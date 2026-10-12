@@ -57,9 +57,9 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     private ReentrantLock mLock = new ReentrantLock();
     protected Broadcaster<INativeBuffer> mNativeBufferBroadcaster = new Broadcaster<>();
     protected FrequencyController mFrequencyController;
-    private int mMiddleUnusableHalfBandwidth;
+    private volatile int mMiddleUnusableHalfBandwidth;
     private int mMeasuredFrequencyError;
-    private double mUsableBandwidthPercentage;
+    private volatile double mUsableBandwidthPercentage;
     private SourceEventListenerToProcessorAdapter mSourceEventListener;
     private volatile NativeBufferWaveRecorder mRecorder;
     private final RecordingStatusBroadcaster mRecordingStatusBroadcaster = new RecordingStatusBroadcaster();
@@ -357,6 +357,20 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     {
         return mFrequencyController.getFrequency();
     }
+
+    /**
+     * Best-effort receiving geometry for loss-tolerant observers. Reads only volatile metadata and never acquires the
+     * controller lock. A concurrent settings change can briefly span two updates; the next observer poll repairs it.
+     */
+    public ReceivingGeometry getReceivingGeometry()
+    {
+        return new ReceivingGeometry(mFrequencyController.getFrequency(),
+            (int)(mFrequencyController.getBandwidth() * mUsableBandwidthPercentage), mMiddleUnusableHalfBandwidth,
+            mFrequencyController.getMinimumFrequency(), mFrequencyController.getMaximumFrequency(), mCenterFrequencyLocked);
+    }
+
+    public record ReceivingGeometry(long frequencyHz, int usableBandwidthHz, int middleUnusableHalfBandwidthHz,
+                                    long minimumFrequencyHz, long maximumFrequencyHz, boolean centerLocked) { }
 
     @Override
     public boolean canTune(long frequency)

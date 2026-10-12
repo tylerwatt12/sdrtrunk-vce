@@ -52,6 +52,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private volatile Thread mRestoreAllocationThread;
     private volatile boolean mDiscoveryHeld;
     private volatile long mOperatorGeneration;
+    private volatile String mAllocationPreferredName;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     private final ReentrantLock mAllocationLifecycleLock = new ReentrantLock();
@@ -62,6 +63,11 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
      * Tuner Class
      */
     public abstract TunerClass getTunerClass();
+
+    /** Cached during ordinary preferred-tuner selection; diagnostic reads never ask hardware for a serial number. */
+    public String getAllocationPreferredName() { return mAllocationPreferredName; }
+
+    public void setAllocationPreferredName(String name) { mAllocationPreferredName = name; }
 
     /**
      * Current status of the discovered tuner

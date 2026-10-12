@@ -75,6 +75,8 @@ import io.github.dsheirer.web.http.ChannelAdminHttpController;
 import io.github.dsheirer.web.http.SpectrumDiscoveryHttpController;
 import io.github.dsheirer.web.http.SpectrumSearchHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
+import io.github.dsheirer.web.http.TunerAllocationHttpController;
+import io.github.dsheirer.web.tuner.TunerAllocationMonitorService;
 import io.github.dsheirer.web.http.MapSnapshotHttpController;
 import io.github.dsheirer.web.http.OperationalPreferencesHttpController;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -197,6 +199,8 @@ public class StatsWebServerService implements AutoCloseable
     private final ChannelDiagnosticService mChannelDiagnosticService;
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final TunerAdministrationService mTunerAdministrationService;
+    private final TunerAllocationMonitorService mTunerAllocationMonitorService;
+    private final TunerAllocationFrequencySeedService mTunerAllocationFrequencySeedService;
     private final TunerSettingsService mTunerSettingsService;
     private final TunerManager mTunerManager;
     private final FrequencyListenService mFrequencyListenService;
@@ -414,6 +418,10 @@ public class StatsWebServerService implements AutoCloseable
             channelProcessingManager) : null;
         mTunerAdministrationService = tunerManager != null ?
             new TunerAdministrationService(tunerManager, mTunerDiagnosticService, mTunerSettingsService) : null;
+        mTunerAllocationMonitorService = tunerManager != null ?
+            new TunerAllocationMonitorService(tunerManager, channelProcessingManager) : null;
+        mTunerAllocationFrequencySeedService = tunerManager != null && channelProcessingManager != null ?
+            new TunerAllocationFrequencySeedService(mDatabase, tunerManager, channelProcessingManager) : null;
         mFrequencyListenService = mTunerDiagnosticService != null ?
             new FrequencyListenService(mTunerDiagnosticService) : null;
         mSpectrumDiscoveryService = mTunerAdministrationService != null && mChannelAdministrationService != null ?
@@ -457,6 +465,7 @@ public class StatsWebServerService implements AutoCloseable
                 AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES, AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES,
                 TimeUnit.MINUTES);
             mReceiverHealthService.start();
+            if(mTunerAllocationFrequencySeedService != null) mTunerAllocationFrequencySeedService.start();
         }
     }
 
@@ -1007,6 +1016,11 @@ public class StatsWebServerService implements AutoCloseable
             () -> mLogicalCallDiagnosticService, () -> mAudioCallCoordinator, mDatabase::enrichSystemNames);
         server.createContext(CallMatchingHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, callMatchingController::handle));
+
+        TunerAllocationHttpController tunerAllocationController = new TunerAllocationHttpController(
+            () -> mTunerAllocationMonitorService != null ? mTunerAllocationMonitorService.snapshot() : null);
+        server.createContext(TunerAllocationHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, tunerAllocationController::handle));
 
         MapSnapshotHttpController mapController = new MapSnapshotHttpController(() -> mMapSnapshotService,
             mDatabase::enrichSystemNames);
@@ -2727,6 +2741,7 @@ public class StatsWebServerService implements AutoCloseable
         mClosed = true;
         mManagedRecordingMaintenance.close();
         mSupportBundleService.close();
+        if(mTunerAllocationFrequencySeedService != null) mTunerAllocationFrequencySeedService.close();
         mApplicationLogService.close();
         mReceiverHealthService.close();
         mTlsMaintenanceExecutor.shutdownNow();

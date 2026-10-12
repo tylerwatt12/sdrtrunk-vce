@@ -86,6 +86,7 @@ import io.github.dsheirer.source.ComplexSource;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
@@ -2118,7 +2119,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
         @Override
         public Source getSource(SourceConfiguration configuration, ChannelSpecification channelSpecification,
-                                String threadName) throws SourceException
+                                String threadName, TunerAllocationContext context) throws SourceException
         {
             int request = mSourceRequests.incrementAndGet();
             Source source = request <= mSources.length ? mSources[request - 1] : null;
@@ -2165,7 +2166,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
         @Override
         public Source getSource(SourceConfiguration configuration, ChannelSpecification channelSpecification,
-                                String threadName)
+                                String threadName, TunerAllocationContext context)
         {
             int request = mSourceRequests.incrementAndGet();
 

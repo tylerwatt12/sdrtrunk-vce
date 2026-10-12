@@ -31,6 +31,9 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import io.github.dsheirer.source.tuner.channel.MultiFrequencyTunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationDecision;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationDiagnosticService;
 import io.github.dsheirer.source.tuner.test.TestTunerController;
 import java.util.ArrayList;
 import java.util.List;
@@ -632,6 +635,796 @@ class TunerManagerAllocationTest
             stop(allocated);
             passThroughTuner.stop();
             polyphaseTuner.stop();
+        }
+    }
+
+    @Test
+    void currentWindowCallCanStartWhileOptionalIdlePlanIsBlocked() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PausingIdlePlanSourceManager sourceManager = new PausingIdlePlanSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "allocation-during-plan");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+        Source call = null;
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            manager.observeKnownFrequency(allocationContext(TunerAllocationContext.Role.CONTROL), 851_812_500, 12_500);
+            assertTrue(sourceManager.mPlanned.await(3, TimeUnit.SECONDS));
+            call = manager.getSource(new TunerChannel(854_312_500, 12_500), CHANNEL_SPECIFICATION,
+                null, "call-during-optional-plan", null, allocationContext(TunerAllocationContext.Role.CALL));
+            assertNotNull(call, "Optional planning must leave the tuner's allocation and controller locks available");
+            assertEquals(tuner.getId(), ((TunerChannelSource)call).getTunerIdentity());
+            sourceManager.mContinue.countDown();
+            assertTrue(sourceManager.mApplied.await(3, TimeUnit.SECONDS));
+            assertFalse(sourceManager.mMoved.get(), "A newly receiving call invalidates the earlier idle plan");
+            assertEquals(854_300_000, controller.getFrequency());
+            assertEquals(1, sourceManager.getTunerChannelCount());
+            assertTrue(controller.getFrequencyAttempts().isEmpty());
+            assertTrue(manager.getTunerAllocationDiagnosticService().snapshot().decisions().isEmpty());
+        }
+        finally
+        {
+            sourceManager.mContinue.countDown();
+            stop(call);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void staleChannelSnapshotDoesNotPreventAnotherCurrentWindowFromReceivingCall() throws Exception
+    {
+        TrackingTunerController staleController = createController(857_000_000);
+        TrackingTunerController availableController = createController(857_000_000);
+        PolyphaseChannelSourceManager staleManager = new PolyphaseChannelSourceManager(staleController)
+        {
+            @Override public SortedSet<TunerChannel> getTunerChannels()
+            {
+                throw new IllegalStateException("Injected disposed channel manager snapshot");
+            }
+        };
+        PolyphaseChannelSourceManager availableManager = new PolyphaseChannelSourceManager(availableController);
+        TestDiscoveredTuner stale = new TestDiscoveredTuner(staleController, staleManager, "stale-window-snapshot");
+        TestDiscoveredTuner available = new TestDiscoveredTuner(availableController, availableManager, "available-current-window");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(stale);
+        manager.getDiscoveredTunerRegistry().add(available);
+        Source allocated = null;
+
+        try
+        {
+            allocated = manager.getSource(new TunerChannel(858_000_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "fallback-after-stale-snapshot");
+            assertNotNull(allocated);
+            assertEquals(available.getId(), ((TunerChannelSource)allocated).getTunerIdentity());
+            assertEquals(1, availableManager.getTunerChannelCount());
+        }
+        finally
+        {
+            stop(allocated);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void unknownFirstCallNearMaximumUsesLegalCenterWithoutFrequencyKnowledge() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(857_000_000);
+        controller.setMaximumFrequency(858_600_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "unknown-near-maximum");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+        TunerChannel requested = new TunerChannel(858_587_500, 12_500);
+        Source allocated = null;
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            allocated = manager.getSource(requested, CHANNEL_SPECIFICATION, null, "unknown-near-maximum");
+            assertNotNull(allocated, "A legal requested channel must not need a learned-frequency list to start");
+            assertTrue(controller.getFrequency() <= controller.getMaximumFrequency());
+            assertTrue(controller.isTunedFor(new TreeSet<>(List.of(requested))));
+            assertEquals(1, controller.getFrequencyAttempts().size());
+            assertTrue(controller.getFrequencyAttempts().stream().allMatch(frequency -> frequency <= 858_600_000));
+        }
+        finally
+        {
+            stop(allocated);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void historyKeepsFailedDecisionsAndOmitsCallsInsideCurrentWindow() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "decision-current-window");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+        TunerAllocationContext controlContext = allocationContext(TunerAllocationContext.Role.CONTROL);
+        TunerAllocationContext callContext = allocationContext(TunerAllocationContext.Role.CALL);
+        Source control = null;
+        Source call = null;
+
+        try
+        {
+            control = manager.getSource(new TunerChannel(854_312_500, 12_500), CHANNEL_SPECIFICATION,
+                null, "history-current-control", null, controlContext);
+            call = manager.getSource(new TunerChannel(854_337_500, 12_500), CHANNEL_SPECIFICATION,
+                null, "history-current-call", null, callContext);
+            assertNotNull(control);
+            assertNotNull(call);
+            assertTrue(manager.getTunerAllocationDiagnosticService().snapshot().decisions().isEmpty());
+            TunerChannel cannotFitWithControl = new TunerChannel(851_812_500, 12_500);
+            assertNull(manager.getSource(cannotFitWithControl, CHANNEL_SPECIFICATION,
+                null, "history-failed-call", null, callContext));
+            assertNull(manager.getSource(cannotFitWithControl, CHANNEL_SPECIFICATION,
+                null, "history-repeated-failed-call", null, callContext));
+
+            List<TunerAllocationDiagnosticService.Entry> history = manager.getTunerAllocationDiagnosticService()
+                .snapshot().decisions();
+            assertEquals(1, history.size());
+            assertEquals(2, history.getFirst().repeatCount());
+            assertEquals(TunerAllocationDecision.Outcome.ALLOCATION_FAILED, history.getFirst().decision().outcome());
+            assertEquals(851_812_500, history.getFirst().decision().requestedFrequencyHz());
+            assertEquals(2, sourceManager.getTunerChannelCount());
+            assertEquals(854_300_000, controller.getFrequency());
+        }
+        finally
+        {
+            stop(call);
+            stop(control);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void successfulLaterTuneProducesFinalMovedDecisionAfterTransientHardwareFailure() throws Exception
+    {
+        TransientRetuneTunerController controller = new TransientRetuneTunerController();
+        controller.setSampleRate(10_000_000);
+        controller.setUsableBandwidthPercentage(0.90);
+        controller.setFrequency(857_000_000);
+        controller.setMinimumFrequency(MINIMUM_FREQUENCY);
+        controller.setMaximumFrequency(WIDE_MAXIMUM_FREQUENCY);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "transient-retune-final-result");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+        controller.failNextHardwareTune();
+        Source allocated = null;
+
+        try
+        {
+            allocated = manager.getSource(new TunerChannel(862_000_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "transient-tune-final-decision");
+            assertNotNull(allocated);
+            assertEquals(862_000_000, controller.getFrequency());
+            List<TunerAllocationDiagnosticService.Entry> history = manager.getTunerAllocationDiagnosticService()
+                .snapshot().decisions();
+            assertEquals(1, history.size(), "One final result represents the request across allocation stages");
+            assertEquals(TunerAllocationDecision.Outcome.MOVED, history.getFirst().decision().outcome());
+            assertEquals(857_000_000, history.getFirst().decision().beforeFrequencyHz());
+            assertEquals(862_000_000, history.getFirst().decision().afterFrequencyHz());
+        }
+        finally
+        {
+            stop(allocated);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void idleSignalsDuringWorkerPassAreCoalescedIntoLaterRepair() throws Exception
+    {
+        TrackingTunerController controlController = createRtlController(855_500_000);
+        TrackingTunerController unusedController = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager controlManager = new PolyphaseChannelSourceManager(controlController);
+        PolyphaseChannelSourceManager unusedManager = new PolyphaseChannelSourceManager(unusedController);
+        TestDiscoveredTuner controlTuner = new TestDiscoveredTuner(controlController, controlManager, "coalesced-control");
+        TestDiscoveredTuner unusedTuner = new TestDiscoveredTuner(unusedController, unusedManager, "coalesced-spare");
+        PausingCoverageTunerManager manager = new PausingCoverageTunerManager();
+        manager.getDiscoveredTunerRegistry().add(controlTuner);
+        manager.getDiscoveredTunerRegistry().add(unusedTuner);
+        Source control = null;
+
+        try
+        {
+            TunerAllocationContext context = allocationContext(TunerAllocationContext.Role.CONTROL);
+            control = manager.getSource(new TunerChannel(855_512_500, 12_500), CHANNEL_SPECIFICATION,
+                controlTuner.getId(), "coalesced-control-source", null, context);
+            assertNotNull(control);
+            manager.observeKnownFrequency(context, 851_812_500, 12_500);
+            assertTrue(manager.mPaused.await(3, TimeUnit.SECONDS),
+                "The worker should complete a first pass while the control tuner is still occupied");
+            stop(control);
+            control = null;
+            manager.observeKnownFrequency(context, 857_012_500, 12_500);
+            manager.mContinue.countDown();
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while(controlController.getFrequency() == 855_500_000 && System.nanoTime() < deadline)
+                Thread.sleep(10);
+            assertTrue(controlController.getFrequency() != 855_500_000,
+                "An idle signal arriving during a worker pass must cause a later pass after that tuner was skipped");
+            assertEquals(0, controlManager.getTunerChannelCount());
+        }
+        finally
+        {
+            manager.mContinue.countDown();
+            stop(control);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void passThroughWindowDoesNotHideOffCenterGapsFromIdleRepair() throws Exception
+    {
+        TrackingTunerController passThroughController = createRtlController(852_400_000);
+        TrackingTunerController unusedController = createRtlController(854_300_000);
+        TestDiscoveredTuner passThrough = new TestDiscoveredTuner(passThroughController,
+            new PassThroughSourceManager(passThroughController), "exact-center-only-recording");
+        PolyphaseChannelSourceManager unusedManager = new PolyphaseChannelSourceManager(unusedController);
+        TestDiscoveredTuner unused = new TestDiscoveredTuner(unusedController, unusedManager, "gap-repair-polyphase");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(passThrough);
+        manager.getDiscoveredTunerRegistry().add(unused);
+        List<TunerChannel> known = List.of(new TunerChannel(851_812_500, 12_500),
+            new TunerChannel(852_012_500, 12_500), new TunerChannel(853_012_500, 12_500));
+        unusedController.clearFrequencyAttempts();
+        passThroughController.clearFrequencyAttempts();
+
+        try
+        {
+            for(TunerChannel frequency: known) manager.observeKnownFrequency(
+                allocationContext(TunerAllocationContext.Role.CONTROL), frequency.getFrequency(), frequency.getBandwidth());
+            manager.repairIdleCoverage();
+            TunerCoveragePlanner.Window receiving = new TunerCoveragePlanner.Window(unusedController.getFrequency(),
+                2_160_000, 5_000, 700_000_000, 900_000_000);
+            assertEquals(3, TunerCoveragePlanner.coveredCount(known, List.of(receiving)),
+                "A pass-through tuner cannot supply these off-center calls even though their RF falls in its recording");
+            assertEquals(1, unusedController.getFrequencyAttempts().size());
+            assertTrue(passThroughController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            manager.stop();
+        }
+    }
+
+    @Test
+    void managerIdleRepairUsesCoverageKnowledgeAndProtectsReceivingControl() throws Exception
+    {
+        TrackingTunerController controlController = createRtlController(855_500_000);
+        TrackingTunerController unusedController = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager controlManager = new PolyphaseChannelSourceManager(controlController);
+        PolyphaseChannelSourceManager unusedManager = new PolyphaseChannelSourceManager(unusedController);
+        TestDiscoveredTuner controlTuner = new TestDiscoveredTuner(controlController, controlManager, "repair-control");
+        TestDiscoveredTuner unusedTuner = new TestDiscoveredTuner(unusedController, unusedManager, "repair-unused");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(controlTuner);
+        manager.getDiscoveredTunerRegistry().add(unusedTuner);
+        TunerChannel controlChannel = new TunerChannel(855_512_500, 12_500);
+        Source control = controlManager.getSourceAtCurrentCenter(controlChannel, CHANNEL_SPECIFICATION,
+            "repair-manager-control");
+        TunerAllocationContext context = allocationContext(TunerAllocationContext.Role.CONTROL);
+        List<TunerChannel> known = List.of(new TunerChannel(851_812_500, 12_500),
+            new TunerChannel(852_212_500, 12_500), new TunerChannel(853_012_500, 12_500),
+            new TunerChannel(853_412_500, 12_500), new TunerChannel(854_512_500, 12_500), controlChannel);
+        controlController.clearFrequencyAttempts();
+        unusedController.clearFrequencyAttempts();
+
+        try
+        {
+            assertNotNull(control);
+            for(TunerChannel frequency: known) manager.observeKnownFrequency(context, frequency.getFrequency(),
+                frequency.getBandwidth());
+            manager.repairIdleCoverage();
+            manager.repairIdleCoverage();
+            assertEquals(855_500_000, controlController.getFrequency());
+            assertTrue(controlController.getFrequencyAttempts().isEmpty());
+            assertEquals(1, controlManager.getTunerChannelCount());
+            assertTrue(controlManager.getTunerChannels().contains(controlChannel));
+            assertEquals(0, unusedManager.getTunerChannelCount());
+            assertEquals(1, unusedController.getFrequencyAttempts().size());
+            List<TunerAllocationDiagnosticService.Entry> history = manager.getTunerAllocationDiagnosticService()
+                .snapshot().decisions();
+            assertEquals(1, history.size());
+            assertEquals(TunerAllocationDecision.Reason.COVERAGE_GAP, history.getFirst().decision().reason());
+            assertEquals(unusedTuner.getId(), history.getFirst().decision().tunerIdentity());
+        }
+        finally
+        {
+            stop(control);
+            manager.stop();
+        }
+    }
+
+    @Test
+    void unusedSourcePlacementCoversCallAndKnownGapsWithoutDuplicatingOtherWindow() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TunerChannel requested = new TunerChannel(851_812_500, 12_500);
+        List<TunerChannel> missing = List.of(requested, new TunerChannel(852_012_500, 12_500),
+            new TunerChannel(853_012_500, 12_500));
+        List<TunerChannel> known = List.of(missing.get(0), missing.get(1), missing.get(2),
+            new TunerChannel(854_800_000, 12_500), new TunerChannel(855_000_000, 12_500),
+            new TunerChannel(855_400_000, 12_500));
+        List<TunerCoveragePlanner.Window> other = List.of(new TunerCoveragePlanner.Window(855_500_000,
+            2_160_000, 5_000, 700_000_000, 900_000_000));
+        PolyphaseChannelSourceManager.AllocationAttempt attempt = new PolyphaseChannelSourceManager.AllocationAttempt();
+        Source call = null;
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            call = sourceManager.getSource(requested, CHANNEL_SPECIFICATION, "unused-useful-placement", null,
+                PolyphaseChannelSourceManager.AllocationMode.ALLOW_IDLE_RETUNE, known, other, attempt);
+            assertNotNull(call);
+            assertEquals(854_300_000, attempt.before);
+            assertEquals(controller.getFrequency(), attempt.requested);
+            assertEquals(controller.getFrequency(), attempt.after);
+            TunerCoveragePlanner.Window after = new TunerCoveragePlanner.Window(controller.getFrequency(),
+                controller.getUsableBandwidth(), controller.getMiddleUnusableHalfBandwidth(),
+                controller.getMinimumFrequency(), controller.getMaximumFrequency());
+            assertEquals(3, TunerCoveragePlanner.coveredCount(missing, List.of(after)));
+            assertEquals(1, sourceManager.getTunerChannelCount());
+            assertEquals(1, controller.getFrequencyAttempts().size());
+        }
+        finally
+        {
+            stop(call);
+            sourceManager.dispose();
+        }
+    }
+
+    @Test
+    void fullyIdleRepairImprovesCoverageAndThenRemainsStable() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        List<TunerChannel> known = List.of(new TunerChannel(851_812_500, 12_500),
+            new TunerChannel(852_212_500, 12_500), new TunerChannel(853_012_500, 12_500),
+            new TunerChannel(853_412_500, 12_500), new TunerChannel(854_512_500, 12_500),
+            new TunerChannel(855_012_500, 12_500));
+        List<TunerCoveragePlanner.Window> other = List.of(new TunerCoveragePlanner.Window(855_500_000,
+            2_160_000, 5_000, 700_000_000, 900_000_000));
+        PolyphaseChannelSourceManager.AllocationAttempt attempt = new PolyphaseChannelSourceManager.AllocationAttempt();
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            assertTrue(sourceManager.repairIdleCoverage(known, other, attempt));
+            assertEquals(854_300_000, attempt.before);
+            assertEquals(controller.getFrequency(), attempt.after);
+            assertTrue(attempt.after != attempt.before);
+            assertEquals(0, sourceManager.getTunerChannelCount());
+            assertEquals(1, controller.getFrequencyAttempts().size());
+            assertFalse(sourceManager.repairIdleCoverage(known, other,
+                new PolyphaseChannelSourceManager.AllocationAttempt()));
+            assertEquals(1, controller.getFrequencyAttempts().size(),
+                "A repeated repair request must not move a window that already has equally good coverage");
+        }
+        finally
+        {
+            sourceManager.dispose();
+        }
+    }
+
+    @Test
+    void failedIdleRepairReportsRequestedCenterAndKeepsReportedCenter() throws Exception
+    {
+        FailingRetuneTunerController controller = new FailingRetuneTunerController();
+        controller.setSampleRate(2_400_000);
+        controller.setUsableBandwidthPercentage(0.90);
+        controller.setMiddleUnusableHalfBandwidth(5_000);
+        controller.setFrequency(854_300_000);
+        controller.setMinimumFrequency(700_000_000);
+        controller.setMaximumFrequency(900_000_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        List<TunerChannel> known = List.of(new TunerChannel(851_812_500, 12_500),
+            new TunerChannel(852_012_500, 12_500));
+        TunerCoveragePlanner.Window before = new TunerCoveragePlanner.Window(854_300_000, 2_160_000, 5_000,
+            700_000_000, 900_000_000);
+        long requested = TunerCoveragePlanner.chooseCenter(List.of(), known, List.of(), before,
+            sourceManager.getChannelGridHz());
+        controller.failHardwareTunesTo(requested);
+        controller.clearFrequencyAttempts();
+        PolyphaseChannelSourceManager.AllocationAttempt attempt = new PolyphaseChannelSourceManager.AllocationAttempt();
+
+        try
+        {
+            assertTrue(sourceManager.repairIdleCoverage(known, List.of(), attempt));
+            assertTrue(attempt.tuneFailed);
+            assertEquals(requested, attempt.requested);
+            assertEquals(854_300_000, attempt.before);
+            assertEquals(854_300_000, attempt.after);
+            assertEquals(854_300_000, controller.getFrequency());
+            assertEquals(854_300_000, controller.getTunedFrequency());
+            assertEquals(1, controller.getFailedHardwareTuneAttempts());
+            assertEquals(0, sourceManager.getTunerChannelCount());
+        }
+        finally
+        {
+            sourceManager.dispose();
+        }
+    }
+
+    @Test
+    void idleRepairCannotMoveLockedOrOccupiedWindow() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        List<TunerChannel> known = List.of(new TunerChannel(851_812_500, 12_500),
+            new TunerChannel(852_012_500, 12_500));
+        Source control = null;
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            controller.setCenterFrequencyLocked(true);
+            assertFalse(sourceManager.repairIdleCoverage(known, List.of(),
+                new PolyphaseChannelSourceManager.AllocationAttempt()));
+            controller.setCenterFrequencyLocked(false);
+            TunerChannel controlChannel = new TunerChannel(854_312_500, 12_500);
+            control = sourceManager.getSourceAtCurrentCenter(controlChannel, CHANNEL_SPECIFICATION,
+                "repair-must-retain-control");
+            assertNotNull(control);
+            assertFalse(sourceManager.repairIdleCoverage(known, List.of(),
+                new PolyphaseChannelSourceManager.AllocationAttempt()));
+            assertTrue(sourceManager.getTunerChannels().contains(controlChannel));
+            assertEquals(1, sourceManager.getTunerChannelCount());
+            assertEquals(854_300_000, controller.getFrequency());
+            assertTrue(controller.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(control);
+            sourceManager.dispose();
+        }
+    }
+
+    @Test
+    void idleRepairChecksActualLimitsAndFullChannelGapEdges() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        controller.setMinimumFrequency(852_000_000);
+        controller.setMaximumFrequency(853_600_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TunerChannel first = new TunerChannel(852_012_500, 12_500);
+        TunerChannel second = new TunerChannel(852_112_500, 12_500);
+        TunerChannel outsideLowerEdge = new TunerChannel(852_002_000, 12_500);
+        TunerChannel outsideUpperEdge = new TunerChannel(853_598_000, 12_500);
+        List<TunerChannel> known = List.of(outsideLowerEdge, first, second, outsideUpperEdge);
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            assertTrue(sourceManager.repairIdleCoverage(known, List.of(),
+                new PolyphaseChannelSourceManager.AllocationAttempt()));
+            TunerCoveragePlanner.Window after = new TunerCoveragePlanner.Window(controller.getFrequency(),
+                controller.getUsableBandwidth(), controller.getMiddleUnusableHalfBandwidth(),
+                controller.getMinimumFrequency(), controller.getMaximumFrequency());
+            assertTrue(TunerCoveragePlanner.covers(after, first));
+            assertTrue(TunerCoveragePlanner.covers(after, second));
+            assertFalse(TunerCoveragePlanner.covers(after, outsideLowerEdge));
+            assertFalse(TunerCoveragePlanner.covers(after, outsideUpperEdge));
+            assertEquals(852_000_000, controller.getMinimumFrequency());
+            assertEquals(853_600_000, controller.getMaximumFrequency());
+            assertEquals(1, controller.getFrequencyAttempts().size());
+        }
+        finally
+        {
+            sourceManager.dispose();
+        }
+    }
+
+    @Test
+    void idleRepairReturnsWhileControllerIsContended() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch returned = new CountDownLatch(1);
+        AtomicBoolean result = new AtomicBoolean(true);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread holder = new Thread(() -> {
+            controller.getLock().lock();
+            try { locked.countDown(); BlockingChannelSourceManager.await(release); }
+            finally { controller.getLock().unlock(); }
+        }, "test idle repair controller lock");
+        Thread repair = new Thread(() -> {
+            try
+            {
+                result.set(sourceManager.repairIdleCoverage(List.of(new TunerChannel(851_812_500, 12_500)),
+                    List.of(), new PolyphaseChannelSourceManager.AllocationAttempt()));
+            }
+            catch(Throwable error) { failure.set(error); }
+            finally { returned.countDown(); }
+        }, "test contended idle repair");
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            holder.start();
+            assertTrue(locked.await(2, TimeUnit.SECONDS));
+            repair.start();
+            assertTrue(returned.await(2, TimeUnit.SECONDS), "Idle repair must skip a contended receiving controller");
+            assertNull(failure.get());
+            assertFalse(result.get());
+            assertTrue(controller.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            release.countDown();
+            holder.join(2_000);
+            repair.join(2_000);
+            sourceManager.dispose();
+        }
+        assertFalse(holder.isAlive());
+        assertFalse(repair.isAlive());
+    }
+
+    @Test
+    void idleRepairSignalNeverMovesAnOccupiedWindowInline() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(854_300_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        AtomicInteger idleSignals = new AtomicInteger();
+        sourceManager.setIdleCoverageListener(idleSignals::incrementAndGet, null);
+        Source control = null;
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            control = sourceManager.getSourceAtCurrentCenter(new TunerChannel(854_312_500, 12_500),
+                CHANNEL_SPECIFICATION, "occupied-idle-signal");
+            assertNotNull(control);
+            sourceManager.process(SourceEvent.channelCountChange(1));
+            assertEquals(0, idleSignals.get());
+            assertEquals(854_300_000, controller.getFrequency());
+            assertTrue(controller.getFrequencyAttempts().isEmpty());
+            stop(control);
+            control = null;
+            assertEquals(0, sourceManager.getTunerChannelCount());
+            assertEquals(1, idleSignals.get(), "Releasing the final receiving channel signals worker repair");
+            assertEquals(854_300_000, controller.getFrequency(), "The notification does not retune inline");
+        }
+        finally
+        {
+            stop(control);
+            sourceManager.dispose();
+        }
+    }
+
+    @Test
+    void occupiedCurrentWindowPreservesAnotherUnusedTuner() throws Exception
+    {
+        TrackingTunerController unusedController = createController(857_000_000);
+        TrackingTunerController occupiedController = createController(857_000_000);
+        PolyphaseChannelSourceManager unusedManager = new PolyphaseChannelSourceManager(unusedController);
+        PolyphaseChannelSourceManager occupiedManager = new PolyphaseChannelSourceManager(occupiedController);
+        TestDiscoveredTuner unused = new TestDiscoveredTuner(unusedController, unusedManager, "unused-first");
+        TestDiscoveredTuner occupied = new TestDiscoveredTuner(occupiedController, occupiedManager, "occupied-second");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(unused);
+        manager.getDiscoveredTunerRegistry().add(occupied);
+        Source existing = occupiedManager.getSource(new TunerChannel(858_000_000, 12_500),
+            CHANNEL_SPECIFICATION, "occupied-existing");
+        Source allocated = null;
+        unusedController.clearFrequencyAttempts();
+        occupiedController.clearFrequencyAttempts();
+
+        try
+        {
+            assertNotNull(existing);
+            allocated = manager.getSource(new TunerChannel(859_000_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "keep-spare-unused");
+            assertNotNull(allocated);
+            assertEquals(occupied.getId(), ((TunerChannelSource)allocated).getTunerIdentity());
+            assertEquals(0, unusedManager.getTunerChannelCount());
+            assertEquals(2, occupiedManager.getTunerChannelCount());
+            assertTrue(unusedController.getFrequencyAttempts().isEmpty());
+            assertTrue(occupiedController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(allocated);
+            stop(existing);
+            unused.stop();
+            occupied.stop();
+        }
+    }
+
+    @Test
+    void occupiedCurrentWindowsPreferSmallerAddedFrequencySpread() throws Exception
+    {
+        TrackingTunerController spreadController = createController(857_000_000);
+        TrackingTunerController compactController = createController(857_000_000);
+        PolyphaseChannelSourceManager spreadManager = new PolyphaseChannelSourceManager(spreadController);
+        PolyphaseChannelSourceManager compactManager = new PolyphaseChannelSourceManager(compactController);
+        TestDiscoveredTuner spread = new TestDiscoveredTuner(spreadController, spreadManager, "spread-first");
+        TestDiscoveredTuner compact = new TestDiscoveredTuner(compactController, compactManager, "compact-second");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(spread);
+        manager.getDiscoveredTunerRegistry().add(compact);
+        Source first = spreadManager.getSource(new TunerChannel(855_000_000, 12_500), CHANNEL_SPECIFICATION,
+            "existing-low-frequency");
+        Source second = compactManager.getSource(new TunerChannel(859_000_000, 12_500), CHANNEL_SPECIFICATION,
+            "existing-near-request");
+        Source allocated = null;
+        spreadController.clearFrequencyAttempts();
+        compactController.clearFrequencyAttempts();
+
+        try
+        {
+            assertNotNull(first);
+            assertNotNull(second);
+            allocated = manager.getSource(new TunerChannel(859_200_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "compact-current-center");
+            assertNotNull(allocated);
+            assertEquals(compact.getId(), ((TunerChannelSource)allocated).getTunerIdentity());
+            assertEquals(1, spreadManager.getTunerChannelCount());
+            assertEquals(2, compactManager.getTunerChannelCount());
+            assertTrue(spreadController.getFrequencyAttempts().isEmpty());
+            assertTrue(compactController.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(allocated);
+            stop(first);
+            stop(second);
+            spread.stop();
+            compact.stop();
+        }
+    }
+
+    @Test
+    void explicitPreferredCurrentWindowBeatsOccupiedHeuristic() throws Exception
+    {
+        TrackingTunerController occupiedController = createController(857_000_000);
+        TrackingTunerController preferredController = createController(857_000_000);
+        PolyphaseChannelSourceManager occupiedManager = new PolyphaseChannelSourceManager(occupiedController);
+        PolyphaseChannelSourceManager preferredManager = new PolyphaseChannelSourceManager(preferredController);
+        TestDiscoveredTuner occupied = new TestDiscoveredTuner(occupiedController, occupiedManager, "occupied-first");
+        TestDiscoveredTuner preferred = new TestDiscoveredTuner(preferredController, preferredManager, "preferred-unused");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(occupied);
+        manager.getDiscoveredTunerRegistry().add(preferred);
+        Source existing = occupiedManager.getSource(new TunerChannel(858_000_000, 12_500),
+            CHANNEL_SPECIFICATION, "existing-occupied-preference");
+        Source allocated = null;
+
+        try
+        {
+            assertNotNull(existing);
+            allocated = manager.getSource(new TunerChannel(859_000_000, 12_500), CHANNEL_SPECIFICATION,
+                preferred.getId(), "explicit-preference-current-center");
+            assertNotNull(allocated);
+            assertEquals(preferred.getId(), ((TunerChannelSource)allocated).getTunerIdentity());
+            assertEquals(1, occupiedManager.getTunerChannelCount());
+            assertEquals(1, preferredManager.getTunerChannelCount());
+        }
+        finally
+        {
+            stop(allocated);
+            stop(existing);
+            occupied.stop();
+            preferred.stop();
+        }
+    }
+
+    @Test
+    void oneRtlWindowCannotFollowOppositeBandVoiceAndAbandonControl() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(771_500_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "single-rtl-control");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+        TunerChannel control = new TunerChannel(771_512_500, 12_500);
+        Source existing = sourceManager.getSourceAtCurrentCenter(control, CHANNEL_SPECIFICATION,
+            "single-rtl-control-source");
+        controller.clearFrequencyAttempts();
+
+        try
+        {
+            assertNotNull(existing);
+            assertNull(manager.getSource(new TunerChannel(857_512_500, 12_500), CHANNEL_SPECIFICATION,
+                null, "opposite-band-voice"));
+            assertEquals(771_500_000, controller.getFrequency());
+            assertEquals(1, sourceManager.getTunerChannelCount());
+            assertTrue(sourceManager.getTunerChannels().contains(control));
+            assertTrue(controller.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(existing);
+            tuner.stop();
+        }
+    }
+
+    @Test
+    void secondRtlWindowCanFollowUnknownOppositeBandVoiceWithoutMovingControl() throws Exception
+    {
+        TrackingTunerController controlController = createRtlController(771_500_000);
+        TrackingTunerController spareController = createRtlController(771_500_000);
+        PolyphaseChannelSourceManager controlManager = new PolyphaseChannelSourceManager(controlController);
+        PolyphaseChannelSourceManager spareManager = new PolyphaseChannelSourceManager(spareController);
+        TestDiscoveredTuner controlTuner = new TestDiscoveredTuner(controlController, controlManager, "rtl-control");
+        TestDiscoveredTuner spareTuner = new TestDiscoveredTuner(spareController, spareManager, "rtl-spare");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(controlTuner);
+        manager.getDiscoveredTunerRegistry().add(spareTuner);
+        TunerChannel control = new TunerChannel(771_512_500, 12_500);
+        TunerChannel previouslyUnknownVoice = new TunerChannel(857_512_500, 12_500);
+        Source existing = controlManager.getSourceAtCurrentCenter(control, CHANNEL_SPECIFICATION,
+            "two-rtl-control-source");
+        Source allocated = null;
+        controlController.clearFrequencyAttempts();
+        spareController.clearFrequencyAttempts();
+
+        try
+        {
+            assertNotNull(existing);
+            //No learned-frequency context is supplied: a first sighting must still be admitted normally.
+            allocated = manager.getSource(previouslyUnknownVoice, CHANNEL_SPECIFICATION,
+                controlTuner.getId(), "new-opposite-band-voice");
+            assertNotNull(allocated);
+            assertEquals(spareTuner.getId(), ((TunerChannelSource)allocated).getTunerIdentity());
+            assertEquals(771_500_000, controlController.getFrequency());
+            assertTrue(controlManager.getTunerChannels().contains(control));
+            assertEquals(1, controlManager.getTunerChannelCount());
+            assertEquals(1, spareManager.getTunerChannelCount());
+            assertTrue(controlController.getFrequencyAttempts().isEmpty());
+            assertFalse(spareController.getFrequencyAttempts().isEmpty());
+            assertTrue(spareController.isTunedFor(new TreeSet<>(List.of(previouslyUnknownVoice))));
+        }
+        finally
+        {
+            stop(allocated);
+            stop(existing);
+            controlTuner.stop();
+            spareTuner.stop();
+        }
+    }
+
+    @Test
+    void lockedRtlWindowChecksFullChannelEdgesAndCenterGap() throws Exception
+    {
+        TrackingTunerController controller = createRtlController(857_000_000);
+        controller.setCenterFrequencyLocked(true);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "locked-rtl-edges");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+        controller.clearFrequencyAttempts();
+        Source valid = null;
+
+        try
+        {
+            long upperEdge = controller.getFrequency() + controller.getUsableHalfBandwidth();
+            assertNull(manager.getSource(new TunerChannel(upperEdge - 1_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "center-inside-full-channel-outside"));
+            assertNull(manager.getSource(new TunerChannel(857_005_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "channel-overlaps-dc-gap"));
+            valid = manager.getSource(new TunerChannel(857_012_500, 12_500), CHANNEL_SPECIFICATION,
+                null, "channel-clears-dc-gap");
+            assertNotNull(valid);
+            assertEquals(1, sourceManager.getTunerChannelCount());
+            assertEquals(857_000_000, controller.getFrequency());
+            assertTrue(controller.getFrequencyAttempts().isEmpty());
+        }
+        finally
+        {
+            stop(valid);
+            tuner.stop();
         }
     }
 
@@ -1287,6 +2080,23 @@ class TunerManagerAllocationTest
         return controller;
     }
 
+    private static TrackingTunerController createRtlController(long centerFrequency) throws SourceException
+    {
+        TrackingTunerController controller = new TrackingTunerController();
+        controller.setSampleRate(2_400_000);
+        controller.setUsableBandwidthPercentage(0.90);
+        controller.setMiddleUnusableHalfBandwidth(5_000);
+        controller.setFrequency(centerFrequency);
+        controller.setMinimumFrequency(700_000_000);
+        controller.setMaximumFrequency(900_000_000);
+        return controller;
+    }
+
+    private static TunerAllocationContext allocationContext(TunerAllocationContext.Role role)
+    {
+        return new TunerAllocationContext("allocation-test-site", "Test channel", "Test system", "Test site", null, role);
+    }
+
     private static void stop(Source source)
     {
         if(source != null)
@@ -1366,6 +2176,79 @@ class TunerManagerAllocationTest
         private int getFailedHardwareTuneAttempts()
         {
             return mFailedHardwareTuneAttempts.get();
+        }
+    }
+
+    private static class TransientRetuneTunerController extends TrackingTunerController
+    {
+        private boolean mFailNextHardwareTune;
+
+        private void failNextHardwareTune() { mFailNextHardwareTune = true; }
+
+        @Override
+        public void setTunedFrequency(long frequency) throws SourceException
+        {
+            if(mFailNextHardwareTune)
+            {
+                mFailNextHardwareTune = false;
+                throw new SourceException("Injected transient hardware tune failure");
+            }
+            super.setTunedFrequency(frequency);
+        }
+    }
+
+    private static class PausingCoverageTunerManager extends TunerManager
+    {
+        private final CountDownLatch mPaused = new CountDownLatch(1);
+        private final CountDownLatch mContinue = new CountDownLatch(1);
+        private final AtomicBoolean mPauseFirstPass = new AtomicBoolean(true);
+
+        private PausingCoverageTunerManager() { super(null); }
+
+        @Override
+        void repairIdleCoverage()
+        {
+            super.repairIdleCoverage();
+            if(mPauseFirstPass.compareAndSet(true, false))
+            {
+                mPaused.countDown();
+                BlockingChannelSourceManager.await(mContinue);
+            }
+        }
+    }
+
+    private static class PausingIdlePlanSourceManager extends PolyphaseChannelSourceManager
+    {
+        private final CountDownLatch mPlanned = new CountDownLatch(1);
+        private final CountDownLatch mContinue = new CountDownLatch(1);
+        private final CountDownLatch mApplied = new CountDownLatch(1);
+        private final AtomicBoolean mPauseFirstPlan = new AtomicBoolean(true);
+        private final AtomicBoolean mMoved = new AtomicBoolean();
+
+        private PausingIdlePlanSourceManager(TrackingTunerController controller) { super(controller); }
+
+        @Override
+        IdleCoveragePlan planIdleCoverage(List<TunerChannel> known, List<TunerCoveragePlanner.Window> others)
+        {
+            IdleCoveragePlan plan = super.planIdleCoverage(known, others);
+            if(plan != null && mPauseFirstPlan.compareAndSet(true, false))
+            {
+                mPlanned.countDown();
+                BlockingChannelSourceManager.await(mContinue);
+            }
+            return plan;
+        }
+
+        @Override
+        boolean applyIdleCoverage(IdleCoveragePlan plan, AllocationAttempt attempt)
+        {
+            try
+            {
+                boolean moved = super.applyIdleCoverage(plan, attempt);
+                mMoved.set(moved);
+                return moved;
+            }
+            finally { mApplied.countDown(); }
         }
     }
 

@@ -71,6 +71,8 @@ import io.github.dsheirer.source.tuner.channel.MultiFrequencyTunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationRuntimeChannel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
@@ -387,6 +389,35 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public List<Long> getActiveSourceFrequencies()
     {
         return activeSourceFrequencies(mProcessingChainsMap.values());
+    }
+
+    /**
+     * Best-effort current tuner work for the read-only allocation monitor. Called on an HTTP worker, this observes
+     * the concurrent processing map without acquiring the lifecycle lock or publishing work from a decoder callback.
+     */
+    public List<TunerAllocationRuntimeChannel> getActiveTunerAllocationChannels()
+    {
+        List<TunerAllocationRuntimeChannel> channels = new ArrayList<>();
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        {
+            try
+            {
+                Channel channel = entry.getKey();
+                Source source = entry.getValue().getSource();
+                if(!(source instanceof TunerChannelSource tunerSource) || tunerSource.getTunerIdentity() == null)
+                    continue;
+                long frequency = tunerSource instanceof MultiFrequencyTunerChannelSource rotating ?
+                    rotating.getObservedSourceFrequency() : tunerSource.getFrequency();
+                if(frequency <= 0) continue;
+                channels.add(new TunerAllocationRuntimeChannel(tunerSource.getTunerIdentity(),
+                    TunerAllocationContext.from(channel), frequency, tunerSource.getTunerChannel().getBandwidth()));
+            }
+            catch(RuntimeException ignored)
+            {
+                // A source can be stopped or rebound while an observer projects it. The next poll repairs the view.
+            }
+        }
+        return List.copyOf(channels);
     }
 
     /**
@@ -1402,6 +1433,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         //Ensure that we can get a source before we construct a new processing chain
         Source source = null;
+        TunerAllocationContext allocationContext = channel.getSourceConfiguration() instanceof SourceConfigRemote ?
+            null : TunerAllocationContext.from(channel);
 
         try
         {
@@ -1411,7 +1444,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             if(selectedTuner != null)
             {
                 source = mTunerManager.getSourceAtCurrentCenter(channel.getSourceConfiguration(),
-                    channel.getDecodeConfiguration().getChannelSpecification(), threadName, selectedTuner);
+                    channel.getDecodeConfiguration().getChannelSpecification(), threadName, selectedTuner,
+                    allocationContext);
             }
             else if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
             {
@@ -1425,7 +1459,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             else
             {
                 source = mTunerManager.getSource(channel.getSourceConfiguration(),
-                    channel.getDecodeConfiguration().getChannelSpecification(), threadName);
+                    channel.getDecodeConfiguration().getChannelSpecification(), threadName,
+                    allocationContext);
             }
         }
         catch(SourceException se)
@@ -1615,6 +1650,17 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 setChannelProcessingFlag(channel, true);
                 notifyRemoteChannelStarted(channel, request, processingChain);
 
+                if(source instanceof TunerChannelSource tunerSource)
+                {
+                    try
+                    {
+                        var diagnostic = mTunerManager != null ? mTunerManager.getTunerAllocationDiagnosticService() : null;
+                        if(diagnostic != null)
+                            diagnostic.sourceStarted(allocationContext, tunerSource.getTunerChannel().getFrequency());
+                    }
+                    catch(RuntimeException ignored) { /* Observer failure must not affect the running channel. */ }
+                }
+
                 mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_START));
             }
             else
@@ -1630,6 +1676,18 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
         catch(RuntimeException exception)
         {
+            if(source instanceof TunerChannelSource tunerSource)
+            {
+                try
+                {
+                    var diagnostic = mTunerManager != null ? mTunerManager.getTunerAllocationDiagnosticService() : null;
+                    if(diagnostic != null)
+                        diagnostic.sourceStartFailed(allocationContext, tunerSource.getTunerIdentity(),
+                            tunerSource.getTunerChannel().getFrequency(), tunerSource.getTunerChannel().getBandwidth());
+                }
+                catch(RuntimeException ignored) { /* Best-effort diagnostics never replace the startup error or cleanup. */ }
+            }
+
             //A replacement REST chain temporarily hosts the existing site traffic manager.  If functional startup
             //fails, detach that shared manager before disposing the candidate so its stop() method cannot tear down
             //the preserved former-REST call and sibling traffic channels.  The handoff attempt keeps the manager's

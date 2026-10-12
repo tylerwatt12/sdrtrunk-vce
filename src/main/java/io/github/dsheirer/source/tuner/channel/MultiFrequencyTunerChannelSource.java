@@ -33,6 +33,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.List;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -51,7 +52,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 {
 
     private TunerManager mTunerManager;
-    private TunerChannelSource mTunerChannelSource;
+    private volatile TunerChannelSource mTunerChannelSource;
     private List<Long> mFrequencies;
     private Set<Long> mLockedFrequencies = ConcurrentHashMap.newKeySet();
     private int mFrequencyListPointer = 0;
@@ -67,11 +68,21 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     private boolean mRotationPaused;
     private volatile boolean mStarted;
     private ConsumerSourceEventAdapter mConsumerSourceEventAdapter = new ConsumerSourceEventAdapter();
+    private TunerAllocationContext mAllocationContext;
 
     public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
                                             List<Long> frequencies, ChannelSpecification channelSpecification,
                                             String preferredTuner, String threadName, Long minimumFrequency,
                                             Long maximumFrequency)
+    {
+        this(tunerManager, tunerChannelSource, frequencies, channelSpecification, preferredTuner, threadName,
+            minimumFrequency, maximumFrequency, null);
+    }
+
+    public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
+                                            List<Long> frequencies, ChannelSpecification channelSpecification,
+                                            String preferredTuner, String threadName, Long minimumFrequency,
+                                            Long maximumFrequency, TunerAllocationContext allocationContext)
     {
         super(null, tunerChannelSource.getTunerChannel(), threadName, null);
         mTunerManager = tunerManager;
@@ -91,6 +102,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         mPreferredTuner = preferredTuner;
         mMinimumFrequency = minimumFrequency;
         mMaximumFrequency = maximumFrequency;
+        mAllocationContext = allocationContext;
     }
 
     /**
@@ -146,7 +158,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         if(mStarted)
         {
             Source source = mTunerManager.getSource(nextChannel, mChannelSpecification, mPreferredTuner, mThreadName,
-                getAllFrequencyChannels());
+                getAllFrequencyChannels(), mAllocationContext);
 
             if(source instanceof TunerChannelSource)
             {
@@ -288,6 +300,13 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         {
             mRotationLock.unlock();
         }
+    }
+
+    /** Best-effort observer value without acquiring the rotation lifecycle lock. */
+    public long getObservedSourceFrequency()
+    {
+        TunerChannelSource source = mTunerChannelSource;
+        return mStarted && source != null ? source.getFrequency() : 0;
     }
 
     /**

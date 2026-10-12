@@ -30,6 +30,8 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationKnownSite;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -3838,6 +3840,53 @@ class StatsWebDatabase
             return page(queryTrunkedChannelFrequencies(connection, configured, request.limit() + 1,
                 request.offset()), request);
         });
+    }
+
+    /** Background-only seed reader. Existing statistics storage is read without retaining any new diagnostic data. */
+    List<TunerAllocationKnownSite.Frequency> tunerAllocationKnownFrequencies(String configurationId)
+    {
+        return readSnapshot(connection -> tunerAllocationKnownFrequencies(connection, configurationId));
+    }
+
+    /**
+     * Only confirmed current serving-site frequencies with an exact saved P25 binding can guide automatic tuning.
+     * Historical summaries, neighbors, foreign bands, uplinks, and unbound/provisional identities are excluded.
+     */
+    static List<TunerAllocationKnownSite.Frequency> tunerAllocationKnownFrequencies(Connection connection,
+                                                                                 String configurationId)
+        throws SQLException
+    {
+        List<TunerAllocationKnownSite.Frequency> frequencies = new ArrayList<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT frequency.downlink_hz,
+                max(CASE WHEN tag.tag IN ('CONFIGURED','CONTROL','CURRENT_CONTROL','ALTERNATE_CONTROL')
+                    THEN 1 ELSE 0 END) AS control
+            FROM configuration_channel config
+            JOIN receiver_channel receiver ON receiver.configuration_id = config.configuration_id
+            JOIN radio_system system ON system.id = receiver.radio_system_id
+            JOIN p25_site_snapshot site ON site.channel_id = receiver.id
+            JOIN p25_site_channel frequency ON frequency.channel_id = receiver.id
+            JOIN p25_site_channel_tag tag
+              ON tag.channel_id = frequency.channel_id AND tag.channel_key = frequency.channel_key
+            WHERE config.configuration_id = ? AND config.channel_kind = 'TRUNKED'
+              AND config.decoder_type IN ('P25_PHASE1','P25_PHASE2')
+              AND system.p25_wacn = json_extract(config.config_json, '$.p25SiteIdentity.wacn')
+              AND system.p25_system_id = json_extract(config.config_json, '$.p25SiteIdentity.system')
+              AND site.rfss = json_extract(config.config_json, '$.p25SiteIdentity.rfss')
+              AND site.site = json_extract(config.config_json, '$.p25SiteIdentity.site')
+              AND tag.tag IN ('CONFIGURED','CONTROL','CURRENT_CONTROL','ALTERNATE_CONTROL','VOICE')
+              AND frequency.downlink_hz > 0
+            GROUP BY frequency.downlink_hz ORDER BY frequency.downlink_hz LIMIT 256
+            """))
+        {
+            statement.setString(1, configurationId);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                while(rows.next()) frequencies.add(new TunerAllocationKnownSite.Frequency(rows.getLong(1), 12_500,
+                    rows.getInt(2) != 0 ? TunerAllocationContext.Role.CONTROL : TunerAllocationContext.Role.CALL));
+            }
+        }
+        return List.copyOf(frequencies);
     }
 
     /** Historical serving-site frequencies remain reserved while the saved channel exists. */

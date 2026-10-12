@@ -25,6 +25,9 @@ import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationDecision.Reason;
+import java.util.List;
 import java.util.SortedSet;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
@@ -40,6 +43,28 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     private static final Logger mLog = LoggerFactory.getLogger(PolyphaseChannelSourceManager.class);
     private PolyphaseChannelManager mPolyphaseChannelManager;
     private TunerController mTunerController;
+    private volatile Runnable mIdleCoverageListener;
+    private volatile TunerAllocationContext mAllocationContext;
+
+    static final class AllocationAttempt
+    {
+        long before, requested, after;
+        int width, gap, activeChannels;
+        Integer coveredBefore, coveredAfter;
+        long minimum, maximum;
+        boolean tuneFailed;
+        Reason reason = Reason.NO_ROOM;
+    }
+
+    void setIdleCoverageListener(Runnable listener, TunerAllocationContext context)
+    {
+        mIdleCoverageListener = listener;
+        if(context != null) mAllocationContext = context;
+    }
+
+    TunerAllocationContext getAllocationContext() { return mAllocationContext; }
+
+    long getChannelGridHz() { return Math.max(1, (long)mPolyphaseChannelManager.getChannelBandwidth()); }
 
     /**
      * Internal allocation stages used by the tuner manager.  Each stage is enforced while holding the tuner
@@ -554,6 +579,15 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                                  String threadName, SortedSet<TunerChannel> centerFrequencyChannels,
                                  AllocationMode allocationMode)
     {
+        return getSource(tunerChannel, channelSpecification, threadName, centerFrequencyChannels, allocationMode,
+            List.of(), List.of(), new AllocationAttempt());
+    }
+
+    TunerChannelSource getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
+                                 String threadName, SortedSet<TunerChannel> centerFrequencyChannels,
+                                 AllocationMode allocationMode, List<TunerChannel> knownChannels,
+                                 List<TunerCoveragePlanner.Window> otherWindows, AllocationAttempt attempt)
+    {
         TunerChannelSource tunerChannelSource = null;
 
         boolean controllerLockAcquired = false;
@@ -570,22 +604,31 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
 
         if(!controllerLockAcquired)
         {
+            attempt.reason = Reason.TUNER_BUSY;
             return null;
         }
 
         try
         {
+            attempt.before = attempt.after = attempt.requested = mTunerController.getFrequency();
+            attempt.width = mTunerController.getUsableBandwidth();
+            attempt.gap = mTunerController.getMiddleUnusableHalfBandwidth();
+            attempt.minimum = mTunerController.getMinimumFrequency();
+            attempt.maximum = mTunerController.getMaximumFrequency();
+            attempt.reason = Reason.OUTSIDE_LIMITS;
             if(isTunable(tunerChannel))
             {
                 //Get a new set of currently tuned channels
                 SortedSet<TunerChannel> tunerChannels = getTunerChannels();
                 boolean hasAllocatedChannels = !tunerChannels.isEmpty();
+                attempt.activeChannels = getTunerChannelCount();
 
                 //Add the requested channel to the list
                 tunerChannels.add(tunerChannel);
 
                 long currentCenterFrequency = mTunerController.getFrequency();
                 boolean centerFrequencyLocked = mTunerController.isCenterFrequencyLocked();
+                attempt.reason = centerFrequencyLocked ? Reason.CENTER_LOCKED : Reason.NO_ROOM;
                 boolean currentCenterValid = isValidCenterFrequency(tunerChannels, currentCenterFrequency);
                 boolean hasUsableBroaderContext = isUsableCenterFrequencyContext(centerFrequencyChannels);
                 boolean idleContextPlacementRequired = !hasAllocatedChannels && !centerFrequencyLocked &&
@@ -649,17 +692,43 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                                 updatedCenterFrequency = getCenterFrequency(tunerChannels, currentCenterFrequency);
                             }
 
+                            boolean centerWithinLimits = updatedCenterFrequency >= attempt.minimum &&
+                                updatedCenterFrequency <= attempt.maximum;
+                            if(!hasAllocatedChannels && !knownChannels.isEmpty() || !centerWithinLimits)
+                            {
+                                TunerCoveragePlanner.Window baseline = new TunerCoveragePlanner.Window(
+                                    updatedCenterFrequency, attempt.width, attempt.gap, attempt.minimum, attempt.maximum);
+                                long usefulCenter = TunerCoveragePlanner.chooseCenter(tunerChannels, knownChannels,
+                                    otherWindows, baseline, getChannelGridHz());
+                                if(usefulCenter > 0 && isValidCenterFrequency(tunerChannels, usefulCenter))
+                                    updatedCenterFrequency = usefulCenter;
+                                else if(!centerWithinLimits)
+                                    throw new IllegalArgumentException("No permitted center can receive the requested channels");
+                            }
+
                             if(updatedCenterFrequency != currentCenterFrequency && updatedCenterFrequency != 0)
                             {
-                                mTunerController.setFrequency(updatedCenterFrequency);
+                                attempt.requested = updatedCenterFrequency;
+                                try
+                                {
+                                    mTunerController.setFrequency(updatedCenterFrequency);
+                                }
+                                catch(SourceException exception)
+                                {
+                                    attempt.tuneFailed = true;
+                                    throw exception;
+                                }
                             }
                         }
 
                         //If we're successful to here, allocate the channel
                         tunerChannelSource = mPolyphaseChannelManager.getChannel(tunerChannel, threadName);
+                        attempt.reason = tunerChannelSource == null ? Reason.SOURCE_START_FAILED :
+                            hasAllocatedChannels ? Reason.KEEP_CURRENT_CALLS : Reason.SPARE_TUNER;
                     }
                     catch(SourceException se)
                     {
+                        attempt.reason = attempt.tuneFailed ? Reason.HARDWARE_RETUNE_FAILED : Reason.SOURCE_START_FAILED;
                         //Tuner controller threw an error trying to tune to the updated frequency
                         mLog.error("Error while updating tuner controller with new center frequency [" +
                                 updatedCenterFrequency + "] - unable to allocate new tuner channel", se);
@@ -671,6 +740,7 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                     }
                     catch(Exception e)
                     {
+                        attempt.reason = Reason.SOURCE_START_FAILED;
                         mLog.error("Error getting source", e);
                     }
                 }
@@ -680,11 +750,84 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         {
             if(controllerLockAcquired)
             {
+                attempt.after = mTunerController.getFrequency();
                 mTunerController.getLock().unlock();
             }
         }
 
         return tunerChannelSource;
+    }
+
+    record IdleCoveragePlan(TunerController.ReceivingGeometry geometry, long centerHz, int coveredBefore,
+                            int coveredAfter) { }
+
+    /** Optional planning runs before reserving a tuner, so an arriving call can use it throughout this work. */
+    IdleCoveragePlan planIdleCoverage(List<TunerChannel> known, List<TunerCoveragePlanner.Window> otherWindows)
+    {
+        TunerController controller = mTunerController;
+        if(controller == null || getTunerChannelCount() != 0) return null;
+        TunerController.ReceivingGeometry geometry = controller.getReceivingGeometry();
+        if(geometry.centerLocked()) return null;
+        TunerCoveragePlanner.Window before = new TunerCoveragePlanner.Window(geometry.frequencyHz(),
+            geometry.usableBandwidthHz(), geometry.middleUnusableHalfBandwidthHz(),
+            geometry.minimumFrequencyHz(), geometry.maximumFrequencyHz());
+        List<TunerChannel> hints = known.stream().filter(channel ->
+            channel.getMinFrequency() >= before.minHz() && channel.getMaxFrequency() <= before.maxHz())
+            .limit(512).toList();
+        long center = TunerCoveragePlanner.chooseCenter(List.of(), hints, otherWindows, before, getChannelGridHz());
+        if(center <= 0 || center == before.centerHz()) return null;
+        int countBefore = TunerCoveragePlanner.coveredCount(known, combined(otherWindows, before));
+        int countAfter = TunerCoveragePlanner.coveredCount(known, combined(otherWindows, before.at(center)));
+        return countAfter > countBefore ? new IdleCoveragePlan(geometry, center, countBefore, countAfter) : null;
+    }
+
+    /** Only the final idle/geometry recheck and hardware command hold the controller reservation. */
+    boolean applyIdleCoverage(IdleCoveragePlan plan, AllocationAttempt attempt)
+    {
+        TunerController controller = mTunerController;
+        if(plan == null || controller == null || !controller.getLock().tryLock()) return false;
+        try
+        {
+            if(getTunerChannelCount() != 0 || controller.isCenterFrequencyLocked() ||
+                !plan.geometry().equals(controller.getReceivingGeometry())) return false;
+            attempt.before = attempt.after = controller.getFrequency();
+            attempt.requested = plan.centerHz();
+            attempt.width = plan.geometry().usableBandwidthHz();
+            attempt.gap = plan.geometry().middleUnusableHalfBandwidthHz();
+            attempt.minimum = plan.geometry().minimumFrequencyHz();
+            attempt.maximum = plan.geometry().maximumFrequencyHz();
+            attempt.coveredBefore = plan.coveredBefore();
+            attempt.coveredAfter = plan.coveredAfter();
+            attempt.reason = Reason.COVERAGE_GAP;
+            try
+            {
+                controller.setFrequency(plan.centerHz());
+            }
+            catch(SourceException exception)
+            {
+                attempt.tuneFailed = true;
+                attempt.reason = Reason.HARDWARE_RETUNE_FAILED;
+                attempt.coveredAfter = attempt.coveredBefore;
+            }
+            attempt.after = controller.getFrequency();
+            return true;
+        }
+        finally { controller.getLock().unlock(); }
+    }
+
+    /** Worker/test convenience. The production caller reserves lifecycle only after planning. */
+    boolean repairIdleCoverage(List<TunerChannel> known, List<TunerCoveragePlanner.Window> otherWindows,
+                                AllocationAttempt attempt)
+    {
+        return applyIdleCoverage(planIdleCoverage(known, otherWindows), attempt);
+    }
+
+    private static List<TunerCoveragePlanner.Window> combined(List<TunerCoveragePlanner.Window> windows,
+                                                              TunerCoveragePlanner.Window window)
+    {
+        java.util.ArrayList<TunerCoveragePlanner.Window> combined = new java.util.ArrayList<>(windows);
+        combined.add(window);
+        return combined;
     }
 
     /**
@@ -702,6 +845,8 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
                 //Lock the frequency and sample rate controls on the tuner controller so users can't change them
                 //when the polyphase manager has channels allocated
                 mTunerController.setLockedSampleRate(getTunerChannelCount() > 0);
+                Runnable listener = mIdleCoverageListener;
+                if(getTunerChannelCount() == 0 && listener != null) listener.run();
                 break;
             default:
                 mLog.info("Unrecognized source event: " + sourceEvent);

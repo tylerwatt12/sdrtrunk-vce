@@ -33,12 +33,12 @@ public class FrequencyController
     private static final Logger mLog = LoggerFactory.getLogger(FrequencyController.class);
 
     private Tunable mTunable;
-    private long mFrequency = 101100000;
+    private volatile long mFrequency = 101100000;
     private long mTunedFrequency = 101100000;
-    private long mMinimumFrequency = 0;
-    private long mMaximumFrequency = 0;
+    private volatile long mMinimumFrequency = 0;
+    private volatile long mMaximumFrequency = 0;
     private double mFrequencyCorrection = 0.0d;
-    private double mSampleRate = 0.0d;
+    private volatile double mSampleRate = 0.0d;
     private boolean mSampleRateLocked = false;
     private List<ISourceEventProcessor> mProcessors = new ArrayList<>();
 
