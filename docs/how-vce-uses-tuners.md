@@ -34,8 +34,11 @@ If none works, the new call cannot start. VCE does not drop existing calls or tu
 follow an incompatible request.
 
 **Preferred Tuner** comes first within each step; it does not reserve hardware or override limits and locks.
-P25 voice calls follow the control channel's preference. An unused tuner may initially move to cover a supplied
-control-frequency group or working range that fits, even if the first frequency already fits.
+P25 voice calls follow the control channel's preference. Among other tuners already covering a call, VCE favors
+one already in use, then the one whose received frequencies stay closest together. This keeps spare tuners free.
+
+When an unused tuner needs to move, VCE also considers known frequencies that other tuners do not cover.
+The new call must still fit. A supplied control-frequency group or working range can guide initial tuning.
 
 ## One dongle versus two
 
@@ -67,8 +70,11 @@ control receiver before moving the original. Trying an alternate control frequen
 
 *Enough bandwidth on paper does not mean a new call fits with the ongoing calls.*
 
-Current VCE does not move ongoing calls between dongles to make room. It also does not automatically move the
-centers or rearrange receiving channels when a call ends.
+VCE does not move ongoing calls between dongles. When a tuner becomes unused, VCE can move its center to cover
+more known frequencies. It moves only when overall known coverage improves, without losing known frequencies
+covered elsewhere. Locked tuners and tuners still receiving channels stay in place.
+
+This reduces wasted overlap as calls end. It cannot guarantee every simultaneous call will fit.
 
 ## Settings to check
 
@@ -96,8 +102,11 @@ exclusions, and known alternate control frequencies before relying on fixed wind
 Sites share the tuners. Running conventional channels use them even when quiet. Other activity changes what fits.
 
 Voice frequencies may appear hours or days apart. VCE tries valid calls immediately; it does not wait for a complete
-list or hold coverage for everything observed. Quiet periods cannot prove discovery is finished.
-New frequencies may require reviewing settings or fixed centers.
+list. New frequencies become hints for later placement, including when a tuner becomes unused. For P25, VCE
+also uses frequencies confirmed for the currently received site. Quiet periods cannot prove discovery is finished.
+
+**Known coverage** means coverage of those frequencies, not proof that every frequency the system may use is
+covered. A newly announced frequency can still be received immediately if a current window or allowed retune fits.
 
 ## Failures and missing audio
 
@@ -112,9 +121,16 @@ Open **Administration > Status & support > Receiver status** for active and rece
 to collect a support report. Record the failure's time, frequency, tuner settings, and calls and channels being
 received. Remove credentials and personal information before posting logs publicly.
 
+Open **Administration > Decisions engine > Tuner allocation** to see each site's known coverage and each tuner's
+current work and receiving window. **Call matching** is in the same group.
+
+The tuner decision history records automatic moves and failed attempts, with a short reason. Repeated failures are
+grouped; ordinary successful calls do not create rows. A move's details show its original before-and-after windows,
+even if the tuner moves again. Current site details show the latest windows. **Pause** freezes the display while
+receiving continues. History is held in memory, is limited, and clears when VCE restarts.
+
 Failed-start counters cover control, conventional, and voice requests. Repeated attempts can increase them;
-they do not count unique missed calls. VCE does not retain a complete automatic-retune history, so a later snapshot
-cannot reconstruct an earlier failure. A successful start or clear status page does not prove every call decoded.
+they do not count unique missed calls. A successful start or clear status page does not prove every call decoded.
 
 ## Further reading
 
