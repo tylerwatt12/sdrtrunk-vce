@@ -57,7 +57,7 @@ class AudioCallRecorderTest
     @TempDir Path mDirectory;
 
     @Test
-    void completeMp3AndWavUseUpstreamTagsInBothRecordingModes() throws Exception
+    void completeMp3AndWavUseLocalIdTagsInBothRecordingModes() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
@@ -75,8 +75,8 @@ class AudioCallRecorderTest
                     byte[] id3 = format == RecordFormat.MP3 ? bytes : waveChunk(bytes, "id3 ");
                     ID3v24Tag tag = new ID3v24Tag(id3);
 
-                    assertEquals("501(781824.1671.70001)", tag.getArtist());
-                    assertEquals("ROAM 777(703710.1110.9001)", tag.getTitle());
+                    assertEquals("501", tag.getArtist());
+                    assertEquals("777", tag.getTitle());
                     assertEquals("SyntheticSystem", tag.getGrouping());
                     assertEquals(BasicRecordingContract.composer(), tag.getComposer());
                     assertTrue(tag.getComposer().startsWith("sdrtrunk"));
@@ -89,7 +89,8 @@ class AudioCallRecorderTest
                         assertEquals(bytes.length - 8, ByteBuffer.wrap(bytes, 4, 4).order(ByteOrder.LITTLE_ENDIAN).getInt());
                         assertTrue(waveChunk(bytes, "data").length > 0);
                         String info = new String(waveChunk(bytes, "LIST"), StandardCharsets.UTF_8);
-                        assertTrue(info.contains("501(781824.1671.70001)"));
+                        assertTrue(info.contains("501"));
+                        assertFalse(info.contains("781824.1671.70001"));
                         assertFalse(info.contains("VC Quality"));
                     }
                     else
@@ -114,7 +115,7 @@ class AudioCallRecorderTest
         Path path = mDirectory.resolve("converted.wav");
         AudioCallRecorder.recordWAVE(call, path, call.snapshot().identifierCollection());
         ID3v24Tag tag = new ID3v24Tag(waveChunk(Files.readAllBytes(path), "id3 "));
-        assertEquals("501(781824.1671.70001)", tag.getArtist());
+        assertEquals("501", tag.getArtist());
         assertFalse(tag.getComment().contains("VC "));
     }
 
@@ -208,7 +209,7 @@ class AudioCallRecorderTest
     }
 
     @Test
-    void finalTagsNeverInferWinnerSystemFromPromotedLogicalIdentifiers() throws Exception
+    void finalTagsUseLocalIdsWhenWinnerSystemIsUnknown() throws Exception
     {
         IdentifierCollection observed = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(70001, 0xBEE00, 0x687, 70001)));
@@ -221,7 +222,7 @@ class AudioCallRecorderTest
             AudioCallRecorder.write(call, path, format, new UserPreferences());
             byte[] bytes = Files.readAllBytes(path);
             ID3v24Tag tag = new ID3v24Tag(format == RecordFormat.MP3 ? bytes : waveChunk(bytes, "id3 "));
-            assertEquals("781824.1671.70001", tag.getArtist());
+            assertEquals("70001", tag.getArtist());
         }
     }
 

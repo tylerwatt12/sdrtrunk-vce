@@ -6,11 +6,13 @@
 package io.github.dsheirer.module.decode.traffic;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import org.junit.jupiter.api.Test;
 
@@ -43,6 +45,52 @@ class TrunkedIdentityEligibilityTest
             Form.TALKGROUP, 0xFFF0));
         assertTrue(TrunkedIdentityEligibility.isEligible(Protocol.NXDN, TrunkedIdentityDomain.NXDN_TYPE_D,
             Form.RADIO, 0xFFF1));
+    }
+
+    @Test
+    void explicitZeroAddressPreservesAValidHomeIdentityWithoutAssigningAWorkingAddress()
+    {
+        for(Protocol protocol: new Protocol[]{Protocol.APCO25, Protocol.APCO25_PHASE2})
+        {
+            for(int unit: new int[]{1, 9_001, 0xFFFFFC})
+            {
+                var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                    0, 0xBEE00, 0x123, unit);
+
+                assertTrue(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(protocol,
+                    TrunkedIdentityDomain.STANDARD, source));
+                assertTrue(source.hasExplicitWorkingAddress());
+                assertNull(source.getWorkingAddress());
+                assertFalse(source.isAliased());
+            }
+        }
+        assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, APCO25RadioIdentifier.createFrom(0)));
+        assertFalse(TrunkedIdentityEligibility.isObservedLocalEligible(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, Form.RADIO, 0, true));
+    }
+
+    @Test
+    void zeroLocalExceptionCannotAdmitInvalidHomeOrReservedSubscriberAddresses()
+    {
+        for(int unit: new int[]{0, 0xFFFFFD, 0xFFFFFE, 0xFFFFFF})
+        {
+            assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+                TrunkedIdentityDomain.STANDARD,
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(0, 0xBEE00, 0x123, unit)));
+        }
+        for(int[] home: new int[][]{{-1, 0x123}, {0x100000, 0x123}, {0xBEE00, -1}, {0xBEE00, 0x1000}})
+        {
+            assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+                TrunkedIdentityDomain.STANDARD,
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(0, home[0], home[1], 9_001)));
+        }
+        for(int local: new int[]{0xFFFFFD, 0xFFFFFE, 0xFFFFFF})
+        {
+            assertFalse(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+                TrunkedIdentityDomain.STANDARD,
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(local, 0xBEE00, 0x123, 9_001)));
+        }
     }
 
     @Test

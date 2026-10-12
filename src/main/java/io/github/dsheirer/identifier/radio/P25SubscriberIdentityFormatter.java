@@ -10,6 +10,10 @@
  */
 package io.github.dsheirer.identifier.radio;
 
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.util.Locale;
 
 /**
@@ -35,5 +39,40 @@ public final class P25SubscriberIdentityFormatter
         }
 
         return String.format(Locale.ROOT, "%05X.%03X.%d", homeWacn, homeSystemId, subscriberId);
+    }
+
+    /** Human-readable identity. Canonical storage continues to use {@link #format(int, int, int)}. */
+    public static String display(int homeWacn, int homeSystemId, int subscriberId, Integer workingId,
+                                  String servingSystemKey)
+    {
+        String label = RadioSystemKey.isForeignP25(servingSystemKey, homeWacn, homeSystemId) ?
+            format(homeWacn, homeSystemId, subscriberId) : Integer.toString(subscriberId);
+        return workingId != null && workingId > 0 && workingId <= 0xFFFFFC && workingId != subscriberId ?
+            label + " (Working ID " + workingId + ")" : label;
+    }
+
+    public static String display(Identifier<?> identifier, String servingSystemKey)
+    {
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            return display(radio.getWacn(), radio.getSystem(), radio.getRadio(), radio.getWorkingAddress(),
+                servingSystemKey);
+        }
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group)
+        {
+            return RadioSystemKey.isForeignP25(servingSystemKey, group.getWacn(), group.getSystem()) ?
+                group.toString() : Integer.toString(group.getValue() != 0 ? group.getValue() : group.getTalkgroup());
+        }
+        if(identifier instanceof PatchGroupIdentifier patch)
+        {
+            var group = patch.getValue();
+            String label = "P:" + display(group.getPatchGroup(), servingSystemKey);
+            if(group.hasPatchedTalkgroups()) label += " " + group.getPatchedTalkgroupIdentifiers().stream()
+                .map(member -> display(member, servingSystemKey)).toList();
+            if(group.hasPatchedRadios()) label += " " + group.getPatchedRadioIdentifiers().stream()
+                .map(member -> display(member, servingSystemKey)).toList();
+            return label;
+        }
+        return identifier != null ? identifier.toString() : "";
     }
 }

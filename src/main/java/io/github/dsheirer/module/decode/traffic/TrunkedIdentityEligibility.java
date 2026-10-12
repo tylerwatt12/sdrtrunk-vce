@@ -85,7 +85,9 @@ public final class TrunkedIdentityEligibility
             Integer workingAddress = radio.getWorkingAddress();
             return validP25Home(radio.getWacn(), radio.getSystem()) &&
                 isEligible(protocol, identityDomain, form, radio.getRadio()) &&
-                (!radio.hasExplicitWorkingAddress() || workingAddress != null &&
+                //TIA-102.AABC-B (2005), Table 2.3.30-1: a present zero field supplies no assigned address.
+                //The separate complete home identity can still identify the subscriber.
+                (!radio.hasExplicitWorkingAddress() || radio.getValue() == 0 || workingAddress != null &&
                     isObservedLocalEligible(protocol, identityDomain, form, workingAddress, true));
         }
 

@@ -330,10 +330,10 @@ class AudioRecordingManagerTest
                 "501", "501 Working Unit"),
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
                 85610, 0xBEE00, 0x687, 85610),
-                "781824_1671_85610", "781824.1671.85610 Canonical Unit"),
+                "85610", "85610 Canonical Unit"),
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
                 501, 0xBEE00, 0x687, 85610),
-                "501_781824_1671_85610", "501(781824.1671.85610) Canonical Unit"));
+                "501", "501 Canonical Unit"));
         List<CompletedAudioCall> calls = new ArrayList<>();
 
         try
@@ -374,7 +374,7 @@ class AudioRecordingManagerTest
                 RadioRecordingFixture fixture = fixtures.get(index);
                 Path path = written.get(index);
                 assertTrue(path.getFileName().toString().matches("\\d{8}_\\d{6}_SyntheticSystem_SyntheticSite_" +
-                    "SyntheticChannel__TO_48530_FROM_" + fixture.filenameSource() + "\\.mp3"));
+                    "SyntheticChannel__TO_48530_FROM_" + fixture.filenameSource() + "(?:_V[0-9]+)?\\.mp3"));
                 byte[] bytes = Files.readAllBytes(path);
                 ID3v24Tag tag = new ID3v24Tag(bytes);
                 assertEquals(fixture.artist(), tag.getArtist());

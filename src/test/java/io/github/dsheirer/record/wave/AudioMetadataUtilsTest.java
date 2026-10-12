@@ -62,8 +62,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Mainline metadata fixtures plus the explicit same-system radio-label simplification.
- * Alias ownership, standard frames and non-radio values retain their existing recording contract.
+ * Shared local-ID metadata fixtures. Alias ownership, standard frames and non-identity values retain their
+ * existing recording contract.
  */
 class AudioMetadataUtilsTest
 {
@@ -80,29 +80,29 @@ class AudioMetadataUtilsTest
     }
 
     @Test
-    void roamingRadioUsesDecimalLocalFirstTextAndTargetKeepsRoamPrefix() throws Exception
+    void roamingRadioUsesOnlyItsObservedLocalId() throws Exception
     {
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x687, 2_115_288),
             APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(777, 0xABCDE, 0x456, 9_001)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliasList()),
-            "501(781824.1671.2115288)", "ROAM 777(703710.1110.9001)");
+            "501", "777");
     }
 
     @Test
-    void equalExplicitWorkingAddressUsesUpstreamUnaliasedText() throws Exception
+    void equalExplicitWorkingAddressUsesTheObservedNumericId() throws Exception
     {
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(2_115_288, 0xBEE00, 0x687, 2_115_288),
             APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(9_001, 0xABCDE, 0x456, 9_001)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null),
-            "781824.1671.2115288", "703710.1110.9001");
+            "2115288", "9001");
     }
 
     @Test
-    void matchingHomeSystemShortensArtistAndRadioTitleWithoutChangingQualifiedAliasSelection() throws Exception
+    void qualifiedLocalIdsPreserveQualifiedAliasSelection() throws Exception
     {
         AliasList aliases = aliasList();
         addAlias(aliases, "Numeric Unit", new Radio(Protocol.APCO25, 85610));
@@ -112,28 +112,24 @@ class AudioMetadataUtilsTest
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(85610, 0xBEE00, 0x687, 85610),
             APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501, 0xBEE00, 0x687, 85610)));
 
-        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, "p25:bee00:687"),
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
             "85610 Canonical Unit", "501\"Canonical Unit\"");
-        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, "p25:abcde:456"),
-            "781824.1671.85610 Canonical Unit", "ROAM 501(781824.1671.85610)\"Canonical Unit\"");
-        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, null),
-            "781824.1671.85610 Canonical Unit", "ROAM 501(781824.1671.85610)\"Canonical Unit\"");
     }
 
     @Test
-    void networkContextShortensSameSystemRadiosButIncompleteContextKeepsQualification() throws Exception
+    void completeIncompleteAndUnknownNetworkContextPreserveZeroLocalIds() throws Exception
     {
         var source = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x687, 85610);
         assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source,
-            APCO25Wacn.create(0xBEE00), APCO25System.create(0x687))), null), "85610", null);
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x687))), null), "0", null);
         assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source,
-            APCO25Wacn.create(0xBEE00))), null), "781824.1671.85610", null);
+            APCO25Wacn.create(0xBEE00))), null), "0", null);
         assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source,
-            SystemConfigurationIdentifier.create("BEE00.687"))), null), "781824.1671.85610", null);
+            SystemConfigurationIdentifier.create("BEE00.687"))), null), "0", null);
     }
 
     @Test
-    void matchingSystemDoesNotPromoteCachedAssignmentIntoStandardTags() throws Exception
+    void cachedAssignmentDoesNotReplaceObservedIdentityOrAliasInStandardTags() throws Exception
     {
         AliasList aliases = aliasList();
         addAlias(aliases, "Working Unit", new Radio(Protocol.APCO25, 501));
@@ -141,12 +137,12 @@ class AudioMetadataUtilsTest
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
                 Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
-        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases, "p25:bee00:687"),
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
             "501 Working Unit", null);
     }
 
     @Test
-    void sameSystemPatchRadioShortensWithoutChangingTalkgroupQualificationOrAliasDelimiters() throws Exception
+    void qualifiedPatchUsesLocalIdsWithoutChangingAliasDelimiters() throws Exception
     {
         AliasList aliases = aliasList();
         addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
@@ -155,8 +151,8 @@ class AudioMetadataUtilsTest
         patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501,
             0xBEE00, 0x687, 85610));
         assertIdentities(AudioMetadataUtils.getMetadataMap(
-            new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))), aliases, "p25:bee00:687"),
-            null, "P:77(781824.1671.1201) [501]\"Canonical Unit\"");
+            new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))), aliases),
+            null, "P:77 [501]\"Canonical Unit\"");
     }
 
     @Test
@@ -187,20 +183,20 @@ class AudioMetadataUtilsTest
         var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(501, 0xBEE00,
             0x687, 85610);
         assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source, target)), aliases),
-            "781824.1671.85610", "ROAM 501(781824.1671.85610)");
+            "85610", "501");
 
         PatchGroup patch = new PatchGroup(APCO25Talkgroup.create(48530));
         patch.addPatchedRadio(target);
         assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))),
-            aliases), null, "P:48530 [ROAM 501(781824.1671.85610)]");
+            aliases), null, "P:48530 [501]");
 
         addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
         assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source, target)), aliases),
-            "781824.1671.85610 Canonical Unit", "ROAM 501(781824.1671.85610)\"Canonical Unit\"");
+            "85610 Canonical Unit", "501\"Canonical Unit\"");
     }
 
     @Test
-    void laterDirectCanonicalObservationKeepsItsUpstreamArtistWithoutErasingWorkingAssignment() throws Exception
+    void laterDirectCanonicalObservationUsesItsObservedScalarWithoutErasingWorkingAssignment() throws Exception
     {
         AliasList aliases = aliasList();
         addAlias(aliases, "Working Unit", new Radio(Protocol.APCO25, 501));
@@ -211,44 +207,44 @@ class AudioMetadataUtilsTest
         identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(85610, 0xBEE00, 0x687, 85610));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
-            "781824.1671.85610 Canonical Unit", null);
+            "85610 Canonical Unit", null);
         assertEquals(501, ((APCO25FullyQualifiedRadioIdentifier)identifiers.getFromIdentifier()).getWorkingAddress());
     }
 
     @Test
-    void zeroLocalAddressUsesUpstreamFullyQualifiedText() throws Exception
+    void zeroLocalAddressRemainsZeroInSourceAndDestinationTags() throws Exception
     {
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x687, 2_115_288),
             APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xABCDE, 0x456, 9_001)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null),
-            "781824.1671.2115288", "703710.1110.9001");
+            "0", "0");
     }
 
     @Test
-    void legacyProjectionDoesNotDependOnCurrentWorkingAddressProvenance() throws Exception
+    void localIdProjectionDoesNotDependOnWorkingAddressProvenance() throws Exception
     {
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x687, 2_115_288),
             APCO25FullyQualifiedRadioIdentifier.createTo(777, 0xABCDE, 0x456, 9_001)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null),
-            "501(781824.1671.2115288)", "ROAM 777(703710.1110.9001)");
+            "501", "777");
     }
 
     @Test
-    void qualifiedTalkgroupRetainsLocalPersonaAndRemovesIssiPrefix() throws Exception
+    void qualifiedTalkgroupUsesOnlyItsLocalPersona() throws Exception
     {
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(601, 0xBEE00, 0x687, 12_345)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null), null,
-            "601(781824.1671.12345)");
+            "601");
     }
 
     @Test
-    void nestedQualifiedPatchUsesLegacyTextForEveryMember() throws Exception
+    void qualifiedPatchUsesLocalIdTextForEveryMember() throws Exception
     {
         PatchGroup patch = new PatchGroup(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(801, 0xBEE00, 0x687, 5_001));
@@ -261,7 +257,7 @@ class AudioMetadataUtilsTest
             APCO25PatchGroup.create(patch), APCO25RadioIdentifier.createFrom(700)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null), "700",
-            "P:801(781824.1671.5001) [802(781824.1671.5002), 5003] [ROAM 901(781824.1671.9001), 902]");
+            "P:801 [802, 5003] [901, 902]");
     }
 
     @Test
@@ -317,8 +313,8 @@ class AudioMetadataUtilsTest
 
         assertEquals(List.of("COMM", "TALB", "TCOM", "TCON", "TDAT", "TIT1", "TIT2", "TPE1", "TYER"),
             id3FrameIds(bytes));
-        assertEquals("501(781824.1671.2115288) Unit", tag.getArtist());
-        assertEquals("ROAM 777(703710.1110.9001)\"Dispatch\",\"Backup\"", tag.getTitle());
+        assertEquals("501 Unit", tag.getArtist());
+        assertEquals("777\"Dispatch\",\"Backup\"", tag.getTitle());
         assertEquals("Dispatch", tag.getAlbum());
         assertEquals("Regional Police", tag.getGrouping());
         assertEquals("sdrtrunk v0.6.1", tag.getComposer());
@@ -372,10 +368,10 @@ class AudioMetadataUtilsTest
 
         assertEquals(List.of("IART", "IPRD", "ISBJ", "INAM", "ICMT", "ICRD", "IGNR", "ICOP", "ISFT"),
             new ArrayList<>(fields.keySet()));
-        assertEquals("501(781824.1671.2115288) Unit", fields.get("IART"));
+        assertEquals("501 Unit", fields.get("IART"));
         assertEquals("Dispatch", fields.get("IPRD"));
         assertEquals("Regional Police", fields.get("ISBJ"));
-        assertEquals("ROAM 777(703710.1110.9001)\"Dispatch\",\"Backup\"", fields.get("INAM"));
+        assertEquals("777\"Dispatch\",\"Backup\"", fields.get("INAM"));
         assertEquals("Date:2026-10-07 12:34:56.789;System:Regional Police;Site:East;Name:Dispatch;" +
             "Decoder:P25 Phase 1;Channel:1-1234;Frequency:851012500;", fields.get("ICMT"));
         assertEquals("2026-10-07 12:34:56.789", fields.get("ICRD"));
@@ -451,10 +447,10 @@ class AudioMetadataUtilsTest
     private static Map<AudioMetadata, String> fixedMetadata()
     {
         Map<AudioMetadata, String> metadata = new EnumMap<>(AudioMetadata.class);
-        metadata.put(AudioMetadata.ARTIST_NAME, "501(781824.1671.2115288) Unit");
+        metadata.put(AudioMetadata.ARTIST_NAME, "501 Unit");
         metadata.put(AudioMetadata.ALBUM_TITLE, "Dispatch");
         metadata.put(AudioMetadata.GROUPING, "Regional Police");
-        metadata.put(AudioMetadata.TRACK_TITLE, "ROAM 777(703710.1110.9001)\"Dispatch\",\"Backup\"");
+        metadata.put(AudioMetadata.TRACK_TITLE, "777\"Dispatch\",\"Backup\"");
         metadata.put(AudioMetadata.COMMENTS, "Date:2026-10-07 12:34:56.789;System:Regional Police;Site:East;" +
             "Name:Dispatch;Decoder:P25 Phase 1;Channel:1-1234;Frequency:851012500;");
         metadata.put(AudioMetadata.DATE_CREATED, "2026-10-07 12:34:56.789");

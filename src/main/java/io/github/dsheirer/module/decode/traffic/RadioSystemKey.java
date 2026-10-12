@@ -5,6 +5,11 @@
  */
 package io.github.dsheirer.module.decode.traffic;
 
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Locale;
@@ -41,6 +46,35 @@ public final class RadioSystemKey
         }
 
         return String.format(Locale.ROOT, "p25:%05x:%03x", wacn, systemId);
+    }
+
+    /** Complete receiving-system identity broadcast over the air; configuration labels supply no identity. */
+    public static String p25Broadcast(IdentifierCollection identifiers)
+    {
+        if(identifiers == null) return null;
+        Identifier<?> wacn = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.WACN, Role.BROADCAST);
+        Identifier<?> system = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SYSTEM, Role.BROADCAST);
+        return wacn != null && wacn.getValue() instanceof Integer wacnValue &&
+            system != null && system.getValue() instanceof Integer systemValue ? p25(wacnValue, systemValue) : null;
+    }
+
+    /** Resolves captured receiver evidence, refusing disagreement rather than guessing which system carried a call. */
+    public static String p25Serving(String nativeKey, P25SiteIdentity site, IdentifierCollection identifiers)
+    {
+        String networkKey = p25Broadcast(identifiers);
+        String systemKey = isP25Native(nativeKey) ? nativeKey : null;
+        String siteKey = p25(site);
+        if(systemKey != null && siteKey != null && !systemKey.equals(siteKey)) return null;
+        String sourceKey = systemKey != null ? systemKey : siteKey;
+        if(sourceKey != null && networkKey != null && !sourceKey.equals(networkKey)) return null;
+        return sourceKey != null ? sourceKey : networkKey;
+    }
+
+    /** Unknown or invalid receiving context cannot establish that a home identity belongs to a foreign system. */
+    public static boolean isForeignP25(String servingKey, int homeWacn, int homeSystem)
+    {
+        String homeKey = p25(homeWacn, homeSystem);
+        return isP25Native(servingKey) && homeKey != null && !homeKey.equals(servingKey);
     }
 
     /**

@@ -38,6 +38,34 @@ class ManagedRecordingStoreTest
     Path temporary;
 
     @Test
+    void browserServingContextUsesTheStoredAudioWinnerRatherThanOtherReceiverSites() throws Exception
+    {
+        Path root = temporary.resolve("serving-context");
+        Files.createDirectories(root);
+        Site winner = new Site(0xBEE00, 0x348, 1, 2);
+        Site other = new Site(0xABCDE, 0x123, 3, 4);
+        List<ManagedRecordingMetadata> calls = List.of(
+            metadata(1000, "p25:bee00:348", "known.mp3", 501, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, winner, List.of(winner, other), List.of()),
+            metadata(2000, "p25:abcde:123", "unknown.mp3", 501, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(other), List.of()),
+            metadata(3000, "p25:abcde:123", "conflict.mp3", 501, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, winner, List.of(winner, other), List.of()));
+        try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve("serving.sqlite"), root))
+        {
+            for(ManagedRecordingMetadata call : calls) store.insert(call);
+            assertEquals("p25:bee00:348", store.find(1L).toMap().get("serving_system_key"));
+            for(long id : List.of(2L, 3L))
+            {
+                var row = store.find(id).toMap();
+                assertTrue(row.containsKey("serving_system_key"));
+                assertNull(row.get("serving_system_key"));
+                assertEquals("p25:abcde:123", row.get("system_key"), "Routing facts remain unchanged");
+            }
+        }
+    }
+
+    @Test
     void refusedOlderCatalogRetainsItsBytesAndJournalMode() throws Exception
     {
         Path database = temporary.resolve("older-catalog.sqlite");

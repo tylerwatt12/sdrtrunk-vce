@@ -200,7 +200,6 @@ public class AudioRecordingManager
                 Path path = null;
                 boolean writeStarted = false;
                 long writerTimestamp = System.currentTimeMillis();
-                String servingSystemKey = BasicRecordingContract.servingSystemKey(completedAudioCall);
                 int unknownIndex = mUnknownAudioRecordingIndex;
                 if(!managed && completedAudioCall.recordingIdentifierCollection() == null)
                 {
@@ -212,7 +211,7 @@ public class AudioRecordingManager
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
                         BasicRecordingContract.nextPath(getRecordingBasePath(),
                             completedAudioCall.recordingIdentifierCollection(), recordFormat, writerTimestamp,
-                            unknownIndex, servingSystemKey);
+                            unknownIndex);
 
                     if(managed)
                     {
@@ -234,7 +233,7 @@ public class AudioRecordingManager
                             if(managed || attempt >= 31) throw collision;
                             path = BasicRecordingContract.nextPath(getRecordingBasePath(),
                                 completedAudioCall.recordingIdentifierCollection(), recordFormat, writerTimestamp,
-                                unknownIndex, servingSystemKey);
+                                unknownIndex);
                         }
                     }
 

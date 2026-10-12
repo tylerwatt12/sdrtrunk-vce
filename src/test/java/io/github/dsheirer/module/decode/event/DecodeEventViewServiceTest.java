@@ -23,6 +23,8 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -51,6 +53,25 @@ class DecodeEventViewServiceTest
 {
     private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000001";
     private static final long FREQUENCY = 851_012_500L;
+
+    @Test
+    void eventCarriesItsOwnCompleteServingIdentityWithoutChangingTheCanonicalParty() throws Exception
+    {
+        var radio = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x348, 9001);
+        var event = DecodeEvent.builder(DecodeEventType.CALL_UNIT_TO_UNIT, 1_000L).identifiers(
+            new IdentifierCollection(List.of(radio, APCO25Wacn.create(0xBEE00), APCO25System.create(0x349)))).build();
+        try(var service = new DecodeEventViewService(null, null))
+        {
+            var view = service.view(CONFIGURATION_ID, event);
+            var json = new ObjectMapper().valueToTree(view);
+            assertEquals("p25:bee00:349", json.path("serving_system_key").textValue());
+            assertEquals("BEE00.348.9001", view.fromParty().getFirst().text());
+            var unknown = DecodeEvent.builder(DecodeEventType.CALL_UNIT_TO_UNIT, 1_001L).identifiers(
+                new IdentifierCollection(List.of(radio, APCO25Wacn.create(0xBEE00)))).build();
+            assertTrue(new ObjectMapper().valueToTree(service.view(CONFIGURATION_ID, unknown))
+                .path("serving_system_key").isNull());
+        }
+    }
 
     @Test
     void filterCatalogIsCompleteStableAndGloballyUniqueBeforeAnyEventsArrive()

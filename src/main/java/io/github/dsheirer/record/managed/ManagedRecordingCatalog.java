@@ -580,6 +580,11 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             value.put("size_bytes", sizeBytes);
             value.put("audio_url", "/api/v1/recordings/calls/" + id + "/audio");
             put(value, "system_key", systemKey);
+            //The routing key can come from another leg. Only the stored audio winner proves serving context.
+            value.put("serving_system_key", ("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol)) &&
+                winnerSite != null &&
+                !RadioSystemKey.isForeignP25(systemKey, winnerSite.wacn(), winnerSite.systemId()) ?
+                RadioSystemKey.p25(winnerSite.wacn(), winnerSite.systemId()) : null);
             put(value, "channel_id", channelId);
             if(aliasListId > 0)
             {

@@ -155,6 +155,50 @@ class StatsWebCallServiceTest
     }
 
     @Test
+    void playbackLabelsUseCapturedWinnerServingFactsWithoutChangingRoutingOrCanonicalIdentities() throws Exception
+    {
+        CompletedAudioCall template = canonicalRadioCall();
+        CallLegSource originalSource = template.snapshot().callLegSource();
+        P25SiteIdentity[] sites = {new P25SiteIdentity(0x92498, 0x926, 1, 1),
+            new P25SiteIdentity(0xBEE00, 0x4A7, 1, 21), null,
+            new P25SiteIdentity(0x92498, 0x926, 1, 1)};
+        String[] servingKeys = {"p25:92498:926", "p25:bee00:4a7", null, null};
+        String[] labels = {"34006 (Working ID 130002)", "92498.926.34006 (Working ID 130002)",
+            "34006 (Working ID 130002)", "34006 (Working ID 130002)"};
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            for(int index = 0; index < sites.length; index++)
+            {
+                P25SiteIdentity site = sites[index];
+                CallLegSource source = new CallLegSource(originalSource.decoderType(),
+                    originalSource.channelConfigurationId(), originalSource.channelName(), originalSource.radioResolveId(),
+                    originalSource.aliasListId(), site, originalSource.identityDomain(), originalSource.channelKind(), true);
+                CompletedAudioCall snapshotCall = withSource(template, source);
+                IdentifierCollection observed = site != null ? new IdentifierCollection(List.of(
+                    APCO25Wacn.create(index == 3 ? 0xBEE00 : site.wacn()),
+                    APCO25System.create(index == 3 ? 0x4A7 : site.system()))) : new IdentifierCollection();
+                CompletedAudioCall call = new CompletedAudioCall(snapshotCall.logicalCallId(), snapshotCall.snapshot(),
+                    snapshotCall.audioBuffers(), snapshotCall.resolvedPolicy(), snapshotCall.callLegSummaries(), observed);
+
+                service.receive(call);
+                Map<String,Object> metadata = client.awaitCall();
+
+                assertNotNull(metadata);
+                assertTrue(metadata.containsKey("serving_system_key"), "Captured unknown context must remain explicit");
+                assertEquals(servingKeys[index], metadata.get("serving_system_key"));
+                Map<?,?> playback = (Map<?,?>)metadata.get("playback_target");
+                assertEquals(labels[index], playback.get("label"));
+                assertEquals(metadata.get("radio_system_key"), playback.get("radio_system_key"));
+                assertNotNull(playback.get("key"), "Display must not remove the canonical playback target");
+                assertEquals(Map.of("wacn", 0x92498, "system_id", 0x926, "subscriber_id", 34_006),
+                    metadata.get("target_canonical_identity"));
+                assertEquals(130_002, metadata.get("target_observed_working_id"));
+            }
+        }
+    }
+
+    @Test
     void labelsAnalogPlaybackBySavedChannelInsteadOfSyntheticTalkgroup() throws Exception
     {
         try(StatsWebCallService service = started(new StatsWebCallService());

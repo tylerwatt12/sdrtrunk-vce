@@ -29,6 +29,8 @@ import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructureVendor;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -102,11 +104,13 @@ public class MotorolaGroupRegroupVoiceChannelUserExtended extends MacStructureVe
     }
 
     /**
-     * Indicates if this message has a non-zero radio talker identifier.
+     * Indicates if this message carries a usable subscriber identity, independently of its local address.
      */
     public boolean hasRadio()
     {
-        return getInt(SOURCE_ADDRESS) > 0;
+        FullyQualifiedRadioIdentifier source = getSource();
+        return TrunkedIdentityEligibility.isEligibleDecodedIdentifier(source.getProtocol(),
+            TrunkedIdentityDomain.STANDARD, source);
     }
 
     public FullyQualifiedRadioIdentifier getSource()

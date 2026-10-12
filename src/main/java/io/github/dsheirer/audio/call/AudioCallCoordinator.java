@@ -1757,6 +1757,15 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
         if(exact instanceof FullyQualifiedRadioIdentifier radio)
         {
+            if(winnerLocal instanceof FullyQualifiedRadioIdentifier winnerRadio &&
+                winnerRadio.getRole() == role && winnerRadio.getProtocol() == radio.getProtocol() &&
+                winnerRadio.getWacn() == radio.getWacn() && winnerRadio.getSystem() == radio.getSystem() &&
+                winnerRadio.getRadio() == radio.getRadio())
+            {
+                //The winner already owns this home identity. Retain its evidence and independent raw observation.
+                return winnerRadio;
+            }
+
             boolean explicitWorkingAddress = radio.hasExplicitWorkingAddress() && local.equals(radio.getValue());
             if(winnerLocal instanceof FullyQualifiedRadioIdentifier winnerRadio &&
                 winnerRadio.hasExplicitWorkingAddress() && local.equals(winnerRadio.getValue()))
@@ -1764,15 +1773,22 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 explicitWorkingAddress = true;
             }
 
+            APCO25FullyQualifiedRadioIdentifier promoted;
             if(explicitWorkingAddress)
             {
-                return APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(local, radio.getWacn(),
+                promoted = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(local, radio.getWacn(),
                     radio.getSystem(), radio.getRadio(), role, radio.getResolutionEvidence());
             }
-
-            return role == Role.TO ? APCO25FullyQualifiedRadioIdentifier.createTo(local, radio.getWacn(),
-                radio.getSystem(), radio.getRadio()) : APCO25FullyQualifiedRadioIdentifier.createFrom(local,
-                    radio.getWacn(), radio.getSystem(), radio.getRadio());
+            else
+            {
+                promoted = role == Role.TO ? APCO25FullyQualifiedRadioIdentifier.createTo(local, radio.getWacn(),
+                    radio.getSystem(), radio.getRadio()) : APCO25FullyQualifiedRadioIdentifier.createFrom(local,
+                        radio.getWacn(), radio.getSystem(), radio.getRadio());
+            }
+            RadioIdentifier observation = winnerLocal instanceof FullyQualifiedRadioIdentifier winnerRadio ?
+                winnerRadio.getRecordingIdentifier() : winnerLocal instanceof RadioIdentifier winnerRadio ?
+                    winnerRadio : radio.getRecordingIdentifier();
+            return APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(promoted, observation);
         }
         return exact;
     }

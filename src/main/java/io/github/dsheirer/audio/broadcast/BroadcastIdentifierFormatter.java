@@ -42,23 +42,13 @@ public final class BroadcastIdentifierFormatter
 
     static String servingSystemKey(CallLegSource source, IdentifierCollection identifiers)
     {
-        String networkKey = servingSystemKey(identifiers);
-        if(source != null)
-        {
-            String nativeKey = RadioSystemKey.isP25Native(source.radioSystemKey()) ? source.radioSystemKey() : null;
-            String siteKey = RadioSystemKey.p25(source.p25SiteIdentity());
-            if(nativeKey != null && siteKey != null && !nativeKey.equals(siteKey)) return null;
-            String sourceKey = nativeKey != null ? nativeKey : siteKey;
-            if(sourceKey != null && networkKey != null && !sourceKey.equals(networkKey)) return null;
-            if(nativeKey != null) return nativeKey;
-            if(siteKey != null) return siteKey;
-        }
-        return networkKey;
+        return RadioSystemKey.p25Serving(source != null ? source.radioSystemKey() : null,
+            source != null ? source.p25SiteIdentity() : null, identifiers);
     }
 
     public static String servingSystemKey(IdentifierCollection identifiers)
     {
-        return BasicRecordingContract.servingSystemKey(identifiers);
+        return RadioSystemKey.p25Broadcast(identifiers);
     }
 
     /**
@@ -168,7 +158,7 @@ public final class BroadcastIdentifierFormatter
         identifier = BasicRecordingContract.recordingIdentifier(identifier);
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
-            if(!foreignSystem(servingSystemKey, radio.getWacn(), radio.getSystem()))
+            if(!RadioSystemKey.isForeignP25(servingSystemKey, radio.getWacn(), radio.getSystem()))
             {
                 return Integer.toString(radio.getValue() != 0 ? radio.getValue() : radio.getRadio());
             }
@@ -178,7 +168,7 @@ public final class BroadcastIdentifierFormatter
         }
         if(identifier instanceof FullyQualifiedTalkgroupIdentifier group)
         {
-            if(!foreignSystem(servingSystemKey, group.getWacn(), group.getSystem()))
+            if(!RadioSystemKey.isForeignP25(servingSystemKey, group.getWacn(), group.getSystem()))
             {
                 return Integer.toString(group.getValue() != 0 ? group.getValue() : group.getTalkgroup());
             }
@@ -198,10 +188,4 @@ public final class BroadcastIdentifierFormatter
         return identifier != null ? identifier.toString() : "";
     }
 
-    private static boolean foreignSystem(String servingSystemKey, int homeWacn, int homeSystem)
-    {
-        String homeKey = RadioSystemKey.p25(homeWacn, homeSystem);
-        return RadioSystemKey.isP25Native(servingSystemKey) && homeKey != null &&
-            !homeKey.equals(servingSystemKey);
-    }
 }

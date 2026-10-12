@@ -6,6 +6,7 @@
 package io.github.dsheirer.module.decode.event;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
@@ -23,6 +24,7 @@ import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
@@ -468,7 +470,8 @@ public class DecodeEventViewService implements AutoCloseable
             descriptor != null ? bounded(descriptor.toString()) : null, frequency,
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
             event.getProtocol() != null ? event.getProtocol().name() : null,
-            from.party(), to.party(), observationEpoch, bounded(channelName), sourceFrequency, origin);
+            from.party(), to.party(), observationEpoch, bounded(channelName), sourceFrequency, origin,
+            RadioSystemKey.p25Broadcast(identifiers));
     }
 
     private Parties parties(IdentifierCollection collection, Role role)
@@ -780,7 +783,8 @@ public class DecodeEventViewService implements AutoCloseable
                             String fromAliases, String toIdentifiers, String toAliases, String channel,
                             Long frequencyHz, Integer timeslot, String details, String protocol,
                             List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch,
-                            String channelName, Long sourceFrequencyHz, @JsonIgnore DecodeEventSource sourceBinding)
+                            String channelName, Long sourceFrequencyHz, @JsonIgnore DecodeEventSource sourceBinding,
+                            @JsonProperty("serving_system_key") String servingSystemKey)
     {
         public EventView
         {
@@ -799,7 +803,7 @@ public class DecodeEventViewService implements AutoCloseable
         {
             this(eventId, configurationId, timeStartMs, durationMs, eventType, eventLabel, category,
                 fromIdentifiers, fromAliases, toIdentifiers, toAliases, channel, frequencyHz, timeslot, details,
-                protocol, fromParty, toParty, observationEpoch, channelName, sourceFrequencyHz, null);
+                protocol, fromParty, toParty, observationEpoch, channelName, sourceFrequencyHz, null, null);
         }
 
         /** Source-compatible constructor for consumers without a saved channel name. */

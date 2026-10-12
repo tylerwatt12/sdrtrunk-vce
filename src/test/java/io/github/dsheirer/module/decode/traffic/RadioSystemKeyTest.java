@@ -12,6 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -19,6 +22,31 @@ import org.junit.jupiter.api.Test;
 class RadioSystemKeyTest
 {
     private static final String CHANNEL_ID = "728d2d66-de4e-476b-a696-919f32dd4d12";
+
+    @Test
+    void receivingIdentityRequiresCompleteConsistentEvidence()
+    {
+        var home = new IdentifierCollection(List.of(APCO25Wacn.create(0xBEE00), APCO25System.create(0x348)));
+        var incomplete = new IdentifierCollection(List.of(APCO25Wacn.create(0xBEE00)));
+        var site = new P25SiteIdentity(0xBEE00, 0x348, 1, 2);
+        assertEquals("p25:bee00:348", RadioSystemKey.p25Serving(null, null, home));
+        assertEquals("p25:bee00:348", RadioSystemKey.p25Serving("p25:bee00:348", site, incomplete));
+        assertNull(RadioSystemKey.p25Serving(null, null, incomplete));
+        assertNull(RadioSystemKey.p25Serving("p25:bee00:349", site, null));
+        assertNull(RadioSystemKey.p25Serving("p25:bee00:349", null, home));
+        assertNull(RadioSystemKey.p25Serving(null, new P25SiteIdentity(0xBEE00, 0x349, 1, 2), home));
+    }
+
+    @Test
+    void eitherDifferentComponentEstablishesForeignOnlyWithCompleteValidKeys()
+    {
+        assertTrue(RadioSystemKey.isForeignP25("p25:bee00:349", 0xBEE00, 0x348));
+        assertTrue(RadioSystemKey.isForeignP25("p25:bee01:348", 0xBEE00, 0x348));
+        assertFalse(RadioSystemKey.isForeignP25("p25:bee00:348", 0xBEE00, 0x348));
+        assertFalse(RadioSystemKey.isForeignP25(null, 0xBEE00, 0x348));
+        assertFalse(RadioSystemKey.isForeignP25("p25:bee00:48", 0xBEE00, 0x348));
+        assertFalse(RadioSystemKey.isForeignP25("p25:bee00:349", 0x100000, 0x348));
+    }
 
     @Test
     void p25SitesShareTheWacnAndSystemKey()

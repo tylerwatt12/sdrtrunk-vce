@@ -51,7 +51,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Mainline recording contract with the explicit same-system radio-label simplification. */
+/** Shared recording contract with local numeric IDs and unchanged non-identity filename conventions. */
 class BasicRecordingContractTest
 {
     private static final long WRITER_TIME = LocalDateTime.of(2026, 10, 7, 12, 34, 56)
@@ -70,52 +70,38 @@ class BasicRecordingContractTest
     }
 
     @Test
-    void qualifiedRadioDecimalLocalAddressAndSourceTargetAsymmetryStayFrozen()
+    void qualifiedRadiosUseObservedLocalIdsWithoutHomeIdentitySubstitution()
     {
         var differing = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x687, 70001);
-        assertEquals("501(781824.1671.70001)", BasicRecordingContract.sourceIdentifier(differing));
-        assertEquals("ROAM 501(781824.1671.70001)", BasicRecordingContract.targetIdentifier(differing));
-        assertEquals("501_781824_1671_70001", BasicRecordingContract.filenameIdentifier(differing));
-        assertEquals("781824.1671.70001", BasicRecordingContract.sourceIdentifier(
+        assertEquals("501", BasicRecordingContract.sourceIdentifier(differing));
+        assertEquals("501", BasicRecordingContract.targetIdentifier(differing));
+        assertEquals("501", BasicRecordingContract.filenameIdentifier(differing));
+        assertEquals("70001", BasicRecordingContract.sourceIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(70001, 0xBEE00, 0x687, 70001)));
-        assertEquals("781824.1671.70001", BasicRecordingContract.sourceIdentifier(
+        assertEquals("0", BasicRecordingContract.sourceIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x687, 70001)));
-        //The legacy export predicate is numeric inequality, including canonical-only constructor callers.
-        assertEquals("501(781824.1671.70001)", BasicRecordingContract.sourceIdentifier(
+        assertEquals("501", BasicRecordingContract.sourceIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x687, 70001)));
     }
 
     @Test
-    void sameSystemRadioUsesObservedLocalScalarOrHomeUnitWhenLocalIsAbsent()
+    void qualifiedRadioScalarGrammarRetainsZeroAndNeverSubstitutesTheHomeUnit()
     {
         for(int local: List.of(0, 70001, 501))
         {
             var radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(local,
                 0xBEE00, 0x687, 70001);
-            assertEquals(local == 501 ? "501" : "70001",
-                BasicRecordingContract.sourceIdentifier(radio, "p25:bee00:687"));
-            assertEquals(local == 501 ? "501" : "70001",
-                BasicRecordingContract.targetIdentifier(radio, "p25:bee00:687"));
-            assertEquals(local == 501 ? "501" : "70001",
-                BasicRecordingContract.filenameIdentifier(radio, "p25:bee00:687"));
-            assertTrue(BasicRecordingContract.filenameIdentifier(radio, "p25:bee00:687").matches("[0-9]+"),
-                "Same-system radio filename identifiers retain the ordinary scalar grammar");
+            assertEquals(Integer.toString(local),
+                BasicRecordingContract.sourceIdentifier(radio));
+            assertEquals(Integer.toString(local),
+                BasicRecordingContract.targetIdentifier(radio));
+            assertEquals(Integer.toString(local),
+                BasicRecordingContract.filenameIdentifier(radio));
+            assertTrue(BasicRecordingContract.filenameIdentifier(radio).matches("[0-9]+"),
+                "Qualified radio filename identifiers retain the ordinary scalar grammar");
         }
         assertEquals("501", BasicRecordingContract.sourceIdentifier(
-            APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x687, 70001), "p25:bee00:687"));
-    }
-
-    @Test
-    void foreignPartialMismatchAndUnknownSystemKeepQualification()
-    {
-        var radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
-            0xBEE00, 0x687, 70001);
-        for(String serving: new String[]{null, "p25:bee01:687", "p25:bee00:688", "p25:abcde:456"})
-        {
-            assertEquals("501(781824.1671.70001)", BasicRecordingContract.sourceIdentifier(radio, serving));
-            assertEquals("ROAM 501(781824.1671.70001)", BasicRecordingContract.targetIdentifier(radio, serving));
-            assertEquals("501_781824_1671_70001", BasicRecordingContract.filenameIdentifier(radio, serving));
-        }
+            APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xBEE00, 0x687, 70001)));
     }
 
     @Test
@@ -128,14 +114,14 @@ class BasicRecordingContractTest
             new IdentifierCollection(List.of(radio, APCO25System.create(0x687)))))
         {
             assertNull(BasicRecordingContract.servingSystemKey(incomplete));
-            assertEquals("20261007_123456__FROM_781824_1671_70001.mp3",
+            assertEquals("20261007_123456__FROM_70001.mp3",
                 BasicRecordingContract.filename(incomplete, RecordFormat.MP3, WRITER_TIME, 1, 1));
         }
 
         IdentifierCollection configuredName = new IdentifierCollection(List.of(radio,
             SystemConfigurationIdentifier.create("BEE00.687")));
         assertNull(BasicRecordingContract.servingSystemKey(configuredName));
-        assertEquals("20261007_123456_BEE00.687__FROM_781824_1671_70001.mp3",
+        assertEquals("20261007_123456_BEE00.687__FROM_70001.mp3",
             BasicRecordingContract.filename(configuredName, RecordFormat.MP3, WRITER_TIME, 1, 1));
 
         IdentifierCollection complete = new IdentifierCollection(List.of(radio,
@@ -150,25 +136,28 @@ class BasicRecordingContractTest
     }
 
     @Test
-    void winnerNativeKeyTakesPriorityOverSiteAndNetworkAndUnknownIgnoresResolvedIdentifiers()
+    void winnerServingSystemRefusesConflictingEvidenceAndIgnoresPromotedIdentifiers()
     {
         IdentifierCollection observed = new IdentifierCollection(List.of(APCO25Wacn.create(0xABCDE),
             APCO25System.create(0x456)));
         CallLegSource nativeSource = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0,
             new P25SiteIdentity(0x12345, 0x123, 1, 1), TrunkedIdentityDomain.STANDARD, null, false,
             "p25:bee00:687");
-        assertEquals("p25:bee00:687", BasicRecordingContract.servingSystemKey(call(nativeSource, observed)));
+        assertNull(BasicRecordingContract.servingSystemKey(call(nativeSource, observed)));
 
         CallLegSource learnedSource = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0,
             new P25SiteIdentity(0xBEE00, 0x687, 1, 1), TrunkedIdentityDomain.STANDARD, null, false);
-        assertEquals("p25:bee00:687", BasicRecordingContract.servingSystemKey(call(learnedSource, observed)));
+        assertNull(BasicRecordingContract.servingSystemKey(call(learnedSource, observed)));
+        IdentifierCollection matching = new IdentifierCollection(List.of(APCO25Wacn.create(0xBEE00),
+            APCO25System.create(0x687)));
+        assertEquals("p25:bee00:687", BasicRecordingContract.servingSystemKey(call(learnedSource, matching)));
         assertEquals("p25:abcde:456", BasicRecordingContract.servingSystemKey(call(CallLegSource.UNKNOWN, observed)));
         assertNull(BasicRecordingContract.servingSystemKey(call(CallLegSource.UNKNOWN, null)),
             "Promoted logical identifiers must not establish the winner's receiving system");
     }
 
     @Test
-    void sameSystemRadioSimplificationRecursesThroughPatchButLeavesTalkgroupsQualified()
+    void localIdProjectionRecursesThroughQualifiedPatchTalkgroupsAndRadios()
     {
         var primary = APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xBEE00, 0x687, 1201);
         var patch = new PatchGroup(primary);
@@ -177,23 +166,23 @@ class BasicRecordingContractTest
         patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(502,
             0xABCDE, 0x456, 70002));
         var identifier = APCO25PatchGroup.create(patch);
-        assertEquals("P:77(781824.1671.1201) [501, ROAM 502(703710.1110.70002)]",
-            BasicRecordingContract.targetIdentifier(identifier, "p25:bee00:687"));
-        assertEquals("P77_781824_1671_1201 [501, 502_703710_1110_70002]",
-            BasicRecordingContract.filenameIdentifier(identifier, "p25:bee00:687"));
+        assertEquals("P:77 [501, 502]",
+            BasicRecordingContract.targetIdentifier(identifier));
+        assertEquals("P77 [501, 502]",
+            BasicRecordingContract.filenameIdentifier(identifier));
     }
 
     @Test
-    void sameSystemFilenameUsesObservedWorkingScalarAndCollisionSuffix() throws Exception
+    void qualifiedFilenameUsesObservedWorkingScalarAndCollisionSuffix() throws Exception
     {
         IdentifierCollection identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(48530),
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x687, 70001)));
         Path first = BasicRecordingContract.nextPath(mDirectory, identifiers, RecordFormat.MP3,
-            WRITER_TIME, 1, "p25:bee00:687");
+            WRITER_TIME, 1);
         assertEquals("20261007_123456__TO_48530_FROM_501.mp3", first.getFileName().toString());
         Files.writeString(first, "first recording");
         Path second = BasicRecordingContract.nextPath(mDirectory, identifiers, RecordFormat.MP3,
-            WRITER_TIME, 1, "p25:bee00:687");
+            WRITER_TIME, 1);
         assertEquals("20261007_123456__TO_48530_FROM_501_V2.mp3",
             second.getFileName().toString());
         for(Path path: List.of(first, second))
@@ -262,16 +251,16 @@ class BasicRecordingContractTest
             assertEquals("20261007_123456__TO_48530_FROM_" + observed + ".mp3",
                 BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1));
 
-            //A traffic-channel private grant can later carry only the canonical source, without a working field.
+            //A later direct identity observation uses its own captured scalar, not the cached working address.
             identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(85610, 0xBEE00, 0x687, 85610));
-            assertEquals("20261007_123456__TO_48530_FROM_781824_1671_85610.mp3",
+            assertEquals("20261007_123456__TO_48530_FROM_85610.mp3",
                 BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1));
-            assertEquals("781824.1671.85610", BasicRecordingContract.sourceIdentifier(identifiers.getFromIdentifier()));
+            assertEquals("85610", BasicRecordingContract.sourceIdentifier(identifiers.getFromIdentifier()));
         }
     }
 
     @Test
-    void qualifiedTalkgroupAndNestedPatchMembersUseTheSameLegacyProjection()
+    void qualifiedTalkgroupAndPatchMembersUseTheSameLocalIdProjection()
     {
         var primary = APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xBEE00, 0x687, 1201);
         var patch = new PatchGroup(primary);
@@ -279,11 +268,25 @@ class BasicRecordingContractTest
         patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x687, 70001));
         var identifier = APCO25PatchGroup.create(patch);
 
-        assertEquals("77(781824.1671.1201)", BasicRecordingContract.targetIdentifier(primary));
-        assertEquals("P:77(781824.1671.1201) [1202] [ROAM 501(781824.1671.70001)]",
+        assertEquals("77", BasicRecordingContract.targetIdentifier(primary));
+        assertEquals("P:77 [1202] [501]",
             BasicRecordingContract.targetIdentifier(identifier));
-        assertEquals("P77_781824_1671_1201 [1202] [501_781824_1671_70001]",
+        assertEquals("P77 [1202] [501]",
             BasicRecordingContract.filenameIdentifier(identifier));
+    }
+
+    @Test
+    void qualifiedTalkgroupAndPatchMembersRetainZeroLocalIds()
+    {
+        var primary = APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xBEE00, 0x687, 1201);
+        var patch = new PatchGroup(primary);
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xABCDE, 0x456, 1202));
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xBEE00, 0x687, 70001));
+        var identifier = APCO25PatchGroup.create(patch);
+
+        assertEquals("0", BasicRecordingContract.targetIdentifier(primary));
+        assertEquals("P:0 [0] [0]", BasicRecordingContract.targetIdentifier(identifier));
+        assertEquals("P0 [0] [0]", BasicRecordingContract.filenameIdentifier(identifier));
     }
 
     @Test

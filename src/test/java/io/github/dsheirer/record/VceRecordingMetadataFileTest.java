@@ -21,6 +21,7 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -34,9 +35,11 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.record.wave.AudioMetadata;
 import io.github.dsheirer.record.wave.AudioMetadataUtils;
 import java.nio.ByteBuffer;
@@ -72,7 +75,7 @@ class VceRecordingMetadataFileTest
             assertEquals(expected, recording.vceFields());
             assertExistingFieldsUnchanged(call, call.recordingIdentifierCollection(), recording);
             ID3v24Tag standard = new ID3v24Tag(recording.id3());
-            assertEquals("120045(703710.291.7654321)", standard.getArtist());
+            assertEquals("120045", standard.getArtist());
             assertEquals("3101", standard.getTitle());
             assertEquals("Synthetic System", standard.getGrouping());
             assertEquals("Synthetic Voice", standard.getAlbum());
@@ -200,7 +203,7 @@ class VceRecordingMetadataFileTest
     }
 
     @Test
-    void homeSystemSimplificationAndStandaloneWaveRetainOriginalStandardMetadata() throws Exception
+    void homeSystemAndStandaloneWaveUseLocalMetadataWithFullAdditionalIdentity() throws Exception
     {
         IdentifierCollection identifiers = identifiers(
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120045, 0xBEE00, 0x456, 120045),
@@ -222,8 +225,146 @@ class VceRecordingMetadataFileTest
         Recording recording = readRecording(Files.readAllBytes(standalone), RecordFormat.WAVE);
         assertEquals("BEE00.456.120045", recording.vceFields().get("VCE_P25_SUID"));
         assertExistingFieldsUnchanged(call, identifiers, recording);
-        assertTrue(BasicRecordingContract.filename(identifiers, RecordFormat.MP3, 1_000, 1, 1,
-            BasicRecordingContract.servingSystemKey(call)).endsWith("_TO_3101_FROM_120045.mp3"));
+        assertTrue(BasicRecordingContract.filename(identifiers, RecordFormat.MP3, 1_000, 1, 1)
+            .endsWith("_TO_3101_FROM_120045.mp3"));
+    }
+
+    @Test
+    void zeroHomeForeignUnknownAndConflictedCallsUseLocalTagsAndRetainAdditionalIdentities() throws Exception
+    {
+        List<Integer> locals = List.of(0, 7654321, 120045, 120045, 120045);
+        CallLegSource home = source(DecoderType.P25_PHASE2, 0xABCDE, 0x123, 1, 7);
+        List<CallLegSource> receivers = List.of(home, home, SOURCE, CallLegSource.UNKNOWN, SOURCE);
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+
+        try
+        {
+            for(RecordingMode mode: RecordingMode.values())
+            {
+                preferences.getRecordPreference().setRecordingMode(mode);
+                for(int index = 0; index < locals.size(); index++)
+                {
+                    int local = locals.get(index);
+                    IdentifierCollection identifiers = identifiers(
+                        APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(local,
+                            0xABCDE, 0x123, 7654321),
+                        APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(local,
+                            0xBCDEF, 0x321, 987654));
+                    if(index == 4)
+                    {
+                        identifiers = identifiers(identifiers.getFromIdentifier(), identifiers.getToIdentifier(),
+                            APCO25Wacn.create(0xABCDE), APCO25System.create(0x123));
+                    }
+                    CompletedAudioCall call = call(identifiers, receivers.get(index), VoiceCallQuality.EMPTY,
+                        CallEncryptionState.UNKNOWN, 0);
+
+                    for(RecordFormat format: RecordFormat.values())
+                    {
+                        Path path = mDirectory.resolve("local-" + mode + "-" + index + format.getExtension());
+                        AudioCallRecorder.write(call, path, format, preferences);
+                        Recording recording = readRecording(Files.readAllBytes(path), format);
+                        ID3v24Tag tag = new ID3v24Tag(recording.id3());
+                        assertEquals(Integer.toString(local), tag.getArtist());
+                        assertEquals(Integer.toString(local), tag.getTitle());
+                        assertEquals("ABCDE.123.7654321", recording.vceFields().get("VCE_P25_SUID"));
+                        assertEquals("BCDEF.321.987654", recording.vceFields().get("VCE_P25_DEST_SUID"));
+                        if(local == 0)
+                        {
+                            assertFalse(recording.vceFields().containsKey("VCE_P25_WUID"));
+                            assertFalse(recording.vceFields().containsKey("VCE_P25_DEST_WUID"));
+                        }
+                        else
+                        {
+                            assertEquals(Integer.toString(local), recording.vceFields().get("VCE_P25_WUID"));
+                            assertEquals(Integer.toString(local), recording.vceFields().get("VCE_P25_DEST_WUID"));
+                        }
+                        if(index >= 3)
+                        {
+                            assertFalse(recording.vceFields().containsKey("VCE_P25_RX_WACN"));
+                            assertFalse(recording.vceFields().containsKey("VCE_P25_RX_SYSID"));
+                            assertFalse(recording.vceFields().containsKey("VCE_P25_RX_RFSS"));
+                            assertFalse(recording.vceFields().containsKey("VCE_P25_RX_SITE"));
+                        }
+                        else
+                        {
+                            assertEquals(index == 2 ? "BEE00" : "ABCDE",
+                                recording.vceFields().get("VCE_P25_RX_WACN"));
+                            assertEquals(index == 2 ? "456" : "123",
+                                recording.vceFields().get("VCE_P25_RX_SYSID"));
+                        }
+                        if(format == RecordFormat.WAVE)
+                        {
+                            Map<String, String> info = waveInfoFields(recording.waveChunks().get("LIST"));
+                            assertEquals(Integer.toString(local), info.get("IART"));
+                            assertEquals(Integer.toString(local), info.get("INAM"));
+                        }
+                        assertTrue(BasicRecordingContract.filename(identifiers, format, 1_000, 1, 1)
+                            .endsWith("_TO_" + local + "_FROM_" + local + format.getExtension()));
+                    }
+                }
+            }
+        }
+        finally
+        {
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+        }
+    }
+
+    @Test
+    void qualifiedTalkgroupsAndPatchMembersUseLocalIdsInActualMp3AndWave() throws Exception
+    {
+        var primary = APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xBEE00, 0x456, 45001);
+        var patch = new PatchGroup(primary);
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xABCDE, 0x123, 45002));
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xBEE00, 0x456, 900002));
+        Identifier<?> source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501,
+            0xABCDE, 0x123, 7654321);
+        List<Identifier<?>> destinations = List.of(primary, APCO25PatchGroup.create(patch));
+        List<String> titles = List.of("0", "P:0 [77] [0]");
+
+        for(int index = 0; index < destinations.size(); index++)
+        {
+            IdentifierCollection identifiers = identifiers(source, destinations.get(index));
+            CompletedAudioCall call = call(identifiers, SOURCE, VoiceCallQuality.EMPTY,
+                CallEncryptionState.UNKNOWN, 0);
+            for(RecordFormat format: RecordFormat.values())
+            {
+                Recording recording = writeAndRead(call, "qualified-destination-" + index, format, null);
+                ID3v24Tag tag = new ID3v24Tag(recording.id3());
+                assertEquals("501", tag.getArtist());
+                assertEquals(titles.get(index), tag.getTitle());
+                assertEquals("ABCDE.123.7654321", recording.vceFields().get("VCE_P25_SUID"));
+                assertEquals("501", recording.vceFields().get("VCE_P25_WUID"));
+                if(format == RecordFormat.WAVE)
+                {
+                    Map<String, String> info = waveInfoFields(recording.waveChunks().get("LIST"));
+                    assertEquals("501", info.get("IART"));
+                    assertEquals(titles.get(index), info.get("INAM"));
+                }
+            }
+        }
+    }
+
+    private static Map<String, String> waveInfoFields(byte[] chunk)
+    {
+        ByteBuffer buffer = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN);
+        byte[] four = new byte[4];
+        buffer.get(four);
+        assertEquals("INFO", new String(four, StandardCharsets.US_ASCII));
+        Map<String, String> fields = new LinkedHashMap<>();
+        while(buffer.remaining() >= 8)
+        {
+            buffer.get(four);
+            String name = new String(four, StandardCharsets.US_ASCII);
+            int length = buffer.getInt();
+            byte[] value = new byte[length];
+            buffer.get(value);
+            int textLength = 0;
+            while(textLength < length && value[textLength] != 0) textLength++;
+            fields.put(name, new String(value, 0, textLength, StandardCharsets.UTF_8));
+        }
+        return fields;
     }
 
     private Recording writeAndRead(CompletedAudioCall call, String name, RecordFormat format,
@@ -316,7 +457,7 @@ class VceRecordingMetadataFileTest
         String date = actual.getDate();
         assertTrue(date.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}"));
         Map<AudioMetadata, String> original = AudioMetadataUtils.getMetadataMap(identifiers,
-            call.snapshot().aliasList(), BasicRecordingContract.servingSystemKey(call));
+            call.snapshot().aliasList());
         // The legacy writer stamps the current clock. Normalize only that value before comparing exact bytes.
         original.put(AudioMetadata.DATE_CREATED, date);
         original.put(AudioMetadata.YEAR, date.substring(0, 4));
