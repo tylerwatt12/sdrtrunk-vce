@@ -2,10 +2,11 @@ const { expect, test } = require('@playwright/test');
 const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
 
 async function openGallery(page, { theme = 'light', source = 'live', state = 'full',
-  panel = '', fixture = 'normal', hidden = false } = {}) {
+  panel = '', fixture = 'normal', feedback = '', hidden = false } = {}) {
   await page.clock.setFixedTime( new Date('2026-09-30T14:24:18Z'));
   await page.goto(`/design-system.html?${new URLSearchParams({ view: 'audio-dock', theme,
-    audioSource: source, audioState: state, audioPanel: panel, audioFixture: fixture, audioHidden: String(hidden) })}`);
+    audioSource: source, audioState: state, audioPanel: panel, audioFixture: fixture,
+    audioFeedback: feedback, audioHidden: String(hidden) })}`);
   await expect(page.locator('.visual-audio-dock-example')).toHaveAttribute('data-ready', 'true');
   const dock = page.locator('#audio-dock');
   await expect(dock).toHaveAttribute('data-state', state);
@@ -17,6 +18,160 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
     listening: 'Scan Lists', settings: 'Settings', queue: 'Queue' }[panel]);
   await page.mouse.move(0, 0);
   return dock;
+}
+
+for (const [theme, device, viewport] of [
+  ['light', 'desktop', { width: 1280, height: 900 }],
+  ['dark', 'mobile', { width: 390, height: 844 }]
+]) {
+  test(`audio dock recording playback error ${theme} ${device}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const dock = await openGallery(page, { theme, source: 'recordings', feedback: 'error' });
+    const notice = page.locator('.audio-dock-notice');
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveText('Playback could not start. Press Play to retry.');
+    await expect(notice).toHaveClass(/ui-notice-danger/);
+    await expect(notice).toHaveAttribute('role', 'alert');
+    expect(await notice.evaluate((element) => {
+      const dock = document.querySelector('#audio-dock');
+      return element.parentElement === dock.parentElement && !dock.contains(element);
+    })).toBe(true);
+    const dockBounds = await dock.boundingBox();
+    const noticeBounds = await notice.boundingBox();
+    expect(noticeBounds.x).toBeGreaterThanOrEqual(0);
+    expect(noticeBounds.y).toBeGreaterThanOrEqual(0);
+    expect(noticeBounds.x + noticeBounds.width).toBeLessThanOrEqual(viewport.width);
+    expect(noticeBounds.y + noticeBounds.height).toBeLessThanOrEqual(dockBounds.y);
+    for (const label of ['Play recording', 'Stop recording', 'Volume, 70 percent']) {
+      const control = dock.getByRole('button', { name: label, exact: true });
+      await expect(control).toBeVisible();
+      expect(await control.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2));
+      })).toBe(true);
+    }
+    await expect(page).toHaveScreenshot(`recordings-feedback-error-${theme}-${device}.png`);
+    await dock.getByRole('button', { name: 'Play recording', exact: true }).click();
+    await expect(notice).toBeHidden();
+    expect((await dock.boundingBox()).height).toBe(dockBounds.height);
+  });
+
+  test(`audio dock partial drag keeps the handle and playback visible ${theme} ${device}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const dock = await openGallery(page, { theme, state: 'minimal' });
+    const resize = dock.locator('#audio-dock-size-handle');
+    const compactBounds = await dock.boundingBox();
+    await resize.press('End');
+    const fullHeight = (await dock.boundingBox()).height;
+    await resize.press('ArrowDown');
+    await expect(dock).toHaveAttribute('data-state', 'minimal');
+    const controlBounds = await resize.boundingBox();
+    const x = controlBounds.x + controlBounds.width / 2;
+    const y = controlBounds.y + controlBounds.height / 2;
+    await resize.evaluate((element) => element.addEventListener('pointerdown', (event) => {
+      window.audioGalleryPointerId = event.pointerId;
+    }, { once: true }));
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    const delta = (fullHeight - compactBounds.height) * 0.4;
+    await page.mouse.move(x, y - delta, { steps: 5 });
+    await expect(dock).toHaveAttribute('data-dragging', 'true');
+    await expect.poll(async () => Math.abs((await dock.boundingBox()).height - compactBounds.height - delta))
+      .toBeLessThanOrEqual(2);
+    await expect(resize).toBeVisible();
+    const handleBounds = await resize.boundingBox();
+    const draggingBounds = await dock.boundingBox();
+    expect(handleBounds.y).toBeGreaterThanOrEqual(draggingBounds.y);
+    expect(handleBounds.y + handleBounds.height).toBeLessThanOrEqual(draggingBounds.y + controlBounds.height + 10);
+    const visiblePlayback = dock.getByRole('button', { name: 'Pause live audio', exact: true });
+    await expect(visiblePlayback).toBeVisible();
+    for (const control of [resize, visiblePlayback]) {
+      expect(await control.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2));
+      })).toBe(true);
+    }
+    const mainBounds = await dock.locator('.audio-dock-player-main').boundingBox();
+    for (const control of await dock.locator('.audio-dock-primary-controls button:visible').all()) {
+      const bounds = await control.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(mainBounds.x);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(mainBounds.x + mainBounds.width);
+      expect(await control.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2));
+      })).toBe(true);
+    }
+    await expect(dock.locator('.audio-dock-main-scroll')).toBeVisible();
+    await expect(dock.locator('.audio-dock-identity')).toContainText('Fire Dispatch');
+    await expect(dock).toHaveScreenshot(`live-dragging-${theme}-${device}.png`);
+    await resize.evaluate((element) => element.releasePointerCapture(window.audioGalleryPointerId));
+    await page.mouse.up();
+    await expect(dock).not.toHaveAttribute('data-dragging', 'true');
+    await expect(dock).toHaveAttribute('data-state', 'minimal');
+    expect((await dock.boundingBox()).height).toBe(compactBounds.height);
+  });
+}
+
+for (const viewport of [{ width: 844, height: 390 }, { width: 320, height: 480 }]) {
+  test(`audio dock error leaves the handle and transport reachable in a short ${viewport.width}px viewport`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const dock = await openGallery(page, { source: 'recordings', feedback: 'error', fixture: 'long' });
+    const notice = page.locator('.audio-dock-notice');
+    await expect(notice).toBeVisible();
+    const resize = dock.locator('#audio-dock-size-handle');
+    const expectReachableControls = async () => {
+      for (const control of [resize, dock.getByRole('button', { name: 'Play recording', exact: true })]) {
+        await expect(control).toBeVisible();
+        expect(await control.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2,
+            bounds.y + bounds.height / 2));
+        })).toBe(true);
+      }
+    };
+    const noticeBounds = await notice.boundingBox();
+    const dockBounds = await dock.boundingBox();
+    const headerBounds = await dock.locator('.audio-dock-header').boundingBox();
+    const controlsBounds = await dock.locator('.audio-dock-controls').boundingBox();
+    expect(noticeBounds.y + noticeBounds.height <= dockBounds.y ||
+      noticeBounds.y >= headerBounds.y + headerBounds.height &&
+      noticeBounds.y + noticeBounds.height <= controlsBounds.y).toBe(true);
+    expect(noticeBounds.x).toBeGreaterThanOrEqual(0);
+    expect(noticeBounds.x + noticeBounds.width).toBeLessThanOrEqual(viewport.width);
+    await expectReachableControls();
+
+    // The app normally measures this header token at runtime. Supply the same
+    // measurement in the gallery, then expand beyond the natural full height.
+    await page.evaluate(() => {
+      const header = document.querySelector('.visual-audio-dock-example .app-header');
+      document.documentElement.style.setProperty('--app-header-offset', `${header.getBoundingClientRect().height}px`);
+    });
+    await resize.evaluate((element) => element.addEventListener('pointerdown', (event) => {
+      window.audioGalleryPointerId = event.pointerId;
+    }, { once: true }));
+    const handleBounds = await resize.boundingBox();
+    const x = handleBounds.x + handleBounds.width / 2;
+    const y = handleBounds.y + handleBounds.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, -viewport.height, { steps: 5 });
+    await expect(dock).toHaveAttribute('data-dragging', 'true');
+    await expect.poll(async () => {
+      const [noticeBounds, headerBounds, controlsBounds] = await Promise.all([
+        notice.boundingBox(), dock.locator('.audio-dock-header').boundingBox(),
+        dock.locator('.audio-dock-controls').boundingBox()
+      ]);
+      return noticeBounds.y >= headerBounds.y + headerBounds.height &&
+        noticeBounds.y + noticeBounds.height <= controlsBounds.y;
+    }).toBe(true);
+    await expectReachableControls();
+    await resize.evaluate((element) => element.releasePointerCapture(window.audioGalleryPointerId));
+    await page.mouse.up();
+    await expect(dock).not.toHaveAttribute('data-dragging', 'true');
+  });
 }
 
 for (const theme of ['light', 'dark']) {

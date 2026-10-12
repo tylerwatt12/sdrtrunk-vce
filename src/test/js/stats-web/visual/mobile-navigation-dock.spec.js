@@ -8,7 +8,7 @@ const viewports = [{ width: 320, height: 740 }, { width: 390, height: 844 },
   { width: 430, height: 932 }, { width: 844, height: 390 }];
 
 async function setDockSize(player, size) {
-  const handle = player.getByRole('button', { name: 'Change audio player size', exact: true });
+  const handle = player.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
   await handle.press(size === 'full' ? 'End' : 'Home');
   if (size === 'minimal') await handle.press('ArrowUp');
   await expect(player).toHaveAttribute('data-state', size);

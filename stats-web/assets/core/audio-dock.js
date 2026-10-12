@@ -3,7 +3,7 @@ import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
- * ui-range, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
+ * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
 export function createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer, access, openRecordings,
@@ -21,6 +21,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let presentationMotion = null;
+  let sizeGesture = null;
   let source = 'live';
   let panel = null;
   let liveState = {};
@@ -41,6 +42,14 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let volumeInvoker = null;
   let volumeReturnFocus = true;
   let sharedQueueKey = '';
+  const playbackStatuses = new Map([
+    ['waiting', 'Waiting'], ['waiting for the next matching call', 'Waiting'],
+    ['buffering', 'Buffering'], ['reconnecting', 'Reconnecting'],
+    ['replaying last call', 'Replaying last call'], ['unavailable', 'Unavailable'],
+    ['select a list', 'Select a List'], ['loading lists', 'Loading Lists'],
+    ['loading shared recording queue…', 'Loading queue'],
+    ['continuing through matching calls', 'Continuing']
+  ]);
 
   const command = (label, icon, action, primary = false) => {
     const button = iconButton(`icon-${icon}`, label,
@@ -116,6 +125,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const queueCount = () => source === 'live' ? Number(liveState.queuedCount) || 0 : recordingState.queue?.length || 0;
   const isAllowed = () => Boolean(access()[source]);
   const setSize = (value) => {
+    cancelSizeGesture();
     closeVolume(false);
     cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement);
@@ -126,6 +136,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const shiftSize = (direction) => setSize(sizes[Math.max(0, Math.min(2, sizes.indexOf(size) + direction))]);
   const switchSource = (value) => {
     if (source === value || !access()[value]) return;
+    cancelSizeGesture();
     if (source === 'recordings') recordings.stop();
     else if (getLivePlayer() && !liveState.stopped) void getLivePlayer().togglePlayback();
     closeVolume(false);
@@ -167,53 +178,107 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const collapsedTitle = node('strong', 'audio-dock-single-line');
   const collapsedMeta = node('span', 'audio-dock-meta audio-dock-collapsed-meta');
   handle.append(grip, sizeHint);
+  function measureSizeChoices() {
+    // Measure inert copies without hiding the focused or captured real controls.
+    const copy = dock.cloneNode(true);
+    copy.classList.add('audio-dock-size-measurement');
+    copy.inert = true;
+    copy.setAttribute('aria-hidden', 'true');
+    [copy, ...copy.querySelectorAll('[id]')].forEach(element => element.removeAttribute('id'));
+    delete copy.dataset.dragging; delete copy.dataset.dragOrigin;
+    copy.style.removeProperty('height'); copy.style.removeProperty('width');
+    dock.parentElement.append(copy);
+    const choices = sizes.map(value => {
+      copy.dataset.state = value;
+      copy.querySelector('.audio-dock-header').hidden = value === 'collapsed';
+      copy.querySelector('.audio-dock-compact').hidden = value !== 'minimal';
+      copy.querySelector('.audio-dock-slim').hidden = value !== 'collapsed';
+      copy.querySelector('.audio-dock-expanded').hidden = value !== 'full';
+      const bounds = copy.getBoundingClientRect();
+      return { size: value, height: bounds.height, width: bounds.width };
+    });
+    copy.remove();
+    return choices;
+  }
+  function finishSizeGesture(commit = false) {
+    const gesture = sizeGesture;
+    if (!gesture) return;
+    sizeGesture = null;
+    if (!commit || gesture.axis) gesture.suppressClick();
+    delete dock.dataset.dragging; delete dock.dataset.dragOrigin;
+    dock.style.removeProperty('height'); dock.style.removeProperty('width');
+    if (gesture.control.hasPointerCapture(gesture.id)) gesture.control.releasePointerCapture(gesture.id);
+    if (!gesture.active) return;
+    size = commit ? gesture.choices.reduce((nearest, choice) =>
+      Math.abs(choice.height - gesture.height) < Math.abs(nearest.height - gesture.height) ? choice : nearest).size : gesture.initialSize;
+    panelKey = ''; render();
+    if (!dock.hidden) (size === 'collapsed' ? slimExpand : handle).focus({ preventScroll: true });
+  }
+  function cancelSizeGesture() { finishSizeGesture(); }
+  function moveSizeGesture(event) {
+    const gesture = sizeGesture;
+    if (!gesture || gesture.id !== event.pointerId) return;
+    const vertical = gesture.y - event.clientY, horizontal = event.clientX - gesture.x;
+    if (!gesture.axis && Math.hypot(vertical, horizontal) > 8) {
+      gesture.axis = Math.abs(vertical) > Math.abs(horizontal) ? 'vertical' : 'horizontal';
+      gesture.suppressClick();
+    }
+    if (gesture.axis !== 'vertical') return;
+    if (!gesture.active) {
+      closeVolume(false); cancelPresentationMotion();
+      gesture.choices = measureSizeChoices();
+      const viewport = window.visualViewport;
+      const tokens = getComputedStyle(document.documentElement);
+      const headerHeight = parseFloat(tokens.getPropertyValue('--app-header-offset')) || 0;
+      const gap = parseFloat(tokens.getPropertyValue('--space-2')) || 8;
+      gesture.maximum = Math.min(parseFloat(getComputedStyle(dock).maxHeight) || innerHeight,
+        gesture.bottom - (viewport?.offsetTop || 0) - headerHeight - gap);
+      gesture.active = true;
+      dock.dataset.dragging = 'true'; dock.dataset.dragOrigin = gesture.initialSize;
+    }
+    const [collapsedChoice, minimalChoice, fullChoice] = gesture.choices;
+    gesture.height = Math.max(collapsedChoice.height, Math.min(gesture.maximum, gesture.initialHeight + vertical));
+    const lower = gesture.height <= minimalChoice.height ? collapsedChoice : minimalChoice;
+    const upper = gesture.height <= minimalChoice.height ? minimalChoice : fullChoice;
+    const fraction = Math.max(0, Math.min(1, (gesture.height - lower.height) / Math.max(1, upper.height - lower.height)));
+    dock.style.height = `${gesture.height}px`;
+    dock.style.width = `${lower.width + (upper.width - lower.width) * fraction}px`;
+    const presentationSize = gesture.height > minimalChoice.height ? 'full' : 'minimal';
+    if (gesture.presentationSize !== presentationSize) {
+      gesture.presentationSize = presentationSize; render();
+    } else measure();
+  }
   const wireSizeControl = (control, activate) => {
-  let gesture = null;
-  let suppressClick = false;
-  control.addEventListener('pointerdown', (event) => {
-    if (!event.isPrimary || event.button !== 0) return;
-    suppressClick = false;
-    gesture = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    control.setPointerCapture(event.pointerId);
-  });
-  control.addEventListener('pointermove', (event) => {
-    if (!gesture || gesture.id !== event.pointerId) return;
-    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 8) {
-      dock.dataset.dragging = 'true';
-      suppressClick = true;
-    }
-  });
-  control.addEventListener('pointerup', (event) => {
-    if (!gesture || gesture.id !== event.pointerId) return;
-    const vertical = event.clientY - gesture.y;
-    const horizontal = event.clientX - gesture.x;
-    gesture = null;
-    delete dock.dataset.dragging;
-    if (control.hasPointerCapture(event.pointerId)) control.releasePointerCapture(event.pointerId);
-    if (Math.abs(vertical) >= 32 && Math.abs(vertical) > Math.abs(horizontal)) {
-      suppressClick = true;
-      shiftSize(vertical < 0 ? 1 : -1);
-    }
-  });
-  const cancelGesture = () => {
-    if (gesture) suppressClick = true;
-    gesture = null;
-    delete dock.dataset.dragging;
-  };
-  control.addEventListener('pointercancel', cancelGesture);
-  control.addEventListener('lostpointercapture', cancelGesture);
-  control.addEventListener('click', (event) => {
-    if (suppressClick && event.detail !== 0) { suppressClick = false; return; }
-    suppressClick = false;
-    activate();
-  });
-  control.addEventListener('keydown', (event) => {
-    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    if (event.key === 'Home' || event.key === 'End') setSize(event.key === 'Home' ? 'collapsed' : 'full');
-    else shiftSize(event.key === 'ArrowUp' ? 1 : -1);
-  });
-
+    let suppressClick = false;
+    control.addEventListener('pointerdown', (event) => {
+      if (!event.isPrimary || event.button !== 0 || sizeGesture) return;
+      suppressClick = false;
+      const bounds = dock.getBoundingClientRect();
+      sizeGesture = { id: event.pointerId, control, x: event.clientX, y: event.clientY,
+        initialSize: size, initialHeight: bounds.height, bottom: bounds.bottom,
+        suppressClick: () => { suppressClick = true; } };
+      control.setPointerCapture(event.pointerId);
+    });
+    control.addEventListener('pointermove', moveSizeGesture);
+    control.addEventListener('pointerup', (event) => {
+      if (sizeGesture?.control !== control || sizeGesture.id !== event.pointerId) return;
+      moveSizeGesture(event); finishSizeGesture(true);
+    });
+    const cancel = (event) => {
+      if (sizeGesture?.control === control && sizeGesture.id === event.pointerId) cancelSizeGesture();
+    };
+    control.addEventListener('pointercancel', cancel);
+    control.addEventListener('lostpointercapture', cancel);
+    control.addEventListener('click', (event) => {
+      if (suppressClick && event.detail !== 0) { suppressClick = false; return; }
+      suppressClick = false; activate();
+    });
+    control.addEventListener('keydown', (event) => {
+      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === 'Home' || event.key === 'End') setSize(event.key === 'Home' ? 'collapsed' : 'full');
+      else shiftSize(event.key === 'ArrowUp' ? 1 : -1);
+    });
   };
   wireSizeControl(handle, () => setSize(sizes[(sizes.indexOf(size) + 1) % sizes.length]));
 
@@ -300,6 +365,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const setSuperCollapsed = (value) => {
     if (mobileLayout.matches || superCollapsed === value) return;
+    cancelSizeGesture();
     closeVolume(false);
     cancelPresentationMotion();
     const from = (value ? dock : restore).getBoundingClientRect();
@@ -331,6 +397,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     });
   });
   const updatePresentationLayout = () => {
+    cancelSizeGesture();
     closeVolume(false);
     cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement) || Boolean(focusedPresentationControl || focusedSourceControl);
@@ -457,8 +524,12 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   transmittingCopy.append(node('span', 'ui-muted ui-label', 'Transmitting'), transmittingName);
   const targetGroup = node('span', 'ui-pill'); transmitting.append(transmittingCopy, targetGroup);
   const technical = node('div', 'audio-dock-technical ui-muted ui-label');
-  const playbackFeedback = node('p', 'ui-feedback audio-dock-playback-feedback');
-  hero.append(listeningStatus, identity, audioHeading, fullWave, transmitting, technical, playbackFeedback);
+  // Detailed messages float beside the dock so playback transitions cannot resize it.
+  const playbackFeedback = node('div', 'ui-notice audio-dock-notice audio-dock-playback-feedback');
+  playbackFeedback.hidden = true;
+  playbackFeedback.setAttribute('role', 'status');
+  playbackFeedback.setAttribute('aria-atomic', 'true');
+  hero.append(listeningStatus, identity, audioHeading, fullWave, transmitting, technical);
   const context = node('section', 'audio-dock-context'); context.hidden = true;
   const contextHeader = node('div', 'audio-dock-context-heading');
   const back = iconButton('icon-chevron-left', 'Back to player', 'ui-disclosure-button ui-icon-button');
@@ -525,7 +596,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const sidebarClickMode = clickModeField('audio-dock-click-mode');
   sidebar.append(queueHeading, sidebarList, inspector, queueFooter, sidebarClickMode); body.append(main, sidebar);
   presentation.append(header, compact, slim, body); dock.append(presentation);
-  document.querySelector('.app-shell').append(dock);
+  document.querySelector('.app-shell').append(dock, playbackFeedback);
   const headerControls = document.querySelector('.app-shell .header-controls');
   headerControls.insertBefore(restore, headerControls.querySelector('#receiver-health-indicator'));
 
@@ -924,19 +995,25 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const permissions = access();
     if (!permissions[source] && (permissions.live || permissions.recordings)) { closeVolume(false); source = permissions.live ? 'live' : 'recordings'; panelKey = ''; }
     const unavailable = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' || !permissions.live && !permissions.recordings;
+    if (unavailable && sizeGesture) cancelSizeGesture();
     const hiddenToHeader = superCollapsed && !mobileLayout.matches;
+    const presentationSize = sizeGesture?.presentationSize || size;
+    const dragging = Boolean(sizeGesture?.active);
     dock.hidden = unavailable || hiddenToHeader;
     if (dock.hidden) closeVolume(false);
     if (unavailable) cancelPresentationMotion();
-    dock.dataset.superCollapsed = String(hiddenToHeader); dock.dataset.state = size; dock.dataset.source = source;
+    dock.dataset.superCollapsed = String(hiddenToHeader); dock.dataset.state = presentationSize; dock.dataset.source = source;
     document.body.classList.toggle('has-audio-dock', !unavailable);
     presentation.hidden = hiddenToHeader; restore.hidden = unavailable || !hiddenToHeader;
     hide.hidden = slimHide.hidden = mobileLayout.matches;
     [hide, restore, slimHide].forEach(button => button.setAttribute('aria-expanded', String(!hiddenToHeader)));
     if (unavailable) focusedPresentationControl = null;
-    header.hidden = size === 'collapsed'; compact.hidden = size !== 'minimal'; slim.hidden = size !== 'collapsed'; body.hidden = size !== 'full';
+    // Keep the original top control under the pointer while revealing the body.
+    header.hidden = dragging ? sizeGesture.initialSize === 'collapsed' : presentationSize === 'collapsed';
+    slim.hidden = dragging ? sizeGesture.initialSize !== 'collapsed' : presentationSize !== 'collapsed';
+    compact.hidden = presentationSize !== 'minimal'; body.hidden = presentationSize !== 'full';
     if (dock.hidden || size === 'collapsed') focusedSourceControl = null;
-    handle.setAttribute('aria-expanded', String(size !== 'collapsed'));
+    handle.setAttribute('aria-expanded', String(presentationSize !== 'collapsed'));
     sizeHint.textContent = `${{ collapsed: 'Collapsed player', minimal: 'Compact player', full: 'Expanded player' }[size]}. Drag up or down, or click to change player size.`;
     handle.title = sizeHint.textContent;
     const call = current(), active = state(), name = String(title(call));
@@ -953,7 +1030,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const selected = (liveState.scanLists || []).filter(item => item.selected && item.enabled).length;
     [desktopLists, mobileLists].forEach(({button, badge}) => { badge.textContent = String(selected); button.setAttribute('aria-label', `Lists, ${selected} selected`); button.disabled = !permissions.live; });
     shrink.querySelector('use').setAttribute('href', mobileLayout.matches ? '#icon-close' : '#icon-chevron-down');
-    setLabel(shrink, size === 'full' ? 'Make player compact' : 'Collapse player');
+    setLabel(shrink, presentationSize === 'full' ? 'Make player compact' : 'Collapse player');
     transcriptButton.hidden = live; transcriptButton.disabled = !permissions.recordings;
     detailsButton.disabled = !isAllowed();
     kind.textContent = [call?.decoder || call?.protocol, live ? 'Voice' : 'Recorded call'].filter(Boolean).join(' · ');
@@ -971,14 +1048,22 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       call.vc_quality_pct === undefined || call.vc_quality_pct === '' || !Number.isFinite(qualityNumber);
     qualityValue.textContent = quality.hidden ? '' : formatVoiceQuality(qualityNumber);
     const playing = live ? !active.stopped && !active.paused : active.playing;
-    status.textContent = active.stopped ? 'Stopped' : active.paused ? 'Paused' : live && active.holdTarget ? 'Holding' : active.loading ? 'Loading' : playing ? 'Listening' : 'Ready';
-    status.classList.toggle('ui-pill-success', playing); status.title = active.status || status.textContent;
     const engineStatus = String(active.status || '').trim().replace(/\bscan lists\b/gi, 'Lists').replace(/\bscan list\b/gi, 'List');
-    playbackFeedback.textContent = engineStatus;
     const ordinaryStatus = engineStatus.toLocaleLowerCase().replace(/[.!]$/, '');
-    playbackFeedback.hidden = !engineStatus || engineStatus === status.textContent ||
-      ['listening', 'paused', 'stopped', 'playing recording', 'ready to play', 'ready', 'playback finished'].includes(ordinaryStatus) ||
-      /^paused\s*[—-]/i.test(engineStatus);
+    const shortStatus = playbackStatuses.get(ordinaryStatus);
+    const statusLabel = active.paused ? 'Paused' : live && active.holdTarget ? 'Holding' : shortStatus ||
+      (active.stopped ? 'Stopped' : active.loading ? 'Loading' : playing ? 'Listening' : 'Ready');
+    if (status.textContent !== statusLabel) status.textContent = statusLabel;
+    status.classList.toggle('ui-pill-success', playing && ['Listening', 'Holding', 'Replaying last call'].includes(statusLabel));
+    status.title = engineStatus || statusLabel;
+    const ordinary = !engineStatus || Boolean(shortStatus) || engineStatus === statusLabel ||
+      ['listening', 'paused', 'stopped', 'playing recording', 'ready to play', 'ready', 'playback finished',
+        'choose a recording to play'].includes(ordinaryStatus) || /^paused\s*[—·-]/i.test(engineStatus);
+    const playbackError = /could not|unavailable/i.test(engineStatus);
+    playbackFeedback.setAttribute('role', playbackError ? 'alert' : 'status');
+    playbackFeedback.classList.toggle('ui-notice-danger', playbackError);
+    if (playbackFeedback.textContent !== engineStatus) playbackFeedback.textContent = engineStatus;
+    playbackFeedback.hidden = ordinary || dock.hidden;
     updateAge();
     const playLabel = playing ? live ? 'Pause live audio' : 'Pause recording' : live ? active.paused ? 'Resume live audio' : 'Listen live' : 'Play recording';
     [play, miniPlay, slimPlay].forEach(button => { setLabel(button, playLabel, playing ? 'pause' : 'play'); button.disabled = !isAllowed() || !live && !active.current && !queueCount(); });
@@ -1000,16 +1085,50 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
     updateProgress(); measure(); synchronizeLoops();
   }
-  function measure() { const height = dock.hidden ? 0 : Math.ceil(dock.getBoundingClientRect().height); document.documentElement.style.setProperty('--audio-dock-height', `${height}px`); }
+  function positionPlaybackFeedback() {
+    if (playbackFeedback.hidden) return;
+    const viewport = window.visualViewport;
+    const bounds = { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0,
+      width: viewport?.width || innerWidth, height: viewport?.height || innerHeight };
+    const tokens = getComputedStyle(document.documentElement);
+    const gap = parseFloat(tokens.getPropertyValue('--space-2')) || 8;
+    const safeTop = bounds.top + Math.max(gap, (parseFloat(tokens.getPropertyValue('--app-header-offset')) || 0) + gap);
+    const anchor = dock.getBoundingClientRect();
+    playbackFeedback.style.width = `${Math.min(anchor.width, bounds.width - gap * 2)}px`;
+    playbackFeedback.style.maxHeight = `${Math.max(gap, bounds.top + bounds.height - safeTop - gap)}px`;
+    let rect = playbackFeedback.getBoundingClientRect();
+    let left = anchor.left;
+    let top = Math.max(safeTop, anchor.top - rect.height - gap);
+    if (anchor.top - rect.height - gap < safeTop && mainScroll.getClientRects().length) {
+      // A short viewport leaves no room above the expanded dock. Keep its
+      // header and transport clear by containing the notice over the scroll area.
+      const scroll = mainScroll.getBoundingClientRect();
+      const scrollTop = Math.max(safeTop, scroll.top + gap);
+      const scrollBottom = Math.min(bounds.top + bounds.height - gap, scroll.bottom - gap);
+      playbackFeedback.style.width = `${Math.max(0, Math.min(scroll.width - gap * 2, bounds.width - gap * 2))}px`;
+      playbackFeedback.style.maxHeight = `${Math.max(0, scrollBottom - scrollTop)}px`;
+      rect = playbackFeedback.getBoundingClientRect();
+      left = scroll.left + gap;
+      top = scrollTop;
+    }
+    playbackFeedback.style.left = `${Math.max(bounds.left + gap, Math.min(left, bounds.left + bounds.width - rect.width - gap))}px`;
+    playbackFeedback.style.top = `${top}px`;
+  }
+  function measure() {
+    const height = dock.hidden ? 0 : Math.ceil(dock.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--audio-dock-height', `${height}px`);
+    positionPlaybackFeedback();
+  }
   const resizeObserver = new ResizeObserver(measure); resizeObserver.observe(dock);
-  const viewportChanged = () => { closeVolume(false); cancelPresentationMotion(); measure(); };
-  const visibilityChanged = () => { if (document.hidden) closeVolume(false); synchronizeLoops(); };
+  const viewportChanged = () => { cancelSizeGesture(); closeVolume(false); cancelPresentationMotion(); measure(); };
+  const visibilityChanged = () => { if (document.hidden) { cancelSizeGesture(); closeVolume(false); } synchronizeLoops(); };
   const escapeContext = event => { if (event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
   mobileLayout.addEventListener('change', updatePresentationLayout);
   reducedMotion.addEventListener('change', cancelPresentationMotion);
   window.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('scroll', viewportChanged);
+  window.addEventListener('blur', cancelSizeGesture);
   document.addEventListener('visibilitychange', visibilityChanged); dock.addEventListener('keydown', escapeContext);
-  const routeObserver = new MutationObserver(() => { closeVolume(false); cancelPresentationMotion(); panelKey = ''; render(); });
+  const routeObserver = new MutationObserver(() => { cancelSizeGesture(); closeVolume(false); cancelPresentationMotion(); panelKey = ''; render(); });
   routeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-view'] });
   const unsubscribeRecordings = recordings.subscribeState(value => {
     recordingState = value;
@@ -1035,12 +1154,14 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   }
   synchronize();
   return { synchronize, destroy() {
+    cancelSizeGesture();
     closeVolume(false); destroyed = true; synchronizeLoops();
     mobileLayout.removeEventListener('change', updatePresentationLayout);
     reducedMotion.removeEventListener('change', cancelPresentationMotion); window.removeEventListener('resize', viewportChanged);
+    window.removeEventListener('blur', cancelSizeGesture);
     window.visualViewport?.removeEventListener('resize', viewportChanged); window.visualViewport?.removeEventListener('scroll', viewportChanged);
     document.removeEventListener('visibilitychange', visibilityChanged); dock.removeEventListener('keydown', escapeContext);
-    cancelPresentationMotion(); restore.remove(); volumePopover.remove(); unsubscribeLive(); unsubscribeRecordings();
+    cancelPresentationMotion(); restore.remove(); volumePopover.remove(); playbackFeedback.remove(); unsubscribeLive(); unsubscribeRecordings();
     resizeObserver.disconnect(); routeObserver.disconnect(); dock.remove(); document.body.classList.remove('has-audio-dock'); document.documentElement.style.removeProperty('--audio-dock-height');
   } };
 }

@@ -169,36 +169,90 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
   });
 }
 
-test('vertical header drags resize once; horizontal, short and canceled drags do not resize', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await openApp(page);
-  const drag = async (dx, dy) => {
-    const r = await handle(page).boundingBox();
-    const x = r.x + r.width / 2, y = r.y + r.height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x + dx, y + dy, { steps: 5 });
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`header drag reversals, cancellation and viewport bounds at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openApp(page);
+    const heights = {};
+    for (const state of ['collapsed', 'minimal', 'full']) {
+      await size(page, state);
+      heights[state] = (await player(page).boundingBox()).height;
+    }
+    await size(page, 'minimal');
+    const beginDrag = async () => {
+      const control = handle(page);
+      const r = await control.boundingBox();
+      const x = r.x + r.width / 2, y = r.y + r.height / 2;
+      await control.evaluate((element) => element.addEventListener('pointerdown', (event) => {
+        window.audioDragPointerId = event.pointerId;
+      }, { once: true }));
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      return { control, x, y };
+    };
+    const expectCompact = async () => {
+      await expect(player(page)).toHaveAttribute('data-state', 'minimal');
+      await expect(player(page)).not.toHaveAttribute('data-dragging', 'true');
+      await expect.poll(async () => Math.abs((await player(page).boundingBox()).height - heights.minimal))
+        .toBeLessThanOrEqual(1);
+    };
+    // A horizontal gesture never changes geometry or turns its pointerup into a click.
+    let gesture = await beginDrag();
+    await page.mouse.move(gesture.x + 65, gesture.y - 40, { steps: 5 });
+    expect((await player(page).boundingBox()).height).toBe(heights.minimal);
     await page.mouse.up();
-  };
-  await size(page, 'collapsed');
-  for (const [dy, expected] of [[-48, 'minimal'], [-48, 'full'], [-48, 'full'],
-    [48, 'minimal'], [48, 'collapsed'], [48, 'collapsed']]) {
-    await drag(0, dy);
-    await expect(player(page)).toHaveAttribute('data-state', expected);
-  }
-  await size(page, 'minimal');
-  for (const [dx, dy] of [[65, -40], [0, 16]]) {
-    await drag(dx, dy);
-    await expect(player(page)).toHaveAttribute('data-state', 'minimal');
-  }
-  const r = await handle(page).boundingBox();
-  const cdp = await page.context().newCDPSession(page);
-  const x = r.x + r.width / 2, y = r.y + r.height / 2;
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - 45, id: 1 }] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-  await expect(player(page)).toHaveAttribute('data-state', 'minimal');
-});
+    await expectCompact();
+
+    // The preview follows a reversal instead of accumulating discrete size changes.
+    const delta = (heights.full - heights.minimal) * 0.4;
+    gesture = await beginDrag();
+    await page.mouse.move(gesture.x, gesture.y - delta, { steps: 5 });
+    await expect.poll(async () => Math.abs((await player(page).boundingBox()).height - heights.minimal - delta))
+      .toBeLessThanOrEqual(2);
+    await page.mouse.move(gesture.x, gesture.y - delta / 2, { steps: 3 });
+    await expect.poll(async () => Math.abs((await player(page).boundingBox()).height - heights.minimal - delta / 2))
+      .toBeLessThanOrEqual(2);
+    await page.mouse.up();
+    await expectCompact();
+
+    // Losing capture restores the starting size and clears temporary geometry.
+    gesture = await beginDrag();
+    await page.mouse.move(gesture.x, gesture.y - delta, { steps: 5 });
+    await gesture.control.evaluate((element) => element.releasePointerCapture(window.audioDragPointerId));
+    await expectCompact();
+    await page.mouse.up();
+    await expectCompact();
+
+    // A native touch cancellation has the same cleanup behavior.
+    const r = await handle(page).boundingBox();
+    const cdp = await page.context().newCDPSession(page);
+    const x = r.x + r.width / 2, y = r.y + r.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - delta, id: 1 }] });
+    await expect.poll(async () => (await player(page).boundingBox()).height).toBeGreaterThan(heights.minimal);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+    await expectCompact();
+    await cdp.detach();
+
+    // Overshooting either end keeps the dock inside the viewport and snaps to an endpoint.
+    gesture = await beginDrag();
+    await page.mouse.move(gesture.x, -viewport.height, { steps: 5 });
+    const maximum = await player(page).evaluate((element) => parseFloat(getComputedStyle(element).maxHeight));
+    const enlarged = await player(page).boundingBox();
+    expect(enlarged.y).toBeGreaterThanOrEqual(0);
+    expect(enlarged.height).toBeLessThanOrEqual(maximum + 1);
+    expect(enlarged.y + enlarged.height).toBeLessThanOrEqual(viewport.height);
+    await page.mouse.up();
+    await expect(player(page)).toHaveAttribute('data-state', 'full');
+    gesture = await beginDrag();
+    await page.mouse.move(gesture.x, viewport.height * 2, { steps: 5 });
+    expect((await player(page).boundingBox()).height).toBeGreaterThanOrEqual(heights.collapsed - 1);
+    await page.mouse.up();
+    await expect(player(page)).toHaveAttribute('data-state', 'collapsed');
+    await expect(player(page)).not.toHaveAttribute('data-dragging', 'true');
+    await expectReachable(handle(page));
+  });
+}
 
 test('source and queue controls keep their own actions without cycling the header', async ({ page }) => {
   await openApp(page, { view: 'dashboard' });

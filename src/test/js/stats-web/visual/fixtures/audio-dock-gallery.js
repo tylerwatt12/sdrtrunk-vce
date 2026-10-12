@@ -102,7 +102,8 @@ export async function mountAudioDockGallery(parameters) {
       ...radioFields(index + 3), start_ms: started + index * 60_000 })),
     history: empty ? [] : [{ ...currentRecording, id: 16, ...radioFields(3), start_ms: started - 60_000 }],
     playing: false, paused: !empty, stopped: empty, loading: false,
-    status: empty ? 'Choose a recording to play' : 'Ready to play', currentTime: 8, duration: empty ? 0 : 42,
+    status: parameters.get('audioFeedback') === 'error' ? 'Playback could not start. Press Play to retry.' :
+      empty ? 'Choose a recording to play' : 'Ready to play', currentTime: 8, duration: empty ? 0 : 42,
     volume: 0.7, canNext: !empty, canPrevious: !empty, clickMode: 'queue', continuation: false
   };
   const liveState = {

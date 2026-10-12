@@ -17,6 +17,7 @@
 }
 .audio-dock [hidden] { display: none; }
 .audio-dock-presentation { display: contents; }
+.audio-dock-size-measurement { visibility: hidden; pointer-events: none; }
 .audio-dock-motion {
   right: auto;
   bottom: auto;
@@ -86,6 +87,8 @@
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
+.audio-dock[data-dragging="true"] .audio-dock-expanded { grid-template-columns: minmax(0, 1fr); }
+.audio-dock[data-dragging="true"] .audio-dock-up-next { display: none; }
 .audio-dock-player-main {
   min-width: 0;
   min-height: 0;
@@ -209,11 +212,12 @@
 .audio-dock-queue-count { display: flex; align-items: center; gap: var(--space-1); margin-inline-start: var(--space-2); min-height: var(--control-height-comfortable); color: var(--muted); font-size: var(--font-size-label); white-space: nowrap; }
 .audio-dock-queue-count svg { width: var(--audio-inline-glyph-size); height: var(--audio-inline-glyph-size); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .audio-dock[data-state="collapsed"] :is(.audio-dock-header, .audio-dock-expanded, .audio-dock-compact) { display: none; }
-.audio-dock[data-state="collapsed"] .audio-dock-slim { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: linear-gradient(135deg, var(--listening-stage-wash), var(--surface) 80%); }
+.audio-dock[data-state="collapsed"] .audio-dock-slim,
+.audio-dock[data-drag-origin="collapsed"] .audio-dock-slim { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: linear-gradient(135deg, var(--listening-stage-wash), var(--surface) 80%); }
 .audio-dock-slim .audio-dock-play { --icon-action-size: var(--control-height-comfortable); }
 .audio-dock-slim-copy strong { font-size: var(--font-size-body); }
 .audio-dock-volume-popover { width: var(--audio-volume-popover-width); max-width: calc(100vw - var(--space-4)); }
-.audio-dock-notice { position: absolute; inset: auto var(--space-3) calc(100% + var(--space-2)); z-index: calc(var(--audio-dock-layer) + 1); padding: var(--space-2) var(--space-3); font-size: var(--font-size-label); }
+.audio-dock-notice { position: fixed; z-index: calc(var(--audio-dock-layer) + 1); min-width: 0; margin: 0; overflow: auto; overflow-wrap: anywhere; }
 :root:has(body.has-audio-dock) { scroll-padding-top: calc(var(--app-header-offset, 0px) + var(--space-2)); }
 @media (min-width: 901px) {
   body.has-audio-dock[data-view="recordings"] .content::after {

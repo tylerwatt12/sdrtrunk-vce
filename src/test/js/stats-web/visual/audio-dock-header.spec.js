@@ -108,27 +108,47 @@ for (const viewport of viewports) {
     });
   }
 
-  test(`center grip retains click, drag and keyboard size changes at ${viewport.width}px`, async ({ page }) => {
+  test(`center grip follows the pointer and retains click, snap and keyboard size changes at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const dock = await openGallery(page, 'live', 'collapsed');
     for (const state of ['minimal', 'full', 'collapsed']) {
       await handle(dock).click();
       await expect(dock).toHaveAttribute('data-state', state);
     }
-    const drag = async (dx, dy) => {
+    const heights = {};
+    for (const state of ['collapsed', 'minimal', 'full']) {
+      await setSize(dock, state);
+      heights[state] = (await dock.boundingBox()).height;
+    }
+    await setSize(dock, 'collapsed');
+    const drag = async (target, expected) => {
+      const before = await dock.boundingBox();
       const bounds = await handle(dock).boundingBox();
       const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
       await page.mouse.move(x, y);
       await page.mouse.down();
-      await page.mouse.move(x + dx, y + dy, { steps: 5 });
+      const dy = before.height - target;
+      for (const fraction of [0.5, 1]) {
+        await page.mouse.move(x, y + dy * fraction, { steps: 3 });
+        await expect.poll(async () => Math.abs((await dock.boundingBox()).height -
+          (before.height - dy * fraction))).toBeLessThanOrEqual(2);
+        const during = await dock.boundingBox();
+        expect(during.x).toBeGreaterThanOrEqual(0);
+        expect(during.x + during.width).toBeLessThanOrEqual(viewport.width);
+        expect(during.y).toBeGreaterThanOrEqual(0);
+        expect(Math.abs(during.y + during.height - before.y - before.height)).toBeLessThanOrEqual(1);
+      }
       await page.mouse.up();
+      await expect(dock).toHaveAttribute('data-state', expected);
+      await expect.poll(async () => Math.abs((await dock.boundingBox()).height - heights[expected]))
+        .toBeLessThanOrEqual(1);
+      await expect(dock).not.toHaveAttribute('data-dragging', 'true');
     };
-    for (const [dy, state] of [[-48, 'minimal'], [-48, 'full'], [48, 'minimal']]) {
-      await drag(0, dy);
-      await expect(dock).toHaveAttribute('data-state', state);
-    }
-    await drag(60, -35);
-    await expect(dock).toHaveAttribute('data-state', 'minimal');
+    await drag(heights.minimal, 'minimal');
+    await drag(heights.full, 'full');
+    await drag(heights.minimal, 'minimal');
+    // Releasing closer to the compact size returns there even after a visible resize.
+    await drag(heights.minimal + (heights.full - heights.minimal) * 0.35, 'minimal');
     await handle(dock).press('Home');
     await expect(dock).toHaveAttribute('data-state', 'collapsed');
     await handle(dock).press('End');
