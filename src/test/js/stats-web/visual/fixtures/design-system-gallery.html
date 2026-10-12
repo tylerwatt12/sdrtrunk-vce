@@ -1576,6 +1576,62 @@
   </main>
 
   <main class="content visual-frequency-window-example">
+    <section class="ui-section">
+      <div class="ui-section-title">Current receiving windows</div>
+      <div class="ui-section-body">
+        <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="22" role="img" aria-label="Frequency ruler from 851 to 861 MHz">
+          <text class="chart-axis-label" x="0" y="16">851 MHz</text><text class="chart-axis-label" x="50%" y="16" text-anchor="middle">856 MHz</text><text class="chart-axis-label" x="100%" y="16" text-anchor="end">861 MHz</text>
+        </svg>
+        <div class="ui-action-row ui-action-row-start"><strong>Known frequencies</strong><span class="muted">9 of 11 in current windows</span></div>
+        <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="32" role="img" aria-label="Eleven known frequencies with two outside current windows">
+          <line class="chart-grid-line" x1="0" x2="100%" y1="20" y2="20"/>
+          <circle class="chart-window-known-dot" cx="7.375%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="11.875%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="19.5%" cy="20" r="4"/>
+          <svg x="27.375%" y="14" width="12" height="12" viewBox="0 0 12 12" overflow="visible"><path class="chart-window-outside" d="M0 0l-5 8h10Z"/></svg>
+          <svg x="30.375%" y="14" width="12" height="12" viewBox="0 0 12 12" overflow="visible"><path class="chart-window-outside" d="M0 0l-5 8h10Z"/></svg>
+          <circle class="chart-window-known-dot" cx="35.375%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="52.125%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="59.375%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="69.375%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="77.125%" cy="20" r="4"/><circle class="chart-window-known-dot" cx="92.125%" cy="20" r="4"/>
+        </svg>
+        <div class="ui-action-row ui-action-row-start"><strong>RTL-SDR 1</strong><span class="muted">Control + call · Center 855.36250 MHz</span></div>
+        <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="44" role="img" aria-label="RTL-SDR 1 window with a control channel and a call">
+          <line class="chart-grid-line" x1="0" x2="100%" y1="22" y2="22"/>
+          <rect class="chart-window-band" x="31.865%" y="12" width="23.52%" height="20" rx="3"/><rect class="chart-window-gap" x="43.575%" y="12" width=".1%" height="20"/>
+          <line class="chart-window-center" x1="43.625%" x2="43.625%" y1="8" y2="36"/>
+          <svg x="35.375%" y="18" width="8" height="8" viewBox="0 0 8 8" overflow="visible"><rect class="chart-window-control" x="-4" width="8" height="8"/></svg>
+          <circle class="chart-window-call" cx="52.125%" cy="22" r="4"/>
+          <line class="chart-window-outside-guide" x1="27.375%" x2="27.375%" y1="0" y2="44"/><line class="chart-window-outside-guide" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+          <line class="chart-window-highlight" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+        </svg>
+        <div class="ui-action-row ui-action-row-start"><strong>RTL-SDR 2</strong><span class="muted">1 call · Center 852.21250 MHz</span></div>
+        <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="44" role="img" aria-label="RTL-SDR 2 receiving window with one call">
+          <line class="chart-grid-line" x1="0" x2="100%" y1="22" y2="22"/>
+          <rect class="chart-window-band" x=".365%" y="12" width="23.52%" height="20" rx="3"/><rect class="chart-window-gap" x="12.075%" y="12" width=".1%" height="20"/>
+          <line class="chart-window-center" x1="12.125%" x2="12.125%" y1="8" y2="36"/><circle class="chart-window-call" cx="7.375%" cy="22" r="4"/>
+          <line class="chart-window-outside-guide" x1="27.375%" x2="27.375%" y1="0" y2="44"/><line class="chart-window-outside-guide" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+          <line class="chart-window-highlight" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+        </svg>
+        <div class="ui-action-row ui-action-row-start"><strong>RTL-SDR 3</strong><span class="muted">Unused · Center 859.46250 MHz</span></div>
+        <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="44" role="img" aria-label="RTL-SDR 3 unused receiving window">
+          <line class="chart-grid-line" x1="0" x2="100%" y1="22" y2="22"/>
+          <rect class="chart-window-band" x="72.865%" y="12" width="23.52%" height="20" rx="3"/><rect class="chart-window-gap" x="84.575%" y="12" width=".1%" height="20"/>
+          <line class="chart-window-center" x1="84.625%" x2="84.625%" y1="8" y2="36"/>
+          <line class="chart-window-outside-guide" x1="27.375%" x2="27.375%" y1="0" y2="44"/><line class="chart-window-outside-guide" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+          <line class="chart-window-highlight" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+        </svg>
+        <div class="ui-action-row ui-action-row-start"><strong>RTL-SDR 4</strong><span class="muted">Unused · Center 856.96250 MHz</span></div>
+        <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="44" role="img" aria-label="RTL-SDR 4 unused receiving window overlapping RTL-SDR 1">
+          <line class="chart-grid-line" x1="0" x2="100%" y1="22" y2="22"/>
+          <rect class="chart-window-band" x="47.865%" y="12" width="23.52%" height="20" rx="3"/><rect class="chart-window-gap" x="59.575%" y="12" width=".1%" height="20"/>
+          <line class="chart-window-center" x1="59.625%" x2="59.625%" y1="8" y2="36"/>
+          <line class="chart-window-outside-guide" x1="27.375%" x2="27.375%" y1="0" y2="44"/><line class="chart-window-outside-guide" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+          <line class="chart-window-highlight" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
+        </svg>
+        <div class="chart-window-legend" aria-label="Receiving window key">
+          <span><svg viewBox="0 0 16 16" aria-hidden="true"><rect class="chart-window-control" x="4" y="4" width="8" height="8"/></svg>Control channel</span>
+          <span><svg viewBox="0 0 16 16" aria-hidden="true"><circle class="chart-window-call" cx="8" cy="8" r="4"/></svg>Call</span>
+          <span><svg viewBox="0 0 16 16" aria-hidden="true"><circle class="chart-window-known-dot" cx="8" cy="8" r="4"/></svg>Known frequency</span>
+          <span><svg viewBox="0 0 16 16" aria-hidden="true"><path class="chart-window-outside" d="M8 3l-5 8h10Z"/></svg>Outside current windows</span>
+        </div>
+      </div>
+    </section>
     <section class="ui-section"><div class="ui-section-title">Receiving windows now</div><div class="ui-table-wrap">
       <svg class="chart-frequency-windows" viewBox="0 0 640 145" role="img" aria-label="Tuner receiving windows in MHz">
         <title>Current receiving windows and known frequencies</title>

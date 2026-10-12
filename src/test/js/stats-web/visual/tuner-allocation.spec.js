@@ -9,36 +9,50 @@ test.beforeAll(async () => {
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
 });
 
-function decision(id = 1, extra = {}) {
-  return { decision_id: id, sequence: id, timestamp: 1_700_000_004_000 + id,
-    site_id: 'cleveland', site_name: 'Cleveland Simulcast', tuner_id: 'safe-tuner-1', tuner_name: 'RTL-SDR 1',
-    type: 'move', outcome: 'moved', reason: 'An unused tuner could cover more known frequencies',
-    before_frequency_hz: 854_300_000, requested_center_frequency_hz: 852_750_000,
-    after_frequency_hz: 852_750_000, usable_bandwidth_hz: 2_160_000, dc_gap_hz: 25_000,
-    requested_frequency_hz: null, covered_before: 27, covered_after: 30, repeat_count: 1,
-    first_timestamp: 1_700_000_004_000 + id, last_timestamp: 1_700_000_004_000 + id, candidates: [], ...extra };
+// Sanitized frequency/window geometry from the October 11, 2026 Albany support
+// snapshot. The monitor represents configured/alternate controls as `control`.
+// That report did not contain tuner movement history or tuner setting values.
+// Broad 851–861 MHz limits below are synthetic to test geometric window matching.
+const ALBANY_FREQUENCIES = [
+  [851_737_500, 'call', true], [852_187_500, 'call', true], [852_950_000, 'control', true],
+  [853_737_500, 'control', false], [854_037_500, 'control', false], [854_537_500, 'control', true],
+  [856_212_500, 'call', true], [856_937_500, 'call', true], [857_937_500, 'call', true],
+  [858_712_500, 'call', true], [860_212_500, 'call', true]
+];
+
+function snapshot(decisions = []) {
+  const receiving = (frequency_hz, role) => ({ frequency_hz, bandwidth_hz: 12_500, role,
+    site_id: 'albany', channel_name: 'Albany County Simulcast' });
+  return { available: true, session_id: 'receiver-session', cursor: 3, generated_at_ms: Date.now(),
+    sites: [{ id: 'albany', name: 'Albany County Simulcast', system_name: 'Albany/Schenectady Counties',
+      channel_name: 'Albany County Simulcast', kind: 'trunked', known_frequency_count: 11,
+      covered_frequency_count: 9, frequencies: ALBANY_FREQUENCIES.map(([frequency_hz, role, covered]) =>
+        ({ frequency_hz, bandwidth_hz: 12_500, covered, role })),
+      tuners: ['safe-tuner-1', 'safe-tuner-2', 'safe-tuner-3', 'safe-tuner-4'], status: 'control_and_calls' }],
+    tuners: [
+      [855_362_500, [receiving(854_537_500, 'control'), receiving(856_212_500, 'call')]],
+      [852_212_500, [receiving(851_737_500, 'call')]], [859_462_500, []], [856_962_500, []]
+    ].map(([frequency_hz, channels], index) => ({ id: `safe-tuner-${index + 1}`, name: `RTL-SDR ${index + 1}`,
+      frequency_hz, usable_bandwidth_hz: 2_352_000, dc_gap_hz: 10_000, status: 'enabled', available: true,
+      center_locked: false, min_frequency_hz: 851_000_000, max_frequency_hz: 861_000_000, preferred_for: [],
+      receiving: channels, supports_shared_window: true, reason: null })), decisions };
 }
 
-function snapshot(center = 852_750_000, decisions = [decision()]) {
-  return { available: true, session_id: 'receiver-session', cursor: 3, generated_at_ms: Date.now(),
-    sites: [{ id: 'cleveland', name: 'Cleveland Simulcast', system_name: 'GCRCN', channel_name: 'Cleveland',
-      kind: 'trunked', known_frequency_count: 30, covered_frequency_count: center === 852_750_000 ? 30 : 27,
-      frequencies: [{ frequency_hz: 852_012_500, bandwidth_hz: 12_500, covered: true, role: 'call' }],
-      tuners: ['safe-tuner-1', 'safe-tuner-2'], status: 'control_and_calls' }],
-    tuners: [{ id: 'safe-tuner-1', name: 'RTL-SDR 1', frequency_hz: center,
-      usable_bandwidth_hz: 2_160_000, dc_gap_hz: 25_000, status: 'enabled', available: true,
-      center_locked: false, min_frequency_hz: 851_000_000, max_frequency_hz: 860_000_000,
-      preferred_for: ['Cleveland'], receiving: [], reason: 'An unused tuner could cover more known frequencies' },
-    { id: 'safe-tuner-2', name: 'RTL-SDR 2', frequency_hz: 856_187_500,
-      usable_bandwidth_hz: 2_160_000, dc_gap_hz: 25_000, status: 'enabled', available: true,
-      center_locked: true, min_frequency_hz: 851_000_000, max_frequency_hz: 860_000_000,
-      preferred_for: [], receiving: [{ frequency_hz: 856_162_500, role: 'control', site_id: 'cleveland', channel_name: 'Cleveland' },
-        { frequency_hz: 855_737_500, role: 'call', site_id: 'cleveland', channel_name: 'Cleveland' }], reason: null }], decisions };
+// Synthetic decisions exercise history, grouped failures and captured geometry.
+// None of these decisions is presented as a recorded Albany event.
+function decision(id = 1, extra = {}) {
+  return { decision_id: id, sequence: id, timestamp: 1_700_000_004_000 + id,
+    site_id: 'albany', site_name: 'Albany County Simulcast', tuner_id: 'safe-tuner-3', tuner_name: 'RTL-SDR 3',
+    type: 'move', outcome: 'moved', reason: 'An unused tuner could cover more known frequencies',
+    before_frequency_hz: 859_462_500, requested_center_frequency_hz: 859_212_500,
+    after_frequency_hz: 859_212_500, usable_bandwidth_hz: 2_352_000, dc_gap_hz: 10_000,
+    requested_frequency_hz: null, covered_before: 8, covered_after: 9, repeat_count: 1,
+    first_timestamp: 1_700_000_004_000 + id, last_timestamp: 1_700_000_004_000 + id, candidates: [], ...extra };
 }
 
 async function openApp(page, options = {}) {
   let requests = 0;
-  let response = { data: snapshot() };
+  let response = { data: options.data || snapshot() };
   let preferences = JSON.parse(JSON.stringify(defaults));
   preferences.appearance.theme = options.theme || 'light';
   await page.route('**/api/v1/**', async (route) => {
@@ -62,45 +76,100 @@ async function openApp(page, options = {}) {
   return { requests: () => requests, respond: (next) => { response = next; } };
 }
 
-test('decision navigation and live windows follow retunes, pause, and resume', async ({ page }) => {
-  const app = await openApp(page);
+const sitePanel = (page) => page.locator('.tuner-allocation-site[data-site-id="albany"]');
+const tunerRow = (page, id) => sitePanel(page).locator(`.tuner-allocation-window-row[data-tuner-id="safe-tuner-${id}"]`);
+const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("Center")) dd');
+
+test('real Albany coverage shows current windows, overlap, and uncovered known frequencies', async ({ page }) => {
+  await openApp(page);
   const group = page.locator('.admin-settings-branch').filter({ hasText: 'Decisions engine' });
   await expect(group.getByRole('link', { name: 'Call matching', exact: true })).toBeVisible();
   await expect(group.getByRole('link', { name: 'Tuner allocation', exact: true })).toHaveAttribute('aria-current', 'page');
   const support = page.locator('.admin-settings-branch').filter({ hasText: 'Status & support' });
   await expect(support.getByRole('link', { name: 'Call matching', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Details for Cleveland Simulcast' }).click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toContainText('30 of 30 known frequencies');
-  await expect(dialog.locator('.chart-window-center title').first()).toHaveText('Center 852.75000 MHz');
-  const known = dialog.getByText('Known frequencies', { exact: true });
-  await known.click();
-  await known.focus();
-  app.respond({ data: snapshot(854_300_000) });
-  await expect(dialog.locator('.chart-window-center title').first()).toHaveText('Center 854.30000 MHz');
-  await expect(dialog.locator('details[data-allocation-disclosure="known"]')).toHaveAttribute('open', '');
-  await expect(dialog.getByText('Known frequencies', { exact: true })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('button', { name: 'Details for Cleveland Simulcast' })).toBeFocused();
-  await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();
-  const count = app.requests();
-  app.respond({ data: snapshot() });
-  await page.waitForTimeout(1150);
-  expect(app.requests()).toBe(count);
-  await page.getByRole('button', { name: 'Details for Cleveland Simulcast' }).click();
-  await expect(page.getByRole('dialog')).toContainText('Receiving windows · paused');
-  await expect(page.getByRole('dialog').locator('.chart-window-center title').first()).toHaveText('Center 854.30000 MHz');
-  await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Resume tuner allocation monitor' }).click();
-  await expect(page.locator('table[data-table-type="tuner-allocation-sites"]')).toContainText('30 / 30 known');
+  const site = sitePanel(page);
+  await expect(site).toContainText('Albany/Schenectady Counties');
+  await expect(site).toContainText('9 / 11 in windows');
+  await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
+  await expect(tunerRow(page, 1).locator('.chart-window-center title')).toHaveText('Center 855.36250 MHz');
+  await expect(tunerRow(page, 2).locator('.chart-window-center title')).toHaveText('Center 852.21250 MHz');
+  await expect(tunerRow(page, 3)).toContainText('Unused');
+  await expect(tunerRow(page, 4)).toContainText('Unused');
+  await expect(tunerRow(page, 1).locator('.chart-window-control')).toHaveCount(1);
+  await expect(tunerRow(page, 1).locator('.chart-window-call')).toHaveCount(1);
+  await expect(tunerRow(page, 2).locator('.chart-window-call')).toHaveCount(1);
+  const outside = page.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true });
+  await outside.click();
+  await expect(outside).toHaveAttribute('aria-pressed', 'true');
+  await expect(site.locator('.chart-window-highlight')).toHaveCount(5);
+  const known = site.locator('details[data-allocation-disclosure="known"]');
+  await known.locator('summary').click();
+  await expect(known.locator('tbody tr')).toHaveCount(11);
+  const overlap = known.getByRole('row').filter({ hasText: '856.21250' });
+  await expect(overlap).toContainText('RTL-SDR 1');
+  await expect(overlap).toContainText('RTL-SDR 4');
+  await expect(known.getByRole('row').filter({ hasText: '853.73750' })).toContainText('Outside');
+  await page.getByRole('button', { name: 'Decision history', exact: true }).click();
+  await expect(page.locator('table[data-table-type="tuner-allocation-decisions"]')).toContainText('No tuner moves or failed calls');
 });
 
-test('history keeps grouped decisions and their captured windows while current positions change', async ({ page }) => {
+test('live page and focused tuner follow retunes while preserving disclosure, focus, and pause state', async ({ page }) => {
   const app = await openApp(page);
+  await page.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true }).click();
+  const known = sitePanel(page).locator('details[data-allocation-disclosure="known"]');
+  await known.locator('summary').click();
+  await known.locator('summary').focus();
+  const changed = snapshot();
+  changed.tuners[2].frequency_hz = 859_212_500;
+  app.respond({ data: changed });
+  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+  await expect(known).toHaveAttribute('open', '');
+  await expect(known.locator('summary')).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(sitePanel(page).locator('.chart-window-highlight')).toHaveCount(5);
+  const tableTuner = known.getByRole('row').filter({ hasText: '856.21250' })
+    .getByRole('button', { name: 'Details for RTL-SDR 4', exact: true });
+  await tableTuner.focus();
+  app.respond({ data: snapshot() });
+  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.46250 MHz');
+  await expect(tableTuner).toBeFocused();
+  await tableTuner.click();
+  await expect(centerReadout(page.getByRole('dialog'))).toHaveText('856.96250 MHz');
+  await page.keyboard.press('Escape');
+  await expect(tableTuner).toBeFocused();
+  app.respond({ data: changed });
+  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+  await tunerRow(page, 3).getByRole('button', { name: 'Details for RTL-SDR 3', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('859.21250 MHz');
+  const settings = dialog.locator('details').filter({ has: page.getByText('Tuner settings', { exact: true }) });
+  await settings.locator('summary').click();
+  await settings.locator('summary').focus();
+  app.respond({ data: snapshot() });
+  await expect(centerReadout(dialog)).toHaveText('859.46250 MHz');
+  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.46250 MHz');
+  await expect(settings).toHaveAttribute('open', '');
+  await expect(settings.locator('summary')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(tunerRow(page, 3).getByRole('button', { name: 'Details for RTL-SDR 3', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();
+  const count = app.requests();
+  app.respond({ data: changed });
+  await page.waitForTimeout(1150);
+  expect(app.requests()).toBe(count);
+  await tunerRow(page, 3).getByRole('button', { name: 'Details for RTL-SDR 3', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Receiving · paused');
+  await expect(centerReadout(page.getByRole('dialog'))).toHaveText('859.46250 MHz');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Resume tuner allocation monitor' }).click();
+  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+});
+
+test('history keeps grouped decisions and captured windows while current positions change', async ({ page }) => {
   const failed = decision(2, { outcome: 'allocation_failed', type: 'failure', repeat_count: 12,
     reason: "The frequency is outside the tuners' allowed range", requested_frequency_hz: 857_512_500,
-    before_frequency_hz: null, after_frequency_hz: null, candidates: [{ tuner_name: 'RTL-SDR 1', reason: 'The center frequency is locked' }] });
-  app.respond({ data: snapshot(852_750_000, [decision(), failed]) });
+    before_frequency_hz: null, after_frequency_hz: null, candidates: [{ tuner_name: 'RTL-SDR 3', reason: 'The center frequency is locked' }] });
+  const app = await openApp(page, { data: snapshot([decision(), failed]) });
   await page.getByRole('button', { name: 'Decision history', exact: true }).click();
   const table = page.locator('table[data-table-type="tuner-allocation-decisions"]');
   await expect(table).toContainText('12 requests');
@@ -108,46 +177,53 @@ test('history keeps grouped decisions and their captured windows while current p
   await page.getByRole('button', { name: 'Details for tuner decision 1' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Receiving windows at this decision');
-  await expect(dialog.locator('.chart-window-center title')).toHaveText(['Center 854.30000 MHz', 'Center 852.75000 MHz']);
-  app.respond({ data: snapshot(853_500_000, [decision(1, { after_frequency_hz: 853_500_000 }), failed]) });
+  await expect(dialog.locator('.chart-window-center title')).toHaveText(['Center 859.46250 MHz', 'Center 859.21250 MHz']);
+  const changed = snapshot([decision(1, { after_frequency_hz: 858_912_500 }), failed]);
+  changed.tuners[2].frequency_hz = 858_912_500;
+  app.respond({ data: changed });
   await page.waitForTimeout(1150);
-  await expect(dialog.locator('.chart-window-center title')).toHaveText(['Center 854.30000 MHz', 'Center 852.75000 MHz']);
+  await expect(dialog.locator('.chart-window-center title')).toHaveText(['Center 859.46250 MHz', 'Center 859.21250 MHz']);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Details for tuner decision 2' }).click();
   await expect(page.getByRole('dialog')).toContainText('Requests12');
   await page.getByRole('dialog').getByText('Other tuners', { exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('The center frequency is locked');
   await page.keyboard.press('Escape');
-  app.respond({ data: snapshot(852_750_000, Array.from({ length: 45 }, (_, index) => decision(index + 1))) });
+  app.respond({ data: snapshot(Array.from({ length: 45 }, (_, index) => decision(index + 1))) });
   await expect(table.locator('tbody tr')).toHaveCount(20);
   await page.locator('.tuner-allocation-history-pager').getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('.tuner-allocation-history-pager')).toContainText('Page 2 of 3');
 });
 
 for (const theme of ['light', 'dark']) {
-  test(`coverage and decision drilldowns fit desktop and phone in ${theme}`, async ({ page }, testInfo) => {
-    await openApp(page, { theme });
+  test(`coverage and tuner/decision drilldowns fit desktop and phone in ${theme}`, async ({ page }, testInfo) => {
+    await openApp(page, { theme, data: snapshot([decision()]) });
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-      expect(await page.locator('table[data-table-type="tuner-allocation-sites"] .ui-status').evaluate((element) =>
-        element.scrollWidth <= element.clientWidth)).toBe(true);
-      await page.getByRole('button', { name: 'Details for Cleveland Simulcast' }).click();
+      const site = sitePanel(page);
+      const rect = await site.boundingBox();
+      expect(rect.x + rect.width).toBeLessThanOrEqual(width);
+      await expect(site.locator('.chart-frequency-windows')).toHaveCount(6);
+      const boxes = await site.locator('.chart-frequency-windows').evaluateAll((charts) => charts.map((chart) => chart.getAttribute('viewBox').split(' ')[2]));
+      expect(new Set(boxes).size).toBe(1);
+      await tunerRow(page, 1).getByRole('button', { name: 'Details for RTL-SDR 1', exact: true }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      const rect = await dialog.boundingBox();
-      expect(rect.x).toBeGreaterThanOrEqual(0);
-      expect(rect.x + rect.width).toBeLessThanOrEqual(width);
-      await expect(dialog.locator('.chart-window-control')).toHaveCount(1);
-      await expect(dialog.locator('.chart-window-call')).toHaveCount(1);
-      if (width === 1280 || width === 320) await page.screenshot({ path: testInfo.outputPath(`tuner-windows-${theme}-${width}.png`) });
+      const dialogRect = await dialog.boundingBox();
+      expect(dialogRect.x).toBeGreaterThanOrEqual(0);
+      expect(dialogRect.x + dialogRect.width).toBeLessThanOrEqual(width);
+      await expect(centerReadout(dialog)).toHaveText('855.36250 MHz');
+      await expect(dialog).toContainText('854.53750 MHz');
+      await expect(dialog).toContainText('856.21250 MHz');
+      if (width === 1280 || width === 320) await page.screenshot({ path: testInfo.outputPath(`tuner-details-${theme}-${width}.png`) });
       await page.keyboard.press('Escape');
       await expect(page.getByRole('dialog')).toHaveCount(0);
       if (width === 1280 || width === 320) await page.screenshot({ path: testInfo.outputPath(`tuner-coverage-${theme}-${width}.png`), fullPage: true });
     }
     await page.getByRole('button', { name: 'Decision history', exact: true }).click();
     await page.getByRole('button', { name: 'Details for tuner decision 1' }).click();
-    await expect(page.getByRole('dialog')).toContainText('Before · 854.30000 MHz');
+    await expect(page.getByRole('dialog')).toContainText('Before · 859.46250 MHz');
     await expect(page.getByRole('dialog')).not.toContainText('Previous center');
     await page.screenshot({ path: testInfo.outputPath(`tuner-decision-${theme}-320.png`) });
     await page.keyboard.press('Escape');
@@ -157,27 +233,70 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('separate radio bands retain readable current receiving windows', async ({ page }) => {
-  const app = await openApp(page);
+test('separate radio bands remain readable and unavailable or limited tuners never appear as frequency matches', async ({ page }) => {
   const data = snapshot();
-  data.tuners.push({ ...data.tuners[0], id: 'safe-tuner-3', name: 'RTL-SDR 3', frequency_hz: 773_987_500, min_frequency_hz: 760_000_000, max_frequency_hz: 800_000_000, supports_shared_window: false,
-    receiving: [{ frequency_hz: 773_987_500, bandwidth_hz: 12_500, role: 'control', site_id: 'cleveland' }] });
-  data.sites[0].tuners.push('safe-tuner-3');
+  data.tuners.push({ ...data.tuners[0], id: 'safe-tuner-5', name: 'RTL-SDR 5', frequency_hz: 773_987_500,
+    min_frequency_hz: 760_000_000, max_frequency_hz: 800_000_000, supports_shared_window: false, dc_gap_hz: 0,
+    receiving: [{ frequency_hz: 773_987_500, bandwidth_hz: 12_500, role: 'control', site_id: 'albany' }] });
+  data.tuners.push({ ...data.tuners[0], id: 'safe-tuner-6', name: 'RTL-SDR 6', available: false, status: 'disabled',
+    frequency_hz: 853_912_500, receiving: [] });
+  data.tuners.push({ ...data.tuners[0], id: 'safe-tuner-7', name: 'RTL-SDR 7', frequency_hz: 854_712_500,
+    min_frequency_hz: 854_100_000, max_frequency_hz: 855_000_000, receiving: [] });
+  data.sites[0].tuners.push('safe-tuner-5');
+  data.sites[0].known_frequency_count++;
+  data.sites[0].covered_frequency_count++;
   data.sites[0].frequencies.push({ frequency_hz: 773_987_500, bandwidth_hz: 12_500, covered: true, role: 'control' });
-  app.respond({ data });
-  await expect(page.locator('table[data-table-type="tuner-allocation-sites"] tbody tr')).toHaveCount(1);
-  await expect.poll(app.requests).toBeGreaterThan(1);
-  await page.getByRole('button', { name: 'Details for Cleveland Simulcast' }).click();
-  await expect(page.getByRole('dialog').locator('.chart-frequency-windows')).toHaveCount(2);
-  await expect(page.getByRole('dialog').locator('.chart-window-band')).toHaveCount(3);
+  await openApp(page, { data });
+  const site = sitePanel(page);
+  await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(7);
+  await expect(site.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true })).toBeVisible();
+  const known = site.locator('details[data-allocation-disclosure="known"]');
+  await known.locator('summary').click();
+  const alternate = known.getByRole('row').filter({ hasText: '853.73750' });
+  await expect(alternate).toContainText('Outside');
+  await expect(alternate).not.toContainText('RTL-SDR 6');
+  await expect(alternate).not.toContainText('RTL-SDR 7');
+  await expect(known.getByRole('row').filter({ hasText: '773.98750' })).toContainText('RTL-SDR 5');
+  await expect(known.getByRole('row').filter({ hasText: '854.53750' })).not.toContainText('RTL-SDR 5');
+  await tunerRow(page, 6).getByRole('button', { name: 'Details for RTL-SDR 6', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Unavailable');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 320, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+});
+
+test('site selection scopes known frequencies without hiding the tuner inventory', async ({ page }) => {
+  const data = snapshot();
+  data.sites.push({ id: 'other-site', name: 'Other site', system_name: 'Other system', channel_name: 'Other control',
+    kind: 'trunked', known_frequency_count: 1, covered_frequency_count: 0, status: 'stopped', tuners: [],
+    frequencies: [{ frequency_hz: 773_987_500, bandwidth_hz: 12_500, covered: false, role: 'control' }] });
+  await openApp(page, { data });
+  await page.locator('.tuner-allocation-site-filter').selectOption('other-site');
+  const selected = page.locator('.tuner-allocation-site[data-site-id="other-site"]');
+  await expect(selected).toContainText('Other system');
+  await expect(selected).toContainText('0 / 1 in windows');
+  await expect(selected.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
+  await expect(selected.getByRole('button', { name: 'Highlight 773.98750 MHz', exact: true })).toBeVisible();
+  await expect(sitePanel(page)).toHaveCount(0);
+});
+
+test('receiver session changes close details and reset captured history', async ({ page }) => {
+  const app = await openApp(page, { data: snapshot([decision()]) });
+  await page.getByRole('button', { name: 'Decision history', exact: true }).click();
+  await page.getByRole('button', { name: 'Details for tuner decision 1' }).click();
+  const restarted = snapshot();
+  restarted.session_id = 'next-receiver-session';
+  app.respond({ data: restarted });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('table[data-table-type="tuner-allocation-decisions"]')).toContainText('No tuner moves or failed calls');
 });
 
 test('access loss clears tuner status, history, and open details', async ({ page }) => {
   const app = await openApp(page);
-  await page.getByRole('button', { name: 'Details for Cleveland Simulcast' }).click();
+  await tunerRow(page, 1).getByRole('button', { name: 'Details for RTL-SDR 1', exact: true }).click();
   app.respond({ status: 403 });
   await expect(page.locator('.tuner-allocation-live-status')).toContainText('Access denied');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.locator('table[data-table-type="tuner-allocation-sites"] tbody tr')).toHaveCount(1);
-  await expect(page.locator('table[data-table-type="tuner-allocation-sites"] tbody td.empty')).toBeVisible();
+  await expect(page.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(0);
+  await expect(page.locator('.tuner-allocation-workspace')).not.toContainText('855.36250 MHz');
 });

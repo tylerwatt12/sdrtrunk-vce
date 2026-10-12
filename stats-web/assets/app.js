@@ -31895,9 +31895,10 @@ function tunerAllocationWork(receiving = []) {
   const work = [];
   if (roles.has('control')) work.push('Control');
   if (roles.has('conventional')) work.push(work.length ? 'conventional' : 'Conventional');
-  if (roles.has('call')) work.push(work.length ? 'calls' : 'Calls');
+  const calls = receiving.filter((item) => item.role === 'call').length;
+  if (calls) work.push(work.length ? (calls === 1 ? 'call' : 'calls') : `${number(calls)} ${calls === 1 ? 'call' : 'calls'}`);
   if (work.length > 1) return work.join(' + ');
-  return work[0] === 'Control' ? 'Control channel' : work[0] === 'Conventional' ? 'Conventional channel' : work[0] || 'Unused';
+  return work[0] === 'Control' ? 'Control channel' : work[0] === 'Conventional' ? 'Conventional channel' : work[0] || (receiving.length ? 'Receiving' : 'Unused');
 }
 
 function tunerAllocationOutcome(outcome) {
@@ -32040,48 +32041,282 @@ function tunerAllocationReceivingWindow(tuner, knownFrequencies = []) {
   return { ...tuner, usableBandwidthHz: Math.max(0, ...widths), dcGapHz: 0 };
 }
 
-function tunerAllocationSiteDetails(site, snapshot, stateLabel) {
+function tunerAllocationFrequencyUse(item) {
+  return ({ control: 'Control frequency', conventional: 'Conventional channel', call: 'Call frequency' })[item.role] || 'Known frequency';
+}
+
+function tunerAllocationWindowBounds(tuner) {
+  const center = Number(tuner.frequencyHz);
+  const half = Math.floor(Number(tuner.usableBandwidthHz) / 2);
+  if (!(center > 0) || !Number.isFinite(half)) return null;
+  const minimum = Number(tuner.minFrequencyHz);
+  const maximum = Number(tuner.maxFrequencyHz);
+  return { start: Math.max(center - half, minimum > 0 ? minimum : center - half),
+    end: Math.min(center + half, maximum > 0 ? maximum : center + half) };
+}
+
+// Match the receiver's whole-channel window check when naming the tuners that fit a frequency.
+// The site's covered flag remains the authority for the overall coverage status.
+function tunerAllocationFits(tuner, item) {
+  const center = Number(tuner.frequencyHz);
+  const width = Number(item.bandwidthHz);
+  const minimum = Number(tuner.minFrequencyHz);
+  const maximum = Number(tuner.maxFrequencyHz);
+  if (tuner.available === false || !(center > 0) || !(width > 0) || !(minimum > 0) || !(maximum >= minimum) ||
+      !(Number(tuner.usableBandwidthHz) > 0) || (tuner.supportsSharedWindow === false && Number(item.frequencyHz) !== center)) return false;
+  const half = Math.floor(width / 2);
+  const low = Number(item.frequencyHz) - half;
+  const high = Number(item.frequencyHz) + half;
+  const window = tunerAllocationWindowBounds(tuner);
+  if (!window || low < window.start || high > window.end) return false;
+  const gap = Math.floor((Number(tuner.dcGapHz) || 0) / 2);
+  return gap <= 0 || high < center - gap || low > center + gap;
+}
+
+function tunerAllocationTunerDetails(tuner, site, stateLabel) {
   const body = node('div', 'tuner-allocation-details');
-  const summary = node('div', 'ui-action-row');
-  summary.append(tunerAllocationCoverage(site), uiStatus(stateLabel,
-    stateLabel === 'Live' ? 'success' : stateLabel === 'Unavailable' ? 'danger' : 'neutral'));
-  body.append(summary);
-  const tunerIds = new Set((site.tuners || []).map(String));
-  const tuners = snapshot.tuners.filter((item) => tunerIds.has(String(item.id)));
-  const windowTitle = stateLabel === 'Paused' ? 'Receiving windows · paused · MHz' :
-    stateLabel === 'Unavailable' ? 'Receiving windows · last update · MHz' : 'Receiving windows now · MHz';
-  const receiving = section(windowTitle, tunerAllocationWindowChart(tuners.map((tuner) =>
-    tunerAllocationReceivingWindow(tuner, site.frequencies || [])), site.frequencies || []));
-  receiving.append(node('p', 'ui-section-note', 'Bands: usable bandwidth · Square: control · Dot: receiving · Marks: known frequencies'));
-  body.append(receiving);
-  for (const tuner of tuners) {
-    const entries = [
-      ['Current work', tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)],
-      ['Center', tunerAllocationFrequency(tuner.frequencyHz)]
-    ];
-    if (tuner.reason) entries.push(['Why this position', tuner.reason]);
-    const facts = tunerAllocationFacts(entries);
-    const window = tunerAllocationReceivingWindow(tuner, site.frequencies || []);
-    const settings = [
-      [tuner.supportsSharedWindow === false ? 'Receiving bandwidth' : 'Usable bandwidth',
-        Number(window.usableBandwidthHz) > 0 ? `${number(Number(window.usableBandwidthHz) / 1_000_000)} MHz` : 'Unavailable'],
-      ['Center lock', tuner.centerLocked ? 'Locked' : 'Unlocked'],
-      ['Minimum frequency', tunerAllocationFrequency(tuner.minFrequencyHz)],
-      ['Maximum frequency', tunerAllocationFrequency(tuner.maxFrequencyHz)]
-    ];
-    if (Array.isArray(tuner.preferredFor) && tuner.preferredFor.length) {
-      settings.push(['Preferred for', tuner.preferredFor.join(', ')]);
-    }
-    const tunerBody = node('div', 'ui-section-body tuner-allocation-details');
-    tunerBody.append(facts, tunerAllocationDisclosure('Tuner settings', tunerAllocationFacts(settings), `tuner-${tuner.id}`));
-    body.append(section(tuner.name || 'Tuner', tunerBody));
+  const window = tunerAllocationReceivingWindow(tuner, site.frequencies || []);
+  const bounds = tunerAllocationWindowBounds(window);
+  const entries = [['Current work', tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)],
+    ['Center', tunerAllocationFrequency(tuner.frequencyHz)]];
+  if (tuner.available !== false && bounds && bounds.end > bounds.start) entries.push(['Receiving window',
+    `${frequency(bounds.start)}–${frequency(bounds.end)} MHz`]);
+  if (tuner.supportsSharedWindow === false) entries.push(['Tuning', 'One frequency at a time']);
+  body.append(tunerAllocationFacts(entries));
+  const receiving = node('dl', 'ui-fact-list');
+  for (const item of tuner.receiving || []) {
+    const role = item.role === 'control' ? 'Control channel' : item.role === 'conventional' ?
+      'Conventional channel' : item.role === 'call' ? 'Call' : 'Receiving channel';
+    const label = node('div', 'ui-heading-group ui-heading-group-quiet');
+    label.append(node('span', '', tunerAllocationFrequency(item.frequencyHz)));
+    if (item.channelName) label.append(node('small', 'muted', item.channelName));
+    const value = node('dd');
+    value.append(label);
+    receiving.append(node('dt', '', role), value);
   }
-  const frequencies = node('div', 'tuner-allocation-frequency-list');
-  for (const item of site.frequencies || []) {
-    frequencies.append(uiStatus(tunerAllocationFrequency(item.frequencyHz), item.covered ? 'neutral' : 'warning'));
-  }
-  if (frequencies.childElementCount) body.append(tunerAllocationDisclosure('Known frequencies', frequencies, 'known'));
+  const receivingBody = node('div', 'ui-section-body');
+  receivingBody.append(receiving.childElementCount ? receiving : node('p', 'ui-section-note', 'No calls or control channels.'));
+  body.append(section(stateLabel === 'Paused' ? 'Receiving · paused' : stateLabel === 'Unavailable' ?
+    'Receiving · last update' : 'Receiving now', receivingBody));
+  const settings = [
+    ['Usable bandwidth', Number(window.usableBandwidthHz) > 0 ? `${number(Number(window.usableBandwidthHz) / 1_000_000)} MHz` : 'Unavailable'],
+    ['Center lock', tuner.centerLocked === true ? 'Locked' : tuner.centerLocked === false ? 'Unlocked' : 'Unavailable'],
+    ['Minimum frequency', tunerAllocationFrequency(tuner.minFrequencyHz)],
+    ['Maximum frequency', tunerAllocationFrequency(tuner.maxFrequencyHz)]
+  ];
+  if (tuner.preferredFor?.length) settings.push(['Preferred for', tuner.preferredFor.join(', ')]);
+  if (tuner.reason) settings.push(['Last move', tuner.reason]);
+  body.append(tunerAllocationDisclosure('Tuner settings', tunerAllocationFacts(settings), 'settings'));
   return body;
+}
+
+function tunerAllocationMapGroups(tuners, frequencies) {
+  const windows = tuners.map((tuner) => tunerAllocationReceivingWindow(tuner, frequencies));
+  const entries = windows.filter((tuner) => Number(tuner.frequencyHz) > 0).map((tuner) => {
+    const bounds = tunerAllocationWindowBounds(tuner);
+    return { start: bounds && bounds.end >= bounds.start ? Math.min(bounds.start, Number(tuner.frequencyHz)) : Number(tuner.frequencyHz),
+      end: bounds && bounds.end >= bounds.start ? Math.max(bounds.end, Number(tuner.frequencyHz)) : Number(tuner.frequencyHz), tuner };
+  });
+  frequencies.forEach((item) => entries.push({ start: Number(item.frequencyHz), end: Number(item.frequencyHz), frequency: item }));
+  const groups = [];
+  const bandGap = Math.max(2_000_000, ...windows.map((tuner) => Number(tuner.usableBandwidthHz) || 0)) * 2;
+  for (const entry of entries.sort((left, right) => left.start - right.start)) {
+    let group = groups.at(-1);
+    if (!group || entry.start - group.end > bandGap) {
+      group = { start: entry.start, end: entry.end, tuners: [], frequencies: [] };
+      groups.push(group);
+    }
+    group.end = Math.max(group.end, entry.end);
+    if (entry.tuner) group.tuners.push(entry.tuner);
+    if (entry.frequency) group.frequencies.push(entry.frequency);
+  }
+  groups.forEach((group) => {
+    const padding = Math.max(12_500, (group.end - group.start) * .025);
+    const span = Math.max(100_000, group.end - group.start + padding * 2);
+    const middle = (group.start + group.end) / 2;
+    group.minimum = middle - span / 2;
+    group.maximum = middle + span / 2;
+    group.tuners.sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { numeric: true }));
+  });
+  return groups;
+}
+
+function tunerAllocationMapPlot(host, group, kind, tuner, highlighted) {
+  const width = Math.max(100, host.clientWidth || 640);
+  const height = kind === 'ruler' ? 32 : kind === 'known' ? 28 : 44;
+  const svg = svgNode('svg', { class: 'chart-frequency-windows chart-frequency-window-row',
+    viewBox: `0 0 ${width} ${height}`, role: 'img' });
+  const x = (value) => 8 + (Number(value) - group.minimum) / (group.maximum - group.minimum) * (width - 16);
+  svg.append(svgNode('title', {}, kind === 'ruler' ? 'Frequency scale in MHz' : kind === 'known' ?
+    'Known frequencies. Triangles show frequencies outside current windows.' :
+    `${tuner.name}: ${tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)}. Center ${tunerAllocationFrequency(tuner.frequencyHz)}`));
+  const ticks = width < 370 ? 3 : 5;
+  for (let index = 0; index < ticks; index++) {
+    const value = group.minimum + (group.maximum - group.minimum) * index / (ticks - 1);
+    const position = x(value);
+    svg.append(svgNode('line', { class: 'chart-grid-line', x1: position, x2: position,
+      y1: kind === 'ruler' ? 24 : 0, y2: height }));
+    if (kind === 'ruler') svg.append(svgNode('text', { class: 'chart-axis-label', x: position, y: 17,
+      'text-anchor': index === 0 ? 'start' : index === ticks - 1 ? 'end' : 'middle' },
+      (value / 1_000_000).toFixed(group.maximum - group.minimum < 1_000_000 ? 3 : 2)));
+  }
+  if (tuner && tuner.available !== false) {
+    const bounds = tunerAllocationWindowBounds(tuner);
+    if (bounds && bounds.end > bounds.start) svg.append(svgNode('rect', { class: 'chart-window-band',
+      x: x(bounds.start), y: 12, width: x(bounds.end) - x(bounds.start), height: 20, rx: 3 }));
+    const center = Number(tuner.frequencyHz);
+    const gap = Number(tuner.dcGapHz) || 0;
+    if (gap > 0 && bounds?.end > bounds?.start) svg.append(svgNode('rect', { class: 'chart-window-gap',
+      x: x(Math.max(bounds.start, center - gap / 2)), y: 12,
+      width: Math.max(0, x(Math.min(bounds.end, center + gap / 2)) - x(Math.max(bounds.start, center - gap / 2))), height: 20 }));
+    const mark = svgNode('line', { class: 'chart-window-center', x1: x(center), x2: x(center), y1: 9, y2: 35 });
+    mark.append(svgNode('title', {}, `Center ${tunerAllocationFrequency(center)}`));
+    svg.append(mark);
+    (tuner.receiving || []).forEach((item) => {
+      if (Number(item.frequencyHz) < group.minimum || Number(item.frequencyHz) > group.maximum) return;
+      const position = x(item.frequencyHz);
+      const control = item.role === 'control';
+      const marker = control ? svgNode('path', { class: 'chart-window-control',
+        d: `M ${position} 16 l 6 6 l -6 6 l -6 -6 Z` }) :
+        svgNode('circle', { class: 'chart-window-call', cx: position, cy: 22, r: 5 });
+      marker.append(svgNode('title', {}, `${control ? 'Control channel' : item.role === 'conventional' ? 'Conventional channel' : item.role === 'call' ? 'Call' : 'Receiving channel'} ${tunerAllocationFrequency(item.frequencyHz)}${item.channelName ? ` · ${item.channelName}` : ''}`));
+      svg.append(marker);
+    });
+  }
+  if (kind === 'known') group.frequencies.forEach((item) => {
+    const position = x(item.frequencyHz);
+    const marker = item.covered ? svgNode('circle', { class: 'chart-window-known-dot', cx: position, cy: 14, r: 3.5 }) :
+      svgNode('path', { class: 'chart-window-outside', d: `M ${position} 7 l 5 11 h -10 Z` });
+    marker.append(svgNode('title', {}, `${tunerAllocationFrequency(item.frequencyHz)} · ${tunerAllocationFrequencyUse(item)} · ${item.covered ? 'In current windows' : 'Outside current windows'}`));
+    svg.append(marker);
+  });
+  if (tuner) group.frequencies.filter((item) => !item.covered).forEach((item) => svg.append(svgNode('line', {
+    class: 'chart-window-outside-guide', x1: x(item.frequencyHz), x2: x(item.frequencyHz), y1: 0, y2: height })));
+  if (kind !== 'ruler' && Number(highlighted) >= group.minimum && Number(highlighted) <= group.maximum) {
+    svg.append(svgNode('line', { class: 'chart-window-highlight', x1: x(highlighted), x2: x(highlighted), y1: 0, y2: height }));
+  }
+  host.replaceChildren(svg);
+}
+
+function tunerAllocationMapLegend() {
+  const legend = node('div', 'chart-window-legend');
+  for (const [label, kind] of [['Window', 'band'], ['Receiving control', 'control'], ['Receiving call / channel', 'call'], ['Outside windows', 'outside']]) {
+    const key = node('span');
+    const svg = svgNode('svg', { viewBox: '0 0 20 16', 'aria-hidden': 'true' });
+    svg.append(kind === 'band' ? svgNode('rect', { class: 'chart-window-band', x: 1, y: 4, width: 18, height: 8, rx: 2 }) :
+      kind === 'control' ? svgNode('path', { class: 'chart-window-control', d: 'M 10 2 l 6 6 l -6 6 l -6 -6 Z' }) :
+      kind === 'call' ? svgNode('circle', { class: 'chart-window-call', cx: 10, cy: 8, r: 5 }) :
+      svgNode('path', { class: 'chart-window-outside', d: 'M 10 2 l 6 12 h -12 Z' }));
+    key.append(svg, document.createTextNode(label));
+    legend.append(key);
+  }
+  return legend;
+}
+
+function tunerAllocationSiteMap(site, snapshot, state, openTuner) {
+  const name = node('div', 'ui-heading-group ui-heading-group-quiet');
+  name.append(node('strong', '', site.name || site.channelName || 'Unknown channel'));
+  if (site.systemName) name.append(node('small', 'muted', site.systemName));
+  const coverage = uiStatus(Number(site.knownFrequencyCount) > 0 ?
+    `${number(site.coveredFrequencyCount)} / ${number(site.knownFrequencyCount)} in windows` : 'No known frequencies',
+    Number(site.coveredFrequencyCount) < Number(site.knownFrequencyCount) ? 'warning' : 'neutral');
+  const header = node('div', 'tuner-allocation-site-heading');
+  header.append(name, coverage);
+  if (site.status === 'stopped') header.append(uiStatus('Stopped', 'neutral'));
+  const body = node('div', 'ui-section-body');
+  body.append(node('p', 'ui-section-note', 'All current tuner windows'));
+  const panel = section('', body);
+  panel.firstElementChild.append(header);
+  panel.classList.add('tuner-allocation-site');
+  panel.dataset.siteId = String(site.id);
+  const plots = [];
+  state.site = site;
+  state.snapshot = snapshot;
+  const tunerButton = (tuner, frequencyHz = null) => {
+    const button = node('button', 'ui-button ui-button-link tuner-allocation-tuner-details', tuner.name || 'Tuner');
+    button.type = 'button';
+    button.dataset.tunerId = String(tuner.id);
+    button.dataset.allocationFocus = `tuner-${tuner.id}${frequencyHz == null ? '' : `-frequency-${frequencyHz}`}`;
+    button.setAttribute('aria-label', `Details for ${tuner.name || 'tuner'}`);
+    button.addEventListener('click', () => {
+      const current = state.snapshot.tuners.find((item) => String(item.id) === String(tuner.id));
+      if (current) openTuner(current, state.site, button.dataset.allocationFocus);
+    });
+    return button;
+  };
+  const groups = tunerAllocationMapGroups(snapshot.tuners, site.frequencies || []);
+  groups.forEach((group) => {
+    const map = node('div', 'tuner-allocation-map');
+    const addPlot = (label, kind, tuner = null) => {
+      const row = node('div', `tuner-allocation-window-row tuner-allocation-${kind}-row`);
+      if (tuner) row.dataset.tunerId = String(tuner.id);
+      const host = node('div', 'tuner-allocation-plot');
+      row.append(label, host);
+      map.append(row);
+      plots.push(() => tunerAllocationMapPlot(host, group, kind, tuner, state.highlight));
+    };
+    addPlot(node('span', 'muted', 'Frequency · MHz'), 'ruler');
+    addPlot(node('span', 'muted', 'Known frequencies'), 'known');
+    group.tuners.forEach((tuner) => {
+      const label = node('div', 'tuner-allocation-tuner-label');
+      label.append(tunerButton(tuner), node('span', '', tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)),
+        node('small', 'muted', `Center ${tunerAllocationFrequency(tuner.frequencyHz)}`));
+      addPlot(label, 'tuner', tuner);
+    });
+    body.append(map);
+  });
+  const unknown = snapshot.tuners.filter((tuner) => !(Number(tuner.frequencyHz) > 0));
+  unknown.forEach((tuner) => {
+    const row = node('div', 'ui-action-row');
+    row.append(tunerButton(tuner), node('span', 'muted', 'No receiving window available'));
+    body.append(row);
+  });
+  if (groups.length) body.append(tunerAllocationMapLegend());
+  else body.append(node('p', 'ui-section-note', 'No current receiving windows or known frequencies.'));
+  const outside = (site.frequencies || []).filter((item) => !item.covered);
+  if (outside.length) {
+    const gaps = node('div', 'ui-notice ui-notice-warning tuner-allocation-frequency-list');
+    gaps.append(node('span', '', `${number(outside.length)} known ${outside.length === 1 ? 'frequency' : 'frequencies'} outside windows`));
+    outside.forEach((item) => {
+      const button = node('button', 'ui-button ui-button-secondary', tunerAllocationFrequency(item.frequencyHz));
+      button.type = 'button';
+      button.dataset.highlight = String(item.frequencyHz);
+      button.dataset.allocationFocus = `frequency-${item.frequencyHz}`;
+      button.setAttribute('aria-label', `Highlight ${tunerAllocationFrequency(item.frequencyHz)}`);
+      button.setAttribute('aria-pressed', String(state.highlight === Number(item.frequencyHz)));
+      button.addEventListener('click', () => {
+        state.highlight = state.highlight === Number(item.frequencyHz) ? null : Number(item.frequencyHz);
+        gaps.querySelectorAll('button').forEach((action) => action.setAttribute('aria-pressed', String(Number(action.dataset.highlight) === state.highlight)));
+        plots.forEach((draw) => draw());
+      });
+      gaps.append(button);
+    });
+    body.append(gaps);
+  }
+  if (!state.knownDisclosure) {
+    const actions = sectionActionHost();
+    state.frequencyController = {};
+    const frequencies = table(site.frequencies || [], [
+      { id: 'frequency', label: 'Frequency · MHz', render: (item) => frequency(item.frequencyHz) },
+      { id: 'use', label: 'Use', render: tunerAllocationFrequencyUse },
+      { id: 'window', label: 'In window of', render: (item) => {
+        if (!item.covered) return uiStatus('Outside windows', 'warning');
+        const tuners = state.snapshot.tuners.filter((tuner) => tunerAllocationFits(tuner, item));
+        const names = node('div', 'tuner-allocation-frequency-list');
+        tuners.forEach((tuner) => names.append(tunerButton(tuner, item.frequencyHz)));
+        return names.childElementCount ? names : 'In current windows';
+      } }
+    ], 'No known frequencies.', { type: 'tuner-allocation-frequencies', sortable: false,
+      layoutMenuHost: actions, controller: state.frequencyController, rowKey: (item) => item.frequencyHz });
+    state.knownDisclosure = tunerAllocationDisclosure('', fragment(actions, frequencies), 'known');
+    state.frequencyLabel = node('span');
+    state.knownDisclosure.firstElementChild.append(state.frequencyLabel);
+  }
+  state.frequencyLabel.textContent = `${number(site.knownFrequencyCount)} known frequencies`;
+  state.frequencyController.reconcileRows(site.frequencies || []);
+  body.append(state.knownDisclosure);
+  panel.drawPlots = () => plots.forEach((draw) => draw());
+  return panel;
 }
 
 function tunerAllocationDecisionDetails(decision) {
@@ -32148,9 +32383,20 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   let inFlight = false;
   let requestController = null;
   let selectedModal = null;
-  let selectedSiteId = null;
-  let selectedSiteHost = null;
-  let selectedSiteSignature = null;
+  let selectedTunerId = null;
+  let selectedTunerSiteId = null;
+  let selectedTunerHost = null;
+  let selectedTunerSignature = null;
+  let coverageSiteId = null;
+  let coverageSignature = null;
+  const mapStates = new Map();
+  const clearMapStates = () => {
+    mapStates.forEach((state) => {
+      cleanupTableLayoutMenu(state.frequencyController);
+      state.frequencyController?.widthObserver?.disconnect();
+    });
+    mapStates.clear();
+  };
   let activeTab = 'coverage';
   let historyPage = 0;
   let pollingTimer = null;
@@ -32161,62 +32407,80 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       paused ? 'Paused' : latest ? 'Live' : 'Connecting', stopped || pollingError ? 'danger' : paused || !latest ? 'neutral' : 'success'));
   };
   const currentState = () => pollingError ? 'Unavailable' : paused ? 'Paused' : 'Live';
-  const updateSiteDetail = () => {
-    if (!selectedSiteHost?.isConnected || !latest) return;
-    const site = latest.sites.find((item) => String(item.id) === selectedSiteId);
-    if (!site) { selectedModal?.close(); return; }
-    const relevant = latest.tuners.filter((tuner) => (site.tuners || []).map(String).includes(String(tuner.id)));
-    const signature = JSON.stringify([site, relevant, currentState()]);
-    if (signature === selectedSiteSignature) return;
-    selectedSiteSignature = signature;
-    const openKeys = new Set([...selectedSiteHost.querySelectorAll('details[open]')].map((item) => item.dataset.allocationDisclosure));
-    const focusedDisclosure = selectedSiteHost.contains(document.activeElement) ?
+  const updateTunerDetail = () => {
+    if (!selectedTunerHost?.isConnected || !latest) return;
+    const tuner = latest.tuners.find((item) => String(item.id) === selectedTunerId);
+    const site = latest.sites.find((item) => String(item.id) === selectedTunerSiteId);
+    if (!tuner || !site) { selectedModal?.close(); return; }
+    const signature = JSON.stringify([tuner, site.frequencies, currentState()]);
+    if (signature === selectedTunerSignature) return;
+    selectedTunerSignature = signature;
+    const openKeys = new Set([...selectedTunerHost.querySelectorAll('details[open]')].map((item) => item.dataset.allocationDisclosure));
+    const focusedDisclosure = selectedTunerHost.contains(document.activeElement) ?
       document.activeElement.closest('details')?.dataset.allocationDisclosure : null;
-    const replacement = tunerAllocationSiteDetails(site, latest, currentState());
+    const replacement = tunerAllocationTunerDetails(tuner, site, currentState());
     replacement.querySelectorAll('details').forEach((item) => { item.open = openKeys.has(item.dataset.allocationDisclosure); });
-    selectedSiteHost.replaceChildren(replacement);
+    selectedTunerHost.replaceChildren(replacement);
     if (focusedDisclosure) selectedModal?.focus([...replacement.querySelectorAll('details')]
       .find((item) => item.dataset.allocationDisclosure === focusedDisclosure)?.querySelector('summary'));
   };
-  const openSite = (site) => {
-    selectedSiteId = String(site.id);
-    selectedSiteSignature = null;
-    selectedSiteHost = node('div');
-    selectedSiteHost.append(tunerAllocationSiteDetails(site, latest, currentState()));
-    selectedModal = openReadOnlyModal(site.name || site.channelName || 'Channel details', selectedSiteHost, {
-      id: 'tuner-allocation-site', className: 'tuner-allocation-modal',
-      returnFocusSelector: `.tuner-allocation-site-details[data-site-id="${CSS.escape(String(site.id))}"]`,
-      onClose: () => { selectedSiteId = null; selectedSiteHost = null; selectedModal = null; selectedSiteSignature = null; }
+  const openTuner = (tuner, site, focusKey) => {
+    selectedTunerId = String(tuner.id);
+    selectedTunerSiteId = String(site.id);
+    selectedTunerSignature = null;
+    selectedTunerHost = node('div');
+    selectedTunerHost.append(tunerAllocationTunerDetails(tuner, site, currentState()));
+    selectedModal = openReadOnlyModal(tuner.name || 'Tuner details', selectedTunerHost, {
+      id: 'tuner-allocation-tuner', className: 'tuner-allocation-modal',
+      returnFocusSelector: `.tuner-allocation-site[data-site-id="${CSS.escape(String(site.id))}"] [data-allocation-focus="${CSS.escape(focusKey)}"]`,
+      onClose: () => { selectedTunerId = null; selectedTunerSiteId = null; selectedTunerHost = null; selectedModal = null; selectedTunerSignature = null; }
     });
   };
-  const sitesController = {};
-  const coverageActions = sectionActionHost();
-  const historyActions = sectionActionHost();
-  const siteColumns = [
-    { id: 'site', label: 'Site / channel', className: 'ui-record-title', render: (site) => {
-      const label = node('div', 'ui-heading-group ui-heading-group-quiet');
-      label.append(node('strong', '', site.name || site.channelName || 'Unknown channel'));
-      if (site.systemName) label.append(node('small', 'muted', site.systemName));
-      return label;
-    } },
-    { id: 'work', label: 'Receiving', render: (site) => tunerAllocationSiteWork(site.status) },
-    { id: 'coverage', label: 'Current coverage', render: (site) => tunerAllocationCoverage(site, true) },
-    { id: 'action', label: '', fullLabel: 'View receiving windows', essential: true, className: 'ui-record-action', render: (site) => {
-      const button = node('button', 'ui-button ui-button-secondary tuner-allocation-site-details', 'Details');
-      button.type = 'button';
-      button.dataset.siteId = String(site.id);
-      button.setAttribute('aria-label', `Details for ${site.name || site.channelName || 'channel'}`);
-      button.addEventListener('click', () => openSite(site));
-      return button;
-    } }
-  ];
-  const sites = table([], siteColumns, 'Loading tuner allocation…', {
-    type: 'tuner-allocation-sites', layoutMenuHost: coverageActions, controller: sitesController, sortable: false, recordList: true,
-    tableClass: 'ui-record-list-compact tuner-allocation-site-list',
-    recordListOrder: ['site', 'action', 'work', 'coverage'], rowKey: (site) => site.id
+  const coveragePanel = node('div', 'tuner-allocation-coverage');
+  coveragePanel.append(node('p', 'ui-section-note', 'Loading tuner allocation…'));
+  const coverageSiteFilter = node('select', 'ui-select tuner-allocation-site-filter');
+  coverageSiteFilter.setAttribute('aria-label', 'Site / channel');
+  const coverageFilter = formField('Site / channel', coverageSiteFilter);
+  coverageFilter.hidden = true;
+  const renderCoverage = () => {
+    if (!latest) return;
+    const site = latest.sites.find((item) => String(item.id) === coverageSiteId) || latest.sites[0];
+    coverageSiteId = site ? String(site.id) : null;
+    coverageSiteFilter.value = coverageSiteId || '';
+    const signature = JSON.stringify([site, latest.tuners]);
+    if (signature === coverageSignature) return;
+    if (!site) {
+      coveragePanel.replaceChildren(node('p', 'ui-section-note', 'No receiving channels are running.'));
+      coverageSignature = signature;
+      return;
+    }
+    const previous = coveragePanel.firstElementChild;
+    const sameSite = previous?.dataset.siteId === coverageSiteId;
+    const openKeys = new Set(sameSite ? [...previous.querySelectorAll('details[open]')].map((item) => item.dataset.allocationDisclosure) : []);
+    const focused = sameSite && previous.contains(document.activeElement) ? document.activeElement : null;
+    const focusedKey = focused?.dataset.allocationFocus;
+    const focusedDisclosure = focused?.closest('details')?.dataset.allocationDisclosure;
+    const state = mapStates.get(coverageSiteId) || { highlight: null };
+    mapStates.set(coverageSiteId, state);
+    if (!(site.frequencies || []).some((item) => !item.covered && Number(item.frequencyHz) === state.highlight)) state.highlight = null;
+    const replacement = tunerAllocationSiteMap(site, latest, state, openTuner);
+    replacement.querySelectorAll('details').forEach((item) => { item.open = openKeys.has(item.dataset.allocationDisclosure); });
+    coveragePanel.replaceChildren(replacement);
+    replacement.drawPlots();
+    coverageSignature = signature;
+    if (focusedKey) replacement.querySelector(`[data-allocation-focus="${CSS.escape(focusedKey)}"]`)?.focus({ preventScroll: true });
+    else if (focusedDisclosure) [...replacement.querySelectorAll('details')]
+      .find((item) => item.dataset.allocationDisclosure === focusedDisclosure)?.querySelector('summary')?.focus({ preventScroll: true });
+  };
+  coverageSiteFilter.addEventListener('change', () => {
+    coverageSiteId = coverageSiteFilter.value;
+    coverageSignature = null;
+    renderCoverage();
   });
-  const coveragePanel = section('Current coverage', sites, coverageActions);
+  const chartResize = new ResizeObserver(() => coveragePanel.firstElementChild?.drawPlots?.());
+  chartResize.observe(coveragePanel);
   const historyController = {};
+  const historyActions = sectionActionHost();
   const historyColumns = [
     { id: 'time', label: 'Time', render: (decision) => stackedDateTime(decision.lastTimestamp || decision.timestamp) || '—' },
     { id: 'site', label: 'Site / tuner', render: (decision) => {
@@ -32238,8 +32502,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       button.dataset.decisionId = String(decision.decisionId);
       button.setAttribute('aria-label', `Details for tuner decision ${decision.decisionId}`);
       button.addEventListener('click', () => {
-        selectedSiteId = null;
-        selectedSiteHost = null;
+        selectedTunerId = null;
+        selectedTunerHost = null;
         // Freeze this record while the live windows and history continue to update behind it.
         const captured = structuredClone(decision);
         selectedModal = openReadOnlyModal(tunerAllocationOutcome(decision.outcome), tunerAllocationDecisionDetails(captured), {
@@ -32271,12 +32535,14 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   const activate = (id) => {
     activeTab = id;
     for (const [key, panel] of Object.entries(panels)) panel.hidden = key !== id;
+    coverageFilter.hidden = id !== 'coverage' || (latest?.sites.length || 0) < 2;
+    if (id === 'coverage') coveragePanel.firstElementChild?.drawPlots?.();
     [...navigation.children].forEach((button) => {
       button.classList.toggle('active', button.dataset.view === id);
       button.setAttribute('aria-pressed', String(button.dataset.view === id));
     });
   };
-  for (const [id, label] of [['coverage', 'Current coverage'], ['history', 'Decision history']]) {
+  for (const [id, label] of [['coverage', 'Coverage'], ['history', 'Decision history']]) {
     const button = node('button', 'ui-segmented-option', label);
     button.type = 'button';
     button.dataset.view = id;
@@ -32287,7 +32553,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   const toolbar = node('div', 'ui-toolbar');
   toolbar.append(navigation, status);
   const failure = node('div');
-  workspace.append(toolbar, failure, coveragePanel, historyPanel);
+  workspace.append(toolbar, failure, coverageFilter, coveragePanel, historyPanel);
   content.append(workspace);
   const renderHistory = () => {
     if (!latest) return;
@@ -32309,8 +32575,18 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     if (latest && latest.sessionId !== next.sessionId) {
       selectedModal?.close();
       historyPage = 0;
+      coverageSignature = null;
+      clearMapStates();
     }
     latest = next;
+    const siteIds = new Set(latest.sites.map((site) => String(site.id)));
+    for (const [id, state] of mapStates) {
+      if (!siteIds.has(id)) {
+        cleanupTableLayoutMenu(state.frequencyController);
+        state.frequencyController?.widthObserver?.disconnect();
+        mapStates.delete(id);
+      }
+    }
     failure.replaceChildren();
     const choices = new Map(latest.sites.map((site) => [String(site.id), site.name || site.channelName || 'Unknown channel']));
     latest.decisions.forEach((decision) => {
@@ -32330,12 +32606,22 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       siteFilter.value = choices.has(saved) ? saved : '';
       siteFilter.dataset.choiceSignature = choiceSignature;
     }
-    sitesController.setEmptyText('No receiving channels are running.', { render: false });
+    const coverageChoices = JSON.stringify(latest.sites.map((site) => [site.id, site.name, site.systemName]));
+    if (coverageSiteFilter.dataset.choiceSignature !== coverageChoices) {
+      coverageSiteFilter.replaceChildren(...latest.sites.map((site) => {
+        const duplicate = latest.sites.some((other) => other.id !== site.id && other.name === site.name);
+        const option = node('option', '', `${site.name || site.channelName || 'Unknown channel'}${duplicate && site.systemName ? ` · ${site.systemName}` : ''}`);
+        option.value = String(site.id);
+        return option;
+      }));
+      coverageSiteFilter.dataset.choiceSignature = coverageChoices;
+    }
+    coverageFilter.hidden = activeTab !== 'coverage' || latest.sites.length < 2;
     historyController.setEmptyText('No tuner moves or failed calls have been recorded yet.', { render: false });
-    sitesController.reconcileRows(latest.sites);
+    renderCoverage();
     renderHistory();
     syncPause();
-    updateSiteDetail();
+    updateTunerDetail();
   };
   const refresh = async () => {
     if (inFlight || stopped || paused || document.hidden || !renderIsCurrent(renderContext) || !workspace.isConnected) return;
@@ -32360,9 +32646,12 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         latest = null;
         paused = false;
         pause.disabled = true;
-        sitesController.setEmptyText('No tuner information is available.', { render: false });
         historyController.setEmptyText('No tuner decisions are available.', { render: false });
-        sitesController.replaceRows([]);
+        coveragePanel.replaceChildren(node('p', 'ui-section-note', 'No tuner information is available.'));
+        coverageFilter.hidden = true;
+        coverageSiteFilter.replaceChildren();
+        coverageSignature = null;
+        clearMapStates();
         historyController.replaceRows([]);
         historyPager.replaceChildren();
         siteFilter.replaceChildren();
@@ -32373,12 +32662,12 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       }
       pollingError = true;
       if (!latest) {
-        sitesController.setEmptyText('No tuner information is available.');
+        coveragePanel.replaceChildren(node('p', 'ui-section-note', 'No tuner information is available.'));
         historyController.setEmptyText('No tuner decisions are available.');
       }
       failure.replaceChildren(node('div', 'error', 'Tuner allocation is unavailable. Reconnect to the receiver or reload to try again.'));
       syncPause();
-      updateSiteDetail();
+      updateTunerDetail();
     } finally {
       renderContext.signal.removeEventListener('abort', abort);
       if (requestController === controller) requestController = null;
@@ -32390,7 +32679,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     paused = !paused;
     if (paused) requestController?.abort();
     syncPause();
-    updateSiteDetail();
+    updateTunerDetail();
     if (!paused) void refresh();
   });
   const synchronizeVisibility = () => {
@@ -32401,6 +32690,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   renderContext.signal.addEventListener('abort', () => {
     requestController?.abort();
     selectedModal?.close();
+    chartResize.disconnect();
+    clearMapStates();
     document.removeEventListener('visibilitychange', synchronizeVisibility);
   }, { once: true });
   let initialRequest = true;
@@ -32424,7 +32715,7 @@ function adminSettingsGroups() {
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Monitor how duplicate calls are matched.' },
       { id: 'tuner-allocation', label: 'Tuner allocation', icon: 'tuner', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'See current tuner coverage and why tuners move or calls cannot start.' }
+        description: 'See where each tuner is listening and which frequencies fit.' }
     ] },
     { label: 'Audio & recordings', items: [
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,

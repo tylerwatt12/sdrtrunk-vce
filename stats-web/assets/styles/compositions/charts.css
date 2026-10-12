@@ -148,3 +148,43 @@
 .chart-window-control { fill: var(--chart-grant); }
 .chart-window-call { fill: var(--chart-call); }
 .chart-window-request { fill: var(--warning); }
+
+/* Compact rows share one frequency ruler without scrolling the page. */
+.chart-frequency-windows.chart-frequency-window-row {
+  min-width: 0;
+}
+
+.chart-window-known-dot { fill: var(--muted); }
+.chart-window-outside { fill: var(--warning); }
+.chart-window-outside-guide {
+  stroke: var(--warning);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+.chart-window-highlight {
+  stroke: var(--accent);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.chart-window-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--font-size-secondary);
+}
+
+.chart-window-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chart-window-legend svg {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: none;
+}

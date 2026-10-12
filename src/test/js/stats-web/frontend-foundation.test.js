@@ -1346,7 +1346,8 @@ async function main() {
   assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
   const tunerAllocationRenderer = functionBinding(appSource, 'renderAdminTunerAllocation');
-  assert.match(tunerAllocationRenderer, /type: 'tuner-allocation-sites'/);
+  assert.match(tunerAllocationRenderer, /tunerAllocationSiteMap\(site, latest, state, openTuner\)/);
+  assert.match(functionBinding(appSource, 'tunerAllocationSiteMap'), /type: 'tuner-allocation-frequencies'/);
   assert.match(tunerAllocationRenderer, /type: 'tuner-allocation-decisions'/);
   assert.match(tunerAllocationRenderer, /recordList: true/);
   assert.match(tunerAllocationRenderer, /sortable: false/);
