@@ -420,6 +420,10 @@ document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+const modalSize = parameters.get('modal-size');
+if (['small', 'medium'].includes(modalSize)) {
+  document.querySelector('.visual-modal-example .read-only-modal')?.classList.add(`modal-size-${modalSize}`);
+}
 
 if (view === 'setup-guide') {
   const example = document.querySelector('.visual-channels-example');

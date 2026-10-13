@@ -556,7 +556,7 @@ export function createAlertsWorkspace(deps) {
     }
     renderTiming();
     const title = input(draft.title_template, 'text', true, 128);
-    const text = node('textarea', 'ui-textarea'); text.value = draft.body_template; text.required = true; text.maxLength = 2048;
+    const text = node('textarea', 'ui-textarea'); text.value = draft.body_template; text.required = true; text.maxLength = 2048; text.rows = 4;
     title.addEventListener('input', () => { draft.title_template = title.value; });
     text.addEventListener('input', () => { draft.body_template = text.value; });
     const preview = node('aside', 'alerts-notification-preview');
@@ -585,7 +585,7 @@ export function createAlertsWorkspace(deps) {
     tabScroll.append(tabs);
     form.append(tabScroll, ...panels.values(), status, modalFooter(cancel, save));
     modal = openReadOnlyModal(existing ? 'Edit alert rule' : 'Create alert rule', form,
-      { id: 'alert-rule-editor', className: 'modal-size-small', cleanup: () => identityPickers.forEach(picker => picker.close()) });
+      { id: 'alert-rule-editor', className: 'modal-size-medium', cleanup: () => identityPickers.forEach(picker => picker.close()) });
     const localModal = modal;
     await localModal.ready;
     workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal });
