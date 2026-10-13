@@ -53,6 +53,35 @@ async function openLive(page, theme) {
   return { fixture, controls, latest, send, acknowledge: value => { autoAcknowledge = value; } };
 }
 
+test('Live channels resume on visibility without a focus event', async ({ page }, testInfo) => {
+  const app = await openLive(page, 'light');
+  const signal = page.locator('.channels-live-table tr[data-id="source-0"] [data-column="signal"]');
+  const update = (revision, signal_dbfs) => app.send(1, 'activity_delta', {
+    table_id: 'conventional', operation: 'upsert', base_revision: revision - 1, revision,
+    rows: [{ ...snapshot.tables[0].rows[0], signal_dbfs }]
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await update(2, -40);
+  await expect(signal).toContainText('-40.0');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await update(3, -60);
+  await expect(signal).toContainText('-40.0');
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  // The hidden channel subscription resumes with the server's current snapshot.
+  await app.send(1, 'snapshot', { revision: 3, tables: [{ ...snapshot.tables[0],
+    rows: [{ ...snapshot.tables[0].rows[0], signal_dbfs: -60 }, snapshot.tables[0].rows[1]] }] });
+  await expect(signal).toContainText('-60.0');
+  await page.locator('.channels-live-table').screenshot({ path: testInfo.outputPath('live-visible-updates.png') });
+  expect(app.fixture.pageErrors).toEqual([]);
+  expect(app.fixture.unexpected).toEqual([]);
+});
+
 test('High-rate Live messages retain ordering, capture, row focus and bounded presentation work', async ({ page }, testInfo) => {
   test.setTimeout(40_000);
   const baseline = process.env.SDRTRUNK_LIVE_CPU_BASELINE;

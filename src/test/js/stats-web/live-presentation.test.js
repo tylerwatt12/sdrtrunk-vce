@@ -481,16 +481,20 @@ assert.match(renderRow, /'ArrowDown', 'ArrowUp', 'Home', 'End'/,
   assert.equal(frames.size, 1);
   flush();
   assert.deepEqual(paints, [[['channel', 499], ['other', 1]]]);
+  // A visible page keeps updating even when another window takes focus.
   update('channel', 500);
-  listeners.get('window/blur')();
-  assert.equal(frames.size, 0);
-  for (let index = 501; index < 1000; index += 1) update('channel', index);
-  assert.equal(model.get('channel'), 999);
-  assert.equal(frames.size, 0);
+  listeners.get('window/blur')?.();
+  assert.equal(frames.size, 1);
+  flush();
+  assert.deepEqual(paints.at(-1), [['channel', 500]]);
+  update('channel', 501);
   document.hidden = true;
   listeners.get('document/visibilitychange')();
-  listeners.get('window/focus')();
   assert.equal(frames.size, 0);
+  for (let index = 502; index < 1000; index += 1) update('channel', index);
+  assert.equal(model.get('channel'), 999);
+  assert.equal(frames.size, 0);
+  // Returning visibility resumes the latest state without a focus event or click.
   document.hidden = false;
   listeners.get('document/visibilitychange')();
   flush();
@@ -504,7 +508,7 @@ assert.match(renderRow, /'ArrowDown', 'ArrowUp', 'Home', 'End'/,
   scheduler.queue('channel');
   assert.equal(frames.size, 0);
   assert.equal(listeners.size, 0);
-  assert.equal(paints.length, 2);
+  assert.equal(paints.length, 3);
 }
 
 const details = functionSource('liveEventsPanel');

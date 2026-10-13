@@ -18719,27 +18719,22 @@ function livePresentedTableRows(tableValue, presentation) {
 function createLivePresentationScheduler(paint) {
   const pending = new Set();
   let frame = null;
-  let focused = true;
   let closed = false;
   const cancel = () => {
     if (frame !== null) window.cancelAnimationFrame(frame);
     frame = null;
   };
   const schedule = () => {
-    if (closed || !focused || document.hidden || frame !== null || !pending.size) return;
+    if (closed || document.hidden || frame !== null || !pending.size) return;
     frame = window.requestAnimationFrame(() => {
       frame = null;
-      if (closed || !focused || document.hidden) return;
+      if (closed || document.hidden) return;
       const keys = [...pending];
       pending.clear();
       paint(keys);
     });
   };
-  const onBlur = () => { focused = false; cancel(); };
-  const onFocus = () => { focused = true; schedule(); };
   const onVisibility = () => { if (document.hidden) cancel(); else schedule(); };
-  window.addEventListener('blur', onBlur);
-  window.addEventListener('focus', onFocus);
   document.addEventListener('visibilitychange', onVisibility);
   return {
     queue(key) { if (!closed) { pending.add(key); schedule(); } },
@@ -18748,8 +18743,6 @@ function createLivePresentationScheduler(paint) {
       closed = true;
       cancel();
       pending.clear();
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     }
   };
