@@ -12,6 +12,7 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -23,6 +24,7 @@ import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.VoiceFrameFingerprint;
+import io.github.dsheirer.audio.tone.DecodedPagingToneMessage;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
@@ -33,11 +35,15 @@ import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HeaderData;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.protocol.Protocol;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import jmbe.iface.IAudioCodec;
 import jmbe.iface.IAudioWithMetadata;
 import org.junit.jupiter.api.AfterEach;
@@ -155,6 +161,119 @@ class P25P1AudioModuleTest
         for(boolean encrypted: List.of(false, true))
         {
             checkImbeFingerprints(encrypted);
+        }
+    }
+
+    @Test
+    void preservesRawImbeLevelsForClearAndDecryptedFrames() throws Exception
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            float[] raw = new float[160];
+            float[] pattern = {0.75f, -0.8f, 0.2f, -0.35f, 0.0f, -0.0f};
+
+            for(int index = 0; index < raw.length; index++)
+            {
+                raw[index] = pattern[index % pattern.length];
+            }
+
+            TestAudioCodec codec = new TestAudioCodec(raw);
+            P25P1AudioModule module = new P25P1AudioModule(new UserPreferences(), AliasList.empty("gain"))
+            {
+                @Override
+                protected boolean hasAudioCodec()
+                {
+                    return true;
+                }
+
+                @Override
+                public IAudioCodec getAudioCodec()
+                {
+                    return codec;
+                }
+            };
+            List<AudioCallEvent> events = new ArrayList<>();
+            module.setAudioCallEventListener(events::add);
+
+            try
+            {
+                module.getDecoderStateListener().receive(new DecoderStateEvent(this,
+                    DecoderStateEvent.Event.START, encrypted ? State.ENCRYPTED : State.CALL));
+                module.receive(encryptedHdu(1_000L, encrypted ? 0x84 : 0x80, 0, 56_132, 1));
+
+                if(encrypted)
+                {
+                    Field decryptor = P25P1AudioModule.class.getDeclaredField("mVoiceFrameDecryptor");
+                    decryptor.setAccessible(true);
+                    decryptor.set(module, new FingerprintTestDecryptor(18));
+                }
+
+                module.receive(new LDU1Message(new CorrectedBinaryMessage(1_568), 0x123, 1_180L));
+                List<AudioCallEvent> frames = events.stream()
+                    .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+                assertEquals(9, frames.size());
+
+                for(int index = 0; index < frames.size(); index++)
+                {
+                    assertArrayEquals(raw, frames.get(index).audioFrame());
+                    assertEquals(160, frames.get(index).audioFrame().length);
+                    assertEquals(1_020L + index * 20L, frames.get(index).voiceFrameTimestamp());
+                }
+
+                assertArrayEquals(raw, codec.mLastDecodedSamples);
+            }
+            finally
+            {
+                module.dispose();
+            }
+        }
+    }
+
+    @Test
+    void publishesTypedReceiverToneMessageWithoutAnyAudioCallConsumer() throws Exception
+    {
+        float[] raw = new float[160];
+        for(int index = 0; index < raw.length; index++)
+            raw[index] = (float)(0.1 * Math.sin(2 * Math.PI * 800 * index / 8000));
+        IAudioCodec codec = new TestAudioCodec(raw);
+        P25P1AudioModule module = new P25P1AudioModule(new UserPreferences(), AliasList.empty("tone"))
+        {
+            @Override
+            protected boolean hasAudioCodec() { return true; }
+
+            @Override
+            public IAudioCodec getAudioCodec() { return codec; }
+        };
+        CountDownLatch detected = new CountDownLatch(1);
+        AtomicReference<DecodedPagingToneMessage> message = new AtomicReference<>();
+        AtomicReference<String> deliveryThread = new AtomicReference<>();
+        module.setMessageListener(value -> {
+            if(value instanceof DecodedPagingToneMessage tone)
+            {
+                message.set(tone);
+                deliveryThread.set(Thread.currentThread().getName());
+                detected.countDown();
+            }
+        });
+
+        try
+        {
+            module.getDecoderStateListener().receive(new DecoderStateEvent(this,
+                DecoderStateEvent.Event.START, State.CALL));
+            module.receive(encryptedHdu(1_000L, 0x80, 0, 56_132, 1));
+            for(int index = 0; index < 5; index++)
+                module.receive(new LDU1Message(new CorrectedBinaryMessage(1_568), 0x123, 1_180L + index * 180L));
+            module.getDecoderStateListener().receive(new DecoderStateEvent(this,
+                DecoderStateEvent.Event.END, State.IDLE));
+            assertTrue(detected.await(3, TimeUnit.SECONDS));
+            assertEquals(Protocol.APCO25, message.get().getProtocol());
+            assertEquals(800.0, message.get().toneIdentifier().getValue().getFirst().frequencyHz(), 1.0);
+            assertEquals(1020, message.get().firstVoiceFrameTimestamp());
+            assertEquals("p25-paging-tone-observer", deliveryThread.get());
+        }
+        finally
+        {
+            module.dispose();
         }
     }
 
@@ -298,6 +417,19 @@ class P25P1AudioModuleTest
 
     private static final class TestAudioCodec implements IAudioCodec
     {
+        private final float[] mSamples;
+        private float[] mLastDecodedSamples;
+
+        private TestAudioCodec()
+        {
+            this(new float[160]);
+        }
+
+        private TestAudioCodec(float[] samples)
+        {
+            mSamples = samples.clone();
+        }
+
         @Override
         public String getCodecName()
         {
@@ -313,12 +445,14 @@ class P25P1AudioModuleTest
         @Override
         public IAudioWithMetadata getAudioWithMetadata(byte[] frame)
         {
+            mLastDecodedSamples = mSamples.clone();
+            float[] audio = mLastDecodedSamples;
             return new IAudioWithMetadata()
             {
                 @Override
                 public float[] getAudio()
                 {
-                    return new float[160];
+                    return audio;
                 }
 
                 @Override

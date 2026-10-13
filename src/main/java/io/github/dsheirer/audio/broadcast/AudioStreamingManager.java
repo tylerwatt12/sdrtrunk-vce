@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.dsp.gain.P25AudioGain;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -226,7 +227,9 @@ public class AudioStreamingManager
 
             try
             {
-                mRecordingWriter.write(completedAudioCall, path, mUserPreferences, identifierCollection);
+                //Gain is applied on this encoding worker; raw PCM and frozen delivery evidence remain unchanged.
+                mRecordingWriter.write(P25AudioGain.forEncoding(completedAudioCall), path, mUserPreferences,
+                    identifierCollection);
 
                 if(!Files.isRegularFile(path) || Files.size(path) <= 0)
                 {

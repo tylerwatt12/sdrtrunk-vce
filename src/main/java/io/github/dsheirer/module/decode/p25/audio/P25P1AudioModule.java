@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
@@ -33,11 +34,12 @@ import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptor;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.IDecoderStateEventListener;
 import io.github.dsheirer.channel.state.State;
-import io.github.dsheirer.dsp.gain.NonClippingGain;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.IMessageProvider;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.EncryptionSyncParameters;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
@@ -53,7 +55,7 @@ import jmbe.iface.IAudioWithMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEventListener
+public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEventListener, IMessageProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P1AudioModule.class);
     /** Each IMBE codeword represents 20 ms of speech (TIA-102-BAAA-A, 8.2.2). */
@@ -67,7 +69,6 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
 
     private DecoderStateEventListener mDecoderStateEventListener = new DecoderStateEventListener();
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
-    private NonClippingGain mGain = new NonClippingGain(5.0f, 0.95f);
     private final Deque<LDUMessage> mPendingEncryptionLdus =
         new ArrayDeque<>(MAX_PENDING_ENCRYPTION_LDUS);
     private final Deque<LDUMessage> mDeferredClearAudioLdus =
@@ -79,6 +80,9 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private long mLastAudioTimestamp = Long.MIN_VALUE;
     private long mPendingEncryptedStartTimestamp = Long.MIN_VALUE;
     private String mLastAudioSegmentId;
+    private final P25PagingToneService.Registration mPagingToneRegistration =
+        P25PagingToneService.getInstance().register();
+    private volatile Listener<AudioCallEvent> mAudioCallListener;
 
     public P25P1AudioModule(UserPreferences userPreferences, AliasList aliasList)
     {
@@ -91,6 +95,48 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
             .getVoiceDecryptionModulePreference().getModuleManager());
+        //One immutable event is shared with the normal audio owner and the bounded tone observer.
+        super.setAudioCallEventListener(this::observeAudioCallEvent);
+    }
+
+    private void observeAudioCallEvent(AudioCallEvent event)
+    {
+        mPagingToneRegistration.receive(event);
+        Listener<AudioCallEvent> listener = mAudioCallListener;
+        if(listener != null) listener.receive(event);
+    }
+
+    @Override
+    public void setAudioCallEventListener(Listener<AudioCallEvent> listener)
+    {
+        mAudioCallListener = listener;
+    }
+
+    @Override
+    public void removeAudioCallEventListener()
+    {
+        mAudioCallListener = null;
+    }
+
+    @Override
+    public void setMessageListener(Listener<IMessage> listener)
+    {
+        mPagingToneRegistration.setMessageListener(listener);
+    }
+
+    @Override
+    public void removeMessageListener()
+    {
+        mPagingToneRegistration.setMessageListener(null);
+    }
+
+    @Override
+    public void dispose()
+    {
+        mPagingToneRegistration.close();
+        mAudioCallListener = null;
+        super.removeAudioCallEventListener();
+        super.dispose();
     }
 
     @Override
@@ -120,6 +166,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     @Override
     public void reset()
     {
+        mPagingToneRegistration.resetUnfinishedCall();
         MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
 
         if(currentAudioCall != null)
@@ -543,7 +590,8 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                 IAudioCodec codec = getAudioCodec();
                 IAudioWithMetadata audioWithMetadata = codec.getAudioWithMetadata(frame);
                 long correctedFingerprint = getCorrectedVoiceFrameFingerprint(codec);
-                float[] audio = mGain.apply(audioWithMetadata.getAudio());
+                //Preserve raw decoder levels for ML input and apply presentation gain only after call completion.
+                float[] audio = audioWithMetadata.getAudio();
                 addAudio(audio, getVoiceFrameQuality(audioWithMetadata), timestamp, voiceFrameFingerprint,
                     correctedFingerprint);
                 mLastAudioTimestamp = timestamp;
@@ -602,7 +650,8 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                 IAudioCodec codec = getAudioCodec();
                 IAudioWithMetadata audioWithMetadata = codec.getAudioWithMetadata(decryptedFrame);
                 long correctedFingerprint = getCorrectedVoiceFrameFingerprint(codec);
-                float[] audio = mGain.apply(audioWithMetadata.getAudio());
+                //Preserve raw decoder levels for ML input and apply presentation gain only after call completion.
+                float[] audio = audioWithMetadata.getAudio();
                 addAudio(audio, getVoiceFrameQuality(audioWithMetadata), timestamp, voiceFrameFingerprint,
                     correctedFingerprint);
                 mLastAudioTimestamp = timestamp;

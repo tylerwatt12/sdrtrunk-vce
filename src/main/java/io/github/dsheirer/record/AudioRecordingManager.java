@@ -20,6 +20,7 @@
 package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.dsp.gain.P25AudioGain;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -208,6 +209,8 @@ public class AudioRecordingManager
 
                 try
                 {
+                    //A worker-only encoding view keeps the elected raw PCM available for ML and tone evidence.
+                    CompletedAudioCall encodingCall = P25AudioGain.forEncoding(completedAudioCall);
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
                         BasicRecordingContract.nextPath(getRecordingBasePath(),
                             completedAudioCall.recordingIdentifierCollection(), recordFormat, writerTimestamp,
@@ -225,7 +228,7 @@ public class AudioRecordingManager
                     {
                         try
                         {
-                            mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
+                            mRecordingWriter.write(encodingCall, path, recordFormat, mUserPreferences);
                             break;
                         }
                         catch(FileAlreadyExistsException collision)

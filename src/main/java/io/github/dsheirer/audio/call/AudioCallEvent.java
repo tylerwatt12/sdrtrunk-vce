@@ -86,6 +86,12 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
         return audioFrame != null ? audioFrame.clone() : null;
     }
 
+    /** Primitive payload size for bounded observer handoffs, without another PCM copy on the decoder thread. */
+    public int audioFrameSampleCount()
+    {
+        return audioFrame != null ? audioFrame.length : 0;
+    }
+
     /**
      * Coordinator-only read view of the frame owned by this immutable event.  Keeping this package-private lets the
      * asynchronous handoff transfer the producer's single defensive copy without cloning every frame a second time.

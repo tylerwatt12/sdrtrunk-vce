@@ -76,6 +76,62 @@ class AudioRecordingManagerTest
     Path mTemporaryFolder;
     private RecordingMode mOriginalMode;
 
+    @Test
+    void appliesImbeGainOnlyOnWriterViewAndRetainsRawCallForObservers() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<CompletedAudioCall> written = new ArrayList<>();
+        List<CompletedAudioCall> observed = new ArrayList<>();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
+            (call, path, format, userPreferences) -> {
+                written.add(call);
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+            });
+        float[] rawSamples = {0.1f, -0.2f, 0.4f, -0.8f};
+        CompletedAudioCall rawCall = withDecoder(completedCall(81, List.of(rawSamples)), DecoderType.P25_PHASE1);
+        CompletedAudioCall phase2 = withDecoder(completedCall(82, List.of(rawSamples.clone())), DecoderType.P25_PHASE2);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            manager.start();
+            manager.receive(rawCall);
+            manager.receive(phase2);
+            assertTrue(written.isEmpty());
+            manager.stop();
+            assertEquals(2, written.size());
+            assertSame(rawCall, observed.getFirst());
+            assertSame(rawCall.snapshot(), written.getFirst().snapshot());
+            assertSame(rawCall.resolvedPolicy(), written.getFirst().resolvedPolicy());
+            assertEquals(rawCall.getDuration(), written.getFirst().getDuration());
+            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[3]) <= 0.95f);
+            assertEquals(2.0f, written.getFirst().audioBuffers().getFirst()[2] /
+                written.getFirst().audioBuffers().getFirst()[1] * -1.0f, 0.000001f);
+            assertArrayEquals(new float[]{0.1f, -0.2f, 0.4f, -0.8f}, rawSamples);
+            assertSame(phase2, written.get(1));
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    private static CompletedAudioCall withDecoder(CompletedAudioCall call, DecoderType decoderType)
+    {
+        AudioCallSnapshot old = call.snapshot();
+        CallLegSource source = new CallLegSource(decoderType, null, null, null, 0, null, null, null, false);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(old.callId(), old.linkedCallId(), old.aliasList(),
+            old.identifierCollection(), old.broadcastChannels(), old.startTimestamp(), old.lastActivityTimestamp(),
+            old.burstCount(), old.burstGeneration(), old.lastBurstStartTimestamp(), old.lastBurstEndTimestamp(),
+            old.burstActive(), old.complete(), old.encryptionState(), old.recordAudio(), old.recordingMetadata(),
+            old.voiceCallQuality(), old.callLegId(), source, old.callEncryptionEvidence());
+        return new CompletedAudioCall(snapshot, call.audioBuffers());
+    }
+
     @BeforeEach
     void selectClassicByDefault()
     {

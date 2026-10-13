@@ -31,6 +31,7 @@ import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
@@ -42,6 +43,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.message.TimeslotMessage;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -76,7 +78,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -94,6 +98,58 @@ public class AudioStreamingManagerTest
 
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void appliesConventionalImbeGainOnWorkerWithoutMutatingRawStreamingEvidence() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        List<CompletedAudioCall> written = new ArrayList<>();
+        List<CompletedAudioCall> observed = new ArrayList<>();
+        AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
+            preferences, observed::add, scheduler, (call, path, userPreferences, identifiers) -> {
+                written.add(call);
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+            });
+        float[] rawSamples = {0.1f, -0.2f, 0.4f, -0.8f};
+        CompletedAudioCall rawCall = withDecoder(withAudioBuffers(List.of(rawSamples)), DecoderType.P25_CONVENTIONAL);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            preferences.getCallManagementPreference().setPatchGroupStreamingOption(PatchGroupStreamingOption.PATCH_GROUP);
+            manager.start();
+            manager.receive(rawCall);
+            assertTrue(written.isEmpty());
+            manager.new AudioSegmentProcessor().run();
+            assertEquals(1, written.size());
+            assertSame(rawCall, observed.getFirst());
+            assertSame(rawCall.snapshot(), written.getFirst().snapshot());
+            assertSame(rawCall.resolvedPolicy(), written.getFirst().resolvedPolicy());
+            assertEquals(rawCall.getDuration(), written.getFirst().getDuration());
+            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[3]) <= 0.95f);
+            assertArrayEquals(new float[]{0.1f, -0.2f, 0.4f, -0.8f}, rawSamples);
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
+    private static CompletedAudioCall withDecoder(CompletedAudioCall call, DecoderType decoderType)
+    {
+        AudioCallSnapshot old = call.snapshot();
+        CallLegSource source = new CallLegSource(decoderType, null, null, null, 0, null, null, null, false);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(old.callId(), old.linkedCallId(), old.aliasList(),
+            old.identifierCollection(), old.broadcastChannels(), old.startTimestamp(), old.lastActivityTimestamp(),
+            old.burstCount(), old.burstGeneration(), old.lastBurstStartTimestamp(), old.lastBurstEndTimestamp(),
+            old.burstActive(), old.complete(), old.encryptionState(), old.recordAudio(), old.recordingMetadata(),
+            old.voiceCallQuality(), old.callLegId(), source, old.callEncryptionEvidence());
+        return new CompletedAudioCall(snapshot, call.audioBuffers());
+    }
 
     @Test
     public void testPatchGroupStreamingAsPatchGroup()
