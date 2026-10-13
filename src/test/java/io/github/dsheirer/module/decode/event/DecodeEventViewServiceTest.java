@@ -30,7 +30,6 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
-import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -54,6 +53,48 @@ class DecodeEventViewServiceTest
 {
     private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000001";
     private static final long FREQUENCY = 851_012_500L;
+
+    @Test
+    void alertAliasIdsUseObservedLocalNamespaceAndExistingTypedToneCodes() throws Exception
+    {
+        var definition = new io.github.dsheirer.alias.AliasListDefinition("Alerts", io.github.dsheirer.alias.AliasListFamily.P25);
+        definition.setId(1);
+        var aliases = new io.github.dsheirer.alias.AliasList(definition);
+        var groupAlias = new io.github.dsheirer.alias.Alias("Local group"); groupAlias.setId(77);
+        groupAlias.setMatchIdentifier(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 9000)); aliases.addAlias(groupAlias);
+        var radioAlias = new io.github.dsheirer.alias.Alias("Local radio"); radioAlias.setId(78);
+        radioAlias.setMatchIdentifier(new io.github.dsheirer.alias.id.radio.Radio(Protocol.APCO25, 9001)); aliases.addAlias(radioAlias);
+        var model = new AliasModel()
+        {
+            @Override public io.github.dsheirer.alias.AliasList getAliasList(IdentifierCollection ignored) { return aliases; }
+        };
+        try(var service = new DecodeEventViewService(null, model))
+        {
+            var foreign = APCO25FullyQualifiedTalkgroupIdentifier.createTo(9000, 0xBEE00, 0x349, 9000);
+            var facts = new IdentifierCollection(List.of(foreign, APCO25Wacn.create(0xBEE00), APCO25System.create(0x348)));
+            var view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.AFFILIATE, 1000).identifiers(facts).build());
+            assertTrue(view.alertFacts().aliasIds().isEmpty()); assertNull(view.toAliases());
+            var foreignRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(9001, 0xBEE00, 0x349, 9001);
+            facts = new IdentifierCollection(List.of(foreignRadio, APCO25Wacn.create(0xBEE00), APCO25System.create(0x348)));
+            view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL, 1000).identifiers(facts).build());
+            assertTrue(view.alertFacts().aliasIds().isEmpty()); assertNull(view.fromAliases());
+            var workingRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(9001, 0xBEE00, 0x349, 9001);
+            facts = new IdentifierCollection(List.of(workingRadio, APCO25Wacn.create(0xBEE00), APCO25System.create(0x348)));
+            view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL, 1000).identifiers(facts).build());
+            assertEquals(List.of(78L), view.alertFacts().aliasIds());
+            var local = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(9000, 0xBEE00, 0x349, 9000);
+            var tone = io.github.dsheirer.identifier.tone.P25ToneIdentifier.create(new io.github.dsheirer.identifier.tone.ToneSequence(
+                List.of(new io.github.dsheirer.identifier.tone.Tone(io.github.dsheirer.identifier.tone.AmbeTone.DTMF_1, 10))));
+            var dcs = new io.github.dsheirer.identifier.dcs.DCSIdentifier(io.github.dsheirer.module.decode.dcs.DCSCode.N023);
+            facts = new IdentifierCollection(List.of(local, tone, dcs, APCO25Wacn.create(0xBEE00), APCO25System.create(0x348),
+                io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier.create("East")));
+            view = service.view(CONFIGURATION_ID, DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1001).identifiers(facts).build());
+            assertEquals(List.of(77L), view.alertFacts().aliasIds());
+            assertEquals(List.of("DTMF_1"), view.alertFacts().toneCodes()); assertEquals(List.of("N023"), view.alertFacts().dcsCodes());
+            assertEquals("East", view.alertFacts().siteName());
+            assertFalse(new ObjectMapper().valueToTree(view).has("alertFacts"), "Internal alert facts do not enlarge browser payloads");
+        }
+    }
 
     @Test
     void eventCarriesItsOwnCompleteServingIdentityWithoutChangingTheCanonicalParty() throws Exception

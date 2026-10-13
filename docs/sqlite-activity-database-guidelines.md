@@ -536,6 +536,47 @@ The unique `(process_started_at_ms, occurrence_id)` index supports lifecycle ups
 newest-first reads and pruning without another index. Representative-volume tests require `EXPLAIN QUERY PLAN` for
 `ORDER BY id DESC LIMIT 200` to use the primary-key order without a temporary B-tree.
 
+### Topic notification history and delivery
+
+Format 47 adds eight explicit tables for topic/rule configuration, anonymous devices and memberships, temporary
+pairing sessions and their chosen topics, alert messages, and delivery lifecycle. Existing decoded activity rows do
+not identify subscriptions, notification text, guest management ownership, or provider acceptance. These fields
+therefore cannot be reconstructed from retained Activity or packed into unrelated administrator settings.
+
+Receiving callbacks offer bounded references to the existing event observer. That observer detaches typed identity,
+Alias IDs and decoded AMBE/DCS metadata; a separate bounded alert worker matches rules and writes storage.
+The alert queue holds 1,024 observations and drops excess work. No alert database or network work runs on decoder
+callbacks. Rules are capped at 512, topics at 256, devices at 1,000, and expiring enrollment sessions at 512.
+There is one message per emitted logical notification and one delivery per recipient, rather than repeated message
+text in each delivery. Rule name, title, body, topic name and relay recipient IDs are immutable send snapshots.
+
+With R emitted alerts and D selected recipients per alert per hour, writes add R messages and R × D deliveries.
+An idle installation writes no message or delivery rows. The outbox accepts at most 2,000 pending/retry/queued destinations,
+expires unsent work after one hour, and retains the latest 2,000 messages and 20,000 terminal delivery rows.
+Pending/retry/queued rows temporarily protect their messages and complete recipient sets from pruning, so an unknown
+relay POST outcome cannot change an idempotent retry body. This adds at most 2,000 protected older messages and
+their in-flight recipient rows; aggregate protected recipient snapshots are also capped at 20,000 before a new alert
+is admitted. Expiry releases that protection. Push subscription expiry preserves the guest management token and
+topic/quiet preferences behind an explicit device flag, expires unsent work, and excludes that destination until
+fresh subscription material reactivates it. Device deletion cancels work while retaining
+its relay recipient snapshot. Enrollment expiry deletes temporary ownership rows and membership children.
+
+A fresh SQLite sample with 1,000 messages containing 2,048-byte ASCII bodies, 1,000 devices, 1,000 memberships
+and 1,000 pending deliveries added 4,587,520 allocated database bytes. This measures page allocation for that fixture,
+not throughput, WAL growth or a full Unicode worst case. The four-byte UTF-8 bound on message text is under
+11 KiB per message before SQLite and index overhead; message count rather than activity retention controls growth.
+Membership lookup uses `(topic_id,device_id)`, single alert details seek the message primary key, topic history uses
+`(topic_id,created_at_ms,id)`, pending delivery uses its partial due-time index, and relay outcome lookup uses the
+snapshot `(alert_id,remote_device_id)` index. Representative-volume tests check those plans without a temporary
+history sort. Queued relay reconciliation reads one representative per alert in rotating batches of at most 100,
+including when the topic is hidden or push mode changes. It scans only this capped delivery table; a 20,000-row
+fixture completed 11 batches in approximately 65 ms without another index. Attempted retries also participate
+because the relay may have accepted an initial POST whose response was lost; untouched pending work stays local.
+This is a local correctness sample,
+not a latency guarantee. Active relay work prevents topic deletion until its suppression metadata is no longer
+needed. A trusted provider acceptance may supersede a local cancellation, expiry or failure; an observed open
+remains final. Migration tests preserve populated prior state, check the exact fingerprint, and run SQLite integrity.
+
 ## Verification Required
 
 Schema and query changes must include tests that cover:

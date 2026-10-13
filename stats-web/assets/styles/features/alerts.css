@@ -1,0 +1,75 @@
+.alerts-workspace,
+.alerts-content,
+.alerts-form,
+.alerts-conditions,
+.alerts-condition-children,
+.alerts-timeline,
+.alerts-alias-results {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.alerts-topic-grid,
+.alerts-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.alerts-topic-card,
+.alerts-event {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.alerts-condition-group,
+.alerts-topic-choices {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.alerts-condition-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.alerts-condition-value {
+  min-width: 0;
+}
+
+.alerts-tab-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.alerts-check-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+}
+
+.alerts-editor-panel[hidden] {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .alerts-condition-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

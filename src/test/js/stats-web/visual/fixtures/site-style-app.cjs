@@ -67,6 +67,12 @@ const health = { started_at_ms: now - 3600000, generated_at_ms: now,
   summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
   active: [], resolved: [], measurements: [{ id: 'tuners', title: 'Tuners', rows: [
     { severity: 'healthy', scope: 'Airspy R2', label: 'Active channels', value: 1, unit: 'channels' } ] }] };
+const alertTopics = [{ id: 'fire', name: 'Fire activity', description: 'Dispatch and tactical activity.',
+  visible: true, enabled: true, built_in: false, rule_count: 1, subscription_count: 4 },
+{ id: 'administrator-alerts', name: 'Administrator alerts', description: 'Tuner and system health alerts.',
+  visible: false, enabled: true, built_in: true, rule_count: 0, subscription_count: 0 }];
+const alertRules = [{ id: 'fire-rule', name: 'Fire call activity', topic_id: 'fire', trigger: 'call',
+  enabled: true, conditions: { op: 'all', items: [] }, timing: { mode: 'immediate' } }];
 const applicationLogEntries = [
   ['INFO', 'County receiver started', ''],
   ['WARN', 'County tuner temporarily unavailable', ''],
@@ -376,6 +382,13 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
           protocol: 'P25_PHASE1', frequency_hz: 851012500, system_name: systemName, site_name: 'North',
           state: 'CONNECTED', channel_configuration_id: channelId, alias_list_id: 1, enabled: true }] }],
       alias_lists: [list], export_channel_options: [channel] });
+    if (p === '/api/v1/admin/alerts/topics' || p === '/api/v1/admin/alerts/rules') return respond({ revision: 1,
+      topics: alertTopics, rules: alertRules, options: {} });
+    if (p === '/api/v1/admin/alerts/config') return respond({ revision: 1, enabled: false, mode: 'proxy', site_url: '',
+      sender_label: 'VCE installation', registration: { status: 'pending', sender_id: 'fixture-sender' } });
+    if (p === '/api/v1/alerts/topics') return respond({ topics: alertTopics.filter(topic => topic.visible), mode: 'proxy', push_enabled: false });
+    if (p === '/api/v1/alerts/history') return respond({ items: [{ id: 'fire-alert', topic_id: 'fire', title: 'Fire Tactical is active',
+      body: 'Engine 12 transmitted on Fire Tactical.', created_at_ms: now }], total: 1, limit: 30, offset: 0 });
     if (p === '/api/v1/admin/tuners') return respond({ tuners: [operatorTuner({ spectrum_target_id: 'target-a', spectrum_available: true })] });
     if (p === '/api/v1/admin/tuners/rf-analysis') return respond({ tuners: [{ id: 'tuner-a', model: 'airspy', rate_hz: 10000000 }], frequencies_hz: [851012500] });
     if (p === '/api/v1/admin/tuners/tuner-a/browse') return respond({ lease_id: 'fixture-browse',

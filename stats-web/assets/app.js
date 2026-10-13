@@ -1,4 +1,4 @@
-import * as routeFoundation from './core/routes.js?v=9';
+import * as routeFoundation from './core/routes.js?v=10';
 import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
@@ -32,6 +32,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
+import { createAlertsWorkspace } from './features/alerts.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=32';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
@@ -943,8 +944,9 @@ function synchronizeAccessLanding() {
   if (!landing || !shell || !host) return false;
   const pending = document.getElementById('access-pending');
   if (pending) pending.hidden = true;
-  const gated = !accessSessionAvailable ||
-    accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false;
+  const publicTopics = routeFoundation.requestedView(route) === 'topics';
+  const gated = !publicTopics && (!accessSessionAvailable ||
+    accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false);
   const becameGated = gated && !shell.hidden;
   landing.hidden = !gated;
   landing.toggleAttribute('inert', !gated);
@@ -22152,6 +22154,7 @@ function activityIdentityPicker(context, options = {}) {
   const resultsId = `activity-identity-results-${sequenceId}`;
   const statusId = `activity-identity-status-${sequenceId}`;
   const destination = Boolean(options.destination);
+  const allowedKinds = Array.isArray(options.allowedKinds) ? options.allowedKinds : null;
   const pickerKind = destination ? 'destination' : 'source';
   const placeholder = destination ? 'Find talkgroup, radio, or patch' : 'Find ID or alias';
   const searchPlaceholder = destination ? 'Search talkgroup, radio, patch, or alias' :
@@ -22196,10 +22199,17 @@ function activityIdentityPicker(context, options = {}) {
   clear.type = 'button';
   footer.append(clear, status);
 
-  let activeKind = '';
+  let activeKind = allowedKinds?.length === 1 ? allowedKinds[0] : '';
   const committedKey = activityIdentityKey(options.identityKey);
   const committedKind = committedKey ? activityIdentityKindFromKey(committedKey) : options.kind || '';
   let selected = activityIdentityInitialSelection(options.identityKey, options.kind || '', context);
+  if (!selected && options.nativeValue && allowedKinds?.length === 1) {
+    const kind = allowedKinds[0];
+    const id = Number(options.nativeValue);
+    if (Number.isSafeInteger(id) && id >= 0) selected = Object.freeze({ key: '', id,
+      displayId: String(id), alias: '', kind, kindLabel: activityIdentityKindLabel(kind),
+      label: `${activityIdentityKindLabel(kind)} ${id}` });
+  }
   if (!selected && destination && options.kind) {
     const kindLabel = activityIdentityKindLabel(options.kind);
     selected = Object.freeze({ key: '', id: null, displayId: '', alias: '', kind: options.kind,
@@ -22226,8 +22236,8 @@ function activityIdentityPicker(context, options = {}) {
     clear.hidden = !selected;
     notifySelection();
   };
-  const filteredEntries = () => activeKind ?
-    loadedEntries.filter((entry) => entry.kind === activeKind) : loadedEntries;
+  const filteredEntries = () => loadedEntries.filter((entry) =>
+    (!allowedKinds || allowedKinds.includes(entry.kind)) && (!activeKind || entry.kind === activeKind));
   const selectEntry = (entry) => {
     cancelIdentitySearch();
     selected = entry;
@@ -22252,7 +22262,7 @@ function activityIdentityPicker(context, options = {}) {
   const renderResults = (announce = !input.hasAttribute('aria-busy')) => {
     const entries = filteredEntries();
     const controls = [];
-    if (destination && activeKind) {
+    if (destination && activeKind && !options.exactOnly) {
       const kindLabel = activityIdentityKindLabel(activeKind);
       const any = node('button', 'ui-select-list-item activity-identity-result activity-identity-any-kind');
       any.type = 'button';
@@ -22297,7 +22307,7 @@ function activityIdentityPicker(context, options = {}) {
   };
 
   let kindTabs = null;
-  if (destination) {
+  if (destination && !allowedKinds) {
     kindTabs = uiSegmentedControl([
       { value: '', label: 'All' },
       { value: 'talkgroup', label: 'Talkgroups' },
@@ -22319,8 +22329,9 @@ function activityIdentityPicker(context, options = {}) {
       renderResults();
       return [];
     }
-    const radioPath = activityIdentityDirectoryPath(context, 'radio');
-    const groupPath = destination ? activityIdentityDirectoryPath(context, 'talkgroup') : '';
+    const radioPath = !allowedKinds || allowedKinds.includes('radio') ? activityIdentityDirectoryPath(context, 'radio') : '';
+    const groupPath = destination && (!allowedKinds || allowedKinds.includes('talkgroup') || allowedKinds.includes('patch_group')) ?
+      activityIdentityDirectoryPath(context, 'talkgroup') : '';
     if (!radioPath && !groupPath) {
       status.textContent = 'Identity search is unavailable for this activity scope.';
       return [];
@@ -22356,8 +22367,9 @@ function activityIdentityPicker(context, options = {}) {
         const exactRight = String(right.id) === String(query).trim() ? 0 : 1;
         return exactLeft - exactRight || left.alias.localeCompare(right.alias) || left.id - right.id;
       });
-      if (selected?.key) {
-        const resolved = loadedEntries.find((entry) => entry.key === selected.key);
+      if (selected?.key || selected?.id != null) {
+        const resolved = loadedEntries.find((entry) => selected.key ? entry.key === selected.key :
+          entry.id === selected.id && entry.kind === selected.kind);
         if (resolved) {
           selected = resolved;
           updateSelection();
@@ -22462,7 +22474,7 @@ function activityIdentityPicker(context, options = {}) {
   field.append(node('span', 'ui-field-label', options.label || (destination ? 'Destination' : 'Source radio')),
     trigger, panel);
   updateSelection();
-  if (selected?.key) {
+  if (selected?.key || selected?.id != null) {
     pageTimeout(() => {
       if (input.isConnected) void load(String(selected.id), true);
     }, 0);
@@ -29646,6 +29658,26 @@ function renderAdminRemoteLinks(renderContext) {
   content.append(workspace.element);
 }
 
+function alertsWorkspace(renderContext, view) {
+  return createAlertsWorkspace({
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl,
+    section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
+    createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
+    identityPicker: activityIdentityPicker, createId: randomLiveClientId, signal: renderContext.signal, view,
+    selectedTopic: route.get('topic') || '', selectedAlert: route.get('alert') || ''
+  });
+}
+
+function renderPublicAlertTopics() {
+  const renderContext = captureRenderContext();
+  const workspace = alertsWorkspace(renderContext, 'public');
+  if (!beginPage(renderContext, pageHeader('Topics', 'Follow alerts published by this VCE installation'), workspace.element)) {
+    workspace.close();
+    return;
+  }
+  pageConnections.add(workspace);
+}
+
 function renderAdminApplicationLog(renderContext) {
   const workspace = createApplicationLogWorkspace({
     node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton, uiActionButton,
@@ -33109,6 +33141,14 @@ function adminSettingsGroups() {
       { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
+    { label: 'Alerts', items: [
+      { id: 'alert-topics', label: 'Alert topics', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Create topics and choose which alerts are available to listeners.' },
+      { id: 'alert-rules', label: 'Alert rules', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Choose the activity, conditions, and timing that publish alerts to each topic.' },
+      { id: 'push-setup', label: 'Push setup', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Connect notification delivery for devices subscribed to this VCE installation.' }
+    ] },
     { label: 'Activity & storage', items: [
       { id: 'activity', label: 'Activity settings', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose which activity is saved and how long its history is kept.' },
@@ -33207,6 +33247,11 @@ async function renderAdmin() {
     }
   }
   else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
+  else if (['alert-topics', 'alert-rules', 'push-setup'].includes(active)) {
+    const workspace = alertsWorkspace(renderContext, ({ 'alert-topics': 'topics', 'alert-rules': 'rules', 'push-setup': 'setup' })[active]);
+    content.append(workspace.element);
+    pageConnections.add(workspace);
+  }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
     content.append(node('div', 'ui-notice',
@@ -33473,7 +33518,7 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'recordings', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'streaming',
+      !['live', 'topics', 'recordings', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'streaming',
         'tuners', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
@@ -33483,6 +33528,7 @@ async function loadStatus(refreshCurrentView = false) {
 applicationRoutes = routeFoundation.createRegistry({
   dashboard: renderDashboard,
   live: renderLive,
+  topics: renderPublicAlertTopics,
   recordings: () => recordingsFeature.renderSearchPage(),
   map: renderListenMap,
   'network-visualizer': renderP25Visualizer,

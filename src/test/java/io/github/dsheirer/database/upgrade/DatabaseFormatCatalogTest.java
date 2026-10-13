@@ -365,9 +365,9 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void markerlessSharedCurrentFormatIsRefusedWithoutChangingItsSchema() throws Exception
+    void markerlessSharedFormat46IsRefusedWithoutChangingItsSchema() throws Exception
     {
-        Path database = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("markerless-current.sqlite"));
+        Path database = Format46TestDatabase.create(mTemporaryFolder.resolve("markerless-shared-format46.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);

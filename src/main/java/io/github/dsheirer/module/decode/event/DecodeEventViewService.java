@@ -19,6 +19,11 @@ import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.dcs.DCSIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -453,8 +458,10 @@ public class DecodeEventViewService implements AutoCloseable
                            long observationEpoch, DecodeEventSource origin)
     {
         IdentifierCollection identifiers = event.getIdentifierCollection();
-        Parties from = parties(identifiers, Role.FROM);
-        Parties to = parties(identifiers, Role.TO);
+        String servingKey = RadioSystemKey.p25Serving(null,
+            origin != null ? origin.channel().getP25SiteIdentity() : null, identifiers);
+        Parties from = parties(identifiers, Role.FROM, servingKey);
+        Parties to = parties(identifiers, Role.TO, servingKey);
         IChannelDescriptor descriptor = event.getChannelDescriptor();
         Long frequency = sourceFrequency;
 
@@ -473,10 +480,61 @@ public class DecodeEventViewService implements AutoCloseable
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
             event.getProtocol() != null ? event.getProtocol().name() : null,
             from.party(), to.party(), observationEpoch, bounded(channelName), sourceFrequency, origin,
-            RadioSystemKey.p25Broadcast(identifiers));
+            RadioSystemKey.p25Broadcast(identifiers), alertFacts(identifiers, origin));
     }
 
-    private Parties parties(IdentifierCollection collection, Role role)
+    /** Stable Alias IDs and existing decoded tone metadata, detached on this observer worker only. */
+    private AlertFacts alertFacts(IdentifierCollection identifiers, DecodeEventSource origin)
+    {
+        if(identifiers == null) identifiers = new IdentifierCollection();
+        LinkedHashSet<Long> aliases = new LinkedHashSet<>();
+        LinkedHashSet<String> tones = new LinkedHashSet<>();
+        LinkedHashSet<String> dcs = new LinkedHashSet<>();
+        AliasList aliasList = mAliasModel != null ? mAliasModel.getAliasList(identifiers) : null;
+        String servingKey = RadioSystemKey.p25Serving(null,
+            origin != null ? origin.channel().getP25SiteIdentity() : null, identifiers);
+        int examined = 0;
+        for(Identifier<?> identifier: identifiers.getIdentifiers())
+        {
+            if(examined++ >= 64) break;
+            if(aliasList != null)
+            {
+                for(Alias alias: scopedAliases(aliasList, identifier, servingKey))
+                {
+                    if(alias != null && alias.getId() > 0 && aliases.size() < 64) aliases.add(alias.getId());
+                }
+            }
+            if(identifier instanceof ToneIdentifier tone && tone.getValue() != null)
+            {
+                for(var value: tone.getValue().getTones()) if(tones.size() < 64 && value != null) tones.add(value.getAmbeTone().name());
+            }
+            else if(identifier instanceof DCSIdentifier code && code.getValue() != null) dcs.add(code.getValue().name());
+        }
+        Identifier<?> site = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SITE, Role.BROADCAST);
+        Identifier<?> rfss = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.RF_SUBSYSTEM, Role.BROADCAST);
+        String siteId = site != null && site.getValue() instanceof Number number ?
+            (rfss != null && rfss.getValue() instanceof Number subsystem ? subsystem + ":" : "") + number : null;
+        String systemKey = servingKey;
+        Identifier<?> configuredSite = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.SITE, Role.ANY);
+        String siteName = configuredSite instanceof SiteConfigurationIdentifier namedSite && namedSite.isValid() ? bounded(namedSite.getValue()) : null;
+        if(origin != null && origin.channel().getTrunkedDiscoveryIdentity() != null)
+        {
+            var identity = origin.channel().getTrunkedDiscoveryIdentity();
+            try
+            {
+                identity.validateFor(origin.channel());
+                systemKey = identity.identity().radioSystemKey();
+                siteId = identity.identity().site().toString();
+            }
+            catch(IllegalArgumentException ignored)
+            {
+                //A receiver edit cannot turn old discovery proof into a new system assignment.
+            }
+        }
+        return new AlertFacts(List.copyOf(aliases), List.copyOf(tones), List.copyOf(dcs), siteId, systemKey, siteName);
+    }
+
+    private Parties parties(IdentifierCollection collection, Role role, String servingKey)
     {
         if(collection == null)
         {
@@ -515,7 +573,7 @@ public class DecodeEventViewService implements AutoCloseable
 
             if(aliasList != null)
             {
-                for(Alias alias: aliasList.getAliases(identifier))
+                for(Alias alias: scopedAliases(aliasList, identifier, servingKey))
                 {
                     if(alias != null && alias.getName() != null && !alias.getName().isBlank())
                     {
@@ -531,6 +589,47 @@ public class DecodeEventViewService implements AutoCloseable
         }
 
         return new Parties(join(values), join(aliases), List.copyOf(party.values()));
+    }
+
+    /** A foreign home group number cannot borrow an Alias from the receiving system's local-address namespace. */
+    private static List<Alias> scopedAliases(AliasList list, Identifier<?> identifier, String servingKey)
+    {
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            List<Alias> canonicalOrWorking = list.getAliases(identifier);
+            if(!canonicalOrWorking.isEmpty() || radio.getWorkingAddress() != null) return canonicalOrWorking;
+            if(RadioSystemKey.isP25Native(servingKey) && servingKey.equals(RadioSystemKey.p25(radio.getWacn(), radio.getSystem())) &&
+                radio.getRadio() > 0 && radio.getRadio() <= 0xFFFFFE)
+                return list.getAliases(io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier.createFrom(radio.getRadio()));
+            return List.of();
+        }
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group)
+        {
+            Integer local = group.getLocalAddress();
+            if(local == null && RadioSystemKey.isP25Native(servingKey) &&
+                servingKey.equals(RadioSystemKey.p25(group.getWacn(), group.getSystem())) &&
+                group.getTalkgroup() > 0 && group.getTalkgroup() < 0xFFFF) local = group.getTalkgroup();
+            return local != null ? list.getAliases(io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup.create(local)) : List.of();
+        }
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+        {
+            LinkedHashSet<Alias> result = new LinkedHashSet<>();
+            result.addAll(scopedAliases(list, patch.getValue().getPatchGroup(), servingKey));
+            int examined = 0;
+            for(var group: patch.getValue().getPatchedTalkgroupIdentifiers())
+            {
+                if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS) break;
+                result.addAll(scopedAliases(list, group, servingKey));
+            }
+            examined = 0;
+            for(var radio: patch.getValue().getPatchedRadioIdentifiers())
+            {
+                if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS) break;
+                result.addAll(scopedAliases(list, radio, servingKey));
+            }
+            return result.stream().limit(64).toList();
+        }
+        return list.getAliases(identifier);
     }
 
     private static PartyIdentifier partyIdentifier(Identifier<?> identifier, String text,
@@ -794,7 +893,8 @@ public class DecodeEventViewService implements AutoCloseable
                             Long frequencyHz, Integer timeslot, String details, String protocol,
                             List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch,
                             String channelName, Long sourceFrequencyHz, @JsonIgnore DecodeEventSource sourceBinding,
-                            @JsonProperty("serving_system_key") String servingSystemKey)
+                            @JsonProperty("serving_system_key") String servingSystemKey,
+                            @JsonIgnore AlertFacts alertFacts)
     {
         public EventView
         {
@@ -802,6 +902,21 @@ public class DecodeEventViewService implements AutoCloseable
                 .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
             toParty = toParty != null ? List.copyOf(toParty.stream()
                 .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+            alertFacts = alertFacts != null ? alertFacts : AlertFacts.EMPTY;
+        }
+
+        /** Source-compatible constructor for consumers without internal alert projection. */
+        public EventView(String eventId, String configurationId, long timeStartMs, long durationMs,
+                         String eventType, String eventLabel, String category, String fromIdentifiers,
+                         String fromAliases, String toIdentifiers, String toAliases, String channel,
+                         Long frequencyHz, Integer timeslot, String details, String protocol,
+                         List<PartyIdentifier> fromParty, List<PartyIdentifier> toParty, long observationEpoch,
+                         String channelName, Long sourceFrequencyHz, DecodeEventSource sourceBinding,
+                         String servingSystemKey)
+        {
+            this(eventId, configurationId, timeStartMs, durationMs, eventType, eventLabel, category, fromIdentifiers,
+                fromAliases, toIdentifiers, toAliases, channel, frequencyHz, timeslot, details, protocol, fromParty,
+                toParty, observationEpoch, channelName, sourceFrequencyHz, sourceBinding, servingSystemKey, AlertFacts.EMPTY);
         }
 
         public EventView(String eventId, String configurationId, long timeStartMs, long durationMs,
@@ -888,6 +1003,25 @@ public class DecodeEventViewService implements AutoCloseable
 
     public record CanonicalGroupIdentity(int wacn, int systemId, int talkgroupId)
     {
+    }
+
+    public record AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName)
+    {
+        private static final AlertFacts EMPTY = new AlertFacts(List.of(), List.of(), List.of(), null, null);
+        public AlertFacts
+        {
+            aliasIds = aliasIds != null ? List.copyOf(aliasIds.stream().limit(64).toList()) : List.of();
+            toneCodes = toneCodes != null ? List.copyOf(toneCodes.stream().limit(64).toList()) : List.of();
+            dcsCodes = dcsCodes != null ? List.copyOf(dcsCodes.stream().limit(64).toList()) : List.of();
+        }
+        public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId)
+        {
+            this(aliasIds, toneCodes, dcsCodes, siteId, null, null);
+        }
+        public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey)
+        {
+            this(aliasIds, toneCodes, dcsCodes, siteId, systemKey, null);
+        }
     }
 
     private record Parties(String identifiers, String aliases, List<PartyIdentifier> party)

@@ -828,6 +828,15 @@
   padding-right: 12px;
 }
 
+.ui-qr-code {
+  display: block;
+  width: var(--qr-code-size);
+  max-width: 100%;
+  height: auto;
+  background: var(--qr-code-paper);
+  image-rendering: pixelated;
+}
+
 .ui-selection-check {
   width: 18px;
   height: 18px;

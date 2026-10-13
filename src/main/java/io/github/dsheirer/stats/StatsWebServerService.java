@@ -27,6 +27,9 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
 import io.github.dsheirer.web.http.StreamingAdminHttpController;
+import io.github.dsheirer.web.http.TopicAlertsHttpController;
+import io.github.dsheirer.alerts.TopicAlertService;
+import io.github.dsheirer.alerts.delivery.PushDeliveryService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
@@ -207,6 +210,10 @@ public class StatsWebServerService implements AutoCloseable
     private final SpectrumDiscoveryService mSpectrumDiscoveryService;
     private final SpectrumSearchService mSpectrumSearchService;
     private final ReceiverHealthService mReceiverHealthService;
+    private final TopicAlertService mTopicAlertService;
+    private final PushDeliveryService mPushDeliveryService;
+    private final Listener<DecodeEventViewService.EventView> mTopicAlertEventListener;
+    private boolean mTopicAlertObservationActive;
     private final SupportBundleService mSupportBundleService;
     private final ApplicationLogService mApplicationLogService;
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
@@ -451,6 +458,28 @@ public class StatsWebServerService implements AutoCloseable
         });
         mReceiverHealthService = new ReceiverHealthService(userPreferences, tunerManager,
             channelProcessingManager, activityLogService);
+        TopicAlertService topicAlerts = null;
+        PushDeliveryService pushDelivery = null;
+        if(!mListenerValidationOnly)
+        {
+            try
+            {
+                topicAlerts = new TopicAlertService(mWebAccessDatabasePath);
+                pushDelivery = new PushDeliveryService(mWebAccessDatabasePath, topicAlerts);
+            }
+            catch(Exception exception)
+            {
+                if(topicAlerts != null) topicAlerts.close();
+                topicAlerts = null;
+                mLog.warn("Topic alerts are unavailable; receiver and web service remain active ({})",
+                    exception.getClass().getSimpleName());
+            }
+        }
+        mTopicAlertService = topicAlerts;
+        mPushDeliveryService = pushDelivery;
+        mTopicAlertEventListener = topicAlerts != null ? topicAlerts::receiveEventView : event -> { };
+        if(topicAlerts != null && mDecodeEventViewService != null)
+            topicAlerts.setEventValidator(mDecodeEventViewService::isCurrent);
         mSupportBundleService = new SupportBundleService(mWebAccessDatabasePath,
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog(),
             mReceiverHealthService::snapshot);
@@ -465,6 +494,15 @@ public class StatsWebServerService implements AutoCloseable
                 AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES, AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES,
                 TimeUnit.MINUTES);
             mReceiverHealthService.start();
+            if(mTopicAlertService != null)
+            {
+                reconcileTopicAlertObservation();
+                mPushDeliveryService.start();
+                mTlsMaintenanceExecutor.scheduleWithFixedDelay(() -> {
+                    if(!mClosed && mTopicAlertService.configuration().push().enabled())
+                        mTopicAlertService.observeHealth(mReceiverHealthService.snapshot());
+                }, 5, 5, TimeUnit.SECONDS);
+            }
             if(mTunerAllocationFrequencySeedService != null) mTunerAllocationFrequencySeedService.start();
         }
     }
@@ -907,8 +945,31 @@ public class StatsWebServerService implements AutoCloseable
         }
     }
 
+    private synchronized void reconcileTopicAlertObservation()
+    {
+        if(mTopicAlertService == null || mDecodeEventViewService == null) return;
+        boolean needed = !mClosed && mTopicAlertService.configuration().push().enabled();
+        if(needed == mTopicAlertObservationActive) return;
+        if(needed) mDecodeEventViewService.addListener(mTopicAlertEventListener);
+        else mDecodeEventViewService.removeListener(mTopicAlertEventListener);
+        mTopicAlertObservationActive = needed;
+    }
+
+    private Map<String,Object> topicAlertOptions()
+    {
+        return TopicAlertOptions.read(mWebAccessDatabasePath);
+    }
+
     private void registerContexts(HttpServer server, Path assetRoot, String webClientRevision)
     {
+        if(mTopicAlertService != null)
+        {
+            TopicAlertsHttpController alerts = new TopicAlertsHttpController(mTopicAlertService,
+                mPushDeliveryService, this::topicAlertOptions, this::reconcileTopicAlertObservation);
+            server.createContext(TopicAlertsHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(
+                WebCapability.ADMIN_SETTINGS, alerts::handleAdmin));
+            server.createContext(TopicAlertsHttpController.PUBLIC_PATH, alerts::handlePublic);
+        }
         new WebSessionHttpController(mWebAccessService, mWebAuthenticationService, mWebRequestSecurity)
             .register(server);
         WebUserAdminHttpController users =
@@ -2743,6 +2804,14 @@ public class StatsWebServerService implements AutoCloseable
         mSupportBundleService.close();
         if(mTunerAllocationFrequencySeedService != null) mTunerAllocationFrequencySeedService.close();
         mApplicationLogService.close();
+        if(mPushDeliveryService != null) mPushDeliveryService.close();
+        if(mTopicAlertService != null)
+        {
+            if(mDecodeEventViewService != null && mTopicAlertObservationActive)
+                mDecodeEventViewService.removeListener(mTopicAlertEventListener);
+            mTopicAlertObservationActive = false;
+            mTopicAlertService.close();
+        }
         mReceiverHealthService.close();
         mTlsMaintenanceExecutor.shutdownNow();
         MyEventBus.getGlobalEventBus().unregister(this);

@@ -7,9 +7,9 @@
 @layer reset, tokens, components, compositions, features, utilities;
 
 @import url("./styles/base.css?v=2") layer(reset);
-@import url("./styles/tokens.css?v=35") layer(tokens);
+@import url("./styles/tokens.css?v=36") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=6") layer(components);
-@import url("./styles/components/controls.css?v=35") layer(components);
+@import url("./styles/components/controls.css?v=36") layer(components);
 @import url("./styles/components/audio-controls.css?v=11") layer(components);
 @import url("./styles/compositions/workspaces.css?v=29") layer(compositions);
 @import url("./styles/compositions/tables.css?v=15") layer(compositions);
@@ -34,6 +34,7 @@
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=4") layer(features);
 @import url("./styles/features/administration.css?v=9") layer(features);
+@import url("./styles/features/alerts.css?v=1") layer(features);
 @import url("./styles/features/retained-statistics.css?v=5") layer(features);
 @import url("./styles/features/call-matching.css?v=7") layer(features);
 @import url("./styles/features/tuner-allocation.css?v=5") layer(features);

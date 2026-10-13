@@ -301,6 +301,9 @@
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
+  --qr-code-size: 224px;
+  --qr-code-paper: #ffffff;
+  --qr-code-ink: #000000;
   --control-height-compact: 36px;
   --control-height-spectrum: 38px;
   --spectrum-status-width: 14ch;

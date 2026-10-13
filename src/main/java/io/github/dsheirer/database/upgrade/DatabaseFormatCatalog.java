@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 46;
+    public static final int CURRENT_VERSION = 47;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -543,12 +543,21 @@ public final class DatabaseFormatCatalog
             "Store future receiver-confirmed discovery identity in the existing channel document without another table or relationship",
             "Keep format-45 schema unchanged and require the authoritative format marker for this shared semantic layout"));
 
+    private static final FormatDescriptor FORMAT_47 = new FormatDescriptor(47, "topic-alerts-v1",
+        "Receiver-owned alert topics, guest enrollment, history, and durable delivery", "46929f208c709cd3efabe7bcde84d88cf479ed053888437a9a5e6ff6f68891d0", Map.of(),
+        List.of("main format 47"), "src/test/java/io/github/dsheirer/database/upgrade/Format47TestDatabase.java", List.of(
+            "Preserve all existing administrator configuration, credentials, personal preferences, and receiver history",
+            "Create explicit topic, rule, anonymous device, membership, enrollment, alert-message, and delivery storage",
+            "Start notification delivery disabled and the built-in Administrator alerts topic hidden",
+            "Bound guest enrollment, retained alert history and pending delivery; do not infer prior subscriptions"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
-            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46);
+            FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
+            FORMAT_47);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -729,7 +738,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_46;
+        return FORMAT_47;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -945,6 +954,10 @@ public final class DatabaseFormatCatalog
             try { io.github.dsheirer.web.settings.SpectrumSnapSettings.read(connection); }
             catch(SQLException e) { throw new FormatRejectionException("Invalid or missing spectrum-snap country selection"); }
         }
+        if(descriptor.version() >= 47)
+        {
+            io.github.dsheirer.alerts.TopicAlertSchema.validate(connection);
+        }
         if(descriptor.version() <= 3)
         {
             requirePositiveMetadata(connection, "p25_call_output_metrics_started_at_ms", descriptor);
@@ -1038,7 +1051,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
-            case 43, 44, 45 -> 11;
+            case 43, 44, 45, 46 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

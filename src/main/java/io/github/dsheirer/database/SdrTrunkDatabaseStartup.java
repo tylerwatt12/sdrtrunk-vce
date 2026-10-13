@@ -12,6 +12,7 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
+import io.github.dsheirer.alerts.TopicAlertSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
@@ -62,6 +63,7 @@ public final class SdrTrunkDatabaseStartup
                 ReceiverActivitySchema.create(connection);
                 DmrActivitySchema.create(connection);
                 TrunkedSiteSchema.create(connection);
+                TopicAlertSchema.create(connection);
                 InitialAdminSetup.markRequired(connection);
                 io.github.dsheirer.gui.setup.SetupProgress.write(connection,
                     new io.github.dsheirer.gui.setup.SetupProgress(false, false));
@@ -74,6 +76,7 @@ public final class SdrTrunkDatabaseStartup
                 ReceiverActivitySchema.validate(connection);
                 DmrActivitySchema.validate(connection);
                 TrunkedSiteSchema.validate(connection);
+                TopicAlertSchema.validate(connection);
                 DatabaseFormatCatalog.requireCurrent(connection);
                 connection.commit();
             }
@@ -103,6 +106,7 @@ public final class SdrTrunkDatabaseStartup
             ReceiverActivitySchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
+            TopicAlertSchema.validate(connection);
             DatabaseFormatCatalog.requireCurrent(connection);
         }
 

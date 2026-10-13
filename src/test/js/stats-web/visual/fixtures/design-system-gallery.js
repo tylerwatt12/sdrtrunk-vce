@@ -8,6 +8,10 @@ import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
 import { openSetupGuide } from '/assets/core/setup-guide.js?v=2';
+import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=1';
+
+document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
+  'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));
 
 async function initializeAliasFilterExamples() {
   const forms = [...document.querySelectorAll('.visual-aliases-example .alias-editor-filter-toolbar, ' +
@@ -404,7 +408,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
+const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',

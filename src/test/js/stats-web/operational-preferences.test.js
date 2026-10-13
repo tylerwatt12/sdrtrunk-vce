@@ -84,9 +84,10 @@ async function main() {
   const groups = navigationContext.adminSettingsGroups();
   const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.deepEqual(plain(groups.map((group) => group.label)), ['Status & support', 'Decisions engine',
-    'Audio & recordings', 'Activity & storage', 'Receiver configuration', 'Web interface']);
+    'Audio & recordings', 'Alerts', 'Activity & storage', 'Receiver configuration', 'Web interface']);
   assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
     ['health', 'application-log', 'support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
+    ['alert-topics', 'alert-rules', 'push-setup'],
     ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
   ]);
   const html = fs.readFileSync(path.resolve(path.dirname(process.argv[2] ||
