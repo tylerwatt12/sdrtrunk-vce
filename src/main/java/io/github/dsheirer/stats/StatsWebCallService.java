@@ -18,6 +18,7 @@ import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
 import io.github.dsheirer.audio.tone.P25PagingToneDetector;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.dsp.gain.PeakAudioGain;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.controller.NamingThreadFactory;
@@ -85,6 +86,8 @@ final class StatsWebCallService implements AutoCloseable
     private final CompletedCallScanListMatcher mScanListMatcher;
     private final WebEntityNavigationCatalog mNavigationCatalog;
     private final VoiceEnhancementService mVoiceEnhancement;
+    private final java.util.function.LongSupplier mPagingToneGeneration;
+    private final java.util.function.LongPredicate mPagingToneGenerationCurrent;
     private final BoundedMpscPairQueue<CompletedAudioCall,Object> mEncoderIngress =
         new BoundedMpscPairQueue<>(ENCODER_QUEUE_CAPACITY);
     private final Semaphore mEncoderWakeup = new Semaphore(0);
@@ -129,9 +132,20 @@ final class StatsWebCallService implements AutoCloseable
     StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
                         VoiceEnhancementService voiceEnhancement)
     {
+        this(scanListModel, navigationCatalog, voiceEnhancement, P25PagingToneService.getInstance()::generation,
+            P25PagingToneService.getInstance()::isCurrentGeneration);
+    }
+
+    /** Isolated analysis selection seam; production shares the receiver observer's enabled generation. */
+    StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
+                        VoiceEnhancementService voiceEnhancement, java.util.function.LongSupplier pagingToneGeneration,
+                        java.util.function.LongPredicate pagingToneGenerationCurrent)
+    {
         mScanListMatcher = scanListModel != null ? new CompletedCallScanListMatcher(scanListModel) : null;
         mNavigationCatalog = navigationCatalog;
         mVoiceEnhancement = voiceEnhancement;
+        mPagingToneGeneration = java.util.Objects.requireNonNull(pagingToneGeneration);
+        mPagingToneGenerationCurrent = java.util.Objects.requireNonNull(pagingToneGenerationCurrent);
         mEncoderThread = new NamingThreadFactory("stats completed call audio").newThread(this::runEncoder);
         mEncoderThread.setPriority(Thread.MIN_PRIORITY + 1);
     }
@@ -520,7 +534,8 @@ final class StatsWebCallService implements AutoCloseable
         boolean phase1 = snapshot.callLegSource().decoderType() == DecoderType.P25_PHASE1 ||
             snapshot.callLegSource().decoderType() == DecoderType.P25_CONVENTIONAL;
         List<P25PagingToneDetector.DetectedTone> pagingTones = List.of();
-        if(phase1)
+        long pagingToneGeneration = mPagingToneGeneration.getAsLong();
+        if(phase1 && mPagingToneGenerationCurrent.test(pagingToneGeneration))
         {
             try { pagingTones = new P25PagingToneDetector().detect(call.audioBuffers()); }
             catch(IllegalArgumentException exception) { /* Unavailable analysis never suppresses call playback. */ }
@@ -549,7 +564,8 @@ final class StatsWebCallService implements AutoCloseable
         metadata.put("audio_sample_rate", sampleRate);
         metadata.put("voice_enhancement", rendered != null);
         if(rendered != null) metadata.put("voice_model", rendered.modelId());
-        if(!pagingTones.isEmpty()) metadata.put("detected_paging_tones", pagingTones);
+        if(!pagingTones.isEmpty() && mPagingToneGenerationCurrent.test(pagingToneGeneration))
+            metadata.put("detected_paging_tones", pagingTones);
 
         synchronized(this)
         {

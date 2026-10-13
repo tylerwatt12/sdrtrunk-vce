@@ -23,13 +23,11 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Function;
 
 /**
@@ -40,6 +38,9 @@ import java.util.function.Function;
  * Dispose/rebind invalidates queued deliveries without waiting for slow listeners. An already-claimed callback may
  * finish. Ordinary call completion/reset is FIFO and does not invalidate already-completed work. The detector never
  * updates decoder identifiers or call routing. A slow observer can lose evidence but cannot backpressure reception.
+ * The worker parks indefinitely when idle. Native frames wake it in bounded batches; call/control events and lifecycle
+ * cleanup wake it promptly. Off rejects new handoffs before retention or PCM inspection and changes the runtime epoch
+ * so an old queued/in-flight result cannot become current again after re-enable.
  */
 public final class P25PagingToneService
 {
@@ -49,27 +50,35 @@ public final class P25PagingToneService
     private final AtomicLong mRetainedBytes = new AtomicLong();
     private final AtomicLong mDroppedEvents = new AtomicLong();
     private final AtomicBoolean mDraining = new AtomicBoolean();
+    private final AtomicReference<RuntimeEpoch> mRuntime = new AtomicReference<>(new RuntimeEpoch(true, 1L));
+    private final AtomicBoolean mWakeRequested = new AtomicBoolean();
+    private final AtomicBoolean mStopped = new AtomicBoolean();
+    private final AtomicLong mWorkerWakeCount = new AtomicLong();
+    private final AtomicLong mAnalyzedCalls = new AtomicLong();
     private final Map<CallKey, Context> mContexts = new HashMap<>(); //worker-owned
     private final int mMaximumQueuedEvents;
     private final long mMaximumRetainedBytes;
     private final int mMaximumActiveCalls;
     private final Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> mDetector;
+    private final Thread mWorker;
+    private final int mWakeBatchThreshold;
 
     private P25PagingToneService()
     {
-        this(4096, 16L * 1024L * 1024L, 64, new P25PagingToneDetector()::detect);
-        ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(task -> {
-            Thread thread = new Thread(task, "p25-paging-tone-observer");
-            thread.setDaemon(true);
-            thread.setPriority(Thread.MIN_PRIORITY);
-            return thread;
-        });
-        worker.scheduleWithFixedDelay(this::drain, 20L, 20L, TimeUnit.MILLISECONDS);
+        this(4096, 16L * 1024L * 1024L, 64, new P25PagingToneDetector()::detect, true);
     }
 
     /** Isolated manual-worker constructor for bounded observer tests. */
     P25PagingToneService(int maximumQueuedEvents, long maximumRetainedBytes, int maximumActiveCalls,
                           Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> detector)
+    {
+        this(maximumQueuedEvents, maximumRetainedBytes, maximumActiveCalls, detector, false);
+    }
+
+    /** Isolated threaded instance for lifecycle tests and benchmarks; shares no state with the default service. */
+    P25PagingToneService(int maximumQueuedEvents, long maximumRetainedBytes, int maximumActiveCalls,
+                          Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> detector,
+                          boolean startWorker)
     {
         if(maximumQueuedEvents <= 0 || maximumRetainedBytes <= 0 || maximumActiveCalls <= 0)
             throw new IllegalArgumentException("Positive observer bounds are required");
@@ -77,11 +86,50 @@ public final class P25PagingToneService
         mMaximumRetainedBytes = maximumRetainedBytes;
         mMaximumActiveCalls = maximumActiveCalls;
         mDetector = java.util.Objects.requireNonNull(detector);
+        mWakeBatchThreshold = Math.min(128, Math.max(1, maximumQueuedEvents / 2));
+        if(startWorker)
+        {
+            mWorker = new Thread(this::work, "p25-paging-tone-observer");
+            mWorker.setDaemon(true);
+            mWorker.setPriority(Thread.MIN_PRIORITY);
+            mWorker.start();
+        }
+        else
+        {
+            mWorker = null;
+        }
     }
 
     public static P25PagingToneService getInstance() { return INSTANCE; }
 
     public Registration register() { return new Registration(this); }
+
+    public boolean isEnabled() { return mRuntime.get().enabled; }
+
+    /** Runtime default is On. A real transition invalidates every prior analysis epoch without waiting for work. */
+    public void setEnabled(boolean enabled)
+    {
+        RuntimeEpoch previous;
+        RuntimeEpoch next;
+        do
+        {
+            previous = mRuntime.get();
+            if(previous.enabled == enabled) return;
+            next = new RuntimeEpoch(enabled, previous.generation + 1L);
+        }
+        while(!mRuntime.compareAndSet(previous, next));
+        previous.invalidate();
+        wakeWorker();
+    }
+
+    /** Token for independent raw-PCM analysis; obtain before work and require the same enabled epoch to publish. */
+    public long generation() { return mRuntime.get().generation; }
+
+    public boolean isCurrentGeneration(long generation)
+    {
+        RuntimeEpoch epoch = mRuntime.get();
+        return epoch.enabled && epoch.valid() && epoch.generation == generation;
+    }
 
     public long droppedEvents() { return mDroppedEvents.get(); }
 
@@ -89,8 +137,63 @@ public final class P25PagingToneService
 
     long retainedBytes() { return mRetainedBytes.get(); }
 
+    long workerThreadId() { return mWorker != null ? mWorker.threadId() : -1L; }
+
+    long workerWakeCount() { return mWorkerWakeCount.get(); }
+
+    long analyzedCalls() { return mAnalyzedCalls.get(); }
+
+    int wakeBatchThreshold() { return mWakeBatchThreshold; }
+
+    /** Isolated instances only: callers must quiesce producers before stopping their benchmark/test worker. */
+    void stopWorker()
+    {
+        setEnabled(false);
+        mStopped.set(true);
+        if(mWorker != null) LockSupport.unpark(mWorker);
+        else drain();
+    }
+
+    boolean awaitWorkerStopped(long milliseconds) throws InterruptedException
+    {
+        if(mWorker == null) return true;
+        mWorker.join(milliseconds);
+        return !mWorker.isAlive();
+    }
+
+    private boolean current(RuntimeEpoch epoch)
+    {
+        return mRuntime.get() == epoch && epoch.enabled && epoch.valid();
+    }
+
+    private void wakeWorker()
+    {
+        if(mWorker != null && mWakeRequested.compareAndSet(false, true)) LockSupport.unpark(mWorker);
+    }
+
+    private void work()
+    {
+        while(!mStopped.get())
+        {
+            while(!mWakeRequested.get() && !mStopped.get())
+            {
+                LockSupport.park(this);
+                Thread.interrupted(); //A stray interruption must not turn an empty worker into a polling loop.
+            }
+            if(mStopped.get()) break;
+            mWakeRequested.set(false);
+            mWorkerWakeCount.incrementAndGet();
+            drain();
+            //A bounded drain can leave work under concurrent load. It must not depend on a future frame/timer.
+            if(!mQueue.isEmpty()) wakeWorker();
+        }
+        drain();
+    }
+
     private void offer(Registration registration, AudioCallEvent event, boolean reset)
     {
+        RuntimeEpoch epoch = mRuntime.get();
+        if(!epoch.enabled || !epoch.valid()) return;
         Binding binding = registration.mBinding.get();
         if(binding == null || !binding.valid()) return;
         if(!reset && event.eventType() != AudioCallEventType.CALL_CREATED &&
@@ -109,14 +212,29 @@ public final class P25PagingToneService
             lose(registration, binding);
             return;
         }
-        if(mQueuedEvents.incrementAndGet() > mMaximumQueuedEvents)
+        int reservedQueueCount = mQueuedEvents.incrementAndGet();
+        if(reservedQueueCount > mMaximumQueuedEvents)
         {
             mQueuedEvents.decrementAndGet();
             mRetainedBytes.addAndGet(-bytes);
             lose(registration, binding);
             return;
         }
-        mQueue.offer(new QueuedEvent(registration, binding, event, reset, bytes));
+        if(!current(epoch) || !registration.current(binding))
+        {
+            mQueuedEvents.decrementAndGet();
+            mRetainedBytes.addAndGet(-bytes);
+            wakeWorker();
+            return;
+        }
+        mQueue.offer(new QueuedEvent(registration, binding, epoch, event, reset, bytes));
+        //The final epoch check also wakes cleanup for an old offer that raced Off after the reservation check.
+        if(reset || event.eventType() != AudioCallEventType.AUDIO_FRAME ||
+            reservedQueueCount >= mWakeBatchThreshold || mQueuedEvents.get() >= mWakeBatchThreshold ||
+            !current(epoch) || !registration.current(binding))
+        {
+            wakeWorker();
+        }
     }
 
     private void lose(Registration registration, Binding binding)
@@ -135,7 +253,8 @@ public final class P25PagingToneService
             while(contexts.hasNext())
             {
                 Map.Entry<CallKey, Context> context = contexts.next();
-                if(!context.getKey().registration().current(context.getKey().binding()))
+                if(!current(context.getKey().epoch()) ||
+                    !context.getKey().registration().current(context.getKey().binding()))
                 {
                     release(context.getValue());
                     contexts.remove();
@@ -149,7 +268,8 @@ public final class P25PagingToneService
                 boolean retained = false;
                 try
                 {
-                    if(queued.registration().current(queued.binding())) retained = process(queued);
+                    if(current(queued.epoch()) && queued.registration().current(queued.binding()))
+                        retained = process(queued);
                 }
                 catch(RuntimeException ignored)
                 {
@@ -184,7 +304,7 @@ public final class P25PagingToneService
             return false;
         }
         AudioCallEvent event = queued.event();
-        CallKey key = new CallKey(queued.registration(), queued.binding(), event.callId());
+        CallKey key = new CallKey(queued.registration(), queued.binding(), queued.epoch(), event.callId());
         if(event.eventType() == AudioCallEventType.CALL_CREATED)
         {
             //Each P1 module owns one unfinished call; a new call cannot inherit abandoned PCM.
@@ -242,25 +362,38 @@ public final class P25PagingToneService
             List<P25PagingToneDetector.DetectedTone> tones;
             try
             {
+                if(!current(queued.epoch())) return false;
                 tones = mDetector.apply(context.buffers);
+                mAnalyzedCalls.incrementAndGet();
             }
             finally
             {
                 release(context);
             }
-            if(!tones.isEmpty() && queued.registration().current(queued.binding()) && queued.binding().claim())
+            if(!tones.isEmpty() && current(queued.epoch()) && queued.registration().current(queued.binding()) &&
+                queued.epoch().claim())
             {
                 try
                 {
-                    AudioCallSnapshot snapshot = event.snapshot();
-                    queued.binding().listener.receive(new DecodedPagingToneMessage(snapshot.callId(),
-                        snapshot.callLegId(), snapshot.callLegSource(), context.start.startTimestamp(),
-                        context.firstFrameTimestamp, snapshot.lastActivityTimestamp(),
-                        new DetectedPagingToneIdentifier(tones)));
+                    if(queued.binding().claim())
+                    {
+                        try
+                        {
+                            AudioCallSnapshot snapshot = event.snapshot();
+                            queued.binding().listener.receive(new DecodedPagingToneMessage(snapshot.callId(),
+                                snapshot.callLegId(), snapshot.callLegSource(), context.start.startTimestamp(),
+                                context.firstFrameTimestamp, snapshot.lastActivityTimestamp(),
+                                new DetectedPagingToneIdentifier(tones)));
+                        }
+                        finally
+                        {
+                            queued.binding().finish();
+                        }
+                    }
                 }
                 finally
                 {
-                    queued.binding().finish();
+                    queued.epoch().finish();
                 }
             }
         }
@@ -274,9 +407,21 @@ public final class P25PagingToneService
         context.bytes = 0L;
     }
 
-    private record QueuedEvent(Registration registration, Binding binding, AudioCallEvent event,
+    private record QueuedEvent(Registration registration, Binding binding, RuntimeEpoch epoch, AudioCallEvent event,
                                 boolean reset, long bytes) {}
-    private record CallKey(Registration registration, Binding binding, AudioCallId callId) {}
+    private record CallKey(Registration registration, Binding binding, RuntimeEpoch epoch, AudioCallId callId) {}
+
+    private static final class RuntimeEpoch
+    {
+        private final boolean enabled;
+        private final long generation;
+        private final AtomicInteger deliveryState = new AtomicInteger(); //0 available, 1 claimed callback, 2 invalid
+        private RuntimeEpoch(boolean enabled, long generation) { this.enabled = enabled; this.generation = generation; }
+        private boolean valid() { return deliveryState.get() != 2; }
+        private boolean claim() { return deliveryState.compareAndSet(0, 1); }
+        private void finish() { deliveryState.compareAndSet(1, 0); }
+        private void invalidate() { deliveryState.set(2); }
+    }
 
     private static final class Context
     {
@@ -318,6 +463,7 @@ public final class P25PagingToneService
                 previous = mBinding.getAndSet(null);
                 if(previous != null) previous.invalidate();
             }
+            service.wakeWorker();
         }
 
         public void receive(AudioCallEvent event)
@@ -335,6 +481,7 @@ public final class P25PagingToneService
             Binding next = !mClosed.get() ? new Binding(failed.listener) : null;
             mBinding.compareAndSet(failed, next);
             failed.invalidate();
+            service.wakeWorker();
         }
 
         @Override
@@ -343,6 +490,7 @@ public final class P25PagingToneService
             mClosed.set(true);
             Binding previous = mBinding.getAndSet(null);
             if(previous != null) previous.invalidate();
+            service.wakeWorker();
         }
     }
 }

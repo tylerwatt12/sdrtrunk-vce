@@ -35,6 +35,7 @@ import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createAlertsWorkspace } from './features/alerts.js?v=3';
 import { createRecordingsFeature } from './features/recordings.js?v=32';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=1';
+import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
@@ -33131,7 +33132,7 @@ function adminSettingsGroups() {
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Choose how calls are recorded and how long managed calls are kept.' },
       { id: 'audio-quality', label: 'Audio quality', icon: 'audio-quality', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Choose browser voice enhancement and MP3 encoding for recordings and outgoing streams.' },
+        description: 'Choose browser voice enhancement, paging-tone detection, and MP3 encoding.' },
       { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
@@ -33252,9 +33253,13 @@ async function renderAdmin() {
       setUiToggle, formField, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
       isCurrent: () => renderIsCurrent(renderContext) });
     body.append(enhancement.element);
+    const pagingTones = createPagingToneDetectionSettings({ node, section, sectionActionHost, uiToggleField,
+      setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
+      isCurrent: () => renderIsCurrent(renderContext) });
+    body.append(pagingTones.element);
     body.append(node('div', 'ui-notice',
       'MP3 settings apply to recordings and outgoing streams. Managed recordings use MP3.'));
-    await Promise.all([enhancement.load(), renderAdminOperationalPreferences(renderContext, {
+    await Promise.all([enhancement.load(), pagingTones.load(), renderAdminOperationalPreferences(renderContext, {
       target: body, fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio'], title: 'MP3 encoding'
     })]);
     if (renderIsCurrent(renderContext)) {

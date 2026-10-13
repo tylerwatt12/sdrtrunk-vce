@@ -146,6 +146,44 @@ class StatsWebCallServiceTest
     }
 
     @Test
+    void pagingAnalysisOffPreservesAudibleCallAndCanEnableIndependently() throws Exception
+    {
+        var enabled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        float[] tone = new float[8000];
+        for(int i = 0; i < tone.length; i++) tone[i] = (float)(0.04 * Math.sin(2 * Math.PI * 1000 * i / 8000));
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null, () -> 1L,
+                ignored -> enabled.get())); FeedClient client = listen(service, Set.of()))
+        {
+            CompletedAudioCall source = new CompletedAudioCall(call().snapshot(), List.of(tone));
+            service.receive(source);
+            var off = client.awaitCall();
+            assertFalse(off.containsKey("detected_paging_tones"));
+            assertEquals(false, off.get("voice_enhancement"));
+            byte[] plain = service.get(String.valueOf(off.get("call_id"))).wave();
+            enabled.set(true);
+            service.receive(source);
+            var on = client.awaitCall();
+            assertTrue(on.containsKey("detected_paging_tones"));
+            assertArrayEquals(plain, service.get(String.valueOf(on.get("call_id"))).wave());
+        }
+    }
+
+    @Test
+    void changedPagingEpochDoesNotPublishOldDetections() throws Exception
+    {
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        float[] tone = new float[8000];
+        for(int i = 0; i < tone.length; i++) tone[i] = (float)(0.04 * Math.sin(2 * Math.PI * 1000 * i / 8000));
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null, () -> 1L,
+                ignored -> checks.incrementAndGet() == 1)); FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(new CompletedAudioCall(call().snapshot(), List.of(tone)));
+            assertFalse(client.awaitCall().containsKey("detected_paging_tones"));
+            assertEquals(2, checks.get());
+        }
+    }
+
+    @Test
     void encoderWorkerFollowsServiceOwnership() throws Exception
     {
         StatsWebCallService service = new StatsWebCallService();

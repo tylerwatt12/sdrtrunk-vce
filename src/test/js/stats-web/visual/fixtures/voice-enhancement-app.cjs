@@ -20,6 +20,13 @@ async function openVoiceEnhancementApp(page, options = {}) {
     state.held = new Promise(resolve => { release = resolve; });
     return () => { release(); state.held = null; };
   };
+  const paging = state.pagingTone = { current: { revision: '1'.repeat(64), enabled: true, status: 'ready',
+    ...options.pagingSnapshot }, writes: [], nextFailure: null, held: null, loadFailure: false };
+  const pagingRead = options.holdPagingStatus ? new Promise(resolve => { paging.releaseStatus = resolve; }) : null;
+  paging.holdWrite = () => {
+    let release; paging.held = new Promise(resolve => { release = resolve; });
+    return () => { release(); paging.held = null; };
+  };
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname;
     if (pathname === '/api/v1/auth/session') return route.fulfill({ json: { data: {
@@ -33,6 +40,24 @@ async function openVoiceEnhancementApp(page, options = {}) {
       if (initialRead) await initialRead;
       if (state.loadFailure) return route.abort('failed');
       return route.fulfill({ json: state.current });
+    }
+    if (pathname === '/api/v1/admin/paging-tone-detection') {
+      if (pagingRead) await pagingRead;
+      if (paging.loadFailure) return route.abort('failed');
+      return route.fulfill({ json: paging.current });
+    }
+    if (pathname === '/api/v1/admin/paging-tone-detection/enabled') {
+      paging.writes.push({ method: request.method(), headers: request.headers(), body: request.postDataBuffer() });
+      if (paging.held) await paging.held;
+      if (paging.nextFailure) {
+        const failure = paging.nextFailure; paging.nextFailure = null;
+        return failure === 'network' ? route.abort('failed') : route.fulfill({ status: failure,
+          json: { error: { message: 'Paging-tone detection could not be saved. Try again.' } } });
+      }
+      if (request.headers()['if-match'] !== `"${paging.current.revision}"`) return route.fulfill({ status: 409, json: paging.current });
+      paging.current = { revision: (paging.writes.length % 2 ? '3' : '4').repeat(64),
+        enabled: request.postDataJSON().value, status: 'ready' };
+      return route.fulfill({ json: paging.current });
     }
     if (pathname.startsWith('/api/v1/admin/voice-enhancement/')) {
       state.writes.push({ action: pathname.split('/').at(-1), method: request.method(),

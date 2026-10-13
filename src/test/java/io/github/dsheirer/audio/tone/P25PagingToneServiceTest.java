@@ -29,19 +29,331 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.protocol.Protocol;
 import java.time.Duration;
+import java.lang.management.ManagementFactory;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 class P25PagingToneServiceTest
 {
     private static final P25PagingToneDetector.DetectedTone TONE =
         new P25PagingToneDetector.DetectedTone(800, 54, 200, 0.98, "decoded_audio", "p25_pcm_tone_v1");
+
+    @Test
+    void defaultsOnAndDisabledOffersNeverRetainOrAnalyze()
+    {
+        AtomicInteger analyses = new AtomicInteger();
+        P25PagingToneService service = new P25PagingToneService(100, 64000, 8, buffers -> {
+            analyses.incrementAndGet(); return List.of(TONE);
+        });
+        var registration = service.register();
+        List<IMessage> messages = new ArrayList<>();
+        registration.setMessageListener(messages::add);
+        long initial = service.generation();
+        assertTrue(service.isEnabled());
+        assertTrue(service.isCurrentGeneration(initial));
+        service.setEnabled(true);
+        assertEquals(initial, service.generation());
+        service.setEnabled(false);
+        assertFalse(service.isEnabled());
+        assertFalse(service.isCurrentGeneration(initial));
+        assertFalse(service.isCurrentGeneration(service.generation()));
+        assertTimeoutPreemptively(Duration.ofMillis(250), () -> offerCall(registration, 1, 40));
+        service.drain();
+        assertEquals(0, service.queuedEvents());
+        assertEquals(0, service.retainedBytes());
+        assertEquals(0, service.droppedEvents());
+        assertEquals(0, analyses.get());
+        service.setEnabled(true);
+        assertNotEquals(initial, service.generation());
+        assertTrue(service.isCurrentGeneration(service.generation()));
+        offerCall(registration, 2, 40);
+        service.drain();
+        assertEquals(1, messages.size());
+        assertEquals(2, ((DecodedPagingToneMessage)messages.getFirst()).callId().sequence());
+    }
+
+    @Test
+    void rapidOffOnCannotReviveQueuedCompletedCalls()
+    {
+        P25PagingToneService service = new P25PagingToneService(200, 128000, 8, buffers -> List.of(TONE));
+        var registration = service.register();
+        List<IMessage> messages = new ArrayList<>();
+        registration.setMessageListener(messages::add);
+        offerCall(registration, 1, 40);
+        long initial = service.generation();
+        service.setEnabled(false);
+        service.setEnabled(true);
+        offerCall(registration, 2, 40);
+        service.drain();
+        assertFalse(service.isCurrentGeneration(initial));
+        assertEquals(1, service.analyzedCalls());
+        assertEquals(1, messages.size());
+        assertEquals(2, ((DecodedPagingToneMessage)messages.getFirst()).callId().sequence());
+        assertEquals(0, service.retainedBytes());
+    }
+
+    @Test
+    void rapidOffOnSuppressesAnAnalysisAlreadyRunning() throws Exception
+    {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger analyses = new AtomicInteger();
+        P25PagingToneService service = new P25PagingToneService(200, 128000, 8, buffers -> {
+            if(analyses.incrementAndGet() == 1) awaitLatch(entered, release);
+            return List.of(TONE);
+        });
+        var registration = service.register();
+        List<IMessage> messages = new ArrayList<>();
+        registration.setMessageListener(messages::add);
+        offerCall(registration, 1, 40);
+        var executor = Executors.newSingleThreadExecutor();
+        try
+        {
+            var drain = executor.submit(service::drain);
+            assertTrue(entered.await(1, TimeUnit.SECONDS));
+            long oldEpoch = service.generation();
+            assertTimeoutPreemptively(Duration.ofMillis(250), () -> {
+                service.setEnabled(false);
+                service.setEnabled(true);
+            });
+            assertFalse(service.isCurrentGeneration(oldEpoch));
+            offerCall(registration, 2, 40);
+            release.countDown();
+            drain.get(2, TimeUnit.SECONDS);
+            assertEquals(1, messages.size());
+            assertEquals(2, ((DecodedPagingToneMessage)messages.getFirst()).callId().sequence());
+            assertEquals(0, service.retainedBytes());
+        }
+        finally
+        {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void alreadyClaimedCallbackCanFinishWithoutBlockingOff() throws Exception
+    {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger delivered = new AtomicInteger();
+        P25PagingToneService service = new P25PagingToneService(100, 64000, 8, buffers -> List.of(TONE));
+        var registration = service.register();
+        registration.setMessageListener(message -> {
+            awaitLatch(entered, release);
+            delivered.incrementAndGet();
+        });
+        offerCall(registration, 1, 40);
+        var executor = Executors.newSingleThreadExecutor();
+        try
+        {
+            var drain = executor.submit(service::drain);
+            assertTrue(entered.await(1, TimeUnit.SECONDS));
+            assertTimeoutPreemptively(Duration.ofMillis(250), () -> service.setEnabled(false));
+            assertEquals(0, delivered.get());
+            release.countDown();
+            drain.get(2, TimeUnit.SECONDS);
+            assertEquals(1, delivered.get());
+            assertEquals(0, service.retainedBytes());
+        }
+        finally
+        {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void threadedWorkerHasNoIdleTimerOnOrOff() throws Exception
+    {
+        P25PagingToneService service = new P25PagingToneService(4096, 128000, 8, buffers -> List.of(TONE), true);
+        try
+        {
+            assertTrue(await(() -> parked(service), 1000));
+            assertEquals(0, service.workerWakeCount());
+            Thread.sleep(80);
+            assertEquals(0, service.workerWakeCount());
+            service.setEnabled(false);
+            assertTrue(await(() -> service.workerWakeCount() >= 1 && parked(service), 1000));
+            long wakes = service.workerWakeCount();
+            Thread.sleep(80);
+            assertEquals(wakes, service.workerWakeCount());
+            assertEquals(0, service.queuedEvents());
+            assertEquals(0, service.retainedBytes());
+        }
+        finally
+        {
+            service.stopWorker();
+            assertTrue(service.awaitWorkerStopped(1000));
+        }
+    }
+
+    @Test
+    void parkedWorkerWakesToReleaseDisabledAndDisposedContext() throws Exception
+    {
+        P25PagingToneService service = new P25PagingToneService(4096, 256000, 8, buffers -> List.of(TONE), true);
+        var registration = service.register();
+        registration.setMessageListener(message -> {});
+        try
+        {
+            List<AudioCallEvent> events = callEvents(1, 128);
+            registration.receive(events.getFirst());
+            assertTrue(await(() -> service.queuedEvents() == 0 && parked(service), 1000));
+            events.subList(1, events.size() - 1).forEach(registration::receive);
+            assertTrue(await(() -> service.queuedEvents() == 0 && service.retainedBytes() == 128L * 640 &&
+                parked(service), 1000));
+            service.setEnabled(false);
+            assertTrue(await(() -> service.retainedBytes() == 0 && parked(service), 1000));
+            service.setEnabled(true);
+            events = callEvents(2, 2);
+            registration.receive(events.getFirst());
+            assertTrue(await(() -> service.queuedEvents() == 0 && parked(service), 1000));
+            events.subList(1, events.size() - 1).forEach(registration::receive);
+            assertEquals(2, service.queuedEvents());
+            registration.close();
+            assertTrue(await(() -> service.queuedEvents() == 0 && service.retainedBytes() == 0 &&
+                parked(service), 1000));
+            assertEquals(0, service.analyzedCalls());
+        }
+        finally
+        {
+            registration.close();
+            service.stopWorker();
+            assertTrue(service.awaitWorkerStopped(1000));
+        }
+    }
+
+    @Test
+    void reservedBatchThresholdStillWakesAfterAnEarlierDrain() throws Exception
+    {
+        P25PagingToneService service = new P25PagingToneService(256, 128000, 8, buffers -> List.of(TONE), true);
+        PausedOfferQueue queue = installPausedQueue(service);
+        var registration = service.register();
+        registration.setMessageListener(message -> {});
+        var executor = Executors.newSingleThreadExecutor();
+        try
+        {
+            List<AudioCallEvent> events = callEvents(1, 128);
+            registration.receive(events.getFirst());
+            assertTrue(await(() -> service.queuedEvents() == 0 && parked(service), 1000));
+            events.subList(1, 128).forEach(registration::receive); //127 ordinary frames stay batched
+            assertEquals(127, service.queuedEvents());
+            queue.pauseNext.set(true);
+            var offering = executor.submit(() -> registration.receive(events.get(128)));
+            assertTrue(queue.entered.await(1, TimeUnit.SECONDS));
+            assertEquals(service.wakeBatchThreshold(), service.queuedEvents());
+            service.drain(); //force the count below the threshold before the reserved offer reaches the queue
+            assertEquals(1, service.queuedEvents());
+            long wakes = service.workerWakeCount();
+            queue.release.countDown();
+            offering.get(1, TimeUnit.SECONDS);
+            assertTrue(await(() -> service.queuedEvents() == 0 && service.workerWakeCount() > wakes, 1000));
+        }
+        finally
+        {
+            queue.release.countDown();
+            executor.shutdownNow();
+            registration.close();
+            service.stopWorker();
+            assertTrue(service.awaitWorkerStopped(1000));
+        }
+    }
+
+    @Test
+    void oldReservedOfferAfterOffOnWakesCleanupInsteadOfRetainingPcm() throws Exception
+    {
+        P25PagingToneService service = new P25PagingToneService(256, 128000, 8, buffers -> List.of(TONE), true);
+        PausedOfferQueue queue = installPausedQueue(service);
+        var registration = service.register();
+        registration.setMessageListener(message -> {});
+        var executor = Executors.newSingleThreadExecutor();
+        try
+        {
+            List<AudioCallEvent> events = callEvents(1, 40);
+            registration.receive(events.getFirst());
+            assertTrue(await(() -> service.queuedEvents() == 0 && parked(service), 1000));
+            queue.pauseNext.set(true);
+            var offering = executor.submit(() -> registration.receive(events.get(1)));
+            assertTrue(queue.entered.await(1, TimeUnit.SECONDS));
+            assertEquals(640, service.retainedBytes());
+            service.setEnabled(false);
+            service.setEnabled(true);
+            assertTrue(await(() -> parked(service), 1000));
+            queue.release.countDown();
+            offering.get(1, TimeUnit.SECONDS);
+            assertTrue(await(() -> service.queuedEvents() == 0 && service.retainedBytes() == 0, 1000));
+            assertEquals(0, service.analyzedCalls());
+        }
+        finally
+        {
+            queue.release.countDown();
+            executor.shutdownNow();
+            registration.close();
+            service.stopWorker();
+            assertTrue(service.awaitWorkerStopped(1000));
+        }
+    }
+
+    private static boolean parked(P25PagingToneService service)
+    {
+        var info = ManagementFactory.getThreadMXBean().getThreadInfo(service.workerThreadId());
+        return info != null && info.getThreadState() == Thread.State.WAITING;
+    }
+
+    private static boolean await(BooleanSupplier condition, long milliseconds) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(milliseconds);
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(1);
+        return condition.getAsBoolean();
+    }
+
+    private static void awaitLatch(CountDownLatch entered, CountDownLatch release)
+    {
+        entered.countDown();
+        try
+        {
+            if(!release.await(2, TimeUnit.SECONDS)) throw new IllegalStateException("Test callback timed out");
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private static PausedOfferQueue installPausedQueue(P25PagingToneService service) throws Exception
+    {
+        //Instrument only the isolated fixture's queue to force the reservation/offer race. Production still always
+        //constructs a plain lock-free ConcurrentLinkedQueue; there is no callback or blocking test hook in offer().
+        Field field = P25PagingToneService.class.getDeclaredField("mQueue");
+        field.setAccessible(true);
+        PausedOfferQueue queue = new PausedOfferQueue();
+        field.set(service, queue);
+        return queue;
+    }
+
+    private static final class PausedOfferQueue extends ConcurrentLinkedQueue<Object>
+    {
+        private final AtomicBoolean pauseNext = new AtomicBoolean();
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        @Override
+        public boolean offer(Object event)
+        {
+            if(pauseNext.compareAndSet(true, false)) awaitLatch(entered, release);
+            return super.offer(event);
+        }
+    }
 
     @Test
     void preservesCallAndSampleClockProvenanceOnlyOnWorker()

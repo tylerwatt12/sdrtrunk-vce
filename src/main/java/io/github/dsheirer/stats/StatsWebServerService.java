@@ -33,6 +33,9 @@ import io.github.dsheirer.alerts.delivery.PushDeliveryService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
+import io.github.dsheirer.audio.tone.PagingToneSettingsService;
+import io.github.dsheirer.web.http.PagingToneHttpController;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.web.http.VoiceEnhancementHttpController;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
@@ -225,6 +228,7 @@ public class StatsWebServerService implements AutoCloseable
         event -> mDecodeEventHub.publish("decode_event", event);
     private final StatsWebCallService mWebCallService;
     private final VoiceEnhancementService mVoiceEnhancementService;
+    private final PagingToneSettingsService mPagingToneSettingsService;
     private final StaticWebAssetResponse mStaticWebAssetResponse = new StaticWebAssetResponse();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
@@ -398,6 +402,9 @@ public class StatsWebServerService implements AutoCloseable
         mRadioReferenceImportService = radioReferenceImportService;
         mDatabase = new StatsWebDatabase(userPreferences);
         mEntityCatalog = new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
+        mPagingToneSettingsService = new PagingToneSettingsService(
+            PortableApplicationPaths.getDataRoot().resolve("audio-analysis/paging-tones.json"),
+            P25PagingToneService.getInstance()::setEnabled);
         mVoiceEnhancementService = new VoiceEnhancementService(
             PortableApplicationPaths.getDataRoot().resolve("audio-models"));
         mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog, mVoiceEnhancementService);
@@ -1055,6 +1062,9 @@ public class StatsWebServerService implements AutoCloseable
             new VoiceEnhancementHttpController(mVoiceEnhancementService);
         server.createContext(VoiceEnhancementHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, voiceEnhancementController::handle));
+        PagingToneHttpController pagingToneController = new PagingToneHttpController(mPagingToneSettingsService);
+        server.createContext(PagingToneHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, pagingToneController::handle));
 
         SpectrumSnapPresetHttpController spectrumSnapController =
             new SpectrumSnapPresetHttpController(mSpectrumSnapSettingsService);
