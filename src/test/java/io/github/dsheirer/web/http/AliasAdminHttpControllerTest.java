@@ -164,7 +164,7 @@ class AliasAdminHttpControllerTest
     }
 
     @Test
-    void transferRequiresMatchingPreviewAndExplicitReplaceConfirmation() throws Exception
+    void transferValidatesHeadersPreviewAndReplaceConfirmation() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("transfer-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -185,6 +185,15 @@ class AliasAdminHttpControllerTest
             String path = AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId + "/transfer";
             Map<String,Object> body = new java.util.LinkedHashMap<>();
             body.put("format", "RADIOREFERENCE"); body.put("mode", "REPLACE"); body.put("action", "preview");
+            body.put("csv", "Decimal,Hex,Private submitted heading,Mode,Description,Tag,Category\r\n");
+            HttpResponse<String> invalidHeader = send(client, jsonRequest(origin, path)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body))));
+            assertEquals(400, invalidHeader.statusCode());
+            JsonNode headerError = root(invalidHeader).get("error");
+            assertEquals("invalid_request", headerError.get("code").textValue());
+            assertTrue(headerError.get("message").textValue()
+                .startsWith("CSV columns do not match a RadioReference talkgroup export."));
+            assertFalse(invalidHeader.body().contains("Private submitted heading"));
             body.put("csv", "Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category\r\n123,7b,Dispatch,D,Fire dispatch,Fire Dispatch,Fire\r\n");
             JsonNode preview = json(send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))));
             assertEquals(1, preview.at("/counts/added").intValue());
@@ -204,6 +213,24 @@ class AliasAdminHttpControllerTest
             assertTrue(exported.headers().firstValue("Content-Type").orElseThrow().startsWith("text/csv"));
             assertTrue(exported.headers().firstValue("Content-Disposition").orElseThrow().contains("attachment"));
             body.put("format", "VCE"); body.put("mode", "UPDATE_ADD"); body.put("action", "preview");
+            for(String malformed: List.of(
+                exported.body().replace("format_version,", "Private submitted heading,"),
+                exported.body().replace("name,description,", "description,name,"),
+                exported.body().replace("format_version,", "format_version,extra_column,")))
+            {
+                body.put("csv", malformed);
+                invalidHeader = send(client, jsonRequest(origin, path)
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body))));
+                assertEquals(400, invalidHeader.statusCode());
+                headerError = root(invalidHeader).get("error");
+                assertEquals("invalid_request", headerError.get("code").textValue());
+                String message = headerError.get("message").textValue();
+                assertTrue(message.startsWith("CSV columns do not match a VCE alias export."));
+                assertTrue(message.contains("header row unchanged"));
+                assertTrue(message.contains("comma-separated CSV"));
+                assertFalse(invalidHeader.body().contains("Private submitted heading"));
+                assertEquals(1, service.transferSnapshot(listId).aliases().size());
+            }
             body.put("csv", exported.body());
             preview = json(send(client, jsonRequest(origin, path).POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))));
             assertEquals(1, preview.at("/counts/unchanged").intValue());

@@ -74,7 +74,9 @@ public final class AliasTransferCsv
             boolean version1 = format == Format.VCE && parser.getHeaderNames().equals(VERSION_1_HEADERS);
             boolean version2 = format == Format.VCE && parser.getHeaderNames().equals(VERSION_2_HEADERS);
             if(!parser.getHeaderNames().equals(expected) && !version1 && !version2)
-                throw new IllegalArgumentException("Expected exact CSV header: " + String.join(",", expected));
+                throw new IllegalArgumentException("CSV columns do not match a " +
+                    (format == Format.VCE ? "VCE alias" : "RadioReference talkgroup") +
+                    " export. Keep the exported header row unchanged and save as comma-separated CSV.");
             for(CSVRecord row: parser)
             {
                 try
