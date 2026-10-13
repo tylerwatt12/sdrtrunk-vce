@@ -32,6 +32,9 @@ import io.github.dsheirer.alerts.TopicAlertService;
 import io.github.dsheirer.alerts.delivery.PushDeliveryService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
+import io.github.dsheirer.portable.PortableApplicationPaths;
+import io.github.dsheirer.web.http.VoiceEnhancementHttpController;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.channel.ChannelAdministrationService;
@@ -221,6 +224,7 @@ public class StatsWebServerService implements AutoCloseable
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
         event -> mDecodeEventHub.publish("decode_event", event);
     private final StatsWebCallService mWebCallService;
+    private final VoiceEnhancementService mVoiceEnhancementService;
     private final StaticWebAssetResponse mStaticWebAssetResponse = new StaticWebAssetResponse();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
@@ -394,7 +398,9 @@ public class StatsWebServerService implements AutoCloseable
         mRadioReferenceImportService = radioReferenceImportService;
         mDatabase = new StatsWebDatabase(userPreferences);
         mEntityCatalog = new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
-        mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog);
+        mVoiceEnhancementService = new VoiceEnhancementService(
+            PortableApplicationPaths.getDataRoot().resolve("audio-models"));
+        mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog, mVoiceEnhancementService);
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mSavedActivityLiveService = new SavedActivityLiveService(new SavedActivityLiveService.Source()
@@ -1044,6 +1050,11 @@ public class StatsWebServerService implements AutoCloseable
             new OperationalPreferencesHttpController(new OperationalPreferencesService(mUserPreferences));
         server.createContext(OperationalPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, operationalPreferencesController::handle));
+
+        VoiceEnhancementHttpController voiceEnhancementController =
+            new VoiceEnhancementHttpController(mVoiceEnhancementService);
+        server.createContext(VoiceEnhancementHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, voiceEnhancementController::handle));
 
         SpectrumSnapPresetHttpController spectrumSnapController =
             new SpectrumSnapPresetHttpController(mSpectrumSnapSettingsService);

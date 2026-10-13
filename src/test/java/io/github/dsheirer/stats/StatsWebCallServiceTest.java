@@ -6,6 +6,7 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -28,6 +29,8 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.audio.enhance.ModelBundleFixtures;
+import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -65,6 +68,9 @@ import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -74,9 +80,71 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class StatsWebCallServiceTest
 {
+    @Test
+    void optionalModelUsesExplicit16kWaveAndPreservesNativeCallAndDuration(@TempDir Path directory) throws Exception
+    {
+        var enhancement = new VoiceEnhancementService(directory);
+        enhancement.install(enhancement.snapshot().revision(), ModelBundleFixtures.bundle("first-model"));
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement));
+            FeedClient client = listen(service, Set.of()))
+        {
+            CompletedAudioCall source = call();
+            float[] before = source.audioBuffers().getFirst().clone();
+            service.receive(source);
+            var plain = client.awaitCall();
+            assertEquals(false, plain.get("voice_enhancement"));
+            assertEquals(8000, plain.get("audio_sample_rate"));
+            assertEquals(8000, ByteBuffer.wrap(service.get(String.valueOf(plain.get("call_id"))).wave())
+                .order(ByteOrder.LITTLE_ENDIAN).getInt(24));
+
+            enhancement.setEnabled(enhancement.snapshot().revision(), true);
+            service.receive(source);
+            var enhanced = client.awaitCall();
+            assertEquals(true, enhanced.get("voice_enhancement"));
+            assertEquals("first-model", enhanced.get("voice_model"));
+            assertEquals(100L, enhanced.get("duration_ms"));
+            assertEquals(16000, enhanced.get("audio_sample_rate"));
+            byte[] wave = service.get(String.valueOf(enhanced.get("call_id"))).wave();
+            assertEquals(44 + 1600 * 2, wave.length);
+            assertEquals(16000, ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN).getInt(24));
+            assertArrayEquals(before, source.audioBuffers().getFirst());
+            assertEquals(100L, source.getDuration());
+
+            enhancement.install(enhancement.snapshot().revision(), ModelBundleFixtures.bundle("updated-model"));
+            service.receive(source);
+            assertEquals("updated-model", client.awaitCall().get("voice_model"));
+            enhancement.setEnabled(enhancement.snapshot().revision(), false);
+            service.receive(source);
+            assertEquals(false, client.awaitCall().get("voice_enhancement"));
+        }
+    }
+
+    @Test
+    void phase1ToneDetailsComeFromRawAudioWithEnhancementDisabled(@TempDir Path directory) throws Exception
+    {
+        var enhancement = new VoiceEnhancementService(directory);
+        float[] tone = new float[8000];
+        for(int i = 0; i < tone.length; i++) tone[i] = (float)(0.04 * Math.sin(2 * Math.PI * 1000 * i / 8000));
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(new CompletedAudioCall(call().snapshot(), List.of(tone)));
+            var metadata = client.awaitCall();
+            assertEquals(false, metadata.get("voice_enhancement"));
+            assertTrue(metadata.get("detected_paging_tones") instanceof List<?>);
+            var detections = (List<?>)metadata.get("detected_paging_tones");
+            assertEquals(1, detections.size());
+            var result = (io.github.dsheirer.audio.tone.P25PagingToneDetector.DetectedTone)detections.getFirst();
+            assertEquals("decoded_audio", result.source());
+            assertEquals(1000.0, result.frequencyHz(), 4.0);
+            assertTrue(result.durationMilliseconds() >= 200);
+        }
+    }
+
     @Test
     void encoderWorkerFollowsServiceOwnership() throws Exception
     {

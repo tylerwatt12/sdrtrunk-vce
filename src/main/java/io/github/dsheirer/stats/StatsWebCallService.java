@@ -16,6 +16,10 @@ import io.github.dsheirer.audio.call.CallPlaybackTarget;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
+import io.github.dsheirer.audio.tone.P25PagingToneDetector;
+import io.github.dsheirer.dsp.gain.PeakAudioGain;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -80,6 +84,7 @@ final class StatsWebCallService implements AutoCloseable
     private static final int SAMPLE_RATE = 8000;
     private final CompletedCallScanListMatcher mScanListMatcher;
     private final WebEntityNavigationCatalog mNavigationCatalog;
+    private final VoiceEnhancementService mVoiceEnhancement;
     private final BoundedMpscPairQueue<CompletedAudioCall,Object> mEncoderIngress =
         new BoundedMpscPairQueue<>(ENCODER_QUEUE_CAPACITY);
     private final Semaphore mEncoderWakeup = new Semaphore(0);
@@ -92,6 +97,7 @@ final class StatsWebCallService implements AutoCloseable
     private final AtomicLong mPublishedCalls = new AtomicLong();
     private final AtomicLong mDroppedEncoderCapacity = new AtomicLong();
     private final AtomicLong mEncoderFailures = new AtomicLong();
+    private final AtomicLong mEnhancementSkippedBacklog = new AtomicLong();
     private final AtomicBoolean mLossPending = new AtomicBoolean();
     private final AtomicLong mRunGeneration = new AtomicLong();
     private final AtomicInteger mActiveFeeds = new AtomicInteger();
@@ -117,8 +123,15 @@ final class StatsWebCallService implements AutoCloseable
 
     StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog)
     {
+        this(scanListModel, navigationCatalog, null);
+    }
+
+    StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
+                        VoiceEnhancementService voiceEnhancement)
+    {
         mScanListMatcher = scanListModel != null ? new CompletedCallScanListMatcher(scanListModel) : null;
         mNavigationCatalog = navigationCatalog;
+        mVoiceEnhancement = voiceEnhancement;
         mEncoderThread = new NamingThreadFactory("stats completed call audio").newThread(this::runEncoder);
         mEncoderThread.setPriority(Thread.MIN_PRIORITY + 1);
     }
@@ -404,7 +417,9 @@ final class StatsWebCallService implements AutoCloseable
             Map.entry("encoder_queue_depth", mEncoderIngress.size()),
             Map.entry("published_calls", mPublishedCalls.get()),
             Map.entry("dropped_encoder_capacity", mDroppedEncoderCapacity.get()),
-            Map.entry("encoder_failures", mEncoderFailures.get()));
+            Map.entry("encoder_failures", mEncoderFailures.get()),
+            Map.entry("enhancement_skipped_backlog", mEnhancementSkippedBacklog.get()),
+            Map.entry("enhancement_failures", mVoiceEnhancement != null ? mVoiceEnhancement.failures() : 0L));
     }
 
     private void encodeSafely(CompletedAudioCall call, long generation)
@@ -501,7 +516,26 @@ final class StatsWebCallService implements AutoCloseable
             return;
         }
 
-        byte[] wave = wave(call, waveLength);
+        //All analysis and inference remain on this one bounded low-priority worker. Native call PCM is read-only.
+        boolean phase1 = snapshot.callLegSource().decoderType() == DecoderType.P25_PHASE1 ||
+            snapshot.callLegSource().decoderType() == DecoderType.P25_CONVENTIONAL;
+        List<P25PagingToneDetector.DetectedTone> pagingTones = List.of();
+        if(phase1)
+        {
+            try { pagingTones = new P25PagingToneDetector().detect(call.audioBuffers()); }
+            catch(IllegalArgumentException exception) { /* Unavailable analysis never suppresses call playback. */ }
+        }
+        //Drain original audio while calls are waiting rather than multiplying optional work during a burst.
+        boolean backlog = mEncoderIngress.size() > 0;
+        if(backlog && mVoiceEnhancement != null && mVoiceEnhancement.isEnabled())
+            mEnhancementSkippedBacklog.incrementAndGet();
+        VoiceEnhancementService.RenderedAudio rendered = mVoiceEnhancement != null && !backlog ?
+            mVoiceEnhancement.render(call) : null;
+        List<float[]> output = rendered != null ? List.of(rendered.samples()) : call.audioBuffers();
+        int sampleRate = rendered != null ? rendered.sampleRate() : SAMPLE_RATE;
+        float gain = phase1 || rendered != null ?
+            new PeakAudioGain(phase1 ? 5.0f : 1.0f, 0.95f).calculateGain(output) : 1.0f;
+        byte[] wave = wave(output, checkedWaveLength(output), sampleRate, gain);
 
         if(wave == null)
         {
@@ -511,7 +545,11 @@ final class StatsWebCallService implements AutoCloseable
         long callIdSequence = mCallIdSequence.incrementAndGet();
         String id = mInstanceId + "-" + Long.toUnsignedString(callIdSequence, 36);
         long created = System.currentTimeMillis();
-        Map<String,Object> metadata = metadata(id, call, created, scanListIds);
+        Map<String,Object> metadata = new LinkedHashMap<>(metadata(id, call, created, scanListIds));
+        metadata.put("audio_sample_rate", sampleRate);
+        metadata.put("voice_enhancement", rendered != null);
+        if(rendered != null) metadata.put("voice_model", rendered.modelId());
+        if(!pagingTones.isEmpty()) metadata.put("detected_paging_tones", pagingTones);
 
         synchronized(this)
         {
@@ -523,7 +561,8 @@ final class StatsWebCallService implements AutoCloseable
             commitPendingLoss();
             evictExpired(created);
             long cursor = ++mLatestCursor;
-            CachedCall cachedCall = new CachedCall(cursor, id, wave, metadata, Set.copyOf(scanListIds), created);
+            CachedCall cachedCall = new CachedCall(cursor, id, wave, java.util.Collections.unmodifiableMap(metadata),
+                Set.copyOf(scanListIds), created);
             mCalls.addLast(cachedCall);
             mAudioBytes += wave.length;
             evictToLimits();
@@ -1046,6 +1085,11 @@ final class StatsWebCallService implements AutoCloseable
     private static byte[] wave(CompletedAudioCall call, int waveLength)
     {
         List<float[]> audioBuffers = call != null ? call.audioBuffers() : null;
+        return wave(audioBuffers, waveLength, SAMPLE_RATE, 1.0f);
+    }
+
+    private static byte[] wave(List<float[]> audioBuffers, int waveLength, int sampleRate, float gain)
+    {
 
         if(audioBuffers == null || waveLength < WAVE_HEADER_BYTES || waveLength > MAXIMUM_CALL_AUDIO_BYTES)
         {
@@ -1061,8 +1105,8 @@ final class StatsWebCallService implements AutoCloseable
         wave.putInt(16);
         wave.putShort((short)1);
         wave.putShort((short)1);
-        wave.putInt(SAMPLE_RATE);
-        wave.putInt(SAMPLE_RATE * Short.BYTES);
+        wave.putInt(sampleRate);
+        wave.putInt(sampleRate * Short.BYTES);
         wave.putShort((short)Short.BYTES);
         wave.putShort((short)16);
         wave.put("data".getBytes(StandardCharsets.US_ASCII));
@@ -1077,6 +1121,7 @@ final class StatsWebCallService implements AutoCloseable
 
             for(float sample: audioBuffer)
             {
+                sample *= gain;
                 wave.putShort(sample > 1.0f ? Short.MAX_VALUE : sample < -1.0f ? (short)-Short.MAX_VALUE :
                     (short)(sample * Short.MAX_VALUE));
             }
