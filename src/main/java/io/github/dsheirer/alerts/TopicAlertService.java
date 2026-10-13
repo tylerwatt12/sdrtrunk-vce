@@ -96,6 +96,7 @@ public final class TopicAlertService implements AutoCloseable
     public Map<String,Object> snapshot()
     {
         return Map.of("revision", mConfiguration.revision(), "push", mConfiguration.push(), "topics", topics(), "rules", rules(),
+            "builtin_action_button_enabled", mConfiguration.builtinActionButtonEnabled(),
             "observer_queue_depth", mIngress.size(), "dropped_observations", mDropped.get(), "processing_failures", mFailures.get());
     }
 
@@ -106,24 +107,31 @@ public final class TopicAlertService implements AutoCloseable
     }
     public synchronized TopicAlertConfiguration saveTopic(AlertTopic topic, long expectedRevision) throws IOException, SQLException
     {
+        return saveTopic(topic, expectedRevision, null);
+    }
+    public synchronized TopicAlertConfiguration saveTopic(AlertTopic topic, long expectedRevision, Boolean builtinActionButtonEnabled) throws IOException, SQLException
+    {
+        if(builtinActionButtonEnabled != null && (!topic.builtIn() || !AlertTopic.ADMINISTRATOR_TOPIC_ID.equals(topic.id())))
+            throw new IllegalArgumentException("The built-in action setting belongs to Administrator alerts");
         List<AlertTopic> next = new ArrayList<>(topics()); next.removeIf(t -> t.id().equals(topic.id())); next.add(topic);
-        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), next, rules()), expectedRevision);
+        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), next, rules(),
+            builtinActionButtonEnabled != null ? builtinActionButtonEnabled : mConfiguration.builtinActionButtonEnabled()), expectedRevision);
     }
     public synchronized TopicAlertConfiguration deleteTopic(String id, long expectedRevision) throws IOException, SQLException
     {
         if(AlertTopic.ADMINISTRATOR_TOPIC_ID.equals(id)) throw new IllegalArgumentException("The built-in topic cannot be deleted");
         if(rules().stream().anyMatch(r -> r.topicId().equals(id))) throw new IllegalArgumentException("Remove or move connected rules first");
         List<AlertTopic> next = topics().stream().filter(t -> !t.id().equals(id)).toList();
-        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), next, rules()), expectedRevision);
+        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), next, rules(), mConfiguration.builtinActionButtonEnabled()), expectedRevision);
     }
     public synchronized TopicAlertConfiguration saveRule(AlertRule rule, long expectedRevision) throws IOException, SQLException
     {
         List<AlertRule> next = new ArrayList<>(rules()); next.removeIf(r -> r.id().equals(rule.id())); next.add(rule);
-        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), topics(), next), expectedRevision);
+        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), topics(), next, mConfiguration.builtinActionButtonEnabled()), expectedRevision);
     }
     public synchronized TopicAlertConfiguration deleteRule(String id, long expectedRevision) throws IOException, SQLException
     {
-        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), topics(), rules().stream().filter(r -> !r.id().equals(id)).toList()), expectedRevision);
+        return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), topics(), rules().stream().filter(r -> !r.id().equals(id)).toList(), mConfiguration.builtinActionButtonEnabled()), expectedRevision);
     }
 
     public List<AlertDevice> devices() throws SQLException { return mStore.devices(); }
@@ -207,9 +215,10 @@ public final class TopicAlertService implements AutoCloseable
         String trigger = type == DecodeEventType.EMERGENCY ? "emergency" : type == DecodeEventType.PAGE || type == DecodeEventType.CALL_ALERT ? "paging" :
             type == DecodeEventType.AFFILIATE ? "affiliation" : DecodeEventType.VOICE_CALLS.contains(type) || DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type) ? "call" :
             DecodeEventType.COMMANDS.contains(type) ? "command" : "event";
-        offer(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts), view);
-        if(!facts.getOrDefault("tone", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":tone", Math.max(1, view.timeStartMs()), "tone", facts), view);
-        if(!facts.getOrDefault("dcs", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts), view);
+        AlertAction.Context actionContext = AlertAction.capture(view);
+        offer(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts, actionContext), view);
+        if(!facts.getOrDefault("tone", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":tone", Math.max(1, view.timeStartMs()), "tone", facts, actionContext), view);
+        if(!facts.getOrDefault("dcs", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts, actionContext), view);
     }
     private static void parties(Map<String,List<String>> facts, List<DecodeEventViewService.PartyIdentifier> parties, boolean source, String servingKey)
     {
@@ -308,7 +317,7 @@ public final class TopicAlertService implements AutoCloseable
         {
             AlertTopic builtin = config.topics().stream().filter(t -> t.builtIn() && t.visible() && t.enabled()).findFirst().orElse(null);
             if(builtin != null && firstEvent("builtin:" + event.id(), now))
-                publish(config, builtin, "builtin-health", "Administrator alerts", event, event.first("issue_name"), event.first("scope") + " · " + event.first("severity") + " · " + event.first("state"), "details", now);
+                publish(config, builtin, "builtin-health", "Administrator alerts", event, event.first("issue_name"), event.first("scope") + " · " + event.first("severity") + " · " + event.first("state"), "details", config.builtinActionButtonEnabled(), now);
         }
         for(AlertRule rule: config.rules())
         {
@@ -326,7 +335,7 @@ public final class TopicAlertService implements AutoCloseable
             if(!firstEvent(rule.id() + ':' + event.id() + ':' + (recovered ? "recovery" : "match"), now)) continue;
             long previous = state.lastNotification;
             if(!recovered && previous > 0 && now - previous < rule.cooldownMinutes() * 60_000L) continue;
-            if(publish(config, topic, rule.id(), rule.name(), event, expand(rule.titleTemplate(), event, config.push().senderLabel(), now), expand(rule.bodyTemplate(), event, config.push().senderLabel(), now), rule.clickAction(), now))
+            if(publish(config, topic, rule.id(), rule.name(), event, expand(rule.titleTemplate(), event, config.push().senderLabel(), now), expand(rule.bodyTemplate(), event, config.push().senderLabel(), now), rule.clickAction(), rule.actionButtonEnabled(), now))
             {
                 state.lastNotification = now;
                 if("health".equals(event.trigger()))
@@ -337,10 +346,11 @@ public final class TopicAlertService implements AutoCloseable
             }
         }
     }
-    private boolean publish(TopicAlertConfiguration config, AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body, String click, long now) throws SQLException
+    private boolean publish(TopicAlertConfiguration config, AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body, String click, boolean actionButtonEnabled, long now) throws SQLException
     {
         List<AlertDevice> destinations = mStore.devicesForTopic(topic.id(), config.push().mode());
-        boolean saved = mStore.publish(topic, ruleId, alertName, event, bounded(title, 128), bounded(body, 2048), click, destinations, now);
+        boolean saved = mStore.publish(topic, ruleId, alertName, event, bounded(title, 128), bounded(body, 2048), click,
+            AlertAction.automatic(event.trigger(), event.actionContext(), actionButtonEnabled), destinations, now);
         if(!saved) mDropped.incrementAndGet(); return saved;
     }
     private boolean firstEvent(String key, long now) { return mSeenEvents.putIfAbsent(key, now) == null; }

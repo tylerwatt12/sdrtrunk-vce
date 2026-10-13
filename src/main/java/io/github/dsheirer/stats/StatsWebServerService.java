@@ -978,7 +978,7 @@ public class StatsWebServerService implements AutoCloseable
         if(mTopicAlertService != null)
         {
             TopicAlertsHttpController alerts = new TopicAlertsHttpController(mTopicAlertService,
-                mPushDeliveryService, this::topicAlertOptions, this::reconcileTopicAlertObservation);
+                mPushDeliveryService, this::topicAlertOptions, this::reconcileTopicAlertObservation, mWebAccessService);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_SETTINGS, alerts::handleAdmin));
             server.createContext(TopicAlertsHttpController.PUBLIC_PATH, alerts::handlePublic);

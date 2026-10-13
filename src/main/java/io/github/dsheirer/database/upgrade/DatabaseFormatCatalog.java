@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 48;
+    public static final int CURRENT_VERSION = 49;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -558,13 +558,21 @@ public final class DatabaseFormatCatalog
             "Drop retired personal pause, quiet hours and time zones; preserve custom rule schedules and their time zones",
             "Keep existing rule scopes unchanged; absent protocol_family matches all source decoder families"));
 
+    private static final FormatDescriptor FORMAT_49 = new FormatDescriptor(49, "topic-alert-action-snapshots-v1",
+        "Optional popup actions retain a canonical event destination independently of notification taps", "18d031a2432381b25ffd9a015b436ee23277d7592129d7b42bab6c74f7825d73", Map.of(),
+        List.of("main format 49"), "src/test/java/io/github/dsheirer/database/upgrade/Format49TestDatabase.java", List.of(
+            "Preserve every prior configuration, account, credential, topic, membership, retained message and delivery state",
+            "Snapshot action kind and optional canonical entity reference on each existing bounded alert message; never store an arbitrary action URL",
+            "Preserve prior Listen popup behavior explicitly; missing rule flags follow the old click_action and existing valid boolean flags remain unchanged",
+            "Start the new built-in popup-action setting disabled; refuse malformed premature flags rather than coerce or guess"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
             FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47, FORMAT_48);
+            FORMAT_47, FORMAT_48, FORMAT_49);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -745,7 +753,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_48;
+        return FORMAT_49;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -961,9 +969,13 @@ public final class DatabaseFormatCatalog
             try { io.github.dsheirer.web.settings.SpectrumSnapSettings.read(connection); }
             catch(SQLException e) { throw new FormatRejectionException("Invalid or missing spectrum-snap country selection"); }
         }
-        if(descriptor.version() >= 47)
+        if(descriptor.version() >= 49)
         {
             io.github.dsheirer.alerts.TopicAlertSchema.validate(connection);
+        }
+        else if(descriptor.version() >= 47)
+        {
+            Format48TopicAlertSchema.validate(connection);
         }
         if(descriptor.version() <= 3)
         {
@@ -1058,7 +1070,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
-            case 43, 44, 45, 46, 47, 48 -> 11;
+            case 43, 44, 45, 46, 47, 48, 49 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

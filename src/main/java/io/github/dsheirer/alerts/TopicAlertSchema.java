@@ -90,7 +90,10 @@ public final class TopicAlertSchema
                     click_action TEXT NOT NULL CHECK(click_action IN ('details','listen')),
                     event_type TEXT NOT NULL CHECK(length(event_type)<=80),
                     created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
-                    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms)
+                    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms),
+                    action_kind TEXT NOT NULL DEFAULT 'none' CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system')),
+                    action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json)
+                        THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END)
                 )
                 """);
             statement.execute("CREATE INDEX idx_topic_alert_message_topic_time ON topic_alert_message(topic_id,created_at_ms DESC,id)");
@@ -117,7 +120,7 @@ public final class TopicAlertSchema
             statement.execute("INSERT INTO topic_alert_topic VALUES('administrator-alerts','Administrator alerts','Tuner, USB, channel, computer, recording, and streaming issues and recovery updates.',0,1,1)");
             statement.execute("""
                 INSERT INTO application_settings(key,settings_json,updated_at_ms)
-                VALUES('alert.configuration','{"revision":1,"push":{"enabled":false,"mode":"proxy","site_url":"","sender_label":"VCE installation"}}',1)
+                VALUES('alert.configuration','{"revision":1,"builtin_action_button_enabled":false,"push":{"enabled":false,"mode":"proxy","site_url":"","sender_label":"VCE installation"}}',1)
                 """);
         }
     }
@@ -129,9 +132,16 @@ public final class TopicAlertSchema
             if(!rows.next() || !"Administrator alerts".equals(rows.getString(1)) || rows.getInt(2) != 1)
                 throw new SQLException("Missing or invalid built-in alert topic");
         }
-        try(Statement statement = connection.createStatement(); var rows = statement.executeQuery("SELECT json_extract(settings_json,'$.revision') FROM application_settings WHERE key='alert.configuration'"))
+        try(Statement statement = connection.createStatement(); var rows = statement.executeQuery("SELECT json_extract(settings_json,'$.revision'),json_type(settings_json,'$.builtin_action_button_enabled') FROM application_settings WHERE key='alert.configuration'"))
         {
-            if(!rows.next() || rows.getLong(1) < 1) throw new SQLException("Missing or invalid alert configuration");
+            if(!rows.next() || rows.getLong(1) < 1 || !("true".equals(rows.getString(2)) || "false".equals(rows.getString(2))))
+                throw new SQLException("Missing or invalid alert configuration action-button setting");
         }
+        try(Statement statement = connection.createStatement(); var rows = statement.executeQuery(
+            "SELECT 1 FROM topic_alert_rule WHERE json_type(rule_json,'$.action_button_enabled') IS NULL OR json_type(rule_json,'$.action_button_enabled') NOT IN ('true','false') LIMIT 1"))
+        {
+            if(rows.next()) throw new SQLException("Missing or invalid alert rule action-button setting");
+        }
+
     }
 }

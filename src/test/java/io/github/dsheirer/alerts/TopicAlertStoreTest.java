@@ -137,7 +137,7 @@ class TopicAlertStoreTest
             long before = allocated(connection); connection.setAutoCommit(false);
             sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_device SELECT 'd'||i,'Phone','proxy','remote-'||i,'','','',printf('%064x',i),0 FROM n");
             sql.executeUpdate("INSERT INTO topic_alert_membership SELECT id,'fire' FROM topic_alert_device");
-            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_message SELECT 'm'||i,'rule','fire','Fire','Rule name','Title',printf('%02048d',i),'details','call'," + NOW + "+i," + (NOW + 3_600_000) + " FROM n");
+            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_message(id,rule_id,topic_id,topic_name,alert_name,title,body,click_action,event_type,created_at_ms,expires_at_ms) SELECT 'm'||i,'rule','fire','Fire','Rule name','Title',printf('%02048d',i),'details','call'," + NOW + "+i," + (NOW + 3_600_000) + " FROM n");
             sql.executeUpdate("INSERT INTO topic_alert_delivery(alert_id,device_id,remote_device_id,method,state,attempts,next_at_ms,remote_id,error,updated_at_ms) SELECT 'm'||substr(id,2),id,remote_device_id,'proxy','pending',0," + NOW + ",'',''," + NOW + " FROM topic_alert_device");
             connection.commit();
             assertTrue(plan(connection, "SELECT v.id FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id='fire' AND v.method='proxy' ORDER BY membership.device_id LIMIT 100").contains("idx_topic_alert_membership_topic"));
@@ -158,7 +158,7 @@ class TopicAlertStoreTest
             assertEquals(1000, visited.size()); assertEquals(first.getFirst().id(), queued.queuedRelayAlerts(100).getFirst().id(), "Queued reconciliation wraps after visiting later alerts");
             System.out.println("Queued relay lookup sample: " + ((System.nanoTime() - queryStarted) / 1_000_000.0) + " ms for11 bounded batches over20000 delivery rows");
             assertFalse(queued.publish(topic(), "rule", "Rule", new AlertEvent("overflow", NOW, "call", Map.of()), "Title", "Body", "details", List.of(queued.device("d1").orElseThrow()), NOW), "A protected recipient snapshot set cannot grow beyond the retained-delivery budget");
-            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<2000) INSERT INTO topic_alert_message SELECT 'later'||i,'rule','fire','Fire','Rule name','Title','Body','details','call'," + NOW + "+10000+i," + (NOW + 3_600_000) + " FROM n");
+            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<2000) INSERT INTO topic_alert_message(id,rule_id,topic_id,topic_name,alert_name,title,body,click_action,event_type,created_at_ms,expires_at_ms) SELECT 'later'||i,'rule','fire','Fire','Rule name','Title','Body','details','call'," + NOW + "+10000+i," + (NOW + 3_600_000) + " FROM n");
             sql.executeUpdate("INSERT INTO topic_alert_delivery(alert_id,device_id,remote_device_id,method,state,attempts,next_at_ms,remote_id,error,updated_at_ms) SELECT id,'d1','remote-1','proxy','failed',1," + NOW + ",'',''," + NOW + " FROM topic_alert_message WHERE id LIKE 'later%'");
             connection.commit(); queued.prune(NOW);
             assertEquals(20, queued.deliveriesForAlert("m1").size(), "Queued batch retains completed recipient siblings beyond ordinary history pruning");

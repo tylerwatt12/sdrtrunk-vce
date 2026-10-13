@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Detached bounded receiver observation, evaluated only by the alert worker. */
-public record AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values)
+public record AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values, AlertAction.Context actionContext)
 {
     public AlertEvent
     {
@@ -20,6 +20,11 @@ public record AlertEvent(String id, long observedAtMs, String trigger, Map<Strin
             bounded.put(key, List.copyOf(items));
         });
         values = Map.copyOf(bounded);
+        actionContext = actionContext != null ? actionContext : AlertAction.Context.EMPTY;
+    }
+    public AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values)
+    {
+        this(id, observedAtMs, trigger, values, AlertAction.Context.EMPTY);
     }
     public List<String> values(String field) { return values.getOrDefault(field, List.of()); }
     public String first(String field) { return values(field).isEmpty() ? "" : values(field).getFirst(); }

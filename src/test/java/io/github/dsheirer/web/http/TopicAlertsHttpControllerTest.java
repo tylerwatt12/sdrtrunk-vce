@@ -114,19 +114,78 @@ class TopicAlertsHttpControllerTest
         finally { gateway.stop(0); }
     }
 
+    @Test void historyActionsUseCurrentAnonymousPolicyEvenForAnAdministratorSession() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("public-actions.sqlite")))
+        {
+            f.login();
+            var topic = new io.github.dsheirer.alerts.AlertTopic("fire", "Fire", "", true, true, false);
+            f.service.saveTopic(topic, f.service.configuration().revision());
+            var store = new io.github.dsheirer.alerts.TopicAlertStore(f.database);
+            long now = System.currentTimeMillis();
+            store.publish(topic, "rule", "Rule", new io.github.dsheirer.alerts.AlertEvent("channel-event", 1000, "event", Map.of()), "Channel", "Body", "listen",
+                new io.github.dsheirer.alerts.AlertAction("channel", io.github.dsheirer.stats.WebEntityReferences.channel("00000000-0000-4000-8000-000000000001")), java.util.List.of(), now);
+            store.publish(topic, "rule", "Rule", new io.github.dsheirer.alerts.AlertEvent("health-event", 1000, "health", Map.of()), "Health", "Body", "details",
+                io.github.dsheirer.alerts.AlertAction.LIVE, java.util.List.of(), now + 1);
+            var gated = f.body(f.send("GET", "/api/v1/alerts/history?topic=fire", null, null, false)).path("items");
+            for(var item: gated) assertTrue(item.path("action").isNull(), "The administrator session must not grant guest CTA eligibility");
+            f.access.setCapabilityTier("web-access", io.github.dsheirer.web.auth.AccessTier.PUBLIC);
+            f.access.setCapabilityTier("radio", io.github.dsheirer.web.auth.AccessTier.PUBLIC);
+            f.access.setCapabilityTier("live", io.github.dsheirer.web.auth.AccessTier.PUBLIC);
+            var publicItems = f.body(f.send("GET", "/api/v1/alerts/history?topic=fire", null, null, false)).path("items");
+            assertEquals(2, publicItems.size());
+            for(var item: publicItems)
+            {
+                assertFalse(item.path("action").isNull());
+                var detail = f.body(f.send("GET", "/api/v1/alerts/history/" + item.path("id").asText(), null, null, false));
+                assertEquals(item.path("action"), detail.path("action"));
+                assertFalse(detail.path("action").has("url"));
+            }
+            f.access.setCapabilityTier("radio", io.github.dsheirer.web.auth.AccessTier.USER);
+            f.access.setCapabilityTier("live", io.github.dsheirer.web.auth.AccessTier.ADMIN);
+            for(var item: f.body(f.send("GET", "/api/v1/alerts/history?topic=fire", null, null, false)).path("items"))
+                assertTrue(item.path("action").isNull());
+        }
+    }
+
+    @Test void builtinActionSettingOnlyAcceptsTheBuiltinTopicAndSurvivesPushSettingsSave() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("builtin-action-edit.sqlite")))
+        {
+            f.login();
+            var other = Map.of("id", "fire", "name", "Fire", "description", "", "visible", true, "enabled", true, "built_in", false);
+            assertEquals(422, f.send("PUT", "/api/v1/admin/alerts/topics", Map.of("revision", f.service.configuration().revision(), "topic", other,
+                "builtin_action_button_enabled", true), null, true).statusCode());
+            var builtin = Map.of("id", "administrator-alerts", "name", "Administrator alerts", "description", "", "visible", true, "enabled", true, "built_in", true);
+            assertEquals(422, f.send("PUT", "/api/v1/admin/alerts/topics", Map.of("revision", f.service.configuration().revision(), "topic", builtin,
+                "builtin_action_button_enabled", "true"), null, true).statusCode());
+            var saved = f.send("PUT", "/api/v1/admin/alerts/topics", Map.of("revision", f.service.configuration().revision(), "topic", builtin,
+                "builtin_action_button_enabled", true), null, true);
+            assertEquals(200, saved.statusCode(), saved.body());
+            assertTrue(f.body(saved).path("builtin_action_button_enabled").asBoolean());
+            var pushSaved = f.send("PUT", "/api/v1/admin/alerts/config", Map.of("revision", f.service.configuration().revision(), "enabled", false,
+                "mode", "proxy", "sender_label", "VCE"), null, true);
+            assertEquals(200, pushSaved.statusCode(), pushSaved.body());
+            assertTrue(f.service.configuration().builtinActionButtonEnabled());
+            assertTrue(new io.github.dsheirer.alerts.TopicAlertStore(f.database).configuration().builtinActionButtonEnabled());
+        }
+    }
+
     private static final class Fixture implements AutoCloseable
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
+        final WebAccessService access; final Path database;
         final HttpClient client = HttpClient.newHttpClient(); final WebRequestSecurity security;
         boolean optionsUnavailable;
         final URI origin; String cookie = "", csrf = "";
         Fixture(Path database) throws Exception { this(database, null); }
         Fixture(Path database, URI gateway) throws Exception
         {
+            this.database = database;
             SdrTrunkDatabaseStartup.createGlobalDatabase(database);
             try(var connection = SdrTrunkDatabase.open(database); var insert = connection.createStatement())
             { insert.executeUpdate("INSERT INTO web_access_policy VALUES ('web-access','ADMIN',1)"); }
-            WebAccessService access = new WebAccessService(database);
+            access = new WebAccessService(database);
             access.provisionOrResetPrimaryAdmin("fixture-admin-password".toCharArray());
             var authentication = new WebAuthenticationService(access);
             security = new WebRequestSecurity(access, authentication);
@@ -140,7 +199,7 @@ class TopicAlertsHttpControllerTest
                 deliveryConstructor.setAccessible(true);
                 push = deliveryConstructor.newInstance(database, service, clientConstructor.newInstance(gateway, HttpClient.newHttpClient()));
             }
-            var controller = new TopicAlertsHttpController(service, push, () -> { if(optionsUnavailable) throw new IllegalStateException("Alert source choices are temporarily unavailable"); return Map.of(); });
+            var controller = new TopicAlertsHttpController(service, push, () -> { if(optionsUnavailable) throw new IllegalStateException("Alert source choices are temporarily unavailable"); return Map.of(); }, () -> { }, access);
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             new WebSessionHttpController(access, authentication, security).register(server);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, security.protectApi(WebCapability.ADMIN_SETTINGS, controller::handleAdmin));

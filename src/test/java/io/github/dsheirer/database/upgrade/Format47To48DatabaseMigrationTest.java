@@ -37,7 +37,7 @@ class Format47To48DatabaseMigrationTest
             var rule = new AlertRule("fixture-rule", "Scheduled activity", "fixture-alert", true, "call", "", "", "", "",
                 null, null, new AlertRule.Schedule("custom", List.of(0, 1), "22:00", "06:00", "America/New_York"),
                 0, "rule", false, "Activity", "Scheduled activity", "details");
-            var legacy = new ObjectMapper().valueToTree(rule); ((com.fasterxml.jackson.databind.node.ObjectNode)legacy).remove("protocol_family");
+            var legacy = new ObjectMapper().valueToTree(rule); ((com.fasterxml.jackson.databind.node.ObjectNode)legacy).remove(java.util.List.of("protocol_family", "action_button_enabled"));
             ruleJson = legacy.toString();
             try(var insert = connection.prepareStatement("INSERT INTO topic_alert_rule VALUES('fixture-rule','fixture-alert',?)"))
             { insert.setString(1, ruleJson); insert.executeUpdate(); }
@@ -51,10 +51,10 @@ class Format47To48DatabaseMigrationTest
             assertEquals("1", scalar(connection, "SELECT paused FROM topic_alert_device WHERE id='fixture-phone'"));
             var report = DatabaseMigrationChain.migrate(connection); connection.commit();
             assertEquals("format-47-to-48", report.steps().getFirst().id());
-            assertEquals(48, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             for(String table: List.of("topic_alert_device", "topic_alert_enrollment"))
                 assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_table_info('" + table + "') WHERE name IN ('paused','quiet_start','quiet_end','time_zone')"));
-            assertEquals(ruleJson, scalar(connection, "SELECT rule_json FROM topic_alert_rule"));
+            assertEquals(new ObjectMapper().readTree(ruleJson), new ObjectMapper().readTree(scalar(connection, "SELECT json_remove(rule_json,'$.action_button_enabled') FROM topic_alert_rule")), "Subsequent popup setting migration preserves every original rule field");
             assertEquals("queued:fixture-remote", scalar(connection, "SELECT state||':'||remote_device_id FROM topic_alert_delivery WHERE id=10"));
             assertEquals("Activity:Scheduled activity", scalar(connection, "SELECT title||':'||body FROM topic_alert_message"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));

@@ -17,7 +17,8 @@ public record AlertRule(String id, String name, @JsonProperty("topic_id") String
                         @JsonProperty("notify_recovery") boolean notifyRecovery,
                         @JsonProperty("title_template") String titleTemplate,
                         @JsonProperty("body_template") String bodyTemplate,
-                        @JsonProperty("click_action") String clickAction)
+                        @JsonProperty("click_action") String clickAction,
+                        @JsonProperty("action_button_enabled") boolean actionButtonEnabled)
 {
     public static final Set<String> TRIGGERS = Set.of("call", "emergency", "paging", "affiliation", "command", "health", "tone", "dcs", "event");
     public static final Set<String> FIELDS = Set.of("radio", "target_radio", "talkgroup", "alias_id", "channel_id", "system_key", "site_id", "protocol", "event_type", "encrypted", "emergency", "duration_seconds", "tone", "dcs", "issue", "severity", "state");
@@ -49,6 +50,15 @@ public record AlertRule(String id, String name, @JsonProperty("topic_id") String
         bodyTemplate = text(bodyTemplate, "Notification text", 2048, false);
         clickAction = clickAction != null ? clickAction : "details";
         if(!Set.of("details", "listen").contains(clickAction)) throw new IllegalArgumentException("Unknown click action");
+    }
+
+    public AlertRule(String id, String name, String topicId, boolean enabled, String trigger, String systemKey,
+                     String siteId, String channelId, String protocolFamily, String protocol, Condition conditions, Timing timing,
+                     Schedule schedule, int cooldownMinutes, String repeatKey, boolean notifyRecovery, String titleTemplate,
+                     String bodyTemplate, String clickAction)
+    {
+        this(id, name, topicId, enabled, trigger, systemKey, siteId, channelId, protocolFamily, protocol, conditions, timing,
+            schedule, cooldownMinutes, repeatKey, notifyRecovery, titleTemplate, bodyTemplate, clickAction, false);
     }
 
     public AlertRule(String id, String name, String topicId, boolean enabled, String trigger, String systemKey,

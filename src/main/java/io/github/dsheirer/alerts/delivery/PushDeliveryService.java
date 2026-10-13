@@ -76,7 +76,7 @@ public final class PushDeliveryService implements AutoCloseable
             var push = current.push();
             var requested = new PushSettings(push.enabled(), push.mode(), push.siteUrl(), senderLabel != null ? senderLabel : push.senderLabel());
             if(!requested.senderLabel().equals(push.senderLabel()))
-                mAlerts.updateConfiguration(new io.github.dsheirer.alerts.TopicAlertConfiguration(current.revision(), requested, current.topics(), current.rules()), current.revision());
+                mAlerts.updateConfiguration(new io.github.dsheirer.alerts.TopicAlertConfiguration(current.revision(), requested, current.topics(), current.rules(), current.builtinActionButtonEnabled()), current.revision());
             requestedLabel = requested.senderLabel();
             credentials = mCredentials.prepareRegistration();
         }

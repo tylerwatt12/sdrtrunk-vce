@@ -4,12 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.alerts.AlertDevice;
+import io.github.dsheirer.alerts.AlertAction;
 import io.github.dsheirer.alerts.AlertRule;
 import io.github.dsheirer.alerts.AlertTopic;
 import io.github.dsheirer.alerts.TopicAlertConfiguration;
 import io.github.dsheirer.alerts.TopicAlertService;
 import io.github.dsheirer.alerts.delivery.PublicAccessVerifier;
 import io.github.dsheirer.alerts.delivery.PushDeliveryService;
+import io.github.dsheirer.web.auth.AccessTier;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
@@ -30,6 +34,7 @@ public final class TopicAlertsHttpController
     private final PushDeliveryService mPush;
     private final Supplier<Map<String,Object>> mOptions;
     private final Runnable mConfigurationChanged;
+    private final WebAccessService mAccess;
     private final Map<String,Admission> mAdmissions = new ConcurrentHashMap<>();
 
     public TopicAlertsHttpController(TopicAlertService alerts, PushDeliveryService push,
@@ -41,7 +46,13 @@ public final class TopicAlertsHttpController
     public TopicAlertsHttpController(TopicAlertService alerts, PushDeliveryService push,
                                     Supplier<Map<String,Object>> options, Runnable configurationChanged)
     {
-        mAlerts = alerts; mPush = push; mOptions = options; mConfigurationChanged = configurationChanged;
+        this(alerts, push, options, configurationChanged, null);
+    }
+
+    public TopicAlertsHttpController(TopicAlertService alerts, PushDeliveryService push,
+                                    Supplier<Map<String,Object>> options, Runnable configurationChanged, WebAccessService access)
+    {
+        mAlerts = alerts; mPush = push; mOptions = options; mConfigurationChanged = configurationChanged; mAccess = access;
     }
 
     public void handleAdmin(HttpExchange exchange) throws IOException
@@ -138,7 +149,7 @@ public final class TopicAlertsHttpController
                     if(!body.path("enabled").isBoolean()) throw new IllegalArgumentException("Choose whether notifications are enabled");
                     var push = new TopicAlertConfiguration.PushSettings(body.path("enabled").asBoolean(), mode, url,
                         body.path("sender_label").asText(current.push().senderLabel()));
-                    mAlerts.updateConfiguration(new TopicAlertConfiguration(current.revision(), push, current.topics(), current.rules()), revision);
+                    mAlerts.updateConfiguration(new TopicAlertConfiguration(current.revision(), push, current.topics(), current.rules(), current.builtinActionButtonEnabled()), revision);
                     mConfigurationChanged.run();
                     send(exchange, config());
                 }
@@ -149,11 +160,27 @@ public final class TopicAlertsHttpController
                 else if("POST".equals(method) || "PUT".equals(method))
                 {
                     String field = path.equals("/topics") ? "topic" : "rule";
-                    JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision", field));
+                    JsonNode body = WebHttpSupport.readJsonObject(exchange, field.equals("topic") ?
+                        Set.of("revision", field, "builtin_action_button_enabled") : Set.of("revision", field));
                     try
                     {
-                        if(field.equals("topic")) mAlerts.saveTopic(JSON.treeToValue(body.path(field), AlertTopic.class), revision(body));
-                        else mAlerts.saveRule(JSON.treeToValue(body.path(field), AlertRule.class), revision(body));
+                        if(field.equals("topic"))
+                        {
+                            Boolean builtinAction = null;
+                            if(body.has("builtin_action_button_enabled"))
+                            {
+                                if(!body.path("builtin_action_button_enabled").isBoolean())
+                                    throw new IllegalArgumentException("Choose whether the alert action button is enabled");
+                                builtinAction = body.path("builtin_action_button_enabled").asBoolean();
+                            }
+                            mAlerts.saveTopic(JSON.treeToValue(body.path(field), AlertTopic.class), revision(body), builtinAction);
+                        }
+                        else
+                        {
+                            if(body.path(field).has("action_button_enabled") && !body.path(field).path("action_button_enabled").isBoolean())
+                                throw new IllegalArgumentException("Choose whether the alert action button is enabled");
+                            mAlerts.saveRule(JSON.treeToValue(body.path(field), AlertRule.class), revision(body));
+                        }
                     }
                     catch(com.fasterxml.jackson.core.JsonProcessingException ignored)
                     { throw new IllegalArgumentException("Check the alert fields and try saving again"); }
@@ -207,7 +234,7 @@ public final class TopicAlertsHttpController
         {
             if(!method(exchange, "GET") || !WebHttpSupport.requireNoQuery(exchange)) return;
             var item = mAlerts.historyItem(path.substring("/history/".length()));
-            if(item.isPresent()) send(exchange, item.get()); else WebHttpSupport.notFound(exchange);
+            if(item.isPresent()) send(exchange, publicHistoryItem(item.get())); else WebHttpSupport.notFound(exchange);
             return;
         }
         switch(path)
@@ -225,7 +252,10 @@ public final class TopicAlertsHttpController
                 String topic = query.getOrDefault("topic_id", query.getOrDefault("topic", ""));
                 List<String> ids = mAlerts.configuration().topics().stream().filter(AlertTopic::visible).map(AlertTopic::id)
                     .filter(id -> topic.isEmpty() || topic.equals(id)).toList();
-                send(exchange, mAlerts.history(ids, integer(query, "limit", 30, 1, 100), integer(query, "offset", 0, 0, 10000)));
+                Map<String,Object> page = new LinkedHashMap<>(mAlerts.history(ids, integer(query, "limit", 30, 1, 100), integer(query, "offset", 0, 0, 10000)));
+                @SuppressWarnings("unchecked") List<Map<String,Object>> items = (List<Map<String,Object>>)page.get("items");
+                page.put("items", items.stream().map(this::publicHistoryItem).toList());
+                send(exchange, page);
             }
             case "/enrollments" -> {
                 if(!method(exchange, "POST") || !WebHttpSupport.requireNoQuery(exchange)) return;
@@ -268,6 +298,7 @@ public final class TopicAlertsHttpController
         var config = mAlerts.configuration(); var push = config.push();
         return Map.of("revision", config.revision(), "enabled", push.enabled(), "mode", push.mode(), "site_url", push.siteUrl(),
             "sender_label", push.senderLabel(), "public_access", mPush.verifier().status(push.siteUrl()),
+            "builtin_action_button_enabled", config.builtinActionButtonEnabled(),
             "registration", mPush.registration(), "direct", Map.of("vapid_public_key", "direct".equals(push.mode()) ? mPush.publicKey() : ""));
     }
 
@@ -282,7 +313,19 @@ public final class TopicAlertsHttpController
             row.put("subscription_count", devices.stream().filter(device -> device.topicIds().contains(topic.id())).count());
             return row;
         }).toList();
-        return Map.of("revision", config.revision(), "topics", topics, "rules", config.rules(), "options", mOptions.get());
+        return Map.of("revision", config.revision(), "topics", topics, "rules", config.rules(), "options", mOptions.get(),
+            "builtin_action_button_enabled", config.builtinActionButtonEnabled());
+    }
+
+    private Map<String,Object> publicHistoryItem(Map<String,Object> item)
+    {
+        Map<String,Object> result = new LinkedHashMap<>(item);
+        Object saved = result.remove("action");
+        AlertAction action = saved instanceof AlertAction value ? value : AlertAction.NONE;
+        WebCapability capability = action.kind().equals("live") ? WebCapability.LIVE_VIEW : WebCapability.RADIO_VIEW;
+        boolean allowed = !action.kind().equals("none") && mAccess != null && mAccess.isAllowed(AccessTier.PUBLIC, capability);
+        result.put("action", allowed ? action.toMap() : null);
+        return result;
     }
 
     private static Map<String,Object> publicDevice(AlertDevice device)

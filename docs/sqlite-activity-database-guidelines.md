@@ -567,6 +567,27 @@ Rule schedules retain their separate time-zone setting. Optional protocol-family
 bounded rule document and matched against the primary source decoder family detached on the existing event observer.
 It adds no activity table, event row, index, network call, or database lookup on the receiver callback.
 
+Format 49 appends `action_kind` and nullable `action_entity_ref_json` to each existing alert message. The popup can
+open the canonical destination selected from that specific event without confusing its action with notification-tap
+behavior. Rule changes, deleted rules and later channel or identity changes cannot reconstruct the event's original
+chosen destination. The snapshot therefore belongs to the existing immutable message instead of a new table, arbitrary
+URL, reader-side guess or scan of receiver activity. Rules retain one bounded action-button boolean each, and the existing
+alert-configuration metadata retains the separate built-in choice.
+
+For R emitted alerts per hour, this still writes R messages and R × D deliveries, with no extra event, recipient or
+history row. The nullable reference is limited to 2,048 JSON characters and the action kind is a fixed enum. Typical
+canonical references contain only their kind and stable identifier. The UTF-8 text bound is below 8 KiB per populated
+reference, plus its short kind and SQLite row overhead; the latest 2,000 messages plus at most 2,000 older protected
+messages bound raw reference text below 32 MiB. Disabled or unresolved actions have `none` and NULL, retaining no
+invented destination. Existing message retention, expiry protection and deletion remove the snapshot with its message.
+
+The existing message primary key supports a selected alert's action lookup and the topic/time index supports bounded
+history pages; no action predicate, table or index is added. Representative `EXPLAIN QUERY PLAN` checks retain the
+message primary-key seek and topic/time seek without a temporary sort. Action context is detached and resolved on
+existing observer/alert workers; receiver callbacks add no database, network or filesystem work. The adjacent migration
+preserves prior Listen popup actions with a `live` kind and NULL entity reference, and leaves other historical destinations
+unresolved. Exact frozen-source, target-DDL, rollback/retry, preservation and integrity tests cover the transformation.
+
 A fresh SQLite sample with 1,000 messages containing 2,048-byte ASCII bodies, 1,000 devices, 1,000 memberships
 and 1,000 pending deliveries added 4,587,520 allocated database bytes. This measures page allocation for that fixture,
 not throughput, WAL growth or a full Unicode worst case. The four-byte UTF-8 bound on message text is under

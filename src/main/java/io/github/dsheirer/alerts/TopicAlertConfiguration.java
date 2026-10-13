@@ -6,7 +6,8 @@ import java.util.HashSet;
 import java.util.List;
 
 /** Bounded administrator configuration. Push credentials are kept under a separate private settings key. */
-public record TopicAlertConfiguration(long revision, PushSettings push, List<AlertTopic> topics, List<AlertRule> rules)
+public record TopicAlertConfiguration(long revision, PushSettings push, List<AlertTopic> topics, List<AlertRule> rules,
+                                     @JsonProperty("builtin_action_button_enabled") boolean builtinActionButtonEnabled)
 {
     public TopicAlertConfiguration
     {
@@ -25,6 +26,11 @@ public record TopicAlertConfiguration(long revision, PushSettings push, List<Ale
             if(!ruleIds.add(rule.id())) throw new IllegalArgumentException("Duplicate rule ID");
             if(!ids.contains(rule.topicId())) throw new IllegalArgumentException("Rule topic does not exist");
         }
+    }
+
+    public TopicAlertConfiguration(long revision, PushSettings push, List<AlertTopic> topics, List<AlertRule> rules)
+    {
+        this(revision, push, topics, rules, false);
     }
 
     public static TopicAlertConfiguration defaults()

@@ -62,7 +62,7 @@ public final class TopicAlertStore
                 rules.add(rule);
             }
         }
-        return new TopicAlertConfiguration(settings.revision(), settings.push(), topics, rules);
+        return new TopicAlertConfiguration(settings.revision(), settings.push(), topics, rules, settings.builtinActionButtonEnabled());
     }
 
     public synchronized TopicAlertConfiguration updateConfiguration(TopicAlertConfiguration next, long expectedRevision) throws IOException, SQLException
@@ -73,10 +73,10 @@ public final class TopicAlertStore
             connection.setAutoCommit(false);
             try
             {
-                TopicAlertConfiguration saved = new TopicAlertConfiguration(expectedRevision + 1, next.push(), next.topics(), next.rules());
+                TopicAlertConfiguration saved = new TopicAlertConfiguration(expectedRevision + 1, next.push(), next.topics(), next.rules(), next.builtinActionButtonEnabled());
                 try(PreparedStatement update = connection.prepareStatement("UPDATE application_settings SET settings_json=?,updated_at_ms=? WHERE key='alert.configuration' AND json_extract(settings_json,'$.revision')=?"))
                 {
-                    update.setString(1, mMapper.writeValueAsString(new Settings(saved.revision(), saved.push())));
+                    update.setString(1, mMapper.writeValueAsString(new Settings(saved.revision(), saved.push(), saved.builtinActionButtonEnabled())));
                     update.setLong(2, System.currentTimeMillis()); update.setLong(3, expectedRevision);
                     if(update.executeUpdate() != 1) throw new RevisionConflictException();
                 }
@@ -409,6 +409,17 @@ public final class TopicAlertStore
     public synchronized boolean publish(AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body,
                                          String clickAction, List<AlertDevice> destinations, long now) throws SQLException
     {
+        return publish(topic, ruleId, alertName, event, title, body, clickAction, AlertAction.NONE, destinations, now);
+    }
+
+    public synchronized boolean publish(AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body,
+                                         String clickAction, AlertAction action, List<AlertDevice> destinations, long now) throws SQLException
+    {
+        if(action == null) action = AlertAction.NONE;
+        String actionJson;
+        try { actionJson = action.entityRef() != null ? mMapper.writeValueAsString(action.entityRef()) : null; }
+        catch(IOException exception) { throw new SQLException("The alert action could not be saved", exception); }
+        if(actionJson != null && actionJson.length() > 2048) throw new IllegalArgumentException("Alert action exceeds its limit");
         if(destinations.size() > MAXIMUM_DEVICES) throw new IllegalArgumentException("Maximum of " + MAXIMUM_DEVICES + " notification recipients exceeded");
         if(destinations.stream().map(AlertDevice::id).distinct().count() != destinations.size())
             throw new IllegalArgumentException("Notification recipients must be unique");
@@ -428,11 +439,12 @@ public final class TopicAlertStore
                     }
                 }
                 String alertId = UUID.randomUUID().toString(); long expiresAt = now + 3_600_000;
-                try(PreparedStatement update = connection.prepareStatement("INSERT INTO topic_alert_message(id,rule_id,topic_id,topic_name,alert_name,title,body,click_action,event_type,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?)"))
+                try(PreparedStatement update = connection.prepareStatement("INSERT INTO topic_alert_message(id,rule_id,topic_id,topic_name,alert_name,title,body,click_action,event_type,created_at_ms,expires_at_ms,action_kind,action_entity_ref_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"))
                 {
                     update.setString(1, alertId); update.setString(2, ruleId); update.setString(3, topic.id()); update.setString(4, topic.name());
                     update.setString(5, alertName); update.setString(6, title); update.setString(7, body); update.setString(8, clickAction); update.setString(9, event.trigger());
-                    update.setLong(10, now); update.setLong(11, expiresAt); update.executeUpdate();
+                    update.setLong(10, now); update.setLong(11, expiresAt); update.setString(12, action.kind());
+                    update.setString(13, actionJson); update.executeUpdate();
                 }
                 try(PreparedStatement update = connection.prepareStatement("INSERT INTO topic_alert_delivery(alert_id,device_id,remote_device_id,method,state,attempts,next_at_ms,remote_id,error,updated_at_ms) SELECT ?,?,?,?,'pending',0,?,'','',? FROM topic_alert_device WHERE id=? AND subscription_expired=0"))
                 {
@@ -592,14 +604,23 @@ public final class TopicAlertStore
 
     private static String historySelect()
     {
-        return "SELECT m.id,m.rule_id,m.topic_id,m.topic_name,m.alert_name,m.title,m.body,m.click_action,m.event_type,m.created_at_ms,m.expires_at_ms FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id";
+        return "SELECT m.id,m.rule_id,m.topic_id,m.topic_name,m.alert_name,m.title,m.body,m.click_action,m.event_type,m.created_at_ms,m.expires_at_ms,m.action_kind,m.action_entity_ref_json FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id";
     }
-    private static Map<String,Object> historyItem(ResultSet row) throws SQLException
+    private Map<String,Object> historyItem(ResultSet row) throws SQLException
     {
         Map<String,Object> item = new LinkedHashMap<>();
         String[] keys = {"id","rule_id","topic_id","topic_name","alert_name","title","body","click_action","event_type"};
         for(int i = 0; i < keys.length; i++) item.put(keys[i], row.getString(i + 1));
-        item.put("created_at_ms", row.getLong(10)); item.put("expires_at_ms", row.getLong(11)); return Map.copyOf(item);
+        item.put("created_at_ms", row.getLong(10)); item.put("expires_at_ms", row.getLong(11));
+        AlertAction action = AlertAction.NONE;
+        try
+        {
+            String json = row.getString(13);
+            Map<String,Object> reference = json != null ? mMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<Map<String,Object>>() {}) : null;
+            action = new AlertAction(row.getString(12), reference);
+        }
+        catch(IOException | IllegalArgumentException ignored) { }
+        item.put("action", action); return Map.copyOf(item);
     }
 
     private static int setTopics(PreparedStatement query, List<String> topics) throws SQLException
@@ -633,7 +654,8 @@ public final class TopicAlertStore
         try { return SdrTrunkDatabase.open(mPath); }
         catch(IOException exception) { throw new SQLException("Alert database is unavailable", exception); }
     }
-    private record Settings(long revision, TopicAlertConfiguration.PushSettings push) {}
+    private record Settings(long revision, TopicAlertConfiguration.PushSettings push,
+                            @com.fasterxml.jackson.annotation.JsonProperty("builtin_action_button_enabled") boolean builtinActionButtonEnabled) {}
     public static final class RevisionConflictException extends SQLException
     {
         public RevisionConflictException() { super("Alert configuration changed; reload before saving"); }
