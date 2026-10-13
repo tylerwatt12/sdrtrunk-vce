@@ -585,12 +585,17 @@ export function createAlertsWorkspace(deps) {
     const enabled = toggle('Enable push notifications', draft.enabled, value => { draft.enabled = value; });
     const deliveryStatus = node('div');
     const header = node('div', 'alerts-delivery-header'); header.append(enabled.element, deliveryStatus);
+    const senderName = input(draft.sender_label, 'text', true, 80);
+    senderName.addEventListener('input', () => {
+      draft.sender_label = senderName.value.trim();
+      senderName.setCustomValidity(draft.sender_label ? '' : 'Enter a VCE name.');
+    });
     const mode = uiSegmentedControl([{ value: 'proxy', label: 'Cloud · Recommended' }, { value: 'direct', label: 'Direct' }],
       draft.mode, value => { draft.mode = value; renderMode(); workflow.setDirty(true); });
     mode.setAttribute('aria-label', 'Notification delivery');
     const detail = node('div', 'alerts-form');
     const footer = node('footer', 'settings-form-footer'); footer.append(status, save);
-    form.append(header, mode, detail, footer);
+    form.append(header, formField('VCE name', senderName), mode, detail, footer);
     const workflow = createFormWorkflow({ form, submit: save, feedback: status });
     function needsApproval() {
       if (snapshot.registration?.status === 'banned') return false;
@@ -606,9 +611,6 @@ export function createAlertsWorkspace(deps) {
       if (draft.mode === 'proxy') {
         detail.append(paragraph('Sends push notifications through the cloud to your device. Choose this if you do not expose VCE for public access.'),
           paragraph('Usage is subject to approval. Most requests are granted within 24 hours. Abuse is subject to ban.'));
-        const senderName = input(draft.sender_label, 'text', true, 80);
-        senderName.addEventListener('input', () => { draft.sender_label = senderName.value.trim(); });
-        detail.append(formField('VCE name', senderName));
         const registration = snapshot.registration || {};
         const registrationStatus = String(registration.status).toLowerCase();
         const label = ({ approved: 'Approved', pending: 'Awaiting approval', rejected: 'Not approved', banned: 'Banned',
@@ -705,12 +707,14 @@ export function createAlertsWorkspace(deps) {
     const topics = visibleAlertTopics(snapshot.topics);
     if (publicTopic && !topics.some(topic => topic.id === publicTopic)) publicTopic = '';
     body.replaceChildren();
-    const introduction = node('header', 'ui-surface ui-surface-heading');
+    const layout = node('div', 'alerts-public-layout');
+    const sidebar = node('div', 'alerts-public-sidebar');
+    const introduction = node('header', 'ui-surface ui-section-body');
     const heading = node('div', 'ui-heading-group'); heading.append(node('h2', '', 'Follow alert topics'), paragraph('Read recent alerts and choose which topics notify this device. No account is needed.'));
     introduction.append(heading, button(device ? 'Notification settings' : 'Subscribe', () => void openSubscription()));
-    body.append(introduction);
-    if (directConnection.message) body.append(notice(directConnection.message, 'warning'));
-    const cards = node('div', 'alerts-topic-grid');
+    sidebar.append(introduction);
+    if (directConnection.message) sidebar.append(notice(directConnection.message, 'warning'));
+    const cards = node('div', 'alerts-public-topics');
     for (const topic of topics) {
       const card = node('article', 'ui-surface alerts-topic-card');
       const identity = node('div', 'ui-heading-group');
@@ -721,15 +725,16 @@ export function createAlertsWorkspace(deps) {
       cards.append(card);
     }
     if (!topics.length) cards.append(notice('No topics are available to listeners yet.'));
-    body.append(cards);
-    if (!snapshot.push_enabled && topics.length) body.append(notice('Push notifications are not ready. You can still read the available alerts.'));
+    sidebar.append(cards);
+    if (!snapshot.push_enabled && topics.length) sidebar.append(notice('Push notifications are not ready. You can still read the available alerts.'));
     const filter = selectField('Show alerts from', topics.map(topic => ({ value: topic.id, label: topic.name })), publicTopic,
       value => { publicTopic = value; publicOffset = 0; void loadHistory(); }, 'All topics');
     const timeline = node('div', 'alerts-timeline');
     const timelineContent = node('div', 'alerts-form ui-surface-inset');
     timelineContent.append(filter.element, timeline);
     const timelinePanel = section('Recent alerts', timelineContent, button('Refresh', () => void loadHistory()));
-    body.append(timelinePanel);
+    layout.append(sidebar, timelinePanel);
+    body.append(layout);
     let generation = 0;
     async function loadHistory() {
       const current = ++generation;

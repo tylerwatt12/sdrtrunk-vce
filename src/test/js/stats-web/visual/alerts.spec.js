@@ -142,7 +142,13 @@ test('guest topics hide private names and connect through RadioResolve without a
 test('Direct save waits for the exact URL proof and invalidates it on edit', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   await page.goto('/app.html?view=admin&tab=push-setup');
+  const name = page.getByRole('textbox', { name: 'VCE name', exact: true });
+  await expect(name).toBeVisible();
+  await name.fill('Regional dispatch');
   await page.getByRole('button', { name: 'Direct', exact: true }).click();
+  await expect(name).toBeVisible();
+  await expect(name).toHaveValue('Regional dispatch');
+  await expect(name).toHaveAttribute('maxlength', '80');
   const save = page.getByRole('button', { name: 'Save settings', exact: true });
   await expect(save).toBeDisabled();
   await revealPrimaryAction(page, save);
@@ -155,12 +161,18 @@ test('Direct save waits for the exact URL proof and invalidates it on edit', asy
   await expect(save).toBeDisabled();
   expect(state.config.mode).toBe('proxy');
   await page.getByRole('button', { name: 'Test public access', exact: true }).click();
+  await name.fill('   ');
+  await save.click();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  expect(state.writes.some(write => write.p === '/api/v1/admin/alerts/config')).toBe(false);
+  await name.fill('Regional dispatch');
   await save.click();
   const confirmation = page.getByRole('alertdialog', { name: 'Change delivery', exact: true });
   await confirmation.getByRole('button', { name: 'Switch delivery', exact: true }).click();
   await expect(page.locator('.alerts-workspace')).toContainText('Settings saved.');
   expect(state.writes.at(-1).value.test_token).toBe('synthetic-proof');
   expect(state.writes.at(-1).value.site_url).toBe('https://other.example.net');
+  expect(state.writes.at(-1).value.sender_label).toBe('Regional dispatch');
   expect(fixture.pageErrors).toEqual([]);
 });
 

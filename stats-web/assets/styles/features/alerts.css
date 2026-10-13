@@ -1,5 +1,7 @@
 .alerts-workspace,
 .alerts-content,
+.alerts-public-sidebar,
+.alerts-public-topics,
 .alerts-form,
 .alerts-conditions,
 .alerts-condition-children,
@@ -9,6 +11,14 @@
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: var(--space-3);
+}
+
+.alerts-public-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  align-items: start;
+  min-width: 0;
+  gap: var(--space-4);
 }
 
 .alerts-topic-grid,
@@ -87,6 +97,12 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .alerts-public-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 700px) {
