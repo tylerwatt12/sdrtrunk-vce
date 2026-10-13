@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
@@ -494,6 +496,30 @@ class ReceiverActivityMapper
         return observation.form() == Form.RADIO || observation.form() == Form.TALKGROUP ||
             observation.form() == Form.PATCH_GROUP ? ReceiverActivityRecords.P25Identity.ORDINARY :
             ReceiverActivityRecords.P25Identity.UNKNOWN;
+    }
+
+    ReceiverActivityRecords.CompletedToneObservation mapCompletedToneSequence(CompletedToneSequence sequence)
+    {
+        if(sequence == null || sequence.tones().isEmpty() || sequence.callStartTimestamp() <= 0 || sequence.completedTimestamp() < sequence.callStartTimestamp()) return null;
+        AudioCallSnapshot snapshot = sequence.snapshot(); CallLegSource source = sequence.callLegSource();
+        DecoderType decoder = source.decoderType(); String configuration = ChannelConfigurationKey.canonical(source.channelConfigurationId());
+        if(decoder == null || configuration == null || snapshot.identifierCollection() == null) return null;
+        ReceiverActivityRecords.ReceiverKind kind = source.isTrunked() ? ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE : conventionalReceiverKind(decoder);
+        if(kind == null) return null;
+        IdentifierCollection identifiers = snapshot.identifierCollection(); IdentifierFacts facts = IdentifierFacts.from(identifiers);
+        Identifier from = identifiers.getFromIdentifier(); Identifier target = identifiers.getToIdentifier();
+        P25SiteIdentity site = source.p25SiteIdentity(); boolean p25 = isP25Decoder(decoder);
+        Long offset = sequence.tones().getFirst().offsetMilliseconds();
+        long observed = sequence.firstVoiceSampleTimestamp() > 0 && offset != null ? Math.addExact(sequence.firstVoiceSampleTimestamp(), offset) : sequence.completedTimestamp();
+        ReceiverActivityRecords.ActivityEvent event = new ReceiverActivityRecords.ActivityEvent(observed, configuration, kind,
+            sequence.protocol().name(), ReceiverActivityRecords.Action.TONE, "TONE", facts.sourceId(), facts.targetId(), facts.targetForm(),
+            facts.patchMemberTalkgroupIds(), facts.frequencyHertz(), firstNonBlank(facts.channelDescriptor(), facts.logicalChannelName()),
+            snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) : facts.timeslot(), snapshot.isEncrypted(), facts.encryptionAlgorithmId(), facts.encryptionKeyId(),
+            site != null ? Integer.valueOf(site.wacn()) : facts.wacn(), site != null ? Integer.valueOf(site.system()) : facts.systemId(), facts.nac(),
+            site != null ? Integer.valueOf(site.rfss()) : facts.rfss(), site != null ? Integer.valueOf(site.site()) : facts.site(), facts.talkerAlias(), false, null, null,
+            source.identityDomain(), p25TargetIdentity(target, p25), p25Identity(from, p25), facts.p25PatchMemberIdentities(),
+            source.radioSystemKey(), p25WorkingAddress(from), p25WorkingAddress(target), null);
+        return new ReceiverActivityRecords.CompletedToneObservation(event, sequence);
     }
 
     ReceiverActivityRecords.ConventionalCallOutput mapConventionalCallOutput(AudioCallSnapshot snapshot,

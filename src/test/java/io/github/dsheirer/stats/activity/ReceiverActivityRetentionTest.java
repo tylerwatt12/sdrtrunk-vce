@@ -84,7 +84,7 @@ class ReceiverActivityRetentionTest
                     SELECT sum(value) FROM retention_test_work;
                 END
                 """);
-            ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "1");
+            ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "3");
 
             ReceiverActivityRetention.Pass interrupted = ReceiverActivityRetention.runPass(connection,
                 3_700_000, nanoTime::get);
@@ -92,7 +92,7 @@ class ReceiverActivityRetentionTest
             assertEquals(2, triggeredDeletes.get(), "the second row interrupts an already-started DELETE");
             assertEquals(1, interrupted.deletedRows(), "the earlier event task remains committed");
             assertTrue(interrupted.moreWorkLikely());
-            assertEquals(9, interrupted.nextCursor(), "resume after the interrupted conventional bucket task");
+            assertEquals(11, interrupted.nextCursor(), "resume after the interrupted conventional bucket task, including the two tone cleanup tasks");
             assertEquals(interrupted.nextCursor(), ReceiverActivitySchema.readStatusLong(connection,
                 ReceiverActivityRetention.CURSOR_STATUS_KEY));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
@@ -147,14 +147,14 @@ class ReceiverActivityRetentionTest
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
                 VALUES (1, 1, 4)
                 """);
-            ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "1");
+            ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "3");
             connection.setAutoCommit(false);
             execute(connection, "UPDATE web_user SET preferences_revision=2 WHERE username='retention-test'");
 
             assertThrows(SQLException.class, () -> ReceiverActivityRetention.runPass(connection, 3_700_000));
             assertFalse(connection.getAutoCommit());
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
-            assertEquals(1, ReceiverActivitySchema.readStatusLong(connection,
+            assertEquals(3, ReceiverActivitySchema.readStatusLong(connection,
                 ReceiverActivityRetention.CURSOR_STATUS_KEY));
             assertEquals(2, scalar(connection, "SELECT preferences_revision FROM web_user"),
                 "retention must preserve the caller's pending writes");

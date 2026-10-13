@@ -132,9 +132,9 @@ public final class P25PagingToneDetector
                 {
                     qualify(run, tones);
 
-                    if(tones.size() >= MAXIMUM_TONES)
+                    if(tones.size() > MAXIMUM_TONES)
                     {
-                        return List.copyOf(tones);
+                        throw new IllegalArgumentException("Incomplete tone sequence exceeds bound");
                     }
                 }
 
@@ -147,6 +147,7 @@ public final class P25PagingToneDetector
             qualify(run, tones);
         }
 
+        if(tones.size() > MAXIMUM_TONES) throw new IllegalArgumentException("Incomplete tone sequence exceeds bound");
         return List.copyOf(tones);
     }
 
@@ -252,7 +253,7 @@ public final class P25PagingToneDetector
     {
         int qualifiedSamples = run.lastCenter - run.firstCenter + HOP_SIZE;
 
-        if(qualifiedSamples >= MINIMUM_QUALIFIED_SAMPLES && tones.size() < MAXIMUM_TONES)
+        if(qualifiedSamples >= MINIMUM_QUALIFIED_SAMPLES)
         {
             tones.add(new DetectedTone(run.frequencyHz(),
                 (run.firstCenter - HOP_SIZE / 2) * 1000L / SAMPLE_RATE,

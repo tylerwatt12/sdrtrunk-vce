@@ -98,8 +98,12 @@ public class ReceiverActivitySchema
     private static final int P25_EVERYONE_TALKGROUP = 0xFFFF;
 
     private static final int FORMAT_25_MAXIMUM_EVENT_TYPE_CODE = 57;
-    private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes();
-    private static final List<ReceiverActivityCodes.EventTypeCode> EVENT_TYPES = ReceiverActivityCodes.eventTypeCodes();
+    //Frozen through format 49: adding a current category must not rewrite an
+    //older supported creator, summary columns or resolved-view signature.
+    private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes().stream()
+        .filter(action -> action.code() <= 23).toList();
+    private static final List<ReceiverActivityCodes.EventTypeCode> EVENT_TYPES = ReceiverActivityCodes.eventTypeCodes().stream()
+        .filter(type -> type.code() <= 61).toList();
     private static final List<ReceiverActivityCodes.EventTypeCode> PRE_FORMAT_26_EVENT_TYPES = EVENT_TYPES.stream()
         .filter(eventType -> eventType.code() <= FORMAT_25_MAXIMUM_EVENT_TYPE_CODE)
         .toList();
@@ -204,8 +208,33 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
+        createFormat48(connection);
+        ToneActivitySchema.upgradeFrom49(connection);
+    }
+
+    /** Exact historical current creator retained for the adjacent migration. */
+    public static void createFormat48(Connection connection) throws SQLException
+    {
         createFormat42(connection);
         rebuildP25HomeIdentityKeyView(connection);
+    }
+
+    /** Clean event definition used only by fresh format 50 and its adjacent migration. */
+    public static void createFormat50ReceiverActivityEventMigrationTable(Connection connection) throws SQLException
+    {
+        String sql = receiverActivityEventSql().replace("receiver_activity_event (", "receiver_activity_event_format50 (");
+        try(Statement statement = connection.createStatement()) { statement.executeUpdate(sql); }
+    }
+
+    public static void createFormat50ResolvedView(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement()) { statement.executeUpdate(createFormat50ResolvedViewSql()); }
+    }
+
+    private static String createFormat50ResolvedViewSql()
+    {
+        return createFormat45ResolvedViewSql().replace("CASE a.action_code", "CASE a.action_code WHEN 24 THEN 'TONE'")
+            .replace("CASE a.event_type_code", "CASE a.event_type_code WHEN 62 THEN 'TONE'");
     }
 
     /** Creates the frozen format-42 activity schema before receiving-home radio keys in format 45. */
@@ -448,8 +477,9 @@ public class ReceiverActivitySchema
             new SqliteSchemaValidator.Definition("table", "p25_site_call_identity_bucket",
                 createP25SiteCallIdentityBucketSql()),
             new SqliteSchemaValidator.Definition("view", "receiver_activity_event_resolved",
-                createFormat45ResolvedViewSql())));
+                createFormat50ResolvedViewSql())));
         SqliteSchemaValidator.validateDefinitions(connection, exactDefinitions);
+        ToneActivitySchema.validate(connection);
         validateRequiredForeignKeys(connection);
         validatePositiveMetadataTimestamp(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
         validatePositiveMetadataTimestamp(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY);
@@ -603,6 +633,21 @@ public class ReceiverActivitySchema
             statement.setInt(1, SdrTrunkDatabaseSchema.MAXIMUM_RECEIVER_HEALTH_INCIDENTS);
             statement.executeUpdate();
         }
+    }
+
+    /** No summary, signaling, presence or call credit is created by audio/codec tone evidence. */
+    static Long insertDetailedToneEvent(Connection connection, ReceiverActivityRecords.ActivityEvent activity) throws SQLException
+    {
+        if(!configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()), protocolCode(activity.protocol()), activity.identityDomain())) return null;
+        long channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity), activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE);
+        if(channelId <= 0) return null;
+        if(TrunkedIdentityPolicy.protocolFamilyCode(protocolCode(activity.protocol())) == TrunkedIdentityPolicy.PROTOCOL_P25 &&
+            !matchesCurrentP25Generation(selectReceiverChannelIdentity(connection, activity.configurationId()), activity)) return null;
+        RadioSystemSchema.RadioSystem system = activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE ?
+            RadioSystemSchema.ensureReceiverRadioSystem(connection, channelId, activity.observedAtEpochMilliseconds(), activity.identityDomain(),
+                activity.wacn(), activity.systemId(), activity.radioSystemKey()) : null;
+        RadioSystemSchema.retainDetailedToneIdentities(connection,system,activity);
+        return insertReceiverActivityEvent(connection, activity, channelId, system);
     }
 
     static Long recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
@@ -769,7 +814,9 @@ public class ReceiverActivitySchema
 
     private static String receiverActivityEventSql()
     {
-        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true);
+        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true)
+            .replace("action_code IN (" + ACTION_CODES + ")", "action_code IN (" + ACTION_CODES + ",24)")
+            .replace("event_type_code IN (" + eventTypeCodes(EVENT_TYPES) + ")", "event_type_code IN (" + eventTypeCodes(EVENT_TYPES) + ",62)");
     }
 
     private static String receiverActivityEventSql(int maximumObservedSite,
@@ -2368,6 +2415,8 @@ public class ReceiverActivitySchema
     static int resetStats(Connection connection) throws SQLException
     {
         int deleted = 0;
+        deleted += deleteAll(connection, "receiver_activity_tone");
+        deleted += deleteAll(connection, "receiver_activity_tone_sequence");
         deleted += deleteAll(connection, "receiver_activity_event");
         deleted += deleteAll(connection, "p25_site_call_identity_bucket");
         deleted += deleteAll(connection, "p25_site_call_bucket");
@@ -3475,6 +3524,8 @@ public class ReceiverActivitySchema
     }
 
     private static final List<SqliteSchemaValidator.Table> TABLES = java.util.stream.Stream.concat(List.of(
+        table("receiver_activity_tone_sequence", "event_id", "source_code", "method_code", "phase", "call_started_at_ms", "first_voice_sample_at_ms", "completed_at_ms", "tone_count"),
+        table("receiver_activity_tone", "event_id", "ordinal", "frequency_1_millihz", "frequency_2_millihz", "codec_symbol", "offset_ms", "duration_ms", "confidence_ppm"),
         table("receiver_channel", "id", "configuration_id", "first_seen_ms",
             "last_seen_ms", "radio_system_id", "radio_system_assigned_at_ms"),
         table("receiver_activity_event", "id", "channel_id", "radio_system_id", "observed_at_ms", "action_code",

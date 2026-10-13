@@ -49,7 +49,7 @@ final class ReceiverActivityScopedDeletion
         "call_count>0 OR logical_call_count>0 OR encrypted_logical_call_count>0 OR " +
             "recorded_output_count>0 OR streamed_output_count>0";
     private static final List<String> SIGNALING_COLUMNS = ReceiverActivityCodes.actionCodes().stream()
-        .filter(action -> action != ReceiverActivityRecords.Action.CALL)
+        .filter(action -> action != ReceiverActivityRecords.Action.CALL && action != ReceiverActivityRecords.Action.TONE)
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count").toList();
     private static final String SIGNALING_RESET = SIGNALING_COLUMNS.stream()
         .map(column -> column + "=0").collect(Collectors.joining(","));
@@ -138,7 +138,7 @@ final class ReceiverActivityScopedDeletion
         applyHistoryFilters(plan, target);
         plan.steps.sort(Comparator.comparingInt(ReceiverActivityScopedDeletion::priority));
         if(plan.steps.stream().anyMatch(step -> "receiver_activity_event".equals(step.table)))
-            plan.effects.add("Matching detailed events also remove their linked identity-member rows.");
+            plan.effects.add("Matching detailed events also remove their linked identity members and tone sequences.");
         return plan;
     }
 
@@ -828,6 +828,8 @@ final class ReceiverActivityScopedDeletion
     {
         return switch(step.table)
         {
+            case "receiver_activity_tone" -> -3;
+            case "receiver_activity_tone_sequence" -> -2;
             case "activity_event_identity_member" -> -1;
             case "receiver_activity_event" -> 0;
             case "p25_site_channel_tag", "p25_site_channel_tag_summary" -> 1;
@@ -1136,7 +1138,7 @@ final class ReceiverActivityScopedDeletion
 
         private static String partFor(String table)
         {
-            if(table.equals("receiver_activity_event") || table.equals("activity_event_identity_member")) return "events";
+            if(table.equals("receiver_activity_event") || table.equals("activity_event_identity_member") || table.startsWith("receiver_activity_tone")) return "events";
             if(table.endsWith("_bucket") || table.equals("trunked_control_channel_quality")) return "buckets";
             if(table.endsWith("_summary")) return "summary";
             return "current";
@@ -1167,7 +1169,7 @@ final class ReceiverActivityScopedDeletion
                 arguments.add(scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of()));
             }
             // Member rows have no timestamp; bind their ownership to the same fixed event cutoff.
-            if(table.name.equals("activity_event_identity_member"))
+            if(table.name.equals("activity_event_identity_member") || table.name.startsWith("receiver_activity_tone"))
             {
                 predicate += " AND event_id IN (SELECT id FROM receiver_activity_event WHERE observed_at_ms<=? AND id<=?)";
                 arguments.add(cutoffMs);
@@ -1223,7 +1225,7 @@ final class ReceiverActivityScopedDeletion
             try(var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'p25_%' OR name LIKE 'trunked_%' " +
                     "OR name LIKE 'conventional_%' OR name LIKE 'dmr_conventional_%' OR name LIKE 'radio_system%' " +
-                    "OR name IN ('receiver_channel','receiver_activity_event','activity_event_identity_member','alias_activity_summary'))"))
+                    "OR name LIKE 'receiver_activity_tone%' OR name IN ('receiver_channel','receiver_activity_event','activity_event_identity_member','alias_activity_summary'))"))
             {
                 while(rows.next()) names.add(rows.getString(1));
             }

@@ -36,6 +36,6 @@ public final class P25AudioGain
 
         return new CompletedAudioCall(rawCall.logicalCallId(), rawCall.snapshot(),
             IMBE_GAIN.process(rawCall.audioBuffers()), rawCall.resolvedPolicy(), rawCall.callLegSummaries(),
-            rawCall.recordingIdentifierCollection());
+            rawCall.recordingIdentifierCollection(), rawCall.nativeAudioSnapshot(), rawCall.completedToneSequence());
     }
 }

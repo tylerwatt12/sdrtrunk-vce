@@ -18,6 +18,13 @@
  */
 package io.github.dsheirer.module.decode.dmr.audio;
 
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
+import io.github.dsheirer.audio.tone.EncodedToneMetadata;
+
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
@@ -69,6 +76,12 @@ import org.slf4j.LoggerFactory;
  */
 public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
+    private final P25PagingToneService.Registration mToneObservationRegistration =
+        P25PagingToneService.getInstance().registerEncoded(1);
+    private volatile Listener<AudioCallEvent> mAudioCallListener;
+    private AudioCallSnapshot mToneFrameSnapshot;
+    private long mToneFrameSequence;
+
     private static final Logger mLog = LoggerFactory.getLogger(DMRAudioModule.class);
     static final int MAX_PENDING_AMBE_FRAMES = 300;
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
@@ -99,9 +112,33 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
                           CallLegSource callLegSource)
     {
         super(userPreferences, aliasList, timeslot, callLegSource);
+        super.setAudioCallEventListener(this::observeToneAudioCallEvent);
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
             .getVoiceDecryptionModulePreference().getModuleManager());
+    }
+
+    private void observeToneAudioCallEvent(AudioCallEvent event)
+    {
+        if(event.eventType() == AudioCallEventType.AUDIO_FRAME)
+        {
+            mToneFrameSnapshot = event.snapshot(); mToneFrameSequence++;
+        }
+        else if(event.eventType() == AudioCallEventType.CALL_CREATED || event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            mToneFrameSnapshot = null;
+        mToneObservationRegistration.receive(event);
+        Listener<AudioCallEvent> listener = mAudioCallListener;
+        if(listener != null) listener.receive(event);
+    }
+
+    @Override public void setAudioCallEventListener(Listener<AudioCallEvent> listener) { mAudioCallListener = listener; }
+    @Override public void removeAudioCallEventListener() { mAudioCallListener = null; }
+    @Override public void dispose()
+    {
+        mToneObservationRegistration.close();
+        mAudioCallListener = null;
+        super.removeAudioCallEventListener();
+        super.dispose();
     }
 
     @Override
@@ -113,6 +150,9 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     @Override
     public void reset()
     {
+        mToneObservationRegistration.resetUnfinishedCall();
+        mToneFrameSnapshot = null;
+        mToneMetadataProcessor.reset();
         //Explicitly clear FROM identifiers to ensure previous call TONE identifiers are cleared.
         mIdentifierCollection.remove(Role.FROM);
 
@@ -335,7 +375,12 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         try
         {
             IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(frame);
+            long toneFrameBefore = mToneFrameSequence;
             addAudio(audioWithMetadata.getAudio(), getVoiceFrameQuality(audioWithMetadata), timestamp);
+            if(mToneFrameSequence != toneFrameBefore)
+                mToneObservationRegistration.receiveEncodedFrame(mToneFrameSnapshot,
+                    EncodedToneMetadata.tone(audioWithMetadata.getMetadata()));
+            else mToneObservationRegistration.resetUnfinishedCall();
             processMetadata(audioWithMetadata, timestamp);
         }
         catch(Exception e)
@@ -526,6 +571,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         public void reset()
         {
             mTones.clear();
+            mCurrentTone = null;
         }
 
         /**

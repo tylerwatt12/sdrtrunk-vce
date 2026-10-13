@@ -21,12 +21,13 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 3;
+    public static final int CURRENT_FORMAT_VERSION = 4;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
     private static final Map<String,String> FORMAT_TWO_DDL = formatTwoSchema();
-    static final Map<String,String> DDL = formatThreeSchema();
+    private static final Map<String,String> FORMAT_THREE_DDL = formatThreeSchema();
+    static final Map<String,String> DDL = formatFourSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -37,7 +38,8 @@ public final class ManagedRecordingSchema
         {
             case 1 -> FORMAT_ONE_DDL;
             case 2 -> FORMAT_TWO_DDL;
-            case 3 -> DDL;
+            case 3 -> FORMAT_THREE_DDL;
+            case 4 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -93,6 +95,13 @@ public final class ManagedRecordingSchema
         schema.put("idx_recording_call_transcription_pending",
             "CREATE INDEX idx_recording_call_transcription_pending " +
                 "ON recording_call(id,duration_ms) WHERE transcription_status='pending'");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    private static Map<String,String> formatFourSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_THREE_DDL);
+        schema.putAll(ManagedRecordingTones.ddl());
         return java.util.Collections.unmodifiableMap(schema);
     }
 

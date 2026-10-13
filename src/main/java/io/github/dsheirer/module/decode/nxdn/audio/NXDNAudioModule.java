@@ -18,6 +18,13 @@
  */
 package io.github.dsheirer.module.decode.nxdn.audio;
 
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
+import io.github.dsheirer.audio.tone.EncodedToneMetadata;
+
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
@@ -62,6 +69,12 @@ import org.slf4j.LoggerFactory;
  */
 public class NXDNAudioModule extends AmbeAudioModule
 {
+    private final P25PagingToneService.Registration mToneObservationRegistration =
+        P25PagingToneService.getInstance().registerEncoded(1);
+    private volatile Listener<AudioCallEvent> mAudioCallListener;
+    private AudioCallSnapshot mToneFrameSnapshot;
+    private long mToneFrameSequence;
+
     private static final Logger LOGGER = LoggerFactory.getLogger(NXDNAudioModule.class);
     static final int MAX_PENDING_AUDIO_MESSAGES = 64;
     private final SquelchStateListener mSquelchStateListener = new SquelchStateListener();
@@ -94,9 +107,33 @@ public class NXDNAudioModule extends AmbeAudioModule
     public NXDNAudioModule(UserPreferences userPreferences, AliasList aliasList, CallLegSource callLegSource)
     {
         super(userPreferences, aliasList, 0, callLegSource);
+        super.setAudioCallEventListener(this::observeToneAudioCallEvent);
         mKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences.getVoiceDecryptionModulePreference()
             .getModuleManager());
+    }
+
+    private void observeToneAudioCallEvent(AudioCallEvent event)
+    {
+        if(event.eventType() == AudioCallEventType.AUDIO_FRAME)
+        {
+            mToneFrameSnapshot = event.snapshot(); mToneFrameSequence++;
+        }
+        else if(event.eventType() == AudioCallEventType.CALL_CREATED || event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            mToneFrameSnapshot = null;
+        mToneObservationRegistration.receive(event);
+        Listener<AudioCallEvent> listener = mAudioCallListener;
+        if(listener != null) listener.receive(event);
+    }
+
+    @Override public void setAudioCallEventListener(Listener<AudioCallEvent> listener) { mAudioCallListener = listener; }
+    @Override public void removeAudioCallEventListener() { mAudioCallListener = null; }
+    @Override public void dispose()
+    {
+        mToneObservationRegistration.close();
+        mAudioCallListener = null;
+        super.removeAudioCallEventListener();
+        super.dispose();
     }
 
     @Override
@@ -108,6 +145,8 @@ public class NXDNAudioModule extends AmbeAudioModule
     @Override
     public void reset()
     {
+        mToneObservationRegistration.resetUnfinishedCall();
+        mToneFrameSnapshot = null;
         getIdentifierCollection().clear();
         mCachedAudioMessages.clear();
         resetEncryptionState();
@@ -335,7 +374,12 @@ public class NXDNAudioModule extends AmbeAudioModule
                         IAudioWithMetadata audioWithMetadata =
                             getAudioCodec().getAudioWithMetadata(decodedFrame);
                         float[] generatedAudio = mGain.apply(audioWithMetadata.getAudio());
+                        long toneFrameBefore = mToneFrameSequence;
                         addAudio(generatedAudio, getVoiceFrameQuality(audioWithMetadata), timestamp);
+                        if(mToneFrameSequence != toneFrameBefore)
+                            mToneObservationRegistration.receiveEncodedFrame(mToneFrameSnapshot,
+                                EncodedToneMetadata.tone(audioWithMetadata.getMetadata()));
+                        else mToneObservationRegistration.resetUnfinishedCall();
                     }
                     catch(VoiceFrameDecryptionException e)
                     {

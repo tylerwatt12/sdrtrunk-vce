@@ -20,10 +20,10 @@ class Format47To48DatabaseMigrationTest
 
     @Test void authoritativeCurrentSchemaHasExactRegisteredFingerprint() throws Exception
     {
-        Path path = Format46TestDatabase.create(directory.resolve("fresh.sqlite"));
+        Path path = directory.resolve("fresh.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(path);
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path))
         {
-            TopicAlertSchema.create(connection);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
     }

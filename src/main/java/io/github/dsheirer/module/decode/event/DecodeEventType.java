@@ -90,7 +90,8 @@ public enum DecodeEventType
     RADIO_UNINHIBIT("Radio Uninhibit"),
     RADIO_INHIBIT("Radio Inhibit"),
     RADIO_UNINHIBIT_ACK("Radio Uninhibit Acknowledge"),
-    RADIO_INHIBIT_ACK("Radio Inhibit Acknowledge");
+    RADIO_INHIBIT_ACK("Radio Inhibit Acknowledge"),
+    TONE("Tone");
 
     private final String mLabel;
 

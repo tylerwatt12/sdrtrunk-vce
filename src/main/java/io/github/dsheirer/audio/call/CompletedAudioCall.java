@@ -29,8 +29,19 @@ import java.util.List;
 public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
                                  List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
                                  List<CallLegSummary> callLegSummaries,
-                                 @JsonIgnore IdentifierCollection recordingIdentifierCollection)
+                                 @JsonIgnore IdentifierCollection recordingIdentifierCollection,
+                                 @JsonIgnore AudioCallSnapshot nativeAudioSnapshot,
+                                 @JsonIgnore io.github.dsheirer.audio.tone.CompletedToneSequence completedToneSequence)
 {
+    /** Compatibility constructor: a caller without multi-receiver resolution owns its snapshot's native audio. */
+    public CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
+                              List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
+                              List<CallLegSummary> callLegSummaries, IdentifierCollection recordingIdentifierCollection)
+    {
+        this(logicalCallId, snapshot, audioBuffers, resolvedPolicy, callLegSummaries,
+            recordingIdentifierCollection, snapshot, null);
+    }
+
     /**
      * Existing callers without a logical-call identity promotion use their snapshot's recording observations.
      * The full constructor deliberately preserves a null recording collection when the winning leg had none.
@@ -78,6 +89,12 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
         audioBuffers = audioBuffers != null ? List.copyOf(audioBuffers) : List.of();
         resolvedPolicy = resolvedPolicy != null ? resolvedPolicy : ResolvedCallPolicy.capture(snapshot);
         callLegSummaries = callLegSummaries != null ? List.copyOf(callLegSummaries) : List.of();
+        nativeAudioSnapshot = nativeAudioSnapshot != null ? nativeAudioSnapshot : snapshot;
+        if(!nativeAudioSnapshot.callId().equals(snapshot.callId()) ||
+            !nativeAudioSnapshot.callLegId().equals(snapshot.callLegId()) ||
+            !nativeAudioSnapshot.callLegSource().equals(snapshot.callLegSource()) ||
+            completedToneSequence != null && !completedToneSequence.matches(nativeAudioSnapshot))
+            throw new IllegalArgumentException("Tone evidence must belong to the captured native audio winner");
 
         long winners = callLegSummaries.stream().filter(CallLegSummary::winner).count();
 
@@ -90,6 +107,13 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
     public boolean hasAudio()
     {
         return !audioBuffers.isEmpty();
+    }
+
+    /** Worker-only recording view; no PCM copy and no mutation of receiver or logical-call facts. */
+    public CompletedAudioCall withCompletedTones(io.github.dsheirer.audio.tone.CompletedToneSequence sequence)
+    {
+        return new CompletedAudioCall(logicalCallId, snapshot, audioBuffers, resolvedPolicy, callLegSummaries,
+            recordingIdentifierCollection, nativeAudioSnapshot, sequence);
     }
 
     public long getDuration()

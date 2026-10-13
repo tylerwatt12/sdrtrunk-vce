@@ -15,6 +15,7 @@ import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -40,7 +41,8 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
                                 Integer nac, Integer toneKind, String tone,
                                 ManagedRecordingCatalog.Site winnerSite,
                                 List<ManagedRecordingCatalog.Site> observedSites,
-                                List<ManagedRecordingCatalog.Member> patchMembers)
+                                List<ManagedRecordingCatalog.Member> patchMembers,
+                                CompletedToneSequence completedTones)
 {
     static ManagedRecordingMetadata from(CompletedAudioCall call, String relativePath, long sizeBytes)
     {
@@ -139,7 +141,7 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
                 snapshot.timeslot() : null,
             integer(identifiers, Form.NETWORK_ACCESS_CODE), tone != null ? tone.kind() : null,
             tone != null ? tone.value() : null, winningSite,
-            List.copyOf(sites), List.copyOf(members));
+            List.copyOf(sites), List.copyOf(members), call.completedToneSequence());
     }
 
     /** Catalog ownership follows the same native-home radio key as the directory, without changing decoder facts. */

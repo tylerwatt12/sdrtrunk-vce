@@ -5436,6 +5436,7 @@ class StatsWebDatabase
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
+            if(!p25Visualizer) io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
             if(!p25Visualizer)
             {
                 enrichActivityEncryption(rows);

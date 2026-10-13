@@ -16,7 +16,7 @@ public final class Format49TestDatabase
             connection.setAutoCommit(false);
             try { new Format48To49DatabaseMigration().migrate(connection); DatabaseFormatCatalog.stamp(connection, 49); connection.commit(); }
             catch(Exception exception) { connection.rollback(); throw exception; }
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 49) throw new IllegalStateException("Frozen format-49 fixture drifted");
         }
         return database;
     }

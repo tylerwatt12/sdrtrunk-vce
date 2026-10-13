@@ -65,6 +65,8 @@ class Format23To24DatabaseMigrationTest
             assertEquals("format-23-to-24", report.steps().getFirst().id());
             assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
+            try(var toneRows = statement.executeQuery("SELECT (SELECT count(*) FROM receiver_activity_tone)+(SELECT count(*) FROM receiver_activity_tone_sequence)"))
+            { assertTrue(toneRows.next()); assertEquals(0,toneRows.getLong(1),"Prospective tone tables remain empty for prior history"); }
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));
 
@@ -84,6 +86,7 @@ class Format23To24DatabaseMigrationTest
                 "p25_wuid_assignment_observation_summary", "idx_alias_p25_subscriber_identity",
                 "idx_radio_system_identity_p25_subscriber", "idx_p25_wuid_assignment_observation_system_time",
                 "idx_p25_wuid_assignment_observation_subscriber", "idx_p25_wuid_assignment_observation_retention"));
+            expectedObjects.addAll(Set.of("receiver_activity_tone","receiver_activity_tone_sequence"));
             assertEquals(expectedObjects, addedObjects);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
@@ -243,7 +246,7 @@ class Format23To24DatabaseMigrationTest
             SELECT name FROM sqlite_schema
             WHERE type='table' AND name NOT LIKE 'sqlite_%'
               AND name NOT IN ('p25_subscriber_identity','alias_p25_subscriber_identity',
-                  'p25_wuid_assignment_observation_summary')
+                  'p25_wuid_assignment_observation_summary','receiver_activity_tone','receiver_activity_tone_sequence')
             ORDER BY name
             """))
         {

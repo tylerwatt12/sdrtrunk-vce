@@ -170,6 +170,16 @@ final class ReceiverActivityDeletion
             statement.setLong(2, 100_001 - total);
             try(ResultSet rows = statement.executeQuery()) { if(rows.next()) total += rows.getLong(1); }
         }
+        for(String table: List.of("receiver_activity_tone_sequence", "receiver_activity_tone"))
+        {
+            if(total > 100_000) return true;
+            try(PreparedStatement statement = connection.prepareStatement("SELECT count(*) FROM (SELECT 1 FROM " + table +
+                " tone JOIN receiver_activity_event event ON event.id=tone.event_id WHERE event.channel_id=? LIMIT ?)"))
+            {
+                statement.setLong(1, channel.id()); statement.setLong(2, 100_001 - total);
+                try(ResultSet rows = statement.executeQuery()) { if(rows.next()) total += rows.getLong(1); }
+            }
+        }
         return total > 100_000;
     }
 

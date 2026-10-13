@@ -19,6 +19,13 @@
 
 package io.github.dsheirer.module.decode.p25.audio;
 
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
+import io.github.dsheirer.audio.tone.EncodedToneMetadata;
+
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
@@ -75,6 +82,12 @@ import org.slf4j.LoggerFactory;
 
 public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
+    private final P25PagingToneService.Registration mToneObservationRegistration =
+        P25PagingToneService.getInstance().registerEncoded(3);
+    private volatile Listener<AudioCallEvent> mAudioCallListener;
+    private AudioCallSnapshot mToneFrameSnapshot;
+    private long mToneFrameSequence;
+
     private static final Logger mLog = LoggerFactory.getLogger(P25P2AudioModule.class);
     /** Half-rate vocoder frames are spaced 20 ms apart (TIA-102.BABA-1, clauses 3 and 4). */
     private static final long VOICE_FRAME_DURATION_MILLISECONDS = 20L;
@@ -115,6 +128,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                             CallLegSource callLegSource, P25TrafficChannelManager trafficChannelManager)
     {
         super(userPreferences, aliasList, timeslot, callLegSource);
+        super.setAudioCallEventListener(this::observeToneAudioCallEvent);
         mTrafficChannelManager = trafficChannelManager;
         mEncryptionKeyResolver = new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
         mVoiceFrameDecryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
@@ -125,6 +139,29 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     protected boolean usesCorrectedVoiceFrameFingerprint()
     {
         return true;
+    }
+
+    private void observeToneAudioCallEvent(AudioCallEvent event)
+    {
+        if(event.eventType() == AudioCallEventType.AUDIO_FRAME)
+        {
+            mToneFrameSnapshot = event.snapshot(); mToneFrameSequence++;
+        }
+        else if(event.eventType() == AudioCallEventType.CALL_CREATED || event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            mToneFrameSnapshot = null;
+        mToneObservationRegistration.receive(event);
+        Listener<AudioCallEvent> listener = mAudioCallListener;
+        if(listener != null) listener.receive(event);
+    }
+
+    @Override public void setAudioCallEventListener(Listener<AudioCallEvent> listener) { mAudioCallListener = listener; }
+    @Override public void removeAudioCallEventListener() { mAudioCallListener = null; }
+    @Override public void dispose()
+    {
+        mToneObservationRegistration.close();
+        mAudioCallListener = null;
+        super.removeAudioCallEventListener();
+        super.dispose();
     }
 
     @Override
@@ -140,6 +177,8 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     @Override
     public void reset()
     {
+        mToneObservationRegistration.resetUnfinishedCall();
+        mToneFrameSnapshot = null;
         MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
 
         if(currentAudioCall != null)
@@ -487,9 +526,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                         for(DecodedVoiceFrame decodedVoiceFrame : committed)
                         {
                             IAudioWithMetadata audio = decodedVoiceFrame.audioWithMetadata();
+                            long toneFrameBefore = mToneFrameSequence;
                             addAudio(audio.getAudio(), getVoiceFrameQuality(audio),
                                 decodedVoiceFrame.carrierTimestamp(), decodedVoiceFrame.voiceFrameFingerprint(),
                                 decodedVoiceFrame.correctedVoiceFrameFingerprint());
+                            if(mToneFrameSequence != toneFrameBefore)
+                                mToneObservationRegistration.receiveEncodedFrame(mToneFrameSnapshot,
+                                    EncodedToneMetadata.tone(audio.getMetadata()));
+                            else mToneObservationRegistration.resetUnfinishedCall();
                         }
                     }
                 }

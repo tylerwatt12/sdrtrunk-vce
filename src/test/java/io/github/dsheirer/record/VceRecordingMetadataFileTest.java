@@ -27,6 +27,8 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -71,6 +73,61 @@ class VceRecordingMetadataFileTest
     private static final VoiceCallQuality QUALITY = new VoiceCallQuality(480, 8, 4, 8, 144, 72_000);
     private static final CallLegSource SOURCE = source(DecoderType.P25_PHASE2, 0xBEE00, 0x456, 1, 7);
     @TempDir Path mDirectory;
+
+    @Test
+    void sharedNativeToneEvidenceSurvivesActualFilesAndSavedCatalogWithoutChangingAudioOrLegacyTags() throws Exception
+    {
+        for(boolean encoded: List.of(false, true))
+        {
+            CompletedAudioCall nativeCall = call(groupIdentifiers(), encoded ? SOURCE :
+                source(DecoderType.P25_PHASE1, 0xBEE00, 0x456, 1, 7), QUALITY, CallEncryptionState.CLEAR, 1);
+            var sequence = new CompletedToneSequence(nativeCall.nativeAudioSnapshot(), encoded ? 0 : 1_000,
+                encoded ? CompletedToneSequence.Source.ENCODED : CompletedToneSequence.Source.DECODED_AUDIO,
+                encoded ? CompletedToneSequence.Method.AMBE_TONE_V1 : CompletedToneSequence.Method.P25_PCM_TONE_V1,
+                encoded ? List.of(new CompletedToneSequence.Element(List.of(697_000,1_209_000), "DTMF_1", 0L, 200, null),
+                    new CompletedToneSequence.Element(List.of(), "INVALID", 200L, 60, null)) :
+                    List.of(new CompletedToneSequence.Element(List.of(1_000_125), null, 0L, 250, .9123456)));
+            CompletedAudioCall tagged = nativeCall.withCompletedTones(sequence);
+            for(RecordFormat format: RecordFormat.values())
+            {
+                String name = "tones-" + encoded + "-" + format;
+                Recording original = writeAndRead(nativeCall, name + "-plain", format, null);
+                Recording recording = writeAndRead(tagged, name, format, null);
+                assertExistingFieldsUnchanged(nativeCall, nativeCall.recordingIdentifierCollection(), recording);
+                assertEquals("1", recording.vceFields().get("VCE_PAGING_TONE_SCHEMA"));
+                assertEquals(encoded ? "encoded" : "decoded_audio", recording.vceFields().get("VCE_PAGING_TONE_SOURCE"));
+                assertEquals(encoded ? "2" : "1", recording.vceFields().get("VCE_PAGING_TONE_COUNT"));
+                assertEquals(encoded ? "697" : "1000.125", recording.vceFields().get("VCE_PAGING_TONE_1_FREQUENCY_1_HZ"));
+                assertEquals(encoded ? "200" : "250", recording.vceFields().get("VCE_PAGING_TONE_1_DURATION_MS"));
+                if(encoded)
+                {
+                    assertEquals("1209", recording.vceFields().get("VCE_PAGING_TONE_1_FREQUENCY_2_HZ"));
+                    assertEquals("INVALID", recording.vceFields().get("VCE_PAGING_TONE_2_CODE"));
+                    assertFalse(recording.vceFields().containsKey("VCE_PAGING_TONE_FIRST_SAMPLE_MS"));
+                    assertFalse(recording.vceFields().containsKey("VCE_PAGING_TONE_1_CONFIDENCE_PPM"));
+                }
+                else assertEquals("912346", recording.vceFields().get("VCE_PAGING_TONE_1_CONFIDENCE_PPM"));
+                if(format == RecordFormat.WAVE)
+                    assertArrayEquals(original.waveChunks().get("data"), recording.waveChunks().get("data"));
+                Path saved = mDirectory.resolve(name + format.getExtension());
+                Path database = mDirectory.resolve(name + ".sqlite");
+                try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(database,mDirectory))
+                {
+                    CountDownLatch indexed = new CountDownLatch(1);
+                    assertTrue(catalog.submit(saved, tagged, Files.size(saved), indexed::countDown));
+                    assertTrue(indexed.await(5, TimeUnit.SECONDS));
+                    var stored = catalog.search(ManagedRecordingCatalog.SearchFilter.builder().fromMs(0L).toMs(5_000L).build()).calls().getFirst();
+                    assertEquals(ToneSummaryPayload.summary(sequence), stored.toMap().get("paging_tone_summary"));
+                    assertFalse(stored.toMap().containsKey("tone"), "Paging sequences are not DPL access codes");
+                }
+                try(ManagedRecordingCatalog reopened = new ManagedRecordingCatalog(database,mDirectory))
+                {
+                    assertEquals(ToneSummaryPayload.summary(sequence), reopened.search(
+                        ManagedRecordingCatalog.SearchFilter.builder().fromMs(0L).toMs(5_000L).build()).calls().getFirst().toMap().get("paging_tone_summary"));
+                }
+            }
+        }
+    }
 
     @Test
     void everyAvailableFieldSurvivesInActualMp3AndWaveWithoutChangingStandardFields() throws Exception

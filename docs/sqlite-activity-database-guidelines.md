@@ -85,6 +85,37 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
   history. The existing action-specific radio ranking and historical Alias evidence paths below document their
   bounded, indexed exceptions.
 
+### Complete-call tone evidence (format 50)
+
+The Activity browser needs to retrieve the actual ordered tone sequence for one retained row. Existing call and
+signaling counters cannot answer that query. The optional detailed-history writer therefore adds one `TONE` event,
+one `receiver_activity_tone_sequence` context and 1–32 `receiver_activity_tone` facts per accepted completed physical
+call leg with tones. Empty results and detailed-history-off results create no rows; retries are suppressed by a
+bounded, commit-only in-memory receipt set. Tone evidence changes no call, signaling, presence or Alias totals.
+
+The context uses stable integer source/method categories, optional P25 phase and epoch milliseconds. Each ordered
+fact stores zero, one or two millihertz frequencies, a bounded encoded symbol when supplied by the codec, duration,
+optional offset and optional integer-millionth evidence score. Encoded symbols without known numeric frequencies
+retain their exact symbol. DMR/NXDN do not acquire a P25 phase. RF carrier frequency stays on the original event;
+there is no JSON, raw message, audio or process-local call identifier in these tables.
+
+At `R` tone-bearing completed legs per hour, storage is `R` events, `R` contexts and at most `32R` facts per hour;
+for `H` retained hours the upper bound is `34RH` rows. The fact payload has at most seven integers plus a 64-character
+ASCII symbol (up to 120 bytes before SQLite row/index overhead); the context has eight bounded integers (up to
+64 bytes before overhead). The parent retains the existing normalized channel, system and identity keys rather
+than duplicating names or aliases. This is prospective evidence and creates no backfill.
+
+The existing Activity owner/type/time/ID indexes select the bounded page first. Its at most 500 event IDs then seek
+the context integer primary key and the fact `(event_id,ordinal)` primary key; no secondary tone index is added.
+`EXPLAIN QUERY PLAN` for these `IN` lookups reports primary-key seeks, and ordered fact reads require no temporary
+history sort. Alias enrichment, friendly-name filters and drilldowns still use the original parent context.
+
+Retention explicitly deletes tone facts, then empty tone contexts, then eligible parent events. Those deletions
+count toward the existing 256-row statement and 1,000-row pass limits; parent retention refuses to cascade still
+retained tone contexts. Scoped deletion expands and counts both child levels under its bounded plan, and Reset
+Stats clears children before parents. The separate Managed Recordings catalog format 4 uses the same typed summary
+shape but follows recording ownership and deletion, independently of Activity retention.
+
 ### Alias Editor large-list indexes
 
 The web Alias Editor never builds a whole-list activity snapshot. SQLite applies the selected Alias List, search, and

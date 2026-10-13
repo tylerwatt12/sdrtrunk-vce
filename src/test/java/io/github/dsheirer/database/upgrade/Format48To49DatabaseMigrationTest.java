@@ -26,7 +26,8 @@ class Format48To49DatabaseMigrationTest
             Path path = Format46TestDatabase.create(directory.resolve(current ? "current.sqlite" : "frozen48.sqlite"));
             try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path))
             {
-                if(current) TopicAlertSchema.create(connection); else Format48TopicAlertSchema.create(connection);
+                if(current) { TopicAlertSchema.create(connection); io.github.dsheirer.stats.activity.ToneActivitySchema.upgradeFrom49(connection); }
+                else Format48TopicAlertSchema.create(connection);
                 assertEquals(current ? DatabaseFormatCatalog.current().fingerprint() : DatabaseFormatCatalog.requireVersion(48).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
             }
@@ -55,7 +56,7 @@ class Format48To49DatabaseMigrationTest
             assertEquals(metadata, scalar(connection, "SELECT settings_json FROM application_settings WHERE key='alert.configuration'"));
             assertEquals(listenRule, scalar(connection, "SELECT rule_json FROM topic_alert_rule WHERE id='fixture-listen'"));
             var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals("format-48-to-49", report.steps().getFirst().id()); assertEquals(49, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals("format-48-to-49", report.steps().getFirst().id()); assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(messages, originalMessages(connection)); assertEquals(deliveries, deliveryState(connection));
             assertEquals(channelData, scalar(connection, "SELECT group_concat(id||':'||config_json,'|') FROM configuration_channel"));

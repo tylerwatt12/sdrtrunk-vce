@@ -240,13 +240,13 @@ class ManagedRecordingStoreTest
             try(var version = statement.executeQuery("PRAGMA user_version"))
             {
                 assertTrue(version.next());
-                assertEquals(3, version.getInt(1));
+                assertEquals(ManagedRecordingSchema.CURRENT_FORMAT_VERSION, version.getInt(1));
             }
             try(var metadata = statement.executeQuery(
                 "SELECT format_version FROM catalog_metadata WHERE id=1"))
             {
                 assertTrue(metadata.next());
-                assertEquals(3, metadata.getInt(1));
+                assertEquals(ManagedRecordingSchema.CURRENT_FORMAT_VERSION, metadata.getInt(1));
             }
             try(var rows = statement.executeQuery("SELECT text,stored_at_ms FROM recording_transcript " +
                 "WHERE call_id=1"))
@@ -599,7 +599,7 @@ class ManagedRecordingStoreTest
                 base.sourceHomeWacn(), base.sourceHomeSystem(), base.sourceHomeId(), base.targetId(),
                 base.targetHomeWacn(), base.targetHomeSystem(), base.targetHomeId(), base.frequencyHz(),
                 base.timeslot(), base.nac(), 1, "N023", base.winnerSite(), base.observedSites(),
-                base.patchMembers());
+                base.patchMembers(), null);
             save(store, root, tagged);
             var map = store.find(1L).toMap();
             assertEquals(8008, map.get("destination_radio_id"));
@@ -1130,6 +1130,6 @@ class ManagedRecordingStoreTest
         return new ManagedRecordingMetadata(start, start + 1000, 1000L, 5L, path, system,
             channel, 7L, 1, type, ManagedRecordingCatalog.VOICE_CLEAR,
             source, null, null, null, target, null, null, null,
-            851012500L, 1, 0x293, null, null, winner, sites, members);
+            851012500L, 1, 0x293, null, null, winner, sites, members, null);
     }
 }

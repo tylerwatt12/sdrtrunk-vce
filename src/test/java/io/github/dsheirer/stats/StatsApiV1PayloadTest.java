@@ -19,6 +19,28 @@ import org.junit.jupiter.api.Test;
 
 class StatsApiV1PayloadTest
 {
+    @Test
+    void toneEvidenceKeepsExactSymbolsAudioFrequenciesAndOptionalPhaseSeparateFromRfContext()
+    {
+        var summary = io.github.dsheirer.audio.tone.ToneSummaryPayload.summary(2, 2, null, 1000, null, 2000,
+            List.of(new io.github.dsheirer.audio.tone.CompletedToneSequence.Element(
+                List.of(440_000, 480_000), "DIAL_TONE", null, 400, null)));
+        JsonNode payload = StatsApiV1Payload.present(Map.of("event_type", "TONE", "action", "TONE",
+            "protocol_code", 3, "frequency_hz", 851_000_000L, "paging_tone_summary", summary));
+        assertEquals("tone", payload.path("event_type").textValue());
+        assertEquals("tone", payload.path("action").textValue());
+        assertEquals("dmr", payload.path("protocol").textValue());
+        assertEquals(851_000_000L, payload.path("frequency_hz").longValue());
+        assertEquals("encoded", payload.at("/paging_tone_summary/source").textValue());
+        assertEquals("ambe_tone_v1", payload.at("/paging_tone_summary/method").textValue());
+        assertEquals("DIAL_TONE", payload.at("/paging_tone_summary/tones/0/code").textValue());
+        assertEquals(440., payload.at("/paging_tone_summary/tones/0/frequencies_hz/0").doubleValue());
+        assertEquals(480., payload.at("/paging_tone_summary/tones/0/frequencies_hz/1").doubleValue());
+        assertFalse(payload.path("paging_tone_summary").has("phase"));
+        assertFalse(payload.at("/paging_tone_summary/tones/0").has("offset_milliseconds"));
+        assertFalse(payload.at("/paging_tone_summary/tones/0").has("confidence"));
+        assertNoInternalFields(payload);
+    }
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",

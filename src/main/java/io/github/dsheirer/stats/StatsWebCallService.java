@@ -17,7 +17,8 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
-import io.github.dsheirer.audio.tone.P25PagingToneDetector;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.dsp.gain.PeakAudioGain;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -86,8 +87,13 @@ final class StatsWebCallService implements AutoCloseable
     private final CompletedCallScanListMatcher mScanListMatcher;
     private final WebEntityNavigationCatalog mNavigationCatalog;
     private final VoiceEnhancementService mVoiceEnhancement;
-    private final java.util.function.LongSupplier mPagingToneGeneration;
-    private final java.util.function.LongPredicate mPagingToneGenerationCurrent;
+    private final java.util.function.Function<AudioCallSnapshot,CompletedToneSequence> mToneLookup;
+    private final AutoCloseable mToneSubscription;
+    private final BoundedMpscPairQueue<CompletedToneSequence,Object> mToneIngress = new BoundedMpscPairQueue<>(128);
+    private final Deque<ToneMetadataUpdate> mToneMetadataUpdates = new ArrayDeque<>();
+    private final AtomicLong mDroppedToneMetadata = new AtomicLong();
+    private final AtomicLong mToneMetadataFailures = new AtomicLong();
+    private static final int MAXIMUM_TONE_METADATA_UPDATES = 256;
     private final BoundedMpscPairQueue<CompletedAudioCall,Object> mEncoderIngress =
         new BoundedMpscPairQueue<>(ENCODER_QUEUE_CAPACITY);
     private final Semaphore mEncoderWakeup = new Semaphore(0);
@@ -132,22 +138,30 @@ final class StatsWebCallService implements AutoCloseable
     StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
                         VoiceEnhancementService voiceEnhancement)
     {
-        this(scanListModel, navigationCatalog, voiceEnhancement, P25PagingToneService.getInstance()::generation,
-            P25PagingToneService.getInstance()::isCurrentGeneration);
+        this(scanListModel, navigationCatalog, voiceEnhancement, P25PagingToneService.getInstance()::lookupCompleted,
+            P25PagingToneService.getInstance()::addCompletedToneListener);
     }
 
-    /** Isolated analysis selection seam; production shares the receiver observer's enabled generation. */
+    /** Isolated outcome seam: browser playback never performs a second tone-analysis pass. */
     StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
-                        VoiceEnhancementService voiceEnhancement, java.util.function.LongSupplier pagingToneGeneration,
-                        java.util.function.LongPredicate pagingToneGenerationCurrent)
+                        VoiceEnhancementService voiceEnhancement,
+                        java.util.function.Function<AudioCallSnapshot,CompletedToneSequence> toneLookup)
+    {
+        this(scanListModel, navigationCatalog, voiceEnhancement, toneLookup, ignored -> () -> {});
+    }
+
+    private StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
+                        VoiceEnhancementService voiceEnhancement,
+                        java.util.function.Function<AudioCallSnapshot,CompletedToneSequence> toneLookup,
+                        java.util.function.Function<io.github.dsheirer.sample.Listener<CompletedToneSequence>,AutoCloseable> subscribe)
     {
         mScanListMatcher = scanListModel != null ? new CompletedCallScanListMatcher(scanListModel) : null;
         mNavigationCatalog = navigationCatalog;
         mVoiceEnhancement = voiceEnhancement;
-        mPagingToneGeneration = java.util.Objects.requireNonNull(pagingToneGeneration);
-        mPagingToneGenerationCurrent = java.util.Objects.requireNonNull(pagingToneGenerationCurrent);
+        mToneLookup = java.util.Objects.requireNonNull(toneLookup);
         mEncoderThread = new NamingThreadFactory("stats completed call audio").newThread(this::runEncoder);
         mEncoderThread.setPriority(Thread.MIN_PRIORITY + 1);
+        mToneSubscription = subscribe.apply(this::receiveToneSequence);
     }
 
     synchronized void start()
@@ -212,6 +226,15 @@ final class StatsWebCallService implements AutoCloseable
             mDroppedEncoderCapacity.incrementAndGet();
             markLoss(generation);
         }
+    }
+
+    /** Shared observer callback: bounded references only; no cache locks, projection or client fan-out. */
+    void receiveToneSequence(CompletedToneSequence sequence)
+    {
+        long generation = mRunGeneration.get();
+        if(!mRunning || mClosed.get() || sequence == null || !hasActiveFeed()) return;
+        if(mToneIngress.offer(sequence, ENCODER_WORK, generation)) mEncoderWakeup.release();
+        else mDroppedToneMetadata.incrementAndGet();
     }
 
     boolean isRunning()
@@ -321,25 +344,28 @@ final class StatsWebCallService implements AutoCloseable
             return new FeedResult(Long.toString(mLatestCursor), true, List.of());
         }
 
-        List<Map<String,Object>> calls = new java.util.ArrayList<>(MAXIMUM_FEED_CALLS);
-        long nextCursor = mLatestCursor;
-
+        List<FeedEntry> available = new java.util.ArrayList<>();
         for(CachedCall call: mCalls)
         {
-            if(call.cursor() <= requestedCursor)
+            if(call.cursor() > requestedCursor && intersects(call.scanListIds(), selected))
+                available.add(new FeedEntry(call.cursor(), call.metadata()));
+        }
+        for(ToneMetadataUpdate update: mToneMetadataUpdates)
+        {
+            if(update.cursor() > requestedCursor && intersects(update.scanListIds(), selected))
+                available.add(new FeedEntry(update.cursor(), update.metadata()));
+        }
+        // Metadata updates have their own cursor without reordering retained audio calls.
+        available.sort(Comparator.comparingLong(FeedEntry::cursor));
+        List<Map<String,Object>> calls = new java.util.ArrayList<>(MAXIMUM_FEED_CALLS);
+        long nextCursor = mLatestCursor;
+        for(FeedEntry entry: available)
+        {
+            calls.add(entry.metadata());
+            if(calls.size() == MAXIMUM_FEED_CALLS)
             {
-                continue;
-            }
-
-            if(intersects(call.scanListIds(), selected))
-            {
-                calls.add(call.metadata());
-
-                if(calls.size() == MAXIMUM_FEED_CALLS)
-                {
-                    nextCursor = call.cursor();
-                    break;
-                }
+                nextCursor = entry.cursor();
+                break;
             }
         }
 
@@ -433,7 +459,10 @@ final class StatsWebCallService implements AutoCloseable
             Map.entry("dropped_encoder_capacity", mDroppedEncoderCapacity.get()),
             Map.entry("encoder_failures", mEncoderFailures.get()),
             Map.entry("enhancement_skipped_backlog", mEnhancementSkippedBacklog.get()),
-            Map.entry("enhancement_failures", mVoiceEnhancement != null ? mVoiceEnhancement.failures() : 0L));
+            Map.entry("enhancement_failures", mVoiceEnhancement != null ? mVoiceEnhancement.failures() : 0L),
+            Map.entry("tone_metadata_queue_depth", mToneIngress.size()),
+            Map.entry("dropped_tone_metadata", mDroppedToneMetadata.get()),
+            Map.entry("tone_metadata_failures", mToneMetadataFailures.get()));
     }
 
     private void encodeSafely(CompletedAudioCall call, long generation)
@@ -476,12 +505,74 @@ final class StatsWebCallService implements AutoCloseable
                 while(!mClosed.get() && (work = mEncoderIngress.poll()) != null)
                 {
                     encodeSafely(work.first(), work.stamp());
+                    drainToneMetadataSafely();
                 }
+                drainToneMetadataSafely();
             }
         }
         finally
         {
             mEncoderIngress.clear();
+            mToneIngress.clear();
+        }
+    }
+
+    private CompletedToneSequence lookupTones(AudioCallSnapshot snapshot)
+    {
+        try { return mToneLookup.apply(snapshot); }
+        catch(RuntimeException exception)
+        {
+            mToneMetadataFailures.incrementAndGet();
+            return null;
+        }
+    }
+
+    /** Late results update details only; audio bytes and scheduling remain unchanged. */
+    private void drainToneMetadataSafely()
+    {
+        try { drainToneMetadata(); }
+        catch(RuntimeException exception) { mToneMetadataFailures.incrementAndGet(); }
+    }
+
+    private void drainToneMetadata()
+    {
+        BoundedMpscPairQueue.Entry<CompletedToneSequence,Object> work;
+        while(!mClosed.get() && (work = mToneIngress.poll()) != null)
+        {
+            CompletedToneSequence sequence = work.first();
+            if(!isCurrentGeneration(work.stamp()) || sequence.tones().isEmpty() ||
+                lookupTones(sequence.snapshot()) != sequence) continue;
+            Map<String,Object> summary = ToneSummaryPayload.summary(sequence);
+            synchronized(this)
+            {
+                if(!isCurrentGeneration(work.stamp()) || lookupTones(sequence.snapshot()) != sequence) continue;
+                evictExpired(System.currentTimeMillis());
+                Deque<CachedCall> retained = new ArrayDeque<>(mCalls.size());
+                for(CachedCall call: mCalls)
+                {
+                    if(sequence.matches(call.snapshot()) && !summary.equals(call.metadata().get("paging_tone_summary")))
+                    {
+                        Map<String,Object> metadata = new LinkedHashMap<>(call.metadata());
+                        metadata.put("paging_tone_summary", summary);
+                        Map<String,Object> immutable = java.util.Collections.unmodifiableMap(metadata);
+                        retained.addLast(new CachedCall(call.cursor(), call.id(), call.wave(), immutable,
+                            call.scanListIds(), call.createdAtMs(), call.snapshot()));
+                        Map<String,Object> update = new LinkedHashMap<>(immutable);
+                        update.put("audio_metadata_updated", true);
+                        mToneMetadataUpdates.addLast(new ToneMetadataUpdate(++mLatestCursor, call.id(),
+                            java.util.Collections.unmodifiableMap(update), call.scanListIds()));
+                        while(mToneMetadataUpdates.size() > MAXIMUM_TONE_METADATA_UPDATES)
+                        {
+                            mToneMetadataUpdates.removeFirst();
+                            mDroppedToneMetadata.incrementAndGet();
+                        }
+                        notifyAll();
+                    }
+                    else retained.addLast(call);
+                }
+                mCalls.clear();
+                mCalls.addAll(retained);
+            }
         }
     }
 
@@ -533,13 +624,9 @@ final class StatsWebCallService implements AutoCloseable
         //All analysis and inference remain on this one bounded low-priority worker. Native call PCM is read-only.
         boolean phase1 = snapshot.callLegSource().decoderType() == DecoderType.P25_PHASE1 ||
             snapshot.callLegSource().decoderType() == DecoderType.P25_CONVENTIONAL;
-        List<P25PagingToneDetector.DetectedTone> pagingTones = List.of();
-        long pagingToneGeneration = mPagingToneGeneration.getAsLong();
-        if(phase1 && mPagingToneGenerationCurrent.test(pagingToneGeneration))
-        {
-            try { pagingTones = new P25PagingToneDetector().detect(call.audioBuffers()); }
-            catch(IllegalArgumentException exception) { /* Unavailable analysis never suppresses call playback. */ }
-        }
+        //The shared receiver observer owns both PCM detection and encoded-tone interpretation.
+        AudioCallSnapshot nativeSnapshot = call.nativeAudioSnapshot();
+        CompletedToneSequence tones = lookupTones(nativeSnapshot);
         //Drain original audio while calls are waiting rather than multiplying optional work during a burst.
         boolean backlog = mEncoderIngress.size() > 0;
         if(backlog && mVoiceEnhancement != null && mVoiceEnhancement.isEnabled())
@@ -564,9 +651,6 @@ final class StatsWebCallService implements AutoCloseable
         metadata.put("audio_sample_rate", sampleRate);
         metadata.put("voice_enhancement", rendered != null);
         if(rendered != null) metadata.put("voice_model", rendered.modelId());
-        if(!pagingTones.isEmpty() && mPagingToneGenerationCurrent.test(pagingToneGeneration))
-            metadata.put("detected_paging_tones", pagingTones);
-
         synchronized(this)
         {
             if(!isCurrentGeneration(generation))
@@ -576,9 +660,11 @@ final class StatsWebCallService implements AutoCloseable
 
             commitPendingLoss();
             evictExpired(created);
+            if(tones != null && !tones.tones().isEmpty() && tones.matches(nativeSnapshot) && lookupTones(nativeSnapshot) == tones)
+                metadata.put("paging_tone_summary", ToneSummaryPayload.summary(tones));
             long cursor = ++mLatestCursor;
             CachedCall cachedCall = new CachedCall(cursor, id, wave, java.util.Collections.unmodifiableMap(metadata),
-                Set.copyOf(scanListIds), created);
+                Set.copyOf(scanListIds), created, nativeSnapshot);
             mCalls.addLast(cachedCall);
             mAudioBytes += wave.length;
             evictToLimits();
@@ -625,10 +711,11 @@ final class StatsWebCallService implements AutoCloseable
     {
         if(!mCalls.isEmpty())
         {
-            mDiscardedThroughCursor = Math.max(mDiscardedThroughCursor, mCalls.getLast().cursor());
+            mDiscardedThroughCursor = Math.max(mDiscardedThroughCursor, mLatestCursor);
         }
 
         mCalls.clear();
+        mToneMetadataUpdates.clear();
         mAudioBytes = 0;
     }
 
@@ -640,6 +727,7 @@ final class StatsWebCallService implements AutoCloseable
         {
             mDiscardedThroughCursor = Math.max(mDiscardedThroughCursor, removed.cursor());
             mAudioBytes -= removed.wave().length;
+            mToneMetadataUpdates.removeIf(update -> update.callId().equals(removed.id()));
         }
     }
 
@@ -1202,6 +1290,8 @@ final class StatsWebCallService implements AutoCloseable
         stop();
         if(mClosed.compareAndSet(false, true))
         {
+            try { mToneSubscription.close(); }
+            catch(Exception exception) { /* Closing a best-effort observer cannot prevent audio worker shutdown. */ }
             mEncoderWakeup.release();
             mEncoderThread.interrupt();
             try
@@ -1221,7 +1311,10 @@ final class StatsWebCallService implements AutoCloseable
     }
 
     record CachedCall(long cursor, String id, byte[] wave, Map<String,Object> metadata, Set<Long> scanListIds,
-                      long createdAtMs)
+                      long createdAtMs, AudioCallSnapshot snapshot)
     {
     }
+
+    private record ToneMetadataUpdate(long cursor, String callId, Map<String,Object> metadata, Set<Long> scanListIds) {}
+    private record FeedEntry(long cursor, Map<String,Object> metadata) {}
 }

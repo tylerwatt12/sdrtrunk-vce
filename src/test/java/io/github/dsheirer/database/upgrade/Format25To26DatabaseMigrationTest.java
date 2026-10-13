@@ -128,7 +128,7 @@ class Format25To26DatabaseMigrationTest
                 """));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code, event_type_code)
-                VALUES (9500, 5000, 21, 62)
+                VALUES (9500, 5000, 21, 63)
                 """));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 UPDATE conventional_activity_summary SET last_event_type_code=62 WHERE channel_id=9500

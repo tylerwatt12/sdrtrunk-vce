@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
@@ -400,7 +402,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private static CompletedAudioCall withoutAudio(CompletedAudioCall call)
     {
         return call != null ? new CompletedAudioCall(call.logicalCallId(), call.snapshot(), List.of(),
-            call.resolvedPolicy(), call.callLegSummaries(), call.recordingIdentifierCollection()) : null;
+            call.resolvedPolicy(), call.callLegSummaries(), call.recordingIdentifierCollection(),
+            call.nativeAudioSnapshot(), call.completedToneSequence()) : null;
     }
 
     private void processResolvedCall(CompletedAudioCall call)
@@ -1100,6 +1103,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         {
             processControlChannelQuality(quality);
         }
+        else if(observation instanceof CompletedToneSequence tones)
+        {
+            processCompletedToneSequence(tones);
+        }
         else if(observation instanceof CompletedAudioCall call)
         {
             processResolvedCall(call);
@@ -1346,6 +1353,20 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 enqueueObservation(writer, channelFact);
             }
         }
+    }
+
+    /** Bounded reference handoff; normalization and persistence stay on background workers. */
+    public void receiveCompletedToneSequence(CompletedToneSequence sequence)
+    {
+        if(sequence != null && !sequence.tones().isEmpty()) offerObservation(sequence);
+    }
+
+    private void processCompletedToneSequence(CompletedToneSequence sequence)
+    {
+        ReceiverActivityWriter writer = getCollectionWriter();
+        if(writer == null) return;
+        ReceiverActivityRecords.CompletedToneObservation record = mMapper.mapCompletedToneSequence(sequence);
+        if(record != null && record.observedAtEpochMilliseconds() >= mObservationCollectionStartedAt) enqueueObservation(writer, record);
     }
 
     @Subscribe

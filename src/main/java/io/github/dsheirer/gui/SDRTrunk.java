@@ -63,6 +63,7 @@ import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.remote.RemoteConnectivityService;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
@@ -143,6 +144,7 @@ public class SDRTrunk
     private AudioCallCoordinator mAudioCallCoordinator;
     private LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private ReceiverActivityService mReceiverActivityService;
+    private AutoCloseable mToneActivitySubscription;
     private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
     private RemoteConnectivityService mRemoteConnectivityService;
@@ -254,6 +256,8 @@ public class SDRTrunk
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
         mReceiverActivityService = new ReceiverActivityService(mUserPreferences);
+        mToneActivitySubscription = P25PagingToneService.getInstance()
+            .addCompletedToneListener(mReceiverActivityService::receiveCompletedToneSequence);
 
         mLogicalCallDiagnosticService = new LogicalCallDiagnosticService();
 
@@ -1015,6 +1019,26 @@ public class SDRTrunk
             {
                 mLog.warn("Logical-call resolver did not fully stop before shutdown");
             }
+        }
+        //Finished tone work must reach Activity before its writer's final drain.
+        boolean tonesDrained;
+        try
+        {
+            tonesDrained = P25PagingToneService.getInstance().awaitWorkerDrain(
+                STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            tonesDrained = false;
+        }
+        databaseBoundarySafe &= tonesDrained;
+        if(!tonesDrained) mLog.warn("Tone observations did not finish before statistics shutdown");
+        if(mToneActivitySubscription != null)
+        {
+            try { mToneActivitySubscription.close(); }
+            catch(Exception exception) { mLog.warn("Unable to remove the completed-tone Activity observer", exception); }
+            mToneActivitySubscription = null;
         }
         if(mReceiverActivityService != null)
         {

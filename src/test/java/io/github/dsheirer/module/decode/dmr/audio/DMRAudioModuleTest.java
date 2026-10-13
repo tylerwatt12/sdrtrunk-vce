@@ -40,6 +40,24 @@ import org.junit.jupiter.api.Test;
 
 class DMRAudioModuleTest
 {
+    @Test
+    void callResetClearsLegacyToneSequenceAndCurrentDuration() throws Exception
+    {
+        Field field = DMRAudioModule.class.getDeclaredField("mToneMetadataProcessor");
+        field.setAccessible(true);
+        var processor = (DMRAudioModule.ToneMetadataProcessor)field.get(mAudioModule);
+        var first = processor.process("TONE","1000.00");
+        assertEquals(1,first.getValue().getTones().size());
+        assertEquals(1,first.getValue().getTones().getFirst().getDuration());
+        processor.process("TONE","1000.00");
+        assertEquals(2,first.getValue().getTones().getFirst().getDuration());
+        mAudioModule.reset();
+        var next = processor.process("TONE","1000.00");
+        assertEquals(1,next.getValue().getTones().size());
+        assertEquals(1,next.getValue().getTones().getFirst().getDuration());
+        assertTrue(mEvents.isEmpty()); //Metadata reset does not create/change an audio frame.
+    }
+
     private static final int TIMESLOT = 1;
     private DMRAudioModule mAudioModule;
     private List<AudioCallEvent> mEvents;

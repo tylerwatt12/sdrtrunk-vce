@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.audio.call.LogicalCallId;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -68,7 +69,8 @@ final class ReceiverActivityRecords
         REGISTER(20),
         REQUEST(21),
         STATUS(22),
-        UNKNOWN(23);
+        UNKNOWN(23),
+        TONE(24);
 
         private final int mCode;
 
@@ -434,6 +436,17 @@ final class ReceiverActivityRecords
         {
             return new RadioPresenceUpdate(radioId, null, null, true, radioIdentity, P25Identity.UNKNOWN);
         }
+    }
+
+    /** One detached complete-call tone result; it never credits a call or signaling counter. */
+    record CompletedToneObservation(ActivityEvent activity, CompletedToneSequence sequence) implements ReceiverActivityRecord
+    {
+        CompletedToneObservation
+        {
+            if(activity == null || sequence == null || sequence.tones().isEmpty() || activity.action() != Action.TONE || activity.countedCall())
+                throw new IllegalArgumentException("Complete tone facts required");
+        }
+        @Override public long observedAtEpochMilliseconds() { return activity.observedAtEpochMilliseconds(); }
     }
 
     record ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,

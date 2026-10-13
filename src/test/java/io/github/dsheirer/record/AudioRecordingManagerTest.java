@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mpatric.mp3agic.ID3v24Tag;
@@ -75,6 +76,67 @@ class AudioRecordingManagerTest
     @TempDir
     Path mTemporaryFolder;
     private RecordingMode mOriginalMode;
+
+    @Test
+    void recordingWorkerCapturesOneSharedResultForFileCatalogAndObserverWithoutWaitingInReceive() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<CompletedAudioCall> written = new ArrayList<>(), observed = new ArrayList<>();
+        CompletedAudioCall source = withDecoder(completedCall(), DecoderType.P25_PHASE1);
+        var sequence = new io.github.dsheirer.audio.tone.CompletedToneSequence(source.nativeAudioSnapshot(),
+            source.snapshot().startTimestamp(), io.github.dsheirer.audio.tone.CompletedToneSequence.Source.DECODED_AUDIO,
+            io.github.dsheirer.audio.tone.CompletedToneSequence.Method.P25_PCM_TONE_V1,
+            List.of(new io.github.dsheirer.audio.tone.CompletedToneSequence.Element(List.of(1_000_000),null,0L,60,.9)));
+        AtomicInteger lookups = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
+            (call,path,format,prefs) -> { written.add(call); Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW); },
+            null,null,call -> { assertSame(source,call); lookups.incrementAndGet(); return sequence; });
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            manager.start(); manager.receive(source);
+            assertEquals(0,lookups.get(), "Live handoff cannot wait for tone analysis");
+            manager.stop();
+            assertEquals(1,lookups.get());
+            assertSame(sequence,written.getFirst().completedToneSequence());
+            assertSame(sequence,observed.getFirst().completedToneSequence());
+            assertSame(source.nativeAudioSnapshot(),written.getFirst().nativeAudioSnapshot());
+            assertSame(source.audioBuffers().getFirst(),observed.getFirst().audioBuffers().getFirst());
+            assertNull(source.completedToneSequence());
+        }
+        finally
+        {
+            manager.stop(); scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    @Test
+    void unavailableToneObserverStillSavesAndReportsRecording() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<CompletedAudioCall> written = new ArrayList<>(), observed = new ArrayList<>();
+        CompletedAudioCall source = completedCall();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,observed::add,scheduler,
+            (call,path,format,prefs) -> { written.add(call); Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW); },
+            null,null,call -> { throw new IllegalStateException("Unavailable optional observer"); });
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            manager.start(); manager.receive(source); manager.stop();
+            assertSame(source,written.getFirst()); assertSame(source,observed.getFirst());
+            assertEquals(0,manager.getQueueStatus().droppedRecordings());
+        }
+        finally
+        {
+            manager.stop(); scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
 
     @Test
     void appliesImbeGainOnlyOnWriterViewAndRetainsRawCallForObservers() throws Exception

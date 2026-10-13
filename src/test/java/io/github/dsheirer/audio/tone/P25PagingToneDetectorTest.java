@@ -139,7 +139,7 @@ class P25PagingToneDetectorTest
     }
 
     @Test
-    void limitsEvidenceToThirtyTwoTones()
+    void suppressesWholeIncompleteSequenceAboveThirtyTwoTones()
     {
         float[] samples = new float[40 * 4400];
 
@@ -148,7 +148,7 @@ class P25PagingToneDetectorTest
             tone(samples, index * 4400, 3200, index % 2 == 0 ? 600 : 900, 0.1, 0.2);
         }
 
-        assertEquals(P25PagingToneDetector.MAXIMUM_TONES, mDetector.detect(frames(samples, 160)).size());
+        assertThrows(IllegalArgumentException.class, () -> mDetector.detect(frames(samples, 160)));
     }
 
     private static void tone(float[] samples, int offset, int length, double frequency, double amplitude, double phase)

@@ -12,6 +12,8 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.audio.call.LogicalCallId;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -96,6 +98,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
     /* Writer-thread-owned evidence that the matching logical-call counters committed successfully. */
     private final Map<LogicalCallId,Long> mResolvedLogicalCalls = new LinkedHashMap<>(1024, 0.75f, true);
+    private final Map<ToneReceipt,Long> mCompletedToneReceipts = new LinkedHashMap<>(256, 0.75f, true);
     /* This bounded receipt cache is writer-owned. No producer treats a queue offer as committed call credit. */
     private final Map<String,ConventionalCallState> mConventionalCalls = new LinkedHashMap<>(256, 0.75f, true);
     private long mConventionalCallRecoveryFloor = System.currentTimeMillis();
@@ -743,6 +746,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS)
                 {
                     mResolvedLogicalCalls.clear();
+                    mCompletedToneReceipts.clear();
                     mConventionalCalls.clear();
                     mConventionalCallRecoveryFloor = System.currentTimeMillis();
                 }
@@ -1043,11 +1047,13 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             int writtenRecords = 0;
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
+            Set<ToneReceipt> acceptedToneSequences = new LinkedHashSet<>();
             Map<String,ConventionalCallState> acceptedConventionalCalls = new LinkedHashMap<>();
             long conventionalEpoch = mConventionalCollectionEpoch;
             boolean retireConventionalReceipts = false;
             List<ReceiverActivityRecords.ActivityEvent> activityEvents = new ArrayList<>();
             pruneResolvedLogicalCalls(System.currentTimeMillis());
+            pruneToneReceipts(System.currentTimeMillis());
             pruneConventionalCalls(System.currentTimeMillis());
             long conventionalRecoveryFloor = mConventionalCallRecoveryFloor;
 
@@ -1063,7 +1069,16 @@ class ReceiverActivityWriter implements AutoCloseable
                 ReceiverActivitySchema.recordActivityBatch(connection, activityEvents, mDetailedEventHistoryEnabled);
                 activityEvents.clear();
 
-                if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
+                if(record instanceof ReceiverActivityRecords.CompletedToneObservation tone)
+                {
+                    ToneReceipt receipt = new ToneReceipt(tone.sequence().callId(), tone.sequence().callLegId(), tone.sequence().source().code(), tone.sequence().method().code());
+                    if(!acceptedToneSequences.contains(receipt) && !mCompletedToneReceipts.containsKey(receipt) &&
+                        ToneActivitySchema.record(connection, tone, mDetailedEventHistoryEnabled))
+                    {
+                        acceptedToneSequences.add(receipt); writtenRecords++;
+                    }
+                }
+                else if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
                 {
                     ReceiverActivitySchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;
@@ -1185,6 +1200,8 @@ class ReceiverActivityWriter implements AutoCloseable
 
             connection.commit();
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
+            for(ToneReceipt receipt: acceptedToneSequences) mCompletedToneReceipts.put(receipt, successfulWrite);
+            pruneToneReceipts(successfulWrite);
             if(retireConventionalReceipts)
             {
                 mConventionalCalls.clear();
@@ -1321,6 +1338,19 @@ class ReceiverActivityWriter implements AutoCloseable
                 iterator.next();
                 iterator.remove();
             }
+        }
+    }
+
+    private record ToneReceipt(AudioCallId call, CallLegId leg, int source, int method) { }
+
+    private void pruneToneReceipts(long now)
+    {
+        var iterator = mCompletedToneReceipts.entrySet().iterator();
+        while(iterator.hasNext())
+        {
+            var entry = iterator.next();
+            if(mCompletedToneReceipts.size() > 4096 || now >= entry.getValue() && now - entry.getValue() > RESOLVED_CALL_RETENTION_MILLISECONDS)
+                iterator.remove();
         }
     }
 

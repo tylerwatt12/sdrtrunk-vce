@@ -177,7 +177,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -673,6 +673,17 @@ built-in choices. Fresh creation uses the same clean fields, while normal startu
 Format 48 keeps its exact populated fixture and frozen schema/invariants; rollback and retry reach the same registered
 format-49 fingerprint without rewriting any original history or notification-tap field.
 
+The format 49-to-50 step adds prospective structured tone evidence to optional individual Activity history. It
+appends the stable `TONE` action and event categories and adds one tone-context row plus at most 32 ordered tone
+facts per accepted completed physical call leg. Frequencies are stored as integer millihertz, separate from the RF
+carrier frequency. Source and method distinguish encoded AMBE symbols from decoded-audio detection; unknown
+frequencies, offsets and confidence stay unknown. These rows do not credit call, signaling, presence or Alias
+counters. The step preserves every old row, ID, relationship, counter, setting, credential, Activity index, planner
+statistic and event allocator. It infers no historical tones. Format 49 keeps its frozen signature and populated
+fixture; only the bundled adjacent Application Migrator rebuilds the category constraints and creates the two empty
+tables. Fresh and migrated format-50 databases share one exact signature. Normal startup refuses an older or mixed
+layout without applying this upgrade.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -682,8 +693,12 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 (`pending`, `complete`, or `failed`) and a pending-call lookup index. The format-2-to-3 step preserves every call and
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
-an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 49; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+an administrator action. Fresh format-3 catalogs use the same status default and index. Catalog format 4 adds a typed complete-call tone
+context and at most 32 ordered tone facts for the recorded native-audio winner. Its adjacent format-3-to-4 step
+preserves every recording, ID, path, access code, transcript, transcription status, relationship, counter and
+allocator, adding no historical tone rows. The exact format-3 signature remains frozen independently of the current
+creator; fresh and migrated format-4 catalogs share the same authoritative definitions. The main application database
+is independently at format 50; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

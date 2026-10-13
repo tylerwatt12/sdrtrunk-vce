@@ -576,7 +576,8 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                                 Integer targetId, Integer targetHomeWacn, Integer targetHomeSystem,
                                 Integer targetHomeId, Long frequencyHz, Integer timeslot, Integer nac,
                                 Integer toneKind, String tone, Site winnerSite,
-                                List<Site> alsoReceivedOn, List<Member> patchMembers, String servingSystemKey)
+                                List<Site> alsoReceivedOn, List<Member> patchMembers, String servingSystemKey,
+                                Map<String,Object> pagingToneSummary)
     {
         public Map<String,Object> toMap()
         {
@@ -587,6 +588,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             value.put("duration_ms", durationMs);
             value.put("size_bytes", sizeBytes);
             value.put("audio_url", "/api/v1/recordings/calls/" + id + "/audio");
+            put(value, "paging_tone_summary", pagingToneSummary);
             put(value, "system_key", systemKey);
             //Legacy routing inference is independent of the captured audio winner's serving proof.
             value.put("serving_system_key", servingSystemKey);

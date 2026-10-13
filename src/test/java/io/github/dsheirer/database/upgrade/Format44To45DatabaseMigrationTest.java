@@ -46,11 +46,9 @@ class Format44To45DatabaseMigrationTest
             Map<String,TableContents> before = contents(connection);
             Map<String,String> schema = schemaDefinitions(connection);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
-            connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 44, report.steps().size());
-            assertEquals("format-44-to-45", report.steps().getFirst().id());
-            assertCounts(report.steps().getFirst().effects());
+            var effects = new Format44To45DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stamp(connection,45); connection.commit();
+            assertCounts(effects);
             Map<String,TableContents> after = contents(connection);
             before.forEach((table, rows) -> {
                 if(!CONSOLIDATED_TABLES.contains(table)) assertEquals(rows, after.get(table), table);
@@ -64,8 +62,10 @@ class Format44To45DatabaseMigrationTest
             });
             assertNotEquals(schema.get("view:receiver_activity_event_resolved"),
                 targetSchema.get("view:receiver_activity_event_resolved"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            assertConsolidated(connection);
+            assertEquals(DatabaseFormatCatalog.requireVersion(45).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertConsolidated(connection); assertHealthy(connection);
+            connection.setAutoCommit(true); statement.execute("PRAGMA foreign_keys=OFF");
+            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertHealthy(connection);
         }
@@ -131,6 +131,8 @@ class Format44To45DatabaseMigrationTest
             assertEquals(before, contents(connection));
             assertHealthy(connection);
             statement.execute("DROP TRIGGER fail_home_radio_merge");
+            connection.setAutoCommit(true); statement.execute("PRAGMA foreign_keys=OFF");
+            connection.setAutoCommit(false);
             var retry = DatabaseMigrationChain.migrate(connection);
             connection.commit();
             assertCounts(retry.steps().getFirst().effects());

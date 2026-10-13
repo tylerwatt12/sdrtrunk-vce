@@ -103,6 +103,30 @@ final class ReceiverActivityRetention
     {
         List<RetentionTask> tasks = new ArrayList<>();
 
+        tasks.add(sql("activity tone elements", false, """
+            DELETE FROM receiver_activity_tone
+            WHERE (event_id,ordinal) IN (
+                SELECT tone.event_id,tone.ordinal
+                FROM receiver_activity_event event INDEXED BY idx_receiver_activity_event_retention
+                JOIN receiver_activity_tone tone ON tone.event_id=event.id
+                WHERE event.observed_at_ms < ?
+                ORDER BY event.observed_at_ms,event.id,tone.ordinal
+                LIMIT ?
+            )
+            """));
+        tasks.add(sql("activity tone contexts", false, """
+            DELETE FROM receiver_activity_tone_sequence
+            WHERE event_id IN (
+                SELECT sequence.event_id
+                FROM receiver_activity_event event INDEXED BY idx_receiver_activity_event_retention
+                JOIN receiver_activity_tone_sequence sequence ON sequence.event_id=event.id
+                WHERE event.observed_at_ms < ?
+                  AND NOT EXISTS (SELECT 1 FROM receiver_activity_tone tone WHERE tone.event_id=event.id)
+                ORDER BY event.observed_at_ms,event.id
+                LIMIT ?
+            )
+            """));
+
         tasks.add(sql("activity event members", false, """
             DELETE FROM activity_event_identity_member
             WHERE (event_id, identity_summary_id) IN (
@@ -123,6 +147,7 @@ final class ReceiverActivityRetention
                   AND NOT EXISTS (
                       SELECT 1 FROM activity_event_identity_member member WHERE member.event_id = event.id
                   )
+                  AND NOT EXISTS (SELECT 1 FROM receiver_activity_tone_sequence sequence WHERE sequence.event_id=event.id)
                 ORDER BY event.observed_at_ms, event.id
                 LIMIT ?
             )

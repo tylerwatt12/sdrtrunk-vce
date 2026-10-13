@@ -62,7 +62,7 @@ final class RadioSystemSchema
     static final int MAX_TALKER_ALIAS_CHARACTERS = 160;
 
     private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes().stream()
-        .filter(action -> action != ReceiverActivityRecords.Action.CALL)
+        .filter(action -> action != ReceiverActivityRecords.Action.CALL && action != ReceiverActivityRecords.Action.TONE)
         .toList();
     static final List<String> ACTION_COUNT_COLUMNS = ACTIONS.stream()
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
@@ -2797,6 +2797,21 @@ final class RadioSystemSchema
             .filter(identity -> identity.kindCode() == TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP ||
                 identity.kindCode() == TrunkedIdentityPolicy.IDENTITY_KIND_PATCH_GROUP)
             .toList();
+    }
+
+    /** Normalize only captured tone identities; directory references need not invent any call/signaling credit. */
+    static void retainDetailedToneIdentities(Connection connection, RadioSystem radioSystem,
+                                            ReceiverActivityRecords.ActivityEvent activity) throws SQLException
+    {
+        if(radioSystem == null) return;
+        Identity source = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            integer(activity.sourceRadioId()), activity.p25SourceIdentity());
+        if(source != null) upsertIdentity(connection,radioSystem,source,activity.observedAtEpochMilliseconds(),
+            null,IdentityCounts.NONE,null,null,null,null,null);
+        for(Identity destination: destinationIdentities(connection,radioSystem,activity.targetId(),activity.targetKind(),
+            activity.patchMemberTalkgroupIds(),activity.p25TargetIdentity(),activity.p25PatchMemberIdentities(),activity.observedAtEpochMilliseconds()))
+            upsertIdentity(connection,radioSystem,destination,activity.observedAtEpochMilliseconds(),
+                null,IdentityCounts.NONE,null,null,null,null,null);
     }
 
     static IdentityReference identityReference(Connection connection, RadioSystem radioSystem, int kindCode,

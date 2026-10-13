@@ -36,6 +36,8 @@ final class CurrentDatabaseDerivedStateRepair
 {
     static final String STEP_ID = "reset-damaged-current-derived-state";
     static final List<String> REPRODUCIBLE_TABLES = List.of(
+        "receiver_activity_tone",
+        "receiver_activity_tone_sequence",
         "radio_system",
         "radio_system_identity_summary",
         "p25_wuid_assignment_observation_summary",
@@ -301,14 +303,13 @@ final class CurrentDatabaseDerivedStateRepair
     /** Earlier direct-source repairs run before the adjacent migration installs the observation table. */
     private static List<String> repairTables(Connection connection) throws SQLException
     {
-        try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE type='table' " +
-                "AND name='p25_wuid_assignment_observation_summary'"))
+        java.util.Set<String> present = new java.util.HashSet<>();
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("SELECT name FROM sqlite_schema WHERE type='table'"))
         {
-            if(rows.next()) return REPRODUCIBLE_TABLES;
+            while(rows.next()) present.add(rows.getString(1));
         }
-        return REPRODUCIBLE_TABLES.stream()
-            .filter(table -> !"p25_wuid_assignment_observation_summary".equals(table)).toList();
+        return REPRODUCIBLE_TABLES.stream().filter(table -> present.contains(table) ||
+            !Set.of("p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table)).toList();
     }
 
     private static boolean tableChecksAreValid(Connection connection, String table) throws SQLException
@@ -319,11 +320,10 @@ final class CurrentDatabaseDerivedStateRepair
         }
 
         //Historical direct-source repair can precede the format-32 storage additions.
-        if("p25_wuid_assignment_observation_summary".equals(table))
+        if(Set.of("p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table))
         {
             try(Statement statement = connection.createStatement();
-                ResultSet rows = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE type='table' " +
-                    "AND name='p25_wuid_assignment_observation_summary'"))
+            ResultSet rows = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='" + table + "'"))
             {
                 if(!rows.next()) return true;
             }

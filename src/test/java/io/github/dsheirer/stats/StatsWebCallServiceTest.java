@@ -31,6 +31,8 @@ import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.enhance.ModelBundleFixtures;
 import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -124,63 +126,360 @@ class StatsWebCallServiceTest
     }
 
     @Test
-    void phase1ToneDetailsComeFromRawAudioWithEnhancementDisabled(@TempDir Path directory) throws Exception
+    void sharedToneDetailsDoNotRequireEnhancementOrBrowserAnalysis(@TempDir Path directory) throws Exception
     {
         var enhancement = new VoiceEnhancementService(directory);
-        float[] tone = new float[8000];
-        for(int i = 0; i < tone.length; i++) tone[i] = (float)(0.04 * Math.sin(2 * Math.PI * 1000 * i / 8000));
-        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement));
-            FeedClient client = listen(service, Set.of()))
+        CompletedAudioCall source = pagingCall();
+        CompletedToneSequence sequence = inferredTones(source.snapshot());
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement,
+                snapshot -> sequence.matches(snapshot) ? sequence : null)); FeedClient client = listen(service, Set.of()))
         {
-            service.receive(new CompletedAudioCall(call().snapshot(), List.of(tone)));
+            service.receive(source);
             var metadata = client.awaitCall();
             assertEquals(false, metadata.get("voice_enhancement"));
-            assertTrue(metadata.get("detected_paging_tones") instanceof List<?>);
-            var detections = (List<?>)metadata.get("detected_paging_tones");
-            assertEquals(1, detections.size());
-            var result = (io.github.dsheirer.audio.tone.P25PagingToneDetector.DetectedTone)detections.getFirst();
-            assertEquals("decoded_audio", result.source());
-            assertEquals(1000.0, result.frequencyHz(), 4.0);
-            assertTrue(result.durationMilliseconds() >= 200);
+            assertEquals(ToneSummaryPayload.summary(sequence), metadata.get("paging_tone_summary"));
+            assertFalse(metadata.containsKey("detected_paging_tones"), "Shared outcome replaces duplicate PCM analysis");
         }
     }
 
     @Test
-    void pagingAnalysisOffPreservesAudibleCallAndCanEnableIndependently() throws Exception
+    void unavailableSharedResultPreservesAudibleCallAndCanAppearIndependently() throws Exception
     {
         var enabled = new java.util.concurrent.atomic.AtomicBoolean(false);
-        float[] tone = new float[8000];
-        for(int i = 0; i < tone.length; i++) tone[i] = (float)(0.04 * Math.sin(2 * Math.PI * 1000 * i / 8000));
-        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null, () -> 1L,
-                ignored -> enabled.get())); FeedClient client = listen(service, Set.of()))
+        CompletedAudioCall source = pagingCall();
+        CompletedToneSequence sequence = inferredTones(source.snapshot());
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> enabled.get() && sequence.matches(snapshot) ? sequence : null));
+            FeedClient client = listen(service, Set.of()))
         {
-            CompletedAudioCall source = new CompletedAudioCall(call().snapshot(), List.of(tone));
             service.receive(source);
             var off = client.awaitCall();
-            assertFalse(off.containsKey("detected_paging_tones"));
+            assertFalse(off.containsKey("paging_tone_summary"));
             assertEquals(false, off.get("voice_enhancement"));
             byte[] plain = service.get(String.valueOf(off.get("call_id"))).wave();
             enabled.set(true);
             service.receive(source);
             var on = client.awaitCall();
-            assertTrue(on.containsKey("detected_paging_tones"));
+            assertTrue(on.containsKey("paging_tone_summary"));
             assertArrayEquals(plain, service.get(String.valueOf(on.get("call_id"))).wave());
         }
     }
 
     @Test
-    void changedPagingEpochDoesNotPublishOldDetections() throws Exception
+    void invalidatedSharedOutcomeDoesNotPublishOldDetections() throws Exception
     {
         var checks = new java.util.concurrent.atomic.AtomicInteger();
-        float[] tone = new float[8000];
-        for(int i = 0; i < tone.length; i++) tone[i] = (float)(0.04 * Math.sin(2 * Math.PI * 1000 * i / 8000));
-        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null, () -> 1L,
-                ignored -> checks.incrementAndGet() == 1)); FeedClient client = listen(service, Set.of()))
+        CompletedAudioCall source = pagingCall();
+        CompletedToneSequence sequence = inferredTones(source.snapshot());
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> checks.incrementAndGet() == 1 ? sequence : null));
+            FeedClient client = listen(service, Set.of()))
         {
-            service.receive(new CompletedAudioCall(call().snapshot(), List.of(tone)));
-            assertFalse(client.awaitCall().containsKey("detected_paging_tones"));
+            service.receive(source);
+            assertFalse(client.awaitCall().containsKey("paging_tone_summary"));
             assertEquals(2, checks.get());
         }
+    }
+
+    @Test
+    void lateToneOutcomeUpdatesMetadataOnceWithoutChangingAudioOrPublishingAnotherCall() throws Exception
+    {
+        var outcome = new AtomicReference<CompletedToneSequence>();
+        CompletedAudioCall source = pagingCall();
+        CompletedToneSequence sequence = inferredTones(source.snapshot());
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null, snapshot -> outcome.get()));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(source);
+            var original = client.awaitCall();
+            String id = String.valueOf(original.get("call_id"));
+            byte[] wave = service.get(id).wave();
+            outcome.set(sequence);
+            service.receiveToneSequence(sequence);
+            var update = client.awaitCall();
+            assertEquals(id, update.get("call_id"));
+            assertEquals(true, update.get("audio_metadata_updated"));
+            assertEquals(ToneSummaryPayload.summary(sequence), update.get("paging_tone_summary"));
+            assertArrayEquals(wave, service.get(id).wave());
+            assertEquals(1L, service.observerStatus().get("published_calls"));
+            service.receiveToneSequence(sequence);
+            long feedGeneration = service.tryAcquireFeed();
+            try
+            {
+                var duplicate = service.feed(Set.of(), Long.parseLong(client.cursor()), 50, TimeUnit.MILLISECONDS, feedGeneration);
+                assertTrue(duplicate.calls().isEmpty());
+            }
+            finally { service.releaseFeed(feedGeneration); }
+        }
+    }
+
+    @Test
+    void sharedToneLookupFailureCannotSuppressAudio() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> { throw new IllegalStateException("Unavailable optional observer"); }));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call());
+            var metadata = client.awaitCall();
+            assertFalse(metadata.containsKey("paging_tone_summary"));
+            assertNotNull(service.get(String.valueOf(metadata.get("call_id"))));
+            assertEquals(1L, service.observerStatus().get("tone_metadata_failures"));
+        }
+    }
+
+    @Test
+    void switchingPcmDetectionOffWhilePublicationIsBlockedCannotAttachStaleTones() throws Exception
+    {
+        CompletedAudioCall source = distinctPagingCall(1);
+        CompletedToneSequence sequence = inferredTones(source.nativeAudioSnapshot());
+        var outcome = new AtomicReference<>(sequence);
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> outcome.get())); FeedClient client = listen(service, Set.of()))
+        {
+            synchronized(service)
+            {
+                service.receive(source);
+                assertTrue(awaitThreadState(encoderThread(service), Thread.State.BLOCKED, 5, TimeUnit.SECONDS));
+                //The shared observer invalidates PCM lookup identity immediately on Off.
+                outcome.set(null);
+            }
+            var off = client.awaitCall();
+            assertNotNull(off);
+            assertFalse(off.containsKey("paging_tone_summary"));
+            byte[] wave = service.get(String.valueOf(off.get("call_id"))).wave();
+            outcome.set(sequence);
+            service.receive(source);
+            var on = client.awaitCall();
+            assertEquals(ToneSummaryPayload.summary(sequence), on.get("paging_tone_summary"));
+            assertArrayEquals(wave, service.get(String.valueOf(on.get("call_id"))).wave());
+        }
+    }
+
+    @Test
+    void mixedOriginalAndToneUpdateEntriesPageInCursorOrderWithoutHistoricalReplayForNewClient() throws Exception
+    {
+        Map<CallLegId,CompletedToneSequence> outcomes = new java.util.concurrent.ConcurrentHashMap<>();
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> outcomes.get(snapshot.callLegId())));
+            FeedClient slow = listen(service, Set.of()); FeedClient observer = listen(service, Set.of()))
+        {
+            List<String> ids = new ArrayList<>();
+            List<Boolean> updates = new ArrayList<>();
+            for(int index = 0; index < 70; index++)
+            {
+                CompletedAudioCall source = distinctPagingCall(index + 10);
+                service.receive(source);
+                var original = observer.awaitCall();
+                assertNotNull(original);
+                String id = String.valueOf(original.get("call_id"));
+                ids.add(id); updates.add(false);
+                if(index % 2 == 0)
+                {
+                    CompletedToneSequence sequence = inferredTones(source.nativeAudioSnapshot());
+                    outcomes.put(sequence.callLegId(), sequence);
+                    service.receiveToneSequence(sequence);
+                    var update = observer.awaitCall();
+                    assertEquals(id, update.get("call_id"));
+                    assertEquals(true, update.get("audio_metadata_updated"));
+                    ids.add(id); updates.add(true);
+                }
+            }
+            var first = slow.page(0, TimeUnit.NANOSECONDS);
+            var second = slow.page(0, TimeUnit.NANOSECONDS);
+            assertFalse(first.reset()); assertFalse(second.reset());
+            assertEquals(64, first.calls().size()); assertEquals("64", first.cursor());
+            assertEquals(41, second.calls().size()); assertEquals("105", second.cursor());
+            List<Map<String,Object>> merged = new ArrayList<>(first.calls()); merged.addAll(second.calls());
+            for(int index = 0; index < ids.size(); index++)
+            {
+                assertEquals(ids.get(index), merged.get(index).get("call_id"));
+                assertEquals(updates.get(index).booleanValue(), Boolean.TRUE.equals(merged.get(index).get("audio_metadata_updated")));
+            }
+            assertEquals(70L, service.observerStatus().get("published_calls"));
+            try(FeedClient fresh = listen(service, Set.of()))
+            {
+                assertTrue(fresh.page(0, TimeUnit.NANOSECONDS).calls().isEmpty(), "A new listener starts at the live edge");
+                service.receive(distinctPagingCall(1000));
+                var next = fresh.awaitCall();
+                assertNotNull(next); assertFalse(next.containsKey("audio_metadata_updated"));
+                assertFalse(ids.contains(String.valueOf(next.get("call_id"))));
+            }
+        }
+    }
+
+    @Test
+    void toneUpdateRingOverflowAndAudioEvictionPreserveOriginalAudioOrderAndBounds() throws Exception
+    {
+        Map<CallLegId,CompletedToneSequence> outcomes = new java.util.concurrent.ConcurrentHashMap<>();
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> outcomes.get(snapshot.callLegId()))); FeedClient observer = listen(service, Set.of()))
+        {
+            List<String> ids = new ArrayList<>();
+            CompletedToneSequence firstSequence = null;
+            for(int index = 0; index < 257; index++)
+            {
+                CompletedAudioCall source = distinctPagingCall(index + 2000);
+                service.receive(source);
+                var original = observer.awaitCall();
+                String id = String.valueOf(original.get("call_id")); ids.add(id);
+                long cursor = service.get(id).cursor(); byte[] wave = service.get(id).wave();
+                CompletedToneSequence sequence = inferredTones(source.nativeAudioSnapshot());
+                if(index == 0) firstSequence = sequence;
+                outcomes.put(sequence.callLegId(), sequence); service.receiveToneSequence(sequence);
+                var update = observer.awaitCall();
+                assertEquals(id, update.get("call_id"));
+                assertEquals(cursor, service.get(id).cursor(), "Metadata cannot replace the audio cursor");
+                assertTrue(wave == service.get(id).wave(), "Metadata cannot copy or replace the cached WAV");
+            }
+            assertEquals(256, toneUpdateCount(service));
+            assertEquals(1L, service.observerStatus().get("dropped_tone_metadata"), "Only optional late metadata was trimmed");
+            for(int index = 0; index < 257; index++)
+            {
+                service.receive(distinctPagingCall(index + 3000));
+                var original = observer.awaitCall();
+                assertNotNull(original); assertFalse(original.containsKey("audio_metadata_updated"));
+                ids.add(String.valueOf(original.get("call_id")));
+            }
+            assertEquals(514L, service.observerStatus().get("published_calls"));
+            assertNull(service.get(ids.get(0))); assertNull(service.get(ids.get(1)));
+            assertEquals(255, toneUpdateCount(service), "Eviction also removes that audio call's late entry");
+            long previous = 0L;
+            for(int index = 2; index < ids.size(); index++)
+            {
+                var retained = service.get(ids.get(index)); assertNotNull(retained);
+                assertTrue(retained.cursor() > previous); previous = retained.cursor();
+            }
+            var remaining = service.feed(Set.of(), 3L, 0, TimeUnit.NANOSECONDS, observer.generation());
+            assertFalse(remaining.reset(), "Missing optional metadata must not force retained audio out of order");
+            assertTrue(remaining.calls().stream().noneMatch(value -> ids.get(0).equals(value.get("call_id")) || ids.get(1).equals(value.get("call_id"))));
+            service.receiveToneSequence(firstSequence);
+            assertTrue(observer.page(50, TimeUnit.MILLISECONDS).calls().isEmpty(), "An evicted call cannot reappear as an update");
+        }
+    }
+
+    @Test
+    void fullToneIngressNeverWaitsForBlockedConsumerAndRestartRejectsOldStampedUpdates() throws Exception
+    {
+        CompletedAudioCall oldCall = distinctPagingCall(4000);
+        CompletedToneSequence sequence = inferredTones(oldCall.nativeAudioSnapshot());
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> sequence.matches(snapshot) ? sequence : null)); FeedClient oldClient = listen(service, Set.of()))
+        {
+            service.receive(oldCall);
+            String oldId = String.valueOf(oldClient.awaitCall().get("call_id"));
+            CountDownLatch offered = new CountDownLatch(1);
+            AtomicLong offerElapsed = new AtomicLong();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread producer = null;
+            try
+            {
+                synchronized(service)
+                {
+                    service.receiveToneSequence(sequence);
+                    assertTrue(awaitThreadState(encoderThread(service), Thread.State.BLOCKED, 5, TimeUnit.SECONDS));
+                    producer = new Thread(() -> {
+                        long started = System.nanoTime();
+                        try { for(int index = 0; index < 129; index++) service.receiveToneSequence(sequence); }
+                        catch(Throwable error) { failure.set(error); }
+                        finally { offerElapsed.set(System.nanoTime() - started); offered.countDown(); }
+                    }, "tone ingress test producer");
+                    producer.start();
+                    assertTrue(offered.await(500, TimeUnit.MILLISECONDS), "Producer cannot wait for a blocked cache consumer");
+                    assertNull(failure.get());
+                    assertTrue(offerElapsed.get() < TimeUnit.MILLISECONDS.toNanos(500));
+                    assertEquals(128, service.observerStatus().get("tone_metadata_queue_depth"));
+                    assertEquals(1L, service.observerStatus().get("dropped_tone_metadata"));
+                    service.stop(); service.start();
+                }
+            }
+            finally { if(producer != null) producer.join(1000); }
+            assertNull(service.get(oldId));
+            assertTrue(oldClient.page(0, TimeUnit.NANOSECONDS).reset());
+            try(FeedClient restarted = listen(service, Set.of()))
+            {
+                service.receive(distinctPagingCall(4001));
+                var fresh = restarted.awaitCall(); assertNotNull(fresh);
+                assertFalse(fresh.containsKey("paging_tone_summary"));
+                assertFalse(fresh.containsKey("audio_metadata_updated"));
+                assertEquals(0L, awaitStatus(service, "tone_metadata_queue_depth", 0L));
+                assertEquals(0, toneUpdateCount(service));
+            }
+        }
+    }
+
+    @Test
+    void expandedLogicalTimesStillMatchTheNativeAudioWinnerForInitialAndLateTones() throws Exception
+    {
+        CompletedAudioCall source = distinctPagingCall(5000);
+        AudioCallSnapshot nativeSnapshot = source.nativeAudioSnapshot();
+        AudioCallSnapshot logical = new AudioCallSnapshot(nativeSnapshot.callId(), nativeSnapshot.linkedCallId(), nativeSnapshot.aliasList(),
+            nativeSnapshot.identifierCollection(), nativeSnapshot.broadcastChannels(), nativeSnapshot.startTimestamp() - 500L,
+            nativeSnapshot.lastActivityTimestamp() + 500L, nativeSnapshot.burstCount(), nativeSnapshot.burstGeneration(),
+            nativeSnapshot.lastBurstStartTimestamp(), nativeSnapshot.lastBurstEndTimestamp(), false, true,
+            nativeSnapshot.encryptionState(), nativeSnapshot.recordAudio(), nativeSnapshot.recordingMetadata(), nativeSnapshot.voiceCallQuality(),
+            nativeSnapshot.callLegId(), nativeSnapshot.callLegSource(), nativeSnapshot.callEncryptionEvidence());
+        CompletedAudioCall expanded = new CompletedAudioCall(source.logicalCallId(), logical, source.audioBuffers(), source.resolvedPolicy(),
+            source.callLegSummaries(), source.recordingIdentifierCollection(), nativeSnapshot, null);
+        CompletedToneSequence sequence = inferredTones(nativeSnapshot);
+        assertFalse(sequence.matches(logical));
+        var outcome = new AtomicReference<>(sequence);
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
+                snapshot -> sequence.matches(snapshot) ? outcome.get() : null)); FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(expanded);
+            var initial = client.awaitCall();
+            assertEquals(logical.startTimestamp(), initial.get("started_at_ms"));
+            assertEquals(ToneSummaryPayload.summary(sequence), initial.get("paging_tone_summary"));
+            byte[] wave = service.get(String.valueOf(initial.get("call_id"))).wave();
+            outcome.set(null); service.receive(expanded);
+            var original = client.awaitCall(); assertFalse(original.containsKey("paging_tone_summary"));
+            outcome.set(sequence); service.receiveToneSequence(sequence);
+            var late = client.awaitCall();
+            assertEquals(original.get("call_id"), late.get("call_id"));
+            assertEquals(true, late.get("audio_metadata_updated"));
+            assertEquals(ToneSummaryPayload.summary(sequence), late.get("paging_tone_summary"));
+            assertArrayEquals(wave, service.get(String.valueOf(late.get("call_id"))).wave());
+        }
+    }
+
+    private static int toneUpdateCount(StatsWebCallService service) throws Exception
+    {
+        var field = StatsWebCallService.class.getDeclaredField("mToneMetadataUpdates"); field.setAccessible(true);
+        synchronized(service) { return ((java.util.Deque<?>)field.get(service)).size(); }
+    }
+
+    private static CompletedAudioCall distinctPagingCall(int index)
+    {
+        CompletedAudioCall template = pagingCall(); AudioCallSnapshot original = template.snapshot();
+        AudioCallId id = new AudioCallId(9876, index + 1L, 0);
+        long start = 10_000L + index * 1_000L, end = start + 1_000L;
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(id, null, original.aliasList(), original.identifierCollection(), original.broadcastChannels(),
+            start, end, original.burstCount(), original.burstGeneration(), start, end, false, true,
+            original.encryptionState(), original.recordAudio(), original.recordingMetadata(), original.voiceCallQuality(),
+            CallLegId.from(id), original.callLegSource(), original.callEncryptionEvidence());
+        return new CompletedAudioCall(snapshot, template.audioBuffers());
+    }
+
+    private static CompletedAudioCall pagingCall()
+    {
+        AudioCallSnapshot original = call().snapshot();
+        long end = original.startTimestamp() + 1_000L;
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(original.callId(), original.linkedCallId(), original.aliasList(),
+            original.identifierCollection(), original.broadcastChannels(), original.startTimestamp(), end,
+            original.burstCount(), original.burstGeneration(), original.lastBurstStartTimestamp(), end, false, true,
+            original.encryptionState(), original.recordAudio(), original.recordingMetadata(), original.voiceCallQuality(),
+            original.callLegId(), original.callLegSource(), original.callEncryptionEvidence());
+        float[] audio = new float[8_000];
+        for(int i = 0; i < audio.length; i++) audio[i] = (float)(.04 * Math.sin(2 * Math.PI * 1_000 * i / 8_000));
+        return new CompletedAudioCall(snapshot, List.of(audio));
+    }
+
+    private static CompletedToneSequence inferredTones(AudioCallSnapshot snapshot)
+    {
+        return new CompletedToneSequence(snapshot, snapshot.startTimestamp(), CompletedToneSequence.Source.DECODED_AUDIO,
+            CompletedToneSequence.Method.P25_PCM_TONE_V1,
+            List.of(new CompletedToneSequence.Element(List.of(1_000_000), null, 0L, 250L, .9)));
     }
 
     @Test

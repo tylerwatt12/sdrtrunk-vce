@@ -81,7 +81,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private long mPendingEncryptedStartTimestamp = Long.MIN_VALUE;
     private String mLastAudioSegmentId;
     private final P25PagingToneService.Registration mPagingToneRegistration =
-        P25PagingToneService.getInstance().register();
+        P25PagingToneService.getInstance().registerGlobalPcm();
     private volatile Listener<AudioCallEvent> mAudioCallListener;
 
     public P25P1AudioModule(UserPreferences userPreferences, AliasList aliasList)
@@ -121,13 +121,13 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     @Override
     public void setMessageListener(Listener<IMessage> listener)
     {
-        mPagingToneRegistration.setMessageListener(listener);
+        mPagingToneRegistration.setLegacyMessageListener(listener);
     }
 
     @Override
     public void removeMessageListener()
     {
-        mPagingToneRegistration.setMessageListener(null);
+        mPagingToneRegistration.setLegacyMessageListener(null);
     }
 
     @Override

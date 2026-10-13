@@ -20,6 +20,8 @@
 package io.github.dsheirer.record;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.dsp.gain.P25AudioGain;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -48,6 +50,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,6 +83,7 @@ public class AudioRecordingManager
     private final RecordingWriter mRecordingWriter;
     private final ManagedRecordingSink mManagedRecordingSink;
     private final Path mManagedRecordingRoot;
+    private final Function<CompletedAudioCall, CompletedToneSequence> mToneLookup;
     private int mUnknownAudioRecordingIndex = 1;
 
     /**
@@ -115,12 +119,23 @@ public class AudioRecordingManager
                           ScheduledExecutorService scheduler, RecordingWriter recordingWriter,
                           ManagedRecordingSink managedRecordingSink, Path managedRecordingRoot)
     {
+        this(userPreferences, recordedCallConsumer, scheduler, recordingWriter, managedRecordingSink,
+            managedRecordingRoot, call -> P25PagingToneService.getInstance().awaitCompleted(
+                call.nativeAudioSnapshot(), 500, TimeUnit.MILLISECONDS));
+    }
+
+    AudioRecordingManager(UserPreferences userPreferences, Consumer<CompletedAudioCall> recordedCallConsumer,
+                          ScheduledExecutorService scheduler, RecordingWriter recordingWriter,
+                          ManagedRecordingSink managedRecordingSink, Path managedRecordingRoot,
+                          Function<CompletedAudioCall, CompletedToneSequence> toneLookup)
+    {
         mUserPreferences = Objects.requireNonNull(userPreferences, "User preferences cannot be null");
         mRecordedCallConsumer = recordedCallConsumer;
         mScheduler = Objects.requireNonNull(scheduler, "Recording scheduler cannot be null");
         mRecordingWriter = Objects.requireNonNull(recordingWriter, "Recording writer cannot be null");
         mManagedRecordingSink = managedRecordingSink;
         mManagedRecordingRoot = managedRecordingRoot != null ? managedRecordingRoot.toAbsolutePath().normalize() : null;
+        mToneLookup = Objects.requireNonNull(toneLookup);
     }
 
     /**
@@ -209,6 +224,19 @@ public class AudioRecordingManager
 
                 try
                 {
+                    //Optional native analysis may finish after logical-call resolution. Only this recording worker
+                    //waits briefly; live decode never waits for tone detection or file metadata. On loss/timeout,
+                    //audio is still saved with unknown tone evidence rather than an invented empty sequence.
+                    try
+                    {
+                        CompletedToneSequence sequence = mToneLookup.apply(completedAudioCall);
+                        if(sequence != null && !sequence.tones().isEmpty() && sequence.matches(completedAudioCall.nativeAudioSnapshot()))
+                            completedAudioCall = completedAudioCall.withCompletedTones(sequence);
+                    }
+                    catch(RuntimeException optionalFailure)
+                    {
+                        //Tone metadata is optional; an observer failure must not discard the audio recording.
+                    }
                     //A worker-only encoding view keeps the elected raw PCM available for ML and tone evidence.
                     CompletedAudioCall encodingCall = P25AudioGain.forEncoding(completedAudioCall);
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
@@ -257,7 +285,8 @@ public class AudioRecordingManager
                         CompletedAudioCall observedCall = mRecordedCallConsumer != null ?
                             new CompletedAudioCall(completedAudioCall.logicalCallId(),
                                 completedAudioCall.snapshot(), List.of(), completedAudioCall.resolvedPolicy(),
-                                completedAudioCall.callLegSummaries(), completedAudioCall.recordingIdentifierCollection()) : null;
+                                completedAudioCall.callLegSummaries(), completedAudioCall.recordingIdentifierCollection(),
+                                completedAudioCall.nativeAudioSnapshot(), completedAudioCall.completedToneSequence()) : null;
                         if(mManagedRecordingSink != null &&
                             mManagedRecordingSink.submit(path, completedAudioCall, fileSize,
                                 observedCall != null ? () -> notifyRecorded(observedCall) : null))

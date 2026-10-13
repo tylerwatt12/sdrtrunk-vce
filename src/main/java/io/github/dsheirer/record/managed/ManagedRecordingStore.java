@@ -240,6 +240,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 }
                 statement.executeBatch();
             }
+            ManagedRecordingTones.insert(mWriterConnection, callId, item.completedTones());
             try(PreparedStatement statement = mWriterConnection.prepareStatement(
                 "UPDATE catalog_metadata SET call_count=call_count+1,total_bytes=total_bytes+? WHERE id=1"))
             {
@@ -1102,7 +1103,7 @@ final class ManagedRecordingStore implements AutoCloseable
             nullableInt(row, "target_home_system"), nullableInt(row, "target_home_id"),
             nullableLong(row, "frequency_hz"), nullableInt(row, "timeslot"), nullableInt(row, "nac"),
             nullableInt(row, "tone_kind"), row.getString("tone"), winner, List.copyOf(also),
-            List.copyOf(members), servingSystemKey);
+            List.copyOf(members), servingSystemKey, ManagedRecordingTones.read(connection, id));
     }
 
     private static Site site(ResultSet rows, String prefix) throws SQLException

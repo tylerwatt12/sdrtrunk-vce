@@ -8,6 +8,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -164,7 +165,35 @@ public final class VceRecordingMetadata
         }
 
         quality(fields, winner.voiceCallQuality());
+        tones(fields, call.completedToneSequence());
         return Collections.unmodifiableMap(fields);
+    }
+
+    /** Additive ID3 TXXX fields are also embedded in the WAV id3 chunk. No process-local call ids are exported. */
+    private static void tones(Map<String,String> fields, CompletedToneSequence sequence)
+    {
+        if(sequence == null || sequence.tones().isEmpty()) return;
+        fields.put("VCE_PAGING_TONE_SCHEMA", "1");
+        fields.put("VCE_PAGING_TONE_SOURCE", sequence.source().value());
+        fields.put("VCE_PAGING_TONE_METHOD", sequence.method().value());
+        fields.put("VCE_PAGING_TONE_CALL_START_MS", Long.toString(sequence.callStartTimestamp()));
+        if(sequence.firstVoiceSampleTimestamp() > 0)
+            fields.put("VCE_PAGING_TONE_FIRST_SAMPLE_MS", Long.toString(sequence.firstVoiceSampleTimestamp()));
+        fields.put("VCE_PAGING_TONE_COMPLETED_MS", Long.toString(sequence.completedTimestamp()));
+        fields.put("VCE_PAGING_TONE_COUNT", Integer.toString(sequence.tones().size()));
+        int index = 0;
+        for(CompletedToneSequence.Element tone: sequence.tones())
+        {
+            String prefix = "VCE_PAGING_TONE_" + ++index;
+            for(int frequency = 0; frequency < tone.frequenciesMilliHertz().size(); frequency++)
+                fields.put(prefix + "_FREQUENCY_" + (frequency + 1) + "_HZ",
+                    BigDecimal.valueOf(tone.frequenciesMilliHertz().get(frequency), 3).stripTrailingZeros().toPlainString());
+            if(tone.codecSymbol() != null) fields.put(prefix + "_CODE", tone.codecSymbol());
+            if(tone.offsetMilliseconds() != null) fields.put(prefix + "_OFFSET_MS", Long.toString(tone.offsetMilliseconds()));
+            fields.put(prefix + "_DURATION_MS", Long.toString(tone.durationMilliseconds()));
+            if(tone.confidence() != null)
+                fields.put(prefix + "_CONFIDENCE_PPM", Long.toString(Math.round(tone.confidence() * 1_000_000)));
+        }
     }
 
     private static void radio(Map<String, String> fields, Identifier<?> identifier, String workingField,

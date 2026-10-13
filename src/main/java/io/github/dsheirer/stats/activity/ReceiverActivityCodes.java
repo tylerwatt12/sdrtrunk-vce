@@ -48,7 +48,8 @@ final class ReceiverActivityCodes
         ReceiverActivityRecords.Action.REGISTER,
         ReceiverActivityRecords.Action.REQUEST,
         ReceiverActivityRecords.Action.STATUS,
-        ReceiverActivityRecords.Action.UNKNOWN
+        ReceiverActivityRecords.Action.UNKNOWN,
+        ReceiverActivityRecords.Action.TONE
     );
     private static final List<EventTypeCode> EVENT_TYPE_CODES = List.of(
         event(DecodeEventType.AFFILIATE, 1),
@@ -111,7 +112,8 @@ final class ReceiverActivityCodes
         event(DecodeEventType.RADIO_UNINHIBIT, 58),
         event(DecodeEventType.RADIO_INHIBIT, 59),
         event(DecodeEventType.RADIO_UNINHIBIT_ACK, 60),
-        event(DecodeEventType.RADIO_INHIBIT_ACK, 61)
+        event(DecodeEventType.RADIO_INHIBIT_ACK, 61),
+        event(DecodeEventType.TONE, 62)
     );
     private static final Map<DecodeEventType,Integer> EVENT_TYPE_TO_CODE = buildCodeMap();
 

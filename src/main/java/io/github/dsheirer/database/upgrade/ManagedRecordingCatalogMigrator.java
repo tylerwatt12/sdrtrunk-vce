@@ -211,6 +211,11 @@ public final class ManagedRecordingCatalogMigrator
                         "WHERE id IN (SELECT call_id FROM recording_transcript)");
                     statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
                 }
+                case 3 ->
+                {
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone_sequence"));
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone"));
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

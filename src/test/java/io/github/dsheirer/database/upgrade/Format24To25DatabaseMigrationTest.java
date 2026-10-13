@@ -85,6 +85,8 @@ class Format24To25DatabaseMigrationTest
             assertEquals(3, report.steps().get(1).effects().size());
             assertEquals(rowsBefore.get("configuration_channel"),
                 report.steps().getFirst().effects().getFirst().affectedRows());
+            try(var toneRows = statement.executeQuery("SELECT (SELECT count(*) FROM receiver_activity_tone)+(SELECT count(*) FROM receiver_activity_tone_sequence)"))
+            { assertTrue(toneRows.next()); assertEquals(0,toneRows.getLong(1),"Prospective tone tables remain empty for prior history"); }
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(configurationBefore, configurationDigest(connection));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
@@ -307,7 +309,7 @@ class Format24To25DatabaseMigrationTest
             SELECT name FROM sqlite_schema
             WHERE type='table' AND name NOT LIKE 'sqlite_%'
               AND name NOT IN ('p25_subscriber_identity','alias_p25_subscriber_identity',
-                  'p25_wuid_assignment_observation_summary')
+                  'p25_wuid_assignment_observation_summary','receiver_activity_tone','receiver_activity_tone_sequence')
             ORDER BY name
             """))
         {
