@@ -64,11 +64,13 @@ async function main() {
   const radioLabelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/radio-labels.js')).href;
   const sourceNamesUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/source-names.js')).href;
   const callValueFormatUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/call-value-format.js')).href;
+  const callAudioDetailsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/call-audio-details.js')).href;
   const executable = source.replace(/^import .*dual-range.*;\r?\n/m, 'const createDualRange = () => {};\n')
     .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
     .replace(/from '\.\.\/core\/radio-labels\.js\?v=\d+'/, `from '${radioLabelsUrl}'`)
     .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`)
-    .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`);
+    .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`)
+    .replace(/from '\.\.\/core\/call-audio-details\.js\?v=\d+'/, `from '${callAudioDetailsUrl}'`);
   const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
   const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',

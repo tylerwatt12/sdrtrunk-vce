@@ -4,6 +4,10 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+async function toneScreenshot(page, name) {
+  if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`), fullPage: true });
+}
+
 const radioSystemKey = 'p25:00001:001';
 const encodedRadioSystemKey = encodeURIComponent(radioSystemKey);
 const radioSystemPath = `/api/v1/radio-systems/${encodedRadioSystemKey}`;
@@ -17,7 +21,12 @@ test.beforeAll(async () => {
   defaultPreferences = (await import(pathToFileURL(file).href)).defaults;
 });
 
-async function openActivity(page) {
+async function openActivity(page, options = {}) {
+  const radioSystemKey = options.radioSystemKey || 'p25:00001:001';
+  const encodedRadioSystemKey = encodeURIComponent(radioSystemKey);
+  const radioSystemPath = `/api/v1/radio-systems/${encodedRadioSystemKey}`;
+  const preferences = structuredClone(defaultPreferences);
+  preferences.appearance.theme = options.theme || 'light';
   const requests = { activity: [], groups: [], radios: [] };
   const groupRows = [
     { identity_key: talkgroupIdentityKey, native_id: 56131, group_identity_kind: 'talkgroup',
@@ -45,7 +54,7 @@ async function openActivity(page) {
       await respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
         primary: true, capabilities: { dashboard: true, radio: true, credits: true } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
+      await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/status') {
       await respond({ stats_logging: { summary_configured: true, detailed_history_configured: true,
         summary_active: true, detailed_history_active: true, state: 'RUNNING' },
@@ -53,7 +62,7 @@ async function openActivity(page) {
     } else if (pathname === '/api/v1/channel-catalog') {
       await respond({ revision: 1, channels: [] });
     } else if (pathname === radioSystemPath) {
-      await respond({ radio_system_key: radioSystemKey, protocol: 'P25', wacn: 1, system_id: 1,
+      await respond({ radio_system_key: radioSystemKey, protocol: options.protocol || 'P25', wacn: 1, system_id: 1,
         system_name: 'Metro Public Safety', assignment_state: 'CURRENT',
         channel_names: 'Downtown · North', capabilities: { group_identities: true, radios: true,
           activity: true, talker_aliases: true, radio_channel_presence: true } });
@@ -68,14 +77,15 @@ async function openActivity(page) {
         site_name: 'Downtown', name: 'GCRCN' }]) });
     } else if (pathname === '/api/v1/activity') {
       requests.activity.push(Object.fromEntries(url.searchParams));
-      await respond({ rows: [{ id: 17, observed_at_ms: 1_790_720_000_000, action: 'CALL',
+      const rows = options.rows || [{ id: 17, observed_at_ms: 1_790_720_000_000, action: 'CALL',
         event_type: 'CALL_GROUP', protocol: 'P25', source_radio_id: 2808137,
         source_identity_key: sourceIdentityKey, source_alias_name: 'Engine 12',
         source_talker_alias: 'E12 Portable', target_id: 56131,
         target_identity_key: talkgroupIdentityKey, target_kind: 'talkgroup',
         target_alias_name: 'CPD D3 DISP', name: 'GCRCN', frequency_hz: 855_737_500,
         lcn: '0-757', encrypted: false,
-        configuration_id: '11111111-1111-4111-8111-111111111111' }],
+        configuration_id: '11111111-1111-4111-8111-111111111111' }];
+      await respond({ rows: rows.filter(row => !url.searchParams.has('event_type') || String(row.event_type).toUpperCase() === url.searchParams.get('event_type')),
       has_more: false, next_before_id: null });
     } else {
       await route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
@@ -107,6 +117,71 @@ test('Radio-system Site cells emphasize the unique channel name without confirma
     .getAttribute('href'), 'http://127.0.0.1:4173');
   expect(target.searchParams.get('view')).toBe('channel');
   expect(target.searchParams.get('configuration_id')).toBe('11111111-1111-4111-8111-111111111111');
+});
+
+function toneActivityRow(id, summary, overrides = {}) {
+  return { id, observed_at_ms: 1_790_720_001_000, action: 'TONE', event_type: 'TONE', protocol: 'P25',
+    source_radio_id: 2808137, source_identity_key: sourceIdentityKey, source_alias_name: 'Engine 12',
+    target_id: 56131, target_identity_key: talkgroupIdentityKey, target_kind: 'talkgroup', target_alias_name: 'CPD D3 DISP',
+    name: 'North Simulcast Control', frequency_hz: 855_737_500, lcn: '0-757', encrypted: false,
+    configuration_id: '11111111-1111-4111-8111-111111111111',
+    source_entity_ref: { kind: 'radio', radio_system_key: radioSystemKey, identity_key: sourceIdentityKey },
+    target_entity_ref: { kind: 'group', radio_system_key: radioSystemKey, identity_key: talkgroupIdentityKey },
+    entity_ref: { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' },
+    paging_tone_summary: summary, ...overrides };
+}
+
+test('paging tones show inferred and encoded sequences with alias context and exact event filtering', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const requests = await openActivity(page, { rows: [
+    toneActivityRow(18, { source: 'decoded_audio', method: 'p25_pcm_tone_v1', phase: 1, call_started_at_ms: 1_790_720_000_000,
+      tones: [{ frequencies_hz: [600.2], duration_milliseconds: 1020, offset_milliseconds: 80, confidence: .99 }] }, { action: 'tone', event_type: 'tone' }),
+    toneActivityRow(19, { source: 'encoded', method: 'ambe_tone_v1', phase: 2, call_started_at_ms: 1_790_720_000_000,
+      tones: [{ frequencies_hz: [600], code: 'TONE_600', duration_milliseconds: 120 },
+        { frequencies_hz: [700], code: 'TONE_700', duration_milliseconds: 240 }] }),
+    toneActivityRow(20, undefined, { source_alias_name: '', source_radio_id: 999, source_identity_key: '', source_entity_ref: null })
+  ] });
+  const row = page.locator('tr[data-id="18"]');
+  await expect(row.locator('[data-column="event"]')).toContainText('Paging tones');
+  await expect(row.locator('[data-column="action"]')).toHaveText('Paging tones');
+  await expect(row.locator('[data-column="event"]')).toContainText('Audio detection');
+  await expect(row.locator('[data-column="event"]')).toContainText('600.2 Hz · 1020 ms · at 80 ms');
+  await expect(row.locator('[data-column="event"]')).toContainText('Call started');
+  await expect(row.locator('[data-column="event"] time')).toHaveText('2026-09-29 22:13:20');
+  await expect(row.locator('[data-column="event"]')).not.toContainText('[object');
+  await expect(row).toContainText('Engine 12'); await expect(row).toContainText('CPD D3 DISP');
+  await expect(row.locator('[data-column="channel"]')).toContainText('855.73750 MHz');
+  await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('Encoded');
+  await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('TONE 600 · 600 Hz · 120 ms');
+  await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('TONE 700 · 700 Hz · 240 ms');
+  await expect(page.locator('tr[data-id="20"] [data-column="event"]')).toHaveText('Paging tones');
+  await expect(row.locator('[data-column="event"]')).not.toContainText('99%');
+  await expect(row.locator('[data-column="event"]')).not.toContainText('p25_pcm_tone_v1');
+  await toneScreenshot(page, 'activity-tones-light-desktop');
+  await row.locator('[data-column="event"] .activity-cell-filter-link').click();
+  await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('TONE');
+  await expect(page.locator('.activity-filter-chips')).toContainText('Paging tones');
+  const source = page.locator('tr[data-id="18"] [data-column="source-alias"] .activity-cell-action-link');
+  await source.click();
+  await expect(page.getByRole('link', { name: 'Open source radio details', exact: true })).toBeVisible();
+});
+
+test('paging tones keep DMR encoded dual frequencies and code readable on a dark phone', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openActivity(page, { protocol: 'DMR', radioSystemKey: 'dmr:channel:fixture', theme: 'dark', rows: [
+    toneActivityRow(21, { source: 'encoded', method: 'ambe_tone_v1', call_started_at_ms: 1_790_720_000_000,
+      tones: [{ frequencies_hz: [697, 1477], code: 'DTMF_3', duration_milliseconds: 120 }] },
+      { protocol: 'DMR', source_alias_name: 'Depot Portable', target_alias_name: 'Depot Dispatch', timeslot: 2 })
+  ] });
+  const row = page.locator('tr[data-id="21"]');
+  await expect(row.locator('[data-column="event"]')).toContainText('Encoded');
+  await expect(row.locator('[data-column="event"]')).toContainText('DTMF 3 · 697 + 1477 Hz · 120 ms');
+  await expect(row.locator('[data-column="event"]')).not.toContainText('[object');
+  await expect(row).toContainText('Depot Portable'); await expect(row).toContainText('Depot Dispatch');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await row.locator('[data-column="event"]').evaluate(cell => cell.scrollIntoView({ inline: 'center', block: 'nearest' }));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await toneScreenshot(page, 'activity-tones-dark-phone');
 });
 
 test('P25 Activity provides compact identity-first filters in the actual application', async ({ page }) => {

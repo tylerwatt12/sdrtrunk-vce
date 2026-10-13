@@ -494,6 +494,10 @@ export class WebCallPlayer {
 
   // The shared HTTP feed supplies normalized completed-call announcements.
   enqueue(call) {
+    if (call?.audio_metadata_updated === true) {
+      this.updateCallAudioMetadata(call);
+      return;
+    }
     const normalized = this.normalizeCall(call);
     if (!normalized || !this.callMatchesSelection(normalized)) return;
     if (this.seenCallIds.has(normalized._callId)) return;
@@ -508,6 +512,22 @@ export class WebCallPlayer {
     this.insertQueuedCall(normalized);
     if (!this.stopped && !this.paused && !this.current) this.playNext();
     else this.render();
+  }
+
+  updateCallAudioMetadata(value) {
+    const id = typeof value?.call_id === 'string' ? value.call_id.trim() : '';
+    if (!id) return false;
+    // These bounded retained objects already own playback position and buffers.
+    // A late observation cannot create a call or change its audio/scheduling.
+    const retained = new Set([this.current, this.lastHeard, this.idleDisplayCall,
+      this.heldDisplayCall, ...this.queuedCalls].filter(call => call?._callId === id));
+    if (!retained.size) return false;
+    const fields = ['paging_tone_summary', 'detected_paging_tones']
+      .filter(field => Object.hasOwn(value, field));
+    if (!fields.length) return false;
+    retained.forEach(call => fields.forEach(field => { call[field] = value[field]; }));
+    this.render();
+    return true;
   }
 
   normalizeCall(value) {

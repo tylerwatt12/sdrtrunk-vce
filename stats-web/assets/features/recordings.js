@@ -3,6 +3,7 @@ import { systemLabel, systemName } from '../core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
+import { callAudioDetailGroups } from '../core/call-audio-details.js?v=2';
 
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
@@ -1162,8 +1163,9 @@ export function createRecordingsFeature(deps) {
       }
       const locations = { 'Source & target identities': 'identities', 'Patch member identities': 'identities',
         'Protocol & signaling': 'technical', 'Received site identities': 'technical',
+        'Audio': 'technical', 'Paging tones': 'technical',
         'Recording identifiers': 'recording' };
-      for (const [title, facts] of factGroups(call)) {
+      for (const [title, facts] of [...factGroups(call), ...callAudioDetailGroups(call)]) {
         const group = node('section', 'ui-form-section');
         if (title) group.append(node('h4', 'ui-section-heading', title));
         const list = node('dl', 'ui-fact-list');

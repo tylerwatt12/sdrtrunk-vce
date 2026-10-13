@@ -33,7 +33,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createAlertsWorkspace } from './features/alerts.js?v=6';
-import { createRecordingsFeature } from './features/recordings.js?v=32';
+import { createRecordingsFeature } from './features/recordings.js?v=33';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=2';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
@@ -41,10 +41,11 @@ import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, di
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=21';
+import { createAudioDock } from './core/audio-dock.js?v=22';
+import { formatPagingToneSummary } from './core/call-audio-details.js?v=2';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=17';
+import { WebCallPlayer } from './web-call-player.js?v=18';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -108,7 +109,7 @@ const ACTIVITY_LOG_RANGES = Object.freeze([
 const ACTIVITY_ACTION_VALUES = Object.freeze([
   'ACKNOWLEDGE', 'ACTIVE', 'BUSY', 'CALL', 'CHECK', 'CHECK_ACK', 'CONTINUE', 'DATA',
   'DENIAL', 'EMERGENCY', 'GPS', 'GRANT', 'JOIN', 'LOGOUT', 'PAGE', 'PATCH',
-  'PATCH_CANCEL', 'PATCH_CREATE', 'QUEUED', 'REGISTER', 'REQUEST', 'STATUS', 'UNKNOWN'
+  'PATCH_CANCEL', 'PATCH_CREATE', 'QUEUED', 'REGISTER', 'REQUEST', 'STATUS', 'TONE', 'UNKNOWN'
 ]);
 const ACTIVITY_EVENT_TYPE_VALUES = Object.freeze([
   'AFFILIATE', 'ANNOUNCEMENT', 'ACKNOWLEDGE', 'AUTOMATIC_REGISTRATION_SERVICE', 'CALL',
@@ -122,7 +123,7 @@ const ACTIVITY_EVENT_TYPE_VALUES = Object.freeze([
   'RADIO_REGISTRATION_SERVICE', 'REGISTER', 'REGISTER_ESN', 'REQUEST', 'RESPONSE',
   'RESPONSE_PACKET', 'SDM', 'SMS', 'STATION_ID', 'STATUS', 'TEXT_MESSAGE', 'UDP_PACKET',
   'UNKNOWN_PACKET', 'XCMP', 'UNKNOWN', 'DENIAL', 'RADIO_UNINHIBIT', 'RADIO_INHIBIT',
-  'RADIO_UNINHIBIT_ACK', 'RADIO_INHIBIT_ACK'
+  'RADIO_UNINHIBIT_ACK', 'RADIO_INHIBIT_ACK', 'TONE'
 ]);
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
@@ -21785,7 +21786,7 @@ function activityOptionLabel(value) {
     ID_ANI: 'ANI', ID_UNIQUE: 'Unique ID', IP_PACKET: 'IP Packet', LRRP: 'Motorola LRRP',
     RADIO_REGISTRATION_SERVICE: 'Hytera RRS', REGISTER_ESN: 'ESN Registration',
     RESPONSE_PACKET: 'Response Packet', SDM: 'Short Data Message', SMS: 'SMS',
-    UDP_PACKET: 'UDP/IP Packet', XCMP: 'Motorola XCMP'
+    UDP_PACKET: 'UDP/IP Packet', XCMP: 'Motorola XCMP', TONE: 'Paging tones'
   };
   return labels[value] || semanticLabel(value);
 }
@@ -23237,13 +23238,31 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
   return trigger;
 }
 
+function activityEventValue(row) {
+  if (String(row?.event_type || '').toUpperCase() !== 'TONE') return row.event_type;
+  const value = node('span', 'identity-summary');
+  value.append(node('span', 'identity-summary-primary', 'Paging tones'));
+  const summary = formatPagingToneSummary(row.paging_tone_summary);
+  if (summary) {
+    value.append(node('small', 'identity-summary-context', summary.source));
+    const started = row.paging_tone_summary.call_started_at_ms;
+    if (typeof started === 'number' && started > 0 && Number.isFinite(new Date(started).getTime())) {
+      const context = node('small', 'identity-summary-context');
+      context.append('Call started ', dateTime(started));
+      value.append(context);
+    }
+    summary.tones.forEach((tone, index) => value.append(node('small', 'identity-summary-context', `${index + 1}. ${tone}`)));
+  }
+  return value;
+}
+
 function activityColumns(context, filters) {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
     { id: 'action', label: 'Action', render: (row) =>
-      activityCellValue(row.action, row, 'action', context, filters), sortValue: (row) => row.action || '' },
+      activityCellValue(String(row.action || '').toUpperCase() === 'TONE' ? activityOptionLabel('TONE') : row.action, row, 'action', context, filters), sortValue: (row) => row.action || '' },
     { id: 'event', label: 'Event subtype', render: (row) =>
-      activityCellValue(row.event_type, row, 'event', context, filters),
+      activityCellValue(activityEventValue(row), row, 'event', context, filters),
       sortValue: (row) => row.event_type || '' },
     { id: 'source', label: 'Src', fullLabel: 'Source ID',
       render: (row) => activityCellValue(activityIdentifier(row, row.source_radio_id, 'radio',

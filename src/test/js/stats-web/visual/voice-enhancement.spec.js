@@ -3,7 +3,7 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { openVoiceEnhancementApp, model } = require('./fixtures/voice-enhancement-app.cjs');
-const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
+const { openAudioApp, liveCall, recording } = require('./fixtures/audio-dock-app.cjs');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 const zip = { name: 'voice-model.zip', mimeType: 'application/zip', buffer: Buffer.from([80, 75, 3, 4]) };
@@ -111,7 +111,7 @@ test('completed call Details shows audio enhancement and measured tones without 
   await dock.getByRole('button', { name: 'Listen live', exact: true }).click();
   await selectAudioPanel(dock, 'Details');
   await dock.locator('summary').filter({ hasText: /^Audio$/ }).click();
-  await dock.locator('summary').filter({ hasText: /^Detected tones$/ }).click();
+  await dock.locator('summary').filter({ hasText: /^Paging tones$/ }).click();
   await expect(dock.locator('#audio-dock-panel')).toContainText('16 kHz');
   await expect(dock.locator('#audio-dock-panel')).toContainText('voice-model-1');
   await expect(dock.locator('#audio-dock-panel')).toContainText('Audio detection');
@@ -119,3 +119,105 @@ test('completed call Details shows audio enhancement and measured tones without 
   await screenshot(page, 'playback-audio-details-dark-phone');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('late paging-tone metadata refreshes current call Details without replaying audio', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await openAudioApp(page, { view: 'dashboard', theme: 'dark', feedCallsEnabled: false });
+  let delivered = false, update = false, updated = false;
+  await page.route('**/api/v1/calls/feed*', async route => {
+    let calls = [];
+    if (!delivered) { calls = [liveCall]; delivered = true; }
+    else if (update && !updated) {
+      calls = [{ ...liveCall, audio_metadata_updated: true, paging_tone_summary: { source: 'encoded', method: 'ambe_tone_v1',
+        tones: [{ frequencies_hz: [600], code: 'TONE_600', duration_milliseconds: 1000 }] } },
+        { ...liveCall, call_id: 'unknown-late-call', audio_metadata_updated: true }];
+      updated = true;
+    }
+    return route.fulfill({ json: { data: { cursor: updated ? '3' : '1', reset: false, calls } } });
+  });
+  const dock = page.locator('#audio-dock');
+  await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
+  await dock.getByRole('button', { name: 'Listen live', exact: true }).click();
+  await selectAudioPanel(dock, 'Details');
+  await expect(dock.locator('#audio-dock-panel')).toContainText('Engine 4');
+  await expect(dock.locator('summary').filter({ hasText: /^Paging tones$/ })).toHaveCount(0);
+  const audioRequests = state.requests.filter(item => /\/audio$/.test(item.path)).length;
+  expect(audioRequests).toBe(1);
+  update = true;
+  const tones = dock.locator('summary').filter({ hasText: /^Paging tones$/ });
+  await expect(tones).toHaveCount(1); await tones.click();
+  await expect(dock.locator('#audio-dock-panel')).toContainText('Encoded');
+  await expect(dock.locator('#audio-dock-panel')).toContainText('TONE 600 · 600 Hz · 1000 ms');
+  expect(state.requests.filter(item => /\/audio$/.test(item.path)).length).toBe(audioRequests);
+  await dock.getByText('TONE 600 · 600 Hz · 1000 ms', { exact: true }).scrollIntoViewIfNeeded();
+  await screenshot(page, 'late-paging-tones-dark-phone');
+});
+
+for (const source of ['encoded', 'decoded_audio']) {
+  test(`recorded paging-tone ${source} details load without replaying or refetching audio`, async ({ page }) => {
+    const phone = source === 'decoded_audio';
+    await page.setViewportSize(phone ? { width: 390, height: 844 } : { width: 1280, height: 900 });
+    const savedCall = { ...recording, ...(phone ? { protocol: 'APCO25', timeslot: 0 } : {}) };
+    await openAudioApp(page, { calls: [savedCall], theme: phone ? 'dark' : 'light' });
+    await page.evaluate(() => {
+      const play = window.Audio.prototype.play;
+      window.Audio.prototype.play = function() { window.audioTest.recordingPlayer = this; return play.call(this); };
+    });
+    let releaseDetails, requested = 0;
+    let waiting = new Promise(resolve => { releaseDetails = resolve; });
+    const summary = { source, method: source === 'encoded' ? 'ambe_tone_v1' : 'p25_pcm_tone_v1',
+      call_started_at_ms: recording.start_ms, completed_at_ms: recording.end_ms, tones: [
+        { frequencies_hz: source === 'encoded' ? [697, 1477] : [600.2],
+          ...(source === 'encoded' ? { code: 'DTMF_3' } : { confidence: .98 }),
+          duration_milliseconds: 1020, offset_milliseconds: 80 }
+      ] };
+    await page.route('**/api/v1/recordings/calls/17', async route => {
+      requested++; await waiting;
+      return route.fulfill({ json: { data: { call: { ...savedCall, paging_tone_summary: summary } } } });
+    });
+    const tone = source === 'encoded' ? 'DTMF 3 · 697 + 1477 Hz · 1020 ms · at 80 ms' : '600.2 Hz · 1020 ms · at 80 ms';
+    await page.getByRole('button', { name: /^Call details for/ }).first().click();
+    const modal = page.getByRole('dialog', { name: 'Call details', exact: true });
+    await expect(modal).toContainText('Loading call details');
+    await expect.poll(() => requested).toBe(1); releaseDetails();
+    await modal.getByRole('tab', { name: 'Technical', exact: true }).click();
+    await expect(modal).toContainText('Paging tones');
+    await expect(modal).toContainText(source === 'encoded' ? 'Encoded' : 'Audio detection');
+    await expect(modal).toContainText(tone);
+    expect(await page.evaluate(() => window.audioTest.recordings.filter(item => item.action === 'play').length)).toBe(0);
+    const inspectedTone = modal.getByText(tone, { exact: true });
+    await inspectedTone.scrollIntoViewIfNeeded();
+    const toneBounds = await inspectedTone.boundingBox(), footerBounds = await modal.locator('.ui-modal-footer').boundingBox();
+    expect(toneBounds.y + toneBounds.height).toBeLessThanOrEqual(footerBounds.y + 1);
+    await screenshot(page, `recorded-tone-inspection-${phone ? 'dark-phone' : 'light-desktop'}`);
+    await page.keyboard.press('Escape'); await expect(modal).toHaveCount(0);
+    waiting = new Promise(resolve => { releaseDetails = resolve; });
+    await page.getByRole('button', { name: /^Choose playback for/ }).first().click();
+    await page.getByRole('dialog', { name: 'Play recording', exact: true })
+      .getByRole('button', { name: /Play once/ }).click();
+    const dock = page.locator('#audio-dock');
+    await expect(dock).toHaveAttribute('data-source', 'recordings');
+    await expect.poll(() => requested).toBe(2);
+    await expect.poll(() => page.evaluate(() => window.audioTest.recordings.filter(item => item.action === 'play').length)).toBe(1);
+    const originalAudio = await page.evaluate(() => {
+      window.audioTest.recordingPlayer.currentTime = .7;
+      return window.audioTest.recordingPlayer.src;
+    });
+    await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
+    await selectAudioPanel(dock, 'Details');
+    await expect(dock.locator('#audio-dock-panel')).toContainText('Loading complete call details');
+    await expect(dock.locator('summary').filter({ hasText: /^Paging tones$/ })).toHaveCount(0);
+    releaseDetails();
+    const heading = dock.locator('summary').filter({ hasText: /^Paging tones$/ });
+    await expect(heading).toHaveCount(1); await heading.click();
+    await expect(dock.locator('#audio-dock-panel')).toContainText(source === 'encoded' ? 'Encoded' : 'Audio detection');
+    await expect(dock.locator('#audio-dock-panel')).toContainText(tone);
+    await expect(dock.locator('#audio-dock-panel')).not.toContainText('98%');
+    expect(await page.evaluate(() => window.audioTest.recordings.filter(item => item.action === 'play').length)).toBe(1);
+    expect(await page.evaluate(() => window.audioTest.recordingPlayer.src)).toBe(originalAudio);
+    expect(await page.evaluate(() => window.audioTest.recordingPlayer.currentTime)).toBe(.7);
+    expect(requested).toBe(2, 'One detail request for inspection and one for playback; tone rendering makes no extra request.');
+    await dock.getByText(tone, { exact: true }).scrollIntoViewIfNeeded();
+    await screenshot(page, `recorded-paging-tones-${phone ? 'dark-phone' : 'light-desktop'}`);
+  });
+}

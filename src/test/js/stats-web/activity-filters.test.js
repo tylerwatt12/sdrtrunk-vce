@@ -95,6 +95,12 @@ assert.equal(context.activityActionControlValue({ action: '', includeGrants: tru
   nativeSystemCapabilities), '__include_grants__');
 assert.equal(context.activityActionControlValue({ action: '', includeGrants: false },
   nativeSystemCapabilities), '');
+const toneFilters = context.activityRouteFilters(parameters({ activity_action: 'TONE', activity_event_type: 'TONE' }), systemContext);
+assert.equal(context.activityApiFilterParameters(toneFilters).action, 'TONE');
+assert.equal(context.activityApiFilterParameters(toneFilters).event_type, 'TONE');
+assert.deepEqual(JSON.parse(JSON.stringify(context.activityCellFilterPatch(systemContext,
+  { action: 'TONE', event_type: 'TONE', paging_tone_summary: { source: 'encoded' } }, 'event'))), { eventType: 'TONE' },
+  'Friendly tone labels must retain the exact server event token when filtering.');
 assert.equal(context.activityMoreFilterCount(rolling, nativeSystemCapabilities), 5,
   'Only controls actually available under More contribute to its count.');
 assert.equal(context.activityMoreFilterCount({ ...rolling, configurationId: '', lcn: '' },

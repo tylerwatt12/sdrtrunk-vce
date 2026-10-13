@@ -52,6 +52,37 @@ async function main() {
   };
 
   try {
+    const lateCurrent = { _callId: 'known', audio_url: '/original.wav', _arrivalSequence: 2 };
+    const lateQueued = { _callId: 'queued', audio_url: '/queued.wav', _arrivalSequence: 3 };
+    const lateLast = { _callId: 'known', audio_url: '/original.wav' };
+    const retainedBuffer = {};
+    let metadataRenders = 0;
+    const latePlayer = Object.assign(Object.create(WebCallPlayer.prototype), {
+      current: lateCurrent, lastHeard: lateLast, idleDisplayCall: null, heldDisplayCall: lateCurrent,
+      queuedCalls: [lateQueued], queuedCount: 1, currentBuffer: retainedBuffer,
+      seenCallIds: new Set(['known', 'queued']), arrivalSequence: 4,
+      render() { metadataRenders++; }, normalizeCall() { throw new Error('Metadata cannot enter normal enqueue.'); },
+      playNext() { throw new Error('Metadata cannot start audio.'); }
+    });
+    const lateSummary = { source: 'encoded', tones: [{ frequencies_hz: [600], duration_milliseconds: 1000 }] };
+    latePlayer.enqueue({ call_id: 'known', audio_metadata_updated: true, paging_tone_summary: lateSummary,
+      audio_url: '/replacement.wav', started_at_ms: 1, scan_list_ids: [999] });
+    assert.equal(lateCurrent.paging_tone_summary, lateSummary);
+    assert.equal(lateLast.paging_tone_summary, lateSummary);
+    assert.equal(lateCurrent.audio_url, '/original.wav');
+    assert.equal(lateCurrent._arrivalSequence, 2);
+    assert.equal(latePlayer.currentBuffer, retainedBuffer);
+    assert.equal(latePlayer.arrivalSequence, 4);
+    assert.equal(latePlayer.queuedCount, 1);
+    assert.equal(metadataRenders, 1);
+    latePlayer.enqueue({ call_id: 'queued', audio_metadata_updated: true, paging_tone_summary: lateSummary });
+    assert.equal(lateQueued.paging_tone_summary, lateSummary);
+    assert.equal(latePlayer.queuedCalls[0], lateQueued);
+    latePlayer.enqueue({ call_id: 'unknown', audio_metadata_updated: true, paging_tone_summary: lateSummary });
+    assert.equal(latePlayer.seenCallIds.has('unknown'), false);
+    assert.equal(metadataRenders, 2, 'Unknown updates must be ignored without enqueuing or replay.');
+    latePlayer.enqueue({ call_id: 'known', audio_metadata_updated: true, transcription: 'unrelated' });
+    assert.equal(metadataRenders, 2, 'Only supplied audio-detail fields can change on this event.');
     const volumeAttributes = new Map();
     const volumeStyles = new Map();
     const volumePlayer = Object.assign(Object.create(WebCallPlayer.prototype), {

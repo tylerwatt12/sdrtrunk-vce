@@ -8,7 +8,7 @@ async function main() {
   const modulePath = path.resolve(process.argv[2] || path.join(__dirname, '../../../../stats-web/assets/features/voice-enhancement.js'));
   const { decodeVoiceEnhancement, validateModelZip, requestVoiceEnhancement, MODEL_ZIP_MAX_BYTES } =
     await import(pathToFileURL(modulePath).href);
-  const { callAudioDetailGroups } = await import(pathToFileURL(path.join(path.dirname(modulePath), '../core/call-audio-details.js')).href);
+  const { callAudioDetailGroups, formatPagingToneSummary } = await import(pathToFileURL(path.join(path.dirname(modulePath), '../core/call-audio-details.js')).href);
   const revision = 'a'.repeat(64);
   const ready = { revision, enabled: false, status: 'ready', model: {
     id: 'voice-model-1', input_sample_rate: 8000, output_sample_rate: 16000,
@@ -68,7 +68,7 @@ async function main() {
   assert.deepEqual(callAudioDetailGroups({ audio_sample_rate: 16000, voice_enhancement: true,
     voice_model: 'voice-model-1', detected_paging_tones: [tone] }), [
     ['Audio', [['Sample rate', '16 kHz'], ['Voice enhancement', 'On'], ['Voice model', 'voice-model-1']]],
-    ['Detected tones', [['Source', 'Audio detection'], ['Tone 1', '600.2 Hz · 1020 ms · at 80 ms']]]
+    ['Paging tones', [['Source', 'Audio detection'], ['Tone 1', '600.2 Hz · 1020 ms · at 80 ms']]]
   ]);
   assert.deepEqual(callAudioDetailGroups({ audio_sample_rate: 8000, voice_enhancement: false, voice_model: 'stale' }),
     [['Audio', [['Sample rate', '8 kHz'], ['Voice enhancement', 'Off']]]]);
@@ -77,6 +77,29 @@ async function main() {
     { ...tone, duration_milliseconds: -1 }, { ...tone, confidence: 2 }, { ...tone, offset_milliseconds: null }
   ] }), []);
   assert.deepEqual(callAudioDetailGroups({}), []);
+  const encoded = { source: 'encoded', method: 'ambe_tone_v1', tones: [
+    { frequencies_hz: [697, 1477], code: 'DTMF_3', duration_milliseconds: 120 },
+    { frequencies_hz: [600.2], code: 'TONE_600', duration_milliseconds: 1020.1, offset_milliseconds: 80.4 },
+    { frequencies_hz: [], code: 'RESERVED_255', duration_milliseconds: 20 }
+  ] };
+  assert.deepEqual(formatPagingToneSummary(encoded), { source: 'Encoded', tones: [
+    'DTMF 3 · 697 + 1477 Hz · 120 ms', 'TONE 600 · 600.2 Hz · 1020 ms · at 80 ms', 'RESERVED 255 · 20 ms'
+  ] });
+  assert.deepEqual(callAudioDetailGroups({ paging_tone_summary: encoded, detected_paging_tones: [tone] }), [
+    ['Paging tones', [['Source', 'Encoded'], ['Tone 1', 'DTMF 3 · 697 + 1477 Hz · 120 ms'],
+      ['Tone 2', 'TONE 600 · 600.2 Hz · 1020 ms · at 80 ms'], ['Tone 3', 'RESERVED 255 · 20 ms']]]
+  ], 'Unified encoded details take precedence without duplicating historical detections.');
+  assert.deepEqual(formatPagingToneSummary({ source: 'decoded_audio', method: 'p25_pcm_tone_v1', tones: [
+    { frequencies_hz: [600], duration_milliseconds: 1000, confidence: .97 }
+  ] }), { source: 'Audio detection', tones: ['600 Hz · 1000 ms'] });
+  assert.equal(formatPagingToneSummary({ ...encoded, source: 'unknown' }), null);
+  assert.equal(formatPagingToneSummary({ source: 'decoded_audio', tones: [{ frequencies_hz: [], code: 'DTMF_3', duration_milliseconds: 20 }] }), null);
+  assert.equal(formatPagingToneSummary({ ...encoded, tones: [
+    { frequencies_hz: [NaN], duration_milliseconds: 20 }, { frequencies_hz: [600, 700, 800], duration_milliseconds: 20 },
+    { frequencies_hz: [600], duration_milliseconds: 0 }, { frequencies_hz: [600], duration_milliseconds: 20, offset_milliseconds: -1 },
+    { frequencies_hz: [600], duration_milliseconds: 20, confidence: 2 }
+  ] }), null);
+  assert.equal(formatPagingToneSummary({ ...encoded, tones: Array.from({ length: 100 }, () => encoded.tones[0]) }).tones.length, 32);
   console.log('Voice enhancement API, raw ZIP, conflict, cancellation, and measured audio detail contracts passed.');
 }
 
