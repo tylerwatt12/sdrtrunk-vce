@@ -34,7 +34,7 @@ import { createRetainedStatisticsWorkspace } from './features/retained-statistic
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createAlertsWorkspace } from './features/alerts.js?v=3';
 import { createRecordingsFeature } from './features/recordings.js?v=32';
-import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=1';
+import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=2';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';

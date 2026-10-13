@@ -86,7 +86,7 @@ export function createVoiceEnhancementSettings({ node, section, sectionActionHos
   const panel = section('Voice enhancement', body, sectionActionHost(reload));
   panel.classList.add('ui-settings-panel'); panel.dataset.voiceEnhancement = '';
   const form = node('form', 'admin-form ui-settings-form');
-  const toggle = uiToggleField('16 kHz voice enhancement', false, '16 kHz voice enhancement', 'Applies to new browser calls.');
+  const toggle = uiToggleField('16 kHz voice enhancement', false, '16 kHz voice enhancement', 'Enhances new browser calls using slightly more CPU and memory.');
   const enabled = toggle.querySelector('input'); enabled.disabled = true;
   const fallback = node('p', 'ui-field-detail'); fallback.setAttribute('role', 'status');
   const save = node('button', 'ui-button ui-button-primary', 'Save'); save.type = 'submit';
