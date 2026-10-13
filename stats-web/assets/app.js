@@ -31684,7 +31684,7 @@ function callMatchingComparison(decision, signal) {
       callMatchingCount(copy.expected_frame_count), callMatchingPercent(copy.quality_percent))],
     ['Observed / decoded frames', (copy) => `${callMatchingCount(copy.observed_frame_count)} / ` +
       callMatchingCount(copy.decoded_frame_count)],
-    ['Missing or repaired', (copy) => measurement(`${callMatchingCount(Number(copy.missing_frame_count || 0) +
+    ['Missing or concealed', (copy) => measurement(`${callMatchingCount(Number(copy.missing_frame_count || 0) +
       Number(copy.concealed_frame_count || 0))} / ${callMatchingCount(copy.expected_frame_count)}`,
       callMatchingPercent(Number(copy.missing_and_concealed_rate || 0) * 100))],
     ['Repeated', (copy) => measurement(`${callMatchingCount(copy.repeated_frame_count)} / ` +
