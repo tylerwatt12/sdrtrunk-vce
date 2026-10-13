@@ -106,6 +106,15 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     }
 
     /**
+     * Whether this protocol consumes corrected speech evidence. Called during codec construction and reload;
+     * overrides must return a constant without depending on instance state.
+     */
+    protected boolean usesCorrectedVoiceFrameFingerprint()
+    {
+        return false;
+    }
+
+    /**
      * Indicates that the JMBE audio library has been loaded and a suitable audio codec is usable (ie non-null)
      */
     protected boolean hasAudioCodec()
@@ -200,7 +209,9 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
         Path path = mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary();
         boolean toneAudioEnabled = !mUserPreferences.getJmbeLibraryPreference().getMuteDecodedAmbeToneFrames();
         IAudioCodec codec = LIBRARY_LOADER.getAudioCodec(path, getCodecName(), toneAudioEnabled);
-        mCodecContext = codec != null ? new CodecContext(codec, JmbeVoiceFrameFingerprint.create(codec)) : null;
+        JmbeVoiceFrameFingerprint fingerprint = codec != null && usesCorrectedVoiceFrameFingerprint() ?
+            JmbeVoiceFrameFingerprint.create(codec) : null;
+        mCodecContext = codec != null ? new CodecContext(codec, fingerprint) : null;
     }
 
     private record CodecContext(IAudioCodec codec, JmbeVoiceFrameFingerprint fingerprint)

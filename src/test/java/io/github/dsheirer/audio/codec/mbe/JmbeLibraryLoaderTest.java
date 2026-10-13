@@ -102,10 +102,18 @@ class JmbeLibraryLoaderTest
     private Path createLibrary(String version, float marker, boolean includeVoiceQualityCapability,
                                boolean includeToneAudioCapability) throws Exception
     {
-        Path sourceDirectory = Files.createDirectories(mTemporaryDirectory.resolve("source-" + version));
-        Path classDirectory = Files.createDirectories(mTemporaryDirectory.resolve("classes-" + version));
+        return createLibrary(mTemporaryDirectory, version, marker, includeVoiceQualityCapability,
+            includeToneAudioCapability, false);
+    }
+
+    static Path createLibrary(Path directory, String version, float marker, boolean includeVoiceQualityCapability,
+                              boolean includeToneAudioCapability, boolean includeCorrectedFingerprint) throws Exception
+    {
+        Path sourceDirectory = Files.createDirectories(directory.resolve("source-" + version));
+        Path classDirectory = Files.createDirectories(directory.resolve("classes-" + version));
         Path source = sourceDirectory.resolve("JMBEAudioLibrary.java");
-        Files.writeString(source, source(version, marker, includeVoiceQualityCapability, includeToneAudioCapability));
+        Files.writeString(source, source(version, marker, includeVoiceQualityCapability, includeToneAudioCapability,
+            includeCorrectedFingerprint));
 
         var compiler = ToolProvider.getSystemJavaCompiler();
 
@@ -118,7 +126,7 @@ class JmbeLibraryLoaderTest
             assertTrue(compiled);
         }
 
-        Path library = mTemporaryDirectory.resolve("jmbe-" + version + ".jar");
+        Path library = directory.resolve("jmbe-" + version + ".jar");
 
         try(JarOutputStream output = new JarOutputStream(Files.newOutputStream(library));
             Stream<Path> classes = Files.walk(classDirectory))
@@ -135,13 +143,21 @@ class JmbeLibraryLoaderTest
     }
 
     private static String source(String version, float marker, boolean includeVoiceQualityCapability,
-                                 boolean includeToneAudioCapability)
+                                 boolean includeToneAudioCapability, boolean includeCorrectedFingerprint)
     {
         int build = Integer.parseInt(version.substring(version.lastIndexOf('.') + 1));
         String voiceQualityCapability = includeVoiceQualityCapability ?
             "public void setVoiceQualityMetadataEnabled(boolean enabled) { qualityMetadataEnabled = enabled; }" : "";
         String toneAudioCapability = includeToneAudioCapability ?
             "public void setToneAudioEnabled(boolean enabled) { toneAudioEnabled = enabled; }" : "";
+        String correctedFingerprintCapability = includeCorrectedFingerprint ? """
+            public void setCorrectedVoiceFrameFingerprintEnabled(boolean enabled) {
+                correctedFingerprintEnabled = enabled;
+                fingerprintEnableCalls++;
+            }
+            public long getCorrectedVoiceFrameFingerprintV1() { return correctedFingerprint; }
+            public int getFingerprintEnableCalls() { return fingerprintEnableCalls; }
+            """ : "";
         return """
             package jmbe;
             import jmbe.iface.IAudioCodec;
@@ -152,7 +168,9 @@ class JmbeLibraryLoaderTest
                 public int getMajorVersion() { return 1; }
                 public int getMinorVersion() { return 0; }
                 public int getBuildVersion() { return %d; }
-                public boolean supports(String codec) { return "TEST".equals(codec); }
+                public boolean supports(String codec) {
+                    return "TEST".equals(codec) || "IMBE".equals(codec) || "AMBE 3600 x 2450".equals(codec);
+                }
                 public IAudioCodec getAudioConverter(String codec) {
                     return new TestCodec(codec);
                 }
@@ -160,17 +178,24 @@ class JmbeLibraryLoaderTest
                     private final String codec;
                     private boolean qualityMetadataEnabled;
                     private boolean toneAudioEnabled = true;
+                    private boolean correctedFingerprintEnabled;
+                    private int fingerprintEnableCalls;
+                    private long correctedFingerprint;
                     public TestCodec(String codec) { this.codec = codec; }
+                    %s
                     %s
                     %s
                     public String getCodecName() { return codec; }
                     public float[] getAudio(byte[] frame) {
+                        correctedFingerprint = correctedFingerprintEnabled ?
+                            1L + (frame.length == 0 ? 0 : (frame[0] & 0xFF)) : 0L;
                         return new float[]{qualityMetadataEnabled && toneAudioEnabled ? %sf : -%sf};
                     }
                     public IAudioWithMetadata getAudioWithMetadata(byte[] frame) { return null; }
-                    public void reset() {}
+                    public void reset() { correctedFingerprint = 0L; }
                 }
             }
-            """.formatted(version, build, voiceQualityCapability, toneAudioCapability, marker, marker);
+            """.formatted(version, build, voiceQualityCapability, toneAudioCapability,
+                correctedFingerprintCapability, marker, marker);
     }
 }

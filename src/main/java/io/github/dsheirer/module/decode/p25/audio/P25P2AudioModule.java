@@ -122,6 +122,12 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     }
 
     @Override
+    protected boolean usesCorrectedVoiceFrameFingerprint()
+    {
+        return true;
+    }
+
+    @Override
     public Listener<SquelchStateEvent> getSquelchStateListener()
     {
         return mSquelchStateListener;

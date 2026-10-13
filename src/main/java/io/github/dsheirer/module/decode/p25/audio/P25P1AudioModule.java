@@ -94,6 +94,12 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     }
 
     @Override
+    protected boolean usesCorrectedVoiceFrameFingerprint()
+    {
+        return true;
+    }
+
+    @Override
     protected int getTimeslot()
     {
         return 0;
