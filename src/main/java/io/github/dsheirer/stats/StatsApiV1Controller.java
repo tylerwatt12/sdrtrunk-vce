@@ -360,7 +360,7 @@ final class StatsApiV1Controller
                 yield mP25AssignmentService.currentState(radioSystemKey);
             }
             case "current-assignments", "recent-changes" -> {
-                request.requireOnly("q", "configuration_id", "roaming_only", "meaningful_only", "home_wacn", "home_system_id",
+                request.requireOnly("q", "configuration_id", "roaming_only", "meaningful_only", "identity_kind", "talkgroup_id", "home_wacn", "home_system_id",
                     "subscriber_id", "sort", "direction", "limit", "offset");
                 requireAssignmentService(radioSystemKey);
                 yield page("current-assignments".equals(segments.get(2)) ?

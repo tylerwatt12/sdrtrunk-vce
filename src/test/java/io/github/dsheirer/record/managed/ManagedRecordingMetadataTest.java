@@ -26,17 +26,25 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ManagedRecordingMetadataTest
 {
+    @TempDir
+    Path temporary;
+
     private static final String CHANNEL_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     private static final P25SiteIdentity SITE = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
     private static final ChannelConfigurationPolicy.ChannelKind TRUNKED =
@@ -58,11 +66,11 @@ class ManagedRecordingMetadataTest
     }
 
     @Test
-    void usesConsistentObservedSiteWhenWinnerHasNoSiteIdentity()
+    void siblingSitesDoNotSupplyMissingWinningServingContext()
     {
         ManagedRecordingMetadata metadata = metadata(DecoderType.P25_PHASE1, TRUNKED, null, null,
             List.of(SITE, new P25SiteIdentity(0xBEE00, 0x49F, 2, 3)));
-        assertEquals("p25:bee00:49f", metadata.systemKey());
+        assertNull(metadata.systemKey());
         assertNull(metadata.winnerSite());
     }
 
@@ -75,11 +83,39 @@ class ManagedRecordingMetadataTest
     }
 
     @Test
-    void preservesExistingSourceKeyEvenIfSiteObservationsDisagree()
+    void conflictingWinningKeyAndSiteLeaveServingContextUnknown()
     {
         ManagedRecordingMetadata metadata = metadata(DecoderType.P25_PHASE1, TRUNKED, SITE,
             "p25:12345:678", List.of(new P25SiteIdentity(0xAAAAA, 0x111, 1, 1)));
-        assertEquals("p25:12345:678", metadata.systemKey());
+        assertNull(metadata.systemKey());
+    }
+
+    @Test
+    void capturedServingProofSurvivesCatalogRoundtripWithoutRevivingConflictingEvidence() throws Exception
+    {
+        for(boolean conflict : List.of(false, true))
+        {
+            String caseName = conflict ? "conflicting" : "known";
+            var identifiers = new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(501),
+                APCO25RadioIdentifier.createTo(502), APCO25Wacn.create(conflict ? 0xABCDE : SITE.wacn()),
+                APCO25System.create(conflict ? 0x123 : SITE.system())));
+            var metadata = metadata(DecoderType.P25_PHASE1, TRUNKED, SITE, "p25:bee00:49f", List.of(),
+                identifiers);
+            Path audio = temporary.resolve(caseName);
+            Files.createDirectories(audio);
+            try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve(caseName + ".sqlite"), audio))
+            {
+                store.insert(metadata);
+                var restored = store.find(1L);
+                assertEquals("p25:bee00:49f", restored.systemKey(), "Historical routing is retained");
+                assertEquals(conflict ? null : "p25:bee00:49f", restored.servingSystemKey());
+                assertEquals(conflict ? null : "p25:bee00:49f", restored.toMap().get("serving_system_key"));
+                assertEquals(501, restored.sourceId());
+                assertEquals(502, restored.targetId());
+                assertEquals(conflict ? null : Integer.valueOf(0xBEE00), restored.sourceHomeWacn());
+                assertEquals(conflict ? null : Integer.valueOf(0xBEE00), restored.targetHomeWacn());
+            }
+        }
     }
 
     @Test
@@ -105,15 +141,15 @@ class ManagedRecordingMetadataTest
         {
             var source = APCO25RadioIdentifier.createFrom(10_900_077);
             var target = APCO25RadioIdentifier.createTo(10_900_078);
-            var metadata = metadata(decoder, TRUNKED, SITE, "p25:12345:678", List.of(),
+            var metadata = metadata(decoder, TRUNKED, SITE, "p25:bee00:49f", List.of(),
                 new IdentifierCollection(List.of(source, target)));
             assertEquals(10_900_077, metadata.sourceId());
-            assertEquals(0x12345, metadata.sourceHomeWacn());
-            assertEquals(0x678, metadata.sourceHomeSystem());
+            assertEquals(0xBEE00, metadata.sourceHomeWacn());
+            assertEquals(0x49F, metadata.sourceHomeSystem());
             assertEquals(10_900_077, metadata.sourceHomeId());
             assertEquals(10_900_078, metadata.targetId());
-            assertEquals(0x12345, metadata.targetHomeWacn());
-            assertEquals(0x678, metadata.targetHomeSystem());
+            assertEquals(0xBEE00, metadata.targetHomeWacn());
+            assertEquals(0x49F, metadata.targetHomeSystem());
             assertEquals(10_900_078, metadata.targetHomeId());
         }
     }
@@ -166,6 +202,21 @@ class ManagedRecordingMetadataTest
         assertEquals(List.of(new ManagedRecordingCatalog.Member("radio", 501, 0xBEE00, 0x49F, 501)),
             metadata.patchMembers());
         assertNull(metadata.targetHomeWacn(), "Ordinary group ownership is unchanged");
+    }
+
+    @Test
+    void conflictingWinnerNetworkDoesNotInventNativePatchMemberHomeButRetainsQualifiedMembers()
+    {
+        var patch = APCO25PatchGroup.create(10_003);
+        patch.getValue().addPatchedRadio(APCO25RadioIdentifier.createTo(501));
+        patch.getValue().addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(503,
+            0xABCDE, 0x321, 777));
+        var metadata = metadata(DecoderType.P25_PHASE1, TRUNKED, SITE, "p25:bee00:49f", List.of(),
+            new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(502), patch,
+                APCO25Wacn.create(0xABCDE), APCO25System.create(0x123))));
+        assertNull(metadata.systemKey());
+        assertEquals(List.of(new ManagedRecordingCatalog.Member("radio", 501, null, null, null),
+            new ManagedRecordingCatalog.Member("radio", 503, 0xABCDE, 0x321, 777)), metadata.patchMembers());
     }
 
     private static ManagedRecordingMetadata metadata(DecoderType decoder,

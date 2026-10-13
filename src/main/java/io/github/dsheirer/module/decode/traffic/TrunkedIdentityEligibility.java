@@ -97,7 +97,9 @@ public final class TrunkedIdentityEligibility
         {
             return validP25Home(talkgroup.getWacn(), talkgroup.getSystem()) &&
                 isEligible(protocol, identityDomain, form, talkgroup.getTalkgroup()) &&
-                isObservedLocalEligible(protocol, identityDomain, form, observedLocalId, true);
+                (!talkgroup.hasExplicitLocalAddress() || talkgroup.getValue() == 0 ||
+                    talkgroup.getLocalAddress() != null &&
+                        isObservedLocalEligible(protocol, identityDomain, form, talkgroup.getLocalAddress(), true));
         }
 
         return isEligible(protocol, identityDomain, form, observedLocalId);

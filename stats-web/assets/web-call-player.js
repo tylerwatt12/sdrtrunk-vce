@@ -1,5 +1,5 @@
 import { systemLabel, systemName } from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from './core/radio-labels.js?v=6';
+import { p25IdentityFacts, p25IdentifierText } from './core/radio-labels.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 
 export class WebCallPlayer {
@@ -1147,17 +1147,12 @@ export class WebCallPlayer {
     return String(call?._playbackTargetKey || call?.playback_target?.key || '').trim();
   }
 
-  canonicalRadioLabel(call, prefix) {
-    const identity = call?.[`${prefix}_canonical_identity`];
-    if (!formatP25RadioIdentifier(identity)) return '';
-    const homeKey = `p25:${Number(identity.wacn).toString(16).padStart(5, '0')}:` +
-      Number(identity.system_id).toString(16).padStart(3, '0');
-    const homeName = String(call?.[`${prefix}_home_system_name`] || '').trim() ||
-      systemName(homeKey);
-    return formatP25RadioIdentifier(identity, {
-      servingSystemKey: p25ServingSystemKey(call, prefix), homeSystemName: homeName,
-      workingId: call?.[`${prefix}_observed_working_id`]
-    });
+  canonicalPartyLabel(call, prefix) {
+    const kind = String(call?.[`${prefix}_form`] || '').toUpperCase() === 'RADIO' ||
+      call?.[`${prefix}_canonical_identity`] ? 'radio' : 'talkgroup';
+    const facts = p25IdentityFacts(call, prefix, kind);
+    return facts ? p25IdentifierText(call, call?.[`${prefix}_id`], { prefix, kind,
+      homeSystemName: call?.[`${prefix}_home_system_name`] || systemName(facts.homeSystemKey) }) : '';
   }
 
   callLabel(call) {
@@ -1167,8 +1162,8 @@ export class WebCallPlayer {
       String(call.source_id);
     const targetType = this.identifierType(call.target_form, 'ID');
     const sourceType = this.identifierType(call.source_form, 'Radio');
-    const targetCanonical = this.canonicalRadioLabel(call, 'target');
-    const sourceCanonical = this.canonicalRadioLabel(call, 'source');
+    const targetCanonical = this.canonicalPartyLabel(call, 'target');
+    const sourceCanonical = this.canonicalPartyLabel(call, 'source');
     const targetIdentity = targetCanonical || (targetId ? `${targetType} ${targetId}` : '');
     const sourceIdentity = sourceCanonical || (sourceId ? `${sourceType} ${sourceId}` : '');
     const playbackLabel = typeof call.playback_target?.label === 'string' ?
@@ -1189,8 +1184,8 @@ export class WebCallPlayer {
   targetLabel(call) {
     if (!call) return '';
     const playbackKind = String(call.playback_target?.kind || '').trim().toLowerCase();
-    const canonical = playbackKind === 'radio' || !playbackKind ?
-      this.canonicalRadioLabel(call, 'target') : '';
+    const canonical = ['radio', 'talkgroup', 'patch_group', ''].includes(playbackKind) ?
+      this.canonicalPartyLabel(call, 'target') : '';
     const alias = String(call.target_alias || '').trim();
     if (canonical) return alias ? `${alias} · ${canonical}` : canonical;
     const playbackLabel = typeof call.playback_target?.label === 'string' ? call.playback_target.label.trim() : '';

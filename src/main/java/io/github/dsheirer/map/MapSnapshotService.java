@@ -13,10 +13,12 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
 import java.util.ArrayDeque;
@@ -105,9 +107,11 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
 
         Identifier system = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
         Identifier configuration = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.UNIQUE_ID, Role.ANY);
+        Identifier wacn = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.WACN, Role.BROADCAST);
+        Identifier networkSystem = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SYSTEM, Role.BROADCAST);
         Ingress observation = new Ingress(from, system, configuration, identifiers.getAliasListConfiguration(),
             location.getLatitude(), location.getLongitude(), plottable.getTimeStart(), plottable.getHeading(),
-            plottable.getSpeed());
+            plottable.getSpeed(), wacn, networkSystem);
         if(mIngress.offer(observation))
         {
             LockSupport.unpark(mWorker);
@@ -240,6 +244,9 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         entity.homeWacn = subscriber != null ? subscriber.homeWacn() : null;
         entity.homeSystemId = subscriber != null ? subscriber.homeSystemId() : null;
         entity.radioId = subscriber != null ? subscriber.subscriberId() : null;
+        entity.servingSystemKey = RadioSystemKey.p25Broadcast(ingress.wacn(), ingress.networkSystem());
+        ResolvedRadioIdentity radio = ResolvedRadioIdentity.from(ingress.from());
+        entity.observedWorkingId = radio != null ? radio.observedWorkingId() : null;
         entity.icon = display != null ? StandardMapIconCatalog.forSlug(display.icon()) :
             StandardMapIconCatalog.NO_ICON;
         if(entity.icon == null)
@@ -274,7 +281,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
             entities.add(new Entity(mutable.key, mutable.label, mutable.identifier, mutable.system, mutable.aliasList,
                 mutable.icon.slug(), mutable.color, mutable.heading, mutable.speedKph,
                 List.copyOf(mutable.positions), mutable.configurationId,
-                mutable.homeWacn, mutable.homeSystemId, mutable.radioId));
+                mutable.homeWacn, mutable.homeSystemId, mutable.radioId,
+                mutable.servingSystemKey, mutable.observedWorkingId));
         }
         java.util.Collections.reverse(entities);
         mSnapshot = new Snapshot(System.currentTimeMillis(), mEvictedEntities, List.copyOf(entities));
@@ -330,7 +338,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
 
     private record Ingress(Identifier from, Identifier system, Identifier configuration,
                            AliasListConfigurationIdentifier aliasList,
-                           double latitude, double longitude, long timestampMs, double heading, double speedKph)
+                           double latitude, double longitude, long timestampMs, double heading, double speedKph,
+                           Identifier wacn, Identifier networkSystem)
     {
     }
 
@@ -346,6 +355,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         private Integer homeWacn;
         private Integer homeSystemId;
         private Integer radioId;
+        private String servingSystemKey;
+        private Integer observedWorkingId;
         private StandardMapIconCatalog icon = StandardMapIconCatalog.NO_ICON;
         private String color = "#0000ff";
         private double heading;
@@ -365,14 +376,23 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
 
     public record Entity(String id, String label, String identifier, String system, String aliasList, String icon,
                          String color, double heading, double speedKph, List<Position> positions,
-                         String configurationId, Integer homeWacn, Integer homeSystemId, Integer radioId)
+                         String configurationId, Integer homeWacn, Integer homeSystemId, Integer radioId,
+                         String servingSystemKey, Integer observedWorkingId)
     {
+        public Entity(String id, String label, String identifier, String system, String aliasList, String icon,
+                      String color, double heading, double speedKph, List<Position> positions,
+                      String configurationId, Integer homeWacn, Integer homeSystemId, Integer radioId)
+        {
+            this(id, label, identifier, system, aliasList, icon, color, heading, speedKph, positions,
+                configurationId, homeWacn, homeSystemId, radioId, null, null);
+        }
+
         public Entity(String id, String label, String identifier, String system, String aliasList, String icon,
                       String color, double heading, double speedKph, List<Position> positions,
                       String configurationId)
         {
             this(id, label, identifier, system, aliasList, icon, color, heading, speedKph, positions,
-                configurationId, null, null, null);
+                configurationId, null, null, null, null, null);
         }
     }
 

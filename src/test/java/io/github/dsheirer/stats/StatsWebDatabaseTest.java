@@ -3736,6 +3736,98 @@ class StatsWebDatabaseTest
 
 
     @Test
+    void foreignGroupHomesAppearWithoutSubscriberRowsOrDuplicateRadioCallCounts() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,logical_call_count)
+                VALUES (7201,71,1,0xD1234,0x789,501,1000,5000,100),
+                       (7202,71,3,0xD1234,0x789,701,2000,6000,200),
+                       (7203,71,1,0xE2345,0x801,501,3000,7000,300),
+                       (7205,71,1,-1,-1,502,1000,8000,400)
+                """);
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(9201,0xD1234,0x789,7654321)");
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,logical_call_count,
+                    p25_subscriber_identity_id)
+                VALUES(7204,71,2,0xD1234,0x789,7654321,1500,5500,2,9201)
+                """);
+        }
+        Map<String,Object> overview = mDatabase.radioSystemIssiOverview(RADIO_SYSTEM_KEY);
+        assertEquals(2, number(overview.get("foreign_system_count")));
+        assertEquals(2, number(overview.get("observed_talkgroup_count")));
+        assertEquals(1, number(overview.get("observed_patch_group_count")));
+        assertEquals(2, number(overview.get("logical_call_count")),
+            "radio and group participation cannot be summed into unique logical calls");
+        assertEquals(7000, number(overview.get("last_group_observed_ms")));
+        var systems = rows(mDatabase.radioSystemIssiForeignSystems(RADIO_SYSTEM_KEY, request("/?limit=20")));
+        assertEquals(2, systems.size(), "legacy -1 unknown homes are not foreign systems");
+        var first = rowWith(systems, "foreign_wacn", 0xD1234);
+        assertEquals(1, number(first.get("subscriber_count")));
+        assertEquals(1, number(first.get("talkgroup_count")));
+        assertEquals(1, number(first.get("patch_group_count")));
+        assertEquals(2, number(first.get("logical_call_count")));
+        assertEquals(1000, number(first.get("first_seen_ms")));
+        assertEquals(6000, number(first.get("last_seen_ms")));
+        var groupOnly = rowWith(systems, "foreign_wacn", 0xE2345);
+        assertEquals(0, number(groupOnly.get("subscriber_count")));
+        assertEquals(1, number(groupOnly.get("talkgroup_count")));
+        assertEquals(0, number(groupOnly.get("logical_call_count")));
+        StatsWebDatabase.IdentityDirectoryQuery[] selected = new StatsWebDatabase.IdentityDirectoryQuery[1];
+        var groups = rows(mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY, request("/?limit=20"),
+            query -> selected[0] = query));
+        var row = rowWith(groups, "identity_summary_id", 7203);
+        var payload = StatsApiV1Payload.present(row);
+        assertEquals(0xE2345, payload.at("/canonical_group_identity/wacn").intValue());
+        assertTrue(payload.path("observed_local_id").isNull(), "retained home rows supply no local mapping proof");
+        assertFalse(selected[0].sql().contains("JOIN p25_subscriber_identity"),
+            "group facts remain direct existing directory columns");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection, selected[0].sql(), selected[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_radio_system_identity_last_seen") ||
+                detail.contains("sqlite_autoindex_radio_system_identity_summary_1")), plan.toString());
+            assertFalse(plan.stream().anyMatch(detail -> detail.contains("p25_subscriber_identity")), plan.toString());
+        }
+    }
+
+    @Test
+    void currentGroupAssociationUsesObservedLocalAliasAndExistingCanonicalRoute() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms)
+                VALUES(7201,71,1,0xD1234,0x789,501,1000,5000)
+                """);
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(7199,71,'Home ID must not match','TALKGROUP','APCO25',501)");
+        }
+        Map<String,Object> observed = new LinkedHashMap<>();
+        observed.put("canonical_group_identity", Map.of("wacn", 0xD1234, "system_id", 0x789, "talkgroup_id", 501));
+        observed.put("home_wacn", 0xD1234);
+        observed.put("home_system_id", 0x789);
+        observed.put("observed_local_id", 101);
+        observed.put("configuration_id", P25_CHANNEL_A);
+        observed.put("serving_system_key", RADIO_SYSTEM_KEY);
+        observed.put("observed_on", Map.of("configuration_id", P25_CHANNEL_A));
+        var named = mDatabase.enrichCurrentP25Assignments(RADIO_SYSTEM_KEY, List.of(observed)).getFirst();
+        assertEquals("Dispatch", named.get("alias_name"));
+        assertEquals("v1-g-d1234-789-501", named.get("identity_key"));
+        assertEquals("talkgroup", map(named, "entity_ref").get("kind"));
+        assertTrue(map(named, "observed_on").get("name") instanceof String);
+        assertEquals(101, StatsApiV1Payload.present(named).path("observed_local_id").intValue());
+        assertFalse(named.containsKey("p25_subscriber_identity_id"));
+    }
+
+    @Test
     void assignmentOnlyIssiSubscribersUseOnlyTheirExactChannelAliasList() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

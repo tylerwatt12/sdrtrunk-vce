@@ -163,7 +163,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
         new P25FrequencyBandConfirmationTracker();
     private final P25BandplanOverrideRegistry mBandplanOverrideRegistry;
-    private final P25WuidAssignmentRegistry mWuidAssignmentRegistry;
+    private final P25IdentityResolver mIdentityResolver;
     private final boolean mUseBandplanOverride;
     private volatile P25SiteIdentity mStabilizedOverrideIdentity;
     private volatile P25SiteIdentity mStabilizedRuntimeIdentity;
@@ -247,29 +247,29 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public P25TrafficChannelManager(Channel parentChannel)
     {
-        this(parentChannel, P25BandplanOverrideRegistry.empty(), new P25WuidAssignmentRegistry(), () -> false);
+        this(parentChannel, P25BandplanOverrideRegistry.empty(), new P25IdentityResolver(), () -> false);
     }
 
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry)
     {
-        this(parentChannel, bandplanOverrideRegistry, new P25WuidAssignmentRegistry(), () -> false);
+        this(parentChannel, bandplanOverrideRegistry, new P25IdentityResolver(), () -> false);
     }
 
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
                                     BooleanSupplier voiceDecryptionModuleLoaded)
     {
-        this(parentChannel, bandplanOverrideRegistry, new P25WuidAssignmentRegistry(), voiceDecryptionModuleLoaded);
+        this(parentChannel, bandplanOverrideRegistry, new P25IdentityResolver(), voiceDecryptionModuleLoaded);
     }
 
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
-                                    P25WuidAssignmentRegistry wuidAssignmentRegistry)
+                                    P25IdentityResolver identityResolver)
     {
-        this(parentChannel, bandplanOverrideRegistry, wuidAssignmentRegistry, () -> false);
+        this(parentChannel, bandplanOverrideRegistry, identityResolver, () -> false);
     }
 
     /** Shared receiver identity state and the current, non-blocking optional decryption module state. */
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
-                                    P25WuidAssignmentRegistry wuidAssignmentRegistry,
+                                    P25IdentityResolver identityResolver,
                                     BooleanSupplier voiceDecryptionModuleLoaded)
     {
         mParentChannel = parentChannel;
@@ -278,8 +278,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
             P25BandplanOverrideRegistry.empty();
-        mWuidAssignmentRegistry = wuidAssignmentRegistry != null ? wuidAssignmentRegistry :
-            new P25WuidAssignmentRegistry();
+        mIdentityResolver = identityResolver != null ? identityResolver :
+            new P25IdentityResolver();
         mUseBandplanOverride = parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25 p25 &&
             p25.getUseP25BandplanOverride();
 
@@ -322,13 +322,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Promotes current WUID assignments before applying the independent over-the-air talker alias cache. Both
+     * Promotes current radio and group assignments before applying the independent over-the-air talker alias cache. Both
      * lookups are bounded and in-memory; callers can safely use this on decoder callbacks.
      */
     public void enrichMutableIdentifiers(MutableIdentifierCollection identifiers, long timestamp)
     {
         P25SiteIdentity servingIdentity = servingSiteIdentity();
-        mWuidAssignmentRegistry.enrich(servingIdentity, identifiers, timestamp);
+        mIdentityResolver.enrich(servingIdentity, identifiers, timestamp);
         mTalkerAliasManager.enrichMutable(identifiers, servingIdentity != null ? servingIdentity.wacn() : -1,
             servingIdentity != null ? servingIdentity.system() : -1);
     }
@@ -337,7 +337,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * Updates the ephemeral live WUID registry from the same accepted/confirmed/cleared structured event that is
      * handed to the statistics writer. Requests, denials and incomplete identities never create assignments.
      */
-    public P25WuidAssignmentRegistry.AssignmentObservation processP25RadioPresence(
+    public P25IdentityResolver.AssignmentObservation processP25RadioPresence(
         P25AffiliationEvent.Outcome outcome, DecodeEventType eventType, P25RadioPresence presence, long timestamp)
     {
         observeControlSource(timestamp);
@@ -345,14 +345,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             outcome == P25AffiliationEvent.Outcome.CONFIRMED)
         {
             return eventType == DecodeEventType.REGISTER ?
-                mWuidAssignmentRegistry.register(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes, mWuidConfigurationId) :
-                mWuidAssignmentRegistry.refresh(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes, mWuidConfigurationId);
+                mIdentityResolver.register(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes, mWuidConfigurationId) :
+                mIdentityResolver.refresh(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes, mWuidConfigurationId);
         }
         else if(outcome == P25AffiliationEvent.Outcome.CLEARED)
         {
-            mWuidAssignmentRegistry.clear(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes);
+            mIdentityResolver.clear(servingSiteIdentity(), presence, timestamp, mWuidLeaseMinutes);
         }
         return null;
+    }
+
+    /** Accepted explicit group associations share the same receiver-scoped resolver and continuity context. */
+    public boolean processP25GroupPresence(P25AffiliationEvent.Outcome outcome, Identifier<?> group, long timestamp)
+    {
+        observeControlSource(timestamp);
+        return mIdentityResolver.observeGroup(servingSiteIdentity(), group,
+            outcome == P25AffiliationEvent.Outcome.ACCEPTED || outcome == P25AffiliationEvent.Outcome.CONFIRMED,
+            timestamp, mWuidConfigurationId);
     }
 
     /** Valid control messages keep observation continuity separate from a subscriber's WUID lease. */
@@ -365,6 +374,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         P25SiteIdentity identity = servingSiteIdentity();
         if(identity == null)
         {
+            if(mWuidSourceIdentity != null)
+            {
+                mIdentityResolver.observationGap(mWuidSourceIdentity, mWuidConfigurationId, timestamp);
+                mWuidSourceIdentity = null;
+                mWuidLastHeartbeat = 0;
+            }
             return;
         }
         P25SiteIdentity previous = mWuidSourceIdentity;
@@ -376,17 +391,22 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
         if(previous != null && !same)
         {
-            mWuidAssignmentRegistry.observationGap(previous, mWuidConfigurationId, timestamp);
+            mIdentityResolver.observationGap(previous, mWuidConfigurationId, timestamp);
         }
         mWuidSourceIdentity = identity;
         mWuidLastHeartbeat = timestamp;
-        mWuidAssignmentRegistry.observeSource(identity, mWuidConfigurationId, timestamp);
+        mIdentityResolver.observeSource(identity, mWuidConfigurationId, timestamp);
     }
 
     private P25SiteIdentity servingSiteIdentity()
     {
         P25SiteIdentity configured = mParentChannel != null ? mParentChannel.getP25SiteIdentity() : null;
-        return configured != null ? configured : mStabilizedRuntimeIdentity;
+        P25SiteIdentity observed = mStabilizedRuntimeIdentity;
+        //A positively conflicting broadcast cannot establish assignments in the channel's captured system.
+        //Absent runtime evidence does not invalidate an otherwise captured serving identity.
+        if(configured != null && observed != null &&
+            (configured.wacn() != observed.wacn() || configured.system() != observed.system())) return null;
+        return configured != null ? configured : observed;
     }
 
     /**
@@ -733,8 +753,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mStabilizedRuntimeIdentity = identity;
         }
 
-        if(wuidLeaseMinutes != null && (wuidLeaseMinutes == P25WuidAssignmentRegistry.NO_EXPIRY_LEASE_MINUTES ||
-            wuidLeaseMinutes >= P25WuidAssignmentRegistry.DEFAULT_LEASE_MINUTES &&
+        if(wuidLeaseMinutes != null && (wuidLeaseMinutes == P25IdentityResolver.NO_EXPIRY_LEASE_MINUTES ||
+            wuidLeaseMinutes >= P25IdentityResolver.DEFAULT_LEASE_MINUTES &&
                 wuidLeaseMinutes <= 7_890 && wuidLeaseMinutes % 30 == 0))
         {
             mWuidLeaseMinutes = wuidLeaseMinutes;
@@ -1011,7 +1031,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         IdentifierCollection identifiers = event.getIdentifierCollection();
         if(identifiers != null)
         {
-            IdentifierCollection enriched = mWuidAssignmentRegistry.enrich(servingSiteIdentity(), identifiers,
+            IdentifierCollection enriched = mIdentityResolver.enrich(servingSiteIdentity(), identifiers,
                 event.getTimeStart());
             event.setIdentifierCollection(mTalkerAliasManager.enrich(enriched, servingSystemKey));
         }
@@ -2951,7 +2971,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             P25SiteIdentity observedIdentity = mWuidSourceIdentity;
             if(observedIdentity != null)
             {
-                mWuidAssignmentRegistry.observationGap(observedIdentity, mWuidConfigurationId,
+                mIdentityResolver.observationGap(observedIdentity, mWuidConfigurationId,
                     System.currentTimeMillis());
                 mWuidSourceIdentity = null;
                 mWuidLastHeartbeat = 0;

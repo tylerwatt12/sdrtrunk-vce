@@ -10,6 +10,8 @@
  */
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -469,7 +471,7 @@ class StatsLiveServiceBoundsTest
                 new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(
                     io.github.dsheirer.protocol.Protocol.APCO25, 130_001,
                     new io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity(0xBEE00, 0x348, 9_601_699),
-                    io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)),
+                    io.github.dsheirer.identifier.IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)),
             List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 130_002,
                 "v1-r-abcde-123-1234567", 130_002));
         ChannelActivitySnapshot.Navigation localNavigation = new ChannelActivitySnapshot.Navigation(
@@ -488,7 +490,7 @@ class StatsLiveServiceBoundsTest
                 new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(
                     io.github.dsheirer.protocol.Protocol.APCO25, null,
                     new io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity(0xBEE00, 0x348, 502),
-                    io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.DIRECT)), List.of(), null);
+                    io.github.dsheirer.identifier.IdentityResolutionEvidence.DIRECT)), List.of(), null);
 
         try
         {
@@ -528,6 +530,64 @@ class StatsLiveServiceBoundsTest
         {
             service.close();
         }
+    }
+
+    @Test
+    void projectsCapturedGroupFactsAndAuthoritativeNullableServingContextInFullAndMarkerRows() throws Exception
+    {
+        var channel = new io.github.dsheirer.controller.channel.Channel("Control");
+        channel.setP25SiteIdentity(new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xBEE00, 0x348, 1, 1));
+        var table = new io.github.dsheirer.channel.metadata.activity.ChannelActivityTableState("Site", channel, null);
+        var live = table.getOrCreate("group", channel,
+            io.github.dsheirer.channel.metadata.activity.ChannelActivityRow.Role.TRAFFIC, 851_262_500L, null);
+        live.setSource(io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier
+            .createFromWithLocalAddress(5678, 0xABCDE, 0x456, 5678));
+        live.setTarget(io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup.create(
+            new io.github.dsheirer.identifier.patch.PatchGroup(
+                io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier
+                    .createWithLocalAddress(1234, 0xABCDE, 0x456, 5678,
+                        io.github.dsheirer.identifier.Role.TO, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT))));
+        table.refresh(live);
+        var navigation = table.getLatestSnapshot().rows().getFirst().navigation();
+        live.setTarget(io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier
+            .createTo(5678, 0xABCDE, 0x456, 5678));
+        table.refresh(live);
+        var homeOnlyNavigation = table.getLatestSnapshot().rows().getFirst().navigation();
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        try
+        {
+            source.publish(activity("identity", List.of(
+                activityRow("known", null, List.of("VOICE"), navigation, 1L, "p25:bee00:348"),
+                activityRow("unknown", null, List.of("VOICE"), navigation, 2L, null),
+                activityRow("home-only", null, List.of("VOICE"), homeOnlyNavigation, 3L, "p25:abcde:456"))));
+            var projectedTable = tables(service).getFirst();
+            var projected = rows(projectedTable);
+            var known = projected.getFirst();
+            assertEquals("p25:bee00:348", known.get("serving_system_key"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x456, "talkgroup_id", 5678),
+                known.get("source_canonical_group_identity"));
+            assertEquals(5678, known.get("source_observed_local_id"),
+                "An explicit equal-number local field remains a separate observation");
+            assertEquals("explicit_identity", known.get("source_identity_source"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x456, "talkgroup_id", 5678),
+                known.get("target_canonical_group_identity"));
+            assertEquals(1234, known.get("target_observed_local_id"));
+            assertEquals("group_affiliation_mapping", known.get("target_identity_source"));
+            assertFalse(known.containsKey("target_canonical_identity"), "Group facts never become subscriber facts");
+            var unknown = projected.get(1);
+            assertTrue(unknown.containsKey("serving_system_key"));
+            assertNull(unknown.get("serving_system_key"), "Current table configuration supplies no missing call proof");
+            assertTrue(projected.get(2).containsKey("target_observed_local_id"));
+            assertNull(projected.get(2).get("target_observed_local_id"), "A home-only group has no explicit local field");
+            var markers = rows(StatsLiveService.markerTable(projectedTable, null, null));
+            assertNull(markers.get(1).get("serving_system_key"));
+            assertEquals(known.get("target_canonical_group_identity"), markers.getFirst().get("target_canonical_group_identity"));
+            var encoded = new ObjectMapper().readTree(service.encodedSnapshot());
+            assertTrue(encoded.at("/tables/0/rows/1").has("serving_system_key"));
+            assertTrue(encoded.at("/tables/0/rows/1/serving_system_key").isNull());
+        }
+        finally { service.close(); }
     }
 
     @Test
@@ -1104,9 +1164,17 @@ class StatsLiveServiceBoundsTest
                                                             ChannelActivitySnapshot.Navigation navigation,
                                                             long activationOrder)
     {
+        return activityRow(key, configurationId, tags, navigation, activationOrder, null);
+    }
+
+    private static ChannelActivitySnapshot.Row activityRow(String key, String configurationId, List<String> tags,
+                                                            ChannelActivitySnapshot.Navigation navigation,
+                                                            long activationOrder, String servingSystemKey)
+    {
         return new ChannelActivitySnapshot.Row(key, "Control", configurationId, "ACTIVE", tags, activationOrder, "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
-            null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL");
+            null, null, null, null, null, null, null, null, null, "DMR", null, navigation, "CURRENT_CONTROL", null,
+            null, servingSystemKey);
     }
 
     private static WebEntityNavigationCatalog.Snapshot navigationSnapshot(String configurationId,

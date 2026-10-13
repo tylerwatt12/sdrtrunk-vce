@@ -19,6 +19,32 @@ import org.junit.jupiter.api.Test;
 class ChannelActivityIngressQueueSnapshotTest
 {
     @Test
+    void originalServingFactsAreDetachedBeforeConfigurationAndDecoderCollectionsAdvance()
+    {
+        var queue = new ChannelActivityIngressQueue(2, 1);
+        var parent = new io.github.dsheirer.controller.channel.Channel("Control");
+        parent.setDecodeConfiguration(new io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1());
+        var site = new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xBEE00, 0x348, 1, 1);
+        parent.setP25SiteIdentity(site);
+        var wacn = io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(0xBEE00);
+        var system = io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(0x348);
+        var identifiers = new MutableIdentifierCollection(List.of(wacn, system));
+        assertTrue(queue.offerTraffic(17, parent, null, null, 1, identifiers, DecodeEventType.CALL_GROUP, 0, 1_000, 1_100));
+        parent.setP25SiteIdentity(new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xABCDE, 0x456, 2, 2));
+        identifiers.update(io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(0xABCDE));
+        identifiers.update(io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(0x456));
+        var accepted = queue.poll();
+        assertSame(site, accepted.servingSite());
+        assertSame(wacn, accepted.servingWacn());
+        assertSame(system, accepted.servingSystem());
+        assertTrue(queue.offerMetadata(18, new ChannelMetadata(null), ChannelMetadataField.DECODER_STATE));
+        var metadata = queue.poll();
+        assertNull(metadata.servingSite());
+        assertNull(metadata.servingWacn());
+        assertNull(metadata.servingSystem());
+    }
+
+    @Test
     void trafficFactsKeepTheirAcceptedReferencesWhenTheDecoderReusesItsCollection()
     {
         var queue = new ChannelActivityIngressQueue(4, 1);

@@ -65,7 +65,7 @@ import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
@@ -707,8 +707,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                                       String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
                                       Integer explicitWorkingId, Identifier<?> talkgroup)
     {
+        mTrafficChannelManager.processP25GroupPresence(outcome, talkgroup, timestamp);
         P25RadioPresence presence = P25RadioPresence.from(radio, explicitWorkingId);
-        P25WuidAssignmentRegistry.AssignmentObservation assignmentObservation =
+        P25IdentityResolver.AssignmentObservation assignmentObservation =
             mTrafficChannelManager.processP25RadioPresence(outcome, eventType, presence, timestamp);
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
         mTrafficChannelManager.enrichMutableIdentifiers(mic, timestamp);

@@ -4,6 +4,8 @@
  */
 package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.motorola;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -33,7 +35,7 @@ class MotorolaGroupRegroupVoiceChannelUserExtendedTest
         assertTrue(source.hasExplicitWorkingAddress(), "The field was present, although zero assigns no address");
         assertNull(source.getWorkingAddress());
         assertFalse(source.isAliased());
-        assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, source.getResolutionEvidence());
+        assertEquals(IdentityResolutionEvidence.DIRECT, source.getResolutionEvidence());
         assertEquals(2, message.getIdentifiers().size());
         assertSame(source, message.getIdentifiers().get(1));
     }

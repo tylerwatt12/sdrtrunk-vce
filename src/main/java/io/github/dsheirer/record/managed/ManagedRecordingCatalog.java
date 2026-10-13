@@ -557,6 +557,14 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             put(value, "home_wacn", homeWacn);
             put(value, "home_system_id", homeSystemId);
             put(value, "home_identity_id", homeIdentityId);
+            value.put("observed_local_id", "talkgroup".equals(kind) && homeIdentityId != null &&
+                (id == 0 || id == homeIdentityId) ? null : id);
+            if(homeWacn != null && homeSystemId != null && homeIdentityId != null)
+            {
+                value.put("radio".equals(kind) ? "canonical_identity" : "canonical_group_identity",
+                    Map.of("wacn", homeWacn, "system_id", homeSystemId,
+                        "radio".equals(kind) ? "subscriber_id" : "talkgroup_id", homeIdentityId));
+            }
             return value;
         }
     }
@@ -568,7 +576,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                                 Integer targetId, Integer targetHomeWacn, Integer targetHomeSystem,
                                 Integer targetHomeId, Long frequencyHz, Integer timeslot, Integer nac,
                                 Integer toneKind, String tone, Site winnerSite,
-                                List<Site> alsoReceivedOn, List<Member> patchMembers)
+                                List<Site> alsoReceivedOn, List<Member> patchMembers, String servingSystemKey)
     {
         public Map<String,Object> toMap()
         {
@@ -580,11 +588,8 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             value.put("size_bytes", sizeBytes);
             value.put("audio_url", "/api/v1/recordings/calls/" + id + "/audio");
             put(value, "system_key", systemKey);
-            //The routing key can come from another leg. Only the stored audio winner proves serving context.
-            value.put("serving_system_key", ("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol)) &&
-                winnerSite != null &&
-                !RadioSystemKey.isForeignP25(systemKey, winnerSite.wacn(), winnerSite.systemId()) ?
-                RadioSystemKey.p25(winnerSite.wacn(), winnerSite.systemId()) : null);
+            //Legacy routing inference is independent of the captured audio winner's serving proof.
+            value.put("serving_system_key", servingSystemKey);
             put(value, "channel_id", channelId);
             if(aliasListId > 0)
             {
@@ -594,6 +599,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             put(value, "call_type", callType);
             put(value, "voice_type", voiceType);
             put(value, "source_id", sourceId);
+            put(value, "source_observed_local_id", sourceId);
             put(value, "source_home_wacn", sourceHomeWacn);
             put(value, "source_home_system_id", sourceHomeSystem);
             put(value, "source_home_id", sourceHomeId);
@@ -606,6 +612,20 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                 put(value, "destination_radio_id", targetId);
             }
             put(value, "target_id", targetId);
+            value.put("target_observed_local_id", ("GROUP".equals(callType) || "PATCH".equals(callType)) &&
+                targetHomeId != null && targetId != null && (targetId == 0 || targetId.equals(targetHomeId)) ?
+                null : targetId);
+            if(targetHomeWacn != null && targetHomeSystem != null && targetHomeId != null)
+            {
+                value.put("DIRECT".equals(callType) ? "target_canonical_identity" : "target_canonical_group_identity",
+                    Map.of("wacn", targetHomeWacn, "system_id", targetHomeSystem,
+                        "DIRECT".equals(callType) ? "subscriber_id" : "talkgroup_id", targetHomeId));
+            }
+            if(sourceHomeWacn != null && sourceHomeSystem != null && sourceHomeId != null)
+            {
+                value.put("source_canonical_identity", Map.of("wacn", sourceHomeWacn,
+                    "system_id", sourceHomeSystem, "subscriber_id", sourceHomeId));
+            }
             put(value, "target_home_wacn", targetHomeWacn);
             put(value, "target_home_system_id", targetHomeSystem);
             put(value, "target_home_id", targetHomeId);
@@ -733,6 +753,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final Integer talkgroupMax;
         public final Integer sourceId;
         public final IdentityNameMatch radioIdentityMatch;
+        public final IdentityNameMatch talkgroupIdentityMatch;
         public final Integer sourceMin;
         public final Integer sourceMax;
         public final Integer anyIdentityId;
@@ -770,6 +791,13 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             talkgroupMax = builder.talkgroupMax;
             sourceId = builder.sourceId;
             radioIdentityMatch = builder.radioIdentityMatch;
+            talkgroupIdentityMatch = builder.talkgroupIdentityMatch;
+            if(talkgroupIdentityMatch != null && (!RadioSystemKey.isP25Native(systemKey) ||
+                !systemKey.equals(talkgroupIdentityMatch.systemKey()) || talkgroupIdentityMatch.homeWacn() == null ||
+                talkgroupIdentityMatch.homeWacn() < 0 || talkgroupIdentityMatch.identityId() > 0xFFFE))
+            {
+                throw new IllegalArgumentException("Exact recording talkgroup requires its P25 receiving system");
+            }
             if(radioIdentityMatch != null && (!RadioSystemKey.isP25Native(systemKey) ||
                 !systemKey.equals(radioIdentityMatch.systemKey()) || radioIdentityMatch.homeWacn() == null ||
                 radioIdentityMatch.homeWacn() < 0))
@@ -826,7 +854,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                 sourceId, sourceMin, sourceMax, anyIdentityId;
             private List<Integer> anyIdentityIds;
             private List<IdentityNameMatch> identityNameMatches;
-            private IdentityNameMatch radioIdentityMatch;
+            private IdentityNameMatch radioIdentityMatch, talkgroupIdentityMatch;
             private boolean sortAscending;
             private int limit = DEFAULT_PAGE_SIZE;
 
@@ -846,6 +874,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder talkgroupMax(Integer value) { talkgroupMax = value; return this; }
             public Builder sourceId(Integer value) { sourceId = value; return this; }
             public Builder radioIdentityMatch(IdentityNameMatch value) { radioIdentityMatch = value; return this; }
+            public Builder talkgroupIdentityMatch(IdentityNameMatch value) { talkgroupIdentityMatch = value; return this; }
             public Builder sourceMin(Integer value) { sourceMin = value; return this; }
             public Builder sourceMax(Integer value) { sourceMax = value; return this; }
             public Builder anyIdentityId(Integer value) { anyIdentityId = value; return this; }

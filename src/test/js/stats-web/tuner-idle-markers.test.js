@@ -98,6 +98,8 @@ function harness(liveAllowed = true) {
     hideCursor: () => { context.hoverFlag = null; context.cursorPopup.hidden = true; }
   };
   context.activeFlagLayers = [context.spectrumActiveFlags];
+  const identityLabels = fs.readFileSync(path.resolve(path.dirname(applicationPath), 'core/radio-labels.js'), 'utf8');
+  Object.assign(context, vm.runInNewContext(identityLabels.replace(/^export .*;$/m, '') + '\n({p25IdentityFacts,p25IdentifierText,p25ServingSystemKey});'));
   vm.createContext(context);
   vm.runInContext([
     ...source.matchAll(/^const TUNER_(?:SPECTRUM_(?:SNAP|SMOOTH|IDLE)_PREFERENCE) = .*;$/gm)
@@ -113,6 +115,9 @@ function harness(liveAllowed = true) {
     'function canonicalSubscriberText(identity)', 'function radioIdentityPrefix(row, value)',
     "function workingSubscriberId(row, prefix = '')",
     "function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value))",
+    "function groupIdentityPrefix(row, value)",
+    "function groupIdentifierText(row, value, prefix = groupIdentityPrefix(row, value))",
+    "function partyIdentifierText(row, value, prefix)",
     'function channelTagSet(...values)', 'function tunerStoredBoolean(key, fallback)',
     'function storeTunerBoolean(key, value)', 'function tunerActivityStatus(row, includeIdle = false)',
     'function updateSpectrumActivityTable(table)', 'function activeCarriers(includeIdle = false)',

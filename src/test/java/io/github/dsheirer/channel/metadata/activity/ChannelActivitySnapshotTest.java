@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.channel.metadata.activity;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -15,12 +17,15 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -111,7 +116,7 @@ class ChannelActivitySnapshotTest
             navigation.sourceAliases().getFirst());
         assertEquals(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201, null, null,
             new io.github.dsheirer.identifier.radio.ResolvedRadioIdentity(io.github.dsheirer.protocol.Protocol.APCO25,
-                1201, null, io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.UNRESOLVED)),
+                1201, null, io.github.dsheirer.identifier.IdentityResolutionEvidence.UNRESOLVED)),
             navigation.sourceMatcher());
         assertEquals(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Dispatch"),
             navigation.targetAliases().getFirst());
@@ -135,7 +140,44 @@ class ChannelActivitySnapshotTest
         ChannelActivitySnapshot.MatcherReference target =
             table.getLatestSnapshot().rows().getFirst().navigation().targetMatcher();
         assertEquals(new ChannelActivitySnapshot.MatcherReference("patch_group", "p25", "phase_1", 4400,
-            "v1-p-bee00-49f-4400"), target);
+            null, "v1-p-bee00-49f-4400", new ResolvedTalkgroupIdentity(Protocol.APCO25, null,
+                new P25TalkgroupIdentity(0xBEE00, 0x49F, 4400), IdentityResolutionEvidence.DIRECT)), target);
+    }
+
+    @Test
+    void capturesBothGroupRolesAndOriginalNullableServingProofIndependentlyOfCurrentConfiguration()
+    {
+        Channel channel = new Channel("Dispatch", Channel.ChannelType.STANDARD);
+        channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x348, 1, 1));
+        ChannelActivityTableState table = new ChannelActivityTableState("Site", channel, null);
+        ChannelActivityRow row = table.getOrCreate("traffic", channel, ChannelActivityRow.Role.TRAFFIC,
+            851_262_500L, null);
+        row.setSource(APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(5678, 0xABCDE, 0x456, 5678));
+        row.setTarget(APCO25PatchGroup.create(new PatchGroup(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(9001, 0xABCDE, 0x456, 9001))));
+        row.captureServingSystemKey("p25:bee00:348", false);
+        table.refresh(row);
+        ChannelActivitySnapshot.Row captured = table.getLatestSnapshot().rows().getFirst();
+        assertEquals("p25:bee00:348", captured.servingSystemKey());
+        assertEquals(5678, captured.navigation().sourceMatcher().groupIdentity().observedLocalId());
+        assertEquals(IdentityResolutionEvidence.DIRECT, captured.navigation().sourceMatcher().groupIdentity().evidence());
+        assertNull(captured.navigation().targetMatcher().groupIdentity().observedLocalId(),
+            "A copied home number does not prove a separate local group field");
+        assertEquals(9001, captured.navigation().targetMatcher().groupIdentity().talkgroup().talkgroupId());
+        channel.setP25SiteIdentity(new P25SiteIdentity(0xABCDE, 0x456, 2, 2));
+        table.setSiteContext(new ChannelActivitySnapshot.Site(0xABCDE, 0x456, 2, 2, null));
+        assertEquals("p25:bee00:348", table.getLatestSnapshot().rows().getFirst().servingSystemKey());
+        row.captureServingSystemKey("p25:abcde:456", false);
+        table.refresh(row);
+        assertEquals("p25:bee00:348", table.getLatestSnapshot().rows().getFirst().servingSystemKey(),
+            "A later grant cannot rebind retained call details");
+        row.captureServingSystemKey(null, true, true);
+        table.refresh(row);
+        assertNull(table.getLatestSnapshot().rows().getFirst().servingSystemKey(),
+            "An original audio observation can authoritatively suppress conflicting receiver proof");
+        row.clearCallDetails();
+        row.captureServingSystemKey("p25:abcde:456", false);
+        assertEquals("p25:abcde:456", row.copy().getServingSystemKey());
     }
 
     @Test
@@ -190,9 +232,9 @@ class ChannelActivitySnapshotTest
         assertEquals(501, matcher.workingAddress());
         assertEquals(new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288), matcher.radioIdentity().subscriber());
         assertEquals(Protocol.APCO25_PHASE2, matcher.radioIdentity().protocol());
-        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, matcher.radioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.UNKNOWN, matcher.radioIdentity().evidence());
         assertNull(canonicalOnly.workingAddress());
-        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, canonicalOnly.radioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.UNKNOWN, canonicalOnly.radioIdentity().evidence());
         assertNull(new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 501,
             "malformed").radioIdentity());
     }
@@ -202,13 +244,13 @@ class ChannelActivitySnapshotTest
     {
         ResolvedRadioIdentity confirmed = new ResolvedRadioIdentity(Protocol.APCO25, 502,
             new P25SubscriberIdentity(0xBEE00, 0x348, 2_115_288),
-            ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+            IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
         ChannelActivitySnapshot.MatcherReference matcher = new ChannelActivitySnapshot.MatcherReference(
             "radio", "p25", "phase_1", 501, "v1-r-bee00-348-2115288", 501, confirmed);
 
         assertSame(confirmed, matcher.radioIdentity());
         assertEquals(502, matcher.workingAddress(), "the legacy copy cannot contradict the captured observation");
-        assertEquals(ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT, matcher.radioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, matcher.radioIdentity().evidence());
     }
 
     @Test

@@ -12,7 +12,7 @@ package io.github.dsheirer.alias.id.radio;
 
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.Objects;
@@ -116,6 +116,6 @@ public class P25Subscriber extends AliasID
             return "P25 Subscriber: **NOT VALID**";
         }
 
-        return "P25 Subscriber: " + P25SubscriberIdentityFormatter.format(mHomeWacn, mHomeSystemId, mSubscriberId);
+        return "P25 Subscriber: " + P25IdentityFormatter.format(mHomeWacn, mHomeSystemId, mSubscriberId);
     }
 }

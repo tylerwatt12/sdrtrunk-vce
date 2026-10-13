@@ -7,7 +7,7 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const modulePath = path.resolve(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/core/radio-labels.js'));
-  const { formatP25RadioIdentifier, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier } =
+  const { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey, parseP25RadioIdentifier } =
     await import(pathToFileURL(modulePath).href);
   const home = { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 4_326_018 };
   const local = { servingSystemKey: 'p25:bee00:348', homeSystemName: 'Home System' };
@@ -111,16 +111,67 @@ async function main() {
   const group = 'ISSI 2002(781824.840.1001)';
   const patch = `P:${group} [ISSI 781824.840.3003, ISSI 0(781824.840.3004)]`;
   for (const scope of ['', 'p25:bee00:348', 'p25:unknown', 'dmr:tier3:small:1']) {
-    assert.equal(formatP25QualifiedIdentifierText(group, scope), '2002');
-    assert.equal(formatP25QualifiedIdentifierText(patch, scope), 'P:2002 [3003, 3004]');
+    assert.equal(formatP25QualifiedIdentifierText(group, scope), '1001 (Local TG ID 2002)');
+    assert.equal(formatP25QualifiedIdentifierText(patch, scope), 'P:1001 (Local TG ID 2002) [3003, 3004]');
   }
-  assert.equal(formatP25QualifiedIdentifierText(patch, 'p25:00001:047'), patch);
-  assert.equal(formatP25QualifiedIdentifierText(group, 'p25:bee00:349'), group);
-  assert.equal(formatP25QualifiedIdentifierText(group, 'p25:bee01:348'), group);
+  assert.equal(formatP25QualifiedIdentifierText(patch, 'p25:00001:047'), 'P:BEE00.348.1001 (Local TG ID 2002) [BEE00.348.3003, BEE00.348.3004]');
+  assert.equal(formatP25QualifiedIdentifierText(group, 'p25:bee00:349'), 'BEE00.348.1001 (Local TG ID 2002)');
+  assert.equal(formatP25QualifiedIdentifierText(group, 'p25:bee01:348'), 'BEE00.348.1001 (Local TG ID 2002)');
+  const legacyRadio = 'ISSI 781824.840.1234567';
+  for (const scope of ['', null, 'p25:bee00:348']) {
+    assert.equal(formatP25QualifiedIdentifierText(legacyRadio, scope), '1234567',
+      'Bare 24-bit ISSI radio text suppresses its prefix for same or unknown captured scope.');
+    assert.equal(formatP25QualifiedIdentifierText('ROAM 501(781824.840.1234567)', scope),
+      '1234567 (Working ID 501)');
+  }
+  assert.equal(formatP25QualifiedIdentifierText(legacyRadio, 'p25:00001:047'), 'BEE00.348.1234567');
+  assert.equal(formatP25QualifiedIdentifierText(legacyRadio, 'p25:00001:047', () => 'County Radio'),
+    'County Radio · 1234567');
+  for (const scope of ['', 'p25:bee00:348', 'p25:00001:047']) {
+    const oversizedGroup = 'ISSI 77(781824.840.1234567)';
+    assert.equal(formatP25QualifiedIdentifierText(oversizedGroup, scope), oversizedGroup,
+      'A parenthesized ISSI group mapping must not gain a 24-bit group identity.');
+  }
+  assert.equal(p25IdentityFacts({ identity_key: 'v1-g-bee00-348-1234567' }, '', 'talkgroup'), null);
+  for (const kind of ['ISSI', 'ROAM']) {
+    for (const scope of ['', 'p25:bee00:348']) {
+      assert.equal(formatP25QualifiedIdentifierText(`${kind} 781824.840.16777215`, scope), '16777215');
+    }
+    assert.equal(formatP25QualifiedIdentifierText(`${kind} 781824.840.16777215`, 'p25:00001:047'),
+      'BEE00.348.16777215', 'Raw reserved diagnostic values obey scope without becoming subscriber facts.');
+  }
+  assert.equal(p25IdentityFacts({ identity_key: 'v1-r-bee00-348-16777215' }), null);
+  assert.equal(parseP25RadioIdentifier('BEE00.348.16777215'), null);
   for (const value of ['ISSI 2002(781824.840.1001', 'ISSI 2002(1048576.840.1001)',
     'ISSI 2002(781824.4096.1001)', 'ISSI 781824.840.1001x', '192.168.1.100']) {
     assert.equal(formatP25QualifiedIdentifierText(value), value, 'Malformed or unrelated text is preserved.');
   }
+  const groupHome = { wacn: home.wacn, system_id: home.system_id, talkgroup_id: 7001 };
+  for (const servingSystemKey of ['', null, local.servingSystemKey]) {
+    assert.equal(formatP25GroupIdentifier(groupHome, { servingSystemKey, localId: 77 }),
+      '7001 (Local TG ID 77)');
+  }
+  assert.equal(formatP25GroupIdentifier(groupHome, { ...foreign, localId: 77 }),
+    'Home System · 7001 (Local TG ID 77)');
+  assert.equal(formatP25GroupIdentifier(groupHome, { ...foreign, homeSystemName: '' }), 'BEE00.348.7001');
+  for (const localId of [null, 0, 7001, true, ' ', 0x10000]) {
+    assert.equal(formatP25GroupIdentifier(groupHome, { localId }), '7001');
+  }
+  const groupRow = { protocol: 'P25', serving_system_key: null, radio_system_key: 'p25:00001:047',
+    target_id: 77, target_canonical_group_identity: groupHome, target_observed_local_id: 77 };
+  assert.equal(p25IdentifierText(groupRow, 77, { prefix: 'target', kind: 'talkgroup' }), '7001 (Local TG ID 77)');
+  assert.equal(p25IdentityFacts({ identity_key: 'v1-p-bee00-348-7001' }, '', 'patch_group').canonical.talkgroup_id, 7001);
+  assert.equal(p25IdentityFacts({ identity_key: 'v1-g-x-x-77' }, '', 'talkgroup'), null);
+  assert.equal(p25IdentifierText({ ...groupRow, target_observed_local_id: null }, 77,
+    { prefix: 'target', kind: 'talkgroup' }), '7001', 'Explicit absent local evidence cannot become a copied Local TG hint.');
+  assert.equal(p25IdentifierText({ ...groupRow, target_observed_local_id: undefined }, 77,
+    { prefix: 'target', kind: 'talkgroup' }), '7001');
+  for (const talkgroup_id of [0, 0xFFFF, 0x10000, true]) {
+    assert.equal(formatP25GroupIdentifier({ ...groupHome, talkgroup_id }), '');
+  }
+  const peerRow = { native_id: 9001, canonical_identity: { ...home, subscriber_id: 9001 }, observed_working_id: 501 };
+  assert.equal(p25IdentifierText(peerRow, 42), '', 'A peer cannot inherit the row’s subscriber identity.');
+  assert.equal(p25IdentifierText(peerRow, 501), '9001 (Working ID 501)');
   console.log('P25 radio labels: local scope, foreign names, Working IDs and incomplete identities passed.');
 }
 

@@ -17,6 +17,10 @@ import io.github.dsheirer.identifier.configuration.ConfigurationLongIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
@@ -46,10 +50,13 @@ public final class VceRecordingMetadata
 
         Map<String, String> fields = new LinkedHashMap<>();
         IdentifierCollection identifiers = call.recordingIdentifierCollection();
-        Identifier<?> source = identifier(identifiers, IdentifierClass.USER, Form.RADIO, Role.FROM);
+        Identifier<?> source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier<?> destination = identifiers != null ? identifiers.getToIdentifier() : null;
         radio(fields, source, "VCE_P25_WUID", "VCE_P25_SUID");
         radio(fields, destination, "VCE_P25_DEST_WUID", "VCE_P25_DEST_SUID");
+        group(fields, source, "VCE_P25_SOURCE_GROUP_ADDRESS", "VCE_P25_SOURCE_GID");
+        group(fields, destination instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
+            patch.getValue().getPatchGroup() : destination, "VCE_P25_GROUP_ADDRESS", "VCE_P25_GID");
 
         String systemKey = BasicRecordingContract.servingSystemKey(call);
         if(RadioSystemKey.isP25Native(systemKey))
@@ -78,6 +85,38 @@ public final class VceRecordingMetadata
             if(patch.getValue() != null)
             {
                 positiveInteger(fields, "VCE_PATCH_GROUP", patch.getValue().getPatchGroup());
+                if(patch.getValue().hasPatchedTalkgroups())
+                {
+                    fields.put("VCE_PATCH_TALKGROUP_COUNT", Integer.toString(
+                        patch.getValue().getPatchedTalkgroupIdentifiers().size()));
+                    if(patch.getValue().getPatchedTalkgroupIdentifiers().size() > 32)
+                        fields.put("VCE_PATCH_TALKGROUPS_TRUNCATED", "true");
+                }
+                if(patch.getValue().hasPatchedRadios())
+                {
+                    fields.put("VCE_PATCH_RADIO_COUNT", Integer.toString(
+                        patch.getValue().getPatchedRadioIdentifiers().size()));
+                    if(patch.getValue().getPatchedRadioIdentifiers().size() > 32)
+                        fields.put("VCE_PATCH_RADIOS_TRUNCATED", "true");
+                }
+                int index = 0;
+                for(TalkgroupIdentifier member: patch.getValue().getPatchedTalkgroupIdentifiers())
+                {
+                    if(member == null) continue;
+                    if(++index > 32) break;
+                    String prefix = "VCE_PATCH_TALKGROUP_" + index;
+                    positiveInteger(fields, prefix, member);
+                    group(fields, member, prefix + "_GROUP_ADDRESS", prefix + "_GID");
+                }
+                index = 0;
+                for(RadioIdentifier member: patch.getValue().getPatchedRadioIdentifiers())
+                {
+                    if(member == null) continue;
+                    if(++index > 32) break;
+                    String prefix = "VCE_PATCH_RADIO_" + index;
+                    positiveInteger(fields, prefix, BasicRecordingContract.recordingIdentifier(member));
+                    radio(fields, member, prefix + "_WUID", prefix + "_SUID");
+                }
             }
         }
         else if(destination != null && destination.getForm() == Form.TALKGROUP)
@@ -144,6 +183,19 @@ public final class VceRecordingMetadata
         if(subscriber != null)
         {
             fields.put(subscriberField, subscriber.display());
+        }
+    }
+
+    private static void group(Map<String,String> fields, Identifier<?> identifier, String localField,
+                              String groupField)
+    {
+        P25TalkgroupIdentity identity = P25TalkgroupIdentity.from(identifier);
+        if(identity == null) return;
+        fields.put(groupField, P25IdentityFormatter.format(identity.homeWacn(), identity.homeSystemId(),
+            identity.talkgroupId()));
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group && group.getLocalAddress() != null)
+        {
+            fields.put(localField, Integer.toString(group.getLocalAddress()));
         }
     }
 

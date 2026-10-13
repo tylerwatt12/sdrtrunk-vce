@@ -50,6 +50,8 @@ class ManagedRecordingStoreTest
             metadata(2000, "p25:abcde:123", "unknown.mp3", 501, 1001,
                 ManagedRecordingCatalog.CALL_GROUP, null, List.of(other), List.of()),
             metadata(3000, "p25:abcde:123", "conflict.mp3", 501, 1001,
+                ManagedRecordingCatalog.CALL_GROUP, winner, List.of(winner, other), List.of()),
+            metadata(4000, null, "legacy-null.mp3", 501, 1001,
                 ManagedRecordingCatalog.CALL_GROUP, winner, List.of(winner, other), List.of()));
         try(ManagedRecordingStore store = new ManagedRecordingStore(temporary.resolve("serving.sqlite"), root))
         {
@@ -62,6 +64,11 @@ class ManagedRecordingStoreTest
                 assertNull(row.get("serving_system_key"));
                 assertEquals("p25:abcde:123", row.get("system_key"), "Routing facts remain unchanged");
             }
+            var legacy = store.find(4L);
+            assertEquals("p25:bee00:348", legacy.systemKey(), "Legacy routing inference remains available");
+            assertNull(legacy.servingSystemKey(), "A stored unknown cannot become proof after a read");
+            assertTrue(legacy.toMap().containsKey("serving_system_key"));
+            assertNull(legacy.toMap().get("serving_system_key"));
         }
     }
 
@@ -852,6 +859,94 @@ class ManagedRecordingStoreTest
         assertThrows(IllegalArgumentException.class, () -> SearchFilter.builder().radioIdentityMatch(foreign).build());
         assertThrows(IllegalArgumentException.class, () -> SearchFilter.builder().systemKey("p25:00002:002")
             .radioIdentityMatch(foreign).build());
+    }
+
+    @Test
+    void exactGroupIdentityMatchesCanonicalTargetsAndMembersWithLocalAliasesAndStablePaging() throws Exception
+    {
+        Path db = temporary.resolve("exact-group.sqlite");
+        String system = "p25:00001:001";
+        Site site = new Site(1, 1, 1, 1);
+        IdentityNameMatch foreign = new IdentityNameMatch(501, system, 2, 2, false);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, temporary.resolve("exact-group-audio")))
+        {
+            store.insert(metadata(1000, system, "local-group.mp3", 101, 501,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(2000, system, "foreign-one.mp3", 101, 3101,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(3000, system, "foreign-two.mp3", 101, 3201,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(4000, system, "private-must-not-match.mp3", 101, 3101,
+                ManagedRecordingCatalog.CALL_DIRECT, site, List.of(site), List.of()));
+            store.insert(metadata(5000, system, "patch-member.mp3", 101, 900,
+                ManagedRecordingCatalog.CALL_PATCH, site, List.of(site),
+                List.of(new Member("talkgroup", 91, 2, 2, 501), new Member("radio", 501, 2, 2, 501))));
+            store.insert(metadata(6000, system, "different-home.mp3", 101, 3101,
+                ManagedRecordingCatalog.CALL_GROUP, site, List.of(site), List.of()));
+            store.insert(metadata(7000, "p25:00002:002", "different-receiver.mp3", 101, 3101,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement())
+            {
+                statement.executeUpdate("UPDATE recording_call SET target_home_wacn=2,target_home_system=2," +
+                    "target_home_id=501 WHERE start_ms IN(2000,3000,4000,7000)");
+                statement.executeUpdate("UPDATE recording_call SET target_home_wacn=3,target_home_system=3," +
+                    "target_home_id=501 WHERE start_ms=6000");
+            }
+            SearchFilter filter = SearchFilter.builder().fromMs(0L).toMs(9000L).systemKey(system)
+                .talkgroupIdentityMatch(foreign).limit(2).build();
+            SearchPage first = store.search(filter);
+            assertEquals(List.of(5000L, 3000L), first.calls().stream().map(call -> call.startMs()).toList());
+            SearchPage second = store.search(SearchFilter.builder().fromMs(0L).toMs(9000L).systemKey(system)
+                .talkgroupIdentityMatch(foreign).limit(2).cursor(first.nextCursor()).build());
+            assertEquals(List.of(2000L), second.calls().stream().map(call -> call.startMs()).toList());
+            assertNull(second.nextCursor());
+            assertEquals(List.of(2000L), store.search(SearchFilter.builder().fromMs(0L).toMs(9000L)
+                .systemKey(system).talkgroupIdentityMatch(foreign).talkgroupId(3101).build())
+                .calls().stream().map(call -> call.startMs()).toList());
+            for(var query: store.singleIdentityCandidateQueries(filter))
+            {
+                String details = plan(db, query);
+                assertTrue(details.contains(query.sql().contains("c INDEXED BY idx_recording_call_time") ?
+                    "SEARCH c USING INDEX idx_recording_call_time" :
+                    "SEARCH c USING INDEX idx_recording_call_system_time"), details);
+                assertFalse(details.contains("USE TEMP B-TREE"), details);
+                assertFalse(query.sql().contains("p25_subscriber_identity"));
+            }
+        }
+        assertThrows(IllegalArgumentException.class, () -> SearchFilter.builder().talkgroupIdentityMatch(foreign).build());
+    }
+
+    @Test
+    void catalogQualifiedGroupLocalHintsDoNotClaimProofForZeroOrHomeOnlyScalars() throws Exception
+    {
+        Path db = temporary.resolve("group-local-proof.sqlite");
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, temporary.resolve("group-proof-audio")))
+        {
+            for(int local: new int[]{0, 501, 3101})
+            {
+                store.insert(metadata(1000 + local, "p25:00001:001", "group-" + local + ".mp3", 101, local,
+                    ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+                Member member = new Member("talkgroup", local, 2, 2, 501);
+                assertEquals(local, member.toMap().get("id"));
+                if(local == 0 || local == 501) assertNull(member.toMap().get("observed_local_id"));
+                else assertEquals(local, member.toMap().get("observed_local_id"));
+            }
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement())
+            {
+                statement.executeUpdate("UPDATE recording_call SET target_home_wacn=2,target_home_system=2,target_home_id=501");
+            }
+            for(var row: store.search(SearchFilter.builder().fromMs(0L).toMs(5000L).build()).calls())
+            {
+                var map = row.toMap();
+                assertEquals(row.targetId(), map.get("target_id"));
+                assertEquals(501, ((java.util.Map<?,?>)map.get("target_canonical_group_identity")).get("talkgroup_id"));
+                assertTrue(map.containsKey("target_observed_local_id"), "null is an authoritative captured unknown");
+                if(row.targetId() == 0 || row.targetId() == 501) assertNull(map.get("target_observed_local_id"));
+                else assertEquals(3101, map.get("target_observed_local_id"));
+            }
+        }
     }
 
     @Test

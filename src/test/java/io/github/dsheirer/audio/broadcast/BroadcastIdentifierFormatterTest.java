@@ -1,5 +1,7 @@
 package io.github.dsheirer.audio.broadcast;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -24,6 +26,14 @@ import org.junit.jupiter.api.Test;
 
 class BroadcastIdentifierFormatterTest
 {
+    @Test
+    void equalExplicitGroupAddressesRetainTheLegacyForeignTitle()
+    {
+        var group = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1001, 0xBEE00, 0x123, 1001);
+        assertEquals("ISSI 781824.291.1001", BroadcastIdentifierFormatter.format(group, "p25:bee00:456"));
+        assertEquals("1001", BroadcastIdentifierFormatter.format(group, "p25:bee00:123"));
+    }
+
     private static final String HOME = RadioSystemKey.p25(0xBEE00, 0x123);
     private static final String FOREIGN = RadioSystemKey.p25(0xBEE00, 0x456);
 
@@ -58,7 +68,7 @@ class BroadcastIdentifierFormatterTest
     void laterIdentityEnrichmentCannotExpandAnOrdinaryOverAirId()
     {
         var inferred = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(7654321, 0xBEE00, 0x123,
-            1234567, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+            1234567, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
         assertEquals("7654321", BroadcastIdentifierFormatter.format(inferred, FOREIGN));
         var retained = APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x123, 1234567),
@@ -69,7 +79,7 @@ class BroadcastIdentifierFormatterTest
     @Test
     void talkgroupsAndEveryPatchMemberFollowTheSameForeignSystemRule()
     {
-        var group = APCO25FullyQualifiedTalkgroupIdentifier.createTo(2002, 0xBEE00, 0x123, 1001);
+        var group = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(2002, 0xBEE00, 0x123, 1001);
         var radio = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(7654321, 0xBEE00, 0x123, 1234567);
         var patch = new PatchGroup(group);
         patch.addPatchedTalkgroup(APCO25Talkgroup.create(3003));

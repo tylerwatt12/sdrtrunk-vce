@@ -24,6 +24,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -130,6 +131,19 @@ class CallPlaybackTargetTest
         assertNotEquals(ordinary, equivalentHome);
         assertEquals("system:p25:bee00:348:v1-r-abcde-321-9001", roaming.key());
         assertNotEquals(ordinary, roaming);
+    }
+
+    @Test
+    void completeP25HomeIdentityDoesNotInventAMissingReceivingSystemOrThrow()
+    {
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            CallLegSource unknown = source(decoder, CHANNEL_A, null, ChannelConfigurationPolicy.ChannelKind.TRUNKED);
+            assertNull(target(unknown,
+                APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(3101, 0xABCDE, 0x123, 501), 0));
+            assertNull(target(unknown,
+                APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(120045, 0xABCDE, 0x123, 7654321), 0));
+        }
     }
 
     @Test

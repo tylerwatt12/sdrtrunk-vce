@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -27,13 +29,62 @@ class P25TrafficChannelEventTrackerTest
     private static final long START = 1_000L;
 
     @Test
+    void equalHomeGroupLocalChangesAndRadioEvidenceChangesReachTheTracker()
+    {
+        var first = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2201);
+        var next = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1202, 0xABCDE, 0x123, 2201);
+        var mappedRadio = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xABCDE, 0x123, 700_001,
+            io.github.dsheirer.identifier.Role.FROM,
+            io.github.dsheirer.identifier.IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
+        var tracked = tracker(identifiers(first, mappedRadio));
+        tracked.addIdentifierIfMissing(next);
+        assertSame(next, tracked.getEvent().getIdentifierCollection().getToIdentifier());
+        var direct = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x123, 700_001);
+        tracked.addIdentifierIfMissing(direct);
+        assertSame(direct, tracked.getEvent().getIdentifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void canonicalOnlyObservationsRefreshRawSourceAndTargetWithoutLosingDirectAddresses()
+    {
+        var directGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2201);
+        var directRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x123, 700_001);
+        var tracked = tracker(identifiers(directGroup, directRadio));
+        var observedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(2201, 0xABCDE, 0x123, 2201);
+        var observedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(700_001, 0xABCDE, 0x123, 700_001);
+        tracked.addIdentifierIfMissing(observedGroup);
+        tracked.addIdentifierIfMissing(observedRadio);
+        var retainedGroup = (APCO25FullyQualifiedTalkgroupIdentifier)tracked.getEvent().getIdentifierCollection().getToIdentifier();
+        var retainedRadio = (APCO25FullyQualifiedRadioIdentifier)tracked.getEvent().getIdentifierCollection().getFromIdentifier();
+        assertEquals(1201, retainedGroup.getLocalAddress());
+        assertEquals(501, retainedRadio.getWorkingAddress());
+        assertEquals(IdentityResolutionEvidence.DIRECT, retainedGroup.getResolutionEvidence());
+        assertEquals(IdentityResolutionEvidence.DIRECT, retainedRadio.getResolutionEvidence());
+        assertSame(observedGroup, retainedGroup.getRecordingIdentifier());
+        assertSame(observedRadio, retainedRadio.getRecordingIdentifier());
+        assertTrue(tracked.isSameCallCheckingToAndFrom(identifiers(1201, APCO25RadioIdentifier.createFrom(501)), START + 75));
+        tracked.addIdentifierIfMissing(APCO25FullyQualifiedTalkgroupIdentifier.createTo(2201, 0xABCDE, 0x123, 2201));
+        tracked.addIdentifierIfMissing(APCO25FullyQualifiedRadioIdentifier.createFrom(700_001, 0xABCDE, 0x123, 700_001));
+        assertSame(retainedGroup, tracked.getEvent().getIdentifierCollection().getToIdentifier());
+        assertSame(retainedRadio, tracked.getEvent().getIdentifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void homeOnlyForeignGroupCannotBorrowACoincidentallyEqualLocalValue()
+    {
+        var homeOnly = APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x123, 1201);
+        var tracked = tracker(identifiers(homeOnly, APCO25RadioIdentifier.createFrom(501)));
+        assertFalse(tracked.isSameCallCheckingToOnly(identifiers(1201, APCO25RadioIdentifier.createFrom(501)), START + 75L));
+    }
+
+    @Test
     void localAndQualifiedAddressesDescribeTheSameTrackedCallInBothDirections()
     {
         RadioIdentifier plainRadio = APCO25RadioIdentifier.createFrom(1234567);
         RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
         Identifier<?> plainGroup = APCO25Talkgroup.create(1201);
-        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
             1201, 0xABCDE, 0x123, 2201);
         MutableIdentifierCollection plain = identifiers(plainGroup, plainRadio);
         MutableIdentifierCollection qualified = identifiers(qualifiedGroup, qualifiedRadio);
@@ -55,7 +106,7 @@ class P25TrafficChannelEventTrackerTest
     {
         RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
-        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
             1201, 0xABCDE, 0x123, 2201);
         P25TrafficChannelEventTracker tracker = tracker(identifiers(1201,
             APCO25RadioIdentifier.createFrom(1234567)));
@@ -69,7 +120,7 @@ class P25TrafficChannelEventTrackerTest
         assertTrue(tracker.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654322)));
         assertFalse(tracker.isSameCallCheckingToOnly(identifiers(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x123, 2202), qualifiedRadio),
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2202), qualifiedRadio),
             START + 75L));
     }
 
@@ -78,7 +129,7 @@ class P25TrafficChannelEventTrackerTest
     {
         RadioIdentifier radio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
-        Identifier<?> group = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+        Identifier<?> group = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
             1201, 0xABCDE, 0x123, 2201);
         P25TrafficChannelEventTracker tracker = tracker(identifiers(group, radio));
 
@@ -92,9 +143,9 @@ class P25TrafficChannelEventTrackerTest
         }
 
         for(Identifier<?> conflict: List.of(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDF, 0x123, 2201),
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x124, 2201),
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x123, 2202)))
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDF, 0x123, 2201),
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x124, 2201),
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2202)))
         {
             MutableIdentifierCollection next = identifiers(conflict, radio);
             assertFalse(tracker.isSameCallCheckingToOnly(next, START + 75L));
@@ -160,11 +211,11 @@ class P25TrafficChannelEventTrackerTest
         assertTrue(tracker.isDifferentTalker(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234568, 0xABCDE, 0x123, 1234567)));
         assertFalse(tracker.isSameCallCheckingToOnly(identifiers(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(1202, 0xABCDE, 0x123, 1201), null), START + 75L));
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1202, 0xABCDE, 0x123, 1201), null), START + 75L));
         P25TrafficChannelEventTracker zero = tracker(identifiers(APCO25Talkgroup.create(0),
             APCO25RadioIdentifier.createFrom(0)));
         assertFalse(zero.isSameCallCheckingToAndFrom(identifiers(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xABCDE, 0x123, 1201),
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(0, 0xABCDE, 0x123, 1201),
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(0, 0xABCDE, 0x123, 1234567)), START + 75L));
     }
 

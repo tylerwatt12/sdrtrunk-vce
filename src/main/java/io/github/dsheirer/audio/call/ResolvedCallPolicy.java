@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
@@ -34,6 +36,8 @@ import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
@@ -301,9 +305,11 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
             {
                 Protocol protocol = normalizeProtocol(primary.getProtocol());
+                Integer localAddress = fullyQualified.getLocalAddress();
                 return eligible(protocol, kind, fullyQualified.getTalkgroup()) &&
                     eligibleDecoded(protocol, destination) ?
-                    new DestinationIdentity(protocol, kind, fullyQualified.getValue(), fullyQualified.getTalkgroup(),
+                    new DestinationIdentity(protocol, kind, localAddress != null ? localAddress : 0,
+                        fullyQualified.getTalkgroup(),
                         DestinationQualifier.networkAndSystem(fullyQualified.getWacn(), fullyQualified.getSystem())) :
                     null;
             }
@@ -353,16 +359,30 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             return localAddress > 0 && localAddress == other.localAddress;
         }
 
-        /** Radio destinations use the same native-home evidence as sources; unknown roaming addresses stay distinct. */
+        /** Home identities may match native addresses only in their proven receiving system. */
         public boolean matches(DestinationIdentity other, String servingSystemKey)
         {
             if(matches(other))
             {
                 return true;
             }
-            return other != null && protocol == Protocol.APCO25 && other.protocol == protocol &&
-                kind == Form.RADIO && other.kind == kind && radioIdentity().matchesWithinScope(
-                    other.radioIdentity(), servingSystemKey);
+            if(other == null || protocol != Protocol.APCO25 || other.protocol != protocol || other.kind != kind)
+            {
+                return false;
+            }
+            if(kind == Form.RADIO)
+            {
+                return radioIdentity().matchesWithinScope(other.radioIdentity(), servingSystemKey);
+            }
+            return groupIdentity().matchesWithinScope(other.groupIdentity(), servingSystemKey);
+        }
+
+        private ResolvedTalkgroupIdentity groupIdentity()
+        {
+            return new ResolvedTalkgroupIdentity(protocol, localAddress > 0 ? localAddress : null,
+                qualifier != null && qualifier.networkId() != null ? new P25TalkgroupIdentity(
+                    qualifier.networkId(), qualifier.systemId(), canonicalIdentity) : null,
+                qualifier != null ? IdentityResolutionEvidence.DIRECT : IdentityResolutionEvidence.UNRESOLVED);
         }
 
         private ResolvedRadioIdentity radioIdentity()
@@ -370,7 +390,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
             return new ResolvedRadioIdentity(protocol, localAddress > 0 ? localAddress : null,
                 qualifier != null && qualifier.networkId() != null ? new P25SubscriberIdentity(
                     qualifier.networkId(), qualifier.systemId(), canonicalIdentity) : null,
-                qualifier != null ? ResolvedRadioIdentity.Evidence.DIRECT : ResolvedRadioIdentity.Evidence.UNRESOLVED);
+                qualifier != null ? IdentityResolutionEvidence.DIRECT : IdentityResolutionEvidence.UNRESOLVED);
         }
 
         private static Protocol normalizeProtocol(Protocol protocol)

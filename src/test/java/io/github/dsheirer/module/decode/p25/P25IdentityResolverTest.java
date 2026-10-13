@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
-class P25WuidAssignmentRegistryTest
+class P25IdentityResolverTest
 {
     private static final P25SiteIdentity SERVING_SITE = new P25SiteIdentity(0xBEE00, 0x348, 1, 1);
     private static final int WORKING_ID = 501;
@@ -42,9 +44,9 @@ class P25WuidAssignmentRegistryTest
     @Test
     void registrationReturnsACompletePositiveObservation()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
 
-        P25WuidAssignmentRegistry.AssignmentObservation observation =
+        P25IdentityResolver.AssignmentObservation observation =
             registry.register(SERVING_SITE, assignmentPresence(), 1_000L, 300);
 
         assertNotNull(observation);
@@ -54,15 +56,15 @@ class P25WuidAssignmentRegistryTest
         assertEquals(subscriber(), observation.subscriber());
         assertEquals(1_000L, observation.observedAt());
         assertEquals(1_000L + 300L * 60_000L, observation.expiresAt());
-        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, observation.evidence());
+        assertEquals(P25IdentityResolver.Evidence.REGISTRATION, observation.evidence());
     }
 
     @Test
     void explicitNoExpiryLeaseDoesNotBecomeTheFiniteDefault()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
-        P25WuidAssignmentRegistry.AssignmentObservation observation = registry.register(SERVING_SITE,
-            assignmentPresence(), 1_000L, P25WuidAssignmentRegistry.NO_EXPIRY_LEASE_MINUTES);
+        P25IdentityResolver registry = new P25IdentityResolver();
+        P25IdentityResolver.AssignmentObservation observation = registry.register(SERVING_SITE,
+            assignmentPresence(), 1_000L, P25IdentityResolver.NO_EXPIRY_LEASE_MINUTES);
 
         assertNotNull(observation);
         assertEquals(Long.MAX_VALUE, observation.expiresAt());
@@ -73,7 +75,7 @@ class P25WuidAssignmentRegistryTest
     @Test
     void promotesOnlyTheMatchingServingSystemUntilExpiry()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
 
         Identifier<?> promoted = enrich(registry, new P25SiteIdentity(0xBEE00, 0x348, 9, 9),
@@ -88,13 +90,13 @@ class P25WuidAssignmentRegistryTest
         assertInstanceOf(APCO25RadioIdentifier.class,
             enrich(registry, new P25SiteIdentity(0xBEE00, 0x349, 1, 1), WORKING_ID, 2_000L));
         assertInstanceOf(APCO25RadioIdentifier.class, enrich(registry, SERVING_SITE, WORKING_ID,
-            1_000L + P25WuidAssignmentRegistry.DEFAULT_LEASE_MILLISECONDS + 1L));
+            1_000L + P25IdentityResolver.DEFAULT_LEASE_MILLISECONDS + 1L));
     }
 
     @Test
     void affiliationCanOnlyRefreshAnExistingExactMapping()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         P25SubscriberIdentity otherSubscriber = new P25SubscriberIdentity(0x12345, 0x222, 700_001);
 
         assertNull(registry.refresh(SERVING_SITE, assignmentPresence(), 1_000L, 300),
@@ -105,19 +107,19 @@ class P25WuidAssignmentRegistryTest
         assertNull(registry.refresh(SERVING_SITE, new P25RadioPresence(otherSubscriber, WORKING_ID),
             1_300L, 300), "an asserted canonical identity must match the current assignment");
 
-        P25WuidAssignmentRegistry.AssignmentObservation observation = registry.refresh(SERVING_SITE,
+        P25IdentityResolver.AssignmentObservation observation = registry.refresh(SERVING_SITE,
             new P25RadioPresence(null, WORKING_ID), 1_400L, 300);
         assertNotNull(observation);
         assertEquals(subscriber(), observation.subscriber());
         assertEquals(WORKING_ID, observation.workingId());
-        assertEquals(P25WuidAssignmentRegistry.Evidence.AFFILIATION, observation.evidence());
+        assertEquals(P25IdentityResolver.Evidence.AFFILIATION, observation.evidence());
         assertEquals(1_400L + 300L * 60_000L, observation.expiresAt());
     }
 
     @Test
     void canonicalClearAndTimestampOrderingPreventDelayedRevival()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
         registry.clear(SERVING_SITE, new P25RadioPresence(subscriber(), null), 2_000L);
 
@@ -136,7 +138,7 @@ class P25WuidAssignmentRegistryTest
     {
         int equalId = 1_234_567;
         P25SubscriberIdentity equalSubscriber = new P25SubscriberIdentity(HOME_WACN, HOME_SYSTEM, equalId);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         registry.register(SERVING_SITE, new P25RadioPresence(equalSubscriber, equalId), 1_000L, null);
 
         APCO25FullyQualifiedRadioIdentifier enriched = assertInstanceOf(
@@ -154,7 +156,7 @@ class P25WuidAssignmentRegistryTest
         P25RadioPresence presence = P25RadioPresence.from(identityOnly, null);
         assertNull(presence.workingId());
 
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         assertNull(registry.register(SERVING_SITE, presence, 1_000L, null));
         assertInstanceOf(APCO25RadioIdentifier.class,
             enrich(registry, SERVING_SITE, SUBSCRIBER, 1_100L));
@@ -163,7 +165,7 @@ class P25WuidAssignmentRegistryTest
     @Test
     void subscriberAndWorkingAddressReassignmentInvalidateBothOldDirections()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
         registry.register(SERVING_SITE, new P25RadioPresence(subscriber(), 502), 2_000L, null);
 
@@ -181,7 +183,7 @@ class P25WuidAssignmentRegistryTest
     @Test
     void trafficManagerReturnsOnlyPositiveAcceptedObservations()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         Channel firstSite = new Channel("First Site");
         firstSite.setP25SiteIdentity(SERVING_SITE);
         Channel secondSite = new Channel("Second Site");
@@ -196,17 +198,17 @@ class P25WuidAssignmentRegistryTest
         assertNull(first.processP25RadioPresence(P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.AFFILIATE,
             assignmentPresence(), 1_100L), "accepted affiliation cannot create the first assignment");
 
-        P25WuidAssignmentRegistry.AssignmentObservation registration = first.processP25RadioPresence(
+        P25IdentityResolver.AssignmentObservation registration = first.processP25RadioPresence(
             P25AffiliationEvent.Outcome.ACCEPTED, DecodeEventType.REGISTER, assignmentPresence(), 1_200L);
-        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, registration.evidence());
+        assertEquals(P25IdentityResolver.Evidence.REGISTRATION, registration.evidence());
         MutableIdentifierCollection accepted = ordinary(WORKING_ID);
         second.enrichMutableIdentifiers(accepted, 1_300L);
         assertInstanceOf(APCO25FullyQualifiedRadioIdentifier.class, accepted.getFromIdentifier());
 
-        P25WuidAssignmentRegistry.AssignmentObservation affiliation = first.processP25RadioPresence(
+        P25IdentityResolver.AssignmentObservation affiliation = first.processP25RadioPresence(
             P25AffiliationEvent.Outcome.CONFIRMED, DecodeEventType.AFFILIATE,
             new P25RadioPresence(null, WORKING_ID), 1_400L);
-        assertEquals(P25WuidAssignmentRegistry.Evidence.AFFILIATION, affiliation.evidence());
+        assertEquals(P25IdentityResolver.Evidence.AFFILIATION, affiliation.evidence());
         assertEquals(subscriber(), affiliation.subscriber());
 
         assertNull(first.processP25RadioPresence(P25AffiliationEvent.Outcome.CLEARED, DecodeEventType.DEREGISTER,
@@ -219,8 +221,8 @@ class P25WuidAssignmentRegistryTest
     @Test
     void eventCarriesThePositiveObservationSeparatelyFromRadioPresence()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
-        P25WuidAssignmentRegistry.AssignmentObservation observation =
+        P25IdentityResolver registry = new P25IdentityResolver();
+        P25IdentityResolver.AssignmentObservation observation =
             registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
         Identifier<?> radio = APCO25RadioIdentifier.createTo(WORKING_ID);
 
@@ -237,7 +239,7 @@ class P25WuidAssignmentRegistryTest
     @Test
     void advertisedLeaseFollowsServingSystemRatherThanSite()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         Channel channel = new Channel("Runtime identity");
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel,
             P25BandplanOverrideRegistry.empty(), registry);
@@ -262,7 +264,7 @@ class P25WuidAssignmentRegistryTest
     @Test
     void saturationInvalidatesTheWholeCacheGeneration()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(2, 2);
+        P25IdentityResolver registry = new P25IdentityResolver(2, 2);
         assertEquals(2, registry.slotCapacity());
 
         assertNotNull(registry.register(SERVING_SITE, presence(1, 1_001), 1L, null));
@@ -283,12 +285,12 @@ class P25WuidAssignmentRegistryTest
     void contendedRegistrationReturnsImmediatelyAndInvalidatesTheWholeCache() throws Exception
     {
         BlockingMutation blocking = new BlockingMutation();
-        P25WuidAssignmentRegistry registry = blocking.registry();
+        P25IdentityResolver registry = blocking.registry();
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
         registry.register(SERVING_SITE, presence(777, 700_001), 1_000L, null);
 
         blocking.arm();
-        CompletableFuture<P25WuidAssignmentRegistry.AssignmentObservation> owner =
+        CompletableFuture<P25IdentityResolver.AssignmentObservation> owner =
             CompletableFuture.supplyAsync(() -> registry.refresh(SERVING_SITE,
                 new P25RadioPresence(null, WORKING_ID), 1_050L, null));
         blocking.awaitEntry();
@@ -296,7 +298,7 @@ class P25WuidAssignmentRegistryTest
         P25SubscriberIdentity replacement = new P25SubscriberIdentity(HOME_WACN, HOME_SYSTEM, SUBSCRIBER + 1);
         try
         {
-            P25WuidAssignmentRegistry.AssignmentObservation dropped = assertTimeoutPreemptively(
+            P25IdentityResolver.AssignmentObservation dropped = assertTimeoutPreemptively(
                 Duration.ofMillis(250), () -> registry.register(SERVING_SITE,
                     new P25RadioPresence(replacement, WORKING_ID), 1_100L, null));
             assertNull(dropped);
@@ -321,12 +323,12 @@ class P25WuidAssignmentRegistryTest
     void contendedClearReturnsImmediatelyAndInvalidatesTheWholeCache() throws Exception
     {
         BlockingMutation blocking = new BlockingMutation();
-        P25WuidAssignmentRegistry registry = blocking.registry();
+        P25IdentityResolver registry = blocking.registry();
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
         registry.register(SERVING_SITE, presence(777, 700_001), 1_000L, null);
 
         blocking.arm();
-        CompletableFuture<P25WuidAssignmentRegistry.AssignmentObservation> owner =
+        CompletableFuture<P25IdentityResolver.AssignmentObservation> owner =
             CompletableFuture.supplyAsync(() -> registry.refresh(SERVING_SITE,
                 new P25RadioPresence(null, WORKING_ID), 1_050L, null));
         blocking.awaitEntry();
@@ -352,16 +354,16 @@ class P25WuidAssignmentRegistryTest
     void contendedAffiliationDropsOnlyTheRefreshAndKeepsTheCache() throws Exception
     {
         BlockingMutation blocking = new BlockingMutation();
-        P25WuidAssignmentRegistry registry = blocking.registry();
+        P25IdentityResolver registry = blocking.registry();
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
 
         blocking.arm();
-        CompletableFuture<P25WuidAssignmentRegistry.AssignmentObservation> owner =
+        CompletableFuture<P25IdentityResolver.AssignmentObservation> owner =
             CompletableFuture.supplyAsync(() -> registry.register(SERVING_SITE,
                 presence(777, 700_001), 1_050L, null));
         blocking.awaitEntry();
 
-        P25WuidAssignmentRegistry.AssignmentObservation dropped = assertTimeoutPreemptively(
+        P25IdentityResolver.AssignmentObservation dropped = assertTimeoutPreemptively(
             Duration.ofMillis(250), () -> registry.refresh(SERVING_SITE,
                 new P25RadioPresence(null, WORKING_ID), 1_100L, null));
         assertNull(dropped);
@@ -380,7 +382,7 @@ class P25WuidAssignmentRegistryTest
     {
         CountDownLatch lookupComplete = new CountDownLatch(1);
         CountDownLatch releaseLookup = new CountDownLatch(1);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(16, 4, () -> {}, () -> {
+        P25IdentityResolver registry = new P25IdentityResolver(16, 4, () -> {}, () -> {
             lookupComplete.countDown();
             await(releaseLookup);
         });
@@ -394,7 +396,7 @@ class P25WuidAssignmentRegistryTest
 
         assertInstanceOf(APCO25RadioIdentifier.class, enrichment.get(2, TimeUnit.SECONDS));
         assertInstanceOf(APCO25RadioIdentifier.class,
-            enrich(new P25WuidAssignmentRegistry(), SERVING_SITE, WORKING_ID, 1_100L));
+            enrich(new P25IdentityResolver(), SERVING_SITE, WORKING_ID, 1_100L));
     }
 
     @Test
@@ -403,7 +405,7 @@ class P25WuidAssignmentRegistryTest
         CountDownLatch lookupComplete = new CountDownLatch(1);
         CountDownLatch releaseLookup = new CountDownLatch(1);
         AtomicBoolean pause = new AtomicBoolean(true);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(16, 4, () -> {}, () -> {
+        P25IdentityResolver registry = new P25IdentityResolver(16, 4, () -> {}, () -> {
             if(pause.compareAndSet(true, false))
             {
                 lookupComplete.countDown();
@@ -431,14 +433,14 @@ class P25WuidAssignmentRegistryTest
         CountDownLatch beforeLock = new CountDownLatch(1);
         CountDownLatch releaseLockAttempt = new CountDownLatch(1);
         AtomicBoolean pause = new AtomicBoolean(true);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(16, 4, () -> {}, () -> {}, () -> {
+        P25IdentityResolver registry = new P25IdentityResolver(16, 4, () -> {}, () -> {}, () -> {
             if(pause.compareAndSet(true, false))
             {
                 beforeLock.countDown();
                 await(releaseLockAttempt);
             }
         });
-        CompletableFuture<P25WuidAssignmentRegistry.AssignmentObservation> registration =
+        CompletableFuture<P25IdentityResolver.AssignmentObservation> registration =
             CompletableFuture.supplyAsync(() -> registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null));
 
         assertTrue(beforeLock.await(2, TimeUnit.SECONDS));
@@ -453,29 +455,29 @@ class P25WuidAssignmentRegistryTest
     @Test
     void observerSnapshotCarriesUsableEvidenceAndIsImmutable()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8);
         registry.observeSource(SERVING_SITE, "source-a", 1_000L);
         registry.register(SERVING_SITE, assignmentPresence(), 1_100L, 300, "source-a");
-        P25WuidAssignmentRegistry.Snapshot snapshot = registry.snapshot(1_200L);
+        P25IdentityResolver.Snapshot snapshot = registry.snapshot(1_200L);
         assertFalse(snapshot.stale());
         assertEquals(1, snapshot.usableCount());
-        P25WuidAssignmentRegistry.Entry entry = snapshot.assignments().getFirst();
+        P25IdentityResolver.Entry entry = snapshot.assignments().getFirst();
         assertEquals(SERVING_SITE, entry.site());
         assertEquals("source-a", entry.configurationId());
-        assertEquals(P25WuidAssignmentRegistry.LeaseSource.ADVERTISED, entry.leaseSource());
-        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, entry.evidence());
+        assertEquals(P25IdentityResolver.LeaseSource.ADVERTISED, entry.leaseSource());
+        assertEquals(P25IdentityResolver.Evidence.REGISTRATION, entry.evidence());
         assertTrue(snapshot.systems().getFirst().observing());
         assertThrows(UnsupportedOperationException.class, () -> snapshot.assignments().clear());
         var promoted = assertInstanceOf(APCO25FullyQualifiedRadioIdentifier.class,
             enrich(registry, SERVING_SITE, WORKING_ID, 1_300L));
-        assertEquals(io.github.dsheirer.identifier.radio.ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT,
+        assertEquals(io.github.dsheirer.identifier.IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT,
             promoted.getResolutionEvidence());
     }
 
     @Test
     void lastSourceGapInvalidatesOnlyItsSystemAndDelayedEvidenceCannotReviveIt()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8);
         P25SiteIdentity secondSite = new P25SiteIdentity(SERVING_SITE.wacn(), SERVING_SITE.system(), 2, 2);
         P25SiteIdentity otherSystem = new P25SiteIdentity(SERVING_SITE.wacn(), SERVING_SITE.system() + 1, 1, 1);
         registry.observeSource(SERVING_SITE, "source-a", 1_000L);
@@ -498,11 +500,11 @@ class P25WuidAssignmentRegistryTest
     @Test
     void observationTimeoutProtectsDecodeWithoutAnyWebSnapshot()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8);
         registry.observeSource(SERVING_SITE, "source-a", 1_000L);
         registry.register(SERVING_SITE, assignmentPresence(), 1_100L, 0, "source-a");
         assertInstanceOf(APCO25RadioIdentifier.class, enrich(registry, SERVING_SITE, WORKING_ID,
-            1_001L + P25WuidAssignmentRegistry.OBSERVATION_GAP_MILLISECONDS));
+            1_001L + P25IdentityResolver.OBSERVATION_GAP_MILLISECONDS));
         registry.observeSource(SERVING_SITE, "source-a", 70_000L);
         assertInstanceOf(APCO25RadioIdentifier.class, enrich(registry, SERVING_SITE, WORKING_ID, 70_001L));
         assertNotNull(registry.register(SERVING_SITE, assignmentPresence(), 70_002L, 0, "source-a"));
@@ -511,33 +513,33 @@ class P25WuidAssignmentRegistryTest
     @Test
     void observerReportsExpiryOnceAndUsesFallbackLeaseLabel()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8);
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
-        assertEquals(P25WuidAssignmentRegistry.LeaseSource.FALLBACK,
+        assertEquals(P25IdentityResolver.LeaseSource.FALLBACK,
             registry.snapshot(1_100L).assignments().getFirst().leaseSource());
-        long afterExpiry = 1_001L + P25WuidAssignmentRegistry.DEFAULT_LEASE_MILLISECONDS;
+        long afterExpiry = 1_001L + P25IdentityResolver.DEFAULT_LEASE_MILLISECONDS;
         var expired = registry.snapshot(afterExpiry);
         assertEquals(0, expired.usableCount());
         assertEquals(1, expired.recentChanges().stream()
-            .filter(change -> change.change() == P25WuidAssignmentRegistry.ChangeReason.EXPIRED).count());
+            .filter(change -> change.change() == P25IdentityResolver.ChangeReason.EXPIRED).count());
         assertEquals(1, registry.snapshot(afterExpiry + 1).recentChanges().stream()
-            .filter(change -> change.change() == P25WuidAssignmentRegistry.ChangeReason.EXPIRED).count());
+            .filter(change -> change.change() == P25IdentityResolver.ChangeReason.EXPIRED).count());
     }
 
     @Test
     void observerDoesNotReportAnOldLeaseAsExpiredAfterRenewal()
     {
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8);
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8);
         registry.register(SERVING_SITE, assignmentPresence(), 1_000L, null);
         registry.snapshot(1_100L);
-        long originalExpiry = 1_000L + P25WuidAssignmentRegistry.DEFAULT_LEASE_MILLISECONDS;
+        long originalExpiry = 1_000L + P25IdentityResolver.DEFAULT_LEASE_MILLISECONDS;
         assertNotNull(registry.refresh(SERVING_SITE, assignmentPresence(), originalExpiry - 1L, null));
 
         var renewed = registry.snapshot(originalExpiry + 1L);
         assertEquals(1, renewed.usableCount());
         assertEquals(1_000L, renewed.assignments().getFirst().establishedAt());
         assertEquals(0, renewed.recentChanges().stream()
-            .filter(change -> change.change() == P25WuidAssignmentRegistry.ChangeReason.EXPIRED).count());
+            .filter(change -> change.change() == P25IdentityResolver.ChangeReason.EXPIRED).count());
         registry.register(SERVING_SITE, assignmentPresence(), originalExpiry + 2L, null);
         assertEquals(1_000L, registry.snapshot(originalExpiry + 3L).assignments().getFirst().establishedAt());
     }
@@ -547,7 +549,7 @@ class P25WuidAssignmentRegistryTest
     {
         CountDownLatch enrichmentEntered = new CountDownLatch(1);
         CountDownLatch releaseEnrichment = new CountDownLatch(1);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8, () -> {}, () -> {
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8, () -> {}, () -> {
             enrichmentEntered.countDown();
             await(releaseEnrichment);
         });
@@ -573,7 +575,7 @@ class P25WuidAssignmentRegistryTest
         AtomicBoolean block = new AtomicBoolean();
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry(128, 8, () -> {
+        P25IdentityResolver registry = new P25IdentityResolver(128, 8, () -> {
             if(block.get())
             {
                 entered.countDown();
@@ -621,7 +623,7 @@ class P25WuidAssignmentRegistryTest
         return new MutableIdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(workingId)));
     }
 
-    private static Identifier<?> enrich(P25WuidAssignmentRegistry registry, P25SiteIdentity site, int workingId,
+    private static Identifier<?> enrich(P25IdentityResolver registry, P25SiteIdentity site, int workingId,
                                         long timestamp)
     {
         MutableIdentifierCollection identifiers = ordinary(workingId);
@@ -646,7 +648,7 @@ class P25WuidAssignmentRegistryTest
         private final CountDownLatch mEntered = new CountDownLatch(1);
         private final CountDownLatch mRelease = new CountDownLatch(1);
         private final AtomicBoolean mBlock = new AtomicBoolean();
-        private final P25WuidAssignmentRegistry mRegistry = new P25WuidAssignmentRegistry(16, 4, () -> {
+        private final P25IdentityResolver mRegistry = new P25IdentityResolver(16, 4, () -> {
             if(mBlock.compareAndSet(true, false))
             {
                 mEntered.countDown();
@@ -654,7 +656,7 @@ class P25WuidAssignmentRegistryTest
             }
         });
 
-        private P25WuidAssignmentRegistry registry()
+        private P25IdentityResolver registry()
         {
             return mRegistry;
         }

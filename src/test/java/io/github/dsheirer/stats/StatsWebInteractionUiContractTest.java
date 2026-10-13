@@ -288,10 +288,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function neighborSiteLink(row)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source,
-            "function groupIdentityLink(row, id, label, reference = row?.entity_ref)")
+            "function groupIdentityLink(row, id, label, reference = row?.entity_ref, prefix)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source,
-            "function radioLink(row, id, label, reference = row?.entity_ref)")
+            "function radioLink(row, id, label, reference = row?.entity_ref, prefix)")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(function(source, "function callSourceLink(row)")
             .contains("entityReferenceAllowed(row.entity_ref)"));
@@ -457,7 +457,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String radio = function(source, "async function renderRadio()");
         String links = function(source,
-            "function groupIdentityLink(row, id, label, reference = row?.entity_ref)");
+            "function groupIdentityLink(row, id, label, reference = row?.entity_ref, prefix)");
         assertTrue(tabs.contains("const values = { ...radioSystemRoute(system), identity_key: identityKey }"));
         assertTrue(groupIdentity.contains(
             "entityTabs('group-identity', groupIdentity, identityKey, tab, false)"));
@@ -472,6 +472,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("const refreshed = await api('/api/v1/activity'"));
         assertTrue(activity.contains("...scopeParameters"));
         assertTrue(links.contains("entityTarget(reference, { channel: 'groups' })"));
+        assertTrue(links.contains("groupIdentifierText(row, id, prefix)"));
+        assertTrue(function(source, "function activityTargetIdentifier(row, linked = true)")
+            .contains("activityIdentifier(row, row.target_id, kind, row.target_entity_ref, linked, 'target')"));
         assertFalse(radio.contains("radio.last_group_identity_entity_ref"));
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
         assertFalse(source.contains("groupIdentityLink(row, row.patch_group)"));
@@ -614,8 +617,9 @@ class StatsWebInteractionUiContractTest
         assertFalse(labels.contains("identity_domain_code"));
         assertTrue(renderer.contains("node('span', 'special-identifier', specialLabel)"));
         assertTrue(renderer.contains("if (identifier === '') return '';"));
-        assertTrue(renderer.contains("groupIdentityLink(row, value, identifier, reference)"));
-        assertTrue(renderer.contains("radioLink(row, value, identifier, reference)"));
+        assertTrue(renderer.contains("groupIdentityLink(row, value, identifier, reference, prefix)"));
+        assertTrue(renderer.contains("radioLink(row, value, identifier, reference, prefix)"));
+        assertTrue(renderer.contains("specialIdentifierLabel(row, value, kind, prefix)"));
         assertFalse(renderer.contains("badge('System/special'"));
         assertTrue(css.contains(".special-identifier"));
         assertTrue(css.contains("text-overflow: ellipsis"));
@@ -624,7 +628,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(sourceAlias.contains("specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source')"));
         assertTrue(sourceAlias.indexOf("specialIdentifierLabel") < sourceAlias.indexOf("radioLink("));
         assertTrue(sourceTalkerAlias.contains("row.source_talker_alias"));
-        assertTrue(sourceTalkerAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref)"));
+        assertTrue(sourceTalkerAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref, 'source')"));
+        assertTrue(sourceAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref, 'source')"));
+        assertTrue(labels.contains("p25IdentityFacts(row, prefix || (kind === 'radio' ?"));
         assertTrue(columns.contains("label: 'Src Alias'"));
         assertTrue(columns.contains("label: 'Src OTA Alias'"));
         assertTrue(columns.contains("activitySourceAlias(row, false)"));
@@ -639,18 +645,22 @@ class StatsWebInteractionUiContractTest
         assertTrue(identifier.contains("String(Math.trunc(numeric))"));
         assertFalse(identifier.contains("number(value)"));
         assertTrue(function(source, "function dashboardIdentityId(row)")
-            .contains("kind === 'radio' ? radioIdentifierText(row, value) : identityNumber(row, value)"));
+            .contains("kind === 'radio' ? radioIdentifierText(row, value) : groupIdentifierText(row, value)"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String((numeric >> 11) & 0x1F).padStart(2, '0')"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
-        String radioLink = function(source, "function radioLink(row, id, label, reference = row?.entity_ref)");
+        String radioLink = function(source, "function radioLink(row, id, label, reference = row?.entity_ref, prefix)");
         assertTrue(radioLink.contains("{ ...row, radio_system_key: reference.radio_system_key } : row"));
-        assertTrue(radioLink.contains("radioIdentifierText(displayRow, id)"));
+        assertTrue(radioLink.contains("radioIdentifierText(displayRow, id, prefix)"));
         assertTrue(function(source, "function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value))")
             .contains("if (!isP25(row)) return identityNumber(row, value)"));
-        assertTrue(function(source, "function groupIdentityLink(row, id, label, reference = row?.entity_ref)")
-            .contains("specialIdentifierLabel(row, id, rowGroupIdentityKind(row))"));
+        assertTrue(function(source, "function groupIdentityLink(row, id, label, reference = row?.entity_ref, prefix)")
+            .contains("specialIdentifierLabel(row, id, rowGroupIdentityKind(row), prefix)"));
+        String groupIdentifier = function(source,
+            "function groupIdentifierText(row, value, prefix = groupIdentityPrefix(row, value))");
+        assertTrue(groupIdentifier.contains("if (!isP25(row)) return identityNumber(row, value)"));
+        assertTrue(groupIdentifier.contains("p25IdentifierText(row, value, { prefix, kind: 'talkgroup'"));
         assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
     }
 
@@ -1322,9 +1332,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(identityInfo.contains("`Open channel ${collection}`"));
         assertTrue(identityFacts.contains("['Serving System', radioSystemContextLink(row)]"));
         assertTrue(identityFacts.contains("['Home System', homeName"));
-        assertTrue(identityFacts.contains("['Permanent Radio ID', canonical ? canonicalSubscriberText(canonical) : 'Not confirmed']"));
-        assertTrue(identityFacts.contains("['Working ID', workingSubscriberId(row, kind) == null ? 'Not supplied'"));
-        assertTrue(identityFacts.contains("identifierNumber(workingSubscriberId(row, kind))"));
+        assertTrue(identityFacts.contains("p25IdentityFacts(row, kind, radio ? 'radio' : 'talkgroup')"));
+        assertTrue(identityFacts.contains("[radio ? 'Permanent Radio ID' : 'Home Talkgroup ID', canonical ?"));
+        assertTrue(identityFacts.contains("`${homeIdentity}.${canonical[radio ? 'subscriber_id' : 'talkgroup_id']}` : 'Not confirmed'"));
+        assertTrue(identityFacts.contains("const observed = radio ? workingSubscriberId(row, kind) : typed?.observedId"));
+        assertTrue(identityFacts.contains("[radio ? 'Working ID' : 'Local Talkgroup ID', observed == null ? 'Not supplied' : identifierNumber(observed)]"));
+        assertTrue(identityFacts.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(homeReference) : ''"));
         assertTrue(identityFacts.contains("['ID Source', p25IdentityEvidenceLabel(row, kind)]"));
         assertTrue(identityAction.contains("const facts = liveIdentityFacts(row, kind)"));
         assertTrue(identityAction.contains("info.title"));

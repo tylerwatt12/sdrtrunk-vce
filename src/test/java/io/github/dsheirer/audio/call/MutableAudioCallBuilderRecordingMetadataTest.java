@@ -10,6 +10,8 @@
  */
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -284,8 +286,8 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals(501, metadata.sourceObservedWorkingId());
         assertEquals(target, metadata.destinationP25Identity());
         assertEquals(777, metadata.destinationObservedWorkingId());
-        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, metadata.sourceRadioIdentity().evidence());
-        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, metadata.destinationRadioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.UNKNOWN, metadata.sourceRadioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.UNKNOWN, metadata.destinationRadioIdentity().evidence());
         assertEquals("501", metadata.sourceValue());
         assertEquals("777", metadata.destinationValue());
         assertEquals("Frozen source", metadata.sourceAlias());
@@ -303,7 +305,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
 
         assertEquals(source, metadata.sourceP25Identity());
         assertNull(metadata.sourceObservedWorkingId());
-        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, metadata.sourceRadioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.UNKNOWN, metadata.sourceRadioIdentity().evidence());
         assertNull(metadata.destinationRadioIdentity());
         assertNull(legacyMetadata(null, null, null, null).sourceRadioIdentity());
     }
@@ -312,7 +314,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
     void lateAbbreviatedAndCanonicalOnlyUpdatesRetainTheWholeConfirmedObservation()
     {
         APCO25FullyQualifiedRadioIdentifier source = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
-            501, 0xBEE00, 0x348, 2_115_288, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+            501, 0xBEE00, 0x348, 2_115_288, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
         APCO25FullyQualifiedRadioIdentifier target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
             777, 0xABCDE, 0x456, 9_001);
         AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null,
@@ -328,9 +330,9 @@ class MutableAudioCallBuilderRecordingMetadataTest
         {
             assertSame(metadata.sourceRadioIdentity(), resolved.sourceRadioIdentity());
             assertSame(metadata.destinationRadioIdentity(), resolved.destinationRadioIdentity());
-            assertEquals(ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT,
+            assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT,
                 resolved.sourceRadioIdentity().evidence());
-            assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, resolved.destinationRadioIdentity().evidence());
+            assertEquals(IdentityResolutionEvidence.DIRECT, resolved.destinationRadioIdentity().evidence());
             assertEquals(501, resolved.sourceObservedWorkingId());
             assertEquals(777, resolved.destinationObservedWorkingId());
         }
@@ -350,7 +352,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals(new P25SubscriberIdentity(0xABCDE, 0x457, 777), resolved.destinationP25Identity());
         assertNull(resolved.sourceObservedWorkingId());
         assertNull(resolved.destinationObservedWorkingId());
-        assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, resolved.sourceRadioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.DIRECT, resolved.sourceRadioIdentity().evidence());
         assertEquals("Frozen source", resolved.sourceAlias());
         assertEquals("Frozen destination", resolved.destinationAlias());
         assertEquals("frozen matcher", resolved.destinationMatcherIdentity());
@@ -366,7 +368,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
 
         assertEquals(metadata.sourceP25Identity(), resolved.sourceP25Identity());
         assertEquals(502, resolved.sourceObservedWorkingId());
-        assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, resolved.sourceRadioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.DIRECT, resolved.sourceRadioIdentity().evidence());
         assertEquals("501", resolved.sourceValue(), "historical recording policy values remain frozen");
     }
 
@@ -380,7 +382,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
 
         assertSame(metadata.sourceRadioIdentity(), resolved.sourceRadioIdentity());
         assertEquals(501, resolved.sourceObservedWorkingId());
-        assertEquals(ResolvedRadioIdentity.Evidence.UNKNOWN, resolved.sourceRadioIdentity().evidence());
+        assertEquals(IdentityResolutionEvidence.UNKNOWN, resolved.sourceRadioIdentity().evidence());
     }
 
     @Test

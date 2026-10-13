@@ -26,13 +26,21 @@ function functionSource(source, signature) {
 
 const context = {
   identitySummaryValue: (primary, secondary) => ({ primary, secondary }),
-  hex: (value, width) => Number(value).toString(16).toUpperCase().padStart(width, '0')
+  hex: (value, width) => Number(value).toString(16).toUpperCase().padStart(width, '0'),
+  entityRefHref: () => ''
 };
 vm.createContext(context);
 vm.runInContext(labels.replace(/export\s*\{[^}]+\};?\s*$/, '') +
   '\nglobalThis.systemLabels = { systemName, systemIdentity, rememberSystemNames };', context);
 context.radioSystemLabel = context.systemLabels.systemIdentity;
+const identityLabels = fs.readFileSync(path.join(assets, 'core/radio-labels.js'), 'utf8');
+vm.runInContext(identityLabels.replace(/^export .*;$/m, ''), context);
 const functions = [
+  'function protocol(value)', 'function protocolFamily(row)', 'function isP25(row)',
+  'function identityNumber(row, value)', 'function radioIdentityPrefix(row, value)',
+  'function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value))',
+  'function groupIdentityPrefix(row, value)',
+  'function groupIdentifierText(row, value, prefix = groupIdentityPrefix(row, value))',
   'function radioSystemPrimaryName(row)', 'function radioSystemDisplayName(row)',
   'function identifierNumber(value)', 'function spectrumDiscoverySystemName(session, draft = null)',
   'function p25OverrideIdentityRow(profile, knownSystems = [])',
@@ -79,7 +87,7 @@ const foreignRadio = { source_value: 'v1-r-abcde-123-456', source_alias: 'Medic 
   home_system: { system_name: 'County Radio', radio_system_key: 'p25:abcde:123' } };
 assert.equal(context.callMatchingSourceValue(foreignRadio), '456');
 assert.deepEqual(JSON.parse(JSON.stringify(context.callMatchingIdentitySummary(foreignRadio, false))),
-  { primary: 'Medic 4', secondary: '456 · County Radio' });
+  { primary: 'Medic 4', secondary: 'County Radio · 456' });
 assert.equal(foreignRadio.source_value, 'v1-r-abcde-123-456', 'The canonical identity stays available in details.');
 const unknownHome = { ...foreignRadio, home_system: undefined };
 assert.equal(context.radioSystemPrimaryName(context.callMatchingIdentitySystem(unknownHome, false)), '',

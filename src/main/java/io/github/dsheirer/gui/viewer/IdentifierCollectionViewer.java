@@ -21,7 +21,7 @@ package io.github.dsheirer.gui.viewer;
 
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.value.ObservableValue;
@@ -95,7 +95,7 @@ public class IdentifierCollectionViewer extends VBox
             textColumn.setCellValueFactory(param -> {
                 if(param.getValue() != null)
                 {
-                    return new SimpleStringProperty(P25SubscriberIdentityFormatter.display(
+                    return new SimpleStringProperty(P25IdentityFormatter.display(
                         param.getValue(), mServingSystemKey));
                 }
 

@@ -28,6 +28,7 @@ import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -106,6 +107,10 @@ public class ChannelActivityRow
     private List<Alias> mSourceAliases = Collections.emptyList();
     private Identifier<?> mTalkerAlias;
     private Identifier<?> mTarget;
+    private String mServingSystemKey;
+    private boolean mServingSystemCaptured;
+    private boolean mServingSystemConflict;
+    private boolean mServingAudioBound;
     private List<Alias> mTargetAliases = Collections.emptyList();
     private String mDecoder;
     private String mEncryptionDetails;
@@ -583,6 +588,7 @@ public class ChannelActivityRow
             case CALL_CREATED -> {
                 if(!ownsLeg)
                 {
+                    if(mServingAudioBound) clearServingSystemContext();
                     mTransmissionBurstGeneration = 0;
                     mTransmissionBurstStart = 0;
                     mCallLegId = callLegId;
@@ -605,6 +611,7 @@ public class ChannelActivityRow
             case BURST_STARTED, AUDIO_FRAME -> {
                 if(!ownsLeg)
                 {
+                    if(mServingAudioBound) clearServingSystemContext();
                     mTransmissionBurstGeneration = 0;
                     mTransmissionBurstStart = 0;
                     mCallLegId = callLegId;
@@ -736,6 +743,48 @@ public class ChannelActivityRow
         mTarget = null;
         mTargetAliases = Collections.emptyList();
         mEncryptionDetails = null;
+        clearServingSystemContext();
+    }
+
+    private void clearServingSystemContext()
+    {
+        mServingSystemKey = null;
+        mServingSystemCaptured = false;
+        mServingSystemConflict = false;
+        mServingAudioBound = false;
+    }
+
+    public String getServingSystemKey()
+    {
+        return mServingSystemKey;
+    }
+
+    /** A grant fixes its original scope; an owning audio leg supplies its independently captured receiver facts. */
+    boolean captureServingSystemKey(String key, boolean audioObservation)
+    {
+        return captureServingSystemKey(key, audioObservation, false);
+    }
+
+    boolean captureServingSystemKey(String key, boolean audioObservation, boolean conflict)
+    {
+        if(mServingSystemCaptured && !audioObservation) return false;
+        //A fresh grant has not bound its proof to the previous row's audio leg yet.
+        if(audioObservation) mServingAudioBound = true;
+        String captured = RadioSystemKey.isP25Native(key) ? key : null;
+        if(mServingSystemConflict || conflict || audioObservation && mServingSystemKey != null &&
+            captured != null && !mServingSystemKey.equals(captured))
+        {
+            mServingSystemConflict = true;
+            captured = null;
+        }
+        else if(captured == null && mServingSystemKey != null)
+        {
+            return false;
+        }
+        boolean changed = !java.util.Objects.equals(mServingSystemKey, captured);
+        mServingSystemKey = captured;
+        mServingSystemCaptured = true;
+        return changed;
     }
 
     /**
@@ -753,6 +802,10 @@ public class ChannelActivityRow
         copy.mLcn = mLcn;
         copy.mCallsign = mCallsign;
         copy.mSource = mSource;
+        copy.mServingSystemKey = mServingSystemKey;
+        copy.mServingSystemCaptured = mServingSystemCaptured;
+        copy.mServingSystemConflict = mServingSystemConflict;
+        copy.mServingAudioBound = mServingAudioBound;
         copy.mTrafficCallStart = mTrafficCallStart;
         copy.mTrafficObservedAt = mTrafficObservedAt;
         copy.mSourceAliases = List.copyOf(mSourceAliases);

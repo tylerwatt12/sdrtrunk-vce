@@ -363,7 +363,7 @@ final class ManagedRecordingStore implements AutoCloseable
         Objects.requireNonNull(filter);
         try(Connection connection = openReader())
         {
-            if(filter.transcript != null || !filter.identityNameMatches.isEmpty() || filter.radioIdentityMatch != null)
+            if(filter.transcript != null || !filter.identityNameMatches.isEmpty() || filter.radioIdentityMatch != null || filter.talkgroupIdentityMatch != null)
             {
                 long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
                 org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
@@ -419,6 +419,7 @@ final class ManagedRecordingStore implements AutoCloseable
             }
             addSystemPredicate(predicates, parameters, filter.systemKey, "sys.system_key=?");
             addRadioIdentityPredicate(predicates, parameters, filter.radioIdentityMatch);
+            addGroupIdentityPredicate(predicates, parameters, filter.talkgroupIdentityMatch);
             if(filter.channelId != null && !filter.channelId.isBlank())
             {
                 predicates.add("ch.channel_uuid=?");
@@ -736,6 +737,11 @@ final class ManagedRecordingStore implements AutoCloseable
             }
             return List.copyOf(queries);
         }
+        if(filter.talkgroupIdentityMatch != null && filter.talkgroupId == null && filter.sourceId == null &&
+            filter.talkgroupMin == null && filter.sourceMin == null && anyIds.isEmpty())
+        {
+            return nameIdentityCandidateQueries(filter, filter.talkgroupIdentityMatch);
+        }
         if(filter.radioIdentityMatch != null && filter.talkgroupId == null && filter.sourceId == null &&
             filter.talkgroupMin == null && filter.sourceMin == null && anyIds.isEmpty())
         {
@@ -775,7 +781,8 @@ final class ManagedRecordingStore implements AutoCloseable
     {
         List<Object> values = new ArrayList<>();
         //The scalar exact filter is already applied by candidateQuery; keep additional name owners independent.
-        String radio = match.equals(filter.radioIdentityMatch) ? "1" : radioIdentityPredicate(match, values);
+        String radio = match.equals(filter.radioIdentityMatch) || match.equals(filter.talkgroupIdentityMatch) ?
+            "1" : radioIdentityPredicate(match, values);
         List<CandidateQuery> queries = new ArrayList<>(2);
         List<Object> parameters = new ArrayList<>();
         parameters.add(match.systemKey());
@@ -809,6 +816,19 @@ final class ManagedRecordingStore implements AutoCloseable
         }
     }
 
+    private static void addGroupIdentityPredicate(List<String> conditions, List<Object> parameters,
+                                                  IdentityNameMatch match)
+    {
+        if(match == null) return;
+        String target = nameRadioValue(match, "c.target_id", "c.target_home_wacn",
+            "c.target_home_system", "c.target_home_id", parameters);
+        String member = nameRadioValue(match, "member.local_id", "nullif(member.home_wacn,-1)",
+            "nullif(member.home_system,-1)", "nullif(member.home_id,-1)", parameters);
+        conditions.add("c.protocol IN(1,2) AND ((c.call_type IN(1,2) AND " + target + ") OR " +
+            "EXISTS(SELECT 1 FROM recording_patch_member member WHERE member.call_id=c.id " +
+            "AND member.kind=1 AND " + member + "))");
+    }
+
     private static String radioIdentityPredicate(IdentityNameMatch match, List<Object> parameters)
     {
         String source = nameRadioValue(match, "c.source_id", "c.source_home_wacn",
@@ -822,7 +842,7 @@ final class ManagedRecordingStore implements AutoCloseable
             "AND member.kind=2 AND " + member + "))";
     }
 
-    /** Home metadata represents the permanent subscriber; its local ID may be a different Working ID. */
+    /** Home metadata represents the permanent identity; its captured local address can differ. */
     private static String nameRadioValue(IdentityNameMatch match, String localId, String homeWacn,
                                          String homeSystem, String homeId, List<Object> parameters)
     {
@@ -868,6 +888,7 @@ final class ManagedRecordingStore implements AutoCloseable
         addSystemPredicate(conditions, parameters, filter.systemKey,
             "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
         addRadioIdentityPredicate(conditions, parameters, filter.radioIdentityMatch);
+        addGroupIdentityPredicate(conditions, parameters, filter.talkgroupIdentityMatch);
         if(filter.channelId != null && !filter.channelId.isBlank())
         {
             conditions.add("c.channel_id=(SELECT id FROM recording_channel WHERE channel_uuid=?)");
@@ -1049,6 +1070,9 @@ final class ManagedRecordingStore implements AutoCloseable
         }
         int protocol = row.getInt("protocol");
         String systemKey = row.getString("system_key");
+        String servingSystemKey = isP25Protocol(protocol) && RadioSystemKey.isP25Native(systemKey) &&
+            winner != null && systemKey.equals(RadioSystemKey.p25(winner.wacn(), winner.systemId())) ?
+            systemKey : null;
         if(systemKey == null && isP25Protocol(protocol))
         {
             Site owner = winner;
@@ -1078,7 +1102,7 @@ final class ManagedRecordingStore implements AutoCloseable
             nullableInt(row, "target_home_system"), nullableInt(row, "target_home_id"),
             nullableLong(row, "frequency_hz"), nullableInt(row, "timeslot"), nullableInt(row, "nac"),
             nullableInt(row, "tone_kind"), row.getString("tone"), winner, List.copyOf(also),
-            List.copyOf(members));
+            List.copyOf(members), servingSystemKey);
     }
 
     private static Site site(ResultSet rows, String prefix) throws SQLException

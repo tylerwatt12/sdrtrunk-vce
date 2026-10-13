@@ -555,7 +555,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(focusKey.contains("encodeURIComponent(observedGroupIdentityKey(row))"));
         assertTrue(prefill.contains("observedGroupIdentityFocusKey(row)"));
         assertTrue(create.contains("dataset.observedKey = observedGroupIdentityFocusKey(row)"));
-        assertTrue(identity.contains("identityNumber(row, row.group_identity_id)"));
+        assertTrue(identity.contains("groupIdentifierText(row, row.group_identity_id)"));
         assertTrue(detail.contains("'Local Talkgroup'"));
         assertTrue(detail.contains("other recognized signaling actions"));
         assertTrue(create.contains("!observedGroupIdentityPromotionSupported(row)"));

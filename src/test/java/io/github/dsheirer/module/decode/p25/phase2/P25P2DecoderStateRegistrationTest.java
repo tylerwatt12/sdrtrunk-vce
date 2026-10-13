@@ -26,7 +26,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
@@ -91,7 +91,7 @@ class P25P2DecoderStateRegistrationTest
         assertEquals(0xBEE00, radio.getWacn());
         assertEquals(0x954, radio.getSystem());
         assertEquals(831_102, radio.getRadio());
-        P25WuidAssignmentRegistry.AssignmentObservation observation = event.getAssignmentObservation();
+        P25IdentityResolver.AssignmentObservation observation = event.getAssignmentObservation();
         assertNotNull(observation);
         assertEquals(0xBEE00, observation.servingWacn());
         assertEquals(0x3A9, observation.servingSystem());
@@ -99,7 +99,7 @@ class P25P2DecoderStateRegistrationTest
         assertEquals(0xBEE00, observation.subscriber().homeWacn());
         assertEquals(0x954, observation.subscriber().homeSystemId());
         assertEquals(831_102, observation.subscriber().subscriberId());
-        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, observation.evidence());
+        assertEquals(P25IdentityResolver.Evidence.REGISTRATION, observation.evidence());
     }
 
     @Test

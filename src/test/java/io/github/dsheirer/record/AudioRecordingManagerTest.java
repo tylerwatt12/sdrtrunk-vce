@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.record;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -323,10 +325,10 @@ class AudioRecordingManagerTest
         aliases.addAlias(canonical);
         List<RadioRecordingFixture> fixtures = List.of(
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
-                85610, 0xBEE00, 0x687, 85610, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT),
+                85610, 0xBEE00, 0x687, 85610, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT),
                 "85610", "85610 Local Unit"),
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
-                501, 0xBEE00, 0x687, 85610, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT),
+                501, 0xBEE00, 0x687, 85610, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT),
                 "501", "501 Working Unit"),
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
                 85610, 0xBEE00, 0x687, 85610),

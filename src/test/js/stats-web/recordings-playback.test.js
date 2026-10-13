@@ -82,7 +82,7 @@ async function main() {
       name_query: 'Foreign OTA %_401', system_key: 'p25:00001:001' });
     const selected = recordingSuggestionFilters(previousFilters, suggestion);
     assert.deepEqual(selected, { ...previousFilters, q: 'Foreign OTA %_401',
-      system_key: 'p25:00001:001', radio_id: '', radio_identity_key: '', talkgroup_id: '',
+      system_key: 'p25:00001:001', radio_id: '', radio_identity_key: '', talkgroup_id: '', talkgroup_identity_key: '',
       radio_min: '', radio_max: '', talkgroup_min: '', talkgroup_max: '', alias_list_id: '' },
     'OTA selection must search its exact name in the receiving system without stale raw identity constraints');
     assert.notEqual(selected, previousFilters, 'Selecting a suggestion must return independent filter state');
@@ -120,16 +120,16 @@ async function main() {
   assert.deepEqual(recordingResultFilter(recordedIdentity,
     { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00001-001-1201' },
     'target').filters,
-  { system_key: 'p25:00001:001', talkgroup_id: '1201', talkgroup_min: '', talkgroup_max: '' },
+  { system_key: 'p25:00001:001', talkgroup_identity_key: 'v1-g-00001-001-1201', talkgroup_id: '', talkgroup_min: '', talkgroup_max: '' },
   'Selecting a talkgroup clears only its replaced numeric range');
   assert.equal(recordingResultFilter({ ...recordedIdentity, target_home_wacn: 2,
     target_home_system_id: 2, target_home_id: 777 },
   { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00002-002-777' },
-  'target'), null, 'A foreign talkgroup must not become a misleading local numeric-ID search');
+  'target').filters.talkgroup_identity_key, 'v1-g-00002-002-777', 'A foreign talkgroup filters its full home tuple within its recorded serving scope');
   assert.equal(recordingResultFilter({ ...recordedIdentity, target_home_wacn: 1,
     target_home_system_id: 1, target_home_id: 777 },
   { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00001-001-777' },
-  'target'), null, 'An unrepresentable talkgroup home/Working ID difference stays unlinked');
+  'target').filters.talkgroup_identity_key, 'v1-g-00001-001-777', 'The canonical home talkgroup filters separately from its observed local TG ID');
   for (const protocol of ['DMR', 'NXDN']) {
     const system = `${protocol.toLowerCase()}:7`;
     assert.deepEqual(recordingResultFilter({ ...recordedIdentity, protocol, system_key: system },
@@ -488,8 +488,8 @@ async function main() {
     const otaMember = { kind: 'radio', id: 401, ota_alias: 'Foreign member OTA',
       home_wacn: 2, home_system_id: 2, home_identity_id: 777, entity_ref: { key: 'member' } };
     const otaMemberFacts = memberFacts([otaMember]);
-    assert.equal(otaMemberFacts.find((fact) => fact.name === 'Patch members').detail, 'Foreign member OTA · 401',
-      'Patch summaries show the OTA name while preserving the recorded local ID');
+    assert.equal(otaMemberFacts.find((fact) => fact.name === 'Patch members').detail, 'Foreign member OTA · 00002.002.777 (Working ID 401)',
+      'Patch summaries show the OTA name and complete member identity with its observed Working ID');
     assert.equal(otaMemberFacts.find((fact) => fact.name === 'Member 1 alias').detail, 'Foreign member OTA',
       'Patch member details expose the OTA name in the existing alias slot');
     assert.equal(memberFacts([{ ...otaMember, alias: 'Configured member' }])

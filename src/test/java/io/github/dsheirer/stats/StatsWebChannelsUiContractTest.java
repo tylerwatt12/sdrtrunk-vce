@@ -205,14 +205,17 @@ class StatsWebChannelsUiContractTest
         String groupColumns = function(source, "function channelGroupIdentityColumns()");
         String radioColumns = function(source, "function channelRadioColumns()");
 
-        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id)"));
-        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id, row.last_source_alias_name)"));
+        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id, undefined, row.last_source_entity_ref, 'last_source')"));
+        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id, row.last_source_alias_name,"));
+        assertTrue(groupColumns.contains("row.last_source_entity_ref ?? null, 'last_source')"));
         assertTrue(radioColumns.contains("render: (row) => radioLink(row)"));
         assertTrue(radioColumns.contains("radioLink(row, undefined, aliasLabel(row))"));
-        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id)"));
-        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name)"));
-        assertTrue(radioColumns.contains("radioLink(row, row.last_peer_radio_id)"));
-        assertTrue(radioColumns.contains("radioLink(row, row.last_peer_radio_id, row.last_peer_alias_name)"));
+        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id, undefined, row.last_talkgroup_entity_ref, 'last_talkgroup')"));
+        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name,"));
+        assertTrue(radioColumns.contains("row.last_talkgroup_entity_ref ?? null, 'last_talkgroup')"));
+        assertTrue(radioColumns.contains("canonical_identity: row.last_peer_canonical_identity"));
+        assertTrue(radioColumns.contains("row.last_peer_radio_id, undefined, row.last_peer_entity_ref)"));
+        assertTrue(radioColumns.contains("row.last_peer_radio_id, row.last_peer_alias_name, row.last_peer_entity_ref)"));
     }
 
     private static String source() throws Exception

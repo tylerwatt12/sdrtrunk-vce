@@ -28,7 +28,7 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -95,7 +95,7 @@ class P25P1DecoderStateRegistrationTest
         assertEquals(0xBEE00, radio.getWacn());
         assertEquals(0x954, radio.getSystem());
         assertEquals(831_102, radio.getRadio());
-        P25WuidAssignmentRegistry.AssignmentObservation observation = event.getAssignmentObservation();
+        P25IdentityResolver.AssignmentObservation observation = event.getAssignmentObservation();
         assertNotNull(observation);
         assertEquals(0xBEE00, observation.servingWacn());
         assertEquals(0x3A9, observation.servingSystem());
@@ -103,7 +103,7 @@ class P25P1DecoderStateRegistrationTest
         assertEquals(0xBEE00, observation.subscriber().homeWacn());
         assertEquals(0x954, observation.subscriber().homeSystemId());
         assertEquals(831_102, observation.subscriber().subscriberId());
-        assertEquals(P25WuidAssignmentRegistry.Evidence.REGISTRATION, observation.evidence());
+        assertEquals(P25IdentityResolver.Evidence.REGISTRATION, observation.evidence());
     }
 
     @Test
@@ -155,7 +155,7 @@ class P25P1DecoderStateRegistrationTest
         Channel channel = new Channel("P25 Deregistration", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         channel.setP25SiteIdentity(site);
-        P25WuidAssignmentRegistry registry = new P25WuidAssignmentRegistry();
+        P25IdentityResolver registry = new P25IdentityResolver();
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel,
             io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry.empty(), registry);
         P25P1DecoderState state = new P25P1DecoderState(channel, manager);
@@ -179,7 +179,7 @@ class P25P1DecoderStateRegistrationTest
         assertInstanceOf(APCO25RadioIdentifier.class, enrichedFrom(registry, site, WORKING_ID, 2_001L));
     }
 
-    private static Identifier<?> enrichedFrom(P25WuidAssignmentRegistry registry, P25SiteIdentity site,
+    private static Identifier<?> enrichedFrom(P25IdentityResolver registry, P25SiteIdentity site,
                                                 int workingId, long timestamp)
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection(

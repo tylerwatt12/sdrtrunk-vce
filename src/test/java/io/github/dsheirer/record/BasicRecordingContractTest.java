@@ -4,6 +4,8 @@
  */
 package io.github.dsheirer.record;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -32,7 +34,7 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
@@ -217,7 +219,7 @@ class BasicRecordingContractTest
             for(var role: List.of(Role.FROM, Role.TO))
             {
                 var enriched = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(observed,
-                    0xBEE00, 0x687, 85610, role, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+                    0xBEE00, 0x687, 85610, role, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
                 assertEquals(Integer.toString(observed), BasicRecordingContract.sourceIdentifier(enriched));
                 assertEquals(Integer.toString(observed), BasicRecordingContract.targetIdentifier(enriched));
                 assertEquals(Integer.toString(observed), BasicRecordingContract.filenameIdentifier(enriched));
@@ -226,7 +228,7 @@ class BasicRecordingContractTest
             }
             IdentifierCollection identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(48530),
                 APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(observed, 0xBEE00, 0x687, 85610,
-                    Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+                    Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)));
             assertEquals("20261007_123456__TO_48530_FROM_" + observed + ".mp3",
                 BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1));
 
@@ -239,7 +241,7 @@ class BasicRecordingContractTest
         var site = new P25SiteIdentity(0xBEE00, 0x687, 1, 1);
         for(int observed: List.of(85610, 501))
         {
-            var registry = new P25WuidAssignmentRegistry();
+            var registry = new P25IdentityResolver();
             registry.register(site, new P25RadioPresence(new P25SubscriberIdentity(0xBEE00, 0x687, 85610),
                 observed), 1_000L, null);
             var identifiers = new MutableIdentifierCollection(List.of(APCO25Talkgroup.create(48530),

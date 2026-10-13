@@ -1,6 +1,6 @@
 import { createDualRange } from '../core/dual-range.js?v=1';
 import { systemLabel, systemName } from '../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=6';
+import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 
@@ -30,7 +30,7 @@ function queryPath(root, values = {}) {
 export function recordingSuggestionFilters(filters, suggestion) {
   const next = { ...filters };
   if (!suggestion?.name_query) return next;
-  for (const key of ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max', 'talkgroup_id',
+  for (const key of ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max', 'talkgroup_id', 'talkgroup_identity_key',
     'talkgroup_min', 'talkgroup_max', 'alias_list_id']) next[key] = '';
   next.q = String(suggestion.name_query);
   if (suggestion.system_key) next.system_key = String(suggestion.system_key);
@@ -79,22 +79,27 @@ export function recordingResultFilter(row, reference, field = '') {
   if (!scope || !['radio', 'talkgroup', 'patch_group'].includes(kind)) return null;
   const tuple = /^v1-([rgp])-(x|[0-9a-f]{5})-(x|[0-9a-f]{3})-([1-9][0-9]*)$/.exec(reference?.identity_key || '');
   if (reference?.identity_key && (!tuple || (tuple[2] === 'x') !== (tuple[3] === 'x') ||
-      Number(tuple[4]) > 0xFFFFFF || (kind === 'radio' ? tuple[1] !== 'r' : !['g', 'p'].includes(tuple[1])))) return null;
+      Number(tuple[4]) > (tuple[2] === 'x' ? 0xFFFFFF : kind === 'radio' ? 0xFFFFFC : 0xFFFE) ||
+      (kind === 'radio' ? tuple[1] !== 'r' : !['g', 'p'].includes(tuple[1])))) return null;
   if (reference?.radio_system_key && system && reference.radio_system_key !== system) return null;
   if (kind !== 'radio') {
     const target = field === 'target' || field === 'target_entity_ref';
-    if (/^p25:/.test(system || '') && tuple?.[2] !== 'x' && tuple &&
-        `p25:${tuple[2]}:${tuple[3]}` !== system) return null;
-    const home = ['target_home_wacn', 'target_home_system_id', 'target_home_id'].map(key => value(row, key));
-    if (target && /^p25:/.test(system || '') && home.some(item => item !== null) &&
-        (home.some(item => item === null) || Number(home[0]) !== Number.parseInt(system.slice(4, 9), 16) ||
-          Number(home[1]) !== Number.parseInt(system.slice(10), 16) ||
-          Number(home[2]) !== Number(value(row, 'talkgroup_id', 'group_id')))) return null;
+    const p25 = /^p25:[0-9a-f]{5}:[0-9a-f]{3}$/.test(system || '');
+    const facts = target ? p25IdentityFacts(row, 'target', kind) : null;
+    let exact = tuple && tuple[2] !== 'x' && tuple[3] !== 'x' ? reference.identity_key : null;
+    if (p25 && !exact && facts) {
+      const home = facts.canonical;
+      exact = `v1-${kind === 'patch_group' || String(row.call_type).toUpperCase() === 'PATCH' ? 'p' : 'g'}-${
+        Number(home.wacn).toString(16).padStart(5, '0')}-${Number(home.system_id).toString(16).padStart(3, '0')}-${home.talkgroup_id}`;
+    }
+    const homeFields = ['target_home_wacn', 'target_home_system_id', 'target_home_id'].map(key => value(row, key));
+    if (p25 && target && !exact && homeFields.some(item => item !== null)) return null;
+    if (p25 && exact) return { key: 'talkgroup_id', filters: { ...scope,
+      talkgroup_identity_key: exact, talkgroup_id: '', talkgroup_min: '', talkgroup_max: '' } };
     const id = target ? value(row, 'talkgroup_id', 'group_id') ?? tuple?.[4] :
       tuple?.[4] ?? value(row, 'talkgroup_id', 'group_id');
-    return id !== null && id !== undefined && Number(id) > 0 ? { key: 'talkgroup_id', filters: {
-      ...scope, talkgroup_id: String(id), talkgroup_min: '', talkgroup_max: ''
-    } } : null;
+    return id != null && Number(id) > 0 ? { key: 'talkgroup_id', filters: { ...scope,
+      talkgroup_id: String(id), talkgroup_identity_key: '', talkgroup_min: '', talkgroup_max: '' } } : null;
   }
   const target = field === 'target' || field === 'target_entity_ref';
   const source = field === 'source' || field === 'source_entity_ref';
@@ -122,6 +127,7 @@ export function recordingResultFilter(row, reference, field = '') {
 }
 
 function recordingRadioId(row, prefix, id) {
+  if (id == null) return id;
   if (!/^(?:APCO25|P25)(?:_|$)/i.test(String(row?.protocol || ''))) return id;
   const identity = {
     wacn: row?.[`${prefix}_home_wacn`],
@@ -140,6 +146,27 @@ function recordingRadioId(row, prefix, id) {
   }) || id;
 }
 
+function recordingGroupId(row, prefix, id) {
+  if (id == null) return id;
+  const observedRow = { ...row, [`${prefix}_id`]: id,
+    [`${prefix}_observed_local_id`]: Object.prototype.hasOwnProperty.call(row, `${prefix}_observed_local_id`) ?
+      row[`${prefix}_observed_local_id`] : id };
+  const facts = p25IdentityFacts(observedRow, prefix, 'talkgroup');
+  const home = row?.[`${prefix}_home_system`];
+  return p25IdentifierText(observedRow, id, { prefix, kind: 'talkgroup',
+    homeSystemName: row?.[`${prefix}_home_system_name`] || systemName(home) ||
+      (facts ? systemName(facts.homeSystemKey) : '') }) || id;
+}
+
+function recordingMemberId(row, member, id) {
+  if (!member || typeof member !== 'object') return id;
+  const kind = String(member.kind || member.form || '').toLowerCase() === 'radio' ? 'radio' : 'talkgroup';
+  const observed = { ...member, serving_system_key: p25ServingSystemKey(row) };
+  const identity = p25IdentityFacts(observed, '', kind);
+  return identity ? p25IdentifierText(observed, id, { kind,
+    homeSystemName: member.home_system_name || systemName(member.home_system) || systemName(identity.homeSystemKey) }) || id : id;
+}
+
 function label(row) {
   const group = value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name');
   const groupId = value(row, 'talkgroup_id', 'group_id');
@@ -147,7 +174,7 @@ function label(row) {
   const destinationAlias = value(row, 'destination_radio_alias', 'destination_radio_ota_alias');
   const channel = value(row, 'channel_name', 'analog_channel_name');
   if (['NBFM', 'AM'].includes(value(row, 'protocol'))) return channel || 'Recorded channel';
-  return group || (groupId !== null ? `Talkgroup ${groupId}` :
+  return group || (groupId !== null ? `${String(row.call_type).toUpperCase() === 'PATCH' ? 'Patch' : 'Talkgroup'} ${recordingGroupId(row, 'target', groupId)}` :
     (destination !== null ? `Direct to ${destinationAlias || `Radio ${recordingRadioId(row, 'target', destination)}`}` : channel)) ||
     systemName(row) || 'Recorded call';
 }
@@ -290,7 +317,7 @@ export function createRecordingsFeature(deps) {
     getSourceNameDisplay = () => 'talker_alias' } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
-    channel_id: '', alias_list_id: '', radio_identity_key: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
+    channel_id: '', alias_list_id: '', radio_identity_key: '', talkgroup_identity_key: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
     talkgroup_min: '', talkgroup_max: '', radio_min: '', radio_max: '',
     call_type: '', voice_type: '', protocol: '', wacn: '', sysid: '', rfss: '', site_id: ''
   };
@@ -349,7 +376,8 @@ export function createRecordingsFeature(deps) {
           Object.assign(search, match.filters);
           selectedSuggestions.set(match.key, { label: String(text),
             appliedKeys: match.key === 'site' ? ['wacn', 'sysid', 'rfss', 'site_id'] :
-              match.filters.radio_identity_key ? ['radio_identity_key'] : [] });
+              match.filters.radio_identity_key ? ['radio_identity_key'] :
+                match.filters.talkgroup_identity_key ? ['talkgroup_identity_key'] : [] });
           if (match.filters.system_key && match.key !== 'system_key') selectedSuggestions.set('system_key', {
             label: systemLabel(row), id: match.filters.system_key
           });
@@ -893,8 +921,14 @@ export function createRecordingsFeature(deps) {
       const name = typeof member === 'object' ? value(member, 'alias', 'name', 'ota_alias') : null;
       if (id === null && !name) return;
       if (list.childNodes.length) list.append(', ');
-      const text = name ? `${name}${id !== null ? ` · ${id}` : ''}` : String(id);
-      list.append(entityLink(text, member?.entity_ref, { ...row, talkgroup_id: member?.id ?? member?.talkgroup_id }, 'member'));
+      const kind = String(member?.kind || member?.form || '').toLowerCase();
+      const radio = kind === 'radio';
+      const display = recordingMemberId(row, member, id);
+      const text = name ? `${name}${display != null ? ` · ${display}` : ''}` : String(display);
+      list.append(entityLink(text, member?.entity_ref, { ...row,
+        ...(radio ? { destination_radio_id: id, talkgroup_id: null } : { talkgroup_id: id }),
+        target_home_wacn: member?.home_wacn, target_home_system_id: member?.home_system_id,
+        target_home_id: member?.home_identity_id }, 'member'));
     });
     return list.childNodes.length ? list : '';
   }
@@ -922,15 +956,15 @@ export function createRecordingsFeature(deps) {
           typeof item === 'string' ? item : value(item, 'name', 'id')).filter(Boolean).join(', ') : null]
       ]],
       ['Source & target identities', [
-        ['Source Radio ID', value(row, 'source_id', 'radio_id'), 'source_entity_ref'],
+        ['Source Radio ID', recordingRadioId(row, 'source', value(row, 'source_id', 'radio_id')), 'source_entity_ref'],
         ['Source alias', value(row, 'source_alias', 'radio_alias'), 'source_entity_ref'],
         ['Source group', value(row, 'source_group', 'radio_group')],
         ['Source description', value(row, 'source_description', 'radio_description')],
-        [`${group} ID`, value(row, 'talkgroup_id', 'group_id'), 'target_entity_ref'],
+        [`${group} ID`, recordingGroupId(row, 'target', value(row, 'talkgroup_id', 'group_id')), 'target_entity_ref'],
         [`${group} alias`, value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name'), 'target_entity_ref'],
         [`${group} group`, value(row, 'talkgroup_group', 'group_group')],
         [`${group} description`, value(row, 'talkgroup_description', 'group_description')],
-        ['Destination Radio ID', value(row, 'destination_radio_id'), 'target_entity_ref'],
+        ['Destination Radio ID', recordingRadioId(row, 'target', value(row, 'destination_radio_id')), 'target_entity_ref'],
         ['Destination alias', value(row, 'destination_radio_alias', 'destination_radio_ota_alias'), 'target_entity_ref'],
         ['Destination group', value(row, 'destination_radio_group')],
         ['Destination description', value(row, 'destination_radio_description')], ['Patch members', patchMembers(row)]
@@ -982,7 +1016,7 @@ export function createRecordingsFeature(deps) {
       if (!member || typeof member !== 'object') return [];
       const prefix = `Member ${index + 1}`;
       return [[`${prefix} kind`, prettify(value(member, 'kind'))],
-        [`${prefix} ID`, value(member, 'id', 'talkgroup_id'), member.entity_ref],
+        [`${prefix} ID`, recordingMemberId(row, member, value(member, 'id', 'talkgroup_id')), member.entity_ref],
         [`${prefix} alias`, value(member, 'alias', 'name', 'ota_alias'), member.entity_ref],
         [`${prefix} home system name`, value(member, 'home_system_name') || systemName(member.home_system),
           member.home_system?.entity_ref],
@@ -1173,7 +1207,7 @@ export function createRecordingsFeature(deps) {
         systemLabel(row), row.radio_system_entity_ref,
         system],
       ['target', value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup',
-        !analog && groupId !== null ? `${label(row)} · ${groupId}` : null, row.target_entity_ref,
+        !analog && groupId !== null ? `${label(row)} · ${recordingGroupId(row, 'target', groupId)}` : null, row.target_entity_ref,
         !analog && groupId !== null && system && `${system}|${value(row, 'call_type')}|${groupId}|` +
           ['target_home_wacn', 'target_home_system_id', 'target_home_id'].map((key) => value(row, key)).join('|')],
       ['description', analog ? 'Description' : 'Talkgroup description',
@@ -1232,7 +1266,7 @@ export function createRecordingsFeature(deps) {
     const hasAlias = value(row, 'talkgroup_alias', 'group_alias', 'talkgroup_name');
     if (!analog && id !== null && !sharedGroup && hasAlias) {
       const identity = node('span', 'recordings-call-id');
-      identity.append(entityLink(`${value(row, 'call_type') === 'PATCH' ? 'Patch' : 'TG'} ${id}`,
+      identity.append(entityLink(`${value(row, 'call_type') === 'PATCH' ? 'Patch' : 'TG'} ${recordingGroupId(row, 'target', id)}`,
         row.target_entity_ref, row, 'target'));
       heading.append(identity);
     } else if (!analog && id === null && value(row, 'destination_radio_id') !== null &&
@@ -1317,7 +1351,7 @@ export function createRecordingsFeature(deps) {
       if (!matches.every(Boolean)) continue;
       const byIdentity = ['system', 'target', 'channel', 'source', 'site'].includes(key);
       if (byIdentity && (!identity || !matches.every((match) => match[4] === identity))) continue;
-      if (!byIdentity && !matches.every((match) => match[2] === text)) continue;
+      if ((!byIdentity || ['source', 'target'].includes(key)) && !matches.every((match) => match[2] === text)) continue;
       const knownRefs = matches.map((match) => match[3]).filter(Boolean);
       if (knownRefs.some((candidate) => JSON.stringify(candidate) !== JSON.stringify(knownRefs[0]))) continue;
       // Navigation is optional; a missing link does not change a proven system or channel identity.
@@ -1369,7 +1403,7 @@ export function createRecordingsFeature(deps) {
     const groups = [
       ['system_key', ['system_key'], 'System'],
       ['site', ['site', 'wacn', 'sysid', 'rfss', 'site_id'], 'Site'],
-      ['talkgroup_id', ['talkgroup_id', 'talkgroup_min', 'talkgroup_max'], 'Talkgroup'],
+      ['talkgroup_id', ['talkgroup_id', 'talkgroup_identity_key', 'talkgroup_min', 'talkgroup_max'], 'Talkgroup'],
       ['radio_id', ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max'], 'Radio'],
       ['channel_id', ['channel_id'], 'Channel'], ['alias_list_id', ['alias_list_id'], 'Alias List']
     ];
@@ -1911,12 +1945,13 @@ export function createRecordingsFeature(deps) {
       search.range = 'custom';
       appliedRange = search.range;
       selectedSuggestions.clear();
-      for (const [key, names] of [['system_key', ['system_key']], ['talkgroup_id', ['talkgroup_id']],
+      for (const [key, names] of [['system_key', ['system_key']], ['talkgroup_id', ['talkgroup_identity_key', 'talkgroup_id']],
         ['radio_id', ['radio_identity_key', 'radio_id']], ['site', ['rfss', 'site_id']],
         ['channel_id', ['channel_id']], ['alias_list_id', ['alias_list_id']]]) {
         const values = names.map(name => search[name]).filter(Boolean);
         if (values.length) selectedSuggestions.set(key, { label: values.join(' · '),
           appliedKeys: key === 'radio_id' && search.radio_identity_key ? ['radio_identity_key'] :
+            key === 'talkgroup_id' && search.talkgroup_identity_key ? ['talkgroup_identity_key'] :
             key === 'site' ? ['wacn', 'sysid', 'rfss', 'site_id'] : [] });
       }
     }

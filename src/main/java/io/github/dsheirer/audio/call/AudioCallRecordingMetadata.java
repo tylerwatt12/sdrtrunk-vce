@@ -10,6 +10,8 @@
  */
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
@@ -118,7 +120,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
     {
         return subscriber != null || workingId != null ? new ResolvedRadioIdentity(
             Protocol.APCO25_PHASE2.name().equals(protocol) ? Protocol.APCO25_PHASE2 : Protocol.APCO25,
-            workingId, subscriber, ResolvedRadioIdentity.Evidence.UNKNOWN) : null;
+            workingId, subscriber, IdentityResolutionEvidence.UNKNOWN) : null;
     }
 
     public static AudioCallRecordingMetadata captureAtSnapshot(AliasList aliasList,
@@ -479,7 +481,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
     private static Integer p25ObservedWorkingId(ResolvedRadioIdentity identity)
     {
         return identity != null && (identity.subscriber() != null ||
-            identity.evidence() == ResolvedRadioIdentity.Evidence.UNKNOWN) ? identity.observedWorkingId() : null;
+            identity.evidence() == IdentityResolutionEvidence.UNKNOWN) ? identity.observedWorkingId() : null;
     }
 
     /**

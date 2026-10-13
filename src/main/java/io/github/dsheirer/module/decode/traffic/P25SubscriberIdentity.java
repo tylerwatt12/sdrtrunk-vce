@@ -12,7 +12,7 @@ package io.github.dsheirer.module.decode.traffic;
 
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.protocol.Protocol;
 
 /**
@@ -52,7 +52,7 @@ public record P25SubscriberIdentity(int homeWacn, int homeSystemId, int subscrib
 
     public String display()
     {
-        return P25SubscriberIdentityFormatter.format(homeWacn, homeSystemId, subscriberId);
+        return P25IdentityFormatter.format(homeWacn, homeSystemId, subscriberId);
     }
 
     @Override

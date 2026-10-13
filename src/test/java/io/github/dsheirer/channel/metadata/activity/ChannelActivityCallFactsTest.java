@@ -17,6 +17,8 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
@@ -264,13 +266,19 @@ class ChannelActivityCallFactsTest
                 var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(202, 0xBEE01, 0x124, 901);
                 f.observe(1, 1_000, 1_000, false, source, target);
 
-                f.observe(1, 1_000, 1_100, false,
-                    APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE01, 0x124, 900),
-                    APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xBEE01, 0x124, 901));
-                assertSame(source, f.row(1).getSource());
-                assertSame(target, f.row(1).getTarget());
-                assertEquals(101, source.getWorkingAddress());
-                assertEquals(202, target.getWorkingAddress());
+                var latestSourceRaw = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE01, 0x124, 900);
+                var latestTargetRaw = APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xBEE01, 0x124, 901);
+                f.observe(1, 1_000, 1_100, false, latestSourceRaw, latestTargetRaw);
+                var retainedSource = (FullyQualifiedRadioIdentifier)f.row(1).getSource();
+                var retainedTarget = (FullyQualifiedRadioIdentifier)f.row(1).getTarget();
+                assertEquals(source, retainedSource);
+                assertEquals(target, retainedTarget);
+                assertEquals(101, retainedSource.getWorkingAddress());
+                assertEquals(202, retainedTarget.getWorkingAddress());
+                assertEquals(IdentityResolutionEvidence.DIRECT, retainedSource.getResolutionEvidence());
+                assertEquals(IdentityResolutionEvidence.DIRECT, retainedTarget.getResolutionEvidence());
+                assertSame(latestSourceRaw, retainedSource.getRecordingIdentifier());
+                assertSame(latestTargetRaw, retainedTarget.getRecordingIdentifier());
                 assertEquals("Roaming source", f.row(1).getSourceAliases().getFirst().getName());
                 assertEquals("Roaming target", f.row(1).getTargetAliases().getFirst().getName());
 
@@ -313,7 +321,15 @@ class ChannelActivityCallFactsTest
                     new IdentifierCollection(List.of(source, target)), DecodeEventType.CALL_UNIT_TO_UNIT,
                     0, 1_000, 1_000);
                 f.idle();
+                assertEquals("p25:bee02:321", f.row(1).getServingSystemKey());
 
+                var laterSite = new P25NetworkConfigurationSnapshot(
+                    variant == Variant.P25_PHASE1 ? "P25_PHASE_1" : "P25_PHASE_2",
+                    new P25NetworkConfigurationSnapshot.Network(0xBEE03, 0x432, 0x454, null),
+                    new P25NetworkConfigurationSnapshot.CurrentSite(0x432, 0x454, 2, 2, null, true),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), null, List.of());
+                f.model.receiveSiteMetadata(new SiteMetadataEvent(f.parent, laterSite, 1_050));
+                f.idle();
                 f.model.trunkedTrafficEvent(f.parent, traffic, f.channel(1), variant.tdma ? 1 : null,
                     new IdentifierCollection(List.of(f.radio(101), APCO25RadioIdentifier.createTo(202))),
                     DecodeEventType.CALL_UNIT_TO_UNIT, 0, 1_000, 1_100);
@@ -322,6 +338,7 @@ class ChannelActivityCallFactsTest
                 assertSame(target, f.row(1).getTarget());
                 assertEquals("Canonical home source", f.row(1).getSourceAliases().getFirst().getName());
                 assertEquals("Canonical home target", f.row(1).getTargetAliases().getFirst().getName());
+                assertEquals("p25:bee02:321", f.row(1).getServingSystemKey());
             }
         }
     }

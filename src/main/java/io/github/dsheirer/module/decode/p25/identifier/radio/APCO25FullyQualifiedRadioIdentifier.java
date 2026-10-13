@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.module.decode.p25.identifier.radio;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -113,14 +115,14 @@ public class APCO25FullyQualifiedRadioIdentifier extends FullyQualifiedRadioIden
         return new APCO25FullyQualifiedRadioIdentifier(workingAddress, wacn, system, id, role, true);
     }
     private APCO25FullyQualifiedRadioIdentifier(int workingAddress, int wacn, int system, int id, Role role,
-                                                ResolvedRadioIdentity.Evidence evidence)
+                                                IdentityResolutionEvidence evidence)
     {
         super(workingAddress, wacn, system, id, role, true, evidence);
     }
 
     public static APCO25FullyQualifiedRadioIdentifier createWithWorkingAddress(int workingAddress, int wacn,
                                                                                int system, int id, Role role,
-                                                                               ResolvedRadioIdentity.Evidence evidence)
+                                                                               IdentityResolutionEvidence evidence)
     {
         return new APCO25FullyQualifiedRadioIdentifier(workingAddress, wacn, system, id, role, evidence);
     }

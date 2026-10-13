@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -468,7 +469,7 @@ final class StatsLiveService implements AutoCloseable
             }
             LinkedHashMap<String,Object> row = new LinkedHashMap<>(entry.getValue());
             NON_MARKER_FIELDS.forEach(row::remove);
-            return Map.copyOf(row);
+            return Collections.unmodifiableMap(row);
         }).toList();
         compact.put("rows", rows);
         return Map.copyOf(compact);
@@ -906,6 +907,8 @@ final class StatsLiveService implements AutoCloseable
             rowSystemChannel);
 
         row.put("key", boundedText(snapshot.key(), MAXIMUM_LIVE_TEXT_LENGTH));
+        //Present-null is authoritative: current navigation/configuration cannot fill missing receiver proof.
+        row.put("serving_system_key", snapshot.servingSystemKey());
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "configuration_id", configurationId, MAXIMUM_LIVE_TEXT_LENGTH);
         putRemoteOrigin(row, remoteOrigins.find(configurationId));
@@ -987,8 +990,8 @@ final class StatsLiveService implements AutoCloseable
             put(row, "alias_list_id", navigation.aliasListId());
             putText(row, "alias_list_name", navigation.aliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "protocol", navigation.protocol(), MAXIMUM_LIVE_TEXT_LENGTH);
-            putP25SubscriberIdentity(row, "source", navigation.sourceMatcher());
-            putP25SubscriberIdentity(row, "target", navigation.targetMatcher());
+            putP25Identity(row, "source", navigation.sourceMatcher());
+            putP25Identity(row, "target", navigation.targetMatcher());
             row.put("source_aliases", navigation.sourceAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
                 .map(StatsLiveService::activityAliasReference).toList());
             row.put("target_aliases", navigation.targetAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
@@ -1023,7 +1026,7 @@ final class StatsLiveService implements AutoCloseable
             }
         }
 
-        return Map.copyOf(row);
+        return Collections.unmodifiableMap(row);
     }
 
     static boolean matchesStructuredP25Site(WebEntityNavigationCatalog.Channel channel,
@@ -1058,15 +1061,36 @@ final class StatsLiveService implements AutoCloseable
     }
 
     /**
-     * Publishes canonical P25 subscriber components only when the immutable receiver snapshot explicitly carries a
-     * fully-qualified radio identity key.  Local radio matchers have no identity key and must remain working IDs;
-     * this projection deliberately performs no radio-system or database inference.
+     * Publishes immutable radio/group identity facts captured by the receiver. Home-only identities retain null
+     * local observations; this projection performs no radio-system or database inference.
      */
-    private static void putP25SubscriberIdentity(Map<String,Object> row, String prefix,
-                                                  ChannelActivitySnapshot.MatcherReference matcher)
+    private static void putP25Identity(Map<String,Object> row, String prefix,
+                                       ChannelActivitySnapshot.MatcherReference matcher)
     {
+        if(matcher != null && "p25".equals(matcher.protocol()) &&
+            ("talkgroup".equals(matcher.type()) || "patch_group".equals(matcher.type())))
+        {
+            var group = matcher.groupIdentity();
+            row.put(prefix + "_observed_local_id", group != null ? group.observedLocalId() : null);
+            row.put(prefix + "_identity_source", group != null ? switch(group.evidence())
+            {
+                case DIRECT -> "explicit_identity";
+                case CONFIRMED_ASSIGNMENT -> "group_affiliation_mapping";
+                case UNRESOLVED -> "local_id";
+                case UNKNOWN -> "unresolved";
+            } : "unresolved");
+            if(group != null && group.talkgroup() != null)
+            {
+                row.put(prefix + "_canonical_group_identity", Map.of("wacn", group.talkgroup().homeWacn(),
+                    "system_id", group.talkgroup().homeSystemId(), "talkgroup_id", group.talkgroup().talkgroupId()));
+            }
+            return;
+        }
         if(matcher != null && "radio".equals(matcher.type()) && "p25".equals(matcher.protocol()))
         {
+            row.put(prefix + "_observed_local_id", matcher.radioIdentity() != null ?
+                matcher.radioIdentity().observedWorkingId() : matcher.identityKey() == null && matcher.value() > 0 &&
+                    matcher.value() <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID ? matcher.value() : null);
             row.put(prefix + "_identity_source", matcher.radioIdentity() != null ?
                 switch(matcher.radioIdentity().evidence())
                 {

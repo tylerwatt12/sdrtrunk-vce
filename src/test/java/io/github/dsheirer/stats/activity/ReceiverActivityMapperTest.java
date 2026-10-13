@@ -29,7 +29,7 @@ import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -136,9 +136,9 @@ class ReceiverActivityMapperTest
         APCO25FullyQualifiedRadioIdentifier radio =
             APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(0xFFFD26, 0xBEE00, 0x954, 831_102);
         P25SubscriberIdentity subscriber = new P25SubscriberIdentity(0xBEE00, 0x954, 831_102);
-        P25WuidAssignmentRegistry.AssignmentObservation observation =
-            new P25WuidAssignmentRegistry.AssignmentObservation(0xABCDE, 0x123, 0xFFFD26, subscriber,
-                1_000L, 2_000L, P25WuidAssignmentRegistry.Evidence.REGISTRATION);
+        P25IdentityResolver.AssignmentObservation observation =
+            new P25IdentityResolver.AssignmentObservation(0xABCDE, 0x123, 0xFFFD26, subscriber,
+                1_000L, 2_000L, P25IdentityResolver.Evidence.REGISTRATION);
         P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1_000L,
             P25AffiliationEvent.Outcome.ACCEPTED, P25RadioPresence.from(radio, radio.getWorkingAddress()), observation,
             radio, null);

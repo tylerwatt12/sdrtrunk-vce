@@ -14,6 +14,7 @@ import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.audio.call.CallPlaybackTarget;
 import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
@@ -23,10 +24,11 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.protocol.Protocol;
@@ -43,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -70,6 +73,7 @@ final class StatsWebCallService implements AutoCloseable
     private static final Object ENCODER_WORK = new Object();
     static final int MAXIMUM_METADATA_TEXT_CHARACTERS = 256;
     static final int MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS = 160;
+    private static final int MAXIMUM_PATCH_MEMBERS_PER_KIND = 32;
     static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
     static final int WAVE_HEADER_BYTES = 44;
     private static final long MAXIMUM_AGE_MS = TimeUnit.MINUTES.toMillis(30);
@@ -621,7 +625,12 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "decoder", callLegSource != null && callLegSource.decoderType() != null ?
             callLegSource.decoderType().name() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
-        putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
+        String sourceValue = recordingMetadata != null ? recordingMetadata.sourceValue() : value(source);
+        if(sourceValue == null && source != null && source.getForm() == Form.TALKGROUP)
+        {
+            sourceValue = value(source);
+        }
+        putText(value, "source_id", sourceValue);
         if(recordingMetadata != null && recordingMetadata.sourceP25Identity() != null)
         {
             value.put("source_canonical_identity", Map.of(
@@ -633,6 +642,7 @@ final class StatsWebCallService implements AutoCloseable
                 value.put("source_observed_working_id", recordingMetadata.sourceObservedWorkingId());
             }
         }
+        putP25Identity(value, "source_", source);
         putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
         putText(value, "source_description", recordingMetadata != null ? recordingMetadata.sourceDescription() : null,
             MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
@@ -652,6 +662,27 @@ final class StatsWebCallService implements AutoCloseable
             {
                 value.put("target_observed_working_id", recordingMetadata.destinationObservedWorkingId());
             }
+        }
+        putP25Identity(value, "target_", target);
+        if(target instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+        {
+            value.put("patch_group_id", patch.getValue().getPatchGroup().getValue());
+            List<Map<String,Object>> members = Stream.concat(
+                patch.getValue().getPatchedTalkgroupIdentifiers().stream().limit(MAXIMUM_PATCH_MEMBERS_PER_KIND),
+                patch.getValue().getPatchedRadioIdentifiers().stream().limit(MAXIMUM_PATCH_MEMBERS_PER_KIND))
+                .map(member -> {
+                    Map<String,Object> facts = new LinkedHashMap<>();
+                    facts.put("kind", member.getForm() == Form.RADIO ? "radio" : "talkgroup");
+                    facts.put("id", member.getValue());
+                    facts.put("serving_system_key", servingSystemKey);
+                    putP25Identity(facts, "", member);
+                    return java.util.Collections.unmodifiableMap(facts);
+                }).toList();
+            int memberCount = patch.getValue().getPatchedTalkgroupIdentifiers().size() +
+                patch.getValue().getPatchedRadioIdentifiers().size();
+            value.put("patch_members", members);
+            value.put("patch_member_count", memberCount);
+            value.put("patch_members_truncated", memberCount > members.size());
         }
         putText(value, "target_alias", recordingMetadata != null ? recordingMetadata.destinationAlias() : null);
         putText(value, "target_description",
@@ -746,6 +777,38 @@ final class StatsWebCallService implements AutoCloseable
         return value != null && value >= 1 && value <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
     }
 
+    /** Projects this completed call's detached facts; no live assignment, alias or database lookup is needed. */
+    private static void putP25Identity(Map<String,Object> values, String prefix, Identifier<?> identifier)
+    {
+        CallLegSummary.P25IdentityObservation observation = CallLegSummary.p25IdentityObservation(identifier,
+            identifier instanceof PatchGroupIdentifier);
+        if(observation == null) return;
+        values.put(prefix + "observed_local_id", observation.form() == Form.RADIO ?
+            Integer.valueOf(observation.observedLocalId()) : observation.explicitlyObservedLocalAddress());
+
+        Identifier<?> primary = identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
+            patch.getValue().getPatchGroup() : identifier;
+        P25TalkgroupIdentity group = P25TalkgroupIdentity.from(primary);
+        if(group != null)
+        {
+            values.put(prefix + "canonical_group_identity", Map.of("wacn", group.homeWacn(),
+                "system_id", group.homeSystemId(), "talkgroup_id", group.talkgroupId()));
+        }
+        else if(!values.containsKey(prefix + "canonical_identity"))
+        {
+            P25SubscriberIdentity radio = P25SubscriberIdentity.from(primary);
+            if(radio != null)
+            {
+                values.put(prefix + "canonical_identity", Map.of("wacn", radio.homeWacn(),
+                    "system_id", radio.homeSystemId(), "subscriber_id", radio.subscriberId()));
+                if(validWorkingSubscriber(observation.observedWorkingId()))
+                {
+                    values.put(prefix + "observed_working_id", observation.observedWorkingId());
+                }
+            }
+        }
+    }
+
     private static WebEntityRef navigationReference(WebEntityNavigationCatalog.Channel channel,
                                                     Identifier<?> identifier)
     {
@@ -834,7 +897,7 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         String identifier = target instanceof FullyQualifiedTalkgroupIdentifier || target instanceof PatchGroupIdentifier ?
-            P25SubscriberIdentityFormatter.display(target, servingSystemKey) :
+            P25IdentityFormatter.display(target, servingSystemKey) :
             recordingMetadata != null ? recordingMetadata.destinationValue() : null;
 
         if(identifier == null || identifier.isBlank())
@@ -868,7 +931,7 @@ final class StatsWebCallService implements AutoCloseable
             return null;
         }
 
-        return P25SubscriberIdentityFormatter.display(identity.homeWacn(), identity.homeSystemId(),
+        return P25IdentityFormatter.display(identity.homeWacn(), identity.homeSystemId(),
             identity.subscriberId(), validWorkingSubscriber(workingId) ? workingId : null, servingSystemKey);
     }
 

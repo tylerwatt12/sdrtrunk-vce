@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.web.http;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -17,6 +19,9 @@ import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpPrincipal;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
+import io.github.dsheirer.audio.call.CallLegSummary;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDecisionOutcome;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticCallIdentity;
@@ -173,6 +178,11 @@ class CallMatchingHttpControllerTest
             assertEquals("[endpoint hidden]", selected.at("/call_identity/destination_value").textValue());
             assertEquals("[secret hidden]", selected.at("/call_identity/source_alias").textValue());
             assertEquals("[secret hidden]", selected.at("/call_identity/source_value").textValue());
+            assertEquals(501, selected.at("/call_identity/destination_canonical_group_identity/talkgroup_id").intValue());
+            assertEquals(7654321, selected.at("/call_identity/source_canonical_identity/subscriber_id").intValue());
+            assertEquals(120045, selected.at("/call_identity/source_observed_working_id").intValue());
+            assertTrue(selected.at("/call_identity/destination_observed_local_id").isNull());
+            assertTrue(selected.at("/call_identity/serving_system_key").isNull());
             assertEquals(1, selected.path("decision_reasons").size());
             assertEquals(1, selected.at("/evidence/confirmed_duplicate_pair_count").longValue());
             assertEquals(1, selected.at("/evidence/merge_proof_counts/shared_voice_content").longValue());
@@ -391,7 +401,11 @@ class CallMatchingHttpControllerTest
             sequence, "P25", "P25 Phase 2", 1_000, 2_000, 2_100, 100,
             "http://192.168.1.1/private", "foo(/tmp/file)", "https://name:pwd@example.com/",
             "token=very-secret", null, 1, 2,
-            91, "note;/Users/owner/logs", 2);
+            91, "note;/Users/owner/logs", 2,
+            new CallLegSummary.P25IdentityObservation(Form.TALKGROUP, 501, 0xABCDE, 0x123, 501,
+                null, null, IdentityResolutionEvidence.DIRECT),
+            new CallLegSummary.P25IdentityObservation(Form.RADIO, 120045, 0xBCDEF, 0x234, 7654321,
+                120045, 120045, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT), null);
         LogicalCallDiagnosticWinner winner = new LogicalCallDiagnosticWinner("physical-leg-39",
             "physical-leg-20", LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID,
             new LogicalCallDiagnosticWinner.CriterionValue("configuration-id-39", null, null),

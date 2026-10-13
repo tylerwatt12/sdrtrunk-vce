@@ -49,6 +49,46 @@ class StatsApiV1PayloadTest
     }
 
     @Test
+    void groupTuplesUseExistingKeysAndHistoricalScalarsDoNotInventLocalProof()
+    {
+        Map<String,Object> raw = new java.util.LinkedHashMap<>();
+        raw.put("protocol_code", 1);
+        raw.put("target_identity_key", "v1-g-abcde-123-501");
+        raw.put("target_id", 501);
+        raw.put("source_identity_key", "v1-r-bcdef-234-7654321");
+        raw.put("source_radio_id", 120045);
+        raw.put("serving_system_key", null);
+        JsonNode payload = StatsApiV1Payload.present(raw);
+        assertEquals(501, payload.at("/target_canonical_group_identity/talkgroup_id").intValue());
+        assertTrue(payload.path("target_observed_local_id").isNull());
+        assertEquals(120045, payload.path("source_observed_local_id").intValue());
+        assertTrue(payload.path("serving_system_key").isNull());
+        assertEquals("v1-g-abcde-123-501", payload.path("target_identity_key").textValue());
+        for(int local: new int[]{501, 3101})
+        {
+            raw.put("target_observed_local_id", local);
+            assertTrue(StatsApiV1Payload.present(raw).path("target_observed_local_id").isNull(),
+                "retained scalar values, equal or different, do not prove an independent group association");
+            assertEquals(501, StatsApiV1Payload.present(raw).path("target_id").intValue(),
+                "original stored address remains unchanged");
+        }
+        raw.put("target_canonical_group_identity", Map.of("wacn", 0xABCDE, "system_id", 0x123, "talkgroup_id", 501));
+        assertEquals(3101, StatsApiV1Payload.present(raw).path("target_observed_local_id").intValue(),
+            "typed live/catalog producer retains its own explicit local fact");
+        JsonNode patch = StatsApiV1Payload.present(Map.of("protocol_code", 1,
+            "identity_key", "v1-p-abcde-123-501", "native_id", 501));
+        assertEquals(501, patch.at("/canonical_group_identity/talkgroup_id").intValue());
+        assertTrue(patch.path("observed_local_id").isNull());
+        JsonNode reference = StatsApiV1Payload.present(Map.of("kind", "talkgroup",
+            "identity_key", "v1-g-abcde-123-501", "radio_system_key", "p25:bee00:456"));
+        assertFalse(reference.has("canonical_group_identity"), "navigation references stay exact opaque input");
+        JsonNode data = StatsApiV1Payload.present(Map.of("protocol_code", 1, "kind", "talkgroup",
+            "identity_key", "v1-g-abcde-123-501", "native_id", 501));
+        assertEquals(501, data.at("/canonical_group_identity/talkgroup_id").intValue(),
+            "kind plus identity key does not make a data row an opaque reference");
+    }
+
+    @Test
     void exposesCurrentConventionalProtocols()
     {
         JsonNode am = StatsApiV1Payload.present(Map.of("protocol_code", 11, "decoder", "AM"));

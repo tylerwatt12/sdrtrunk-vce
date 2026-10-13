@@ -4,6 +4,8 @@
  */
 package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -43,7 +45,7 @@ class ExtendedVoiceChannelUserIdentityTest
             ResolvedRadioIdentity identity = ResolvedRadioIdentity.from(source);
             assertEquals(9_001, identity.subscriber().subscriberId());
             assertNull(identity.observedWorkingId());
-            assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, identity.evidence());
+            assertEquals(IdentityResolutionEvidence.DIRECT, identity.evidence());
         }
     }
 

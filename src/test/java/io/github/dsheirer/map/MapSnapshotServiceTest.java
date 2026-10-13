@@ -7,6 +7,7 @@ package io.github.dsheirer.map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
@@ -17,6 +18,8 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +34,79 @@ import org.junit.jupiter.api.Test;
 
 class MapSnapshotServiceTest
 {
+    @Test
+    void capturesReceivingSystemAndWorkingFactsBeforeObserverProjection() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        try(MapSnapshotService service = new MapSnapshotService((aliasList, identifier) ->
+        {
+            projectionEntered.countDown();
+            try
+            {
+                releaseProjection.await(2, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        }, 8, 8, 2))
+        {
+            MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+            identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                501, 0xABCDE, 0x123, 9001));
+            identifiers.update(APCO25Wacn.create(0xBEE00));
+            identifiers.update(APCO25System.create(0x348));
+            service.receive(PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, 1_000)
+                .identifiers(identifiers).location(new GeoPosition(40, -83)).build());
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            identifiers.update(APCO25Wacn.create(0xABCDE));
+            identifiers.update(APCO25System.create(0x123));
+            identifiers.update(APCO25RadioIdentifier.createFrom(7001));
+            releaseProjection.countDown();
+            await(() -> service.snapshot().entities().size() == 1);
+            var entity = service.snapshot().entities().getFirst();
+            assertEquals("p25:bee00:348", entity.servingSystemKey());
+            assertEquals(501, entity.observedWorkingId());
+            assertEquals(0xABCDE, entity.homeWacn());
+            assertEquals(0x123, entity.homeSystemId());
+            assertEquals(9001, entity.radioId());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+        }
+    }
+
+    @Test
+    void missingOrPartialReceivingFactsAndHomeOnlyValuesRemainUnknown() throws Exception
+    {
+        try(MapSnapshotService service = new MapSnapshotService((aliasList, identifier) -> null, 8, 8, 2))
+        {
+            for(int index = 0; index < 3; index++)
+            {
+                MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+                identifiers.update(SystemConfigurationIdentifier.create("Navigation system name"));
+                identifiers.update(index == 1 ? APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                    0, 0xABCDE, 0x123, 9001 + index) :
+                    APCO25FullyQualifiedRadioIdentifier.createFrom(9001 + index, 0xABCDE, 0x123, 9001 + index));
+                if(index == 1) identifiers.update(APCO25Wacn.create(0xBEE00));
+                if(index == 2) identifiers.update(APCO25System.create(0x348));
+                service.receive(PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, 1_000 + index)
+                    .identifiers(identifiers).location(new GeoPosition(40, -83)).build());
+            }
+            await(() -> service.snapshot().entities().size() == 3);
+            for(var entity : service.snapshot().entities())
+            {
+                assertNull(entity.servingSystemKey());
+                assertNull(entity.observedWorkingId());
+                assertEquals("Navigation system name", entity.system());
+                assertEquals(0xABCDE, entity.homeWacn());
+            }
+        }
+    }
+
     @Test
     void keepsTypedHomeIdentityWhenHexDisplayContainsOnlyDigits() throws Exception
     {

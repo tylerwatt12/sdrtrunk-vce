@@ -22,7 +22,7 @@ package io.github.dsheirer.preference.identifier.talkgroup;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -216,7 +216,7 @@ public class APCO25TalkgroupFormatter extends AbstractIntegerFormatter
     public static String format(FullyQualifiedRadioIdentifier identifier, IntegerFormat format, boolean fixedWidth)
     {
         int radio = identifier.getRadio();
-        String canonical = P25SubscriberIdentityFormatter.format(identifier.getWacn(), identifier.getSystem(), radio);
+        String canonical = P25IdentityFormatter.format(identifier.getWacn(), identifier.getSystem(), radio);
         Integer workingAddress = identifier.getWorkingAddress();
         return workingAddress != null ? canonical + " (Working ID " + workingAddress + ")" : canonical;
     }

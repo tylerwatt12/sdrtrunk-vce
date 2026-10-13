@@ -1388,14 +1388,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), decidedAtMs, wait,
             metadata != null ? metadata.destinationValue() : null,
             metadata != null ? metadata.destinationAlias() : null,
-            metadata != null ? metadata.destinationP25Identity() : null,
-            metadata != null ? metadata.destinationObservedWorkingId() : null,
             metadata != null ? metadata.sourceValue() : null,
-            metadata != null ? metadata.sourceAlias() : null,
-            metadata != null ? metadata.sourceP25Identity() : null,
-            metadata != null ? metadata.sourceObservedWorkingId() : null, snapshot.encryptionState(),
+            metadata != null ? metadata.sourceAlias() : null, snapshot.encryptionState(),
             p25 != null ? p25.wacn() : null, p25 != null ? p25.system() : null,
-            source != null ? source.aliasListId() : 0L, aliasListName, learnedSites.size());
+            source != null ? source.aliasListId() : 0L, aliasListName, learnedSites.size(),
+            CallLegSummary.p25IdentityObservation(destination, destination instanceof PatchGroupIdentifier),
+            CallLegSummary.p25IdentityObservation(snapshot.identifierCollection() != null ?
+                snapshot.identifierCollection().getFromIdentifier() : null, false), servingSystemKey(winner.snapshot));
     }
 
     private LogicalCallDiagnosticOutputPolicy diagnosticOutputPolicy(CompletedAudioCall call)
@@ -1761,10 +1760,28 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
         if(exact instanceof FullyQualifiedTalkgroupIdentifier talkgroup)
         {
-            return role == Role.TO ? APCO25FullyQualifiedTalkgroupIdentifier.createTo(local,
-                talkgroup.getWacn(), talkgroup.getSystem(), talkgroup.getTalkgroup()) :
-                APCO25FullyQualifiedTalkgroupIdentifier.createFrom(local, talkgroup.getWacn(),
-                    talkgroup.getSystem(), talkgroup.getTalkgroup());
+            if(winnerLocal instanceof FullyQualifiedTalkgroupIdentifier winnerGroup &&
+                winnerGroup.getRole() == role && winnerGroup.equals(talkgroup))
+            {
+                return winnerGroup;
+            }
+            boolean explicitLocalAddress = talkgroup.hasExplicitLocalAddress() && local.equals(talkgroup.getValue());
+            if(winnerLocal instanceof FullyQualifiedTalkgroupIdentifier winnerGroup &&
+                winnerGroup.hasExplicitLocalAddress() && local.equals(winnerGroup.getValue()))
+            {
+                explicitLocalAddress = true;
+            }
+            APCO25FullyQualifiedTalkgroupIdentifier promoted = explicitLocalAddress ?
+                APCO25FullyQualifiedTalkgroupIdentifier.createWithLocalAddress(local, talkgroup.getWacn(),
+                    talkgroup.getSystem(), talkgroup.getTalkgroup(), role, talkgroup.getResolutionEvidence()) :
+                role == Role.TO ? APCO25FullyQualifiedTalkgroupIdentifier.createTo(local, talkgroup.getWacn(),
+                    talkgroup.getSystem(), talkgroup.getTalkgroup()) :
+                    APCO25FullyQualifiedTalkgroupIdentifier.createFrom(local, talkgroup.getWacn(),
+                        talkgroup.getSystem(), talkgroup.getTalkgroup());
+            TalkgroupIdentifier observation = winnerLocal instanceof FullyQualifiedTalkgroupIdentifier winnerGroup ?
+                winnerGroup.getRecordingIdentifier() : winnerLocal instanceof TalkgroupIdentifier winnerGroup ?
+                    winnerGroup : talkgroup.getRecordingIdentifier();
+            return APCO25FullyQualifiedTalkgroupIdentifier.withRecordingIdentifier(promoted, observation);
         }
         if(exact instanceof FullyQualifiedRadioIdentifier radio)
         {
@@ -2332,42 +2349,22 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
     private static P25SystemIdentity p25SystemIdentity(AudioCallSnapshot snapshot)
     {
-        CallLegSource source = snapshot != null ? snapshot.callLegSource() : null;
-        String servingKey = source != null ? source.radioSystemKey() : null;
-        if(RadioSystemKey.isP25Native(servingKey))
-        {
-            return new P25SystemIdentity(Integer.parseInt(servingKey, 4, 9, 16),
-                Integer.parseInt(servingKey, 10, 13, 16));
-        }
-        P25SiteIdentity learned = source != null ? source.p25SiteIdentity() : null;
-        if(learned != null && validP25System(learned.wacn(), learned.system()))
-        {
-            return new P25SystemIdentity(learned.wacn(), learned.system());
-        }
-
-        IdentifierCollection identifiers = snapshot != null ? snapshot.identifierCollection() : null;
-        Integer wacn = networkInteger(identifiers, Form.WACN);
-        Integer system = networkInteger(identifiers, Form.SYSTEM);
-        return wacn != null && system != null && validP25System(wacn, system) ?
-            new P25SystemIdentity(wacn, system) : null;
+        String servingKey = servingSystemKey(snapshot);
+        return RadioSystemKey.isP25Native(servingKey) ?
+            new P25SystemIdentity(Integer.parseInt(servingKey, 4, 9, 16),
+                Integer.parseInt(servingKey, 10, 13, 16)) : null;
     }
 
     private static String servingSystemKey(AudioCallSnapshot snapshot)
     {
         CallLegSource source = snapshot != null ? snapshot.callLegSource() : null;
-        if(source != null && source.radioSystemKey() != null)
+        String nativeKey = source != null ? source.radioSystemKey() : null;
+        if(nativeKey != null && !RadioSystemKey.isP25Native(nativeKey))
         {
-            return source.radioSystemKey();
+            return nativeKey;
         }
-        P25SystemIdentity system = p25SystemIdentity(snapshot);
-        return system != null ? RadioSystemKey.p25(system.wacn(), system.system()) : null;
-    }
-
-    private static Integer networkInteger(IdentifierCollection identifiers, Form form)
-    {
-        Identifier<?> identifier = identifiers != null ?
-            identifiers.getIdentifier(IdentifierClass.NETWORK, form, Role.BROADCAST) : null;
-        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
+        return RadioSystemKey.p25Serving(nativeKey, source != null ? source.p25SiteIdentity() : null,
+            snapshot != null ? snapshot.identifierCollection() : null);
     }
 
     private static Long frequency(IdentifierCollection identifiers)
@@ -2381,11 +2378,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private static Integer positiveTimeslot(int timeslot)
     {
         return timeslot > 0 ? timeslot : null;
-    }
-
-    private static boolean validP25System(int wacn, int system)
-    {
-        return wacn >= 0 && wacn <= 0xFFFFF && system >= 0 && system <= 0xFFF;
     }
 
     private static SourceIdentity sourceIdentity(AudioCallSnapshot snapshot)

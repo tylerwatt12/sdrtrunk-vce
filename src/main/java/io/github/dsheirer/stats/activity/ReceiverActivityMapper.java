@@ -48,7 +48,7 @@ import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -1072,7 +1072,7 @@ class ReceiverActivityMapper
     private static ReceiverActivityRecords.P25WuidObservation p25WuidObservation(
         P25AffiliationEvent affiliationEvent)
     {
-        P25WuidAssignmentRegistry.AssignmentObservation observation = affiliationEvent != null ?
+        P25IdentityResolver.AssignmentObservation observation = affiliationEvent != null ?
             affiliationEvent.getAssignmentObservation() : null;
 
         if(observation == null)

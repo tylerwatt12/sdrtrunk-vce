@@ -15,6 +15,8 @@
  */
 package io.github.dsheirer.record.wave;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -136,7 +138,7 @@ class AudioMetadataUtilsTest
         addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
-                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+                Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)));
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
             "501 Working Unit", null);
     }
@@ -164,9 +166,9 @@ class AudioMetadataUtilsTest
         addAlias(aliases, "Canonical Subscriber", new P25Subscriber(0xBEE00, 0x687, 85610));
         IdentifierCollection identifiers = new IdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(85610, 0xBEE00, 0x687, 85610,
-                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT),
+                Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT),
             APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
-                Role.TO, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+                Role.TO, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
             "85610 Observed Source", "501\"Observed Target\"");
@@ -203,7 +205,7 @@ class AudioMetadataUtilsTest
         addAlias(aliases, "Canonical Unit", new P25Subscriber(0xBEE00, 0x687, 85610));
         var identifiers = new MutableIdentifierCollection(List.of(
             APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xBEE00, 0x687, 85610,
-                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)));
+                Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)));
         identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(85610, 0xBEE00, 0x687, 85610));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),

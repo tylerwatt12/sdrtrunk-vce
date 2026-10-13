@@ -19,17 +19,23 @@
 
 package io.github.dsheirer.identifier.talkgroup;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.identifier.Role;
 import java.util.Objects;
 
 /**
- * Fully qualified radio identifier
+ * Fully qualified talkgroup identity with independent local observation facts.
  */
 public abstract class FullyQualifiedTalkgroupIdentifier extends TalkgroupIdentifier
 {
-    private int mWacn;
-    private int mSystem;
-    private int mTalkgroup;
+    private final int mWacn;
+    private final int mSystem;
+    private final int mTalkgroup;
+    private final boolean mExplicitLocalAddress;
+    private final IdentityResolutionEvidence mResolutionEvidence;
+    private final TalkgroupIdentifier mRecordingIdentifier;
 
     /**
      * Constructs an instance
@@ -41,10 +47,43 @@ public abstract class FullyQualifiedTalkgroupIdentifier extends TalkgroupIdentif
      */
     protected FullyQualifiedTalkgroupIdentifier(int localAddress, int wacn, int system, int id, Role role)
     {
+        this(localAddress, wacn, system, id, role, false, IdentityResolutionEvidence.DIRECT, null);
+    }
+
+    protected FullyQualifiedTalkgroupIdentifier(int localAddress, int wacn, int system, int id, Role role,
+        boolean explicitLocalAddress, IdentityResolutionEvidence evidence, TalkgroupIdentifier recordingIdentifier)
+    {
         super(localAddress, role);
         mWacn = wacn;
         mSystem = system;
         mTalkgroup = id;
+        mExplicitLocalAddress = explicitLocalAddress;
+        mResolutionEvidence = Objects.requireNonNull(evidence);
+        mRecordingIdentifier = recordingIdentifier;
+    }
+
+    /** Whether a separate protocol local-group field was carried, even when its value is zero. */
+    public boolean hasExplicitLocalAddress()
+    {
+        return mExplicitLocalAddress;
+    }
+
+    /** Assigned individual group address, or null for an absent, zero or reserved field. */
+    public Integer getLocalAddress()
+    {
+        return mExplicitLocalAddress && getValue() > 0 && getValue() < 0xFFFF ? getValue() : null;
+    }
+
+    public IdentityResolutionEvidence getResolutionEvidence()
+    {
+        return mResolutionEvidence;
+    }
+
+    /** Original receiver observation, independent of assignment-derived home identity. */
+    @JsonIgnore
+    public TalkgroupIdentifier getRecordingIdentifier()
+    {
+        return mRecordingIdentifier != null ? mRecordingIdentifier : this;
     }
 
     public int getWacn()
@@ -77,7 +116,7 @@ public abstract class FullyQualifiedTalkgroupIdentifier extends TalkgroupIdentif
      */
     public boolean isAliased()
     {
-        return getValue() != 0 && getValue() != mTalkgroup;
+        return getLocalAddress() != null;
     }
 
     /**
@@ -128,7 +167,7 @@ public abstract class FullyQualifiedTalkgroupIdentifier extends TalkgroupIdentif
     @Override
     public int hashCode()
     {
-        return Objects.hash(getClass(), getWacn(), getSystem(), getTalkgroup(), getIdentifierClass(), getForm(),
+        return Objects.hash(getWacn(), getSystem(), getTalkgroup(), getIdentifierClass(), getForm(),
                 getRole(), getProtocol());
     }
 }

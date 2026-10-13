@@ -207,6 +207,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
     api: async () => ({ native_id: 23, alias_name: 'Dispatch' }),
     apiPage: (path, parameters) => { requests.push({ path, parameters }); return pending.shift().promise; },
     rowGroupIdentityKind: () => 'talkgroup', identityNumber: (_row, value) => String(value),
+    groupIdentifierText: (_row, value) => String(value),
     aliasLabel: () => 'Dispatch', radioSystemCapability: () => true,
     pageHeader: (title) => node('header', '', title), radioSystemContextLink: () => node('a'),
     entityTabs: () => node('nav'),
@@ -1353,7 +1354,12 @@ async function main() {
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 20, 'Every application table call must be audited');
+  const issiRenderer = functionBinding(appSource, 'renderRadioSystemIssi');
+  assert.match(issiRenderer, /layoutMenuHost: groupAssociationActions, controller: groupAssociationController/,
+    'Talkgroup association refreshes must retain their own table controls');
+  assert.match(issiRenderer, /section\('Talkgroup Associations', groupAssociationHost,\s*groupAssociationActions\)/,
+    'Talkgroup association controls belong to their section title');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -1370,7 +1376,7 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'issiCurrentAssignmentColumns', 'issiRecentChangeColumns',
+    'activityColumns', 'issiCurrentAssignmentColumns', 'issiGroupAssociationColumns', 'issiRecentChangeColumns',
     'issiSubscriberColumns', 'issiForeignSystemColumns', 'issiBandColumns', 'aliasCoverageAliasesColumns',
     'aliasCoverageUnassignedColumns', 'channelGroupIdentityColumns', 'channelRadioColumns'
   ].forEach((name) => {

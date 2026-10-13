@@ -22,7 +22,7 @@ package io.github.dsheirer.preference;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
@@ -71,7 +71,7 @@ public class UserPreferences implements Listener<PreferenceType>
     private TunerPreference mTunerPreference;
     private VectorCalibrationPreference mVectorCalibrationPreference;
     private P25BandplanOverrideRegistry mP25BandplanOverrideRegistry;
-    private P25WuidAssignmentRegistry mP25WuidAssignmentRegistry;
+    private P25IdentityResolver mP25IdentityResolver;
 
     private SwingPreference mSwingPreference = new SwingPreference();
     private JavaFxPreferences mJavaFxPreferences = new JavaFxPreferences();
@@ -212,15 +212,15 @@ public class UserPreferences implements Listener<PreferenceType>
         return mP25BandplanOverrideRegistry;
     }
 
-    /** Receiver-wide, ephemeral P25 WUID assignments shared by every active P25 system decoder. */
-    public synchronized P25WuidAssignmentRegistry getP25WuidAssignmentRegistry()
+    /** Receiver-wide, ephemeral radio and talkgroup resolution shared by every active P25 system decoder. */
+    public synchronized P25IdentityResolver getP25IdentityResolver()
     {
-        if(mP25WuidAssignmentRegistry == null)
+        if(mP25IdentityResolver == null)
         {
-            mP25WuidAssignmentRegistry = new P25WuidAssignmentRegistry();
+            mP25IdentityResolver = new P25IdentityResolver();
         }
 
-        return mP25WuidAssignmentRegistry;
+        return mP25IdentityResolver;
     }
 
     /**

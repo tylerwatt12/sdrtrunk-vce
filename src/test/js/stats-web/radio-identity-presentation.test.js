@@ -35,7 +35,7 @@ const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, ''
 const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
-  '\n({formatP25RadioIdentifier, formatP25QualifiedIdentifierText, p25ServingSystemKey});');
+  '\n({formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey});');
 const sourceNamesSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/source-names.js'), 'utf8');
 const sourceNames = vm.runInNewContext(sourceNamesSource.replace(/^export /m, '') + '\n({formatSourceName});');
@@ -107,6 +107,9 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('radioIdentityPrefix')}
   ${functionSource('workingSubscriberId')}
   ${functionSource('radioIdentifierText')}
+  ${functionSource('groupIdentityPrefix')}
+  ${functionSource('groupIdentifierText')}
+  ${functionSource('partyIdentifierText')}
   ${functionSource('semanticLabel')}
   ${functionSource('trunkedVariant')}
   ${functionSource('savedChannelScopeLabel')}
@@ -159,7 +162,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveEventMatchesQuery')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
-    scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, liveIdentityActionTitle,
+    scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText, liveIdentityActionTitle,
     activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
     activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue,
     liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
@@ -242,7 +245,7 @@ let sourceMode = 'talker_alias';
 const dock = vm.runInNewContext(`(() => {
   ${dockSource.slice(dockSource.indexOf('  const identityType ='), dockSource.indexOf('  const time ='))}
   return { title, sourceName, sourceSummary, sourceId, targetId };
-})()`, { radioIdentifier: behavior.radioIdentifierText, ...sourceNames, getSourceNameDisplay: () => sourceMode });
+})()`, { radioIdentifier: behavior.partyIdentifierText, ...sourceNames, getSourceNameDisplay: () => sourceMode });
 const dockCall = {
   protocol: 'P25', source_id: 130_001, source_form: 'RADIO', source_alias: 'Engine 42',
   source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
@@ -272,6 +275,83 @@ assert.match(dockSource, /\['Target ID', targetId\(call\),/);
 assert.match(dockSource, /\['Source ID', sourceId\(call\),/);
 assert.match(dockSource, /JSON\.stringify\(\[source, panel, getSourceNameDisplay\(\),/,
   'Changing the source name preference must invalidate an open audio detail or queue panel');
+
+const detailNode = (tag, className = '', initialText = '') => ({
+  nodeType: 1, tag, className, childNodes: [], ownText: initialText,
+  append(...children) { this.childNodes.push(...children); },
+  get children() { return this.childNodes.filter(child => child?.nodeType === 1); },
+  get textContent() { return this.ownText + this.childNodes.map(child =>
+    typeof child === 'string' ? child : child.textContent).join(''); },
+  set textContent(value) { this.ownText = value; this.childNodes = []; }
+});
+const dockDetails = vm.runInNewContext(`(() => {
+  let liveState = {};
+  let navigationAllowed = true;
+  const panelHost = node('div');
+  const canViewRadio = () => navigationAllowed;
+  ${dockSource.slice(dockSource.indexOf('  function patchMembers('),
+    dockSource.indexOf('  const queueEntryKey ='))}
+  return { render(call, allowed = true) {
+    liveState = { current: call, stopped: false, scanLists: [] };
+    navigationAllowed = allowed; panelHost.childNodes = []; renderLiveDetails(); return panelHost;
+  }, renderIdle() { liveState = {}; panelHost.childNodes = []; renderLiveDetails(); return panelHost; } };
+})()`, { node: detailNode, ...radioLabels, ...systemLabels, ...callFormats,
+  title: dock.title, sourceName: dock.sourceName, sourceId: dock.sourceId, targetId: dock.targetId,
+  date: () => '', entityRefHref: reference => reference?.href || '' });
+const descendants = node => [node, ...node.children.flatMap(descendants)];
+const patchMemberFact = root => {
+  const list = descendants(root).find(item => item.tag === 'dl' &&
+    item.children.some(child => child.tag === 'dt' && child.textContent === 'Patch members'));
+  const index = list.children.findIndex(child => child.tag === 'dt' && child.textContent === 'Patch members');
+  return list.children[index + 1];
+};
+const memberCall = {
+  protocol: 'P25', target_form: 'PATCH_GROUP', target_id: 10,
+  // Routing alone must never override authoritative unknown captured serving context.
+  radio_system_key: 'p25:00001:001', serving_system_key: null,
+  entity_ref: { href: '/owner' }, patch_member_count: 2,
+  patch_members: [
+    { kind: 'talkgroup', id: 20, alias: 'Dispatch',
+      canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 1001 },
+      observed_local_id: 20, entity_ref: { href: '/member-group' } },
+    { kind: 'radio', id: 501, alias: 'Engine 4',
+      canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9001 },
+      observed_working_id: 501, entity_ref: { href: '/member-radio' } }
+  ]
+};
+for (const serving_system_key of [null, 'p25:bee00:348', 'p25:00001:001']) {
+  const fact = patchMemberFact(dockDetails.render({ ...memberCall, serving_system_key }));
+  const prefix = serving_system_key === 'p25:00001:001' ? 'BEE00.348.' : '';
+  assert.equal(fact.textContent, `Dispatch · TGID ${prefix}1001 (Local TG ID 20), ` +
+    `Engine 4 · Radio ${prefix}9001 (Working ID 501)`,
+  'Actual live detail rows use each member identity and parent captured serving proof.');
+  assert.deepEqual(descendants(fact).filter(item => item.tag === 'a').map(item => item.href),
+    ['/member-group', '/member-radio'], 'Each patch member retains its own reference.');
+}
+const homeOnlyMembers = { ...memberCall, patch_members: memberCall.patch_members.map(member => ({
+  ...member, id: member.kind === 'radio' ? 9001 : 1001, observed_working_id: null,
+  observed_local_id: null, entity_ref: null
+})) };
+const homeOnlyFact = patchMemberFact(dockDetails.render(homeOnlyMembers));
+assert.equal(homeOnlyFact.textContent, 'Dispatch · TGID 1001, Engine 4 · Radio 9001',
+  'Home-only member facts never fabricate a local or working ID.');
+assert.equal(descendants(homeOnlyFact).filter(item => item.tag === 'a').length, 0,
+  'A missing member reference never borrows the call owner link.');
+const hiddenLinks = patchMemberFact(dockDetails.render(memberCall, false));
+assert.equal(descendants(hiddenLinks).filter(item => item.tag === 'a').length, 0,
+  'Patch member navigation uses the existing Radio capability boundary.');
+const namedMembers = { ...memberCall, serving_system_key: 'p25:00001:001',
+  patch_members: memberCall.patch_members.map(member => ({ ...member, home_system_name: 'County network' })) };
+assert.equal(patchMemberFact(dockDetails.render(namedMembers)).textContent,
+  'Dispatch · TGID County network · 1001 (Local TG ID 20), ' +
+  'Engine 4 · Radio County network · 9001 (Working ID 501)',
+  'Known foreign home names remain member context while member aliases stay primary.');
+const truncatedMembers = patchMemberFact(dockDetails.render({ ...memberCall,
+  patch_members_truncated: true, patch_member_count: 5 }));
+assert.match(truncatedMembers.textContent, /Showing 2 of 5 members$/);
+assert.equal(patchMemberFact(dockDetails.renderIdle()).textContent, '',
+  'Idle and active detail views retain the same Patch members fact label.');
+
 assert.equal(behavior.activityIdentifier({
   protocol: 'P25', source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 16_777_212 },
   source_observed_working_id: 130_001
@@ -355,7 +435,7 @@ const pageFunctions = [
   'isSavedChannelRadioSystem', 'radioSystemLabel', 'radioSystemPrimaryName', 'radioSystemDisplayName',
   'radioSystemValue', 'aliasLabel', 'identityKind', 'rowGroupIdentityKind', 'groupIdentityLabel',
   'p25CanonicalSubscriber', 'canonicalSubscriberText', 'radioIdentityPrefix', 'workingSubscriberId',
-  'radioIdentifierText', 'entityPageTitle', 'renderChannel', 'renderTrunkedChannel',
+  'radioIdentifierText', 'groupIdentityPrefix', 'groupIdentifierText', 'partyIdentifierText', 'entityPageTitle', 'renderChannel', 'renderTrunkedChannel',
   'renderConventionalChannel', 'renderRadioSystem', 'renderGroupIdentity', 'renderRadio'
 ];
 vm.createContext(pageContext);
@@ -579,13 +659,13 @@ const qualifiedPatch = { ...structuredPatch, patch_group: 'ISSI 77(781824.840.70
 for (const servingKey of [null, 'p25:bee00:348']) {
   const event = { ...patchEvent, serving_system_key: servingKey, to_party: [qualifiedPatch],
     details: qualifiedPatch.text };
-  assert.equal(behavior.liveEventPartyText(event, 'to'), 'P:77 [7002, 79]');
-  assert.equal(behavior.liveEventDetailsText(event), 'P:77 [7002, 79]');
+  assert.equal(behavior.liveEventPartyText(event, 'to'), 'P:7001 (Local TG ID 77) [7002, 7003 (Local TG ID 79)]');
+  assert.equal(behavior.liveEventDetailsText(event), 'P:7001 (Local TG ID 77) [7002, 7003 (Local TG ID 79)]');
   assert.equal(behavior.liveEventMatchesQuery(event, '781824.840.7001'), true,
     'The raw full destination remains searchable after its visible prefix is suppressed.');
 }
 assert.equal(behavior.liveEventPartyText({ ...patchEvent, serving_system_key: 'p25:bee00:349',
-  to_party: [qualifiedPatch] }, 'to'), qualifiedPatch.text);
+  to_party: [qualifiedPatch] }, 'to'), 'P:BEE00.348.7001 (Local TG ID 77) [BEE00.348.7002, BEE00.348.7003 (Local TG ID 79)]');
 const pickerContext = { radioSystemKey: localRadio.radio_system_key };
 const suggestion = behavior.activityIdentitySuggestion({ ...localRadio, native_id: 4326018,
   identity_key: 'v1-r-bee00-348-4326018', alias_name: 'Engine 42' }, 'radio', pickerContext);
@@ -609,7 +689,7 @@ assert.equal(behavior.activityIdentityInitialSelection(suggestion.key, 'radio',
 const links = vm.runInNewContext(`${functionSource('radioDisplayId')}\n${functionSource('radioLink')}` +
   '\n({radioLink});', { ...radioLabels, radioIdentifierText: behavior.radioIdentifierText,
     ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
-    entityTarget: reference => reference.identity_key,
+    entityTarget: reference => reference?.identity_key || '',
     anchor: (label, target) => ({ label, target }) });
 const relationship = { protocol: 'P25', radio_native_id: 4326018,
   radio_canonical_identity: localRadio.canonical_identity };
@@ -622,6 +702,62 @@ assert.equal(links.radioLink({ ...relationship, radio_system_key: 'p25:00001:047
   'An explicit receiving scope wins over conflicting navigation context.');
 assert.equal(links.radioLink(relationship, 4326018, undefined, localRef).target, localRef.identity_key,
   'The shorter visible number does not replace its complete drilldown identity.');
+const sharedLocal = { protocol: 'P25', serving_system_key: 'p25:00001:047',
+  source_radio_id: 501, source_id: 501, target_id: 501,
+  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9001 },
+  target_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9002 },
+  source_observed_working_id: 501, target_observed_working_id: 501 };
+assert.equal(links.radioLink(sharedLocal, 501, undefined, localRef, 'source').label,
+  'County Radio · 9001 (Working ID 501)');
+assert.equal(links.radioLink(sharedLocal, 501, undefined, localRef, 'target').label,
+  'County Radio · 9002 (Working ID 501)',
+  'A direct target uses its explicit party facts even when the source has the same local ID.');
+assert.equal(links.radioLink({ protocol: 'P25', native_id: 9001,
+  canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9001 },
+  entity_ref: { kind: 'radio', radio_system_key: 'p25:bee00:348', identity_key: 'v1-r-bee00-348-9001' }
+}, 42, undefined, undefined, 'last_peer'), '42',
+  'A peer without its own reference remains plain text and cannot borrow the owner’s drilldown.');
+assert.equal(links.radioLink({ protocol: 'P25', native_id: 9001, entity_ref: localRef,
+  target_id: 501, target_canonical_identity: sharedLocal.target_canonical_identity,
+  target_observed_working_id: 501 }, 501, undefined, undefined, 'target'), '9002 (Working ID 501)',
+  'A missing target reference never falls back to the directory owner’s link.');
+const groupLinks = vm.runInNewContext(`${functionSource('groupIdentityDisplayId')}\n${functionSource('groupIdentityLink')}` +
+  '\n({groupIdentityLink});', { groupIdentifierText: behavior.groupIdentifierText,
+    rowGroupIdentityKind: () => 'talkgroup', specialIdentifierLabel: () => '',
+    ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
+    entityTarget: reference => reference?.identity_key || '', anchor: (label, target) => ({ label, target }) });
+const groupOwner = { protocol: 'P25', native_id: 7001,
+  canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
+  entity_ref: { kind: 'talkgroup', radio_system_key: 'p25:bee00:348', identity_key: 'v1-g-bee00-348-7001' } };
+assert.equal(groupLinks.groupIdentityLink(groupOwner, 42, undefined, undefined, 'last_talkgroup'), '42',
+  'A missing group-party reference cannot borrow the owner’s drilldown.');
+assert.equal(groupLinks.groupIdentityLink(groupOwner).target, 'v1-g-bee00-348-7001',
+  'Own directory rows keep their complete identity links.');
+const directoryColumns = vm.runInNewContext(`${functionSource('channelGroupIdentityColumns')}\n` +
+  `${functionSource('channelRadioColumns')}\n({channelGroupIdentityColumns, channelRadioColumns});`, {
+  radioLink: links.radioLink, groupIdentityLink: groupLinks.groupIdentityLink,
+  aliasLabel: row => row.alias_name || ''
+});
+const sourceAliasColumn = directoryColumns.channelGroupIdentityColumns().find(column => column.id === 'source-alias');
+const groupAliasColumn = directoryColumns.channelRadioColumns().find(column => column.id === 'talkgroup-name');
+const lastSourceRow = { ...groupOwner, last_source_radio_id: 42, last_source_alias_name: 'Engine 42',
+  last_source_entity_ref: { identity_key: 'v1-r-bee00-348-42' } };
+assert.equal(sourceAliasColumn.render(lastSourceRow).target, lastSourceRow.last_source_entity_ref.identity_key,
+  'The directory Last Source alias links to that source instead of its group owner.');
+assert.equal(sourceAliasColumn.render({ ...lastSourceRow, last_source_entity_ref: undefined }), 'Engine 42',
+  'A missing Last Source reference keeps its alias as plain text.');
+const lastGroupRow = { protocol: 'P25', native_id: 9001, entity_ref: localRef,
+  last_talkgroup_id: 42, last_talkgroup_alias_name: 'Dispatch',
+  last_talkgroup_entity_ref: { identity_key: 'v1-g-bee00-348-42' } };
+assert.equal(groupAliasColumn.render(lastGroupRow).target, lastGroupRow.last_talkgroup_entity_ref.identity_key,
+  'The directory Last Talkgroup alias links to that group instead of its radio owner.');
+assert.equal(groupAliasColumn.render({ ...lastGroupRow, last_talkgroup_entity_ref: undefined }), 'Dispatch',
+  'A missing Last Talkgroup reference keeps its alias as plain text.');
+assert.equal(behavior.groupIdentifierText({ ...sharedLocal,
+  source_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
+  target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7002 },
+  source_observed_local_id: 501, target_observed_local_id: 501 }, 501, 'target'),
+  'County Radio · 7002 (Local TG ID 501)', 'Group targets also use explicit party ownership.');
 assert.equal(behavior.activityIdentitySuggestion({ ...localRadio, radio_system_key: '',
   system_key: 'p25:00001:047', native_id: 4326018, identity_key: suggestion.key }, 'radio', pickerContext).displayId,
   'County Radio · 4326018', 'An explicit system scope is preserved before picker context is used.');
@@ -638,3 +774,33 @@ assert.equal(targetHome.primary, 'BEE01.348', 'Target details do not borrow the 
 assert.equal(targetHome.target, '', 'Target details do not navigate to the source home system.');
 assert.equal(targetFacts.values.find(([label]) => label === 'Permanent Radio ID')[1], 'BEE01.348.501',
   'Explicit identity inspection retains the exact permanent address.');
+
+const fullGroup = { protocol: 'P25', target_id: 77, target_form: 'TALKGROUP',
+  target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
+  target_observed_local_id: 77, target_home_system_name: 'County Radio' };
+for (const serving_system_key of [null, 'p25:bee00:348']) {
+  assert.equal(behavior.partyIdentifierText({ ...fullGroup, serving_system_key }, 77, 'target'),
+    '7001 (Local TG ID 77)');
+}
+assert.equal(behavior.partyIdentifierText({ ...fullGroup, serving_system_key: 'p25:00001:047' }, 77, 'target'),
+  'County Radio · 7001 (Local TG ID 77)');
+assert.equal(behavior.liveIdentityFacts({ ...fullGroup, target_identity_source: 'group_affiliation_mapping' },
+  'target').values.find(([label]) => label === 'ID Source')[1], 'Group affiliation response');
+assert.equal(behavior.liveIdentityFacts({ ...fullGroup, target_identity_source: 'local_id' },
+  'target').values.find(([label]) => label === 'ID Source')[1], 'Local talkgroup ID only');
+assert.equal(behavior.groupIdentifierText({ protocol: 'P25', native_id: 7001,
+  identity_key: 'v1-p-bee00-348-7001', serving_system_key: null }, 7001), '7001');
+assert.equal(behavior.radioIdentifierText({ protocol: 'P25', native_id: 9001,
+  canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9001 } }, 42), '42',
+  'A peer/member scalar cannot reuse a row’s own canonical radio ID.');
+const typedGroupEvent = { protocol: 'P25', serving_system_key: 'p25:00001:047',
+  to_party: [{ form: 'TALKGROUP', text: 'ISSI 77(781824.840.7001)',
+    canonical_group_identity: fullGroup.target_canonical_group_identity, observed_local_id: 77 }] };
+assert.equal(behavior.liveEventPartyText(typedGroupEvent, 'to'), 'County Radio · 7001 (Local TG ID 77)');
+assert.equal(behavior.liveEventPartyText({ ...typedGroupEvent, serving_system_key: null }, 'to'),
+  '7001 (Local TG ID 77)');
+const groupSuggestion = behavior.activityIdentitySuggestion({ protocol: 'P25', native_id: 7001,
+  identity_key: 'v1-g-bee00-348-7001', serving_system_key: null, alias_name: 'Dispatch' }, 'talkgroup',
+  { radioSystemKey: 'p25:00001:047' });
+assert.equal(groupSuggestion.label, 'Talkgroup 7001 · Dispatch');
+assert.equal(groupSuggestion.key, 'v1-g-bee00-348-7001', 'Group filters preserve the complete canonical key.');

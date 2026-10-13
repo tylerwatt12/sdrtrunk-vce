@@ -58,6 +58,11 @@ const TABLE_DEFAULTS = Object.freeze({
       expires: 185, evidence: 130, 'observed-on': 260 },
     grow: ['radio', 'home-system', 'observed-on']
   },
+  'issi-group-associations': {
+    widths: { 'home-talkgroup': 240, 'local-talkgroup': 120, 'home-system': 230,
+      'heard-on': 260, seen: 180, expires: 180, evidence: 200 },
+    grow: ['home-talkgroup', 'home-system', 'heard-on']
+  },
   'issi-recent-changes': {
     widths: { changed: 180, radio: 220, 'home-system': 230, change: 165,
       'working-id': 120, 'previous-working-id': 160, 'observed-on': 260 },

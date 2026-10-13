@@ -409,6 +409,17 @@ async function main() {
   assert.equal([...incompatibleScopes.radios.values()][0].visualGroupKey, `${SYSTEM_A}:v1-g-101`,
     'a logout clears only its compatible observation scope');
 
+  for (const [serving_system_key, expected] of [[null, '7001 (Local TG ID 77)'],
+    ['p25:bee00:348', '7001 (Local TG ID 77)'], ['p25:00001:047', 'County Radio · 7001 (Local TG ID 77)']]) {
+    const groupState = history.createP25HistoryState();
+    history.applyP25ActivityRows(groupState, [row(999, 'JOIN', { radio_system_key: 'p25:00001:047',
+      serving_system_key, target_alias_name: '', target_name: '', target_identity_key: 'v1-g-bee00-348-7001',
+      target_id: 77, target_observed_local_id: 77,
+      target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
+      target_home_system_name: 'County Radio' })], { initial: true });
+    assert.equal([...groupState.groups.values()][0].label, expected);
+    assert.equal([...groupState.groups.values()][0].identityKey, 'v1-g-bee00-348-7001');
+  }
   console.log('P25 Visualizer history checks passed.');
 }
 

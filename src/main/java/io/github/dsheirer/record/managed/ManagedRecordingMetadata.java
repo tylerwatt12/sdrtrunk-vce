@@ -92,14 +92,14 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             sites.add(winningSite);
         }
 
-        String recordedSystemKey = systemKey(protocol, source, winningSite, sites);
+        String recordedSystemKey = systemKey(protocol, winner.source(), call.recordingIdentifierCollection());
         sourceIdentity = recordingRadioOwner(sourceIdentity, sourceIdentifier, sourceId, recordedSystemKey);
         targetIdentity = recordingRadioOwner(targetIdentity, unwrapPatch(targetIdentifier), targetId, recordedSystemKey);
 
         Set<ManagedRecordingCatalog.Member> members = new LinkedHashSet<>();
         for(CallLegSummary leg : call.callLegSummaries())
         {
-            String memberSystemKey = systemKey(protocol, leg.source(), site(leg.source().p25SiteIdentity()), Set.of());
+            String memberSystemKey = leg.winner() ? recordedSystemKey : systemKey(protocol, leg.source(), null);
             for(CallLegSummary.P25IdentityObservation member : leg.p25PatchMemberIdentities())
             {
                 if(member.form() == Form.TALKGROUP || member.form() == Form.RADIO)
@@ -159,40 +159,14 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             Integer.parseInt(systemKey, 4, 9, 16), Integer.parseInt(systemKey, 10, 13, 16), observedId, null);
     }
 
-    private static String systemKey(Protocol protocol, CallLegSource source,
-                                    ManagedRecordingCatalog.Site winningSite,
-                                    Set<ManagedRecordingCatalog.Site> observedSites)
+    private static String systemKey(Protocol protocol, CallLegSource source, IdentifierCollection identifiers)
     {
         String recordedKey = source != null ? source.radioSystemKey() : null;
-        if(recordedKey != null ||
-            protocol != Protocol.APCO25 && protocol != Protocol.APCO25_PHASE2)
+        if(protocol != Protocol.APCO25 && protocol != Protocol.APCO25_PHASE2)
         {
             return recordedKey;
         }
-
-        if(winningSite != null)
-        {
-            return RadioSystemKey.p25(winningSite.wacn(), winningSite.systemId());
-        }
-
-        if(observedSites.isEmpty())
-        {
-            return null;
-        }
-        ManagedRecordingCatalog.Site candidate = observedSites.iterator().next();
-        for(ManagedRecordingCatalog.Site observed: observedSites)
-        {
-            if(!sameSystem(candidate, observed))
-            {
-                return null;
-            }
-        }
-        return RadioSystemKey.p25(candidate.wacn(), candidate.systemId());
-    }
-
-    private static boolean sameSystem(ManagedRecordingCatalog.Site left, ManagedRecordingCatalog.Site right)
-    {
-        return left.wacn() == right.wacn() && left.systemId() == right.systemId();
+        return RadioSystemKey.p25Serving(recordedKey, source != null ? source.p25SiteIdentity() : null, identifiers);
     }
 
     private static Identifier<?> unwrapPatch(Identifier<?> identifier)

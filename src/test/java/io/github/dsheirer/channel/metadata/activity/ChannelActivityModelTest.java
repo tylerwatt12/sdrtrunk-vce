@@ -33,6 +33,8 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification.Operation;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
@@ -55,7 +57,13 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
@@ -77,6 +85,227 @@ import org.junit.jupiter.api.Test;
 
 class ChannelActivityModelTest
 {
+    @Test
+    void audioServingProofUsesOriginalCallSourceAndRawNetworkRatherThanCurrentConfiguration() throws Exception
+    {
+        var model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel channel = trunkedChannel("Conventional", "County", "Site", new DecodeConfigP25Conventional(), 155_730_000L);
+        var firstSite = new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xBEE00, 0x348, 1, 1);
+        channel.setP25SiteIdentity(firstSite);
+        var source = new io.github.dsheirer.audio.call.CallLegSource(
+            io.github.dsheirer.module.decode.DecoderType.P25_CONVENTIONAL, null, "Conventional", null, 0, firstSite,
+            io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false,
+            "p25:bee00:348");
+        var metadata = new ChannelMetadata(null);
+        var callId = new AudioCallId(1, 1, 0);
+        var identifiers = new IdentifierCollection(List.of(FrequencyConfigurationIdentifier.create(155_730_000L),
+            io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(0xBEE00),
+            io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(0x348)));
+        var snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(),
+            1_000, 1_100, 1, 1, 1_000, 0, true, false, CallEncryptionState.CLEAR, false,
+            null, null, CallLegId.from(callId), source, null);
+        try
+        {
+            run(model, () -> model.channelStarted(channel, List.of(metadata)));
+            channel.setP25SiteIdentity(new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xABCDE, 0x456, 2, 2));
+            run(model, () -> model.receiveAudioCallEvent(channel,
+                new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot, null, false, 0, 0)));
+            var row = model.getConventionalTable().getRows().getFirst();
+            assertEquals("p25:bee00:348", row.getServingSystemKey());
+            assertEquals("p25:bee00:348", model.getConventionalTable().getLatestSnapshot().rows().getFirst().servingSystemKey());
+            var conflict = new AudioCallSnapshot(callId, null, null, new IdentifierCollection(List.of(
+                FrequencyConfigurationIdentifier.create(155_730_000L),
+                io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(0xABCDE),
+                io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(0x456))), Set.of(),
+                1_000, 1_200, 1, 1, 1_200, 0, true, false, CallEncryptionState.CLEAR, false,
+                null, null, CallLegId.from(callId), source, null);
+            run(model, () -> model.receiveAudioCallEvent(channel,
+                new AudioCallEvent(AudioCallEventType.BURST_STARTED, conflict, null, false, 0, 0)));
+            assertNull(row.getServingSystemKey());
+            run(model, () -> model.receiveAudioCallEvent(channel,
+                new AudioCallEvent(AudioCallEventType.BURST_STARTED, snapshot, null, false, 0, 0)));
+            assertNull(row.getServingSystemKey(), "Conflicting original receiver facts remain unknown for this call");
+
+            var linkedId = new AudioCallId(1, 2, 0);
+            var linked = new AudioCallSnapshot(linkedId, callId, null, identifiers, Set.of(),
+                1_000, 1_300, 1, 1, 1_000, 0, true, false, CallEncryptionState.CLEAR, false,
+                null, null, snapshot.callLegId(), source, null);
+            run(model, () -> model.receiveAudioCallEvent(channel,
+                new AudioCallEvent(AudioCallEventType.CALL_CREATED, linked, null, false, 0, 0)));
+            assertNull(row.getServingSystemKey(), "A linked storage chunk retains the physical leg's conflict");
+
+            var nextId = new AudioCallId(1, 3, 0);
+            var nextSource = new io.github.dsheirer.audio.call.CallLegSource(
+                io.github.dsheirer.module.decode.DecoderType.P25_CONVENTIONAL, null, "Conventional", null, 0,
+                channel.getP25SiteIdentity(), io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+                io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false,
+                "p25:abcde:456");
+            var next = new AudioCallSnapshot(nextId, null, null, conflict.identifierCollection(), Set.of(),
+                2_000, 2_100, 1, 1, 2_000, 0, true, false, CallEncryptionState.CLEAR, false,
+                null, null, CallLegId.from(nextId), nextSource, null);
+            run(model, () -> model.receiveAudioCallEvent(channel,
+                new AudioCallEvent(AudioCallEventType.CALL_CREATED, next, null, false, 0, 0)));
+            assertEquals("p25:abcde:456", row.getServingSystemKey(),
+                "A new physical audio leg replaces the old conflict even when metadata teardown was dropped");
+
+            row.clearCallDetails();
+            row.captureServingSystemKey(null, false, true);
+            var afterGrantId = new AudioCallId(1, 4, 0);
+            var afterGrant = new AudioCallSnapshot(afterGrantId, null, null, next.identifierCollection(), Set.of(),
+                3_000, 3_100, 1, 1, 3_000, 0, true, false, CallEncryptionState.CLEAR, false,
+                null, null, CallLegId.from(afterGrantId), nextSource, null);
+            run(model, () -> model.receiveAudioCallEvent(channel,
+                new AudioCallEvent(AudioCallEventType.CALL_CREATED, afterGrant, null, false, 0, 0)));
+            assertNull(row.getServingSystemKey(), "First audio binding preserves a freshly captured grant conflict");
+        }
+        finally { model.close(); }
+    }
+
+    @Test
+    void grantGroupUpgradesRetainBothRolesAndCallContextWhileDifferentHomeStartsANewCall() throws Exception
+    {
+        for(boolean patchTarget: List.of(false, true))
+        {
+            var model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+            Channel parent = trunkedChannel("Control", "County", "Site", new DecodeConfigP25Phase1(), 851_012_500L);
+            parent.setP25SiteIdentity(new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xBEE00, 0x348, 1, 1));
+            APCO25Channel traffic = APCO25Channel.create(0, 459);
+            traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
+            var localSource = new APCO25Talkgroup(101, Role.FROM);
+            var localTarget = APCO25Talkgroup.create(1234);
+            var qualifiedSource = APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(101, 0xABCDE, 0x456, 777);
+            var qualifiedTarget = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1234, 0xABCDE, 0x456, 5678);
+            Identifier<?> plainTarget = patchTarget ? APCO25PatchGroup.create(new PatchGroup(localTarget)) : localTarget;
+            Identifier<?> fullTarget = patchTarget ? APCO25PatchGroup.create(new PatchGroup(qualifiedTarget)) : qualifiedTarget;
+            try
+            {
+                run(model, () -> model.p25TrafficGrant(parent, null, traffic,
+                    new IdentifierCollection(List.of(localSource, plainTarget)), DecodeEventType.CALL_GROUP, 1_000, 1_100));
+                var row = model.getTables().get(1).getRows().stream()
+                    .filter(candidate -> candidate.getRole() == ChannelActivityRow.Role.TRAFFIC).findFirst().orElseThrow();
+                var quality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
+                row.setVoiceQuality(new AudioCallId(1, 1, 1), quality);
+                run(model, () -> model.p25TrafficGrant(parent, null, traffic,
+                    new IdentifierCollection(List.of(qualifiedSource, fullTarget)), DecodeEventType.CALL_GROUP, 1_000, 1_200));
+                assertSame(quality, row.getVoiceCallQuality(), "Same-local group enrichment is the existing call");
+                assertEquals("p25:bee00:348", row.getServingSystemKey());
+                assertEquals(qualifiedSource, row.getSource());
+                assertEquals(qualifiedTarget, primaryGroup(row.getTarget()));
+
+                run(model, () -> model.p25TrafficGrant(parent, null, traffic,
+                    new IdentifierCollection(List.of(localSource, plainTarget)), DecodeEventType.CALL_GROUP, 1_000, 1_300));
+                assertSame(quality, row.getVoiceCallQuality());
+                assertEquals(qualifiedSource, row.getSource());
+                assertSame(localSource, ((FullyQualifiedTalkgroupIdentifier)row.getSource()).getRecordingIdentifier());
+                assertEquals(qualifiedTarget, primaryGroup(row.getTarget()));
+                assertSame(localTarget, ((FullyQualifiedTalkgroupIdentifier)primaryGroup(row.getTarget())).getRecordingIdentifier());
+
+                var differentHome = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1234, 0xABCDE, 0x456, 9012);
+                Identifier<?> differentTarget = patchTarget ? APCO25PatchGroup.create(new PatchGroup(differentHome)) : differentHome;
+                run(model, () -> model.p25TrafficGrant(parent, null, traffic,
+                    new IdentifierCollection(List.of(qualifiedSource, differentTarget)), DecodeEventType.CALL_GROUP, 1_000, 1_400));
+                assertNull(row.getVoiceCallQuality(), "The same local number cannot equate two known home groups");
+                assertEquals(differentHome, primaryGroup(row.getTarget()));
+            }
+            finally { model.close(); }
+        }
+    }
+
+    @Test
+    void metadataGroupUpgradesAndAbbreviatedUpdatesPreserveBothRolesAndRetainedIdleIdentity() throws Exception
+    {
+        var model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel channel = trunkedChannel("Conventional", "County", "Site", new DecodeConfigP25Conventional(), 155_730_000L);
+        var metadata = new ChannelMetadata(null);
+        var localSource = new APCO25Talkgroup(101, Role.FROM);
+        var localTarget = APCO25Talkgroup.create(1234);
+        var fullSource = APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(101, 0xABCDE, 0x456, 777);
+        var fullTarget = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1234, 0xABCDE, 0x456, 5678);
+        try
+        {
+            run(model, () -> {
+                model.channelStarted(channel, List.of(metadata));
+                metadata.receive(new IdentifierUpdateNotification(localSource, Operation.ADD, 0));
+                metadata.receive(new IdentifierUpdateNotification(localTarget, Operation.ADD, 0));
+                metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 0));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+            });
+            var row = model.getConventionalTable().getRows().getFirst();
+            var quality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
+            row.setVoiceQuality(new AudioCallId(1, 1, 1), quality);
+            run(model, () -> {
+                metadata.receive(new IdentifierUpdateNotification(fullSource, Operation.ADD, 0));
+                metadata.receive(new IdentifierUpdateNotification(fullTarget, Operation.ADD, 0));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+            });
+            assertSame(quality, row.getVoiceCallQuality());
+            assertEquals(fullSource, row.getSource());
+            assertEquals(fullTarget, row.getTarget());
+            assertNull(row.getServingSystemKey(), "Metadata alone does not invent receiving-system proof");
+            run(model, () -> {
+                metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 0));
+                metadata.receive(new IdentifierUpdateNotification(localSource, Operation.ADD, 0));
+                metadata.receive(new IdentifierUpdateNotification(localTarget, Operation.ADD, 0));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+            });
+            assertEquals(State.IDLE, row.getState());
+            assertEquals(fullSource, row.getSource());
+            assertEquals(fullTarget, row.getTarget());
+            assertSame(localSource, ((FullyQualifiedTalkgroupIdentifier)row.getSource()).getRecordingIdentifier());
+            assertSame(localTarget, ((FullyQualifiedTalkgroupIdentifier)row.getTarget()).getRecordingIdentifier());
+            assertSame(quality, row.getVoiceCallQuality());
+        }
+        finally { model.close(); }
+    }
+
+    private static TalkgroupIdentifier primaryGroup(Identifier<?> identifier)
+    {
+        return identifier instanceof PatchGroupIdentifier patch ? patch.getValue().getPatchGroup() : (TalkgroupIdentifier)identifier;
+    }
+
+    @Test
+    void grantServingProofSurvivesReconfigurationAndPositiveConflictsStayUnknownUntilTheNextCall() throws Exception
+    {
+        var model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("Control", "County", "Site", new DecodeConfigP25Phase1(), 851_012_500L);
+        var firstSite = new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xBEE00, 0x348, 1, 1);
+        var nextSite = new io.github.dsheirer.module.decode.p25.P25SiteIdentity(0xABCDE, 0x456, 2, 2);
+        parent.setP25SiteIdentity(firstSite);
+        APCO25Channel traffic = APCO25Channel.create(0, 459);
+        traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
+        var partySource = APCO25RadioIdentifier.createFrom(501);
+        var partyTarget = APCO25Talkgroup.create(1234);
+        var first = new IdentifierCollection(List.of(partySource, partyTarget,
+            io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(firstSite.wacn()),
+            io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(firstSite.system())));
+        var next = new IdentifierCollection(List.of(partySource, partyTarget,
+            io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(nextSite.wacn()),
+            io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(nextSite.system())));
+        try
+        {
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic, first, DecodeEventType.CALL_GROUP, 1_000, 1_100));
+            var row = model.getTables().get(1).getRows().stream()
+                .filter(candidate -> candidate.getRole() == ChannelActivityRow.Role.TRAFFIC).findFirst().orElseThrow();
+            assertEquals("p25:bee00:348", row.getServingSystemKey());
+            parent.setP25SiteIdentity(nextSite);
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic, next, DecodeEventType.CALL_GROUP, 1_000, 1_200));
+            assertEquals("p25:bee00:348", row.getServingSystemKey(), "An ongoing call retains original receiving proof");
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic, first, DecodeEventType.CALL_GROUP, 1_000, 1_250));
+            assertEquals("p25:bee00:348", row.getServingSystemKey(), "Later configuration cannot contradict original grant proof");
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic, first, DecodeEventType.CALL_GROUP, 2_000, 2_100));
+            assertNull(row.getServingSystemKey(), "Configured and raw receiving systems disagree for this call");
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic, next, DecodeEventType.CALL_GROUP, 2_000, 2_200));
+            assertNull(row.getServingSystemKey(), "A retained conflict cannot be repaired by current receiver context");
+            run(model, () -> model.p25TrafficGrant(parent, null, traffic, next, DecodeEventType.CALL_GROUP, 3_000, 3_100));
+            assertEquals("p25:abcde:456", row.getServingSystemKey());
+            run(model, () -> model.channelStopped(parent));
+            assertEquals(State.IDLE, row.getState());
+            assertEquals("p25:abcde:456", row.getServingSystemKey());
+        }
+        finally { model.close(); }
+    }
+
     @Test
     void capturesCallDetailsBeforeMutableMetadataAdvancesToIdle() throws Exception
     {

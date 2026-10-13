@@ -5,6 +5,8 @@
  */
 package io.github.dsheirer.channel.metadata.activity;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.controller.channel.Channel;
@@ -15,8 +17,10 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
@@ -119,8 +123,28 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
                       String targetForm, String targetAlias, String targetAliasDescription, String decoder,
                       String encryptionDetails, Navigation navigation, String role, Transmission transmission,
-                      Integer bandwidthHz)
+                      Integer bandwidthHz, String servingSystemKey)
     {
+        /** Compatibility snapshots have no captured receiving-system proof. */
+        public Row(String key, String channelName, String configurationId, String status, List<String> tags,
+                   long activationOrder, String lcn, long frequencyHz, String callsign, Double signalDbfs,
+                   Double decodeHealthPercent, long qualityObservedAtMs, long controlValidFrames,
+                   long controlInvalidFrames, long controlCorrectedBits, long controlSyncLossBits,
+                   long controlDroppedBits, long controlLastValidDecodeMs, VoiceCallQuality voiceQuality,
+                   Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
+                   String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
+                   String targetForm, String targetAlias, String targetAliasDescription, String decoder,
+                   String encryptionDetails, Navigation navigation, String role, Transmission transmission,
+                   Integer bandwidthHz)
+        {
+            this(key, channelName, configurationId, status, tags, activationOrder, lcn, frequencyHz, callsign,
+                signalDbfs, decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
+                controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
+                timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
+                targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, navigation,
+                role, transmission, bandwidthHz, null);
+        }
+
         /** Source-compatible constructor for snapshots that do not carry channel bandwidth. */
         public Row(String key, String channelName, String configurationId, String status, List<String> tags,
                    long activationOrder, String lcn, long frequencyHz, String callsign, Double signalDbfs,
@@ -192,7 +216,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                     row.getTransmissionObservedAt(), row.getTransmissionStart(),
                     row.getTransmissionLastObservedAt(), row.isTransmissionEndCertain(),
                     row.getTransmissionBurstGeneration(), row.getTransmissionBurstStart()) : null,
-                bandwidth(bandwidthChannel));
+                bandwidth(bandwidthChannel), row.getServingSystemKey());
         }
 
         private static Integer bandwidth(Channel channel)
@@ -261,6 +285,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 primary.getProtocol() == Protocol.APCO25 ? "phase_1" : null;
             String identityKey = null;
             ResolvedRadioIdentity resolvedRadio = ResolvedRadioIdentity.from(primary);
+            ResolvedTalkgroupIdentity resolvedGroup = ResolvedTalkgroupIdentity.from(primary);
             try
             {
                 if(primary instanceof FullyQualifiedRadioIdentifier radio)
@@ -279,7 +304,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
             {
                 //Reserved or infrastructure addresses remain visible as local values without a canonical link.
             }
-            return new MatcherReference(type, protocol, variant, value.intValue(), resolvedRadio, identityKey);
+            return new MatcherReference(type, protocol, variant, value.intValue(), resolvedRadio, identityKey,
+                resolvedGroup);
         }
 
         private static List<AliasReference> aliasReferences(List<Alias> aliases)
@@ -366,8 +392,16 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
     }
 
     public record MatcherReference(String type, String protocol, String variant, int value,
-                                   ResolvedRadioIdentity radioIdentity, String identityKey)
+                                   ResolvedRadioIdentity radioIdentity, String identityKey,
+                                   ResolvedTalkgroupIdentity groupIdentity)
     {
+        public MatcherReference(String type, String protocol, String variant, int value,
+                                ResolvedRadioIdentity radioIdentity, String identityKey)
+        {
+            this(type, protocol, variant, value, radioIdentity, identityKey,
+                legacyGroupIdentity(type, protocol, variant, value, identityKey));
+        }
+
         /** Legacy facts retain unknown provenance; an explicit resolved observation is authoritative. */
         public MatcherReference(String type, String protocol, String variant, int value, String identityKey,
                                 Integer workingAddress, ResolvedRadioIdentity radioIdentity)
@@ -395,8 +429,33 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         public Integer workingAddress()
         {
             return radioIdentity != null && (radioIdentity.subscriber() != null ||
-                radioIdentity.evidence() == ResolvedRadioIdentity.Evidence.UNKNOWN) ?
+                radioIdentity.evidence() == IdentityResolutionEvidence.UNKNOWN) ?
                 radioIdentity.observedWorkingId() : null;
+        }
+
+        private static ResolvedTalkgroupIdentity legacyGroupIdentity(String type, String protocol, String variant,
+                                                                      int value, String identityKey)
+        {
+            if((!"talkgroup".equals(type) && !"patch_group".equals(type)) || !"p25".equals(protocol)) return null;
+            Protocol p25 = "phase_2".equals(variant) ? Protocol.APCO25_PHASE2 : Protocol.APCO25;
+            if(identityKey != null)
+            {
+                try
+                {
+                    RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(identityKey);
+                    if(identity.kindCode() != RadioSystemIdentityKey.KIND_RADIO && identity.hasHome())
+                        return new ResolvedTalkgroupIdentity(p25, null, new P25TalkgroupIdentity(
+                            identity.homeWacn(), identity.homeSystemId(), identity.identityId()),
+                            IdentityResolutionEvidence.UNKNOWN);
+                }
+                catch(IllegalArgumentException ignored)
+                {
+                    //A retained scalar or malformed key does not prove an independent local/home pair.
+                }
+                return null;
+            }
+            return value > 0 && value < 0xFFFF ? new ResolvedTalkgroupIdentity(p25, value, null,
+                IdentityResolutionEvidence.UNRESOLVED) : null;
         }
 
         private static ResolvedRadioIdentity legacyIdentity(String type, String protocol, String variant,
@@ -427,7 +486,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 workingAddress <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID ? workingAddress : null;
             return subscriber != null || working != null ? new ResolvedRadioIdentity(
                 "phase_2".equals(variant) ? Protocol.APCO25_PHASE2 : Protocol.APCO25, working, subscriber,
-                ResolvedRadioIdentity.Evidence.UNKNOWN) : null;
+                IdentityResolutionEvidence.UNKNOWN) : null;
         }
     }
 }

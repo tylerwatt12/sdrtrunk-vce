@@ -949,12 +949,12 @@ class P25TrafficChannelManagerTest
         assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
             wrongNac, 1_100L));
 
-        Identifier qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x123, 2201);
+        Identifier qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2201);
         manager.processP2TrafficCurrentUser(call.frequency(), call.timeslot(), qualifiedGroup, 1_200L);
         assertEquals(source, manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
             call.audioIdentifiers(), 1_300L));
         MutableIdentifierCollection conflictingHome = new MutableIdentifierCollection();
-        conflictingHome.update(APCO25FullyQualifiedTalkgroupIdentifier.createTo(1201, 0xABCDE, 0x123, 2202));
+        conflictingHome.update(APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2202));
         assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(), conflictingHome, 1_300L));
         assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
             conflictingHome, 1_300L));
@@ -1165,7 +1165,7 @@ class P25TrafficChannelManagerTest
         MutableIdentifierCollection abbreviated = identifiers(1201, APCO25RadioIdentifier.createFrom(1234567));
         RadioIdentifier qualifiedRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             1234567, 0xABCDE, 0x123, 7654321);
-        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+        Identifier<?> qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
             1201, 0xABCDE, 0x123, 2201);
         MutableIdentifierCollection enriched = new MutableIdentifierCollection();
         enriched.update(qualifiedGroup);

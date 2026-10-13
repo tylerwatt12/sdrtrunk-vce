@@ -254,8 +254,8 @@ public record CallPlaybackTarget(String key, Kind kind, String radioSystemKey, I
     private static P25Home servingP25Home(CallLegSource source, IdentifierCollection identifiers)
     {
         P25SiteIdentity learned = source != null ? source.p25SiteIdentity() : null;
-        Integer wacn = learned != null ? learned.wacn() : integerIdentifier(identifiers, Form.WACN);
-        Integer system = learned != null ? learned.system() : integerIdentifier(identifiers, Form.SYSTEM);
+        Integer wacn = learned != null ? Integer.valueOf(learned.wacn()) : integerIdentifier(identifiers, Form.WACN);
+        Integer system = learned != null ? Integer.valueOf(learned.system()) : integerIdentifier(identifiers, Form.SYSTEM);
         return wacn != null && system != null ? new P25Home(wacn, system) : null;
     }
 

@@ -30,7 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Group affiliation response abbreviated
+ * Group affiliation response extended
  */
 public class GroupAffiliationResponseExtended extends MacStructure
 {
@@ -87,7 +87,7 @@ public class GroupAffiliationResponseExtended extends MacStructure
             int system = getInt(SOURCE_GID_SYSTEM);
             int id = getInt(SOURCE_GID_ID);
 
-            mSourceGID = APCO25FullyQualifiedTalkgroupIdentifier.createFrom(address, wacn, system, id);
+            mSourceGID = APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(address, wacn, system, id);
         }
 
         return mSourceGID;

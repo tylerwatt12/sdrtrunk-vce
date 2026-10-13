@@ -10,6 +10,8 @@
  */
 package io.github.dsheirer.stats;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -580,6 +582,45 @@ class ManagedRecordingsHttpControllerTest
                 "/calls?radio_identity_key=v1-r-00001-001-101" + scope).GET());
             assertEquals(400, response.statusCode(), response.body());
         }
+    }
+
+    @Test
+    void exactGroupKeyRetainsHomeTupleAndReceivingScopeWithoutRadioRoleMatches() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDirectory.resolve(
+            "managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_system(id,system_key) VALUES(501,'p25:00001:001')");
+            statement.executeUpdate("UPDATE recording_call SET system_id=501 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,target_id,target_home_wacn," +
+                "target_home_system,target_home_id) " +
+                "VALUES(1500,2500,1000,'foreign-group.mp3',5,501,1,1,1,101,3101,2,2,501)");
+            statement.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,system_id,protocol,call_type,voice_type,source_id,target_id,target_home_wacn," +
+                "target_home_system,target_home_id) " +
+                "VALUES(1700,2700,1000,'direct-radio.mp3',5,501,1,3,1,101,3101,2,2,501)");
+            statement.executeUpdate("UPDATE catalog_metadata SET call_count=3,total_bytes=15 WHERE id=1");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH +
+            "/calls?from_ms=0&to_ms=5000&system_key=p25:00001:001";
+        for(String kind: List.of("g", "p"))
+        {
+            var response = send(request(base + "&talkgroup_identity_key=v1-" + kind + "-00002-002-501").GET());
+            assertEquals(200, response.statusCode(), response.body());
+            assertEquals(1, json(response).at("/data/calls").size());
+            assertEquals(3101, json(response).at("/data/calls/0/target_observed_local_id").intValue());
+            assertEquals(501, json(response).at("/data/calls/0/target_canonical_group_identity/talkgroup_id").intValue());
+        }
+        for(String key: List.of("bad", "v1-r-00002-002-501", "v1-g-x-x-501"))
+        {
+            var response = send(request(base + "&talkgroup_identity_key=" + key).GET());
+            assertEquals(400, response.statusCode(), response.body());
+            assertEquals("talkgroup_identity_key", json(response).at("/error/field").textValue());
+        }
+        var unknownScope = send(request(ManagedRecordingsHttpController.BROWSE_PATH +
+            "/calls?talkgroup_identity_key=v1-g-00002-002-501").GET());
+        assertEquals(400, unknownScope.statusCode());
     }
 
     @Test

@@ -22,6 +22,8 @@ package io.github.dsheirer.module.decode.p25;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierObservation;
+import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
@@ -35,7 +37,6 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
-import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -118,7 +119,7 @@ public class P25TrafficChannelEventTracker
             }
             if(capturedIndex >= mConventionalActivityIdentifiers.size()) return false;
             Identifier captured = mConventionalActivityIdentifiers.get(capturedIndex++);
-            if(!Objects.equals(identifier, captured)) return false;
+            if(!IdentifierObservation.same(identifier, captured)) return false;
             //PatchGroup equality compares its primary ID; mutable membership also belongs to the captured facts.
             if(identifier instanceof APCO25PatchGroup current && captured instanceof APCO25PatchGroup previous &&
                 current.getValue() != null && previous.getValue() != null &&
@@ -182,11 +183,8 @@ public class P25TrafficChannelEventTracker
             Identifier existing = getEvent().getIdentifierCollection().getIdentifier(
                 identifier.getIdentifierClass(), identifier.getForm(), identifier.getRole());
 
-            if(getEvent().getIdentifierCollection().hasIdentifier(identifier) &&
-                !(existing instanceof FullyQualifiedRadioIdentifier oldRadio &&
-                    identifier instanceof FullyQualifiedRadioIdentifier newRadio &&
-                    newRadio.getWorkingAddress() != null &&
-                    !newRadio.getWorkingAddress().equals(oldRadio.getWorkingAddress())))
+            identifier = IdentifierObservation.retainAssignment(existing, identifier);
+            if(!IdentifierObservation.shouldReplace(existing, identifier))
             {
                 return;
             }
@@ -348,13 +346,9 @@ public class P25TrafficChannelEventTracker
 
         if(first instanceof TalkgroupIdentifier firstGroup && second instanceof TalkgroupIdentifier secondGroup)
         {
-            if((firstGroup instanceof FullyQualifiedTalkgroupIdentifier) ==
-                (secondGroup instanceof FullyQualifiedTalkgroupIdentifier))
-            {
-                return false;
-            }
-
-            return firstGroup.getValue() > 0 && firstGroup.getValue().equals(secondGroup.getValue());
+            ResolvedTalkgroupIdentity firstIdentity = ResolvedTalkgroupIdentity.from(firstGroup);
+            return firstIdentity != null && firstIdentity.matchesWithinScope(ResolvedTalkgroupIdentity.from(secondGroup),
+                mRadioSystemKey);
         }
 
         return false;

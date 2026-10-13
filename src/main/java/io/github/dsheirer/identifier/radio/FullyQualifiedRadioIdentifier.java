@@ -19,6 +19,10 @@
 
 package io.github.dsheirer.identifier.radio;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
+import io.github.dsheirer.identifier.P25IdentityFormatter;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.identifier.Role;
 import java.util.Objects;
@@ -35,7 +39,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     private int mSystem;
     private int mRadio;
     private final boolean mExplicitWorkingAddress;
-    private final ResolvedRadioIdentity.Evidence mResolutionEvidence;
+    private final IdentityResolutionEvidence mResolutionEvidence;
     private final RadioIdentifier mRecordingIdentifier;
 
     /**
@@ -59,17 +63,17 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
     protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
                                             boolean explicitWorkingAddress)
     {
-        this(localAddress, wacn, system, id, role, explicitWorkingAddress, ResolvedRadioIdentity.Evidence.DIRECT);
+        this(localAddress, wacn, system, id, role, explicitWorkingAddress, IdentityResolutionEvidence.DIRECT);
     }
 
     protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
-                                            boolean explicitWorkingAddress, ResolvedRadioIdentity.Evidence evidence)
+                                            boolean explicitWorkingAddress, IdentityResolutionEvidence evidence)
     {
         this(localAddress, wacn, system, id, role, explicitWorkingAddress, evidence, null);
     }
 
     protected FullyQualifiedRadioIdentifier(int localAddress, int wacn, int system, int id, Role role,
-                                            boolean explicitWorkingAddress, ResolvedRadioIdentity.Evidence evidence,
+                                            boolean explicitWorkingAddress, IdentityResolutionEvidence evidence,
                                             RadioIdentifier recordingIdentifier)
     {
         super(localAddress, role);
@@ -91,7 +95,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
         return mRecordingIdentifier != null ? mRecordingIdentifier : this;
     }
 
-    public ResolvedRadioIdentity.Evidence getResolutionEvidence()
+    public IdentityResolutionEvidence getResolutionEvidence()
     {
         return mResolutionEvidence;
     }
@@ -117,7 +121,7 @@ public abstract class FullyQualifiedRadioIdentifier extends RadioIdentifier
      */
     public String getFullyQualifiedRadioAddress()
     {
-        return P25SubscriberIdentityFormatter.format(mWacn, mSystem, mRadio);
+        return P25IdentityFormatter.format(mWacn, mSystem, mRadio);
     }
 
     /** Indicates whether the protocol explicitly supplied a separate working/local address field. */

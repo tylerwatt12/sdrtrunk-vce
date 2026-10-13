@@ -11,7 +11,7 @@
 
 package io.github.dsheirer.stats;
 
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -480,7 +480,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
 
         try
         {
-            return P25SubscriberIdentityFormatter.format(canonicalWacn, canonicalSystemId,
+            return P25IdentityFormatter.format(canonicalWacn, canonicalSystemId,
                 canonicalSubscriberId);
         }
         catch(IllegalArgumentException exception)

@@ -123,7 +123,8 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertFalse(app.contains("issiSubscriberFilterActions"));
         assertTrue(app.contains("ISSI Advertised Band Plans"));
         assertTrue(app.contains("label: 'Heard On'"));
-        assertTrue(app.contains("View this system’s ISSI Band Plans"));
+        assertTrue(app.contains("action: anchor('View in ISSI', href('radio-system'"));
+        assertTrue(app.contains("radio_system_key: channel.radio_system_key, tab: 'issi', issi_view: 'frequency-bands'"));
         assertTrue(app.contains("section('ISSI Status', stateHost)"));
         assertTrue(app.contains("['Last Updated', state?.snapshot_at_ms"));
         assertTrue(app.contains("['Last Confirmed', state?.last_confirmation_ms"));

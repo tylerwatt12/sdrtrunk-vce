@@ -1,6 +1,8 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.identifier.radio;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
@@ -22,7 +24,7 @@ class ResolvedRadioIdentityTest
         assertNull(permanent.observedWorkingId());
         assertFalse(permanent.matchesWithinScope(local));
         assertFalse(local.matchesWithinScope(permanent));
-        assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, permanent.evidence());
+        assertEquals(IdentityResolutionEvidence.DIRECT, permanent.evidence());
     }
 
     @Test
@@ -60,10 +62,10 @@ class ResolvedRadioIdentityTest
     void explicitOrConfirmedWorkingAddressCanMatchALocalObservationWithinItsScope()
     {
         var qualified = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xABCDE,
-            0x123, 777, Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+            0x123, 777, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
         var canonical = ResolvedRadioIdentity.from(qualified);
         assertTrue(canonical.matchesWithinScope(ResolvedRadioIdentity.from(APCO25RadioIdentifier.createFrom(501))));
-        assertEquals(ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT, canonical.evidence());
+        assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, canonical.evidence());
         assertFalse(canonical.matchesWithinScope(ResolvedRadioIdentity.from(
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x123, 778))));
     }
@@ -83,7 +85,7 @@ class ResolvedRadioIdentityTest
     void assignmentProvenanceRequiresBothIndependentIdentityFacts()
     {
         assertThrows(IllegalArgumentException.class, () -> new ResolvedRadioIdentity(Protocol.APCO25,
-            null, new P25SubscriberIdentity(0xABCDE, 0x123, 777), ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT));
+            null, new P25SubscriberIdentity(0xABCDE, 0x123, 777), IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT));
         assertNull(ResolvedRadioIdentity.from(APCO25RadioIdentifier.createFrom(0xFFFFFF)));
     }
 }

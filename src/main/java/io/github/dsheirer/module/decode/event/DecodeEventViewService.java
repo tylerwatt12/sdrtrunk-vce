@@ -23,6 +23,8 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.sample.Broadcaster;
@@ -537,6 +539,11 @@ public class DecodeEventViewService implements AutoCloseable
         P25SubscriberIdentity subscriber = P25SubscriberIdentity.from(identifier);
         PatchGroupIdentifier patch = identifier instanceof PatchGroupIdentifier value && value.getValue() != null ?
             value : null;
+        Identifier<?> groupIdentifier = patch != null ? patch.getValue().getPatchGroup() : identifier;
+        P25TalkgroupIdentity group = P25TalkgroupIdentity.from(groupIdentifier);
+        Integer local = groupIdentifier instanceof FullyQualifiedTalkgroupIdentifier qualified ?
+            qualified.getLocalAddress() : groupIdentifier instanceof TalkgroupIdentifier talkgroup ?
+                talkgroup.getValue() : identifier instanceof RadioIdentifier radio ? radio.getValue() : null;
         return new PartyIdentifier(text,
             identifier.getForm() != null ? identifier.getForm().name() : null,
             identifier.getProtocol() != null ? identifier.getProtocol().name() : null,
@@ -547,7 +554,9 @@ public class DecodeEventViewService implements AutoCloseable
                 bounded(patch.getValue().getPatchGroup().toString()) : null,
             talkgroupMembers(identifier), patch != null &&
                 patch.getValue().getPatchedTalkgroupIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS,
-            patch != null && patch.getValue().getPatchedRadioIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS);
+            patch != null && patch.getValue().getPatchedRadioIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS,
+            group != null ? new CanonicalGroupIdentity(group.homeWacn(), group.homeSystemId(), group.talkgroupId()) : null,
+            local);
     }
 
     /** Patch text embeds real radio identifiers; detach only its direct, bounded radio members. */
@@ -576,14 +585,14 @@ public class DecodeEventViewService implements AutoCloseable
         return List.copyOf(members.values());
     }
 
-    private static List<String> talkgroupMembers(Identifier<?> identifier)
+    private static List<PartyIdentifier> talkgroupMembers(Identifier<?> identifier)
     {
         if(!(identifier instanceof PatchGroupIdentifier patch) || patch.getValue() == null)
         {
             return List.of();
         }
 
-        LinkedHashSet<String> members = new LinkedHashSet<>();
+        LinkedHashMap<String,PartyIdentifier> members = new LinkedHashMap<>();
         int examined = 0;
         for(TalkgroupIdentifier talkgroup: patch.getValue().getPatchedTalkgroupIdentifiers())
         {
@@ -595,9 +604,10 @@ public class DecodeEventViewService implements AutoCloseable
             {
                 break;
             }
-            members.add(bounded(talkgroup.toString()));
+            String text = bounded(talkgroup.toString());
+            members.putIfAbsent(text, partyIdentifier(talkgroup, text, List.of()));
         }
-        return List.copyOf(members);
+        return List.copyOf(members.values());
     }
 
     private static String eventId(IDecodeEvent event)
@@ -841,8 +851,9 @@ public class DecodeEventViewService implements AutoCloseable
     public record PartyIdentifier(String text, String form, String protocol,
                                   CanonicalRadioIdentity canonicalIdentity, Integer observedWorkingId,
                                   List<PartyIdentifier> radioMembers, String patchGroup,
-                                  List<String> talkgroupMembers, boolean talkgroupMembersTruncated,
-                                  boolean radioMembersTruncated)
+                                  List<PartyIdentifier> talkgroupMembers, boolean talkgroupMembersTruncated,
+                                  boolean radioMembersTruncated, CanonicalGroupIdentity canonicalGroupIdentity,
+                                  Integer observedLocalId)
     {
         public PartyIdentifier
         {
@@ -860,18 +871,22 @@ public class DecodeEventViewService implements AutoCloseable
                                List<PartyIdentifier> radioMembers)
         {
             this(text, form, protocol, canonicalIdentity, observedWorkingId, radioMembers,
-                null, List.of(), false, false);
+                null, List.of(), false, false, null, null);
         }
 
         public PartyIdentifier(String text, String form, String protocol,
                                CanonicalRadioIdentity canonicalIdentity, Integer observedWorkingId)
         {
-            this(text, form, protocol, canonicalIdentity, observedWorkingId, List.of(), null, List.of(), false, false);
+            this(text, form, protocol, canonicalIdentity, observedWorkingId, List.of(), null, List.of(), false, false, null, null);
         }
     }
 
     /** Shares the canonical identity field names already used by Live and retained activity payloads. */
     public record CanonicalRadioIdentity(int wacn, int systemId, int subscriberId)
+    {
+    }
+
+    public record CanonicalGroupIdentity(int wacn, int systemId, int talkgroupId)
     {
     }
 

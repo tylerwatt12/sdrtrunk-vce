@@ -30,7 +30,9 @@ final class StatsApiV1Payload
         "id", "configuration_id", "observed_at_ms", "channel_kind", "protocol", "action",
         "source_radio_id", "target_id", "source_identity_key", "target_identity_key",
         "source_native_id", "target_native_id", "source_canonical_identity", "target_canonical_identity",
-        "source_observed_working_id", "target_observed_working_id", "target_kind",
+        "source_canonical_group_identity", "target_canonical_group_identity",
+        "source_observed_local_id", "target_observed_local_id",
+        "source_observed_working_id", "target_observed_working_id", "target_kind", "serving_system_key",
         "source_alias_name", "target_alias_name", "source_talker_alias", "target_talker_alias",
         "source_home_system_name", "target_home_system_name", "system_name", "system_names",
         "radio_system_key", "radio_system_entity_ref", "wacn", "system_id");
@@ -41,6 +43,7 @@ final class StatsApiV1Payload
         "canonical_wacn", "canonical_system_id", "canonical_subscriber_id",
         "source_canonical_wacn", "source_canonical_system_id", "source_canonical_subscriber_id",
         "target_canonical_wacn", "target_canonical_system_id", "target_canonical_subscriber_id",
+        "canonical_talkgroup_id", "source_canonical_talkgroup_id", "target_canonical_talkgroup_id",
         "radio_canonical_wacn", "radio_canonical_system_id", "radio_canonical_subscriber_id",
         "source_identity_summary_id", "target_identity_summary_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key", "site_type",
@@ -120,8 +123,7 @@ final class StatsApiV1Payload
             source.has("group_identity_kind_code") || source.has("identity_key") || source.has("identity_id");
         boolean channelObservationRecord = !identityRecord && source.has("variant_code") &&
             (source.has("site_id") || source.has("ran") || source.has("rfss"));
-        boolean entityReference = source.path("kind").isTextual() &&
-            (source.has("key") || source.has("identity_key"));
+        boolean entityReference = entityReference(source);
         boolean protocolRecord = !entityReference && (source.has("protocol_code") || source.has("protocol") ||
             identityRecord || channelObservationRecord || source.has("radio_system_key") ||
             source.has("configuration_id"));
@@ -267,6 +269,8 @@ final class StatsApiV1Payload
         {
             return;
         }
+        //Navigation references are opaque keys, not identity observations.
+        if(entityReference(source)) return;
 
         boolean directRadio = code(source, "identity_kind_code") == 2 ||
             code(source, "group_identity_kind_code") == 2 ||
@@ -297,6 +301,99 @@ final class StatsApiV1Payload
                 firstIntegral(source, "target_canonical_wacn"),
                 firstIntegral(source, "target_canonical_system_id"),
                 firstIntegral(source, "target_canonical_subscriber_id"));
+        }
+
+        putGroupIdentity(source, presented, "canonical_group_identity", "identity_key",
+            firstIntegral(source, "canonical_wacn"), firstIntegral(source, "canonical_system_id"),
+            firstIntegral(source, "canonical_talkgroup_id"));
+        putGroupIdentity(source, presented, "source_canonical_group_identity", "source_identity_key",
+            firstIntegral(source, "source_canonical_wacn"), firstIntegral(source, "source_canonical_system_id"),
+            firstIntegral(source, "source_canonical_talkgroup_id"));
+        putGroupIdentity(source, presented, "target_canonical_group_identity", "target_identity_key",
+            firstIntegral(source, "target_canonical_wacn", "target_home_wacn"),
+            firstIntegral(source, "target_canonical_system_id", "target_home_system_id"),
+            firstIntegral(source, "target_canonical_talkgroup_id", "target_home_id"));
+        putGroupIdentity(source, presented, "group_canonical_group_identity", "group_identity_key",
+            null, null, null);
+        putGroupIdentity(source, presented, "affiliated_talkgroup_canonical_group_identity",
+            "affiliated_talkgroup_identity_key", null, null, null);
+
+        if(presented.has("source_canonical_group_identity") && !source.has("source_canonical_group_identity"))
+        {
+            presented.putNull("source_observed_local_id");
+        }
+        else putObservedLocal(source, presented, "source_observed_local_id", "source_observed_local_id",
+            "source_radio_id", "source_id");
+        if(presented.has("target_canonical_group_identity") && !source.has("target_canonical_group_identity"))
+        {
+            presented.putNull("target_observed_local_id");
+        }
+        else putObservedLocal(source, presented, "target_observed_local_id", "target_observed_local_id", "target_id");
+        if(presented.has("canonical_group_identity") && !source.has("canonical_group_identity") &&
+            !source.has("explicitly_observed_local_address"))
+        {
+            presented.putNull("observed_local_id");
+        }
+    }
+
+    private static boolean entityReference(ObjectNode source)
+    {
+        String kind = source.path("kind").asText("");
+        return source.size() == 2 && source.has("key") && Set.of("channel", "radio_system").contains(kind) ||
+            source.size() == 3 && source.has("radio_system_key") && source.has("identity_key") &&
+                Set.of("radio", "talkgroup", "patch_group").contains(kind);
+    }
+
+    private static void putGroupIdentity(ObjectNode source, ObjectNode presented, String field, String keyField,
+                                         Long wacn, Long systemId, Long groupId)
+    {
+        String key = source.path(keyField).asText("");
+        if(!key.isEmpty())
+        {
+            try
+            {
+                RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(key);
+                if(identity.kindCode() == RadioSystemIdentityKey.KIND_RADIO) return;
+                if(identity.hasHome() && identity.kindCode() != RadioSystemIdentityKey.KIND_RADIO)
+                {
+                    wacn = (long)identity.homeWacn();
+                    systemId = (long)identity.homeSystemId();
+                    groupId = (long)identity.identityId();
+                }
+            }
+            catch(IllegalArgumentException ignored)
+            {
+                return;
+            }
+        }
+        else if("target_identity_key".equals(keyField) && code(source, "target_kind_code") != 1 &&
+            code(source, "target_kind_code") != 3 &&
+            !Set.of("GROUP", "PATCH", "talkgroup", "patch_group").contains(source.path("call_type").asText("")) &&
+            !source.has("target_canonical_talkgroup_id"))
+        {
+            return;
+        }
+        if(wacn == null || systemId == null || groupId == null ||
+            wacn < 0 || wacn > 0xFFFFF || systemId < 0 || systemId > 0xFFF ||
+            groupId < 1 || groupId > RadioSystemIdentityKey.MAX_P25_GROUP_ID) return;
+        ObjectNode identity = OBJECT_MAPPER.createObjectNode();
+        identity.put("wacn", wacn);
+        identity.put("system_id", systemId);
+        identity.put("talkgroup_id", groupId);
+        presented.set(field, identity);
+    }
+
+    private static void putObservedLocal(ObjectNode source, ObjectNode presented, String field, String... candidates)
+    {
+        if(candidates.length > 0 && source.has(candidates[0]) && source.get(candidates[0]).isNull())
+        {
+            presented.putNull(field);
+            return;
+        }
+        Long value = firstIntegral(source, candidates);
+        if(value != null && value >= 0 && value <= RadioSystemIdentityKey.MAX_P25_RADIO_ID)
+        {
+            presented.put(field, value);
         }
     }
 

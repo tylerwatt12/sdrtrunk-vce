@@ -19,12 +19,15 @@
 
 package io.github.dsheirer.module.decode.p25.identifier.talkgroup;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 
 /**
- * Fully Qualified Radio Identifier (talkgroup) that includes WACN, System, and Radio Address.
+ * Fully qualified P25 home group identity and independent local observation.
  */
 public class APCO25FullyQualifiedTalkgroupIdentifier extends FullyQualifiedTalkgroupIdentifier
 {
@@ -39,6 +42,44 @@ public class APCO25FullyQualifiedTalkgroupIdentifier extends FullyQualifiedTalkg
     public APCO25FullyQualifiedTalkgroupIdentifier(int groupAddress, int wacn, int system, int id, Role role)
     {
         super(groupAddress, wacn, system, id, role);
+    }
+
+    private APCO25FullyQualifiedTalkgroupIdentifier(int address, int wacn, int system, int id, Role role,
+        boolean explicitLocal, IdentityResolutionEvidence evidence, TalkgroupIdentifier recordingIdentifier)
+    {
+        super(address, wacn, system, id, role, explicitLocal, evidence, recordingIdentifier);
+    }
+
+    public static APCO25FullyQualifiedTalkgroupIdentifier createFromWithLocalAddress(int address, int wacn,
+        int system, int id)
+    {
+        return createWithLocalAddress(address, wacn, system, id, Role.FROM, IdentityResolutionEvidence.DIRECT);
+    }
+
+    public static APCO25FullyQualifiedTalkgroupIdentifier createToWithLocalAddress(int address, int wacn,
+        int system, int id)
+    {
+        return createWithLocalAddress(address, wacn, system, id, Role.TO, IdentityResolutionEvidence.DIRECT);
+    }
+
+    public static APCO25FullyQualifiedTalkgroupIdentifier createWithLocalAddress(int address, int wacn,
+        int system, int id, Role role, IdentityResolutionEvidence evidence)
+    {
+        return createWithLocalAddress(address, wacn, system, id, role, evidence, null);
+    }
+
+    public static APCO25FullyQualifiedTalkgroupIdentifier createWithLocalAddress(int address, int wacn,
+        int system, int id, Role role, IdentityResolutionEvidence evidence, TalkgroupIdentifier raw)
+    {
+        return new APCO25FullyQualifiedTalkgroupIdentifier(address, wacn, system, id, role, true, evidence, raw);
+    }
+
+    public static APCO25FullyQualifiedTalkgroupIdentifier withRecordingIdentifier(
+        APCO25FullyQualifiedTalkgroupIdentifier identity, TalkgroupIdentifier raw)
+    {
+        return new APCO25FullyQualifiedTalkgroupIdentifier(identity.getValue(), identity.getWacn(),
+            identity.getSystem(), identity.getTalkgroup(), identity.getRole(), identity.hasExplicitLocalAddress(),
+            identity.getResolutionEvidence(), raw);
     }
 
     @Override

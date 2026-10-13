@@ -20,6 +20,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -108,6 +110,12 @@ final class ChannelActivityIngressQueue
         cell.mMetadataTalkerAlias = identifiers != null ?
             identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM) : null;
         cell.mMetadataEncryption = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
+        cell.mServingSite = parent != null && parent.getDecodeConfiguration() instanceof DecodeConfigP25 ?
+            parent.getP25SiteIdentity() : null;
+        cell.mServingWacn = identifiers != null ?
+            identifiers.getIdentifier(IdentifierClass.NETWORK, Form.WACN, Role.BROADCAST) : null;
+        cell.mServingSystem = identifiers != null ?
+            identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SYSTEM, Role.BROADCAST) : null;
         publish(cell);
         return true;
     }
@@ -213,7 +221,8 @@ final class ChannelActivityIngressQueue
             cell.mFourth, cell.mFifth, cell.mSixth, cell.mValue, cell.mMetadata, cell.mMetadataField,
             cell.mMetadataFrequency, cell.mMetadataTimeslot, cell.mMetadataState, cell.mMetadataDecoder,
             cell.mMetadataSource, cell.mMetadataSourceAliases, cell.mMetadataTalkerAlias, cell.mMetadataTarget,
-            cell.mMetadataTargetAliases, cell.mMetadataEncryption, cell.mCallStart, cell.mObservedAt);
+            cell.mMetadataTargetAliases, cell.mMetadataEncryption, cell.mCallStart, cell.mObservedAt,
+            cell.mServingSite, cell.mServingWacn, cell.mServingSystem);
         cell.mFirst = null;
         cell.mSecond = null;
         cell.mThird = null;
@@ -233,6 +242,9 @@ final class ChannelActivityIngressQueue
         cell.mMetadataEncryption = null;
         cell.mCallStart = 0;
         cell.mObservedAt = 0;
+        cell.mServingSite = null;
+        cell.mServingWacn = null;
+        cell.mServingSystem = null;
 
         if(!cell.mLifecycle)
         {
@@ -268,7 +280,8 @@ final class ChannelActivityIngressQueue
                  long metadataFrequency, Integer metadataTimeslot, State metadataState,
                  DecoderTypeConfigurationIdentifier metadataDecoder, Identifier<?> metadataSource,
                  List<Alias> metadataSourceAliases, Identifier<?> metadataTalkerAlias, Identifier<?> metadataTarget,
-                 List<Alias> metadataTargetAliases, Identifier<?> metadataEncryption, long callStart, long observedAt)
+                 List<Alias> metadataTargetAliases, Identifier<?> metadataEncryption, long callStart, long observedAt,
+                 P25SiteIdentity servingSite, Identifier<?> servingWacn, Identifier<?> servingSystem)
     {
     }
 
@@ -286,6 +299,9 @@ final class ChannelActivityIngressQueue
         private long mValue;
         private long mCallStart;
         private long mObservedAt;
+        private P25SiteIdentity mServingSite;
+        private Identifier<?> mServingWacn;
+        private Identifier<?> mServingSystem;
         private ChannelMetadata mMetadata;
         private ChannelMetadataField mMetadataField;
         private long mMetadataFrequency;

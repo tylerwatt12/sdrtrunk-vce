@@ -1,7 +1,7 @@
 'use strict';
 
 import { systemName, systemIdentity } from '../../core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, p25ServingSystemKey } from '../../core/radio-labels.js?v=6';
+import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../../core/radio-labels.js?v=7';
 
 const P25_HISTORY_ACTIONS = Object.freeze([
   'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',
@@ -101,8 +101,12 @@ function systemLabel(row) {
 }
 
 function groupLabel(row, key) {
-  return text(row?.target_alias_name) || text(row?.target_name) ||
-    String(nativeId(key, row?.target_native_id ?? row?.target_id) ?? 'Talkgroup');
+  const id = nativeId(key, row?.target_native_id ?? row?.target_id);
+  const facts = p25IdentityFacts({ ...row, target_identity_key: key }, 'target', 'talkgroup');
+  const label = facts ? p25IdentifierText({ ...row, target_identity_key: key }, id, {
+    prefix: 'target', kind: 'talkgroup', homeSystemName: text(row?.target_home_system_name) ||
+      systemName(facts.homeSystemKey) }) : '';
+  return text(row?.target_alias_name) || text(row?.target_name) || label || String(id ?? 'Talkgroup');
 }
 
 function radioAlias(row, role = 'source') {

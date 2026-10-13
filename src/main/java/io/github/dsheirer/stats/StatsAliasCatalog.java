@@ -14,7 +14,7 @@ package io.github.dsheirer.stats;
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import io.github.dsheirer.alias.AliasAdministrationService;
-import io.github.dsheirer.identifier.radio.P25SubscriberIdentityFormatter;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -2790,7 +2790,7 @@ final class StatsAliasCatalog
             {
                 try
                 {
-                    return P25SubscriberIdentityFormatter.format(Math.toIntExact(homeWacn),
+                    return P25IdentityFormatter.format(Math.toIntExact(homeWacn),
                         Math.toIntExact(homeSystemId), Math.toIntExact(subscriberId));
                 }
                 catch(IllegalArgumentException | ArithmeticException ignored)

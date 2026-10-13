@@ -39,6 +39,14 @@ import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierObservation;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -58,6 +66,7 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
@@ -599,6 +608,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         boolean transmissionChanged = row.observeTransmission(event);
+        boolean servingContextChanged = false;
+        if(transmissionChanged && snapshot.callLegId() != null && snapshot.callLegId().equals(row.getCallLegId()))
+        {
+            var source = snapshot.callLegSource();
+            Protocol protocol = source.decoderType() != null ? source.decoderType().getProtocol() : null;
+            String servingKey = protocol == null || protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2 ?
+                RadioSystemKey.p25Serving(source.radioSystemKey(), source.p25SiteIdentity(),
+                    snapshot.identifierCollection()) : null;
+            int proofCount = (RadioSystemKey.isP25Native(source.radioSystemKey()) ? 1 : 0) +
+                (source.p25SiteIdentity() != null ? 1 : 0) +
+                (RadioSystemKey.p25Broadcast(snapshot.identifierCollection()) != null ? 1 : 0);
+            servingContextChanged = row.captureServingSystemKey(servingKey, true, servingKey == null && proofCount > 1);
+        }
 
         /*
          * A linked segment may not carry diagnostic observations. Transfer ownership at creation while retaining
@@ -615,7 +637,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 qualityTransferred = true;
             }
 
-            if(transmissionChanged || qualityTransferred)
+            if(transmissionChanged || qualityTransferred || servingContextChanged)
             {
                 refreshVoiceQualityRow(row);
             }
@@ -630,7 +652,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
          */
         if(completed && !snapshot.callId().equals(row.getVoiceCallId()))
         {
-            if(transmissionChanged)
+            if(transmissionChanged || servingContextChanged)
             {
                 refreshVoiceQualityRow(row);
             }
@@ -642,7 +664,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             row.setVoiceQuality(snapshot.callId(), quality);
         }
 
-        if(transmissionChanged || hasMeasurements)
+        if(transmissionChanged || hasMeasurements || servingContextChanged)
         {
             refreshVoiceQualityRow(row);
         }
@@ -1015,8 +1037,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         Identifier<?> source = entry.metadataSource();
         Identifier<?> target = entry.metadataTarget();
         boolean newCall = row.getState() == State.IDLE || row.startsNewTrafficCall(entry.callStart()) ||
-            isParticipantChanged(row.getSource(), source, parentChannel) ||
-            isParticipantChanged(row.getTarget(), target, parentChannel);
+            isParticipantChanged(row.getSource(), source, row.getServingSystemKey()) ||
+            isParticipantChanged(row.getTarget(), target, row.getServingSystemKey());
         boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
 
         if(newCall)
@@ -1025,9 +1047,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             row.clearVoiceQuality();
         }
 
+        //The worker's prior ordered site observation is receiving evidence even when an allocated child has none.
+        //Capture it at the grant boundary; renderer refreshes and later grants cannot rebind this call's scope.
+        SiteIdentity learned = isP25TrunkedControlParent(parentChannel) ? mSiteIdentities.get(parentChannel) : null;
+        String learnedKey = learned != null && learned.wacn() != null && learned.system() != null ?
+            RadioSystemKey.p25(learned.wacn(), learned.system()) : null;
+        String servingKey = RadioSystemKey.p25Serving(learnedKey, entry.servingSite(), entry.servingWacn(), entry.servingSystem());
+        int proofCount = (learnedKey != null ? 1 : 0) + (entry.servingSite() != null ? 1 : 0) +
+            (RadioSystemKey.p25Broadcast(entry.servingWacn(), entry.servingSystem()) != null ? 1 : 0);
+        boolean servingConflict = servingKey == null && proofCount > 1;
+        row.captureServingSystemKey(servingKey, false, servingConflict);
         row.setDecoder(getDecoder(rowChannel));
         updateCallDetails(row, source, target, entry.metadataTalkerAlias(), entry.metadataEncryption(),
-            rowChannel, parentChannel);
+            rowChannel);
         row.observeTrafficCall(entry.callStart(), entry.observedAt());
         ChannelTag serviceTag = ChannelTag.fromService(eventType);
 
@@ -1139,8 +1171,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         State state = observation.state();
         Identifier<?> metadataTarget = observation.target();
-        boolean targetChanged = state != State.IDLE && metadataTarget != null && row.getTarget() != null &&
-            !metadataTarget.equals(row.getTarget());
+        boolean targetChanged = state != State.IDLE &&
+            isParticipantChanged(row.getTarget(), metadataTarget, row.getServingSystemKey());
         boolean newCall = state != State.IDLE && (row.getState() == State.IDLE || targetChanged);
         boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
 
@@ -1163,15 +1195,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         Identifier<?> source = observation.source();
         Identifier<?> target = metadataTarget;
         Identifier<?> talkerAlias = observation.talkerAlias();
-        boolean sourceMatches = source == null || row.getSource() == null || source.equals(row.getSource());
-        boolean targetMatches = target == null || row.getTarget() == null || target.equals(row.getTarget());
-        boolean sourceChanged = sourceObserved && source != null && row.getSource() != null &&
-            !source.equals(row.getSource());
+        boolean sourceMatches = !isParticipantChanged(row.getSource(), source, row.getServingSystemKey());
+        boolean targetMatches = !isParticipantChanged(row.getTarget(), target, row.getServingSystemKey());
+        boolean sourceChanged = sourceObserved && !sourceMatches;
 
         //Null identifier updates are normal call teardown. Non-null observations may still complete a retained row
         //after IDLE, but cannot replace a different retained source or target.
         if(sourceObserved && source != null && (!preserveIdleDetails || sourceMatches))
         {
+            source = preferKnownParticipant(row.getSource(), source, row.getServingSystemKey());
             row.setSource(source);
             List<Alias> sourceAliases = resolveAliases(source, observation.sourceAliases(), channel);
 
@@ -1195,6 +1227,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         if(targetObserved && target != null && (!preserveIdleDetails || targetMatches))
         {
+            target = preferKnownParticipant(row.getTarget(), target, row.getServingSystemKey());
             row.setTarget(target);
             List<Alias> targetAliases = resolveAliases(target, observation.targetAliases(), channel);
 
@@ -1239,7 +1272,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         return !resolved.isEmpty() ? resolved : list(observedAliases);
     }
 
-    private boolean isParticipantChanged(Identifier<?> current, Identifier<?> observed, Channel channel)
+    private boolean isParticipantChanged(Identifier<?> current, Identifier<?> observed, String servingKey)
     {
         if(current == null || observed == null || current.equals(observed))
         {
@@ -1247,39 +1280,60 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
         ResolvedRadioIdentity first = ResolvedRadioIdentity.from(current);
         ResolvedRadioIdentity second = ResolvedRadioIdentity.from(observed);
-        SiteIdentity serving = mSiteIdentities.get(channel);
-        String systemKey = serving != null && serving.wacn() != null && serving.system() != null ?
-            RadioSystemKey.p25(serving.wacn(), serving.system()) :
-            channel != null ? RadioSystemKey.p25(channel.getP25SiteIdentity()) : null;
-        return first == null || second == null || !first.matchesWithinScope(second, systemKey);
+        if(first != null && second != null) return !first.matchesWithinScope(second, servingKey);
+        Identifier<?> currentGroup = current instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
+            patch.getValue().getPatchGroup() : current;
+        Identifier<?> observedGroup = observed instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
+            patch.getValue().getPatchGroup() : observed;
+        if((current instanceof PatchGroupIdentifier) != (observed instanceof PatchGroupIdentifier)) return true;
+        ResolvedTalkgroupIdentity group = ResolvedTalkgroupIdentity.from(currentGroup);
+        return group == null || !group.matchesWithinScope(ResolvedTalkgroupIdentity.from(observedGroup), servingKey);
     }
 
     /** A compatible abbreviated observation cannot erase the identity or working address already known this call. */
-    private Identifier<?> preferKnownParticipant(Identifier<?> known, Identifier<?> observed, Channel channel)
+    private Identifier<?> preferKnownParticipant(Identifier<?> known, Identifier<?> observed, String servingKey)
     {
+        Identifier<?> retained = IdentifierObservation.retainAssignment(known, observed);
+        if(retained != observed) return retained;
         if(known instanceof FullyQualifiedRadioIdentifier qualified &&
-            !isParticipantChanged(known, observed, channel) &&
+            !isParticipantChanged(known, observed, servingKey) &&
             (!(observed instanceof FullyQualifiedRadioIdentifier latest) ||
                 qualified.getWorkingAddress() != null && latest.getWorkingAddress() == null))
         {
             return known;
         }
+        if(known instanceof APCO25FullyQualifiedTalkgroupIdentifier group && observed instanceof TalkgroupIdentifier local &&
+            !(observed instanceof FullyQualifiedTalkgroupIdentifier) && !isParticipantChanged(known, observed, servingKey))
+            return APCO25FullyQualifiedTalkgroupIdentifier.withRecordingIdentifier(group, local);
+        if(known instanceof PatchGroupIdentifier before && observed instanceof PatchGroupIdentifier after &&
+            before.getValue() != null && after.getValue() != null && !isParticipantChanged(known, observed, servingKey))
+        {
+            TalkgroupIdentifier primary = (TalkgroupIdentifier)preferKnownParticipant(before.getValue().getPatchGroup(),
+                after.getValue().getPatchGroup(), servingKey);
+            if(primary != after.getValue().getPatchGroup())
+            {
+                //Only worker-owned row state carries this copy; published navigation contains immutable scalar facts.
+                PatchGroup patch = new PatchGroup(primary, after.getValue().getVersion());
+                patch.addPatchedTalkgroups(after.getValue().getPatchedTalkgroupIdentifiers());
+                patch.addPatchedRadios(after.getValue().getPatchedRadioIdentifiers());
+                return APCO25PatchGroup.create(patch);
+            }
+        }
         return observed;
     }
 
     private void updateCallDetails(ChannelActivityRow row, Identifier<?> source, Identifier<?> target,
-                                    Identifier<?> talkerAlias, Identifier<?> encryption, Channel channel,
-                                    Channel servingChannel)
+                                    Identifier<?> talkerAlias, Identifier<?> encryption, Channel channel)
     {
         if(source != null)
         {
-            source = preferKnownParticipant(row.getSource(), source, servingChannel);
+            source = preferKnownParticipant(row.getSource(), source, row.getServingSystemKey());
             row.setSource(source);
             row.setSourceAliases(getAliases(source, null, channel));
         }
         if(target != null)
         {
-            target = preferKnownParticipant(row.getTarget(), target, servingChannel);
+            target = preferKnownParticipant(row.getTarget(), target, row.getServingSystemKey());
             row.setTarget(target);
             row.setTargetAliases(getAliases(target, null, channel));
         }

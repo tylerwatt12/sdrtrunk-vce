@@ -1,6 +1,7 @@
-import { systemLabel } from './system-labels.js?v=1';
+import { systemLabel, systemName } from './system-labels.js?v=1';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
+import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -76,9 +77,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const value = call?.source_id ?? call?.radio_id;
     return value === undefined || value === null || value === '' ? value : radioIdentifier(call, value, 'source');
   };
-  const targetId = (call) => String(call?.target_form || '').toUpperCase() === 'RADIO' || call?.target_canonical_identity ||
-    call?.destination_radio_id !== undefined && call?.destination_radio_id !== null ?
-    radioIdentifier(call, call?.target_id ?? call?.destination_radio_id, 'target') : call?.target_id;
+  const targetId = (call) => radioIdentifier(call, call?.target_id ?? call?.destination_radio_id ??
+    call?.talkgroup_id ?? call?.group_id, 'target');
   const title = (call) => {
     if (!call) return 'Nothing queued';
     const analog = ['NBFM', 'AM'].includes(String(call.decoder || call.protocol || '').toUpperCase());
@@ -89,7 +89,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const kind = call.call_type === 'PATCH' ? 'Patch' : call.destination_radio_id !== undefined &&
       call.destination_radio_id !== null ? 'Radio' : identityType(call.target_form,
         call.talkgroup_id !== undefined && call.talkgroup_id !== null ? 'TGID' : 'ID');
-    if (target !== undefined && target !== null && target !== '') return `${kind} ${kind === 'Radio' ? targetId(call) : target}`;
+    if (target !== undefined && target !== null && target !== '') return `${kind} ${targetId(call) ?? target}`;
     return call.playback_target?.label || call.channel_name || call.channel || 'Recorded call';
   };
   const sourceName = (call) => {
@@ -666,6 +666,36 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     frame.append(select); appendIcon(frame, 'chevron-down'); label.append(node('span', 'ui-field-label', 'When a call is clicked'), frame);
     return label;
   }
+  function patchMembers(call) {
+    if (!Array.isArray(call?.patch_members) || !call.patch_members.length) return null;
+    const list = node('span');
+    call.patch_members.forEach((member) => {
+      if (!member || typeof member !== 'object') return;
+      const id = member.id ?? member.talkgroup_id;
+      const kind = String(member.kind || member.form || '').toLowerCase() === 'radio' ? 'radio' : 'talkgroup';
+      const row = { ...member, serving_system_key: p25ServingSystemKey(call) };
+      const facts = p25IdentityFacts(row, '', kind);
+      const identity = facts ? p25IdentifierText(row, id, { kind,
+        homeSystemName: member.home_system_name || systemName(member.home_system) ||
+          systemName(facts.homeSystemKey) }) || id : id;
+      const alias = member.alias || member.name || member.ota_alias;
+      if (identity === undefined || identity === null || identity === '') {
+        if (!alias) return;
+      }
+      const value = [alias, identity !== undefined && identity !== null && identity !== '' ?
+        `${kind === 'radio' ? 'Radio' : 'TGID'} ${identity}` : ''].filter(Boolean).join(' · ');
+      if (list.childNodes.length) list.append(', ');
+      const target = member.entity_ref && canViewRadio() ? entityRefHref(member.entity_ref) : null;
+      if (target) { const link = node('a', '', value); link.href = target; list.append(link); }
+      else list.append(value);
+    });
+    if (call.patch_members_truncated) {
+      const count = Number(call.patch_member_count);
+      list.append(`${list.childNodes.length ? ' · ' : ''}Showing ${call.patch_members.length}` +
+        `${Number.isInteger(count) && count > call.patch_members.length ? ` of ${count}` : ''} members`);
+    }
+    return list.childNodes.length ? list : null;
+  }
   function factList(rows, { empty = false, includeEmpty = false } = {}) {
     const list = node('dl', 'ui-fact-list audio-dock-facts');
     rows.forEach(([label, value, reference]) => {
@@ -673,7 +703,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       const description = node('dd');
       const hasValue = value !== null && value !== undefined && value !== '';
       const target = !empty && hasValue && reference && canViewRadio() ? entityRefHref(reference) : null;
-      if (target) { const link = node('a', '', String(value)); link.href = target; description.append(link); }
+      if (!empty && value?.nodeType) description.append(value);
+      else if (target) { const link = node('a', '', String(value)); link.href = target; description.append(link); }
       else description.textContent = empty ? '' : String(value ?? '');
       list.append(node('dt', '', label), description);
     });
@@ -702,7 +733,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Target type', call.target_form], ['Target description', call.target_description], ['Target group', call.target_group],
       ['Source type', call.source_form], ['Source description', call.source_description], ['Source group', call.source_group],
       ['Talker Alias', call.talker_alias], ['Alias List', call.alias_list || call.alias_list_name],
-      ['Playback target', call.playback_target?.label], ['Patch group', call.patch_group_id]
+      ['Playback target', call.playback_target?.label], ['Patch group', call.patch_group_id],
+      ['Patch members', patchMembers(call)]
     ], options);
     group('Radio & channel', [
       ['Protocol', call.protocol], ['Decoder', call.decoder], ['Modulation', call.modulation],

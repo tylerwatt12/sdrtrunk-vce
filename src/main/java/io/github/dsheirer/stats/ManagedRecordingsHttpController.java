@@ -362,13 +362,16 @@ final class ManagedRecordingsHttpController
         return status;
     }
 
-    private static ManagedRecordingCatalog.IdentityNameMatch recordingRadioIdentity(String key, String systemKey)
+    private static ManagedRecordingCatalog.IdentityNameMatch recordingIdentity(String key, String systemKey,
+                                                                               boolean group)
     {
         if(key == null) return null;
         try
         {
             RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(key);
-            if(identity.kindCode() != RadioSystemIdentityKey.KIND_RADIO || !identity.hasHome() ||
+            if((group ? identity.kindCode() != RadioSystemIdentityKey.KIND_TALKGROUP &&
+                identity.kindCode() != RadioSystemIdentityKey.KIND_PATCH_GROUP :
+                identity.kindCode() != RadioSystemIdentityKey.KIND_RADIO) || !identity.hasHome() ||
                 !RadioSystemKey.isP25Native(systemKey))
             {
                 throw new IllegalArgumentException("A complete P25 radio and receiving system are required");
@@ -379,8 +382,10 @@ final class ManagedRecordingsHttpController
         }
         catch(IllegalArgumentException exception)
         {
-            throw new StatsApiException(400, "invalid_radio_identity", "Select a P25 radio and its receiving system",
-                "radio_identity_key");
+            throw new StatsApiException(400, group ? "invalid_talkgroup_identity" : "invalid_radio_identity",
+                group ? "Select a P25 talkgroup and its receiving system" :
+                    "Select a P25 radio and its receiving system",
+                group ? "talkgroup_identity_key" : "radio_identity_key");
         }
     }
 
@@ -390,13 +395,15 @@ final class ManagedRecordingsHttpController
         Integer talkgroupId = request.optionalInt("talkgroup_id");
         Integer radioId = request.optionalInt("radio_id");
         String systemKey = request.text("system_key");
-        ManagedRecordingCatalog.IdentityNameMatch radioIdentity = recordingRadioIdentity(
-            request.text("radio_identity_key"), systemKey);
+        ManagedRecordingCatalog.IdentityNameMatch radioIdentity = recordingIdentity(
+            request.text("radio_identity_key"), systemKey, false);
+        ManagedRecordingCatalog.IdentityNameMatch groupIdentity = recordingIdentity(
+            request.text("talkgroup_identity_key"), systemKey, true);
         Integer talkgroupMin = request.optionalInt("talkgroup_min");
         Integer talkgroupMax = request.optionalInt("talkgroup_max");
         Integer radioMin = request.optionalInt("radio_min");
         Integer radioMax = request.optionalInt("radio_max");
-        boolean identityConstrained = talkgroupId != null || radioId != null || radioIdentity != null ||
+        boolean identityConstrained = talkgroupId != null || radioId != null || radioIdentity != null || groupIdentity != null ||
             talkgroupMin != null || radioMin != null;
         ManagedRecordingCatalog.SearchFilter.Builder filter = ManagedRecordingCatalog.SearchFilter.builder()
             .fromMs(request.optionalLong("from_ms"))
@@ -413,6 +420,7 @@ final class ManagedRecordingsHttpController
             .talkgroupId(talkgroupId)
             .sourceId(radioId)
             .radioIdentityMatch(radioIdentity)
+            .talkgroupIdentityMatch(groupIdentity)
             .talkgroupMin(talkgroupMin)
             .talkgroupMax(talkgroupMax)
             .sourceMin(radioMin)

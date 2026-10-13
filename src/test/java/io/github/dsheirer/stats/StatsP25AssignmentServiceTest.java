@@ -1,8 +1,9 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.net.URI;
 import java.util.ArrayList;
@@ -17,6 +18,54 @@ import static org.junit.jupiter.api.Assertions.*;
 class StatsP25AssignmentServiceTest
 {
     private static final String SYSTEM = RadioSystemKey.p25(0xABCDE, 0x123);
+
+    @Test
+    void groupOnlyStateIsCurrentBoundedTypedAndHiddenWhenSnapshotIsStale()
+    {
+        long now = System.currentTimeMillis();
+        List<P25IdentityResolver.GroupEntry> groups = new ArrayList<>();
+        for(int index = 0; index < 502; index++)
+        {
+            groups.add(new P25IdentityResolver.GroupEntry(0xABCDE, 0x123, 1000 + index,
+                new P25TalkgroupIdentity(0xBCDEF, 0x234, 2000 + index), now, now + 300_000,
+                new P25SiteIdentity(0xABCDE, 0x123, 1, 2), "A"));
+        }
+        AtomicReference<P25IdentityResolver.Snapshot> snapshot = new AtomicReference<>(
+            new P25IdentityResolver.Snapshot(now, 1, 2, false, 0, List.of(), List.of(), List.of(), 0, 0, groups));
+        AtomicInteger enrichments = new AtomicInteger();
+        var service = new StatsP25AssignmentService(time -> snapshot.get(), (key, rows) -> {
+            assertTrue(rows.size() <= 256);
+            enrichments.incrementAndGet();
+            return rows;
+        }, now - 100);
+        service.refresh(now);
+        Map<String,Object> state = service.currentState(SYSTEM);
+        assertEquals("current", state.get("state"));
+        assertEquals(0, state.get("current_assignment_count"));
+        assertEquals(502, state.get("group_association_count"));
+        assertEquals(true, state.get("group_associations_truncated"));
+        assertEquals(now, state.get("last_confirmation_ms"));
+        assertEquals(2, enrichments.get(), "observer alone enriches bounded batches");
+        List<?> rows = (List<?>)state.get("group_associations");
+        assertEquals(500, rows.size());
+        Map<?,?> first = (Map<?,?>)rows.getFirst();
+        assertEquals(1000, first.get("observed_local_id"));
+        assertEquals(SYSTEM, first.get("serving_system_key"));
+        assertEquals(2000, ((Map<?,?>)first.get("canonical_group_identity")).get("talkgroup_id"));
+        assertFalse(first.containsKey("observed_working_id"), "group address is never called a WUID");
+        assertEquals(2, enrichments.get(), "HTTP reads never enrich or query the registry");
+        Map<String,Object> page = service.currentAssignments(SYSTEM, request(
+            "identity_kind=talkgroup&q=2501&limit=1&sort=canonical_identity"));
+        assertEquals(1, page.get("total_count"), "search includes rows beyond the compact state limit");
+        assertEquals(1501, ((Map<?,?>)((List<?>)page.get("rows")).getFirst()).get("observed_local_id"));
+        assertEquals(2, enrichments.get());
+        snapshot.set(new P25IdentityResolver.Snapshot(now, 1, 2, true, 0,
+            List.of(), List.of(), List.of(), 0, 0, groups));
+        service.refresh(now);
+        assertEquals("needs_confirmation", service.currentState(SYSTEM).get("state"));
+        assertEquals(0, service.currentState(SYSTEM).get("group_association_count"));
+        assertTrue(((List<?>)service.currentState(SYSTEM).get("group_associations")).isEmpty());
+    }
 
     @Test
     void friendlySearchAndSourceFiltersApplyBeforePagingAndRequestsNeverScanRegistry()
@@ -49,7 +98,7 @@ class StatsP25AssignmentServiceTest
     void assignmentPagesKeepStateFromTheirOwnSnapshotAndReportWholeSystemCounts()
     {
         long now = System.currentTimeMillis();
-        AtomicReference<P25WuidAssignmentRegistry.Snapshot> source = new AtomicReference<>(
+        AtomicReference<P25IdentityResolver.Snapshot> source = new AtomicReference<>(
             snapshot(now, true, List.of(entry(3, "A", now), entry(20, "B", now)), true, 0));
         var service = new StatsP25AssignmentService(time -> source.get(), (key, rows) -> rows, now - 100);
         service.refresh(now);
@@ -100,7 +149,7 @@ class StatsP25AssignmentServiceTest
     void staleViewsRetainTheirOriginalTimeAndStoppedSystemsDoNotAppearCurrent()
     {
         long now = System.currentTimeMillis();
-        AtomicReference<P25WuidAssignmentRegistry.Snapshot> source = new AtomicReference<>(
+        AtomicReference<P25IdentityResolver.Snapshot> source = new AtomicReference<>(
             snapshot(now, false, List.of(entry(3, "A", now)), true, 0));
         var service = new StatsP25AssignmentService(time -> source.get(), (key, rows) -> rows, now - 100);
         service.refresh(now);
@@ -122,13 +171,13 @@ class StatsP25AssignmentServiceTest
     {
         long now = System.currentTimeMillis();
         var identity = new P25SubscriberIdentity(0xFFFFF, 0x456, 0xFFFFFC);
-        var entry = new P25WuidAssignmentRegistry.Entry(0xABCDE, 0x123, 400, identity,
-            now, now, Long.MAX_VALUE, P25WuidAssignmentRegistry.Evidence.REGISTRATION,
-            P25WuidAssignmentRegistry.LeaseSource.ADVERTISED, new P25SiteIdentity(0xABCDE, 0x123, 1, 2), "A");
-        var global = new P25WuidAssignmentRegistry.Change(1, now, P25WuidAssignmentRegistry.ChangeReason.RESET,
+        var entry = new P25IdentityResolver.Entry(0xABCDE, 0x123, 400, identity,
+            now, now, Long.MAX_VALUE, P25IdentityResolver.Evidence.REGISTRATION,
+            P25IdentityResolver.LeaseSource.ADVERTISED, new P25SiteIdentity(0xABCDE, 0x123, 1, 2), "A");
+        var global = new P25IdentityResolver.Change(1, now, P25IdentityResolver.ChangeReason.RESET,
             null, null, null, null, null);
-        var source = new P25WuidAssignmentRegistry.Snapshot(now, 1, 2, false, 1, List.of(entry), List.of(global),
-            List.of(new P25WuidAssignmentRegistry.SystemObservation(0xABCDE, 0x123, true, 0, List.of("A"))), 0, 0);
+        var source = new P25IdentityResolver.Snapshot(now, 1, 2, false, 1, List.of(entry), List.of(global),
+            List.of(new P25IdentityResolver.SystemObservation(0xABCDE, 0x123, true, 0, List.of("A"))), 0, 0);
         var service = new StatsP25AssignmentService(time -> source, (key, rows) -> rows, now);
         service.refresh(now);
         assertEquals(1, service.currentAssignments(SYSTEM, request("subscriber_id=16777212")).get("total_count"));
@@ -144,7 +193,7 @@ class StatsP25AssignmentServiceTest
     void historicalSystemWithNoCurrentSourceShowsNoObservation()
     {
         long now = System.currentTimeMillis();
-        var source = new P25WuidAssignmentRegistry.Snapshot(now, 1, 2, false, 0, List.of(), List.of(), List.of(), 0, 0);
+        var source = new P25IdentityResolver.Snapshot(now, 1, 2, false, 0, List.of(), List.of(), List.of(), 0, 0);
         var service = new StatsP25AssignmentService(time -> source, (key, rows) -> rows, now);
         assertEquals("learning", service.currentState(SYSTEM).get("state"));
         service.refresh(now);
@@ -155,11 +204,11 @@ class StatsP25AssignmentServiceTest
     void exactHomeIdentityFilterNeverMatchesAnotherSystemWithTheSameRadioNumber()
     {
         long now = System.currentTimeMillis();
-        List<P25WuidAssignmentRegistry.Entry> entries = new ArrayList<>();
+        List<P25IdentityResolver.Entry> entries = new ArrayList<>();
         entries.add(entry(3, "A", now));
-        entries.add(new P25WuidAssignmentRegistry.Entry(0xABCDE, 0x123, 400,
+        entries.add(new P25IdentityResolver.Entry(0xABCDE, 0x123, 400,
             new P25SubscriberIdentity(0xFFFFF, 0x456, 3), now, now, Long.MAX_VALUE,
-            P25WuidAssignmentRegistry.Evidence.REGISTRATION, P25WuidAssignmentRegistry.LeaseSource.ADVERTISED,
+            P25IdentityResolver.Evidence.REGISTRATION, P25IdentityResolver.LeaseSource.ADVERTISED,
             new P25SiteIdentity(0xABCDE, 0x123, 1, 2), "A"));
         var service = new StatsP25AssignmentService(time -> snapshot(now, false, entries, true, 0),
             (key, rows) -> rows, now);
@@ -179,7 +228,7 @@ class StatsP25AssignmentServiceTest
         var foreign = new P25SubscriberIdentity(0xFFFFF, 0x456, 4);
         var entries = List.of(entry(local, 3, "A", now), entry(foreign, 4, "B", now),
             entry(20, "B", now), entry(null, 400, "A", now));
-        AtomicReference<P25WuidAssignmentRegistry.Snapshot> source = new AtomicReference<>(
+        AtomicReference<P25IdentityResolver.Snapshot> source = new AtomicReference<>(
             snapshot(now, false, entries, true, 0));
         var service = new StatsP25AssignmentService(time -> source.get(), (key, rows) -> rows, now);
         service.refresh(now);
@@ -236,20 +285,20 @@ class StatsP25AssignmentServiceTest
         var foreign = new P25SubscriberIdentity(0xFFFFF, 0x456, 4);
         var remapped = new P25SubscriberIdentity(0xABCDE, 0x123, 20);
         var changes = List.of(
-            change(1, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, local, 3, null),
-            change(2, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, foreign, 4, null),
-            change(3, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, remapped, 220, null),
-            change(4, now, P25WuidAssignmentRegistry.ChangeReason.REFRESHED, remapped, 220, null),
-            change(5, now, P25WuidAssignmentRegistry.ChangeReason.REASSIGNED, remapped, 20, 220),
-            change(6, now, P25WuidAssignmentRegistry.ChangeReason.CLEARED, remapped, 20, 220),
-            change(7, now, P25WuidAssignmentRegistry.ChangeReason.CLEARED, remapped, 220, null),
-            change(8, now, P25WuidAssignmentRegistry.ChangeReason.CLEARED, local, 3, null),
-            new P25WuidAssignmentRegistry.Change(9, now, P25WuidAssignmentRegistry.ChangeReason.RESET,
+            change(1, now, P25IdentityResolver.ChangeReason.REGISTERED, local, 3, null),
+            change(2, now, P25IdentityResolver.ChangeReason.REGISTERED, foreign, 4, null),
+            change(3, now, P25IdentityResolver.ChangeReason.REGISTERED, remapped, 220, null),
+            change(4, now, P25IdentityResolver.ChangeReason.REFRESHED, remapped, 220, null),
+            change(5, now, P25IdentityResolver.ChangeReason.REASSIGNED, remapped, 20, 220),
+            change(6, now, P25IdentityResolver.ChangeReason.CLEARED, remapped, 20, 220),
+            change(7, now, P25IdentityResolver.ChangeReason.CLEARED, remapped, 220, null),
+            change(8, now, P25IdentityResolver.ChangeReason.CLEARED, local, 3, null),
+            new P25IdentityResolver.Change(9, now, P25IdentityResolver.ChangeReason.RESET,
                 null, null, null, null, null),
-            change(10, now, P25WuidAssignmentRegistry.ChangeReason.OBSERVATION_GAP, null, null, null),
-            change(11, now, P25WuidAssignmentRegistry.ChangeReason.REGISTERED, null, 500, null));
-        var source = new P25WuidAssignmentRegistry.Snapshot(now, 1, 2, false, 0, List.of(), changes,
-            List.of(new P25WuidAssignmentRegistry.SystemObservation(0xABCDE, 0x123, true, 0, List.of("A"))), 0, 0);
+            change(10, now, P25IdentityResolver.ChangeReason.OBSERVATION_GAP, null, null, null),
+            change(11, now, P25IdentityResolver.ChangeReason.REGISTERED, null, 500, null));
+        var source = new P25IdentityResolver.Snapshot(now, 1, 2, false, 0, List.of(), changes,
+            List.of(new P25IdentityResolver.SystemObservation(0xABCDE, 0x123, true, 0, List.of("A"))), 0, 0);
         var service = new StatsP25AssignmentService(time -> source, (key, rows) -> rows, now);
         service.refresh(now);
 
@@ -274,33 +323,33 @@ class StatsP25AssignmentServiceTest
             .allMatch(row -> row.containsKey("invalidation_scope")));
     }
 
-    private static P25WuidAssignmentRegistry.Entry entry(int id, String configuration, long now)
+    private static P25IdentityResolver.Entry entry(int id, String configuration, long now)
     {
         return entry(new P25SubscriberIdentity(0xABCDE, 0x123, id), id + 200, configuration, now);
     }
 
-    private static P25WuidAssignmentRegistry.Entry entry(P25SubscriberIdentity identity, int workingId,
+    private static P25IdentityResolver.Entry entry(P25SubscriberIdentity identity, int workingId,
                                                         String configuration, long now)
     {
-        return new P25WuidAssignmentRegistry.Entry(0xABCDE, 0x123, workingId,
+        return new P25IdentityResolver.Entry(0xABCDE, 0x123, workingId,
             identity, now, now, now + 20_000,
-            P25WuidAssignmentRegistry.Evidence.REGISTRATION, P25WuidAssignmentRegistry.LeaseSource.FALLBACK,
+            P25IdentityResolver.Evidence.REGISTRATION, P25IdentityResolver.LeaseSource.FALLBACK,
             new P25SiteIdentity(0xABCDE, 0x123, 1, 2), configuration);
     }
 
-    private static P25WuidAssignmentRegistry.Change change(long sequence, long now,
-        P25WuidAssignmentRegistry.ChangeReason reason, P25SubscriberIdentity identity, Integer working,
+    private static P25IdentityResolver.Change change(long sequence, long now,
+        P25IdentityResolver.ChangeReason reason, P25SubscriberIdentity identity, Integer working,
         Integer previous)
     {
-        return new P25WuidAssignmentRegistry.Change(sequence, now - 20 + sequence, reason, 0xABCDE, 0x123,
+        return new P25IdentityResolver.Change(sequence, now - 20 + sequence, reason, 0xABCDE, 0x123,
             working, previous, identity, new P25SiteIdentity(0xABCDE, 0x123, 1, 2), "A");
     }
 
-    private static P25WuidAssignmentRegistry.Snapshot snapshot(long now, boolean stale,
-        List<P25WuidAssignmentRegistry.Entry> entries, boolean observing, long gap)
+    private static P25IdentityResolver.Snapshot snapshot(long now, boolean stale,
+        List<P25IdentityResolver.Entry> entries, boolean observing, long gap)
     {
-        return new P25WuidAssignmentRegistry.Snapshot(now, 1, 2, stale, entries.size(), entries, List.of(),
-            List.of(new P25WuidAssignmentRegistry.SystemObservation(0xABCDE, 0x123, observing, gap,
+        return new P25IdentityResolver.Snapshot(now, 1, 2, stale, entries.size(), entries, List.of(),
+            List.of(new P25IdentityResolver.SystemObservation(0xABCDE, 0x123, observing, gap,
                 observing ? List.of("A", "B") : List.of())), 0, 0);
     }
 

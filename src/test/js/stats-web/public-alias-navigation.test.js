@@ -51,6 +51,7 @@ const context = {
   liveIdentityFacts: () => node('dl', '', 'Permanent identity and working assignment'),
   liveIdentityActionTitle: (_row, _kind, label) => `Radio ${label}`,
   radioIdentifierText: (_row, value) => String(value),
+  partyIdentifierText: (_row, value) => String(value),
   openReadOnlyModal: (title, body) => { modal = { title, body }; }
 };
 const behavior = vm.runInNewContext(['aliasListLink', 'liveAliasReferences', 'liveIdentityActionLink',

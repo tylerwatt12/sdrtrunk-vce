@@ -7,6 +7,9 @@ package io.github.dsheirer.web.http;
 
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
+import io.github.dsheirer.audio.call.CallLegSummary;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDecisionOutcome;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticCallIdentity;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticCounters;
@@ -386,7 +389,46 @@ public final class CallMatchingHttpController
             identity.resolutionWaitMilliseconds(), safeLabel(identity.destinationValue()),
             safeLabel(identity.destinationAlias()), safeLabel(identity.sourceValue()),
             safeLabel(identity.sourceAlias()), identity.encryptionState().name(), identity.wacn(),
-            identity.system(), safeLabel(identity.aliasListName()), identity.uniqueLearnedSiteCount());
+            identity.system(), safeLabel(identity.aliasListName()), identity.uniqueLearnedSiteCount(),
+            radioIdentity(identity.destinationP25Observation()), radioIdentity(identity.sourceP25Observation()),
+            groupIdentity(identity.destinationP25Observation()), groupIdentity(identity.sourceP25Observation()),
+            workingId(identity.destinationP25Observation()), workingId(identity.sourceP25Observation()),
+            observedLocal(identity.destinationP25Observation()), observedLocal(identity.sourceP25Observation()),
+            identity.servingSystemKey());
+    }
+
+    private static Map<String,Integer> radioIdentity(CallLegSummary.P25IdentityObservation identity)
+    {
+        return identity != null && identity.form() == Form.RADIO && validHome(identity, RadioSystemIdentityKey.MAX_P25_RADIO_ID) ?
+            Map.of("wacn", identity.homeWacn(), "system_id", identity.homeSystemId(),
+                "subscriber_id", identity.homeIdentityId()) : null;
+    }
+
+    private static Map<String,Integer> groupIdentity(CallLegSummary.P25IdentityObservation identity)
+    {
+        return identity != null && (identity.form() == Form.TALKGROUP || identity.form() == Form.PATCH_GROUP) &&
+            validHome(identity, RadioSystemIdentityKey.MAX_P25_GROUP_ID) ?
+            Map.of("wacn", identity.homeWacn(), "system_id", identity.homeSystemId(),
+                "talkgroup_id", identity.homeIdentityId()) : null;
+    }
+
+    private static boolean validHome(CallLegSummary.P25IdentityObservation identity, int maximumId)
+    {
+        return identity.homeWacn() != null && identity.homeWacn() >= 0 && identity.homeWacn() <= 0xFFFFF &&
+            identity.homeSystemId() != null && identity.homeSystemId() >= 0 && identity.homeSystemId() <= 0xFFF &&
+            identity.homeIdentityId() != null && identity.homeIdentityId() > 0 && identity.homeIdentityId() <= maximumId;
+    }
+
+    private static Integer workingId(CallLegSummary.P25IdentityObservation identity)
+    {
+        return identity != null && identity.form() == Form.RADIO ? identity.observedWorkingId() : null;
+    }
+
+    private static Integer observedLocal(CallLegSummary.P25IdentityObservation identity)
+    {
+        if(identity == null) return null;
+        return identity.form() == Form.RADIO ? Integer.valueOf(identity.observedLocalId()) :
+            identity.explicitlyObservedLocalAddress();
     }
 
     private static OutputPolicyView policy(LogicalCallDiagnosticOutputPolicy policy)
@@ -536,7 +578,14 @@ public final class CallMatchingHttpController
                                     long resolvedTimestamp, long resolutionWaitMilliseconds,
                                     String destinationValue, String destinationAlias, String sourceValue,
                                     String sourceAlias, String encryptionState, Integer wacn, Integer system,
-                                    String aliasListName, int uniqueLearnedSiteCount)
+                                    String aliasListName, int uniqueLearnedSiteCount,
+                                    Map<String,Integer> destinationCanonicalIdentity,
+                                    Map<String,Integer> sourceCanonicalIdentity,
+                                    Map<String,Integer> destinationCanonicalGroupIdentity,
+                                    Map<String,Integer> sourceCanonicalGroupIdentity,
+                                    Integer destinationObservedWorkingId, Integer sourceObservedWorkingId,
+                                    Integer destinationObservedLocalId, Integer sourceObservedLocalId,
+                                    String servingSystemKey)
     {
     }
 

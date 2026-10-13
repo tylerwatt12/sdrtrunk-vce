@@ -11,11 +11,14 @@
 
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
@@ -53,8 +56,8 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
                           Identifier<?> destinationIdentifier)
     {
         this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
-            ingressLoss, audioTruncated, winner, callEncryptionEvidence, observation(sourceIdentifier, false),
-            observation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, p25IdentityObservation(sourceIdentifier, false),
+            p25IdentityObservation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
             patchMembers(destinationIdentifier), List.of(), null, null);
     }
 
@@ -66,8 +69,8 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
                           List<TimestampedVoiceFingerprint> voiceFrameFingerprints)
     {
         this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
-            ingressLoss, audioTruncated, winner, callEncryptionEvidence, observation(sourceIdentifier, false),
-            observation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, p25IdentityObservation(sourceIdentifier, false),
+            p25IdentityObservation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
             patchMembers(destinationIdentifier), voiceFrameFingerprints, null, null);
     }
 
@@ -80,8 +83,8 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
                           Long frequencyHz, Integer timeslot)
     {
         this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
-            ingressLoss, audioTruncated, winner, callEncryptionEvidence, observation(sourceIdentifier, false),
-            observation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, p25IdentityObservation(sourceIdentifier, false),
+            p25IdentityObservation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
             patchMembers(destinationIdentifier), voiceFrameFingerprints, frequencyHz, timeslot);
     }
 
@@ -104,7 +107,7 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         timeslot = timeslot != null && timeslot > 0 ? timeslot : null;
     }
 
-    private static P25IdentityObservation observation(Identifier<?> identifier, boolean patch)
+    public static P25IdentityObservation p25IdentityObservation(Identifier<?> identifier, boolean patch)
     {
         Identifier<?> primary = identifier;
         if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier &&
@@ -121,17 +124,19 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
         {
             return new P25IdentityObservation(patch ? Form.PATCH_GROUP : Form.TALKGROUP, number.intValue(),
-                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getTalkgroup(), null);
+                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getTalkgroup(), null,
+                fullyQualified.getLocalAddress(), fullyQualified.getResolutionEvidence());
         }
         if(primary instanceof FullyQualifiedRadioIdentifier fullyQualified)
         {
             return new P25IdentityObservation(Form.RADIO, number.intValue(), fullyQualified.getWacn(),
-                fullyQualified.getSystem(), fullyQualified.getRadio(), fullyQualified.getWorkingAddress());
+                fullyQualified.getSystem(), fullyQualified.getRadio(), fullyQualified.getWorkingAddress(),
+                fullyQualified.getWorkingAddress(), fullyQualified.getResolutionEvidence());
         }
         if(primary.getForm() == Form.TALKGROUP || primary.getForm() == Form.RADIO)
         {
             return new P25IdentityObservation(patch ? Form.PATCH_GROUP : primary.getForm(), number.intValue(),
-                null, null, null, null);
+                null, null, null, null, number.intValue(), IdentityResolutionEvidence.UNRESOLVED);
         }
         return null;
     }
@@ -146,14 +151,22 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         PatchGroup patchGroup = patchIdentifier.getValue();
         return Stream.concat(patchGroup.getPatchedTalkgroupIdentifiers().stream(),
                 patchGroup.getPatchedRadioIdentifiers().stream())
-            .map(member -> observation(member, false)).filter(java.util.Objects::nonNull).distinct().toList();
+            .map(member -> p25IdentityObservation(member, false)).filter(java.util.Objects::nonNull).distinct().toList();
     }
 
     /** Bounded immutable primitive evidence; no mutable identifier collection escapes the completed receiver leg. */
     public record P25IdentityObservation(Form form, int observedLocalId, Integer homeWacn,
                                          Integer homeSystemId, Integer homeIdentityId,
-                                         Integer observedWorkingId)
+                                         Integer observedWorkingId, Integer explicitlyObservedLocalAddress,
+                                         IdentityResolutionEvidence resolutionEvidence)
     {
+        public P25IdentityObservation(Form form, int observedLocalId, Integer homeWacn,
+                                      Integer homeSystemId, Integer homeIdentityId, Integer observedWorkingId)
+        {
+            this(form, observedLocalId, homeWacn, homeSystemId, homeIdentityId, observedWorkingId,
+                observedWorkingId, IdentityResolutionEvidence.UNKNOWN);
+        }
+
         public P25IdentityObservation(Form form, int observedLocalId, Integer homeWacn,
                                       Integer homeSystemId, Integer homeIdentityId)
         {
@@ -167,6 +180,14 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
             {
                 observedWorkingId = null;
             }
+            int maximumLocalAddress = form == Form.RADIO ? 0xFFFFFC : 0xFFFE;
+            if(explicitlyObservedLocalAddress != null &&
+                (explicitlyObservedLocalAddress < 1 || explicitlyObservedLocalAddress > maximumLocalAddress))
+            {
+                explicitlyObservedLocalAddress = null;
+            }
+            resolutionEvidence = resolutionEvidence != null ? resolutionEvidence :
+                IdentityResolutionEvidence.UNKNOWN;
         }
     }
 }

@@ -3,12 +3,12 @@ import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=16';
+import * as tableDefaults from './core/table-defaults.js?v=17';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=1';
-import { formatP25RadioIdentifier, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=6';
+import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=5';
 import { createFormWorkflow } from './core/form-workflows.js?v=2';
@@ -21,7 +21,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=9';
+import { createListenMap } from './features/listen-map.js?v=10';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -32,16 +32,16 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createRecordingsFeature } from './features/recordings.js?v=31';
+import { createRecordingsFeature } from './features/recordings.js?v=32';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=19';
+import { createAudioDock } from './core/audio-dock.js?v=20';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=16';
+import { WebCallPlayer } from './web-call-player.js?v=17';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1661,16 +1661,34 @@ function workingSubscriberId(row, prefix = '') {
 
 function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value)) {
   if (!isP25(row)) return identityNumber(row, value);
-  const canonical = p25CanonicalSubscriber(row, prefix);
-  if (!canonical) return identityNumber(row, value);
-  const homeKey = `p25:${hex(canonical.wacn, 5)}:${hex(canonical.system_id, 3)}`;
-  const homeName = row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
-    systemLabels.systemName(homeKey);
-  return formatP25RadioIdentifier(canonical, {
-    servingSystemKey: p25ServingSystemKey(row, prefix),
-    homeSystemName: homeName,
-    workingId: workingSubscriberId(row, prefix)
-  });
+  const facts = p25IdentityFacts(row, prefix, 'radio');
+  return p25IdentifierText(row, value, { prefix, kind: 'radio',
+    homeSystemName: facts && (row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
+      systemLabels.systemName(facts.homeSystemKey)) }) || identityNumber(row, value);
+}
+
+function groupIdentityPrefix(row, value) {
+  const matches = candidate => candidate != null && Number(candidate) === Number(value);
+  for (const prefix of ['target', 'group', 'affiliated_talkgroup', 'last_talkgroup']) {
+    if (matches(row?.[`${prefix}_id`] ?? row?.[`${prefix}_native_id`]) &&
+        p25IdentityFacts(row, prefix, 'talkgroup')) return prefix;
+  }
+  return '';
+}
+
+function groupIdentifierText(row, value, prefix = groupIdentityPrefix(row, value)) {
+  if (!isP25(row)) return identityNumber(row, value);
+  const facts = p25IdentityFacts(row, prefix, 'talkgroup');
+  return p25IdentifierText(row, value, { prefix, kind: 'talkgroup',
+    homeSystemName: facts && (row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
+      systemLabels.systemName(facts.homeSystemKey)) }) || identityNumber(row, value);
+}
+
+function partyIdentifierText(row, value, prefix) {
+  const form = String(row?.[`${prefix}_form`] || row?.[`${prefix}_kind`] || '').toUpperCase();
+  const radio = form === 'RADIO' || Boolean(row?.[`${prefix}_canonical_identity`]) ||
+    prefix === 'source' && !['TALKGROUP', 'PATCH_GROUP'].includes(form);
+  return radio ? radioIdentifierText(row, value, prefix) : groupIdentifierText(row, value, prefix);
 }
 
 function trunkedSiteLabel(row) {
@@ -1945,10 +1963,12 @@ function retainedStatisticsItem(row) {
   const identity = ['radio', 'talkgroup'].includes(kind);
   const alias = String(row.alias_name || '').trim();
   const talker = String(row.last_talker_alias || '').trim();
-  const primary = alias || talker || row.label || 'Unknown item';
+  const formattedId = identity ? (kind === 'radio' ? radioIdentifierText(row, row.native_id) :
+    groupIdentifierText(row, row.native_id)) : '';
+  const primary = alias || talker || (formattedId ? `${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${formattedId}` : row.label) || 'Unknown item';
   const details = [];
   if (identity && (alias || talker) && row.native_id != null) {
-    details.push(`${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${identityNumber(row, row.native_id)}`);
+    details.push(`${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${formattedId}`);
   }
   if (alias && talker && !sameSiteText(alias, talker)) details.push(`OTA ${talker}`);
   if (row.detail) details.push(...String(row.detail).split(' · '));
@@ -2017,20 +2037,26 @@ function radioDisplayId(row, id) {
   return id ?? row?.observed_local_id ?? row?.native_id ?? row?.radio_native_id ?? row?.radio_id;
 }
 
-function groupIdentityLink(row, id, label, reference = row?.entity_ref) {
+function groupIdentityLink(row, id, label, reference = row?.entity_ref, prefix) {
   id = groupIdentityDisplayId(row, id);
-  const specialLabel = specialIdentifierLabel(row, id, rowGroupIdentityKind(row));
-  const text = label || specialLabel || identityNumber(row, id);
+  if (prefix && prefix !== 'group' && reference === row?.entity_ref) {
+    reference = row?.[`${prefix}_entity_ref`] || null;
+  }
+  const specialLabel = specialIdentifierLabel(row, id, rowGroupIdentityKind(row), prefix);
+  const text = label || specialLabel || groupIdentifierText(row, id, prefix);
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
     entityTarget(reference, { channel: 'groups' }) : '';
   return target ? anchor(text, target) : text;
 }
 
-function radioLink(row, id, label, reference = row?.entity_ref) {
+function radioLink(row, id, label, reference = row?.entity_ref, prefix) {
   id = radioDisplayId(row, id);
+  if (prefix && prefix !== 'radio' && reference === row?.entity_ref) {
+    reference = row?.[`${prefix}_entity_ref`] || null;
+  }
   const displayRow = !p25ServingSystemKey(row) && reference?.radio_system_key ?
     { ...row, radio_system_key: reference.radio_system_key } : row;
-  const text = label || radioIdentifierText(displayRow, id);
+  const text = label || radioIdentifierText(displayRow, id, prefix);
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
     entityTarget(reference, { channel: 'radios' }) : '';
   return target ? anchor(text, target) : text;
@@ -2047,10 +2073,11 @@ function affiliationTalkgroupCell(row) {
   const id = row?.affiliated_talkgroup_id;
   if (id === null || id === undefined) return '—';
   const alias = String(row.affiliated_talkgroup_alias_name || '').trim();
-  const identifier = `TG ${identityNumber(row, id)}`;
+  const identifier = `TG ${groupIdentifierText(row, id, 'affiliated_talkgroup')}`;
   const summary = node('span', 'identity-summary');
   const primary = node('span', 'identity-summary-primary');
-  primary.append(groupIdentityLink(row, id, alias || identifier, row.affiliated_talkgroup_entity_ref));
+  primary.append(groupIdentityLink(row, id, alias || identifier, row.affiliated_talkgroup_entity_ref,
+    'affiliated_talkgroup'));
   summary.append(primary);
   if (alias) summary.append(node('small', 'identity-summary-context', identifier));
   summary.title = alias ? `${alias} · ${identifier}` : identifier;
@@ -6988,7 +7015,7 @@ function observedGroupIdentityPromotionReason(row) {
 
 function observedGroupIdentityValue(row) {
   const wrapper = node('div', 'observed-group-identity-value');
-  wrapper.append(node('strong', '', identityNumber(row, row.group_identity_id)));
+  wrapper.append(node('strong', '', groupIdentifierText(row, row.group_identity_id)));
   if (observedGroupIdentityMatchKind(row) === 'range') {
     wrapper.append(node('small', '', `Covered by range · ${row.matched_alias_name ||
       `Alias ${identifierNumber(row.matched_alias_id)}`}`));
@@ -7172,7 +7199,7 @@ function observedGroupIdentityDetail(row, selectedList) {
   const localP25 = isP25(row) && String(row?.topology || '').toUpperCase() === 'TRUNKED';
   const identity = [
     [localP25 ? 'Local Talkgroup' : groupIdentityLabel(row, null, false),
-      identityNumber(row, row.group_identity_id)],
+      localP25 ? identityNumber(row, row.group_identity_id) : groupIdentifierText(row, row.group_identity_id)],
     ['Protocol', protocolFamily(row) || row.protocol],
     ['System', radioSystemLink(row.radio_system_entity_ref, radioSystemPrimaryName(row) ||
       (row.radio_system_key ? radioSystemDisplayName(row) : '—'))],
@@ -7222,7 +7249,7 @@ function observedGroupIdentityDetail(row, selectedList) {
 }
 
 function openObservedGroupIdentityDetail(row, selectedList) {
-  const id = identityNumber(row, row.group_identity_id);
+  const id = groupIdentifierText(row, row.group_identity_id);
   const modal = openReadOnlyModal(`Observed ${groupIdentityLabel(row, null, false)} ${id}`,
     observedGroupIdentityDetail(row, selectedList), {
     id: `observed-group-identity-${id}`, className: 'alias-editor-modal observed-group-identity-modal'
@@ -11104,8 +11131,7 @@ function scannerNetworkSiteIdentity(call) {
 
 function scannerTargetLabel(call, channel) {
   if (isAnalogChannel(channel || call)) return call?.channel || channel?.name || 'Analog channel';
-  const targetId = String(call?.target_form || '').toUpperCase() === 'RADIO' || call?.target_canonical_identity ?
-    radioIdentifierText(call, call?.target_id, 'target') : call?.target_id;
+  const targetId = partyIdentifierText(call, call?.target_id, 'target');
   return call?.target_alias || (targetId ? `${identifierTypeLabel(call.target_form)} ${targetId}` :
     call?.channel || 'Waiting for a call');
 }
@@ -11358,8 +11384,7 @@ function renderScannerCall(host, state, channelMetadata) {
   const participants = node('div', 'scanner-participant-grid');
   if (detailLevel >= SCANNER_DETAIL_LEVELS.advanced) {
     if (!analog) {
-      const targetId = String(call?.target_form || '').toUpperCase() === 'RADIO' || call?.target_canonical_identity ?
-        radioIdentifierText(call, call.target_id, 'target') : call.target_id;
+      const targetId = partyIdentifierText(call, call.target_id, 'target');
       const target = scannerParticipant('Target', call.target_alias, targetId, call.target_description,
         call.target_group, open('target-alias'), open('target'));
       if (target) participants.append(target);
@@ -12088,7 +12113,7 @@ function dashboardIdentityId(row) {
   const value = row.identity_id ?? row.native_id;
   const kind = identityKind(row.identity_kind);
   if (kind === 'unknown' || Number(value) <= 0) return '—';
-  return kind === 'radio' ? radioIdentifierText(row, value) : identityNumber(row, value);
+  return kind === 'radio' ? radioIdentifierText(row, value) : groupIdentifierText(row, value);
 }
 
 function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
@@ -12888,44 +12913,50 @@ function liveEventRadioRow(event, identifier) {
 function liveEventReplaceRadioText(event, value, party) {
   let text = String(value || '');
   const identifiers = party.flatMap((identifier) => [identifier,
-    ...(String(identifier?.form || '').toUpperCase() === 'PATCH_GROUP' && Array.isArray(identifier.radio_members) ?
-      identifier.radio_members : [])])
-    .filter((identifier) => liveEventRadioRow(event, identifier) && identifier.text)
+    ...(String(identifier?.form || '').toUpperCase() === 'PATCH_GROUP' ? [
+      ...(Array.isArray(identifier.radio_members) ? identifier.radio_members : []),
+      ...(Array.isArray(identifier.talkgroup_members) ? identifier.talkgroup_members.filter(member =>
+        member && typeof member === 'object') : [])] : [])])
+    .filter((identifier) => identifier?.text && (liveEventRadioRow(event, identifier) ||
+      p25IdentityFacts(identifier, '', 'talkgroup')))
     .sort((left, right) => right.text.length - left.text.length);
   for (const identifier of identifiers) {
     const escaped = String(identifier.text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const token = new RegExp(`(^|[^a-zA-Z0-9_.])${escaped}(?=$|[^a-zA-Z0-9_.])`, 'g');
-    const row = liveEventRadioRow(event, identifier);
-    text = text.replace(token, (_match, boundary) => boundary +
-      radioIdentifierText(row, row.canonical_identity.subscriber_id));
+    text = text.replace(token, (_match, boundary) => boundary + liveEventIdentifierText(event, identifier));
   }
-  return formatP25QualifiedIdentifierText(text, p25ServingSystemKey(event));
+  return formatP25QualifiedIdentifierText(text, p25ServingSystemKey(event), systemLabels.systemName);
 }
 
 function liveEventIdentifierText(event, identifier) {
   const row = liveEventRadioRow(event, identifier);
   if (row) return radioIdentifierText(row, row.canonical_identity.subscriber_id);
-  if (String(identifier?.form || '').toUpperCase() === 'PATCH_GROUP' && identifier.patch_group &&
+  const form = String(identifier?.form || '').toUpperCase();
+  const groupFacts = ['TALKGROUP', 'PATCH_GROUP'].includes(form) && p25IdentityFacts(identifier, '', 'talkgroup');
+  const groupText = groupFacts ? groupIdentifierText({ ...identifier, protocol: 'P25',
+    serving_system_key: p25ServingSystemKey(event) }, groupFacts.canonical.talkgroup_id) : '';
+  if (form === 'PATCH_GROUP' && identifier.patch_group &&
       Array.isArray(identifier.talkgroup_members) && Array.isArray(identifier.radio_members)) {
-    const groups = identifier.talkgroup_members.map((member) =>
-      formatP25QualifiedIdentifierText(member, p25ServingSystemKey(event)));
-    const radios = identifier.radio_members.map((member) => {
-      const radio = liveEventRadioRow(event, member);
-      return radio ? radioIdentifierText(radio, radio.canonical_identity.subscriber_id) : String(member?.text || '');
-    }).filter(Boolean);
+    const groups = identifier.talkgroup_members.map((member) => typeof member === 'object' ?
+      liveEventIdentifierText(event, member) : formatP25QualifiedIdentifierText(member,
+        p25ServingSystemKey(event), systemLabels.systemName));
+    const radios = identifier.radio_members.map((member) => liveEventIdentifierText(event, member)).filter(Boolean);
     if (identifier.talkgroup_members_truncated) groups.push('…');
     if (identifier.radio_members_truncated) radios.push('…');
-    return [`P:${formatP25QualifiedIdentifierText(identifier.patch_group, p25ServingSystemKey(event))}`,
+    return [`P:${groupText || formatP25QualifiedIdentifierText(identifier.patch_group,
+      p25ServingSystemKey(event), systemLabels.systemName)}`,
       groups.length ? `[${groups.join(', ')}]` : '',
       radios.length ? `[${radios.join(', ')}]` : ''].filter(Boolean).join(' ');
   }
-  return liveEventReplaceRadioText(event, identifier?.text, [identifier]);
+  if (groupText) return groupText;
+  if (form === 'PATCH_GROUP') return liveEventReplaceRadioText(event, identifier?.text, [identifier]);
+  return formatP25QualifiedIdentifierText(identifier?.text, p25ServingSystemKey(event), systemLabels.systemName);
 }
 
 function liveEventPartyText(event, side) {
   const party = event?.[`${side}_party`];
   return Array.isArray(party) && party.length ? party.map((identifier) => liveEventIdentifierText(event, identifier))
-    .filter(Boolean).join(', ') : formatP25QualifiedIdentifierText(event?.[`${side}_identifiers`], p25ServingSystemKey(event));
+    .filter(Boolean).join(', ') : formatP25QualifiedIdentifierText(event?.[`${side}_identifiers`], p25ServingSystemKey(event), systemLabels.systemName);
 }
 
 function liveEventDetailsText(event) {
@@ -12960,7 +12991,13 @@ function liveEventParty(event, side) {
         const reference = identity && row.radio_system_key ? { kind: 'radio',
           radio_system_key: row.radio_system_key,
           identity_key: `v1-r-${hex(identity.wacn, 5).toLowerCase()}-${hex(identity.system_id, 3).toLowerCase()}-${identity.subscriber_id}` } : null;
-        content.append(row ? radioLink(row, identity.subscriber_id, text, reference) : document.createTextNode(text));
+        const group = !row && p25IdentityFacts(identifier, '', 'talkgroup');
+        const groupKey = group && `v1-${String(identifier.form).toUpperCase() === 'PATCH_GROUP' ? 'p' : 'g'}-${hex(group.canonical.wacn, 5).toLowerCase()}-${hex(group.canonical.system_id, 3).toLowerCase()}-${group.canonical.talkgroup_id}`;
+        const groupRef = groupKey && p25ServingSystemKey(event) ? { kind: String(identifier.form).toUpperCase() === 'PATCH_GROUP' ? 'patch_group' : 'talkgroup',
+          radio_system_key: p25ServingSystemKey(event), identity_key: groupKey } : null;
+        content.append(row ? radioLink(row, identity.subscriber_id, text, reference) : group ?
+          groupIdentityLink({ ...identifier, protocol: 'P25', serving_system_key: p25ServingSystemKey(event) },
+            group.canonical.talkgroup_id, text, groupRef) : document.createTextNode(text));
       });
     } else content.textContent = identifiers;
     content.title = event?.[`${side}_identifiers`] || '';
@@ -17626,8 +17663,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       .map((row) => String(row.target_form || '').toUpperCase()))];
     (targetForms.length ? targetForms : ['']).forEach((form) => add(targetIdentifierLabel(form),
       activityValues(identityRows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
-        (!form && !row.target_form)), (row) => form === 'RADIO' || row.target_canonical_identity ?
-        radioIdentifierText(row, row.target_id, 'target') : row.target_id)));
+        (!form && !row.target_form)), (row) => partyIdentifierText(row, row.target_id, 'target'))));
     add('Target alias', activityValues(identityRows, (row) => activityAliasLabel(row, 'target')));
     add('Source type', activityValues(rows, (row) => activityTokenLabel(row.source_form)));
     add('Source', activityValues(rows, (row) => radioIdentifierText(row, row.source_id, 'source')));
@@ -18382,7 +18418,7 @@ function liveIdentityActionTitle(row, kind, label = '') {
   const radio = liveIdentityType(row, kind) === 'radio' || Boolean(canonical);
   const value = row?.[`${kind}_id`];
   const identity = radio ? radioIdentifierText(row, value, kind) :
-    (value === null || value === undefined ? '' : String(value));
+    (value === null || value === undefined ? '' : groupIdentifierText(row, value, kind));
   const type = radio ? 'Radio' : liveIdentityLabel(row, kind, true);
   const displayedAlias = label && String(label) !== identity ? String(label) :
     (row?.[`${kind}_alias_display`] || row?.[`${kind}_alias`] ||
@@ -18395,26 +18431,31 @@ function p25IdentityEvidenceLabel(row, kind = '') {
   return ({
     explicit_identity: 'Included in the radio message',
     registration_mapping: 'Confirmed Working ID assignment',
+    group_affiliation_mapping: 'Group affiliation response',
+    local_id: 'Local talkgroup ID only',
     working_id: 'Working ID only',
     unresolved: 'Unknown'
   })[row?.[key]] || 'Unknown';
 }
 
 function liveIdentityFacts(row, kind) {
-  const canonical = p25CanonicalSubscriber(row, kind);
-  if (!isP25(row) || liveIdentityType(row, kind) !== 'radio' && !canonical) return null;
-  const homeKey = canonical ? `p25:${hex(canonical.wacn, 5).toLowerCase()}:${hex(canonical.system_id, 3).toLowerCase()}` : '';
+  if (!isP25(row)) return null;
+  const radio = liveIdentityType(row, kind) === 'radio' || Boolean(p25CanonicalSubscriber(row, kind));
+  const typed = p25IdentityFacts(row, kind, radio ? 'radio' : 'talkgroup');
+  if (!radio && !typed) return null;
+  const canonical = typed?.canonical;
+  const homeKey = typed?.homeSystemKey || '';
   const homeIdentity = canonical ? `${hex(canonical.wacn, 5)}.${hex(canonical.system_id, 3)}` : '';
-  const homeName = row?.[`${kind}_home_system_name`] ||
-    systemLabels.systemName(homeKey) || homeIdentity;
+  const homeName = row?.[`${kind}_home_system_name`] || systemLabels.systemName(homeKey) || homeIdentity;
   const homeReference = row?.[`${kind}_home_system_entity_ref`];
   const homeTarget = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(homeReference) : '';
+  const observed = radio ? workingSubscriberId(row, kind) : typed?.observedId;
   const values = [
     ['Serving System', radioSystemContextLink(row)],
     ['Home System', homeName ? identitySummaryValue(homeName, homeName === homeIdentity ? '' : homeIdentity, homeTarget) : 'Not confirmed'],
-    ['Permanent Radio ID', canonical ? canonicalSubscriberText(canonical) : 'Not confirmed'],
-    ['Working ID', workingSubscriberId(row, kind) == null ? 'Not supplied' :
-      identifierNumber(workingSubscriberId(row, kind))],
+    [radio ? 'Permanent Radio ID' : 'Home Talkgroup ID', canonical ?
+      `${homeIdentity}.${canonical[radio ? 'subscriber_id' : 'talkgroup_id']}` : 'Not confirmed'],
+    [radio ? 'Working ID' : 'Local Talkgroup ID', observed == null ? 'Not supplied' : identifierNumber(observed)],
     ['ID Source', p25IdentityEvidenceLabel(row, kind)]
   ];
   const facts = keyValues(values);
@@ -18455,10 +18496,8 @@ function liveIdentityActionLink(row, kind, label) {
 
 function liveIdentifierAliasValue(row, kind) {
   const value = row?.[`${kind}_id`];
-  const radio = kind === 'source' || String(row?.[`${kind}_form`] || '').toUpperCase() === 'RADIO' ||
-    Boolean(row?.[`${kind}_canonical_identity`]);
   const text = value === null || value === undefined ? '' :
-    (radio ? radioIdentifierText(row, value, kind) : String(value));
+    partyIdentifierText(row, value, kind);
   if (!text) return '';
   return liveIdentityActionLink(row, kind, text);
 }
@@ -18593,8 +18632,11 @@ async function activateLivePresentationSettings(button) {
 const LIVE_IDLE_CALL_FIELDS = [
   'source_id', 'source_form', 'source_alias', 'source_alias_description', 'source_alias_display',
   'source_aliases', 'source_entity_ref', 'source_canonical_identity', 'source_working_subscriber_id',
-  'source_observed_working_id', 'source_identity_source',
+  'source_canonical_group_identity', 'source_observed_local_id', 'source_identity_key', 'source_matcher',
+  'source_home_system_name', 'source_home_system_entity_ref', 'source_observed_working_id', 'source_identity_source',
   'talker_alias', 'target_id', 'target_form', 'target_alias', 'target_canonical_identity',
+  'target_canonical_group_identity', 'target_observed_local_id', 'target_identity_key', 'target_matcher',
+  'target_home_system_name', 'target_home_system_entity_ref', 'serving_system_key',
   'target_working_subscriber_id', 'target_observed_working_id', 'target_identity_source',
   'target_alias_description', 'target_aliases', 'target_entity_ref', 'encryption_details'
 ];
@@ -18611,7 +18653,11 @@ function liveIdentityRenderKey(row, kind) {
     kind === 'source' ? row?.talker_alias : null, row?.alias_list_id, row?.protocol,
     kind === 'source' ? sourceNameDisplayMode() : null,
     row?.[`${kind}_canonical_identity`], row?.[`${kind}_working_subscriber_id`],
+    row?.[`${kind}_canonical_group_identity`], row?.[`${kind}_identity_key`],
+    row?.[`${kind}_observed_local_id`], Boolean(row &&
+      Object.prototype.hasOwnProperty.call(row, `${kind}_observed_local_id`)),
     row?.[`${kind}_observed_working_id`], row?.[`${kind}_identity_source`],
+    row?.serving_system_key, Boolean(row && Object.prototype.hasOwnProperty.call(row, 'serving_system_key')),
     p25ServingSystemKey(row, kind), row?.[`${kind}_home_system_name`], row?.[`${kind}_home_system_entity_ref`],
     row?.decoder, row?.tags, row?.entity_ref, row?.channel_kind, row?.channel_name
   ]);
@@ -19365,7 +19411,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=41');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=42');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -20335,6 +20381,7 @@ function issiStateContent(state) {
   if (Number(state?.retained_meaningful_assignment_count) > 0) {
     assignmentCounts.push(['Last Known Assignments', state.retained_meaningful_assignment_count]);
   }
+  assignmentCounts.push(['Talkgroup Associations', state?.group_association_count]);
   assignmentCounts.push(['Monitored Channels', state?.observed_channel_count]);
   return fragment(keyValues([
     ['Status', issiStateLabel(state)],
@@ -20342,6 +20389,40 @@ function issiStateContent(state) {
     ['Last Confirmed', state?.last_confirmation_ms ? dateTime(state.last_confirmation_ms) : 'Waiting'],
     ['Receiver Started', state?.receiver_started_at_ms ? dateTime(state.receiver_started_at_ms) : 'Unavailable']
   ]), metrics(assignmentCounts, true));
+}
+
+function issiGroupAssociationRows(page, system) {
+  return (Array.isArray(page?.rows) ? page.rows : []).map(row => ({
+    ...row, protocol: 'P25', radio_system_key: row.radio_system_key || system.radio_system_key
+  })).filter(row => p25IdentityFacts(row, '', 'talkgroup'));
+}
+
+function issiGroupAssociationColumns() {
+  return [
+    { id: 'home-talkgroup', label: 'Home Talkgroup', sort: 'canonical_identity', render: row => {
+      const facts = p25IdentityFacts(row, '', 'talkgroup');
+      const identifier = groupIdentifierText(row, facts?.canonical.talkgroup_id);
+      const alias = String(row.alias_name || '').trim();
+      return identitySummaryValue(alias || identifier, [alias ? identifier : '', row.alias_description]
+        .filter(Boolean).join(' · '), entityReferenceAllowed(row.entity_ref) ? entityRefHref(row.entity_ref) : '');
+    } },
+    { id: 'local-talkgroup', label: 'Local TG ID', className: 'numeric', sort: 'local_id',
+      render: row => identifierNumber(row.observed_local_id) },
+    { id: 'home-system', label: 'Home System', render: row => {
+      const facts = p25IdentityFacts(row, '', 'talkgroup');
+      const identity = facts ? `${hex(facts.canonical.wacn, 5)}.${hex(facts.canonical.system_id, 3)}` : '';
+      const name = row.home_system_name || systemLabels.systemName(facts?.homeSystemKey) || identity;
+      return identitySummaryValue(name, name === identity ? '' : identity,
+        entityRefHref(row.home_system_entity_ref));
+    } },
+    { id: 'heard-on', label: 'Heard On', render: issiObservedOnCell },
+    { id: 'seen', label: 'Seen', sort: 'observed_at', render: row => dateTime(row.observed_at_ms),
+      sortValue: row => Number(row.observed_at_ms || 0) },
+    { id: 'expires', label: 'Expires', sort: 'expires_at', render: row => dateTime(row.expires_at_ms),
+      sortValue: row => Number(row.expires_at_ms || 0) },
+    { id: 'evidence', label: 'Confirmed By', render: row =>
+      row.evidence === 'group_affiliation' ? 'Group affiliation response' : 'Observed group identity' }
+  ];
 }
 
 function issiSectionTabs(active) {
@@ -20421,6 +20502,30 @@ async function renderRadioSystemIssi(system, renderContext) {
     'frequency-bands': ['ISSI Advertised Band Plans', issiBandColumns, 'issi-frequency-bands']
   };
   const [title, columns, tableType] = views[active];
+  const groupAssociationHost = active === 'current-assignments' ? node('div', 'ui-section-body') : null;
+  const groupAssociationActions = groupAssociationHost ? sectionActionHost() : null;
+  const groupAssociationController = {};
+  let groupOffset = 0;
+  const showGroupAssociations = (groupPage, currentState) => {
+    if (!groupAssociationHost) return;
+    const rows = currentState?.snapshot_stale ? [] : issiGroupAssociationRows(groupPage, system);
+    const changePage = offset => {
+      groupOffset = offset;
+      void reload().catch(() => { void render(); });
+    };
+    groupAssociationHost.replaceChildren(table(rows, issiGroupAssociationColumns(),
+      'No confirmed talkgroup associations match these filters.', { type: 'issi-group-associations',
+        mobileCards: true, sortable: false, serverSort: false,
+        layoutMenuHost: groupAssociationActions, controller: groupAssociationController }),
+      browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Talkgroup association pages',
+        countText: browsingWorkflows.pageRangeText({ offset: groupPage?.offset || 0, visible: rows.length,
+          total: currentState?.snapshot_stale ? 0 : groupPage?.total_count, label: 'Associations', format: number }),
+        previous: { enabled: !currentState?.snapshot_stale && groupPage?.offset > 0,
+          onClick: () => changePage(Math.max(0, groupPage.offset - groupPage.limit)) },
+        next: { enabled: !currentState?.snapshot_stale && groupPage?.has_more,
+          onClick: () => changePage(groupPage.next_offset) }
+      }));
+  };
   const directory = createAsyncSection(title, {
     loadingMessage: `Loading ${title.toLowerCase()}…`,
     errorMessage: `${title} could not be loaded.`
@@ -20434,6 +20539,8 @@ async function renderRadioSystemIssi(system, renderContext) {
   directory.titleActions.prepend(refresh);
   content.append(issiFilterToolbar(channels.rows, live, active !== 'foreign-systems',
     active === 'subscribers' ? 'Last Heard On' : 'Heard On'), directory.element);
+  if (groupAssociationHost) content.append(section('Talkgroup Associations', groupAssociationHost,
+    groupAssociationActions));
   const parameters = pageParameters({ configuration_id: active === 'foreign-systems' ? null : route.get('configuration_id'),
     ...(live ? { meaningful_only: true, roaming_only: route.get('roaming_only') === 'true' ? true : null } : {}) });
   let state = null;
@@ -20448,12 +20555,18 @@ async function renderRadioSystemIssi(system, renderContext) {
     next: { enabled: page.has_more, href: currentHref({ offset: page.next_offset }) }
   });
   const load = async () => {
-    const page = await apiPage(`${base}/${active}`, parameters, { signal: renderContext.signal });
-    return { page, currentState: live ? page.current_state : null };
+    const [page, groupPage] = await Promise.all([
+      apiPage(`${base}/${active}`, parameters, { signal: renderContext.signal }),
+      groupAssociationHost ? apiPage(`${base}/current-assignments`, { ...parameters,
+        identity_kind: 'talkgroup', offset: groupOffset, sort: 'observed_at', direction: 'desc'
+      }, { signal: renderContext.signal }) : null
+    ]);
+    return { page, groupPage, currentState: live ? page.current_state : null };
   };
-  const present = ({ page, currentState }) => {
+  const present = ({ page, groupPage, currentState }) => {
     state = currentState;
     if (live) stateHost.replaceChildren(issiStateContent(state));
+    showGroupAssociations(groupPage, state);
     const empty = active === 'current-assignments' ? issiEmptyMessage(state, true) :
       active === 'recent-changes' ? 'No assignment changes match these filters.' : 'No history matches these filters.';
     displayedRowsKey = JSON.stringify(page.rows);
@@ -20476,6 +20589,7 @@ async function renderRadioSystemIssi(system, renderContext) {
         if (!renderIsCurrent(renderContext) || document.hidden || !directory.host.isConnected) return;
         state = result.currentState;
         if (live) stateHost.replaceChildren(issiStateContent(state));
+        showGroupAssociations(result.groupPage, state);
         if (active === 'current-assignments' && result.page.rows.length === 0 &&
             displayedEmptyText !== issiEmptyMessage(state, true)) {
           directory.host.replaceChildren(present(result));
@@ -20499,6 +20613,7 @@ async function renderRadioSystemIssi(system, renderContext) {
           meaningful_assignment_count: 0,
           retained_meaningful_assignment_count: state.retained_meaningful_assignment_count || state.meaningful_assignment_count || 0 };
         stateHost.replaceChildren(issiStateContent(state));
+        showGroupAssociations(null, state);
       }
       feedback.textContent = 'Could not update this list. Select Refresh to retry.';
       feedback.hidden = false;
@@ -20653,7 +20768,7 @@ async function renderGroupIdentity() {
   const groupIdentity = response;
   const kind = rowGroupIdentityKind(groupIdentity);
   const tab = route.get('tab') || 'info';
-  const formattedId = identityNumber(groupIdentity, groupIdentity.native_id);
+  const formattedId = groupIdentifierText(groupIdentity, groupIdentity.native_id);
   const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
   const title = entityPageTitle(kindLabel, aliasLabel(groupIdentity), formattedId);
   if (!beginPage(renderContext,
@@ -20667,9 +20782,9 @@ async function renderGroupIdentity() {
     const affiliatedOnly = currentAffiliations && route.get('affiliated') === 'true';
     const columns = [
       { id: 'radio', label: 'Radio', render: (row) => radioLink(row, row.radio_native_id, undefined,
-        row.radio_entity_ref), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_native_id) },
+        row.radio_entity_ref, 'radio'), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_native_id) },
       { id: 'alias', label: 'Alias', render: (row) => row.radio_alias_name ?
-        radioLink(row, row.radio_native_id, row.radio_alias_name, row.radio_entity_ref) : '',
+        radioLink(row, row.radio_native_id, row.radio_alias_name, row.radio_entity_ref ?? null, 'radio') : '',
         className: 'alias-cell', sort: 'radio_alias', sortValue: (row) => row.radio_alias_name || '' },
       { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
@@ -20715,7 +20830,10 @@ async function renderGroupIdentity() {
       [kind === 'patch_group' ? 'Patch Group ID' : 'Talkgroup ID', formattedId],
       ['Alias', aliasLabel(groupIdentity)],
       ['Description', groupIdentity.alias_description],
-      ['Group', groupIdentity.alias_group]
+      ['Group', groupIdentity.alias_group],
+      ['Home System', groupIdentity.home_system_entity_ref ? identitySummaryValue(
+        groupIdentity.home_system_name || systemLabels.systemName(groupIdentity.home_system_key) ||
+          groupIdentity.home_system_key, '', entityRefHref(groupIdentity.home_system_entity_ref)) : '']
     ])), section('Logical Call Activity', metrics([
       ['Logical Calls', groupIdentity.logical_call_count],
       ['Channel Observations', groupIdentity.channel_observation_count],
@@ -20738,7 +20856,7 @@ async function renderGroupIdentity() {
     }
     blocks.push(section('Last-known Facts', keyValues([
       ['Last Source', radioLink(groupIdentity, groupIdentity.last_source_radio_id, undefined,
-        groupIdentity.last_source_entity_ref)],
+        groupIdentity.last_source_entity_ref, 'last_source')],
       ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(groupIdentity.last_encryption_algorithm_name,
         groupIdentity.last_encryption_algorithm_id)],
       ['Last Encryption Key ID', hexDecimalPair(groupIdentity.last_encryption_key_id)]
@@ -20876,11 +20994,11 @@ async function renderRadio() {
       pageParameters({ radio_identity_key: identityKey }));
     const columns = [
       { id: 'group-identity-id', label: 'Group', render: (row) => groupIdentityLink(row,
-        row.group_native_id, undefined, row.group_identity_entity_ref), className: 'numeric',
+        row.group_native_id, undefined, row.group_identity_entity_ref, 'group'), className: 'numeric',
         sort: 'group_identity', sortValue: (row) => Number(row.group_native_id) },
       { id: 'group-identity-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
       { id: 'group-identity-name', label: 'Group Alias', render: (row) => groupIdentityAliasLink(row,
-        row.group_native_id, 'group_identity_alias_', row.group_identity_entity_ref), className: 'alias-cell',
+        row.group_native_id, 'group_identity_alias_', row.group_identity_entity_ref ?? null), className: 'alias-cell',
         sort: 'group_identity_alias', sortValue: (row) => row.group_identity_alias_name || '' },
       { id: 'group-identity-description', label: 'Description', key: 'group_identity_alias_description',
         className: 'alias-cell' },
@@ -20924,9 +21042,9 @@ async function renderRadio() {
     if (radioSystemCapability(radio, 'current_affiliations')) {
       blocks.push(section('Current Affiliation', keyValues([
         ['Talkgroup ID', groupIdentityLink(radio, radio.affiliated_talkgroup_id, undefined,
-          radio.affiliated_talkgroup_entity_ref)],
+          radio.affiliated_talkgroup_entity_ref, 'affiliated_talkgroup')],
         ['Talkgroup Alias', groupIdentityAliasLink(radio, radio.affiliated_talkgroup_id,
-          'affiliated_talkgroup_alias_', radio.affiliated_talkgroup_entity_ref)],
+          'affiliated_talkgroup_alias_', radio.affiliated_talkgroup_entity_ref ?? null)],
         ['Affiliation Confirmed', dateTime(radio.affiliation_confirmed_at_ms)]
       ])));
     }
@@ -21510,7 +21628,8 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
 }
 
 function specialIdentifierLabel(row, value, kind, prefix = '') {
-  if (kind === 'radio' && p25CanonicalSubscriber(row, prefix || radioIdentityPrefix(row, value))) return '';
+  if (isP25(row) && p25IdentityFacts(row, prefix || (kind === 'radio' ?
+    radioIdentityPrefix(row, value) : groupIdentityPrefix(row, value)), kind)) return '';
   const identifier = Number(value);
   if (isP25(row)) {
     if (kind === 'talkgroup') {
@@ -21587,7 +21706,7 @@ function specialIdentifierLabel(row, value, kind, prefix = '') {
 }
 
 function activityIdentifier(row, value, kind, reference, linked = true, prefix = '') {
-  const identifier = kind === 'radio' ? radioIdentifierText(row, value, prefix) : identityNumber(row, value);
+  const identifier = kind === 'radio' ? radioIdentifierText(row, value, prefix) : groupIdentifierText(row, value, prefix);
   if (identifier === '') return '';
   const specialLabel = specialIdentifierLabel(row, value, kind, prefix);
   if (specialLabel) {
@@ -21599,9 +21718,9 @@ function activityIdentifier(row, value, kind, reference, linked = true, prefix =
     return result;
   }
   if (['talkgroup', 'patch_group'].includes(kind)) {
-    return linked ? groupIdentityLink(row, value, identifier, reference) : identifier;
+    return linked ? groupIdentityLink(row, value, identifier, reference, prefix) : identifier;
   }
-  if (kind === 'radio') return linked ? radioLink(row, value, identifier, reference) : identifier;
+  if (kind === 'radio') return linked ? radioLink(row, value, identifier, reference, prefix) : identifier;
   return identifier;
 }
 
@@ -21613,21 +21732,21 @@ function activityTargetKind(row) {
 function activityTargetIdentifier(row, linked = true) {
   if (isAnalogChannel(row)) return '';
   const kind = activityTargetKind(row);
-  return activityIdentifier(row, row.target_id, kind, row.target_entity_ref, linked, kind === 'radio' ? 'target' : '');
+  return activityIdentifier(row, row.target_id, kind, row.target_entity_ref, linked, 'target');
 }
 
 function activitySourceAlias(row, linked = true) {
   const alias = row.source_alias_name || '';
   if (!alias) return '';
   return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source') ?
-    alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
+    alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref, 'source');
 }
 
 function activitySourceTalkerAlias(row, linked = true) {
   const alias = String(row.source_talker_alias || '').trim();
   if (!alias) return '';
   return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio', 'source') ?
-    alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
+    alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref, 'source');
 }
 
 function activityTargetAlias(row, linked = true) {
@@ -21637,9 +21756,9 @@ function activityTargetAlias(row, linked = true) {
   const kind = activityTargetKind(row);
   if (!linked || specialIdentifierLabel(row, row.target_id, kind, kind === 'radio' ? 'target' : '')) return alias;
   if (['talkgroup', 'patch_group'].includes(kind)) {
-    return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref);
+    return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref, 'target');
   }
-  if (kind === 'radio') return radioLink(row, row.target_id, alias, row.target_entity_ref);
+  if (kind === 'radio') return radioLink(row, row.target_id, alias, row.target_entity_ref, 'target');
   return alias;
 }
 
@@ -22004,9 +22123,8 @@ function activityIdentitySuggestion(row, requestedKind = '', context = null) {
   const displayRow = p25ServingSystemKey(row) || !context?.radioSystemKey ? row :
     { ...row, radio_system_key: context.radioSystemKey };
   const displayId = String(kind === 'radio' ? radioIdentifierText(displayRow, nativeId) :
-    identityNumber(row, nativeId));
-  const [, , homeWacn, homeSystemId] = identityKey.split('-');
-  const home = kind === 'radio' || homeWacn === 'x' ? '' : `${homeWacn}-${homeSystemId}`;
+    groupIdentifierText(displayRow, nativeId));
+  const home = '';
   return Object.freeze({ key: identityKey, id: Number(nativeId), displayId, alias, kind, kindLabel, home,
     label: `${kindLabel} ${displayId}${alias ? ` · ${alias}` : ''}${home ? ` · ${home}` : ''}` });
 }
@@ -22017,12 +22135,12 @@ function activityIdentityInitialSelection(identityKey, requestedKind = '', conte
   const kind = requestedKind || activityIdentityKindFromKey(key);
   const parts = key.split('-');
   const id = Number(parts.at(-1));
-  const qualifiedRadio = kind === 'radio' && parts[2] !== 'x' && parts[3] !== 'x';
-  const displayId = qualifiedRadio ? radioIdentifierText({
-    protocol: 'P25', radio_system_key: context?.radioSystemKey,
-    canonical_identity: { wacn: parseInt(parts[2], 16), system_id: parseInt(parts[3], 16), subscriber_id: id }
-  }, id) : parts.at(-1);
-  const home = kind === 'radio' || parts[2] === 'x' ? '' : `${parts[2]}-${parts[3]}`;
+  const qualified = parts[2] !== 'x' && parts[3] !== 'x';
+  const displayRow = { protocol: 'P25', radio_system_key: context?.radioSystemKey,
+    identity_key: key, native_id: id };
+  const displayId = qualified ? (kind === 'radio' ? radioIdentifierText(displayRow, id) :
+    groupIdentifierText(displayRow, id)) : parts.at(-1);
+  const home = '';
   const kindLabel = activityIdentityKindLabel(kind);
   return Object.freeze({ key, id, displayId, alias: '', kind, kindLabel, home,
     label: `${kindLabel} ${displayId}${home ? ` · ${home}` : ''}` });
@@ -22445,9 +22563,9 @@ function activityFilterIdentitySummary(identityKey, explicitKind = '', numericId
   if (id === '' || id === null || id === undefined) {
     return explicitKind ? `Any ${activityIdentityKindLabel(explicitKind).toLowerCase()}` : '';
   }
-  const parts = key ? key.split('-') : [];
-  const home = parts[2] && parts[2] !== 'x' ? `${parts[2]}-${parts[3]}` : '';
-  return `${id}${home ? ` · ${home}` : ''}`;
+  const kind = explicitKind || activityIdentityKindFromKey(key);
+  const row = { protocol: 'P25', serving_system_key: null, identity_key: key, native_id: Number(id) };
+  return key ? (kind === 'radio' ? radioIdentifierText(row, id) : groupIdentifierText(row, id)) : String(id);
 }
 
 function activityIdentityChipValue(entry) {
@@ -25595,7 +25713,7 @@ function aliasCoverageOwnerCell(row) {
 }
 
 function aliasCoverageUnassignedIdentity(row) {
-  const label = `${groupIdentityLabel(row, null, false)} ${identityNumber(row, row.group_identity_id)}`;
+  const label = `${groupIdentityLabel(row, null, false)} ${groupIdentifierText(row, row.group_identity_id)}`;
   return identitySummaryValue(label, '', entityTarget(row.entity_ref, { channel: 'groups' }));
 }
 
@@ -25955,10 +26073,11 @@ function channelGroupIdentityColumns() {
       sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
     { id: 'source', label: 'Last Source', key: 'last_source_radio_id', className: 'numeric',
       render: (row) => row.last_source_radio_id == null ? '' :
-        radioLink(row, row.last_source_radio_id) },
+        radioLink(row, row.last_source_radio_id, undefined, row.last_source_entity_ref, 'last_source') },
     { id: 'source-alias', label: 'Source Alias', className: 'alias-cell',
       render: (row) => row.last_source_alias_name ?
-        radioLink(row, row.last_source_radio_id, row.last_source_alias_name) : '' },
+        radioLink(row, row.last_source_radio_id, row.last_source_alias_name,
+          row.last_source_entity_ref ?? null, 'last_source') : '' },
     { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
       render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
       sortValue: (row) => Number(row.first_seen_ms || 0) },
@@ -26005,16 +26124,23 @@ function channelRadioColumns() {
       sortValue: (row) => Number(row.private_logical_call_count || 0) },
     { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric',
       render: (row) => row.last_talkgroup_id == null ? '' :
-        groupIdentityLink(row, row.last_talkgroup_id) },
+        groupIdentityLink(row, row.last_talkgroup_id, undefined, row.last_talkgroup_entity_ref, 'last_talkgroup') },
     { id: 'talkgroup-name', label: 'Talkgroup Alias', className: 'alias-cell',
       render: (row) => row.last_talkgroup_alias_name ?
-        groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name) : '' },
+        groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name,
+          row.last_talkgroup_entity_ref ?? null, 'last_talkgroup') : '' },
     { id: 'last-peer', label: 'Last Peer', key: 'last_peer_radio_id', className: 'numeric',
       render: (row) => row.last_peer_radio_id == null ? '' :
-        radioLink(row, row.last_peer_radio_id) },
+        radioLink({ protocol: row.protocol, serving_system_key: p25ServingSystemKey(row),
+          canonical_identity: row.last_peer_canonical_identity, observed_working_id: row.last_peer_observed_working_id,
+          home_system_name: row.last_peer_home_system_name, native_id: row.last_peer_radio_id },
+          row.last_peer_radio_id, undefined, row.last_peer_entity_ref) },
     { id: 'peer-alias', label: 'Peer Alias', className: 'alias-cell',
       render: (row) => row.last_peer_alias_name ?
-        radioLink(row, row.last_peer_radio_id, row.last_peer_alias_name) : '' },
+        radioLink({ protocol: row.protocol, serving_system_key: p25ServingSystemKey(row),
+          canonical_identity: row.last_peer_canonical_identity, observed_working_id: row.last_peer_observed_working_id,
+          home_system_name: row.last_peer_home_system_name, native_id: row.last_peer_radio_id },
+          row.last_peer_radio_id, row.last_peer_alias_name, row.last_peer_entity_ref) : '' },
     { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
       render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
       sortValue: (row) => Number(row.first_seen_ms || 0) },
@@ -31299,11 +31425,32 @@ function callMatchingIdentitySystem(identity, destination = true) {
 
 function callMatchingIdentitySummary(identity, destination = true) {
   const alias = destination ? identity.destination_alias : identity.source_alias;
-  const identifier = destination ? identity.destination_value : callMatchingSourceValue(identity);
+  const role = destination ? 'target' : 'source';
+  const value = destination ? identity.destination_value : identity.source_radio_id ?? identity.source_value;
+  const kind = destination ? (identity.destination_canonical_identity ? 'radio' :
+    String(identity.destination_kind || identity.destination_form || 'talkgroup').toLowerCase()) :
+    identity.source_canonical_group_identity ? 'talkgroup' : 'radio';
+  const raw = String(value ?? '').trim();
+  const key = /^v1-[rgp]-/.test(raw) ? raw : '';
+  const scalar = key ? Number(key.split('-').at(-1)) : value;
+  const row = { ...identity, protocol: identity.protocol || 'P25',
+    ...(destination ? { target_canonical_identity: identity.destination_canonical_identity,
+      target_canonical_group_identity: identity.destination_canonical_group_identity,
+      target_observed_working_id: identity.destination_observed_working_id,
+      target_observed_local_id: identity.destination_observed_local_id } : {}),
+    [`${role}_home_system_name`]: identity[`${role}_home_system_name`] ||
+      (!destination ? identity.home_system?.system_name || identity.home_system_name : ''),
+    [`${role}_identity_key`]:
+    identity[`${role}_identity_key`] || key };
+  const identifier = kind === 'radio' || kind === 'individual' ?
+    radioIdentifierText(row, scalar, role) : groupIdentifierText(row, scalar, role);
   const system = callMatchingIdentitySystem(identity, destination);
-  const context = [alias ? identifier : '', radioSystemPrimaryName(system)].filter(Boolean).join(' · ');
+  const systemName = radioSystemPrimaryName(system);
+  const context = [alias ? identifier : '', systemName && !String(identifier).includes(systemName) ?
+    systemName : ''].filter(Boolean).join(' · ');
   return identitySummaryValue(callMatchingIdentity(alias, identifier,
-    destination ? 'Unknown destination' : 'Unknown radio'), context);
+    destination ? 'Unknown destination' : 'Unknown radio'), context,
+    entityRefHref(identity[`${role}_entity_ref`]));
 }
 
 function callMatchingWinner(decision) {
@@ -33377,7 +33524,7 @@ const audioDock = createAudioDock({
   getLivePlayer: () => webCallPlayer,
   access: () => ({ live: capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO),
     recordings: capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) }),
-  entityRefHref, href, radioIdentifier: radioIdentifierText,
+  entityRefHref, href, radioIdentifier: partyIdentifierText,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   getSourceNameDisplay: sourceNameDisplayMode,
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,

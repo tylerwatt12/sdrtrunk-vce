@@ -438,7 +438,7 @@ public class StatsWebServerService implements AutoCloseable
         if(mSpectrumSearchService != null) mSpectrumSearchService.setAliasImporter(mRadioReferenceImportService);
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
             remoteLinkAdministrationService);
-        mP25AssignmentService = new StatsP25AssignmentService(userPreferences.getP25WuidAssignmentRegistry(), mDatabase);
+        mP25AssignmentService = new StatsP25AssignmentService(userPreferences.getP25IdentityResolver(), mDatabase);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
         mSpectrumSnapSettingsService = new SpectrumSnapSettingsService(mWebAccessDatabasePath);
         mWebReceiverSettingsService = new WebReceiverSettingsService(mUserPreferences.getNowPlayingPreference());

@@ -4,6 +4,8 @@
  */
 package io.github.dsheirer.audio.broadcast;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.audio.broadcast.icecast.IcecastHTTPConfiguration;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
@@ -144,7 +146,7 @@ class AudioStreamingBroadcasterMetadataContextTest
         var observedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(9_001, 0xABCDE, 0x321, 9_001);
         var retained = APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xABCDE, 0x321, 9_001,
-                Role.FROM, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT), observedRadio);
+                Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT), observedRadio);
         var reconstructed = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
             501, 0xABCDE, 0x321, 9_001);
         var observedGroup = APCO25Talkgroup.create(77);

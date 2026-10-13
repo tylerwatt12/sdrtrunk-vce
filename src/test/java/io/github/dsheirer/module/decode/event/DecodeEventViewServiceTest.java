@@ -30,6 +30,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -314,7 +315,7 @@ class DecodeEventViewServiceTest
             assertEquals("PATCH_GROUP", party.form());
             assertNull(party.canonicalIdentity(), "the patch itself is never presented as a radio");
             assertEquals("56132", party.patchGroup());
-            assertEquals(List.of("91"), party.talkgroupMembers());
+            assertEquals(List.of("91"), party.talkgroupMembers().stream().map(DecodeEventViewService.PartyIdentifier::text).toList());
             assertFalse(party.talkgroupMembersTruncated());
             assertFalse(party.radioMembersTruncated());
             assertEquals(3, party.radioMembers().size());
@@ -330,7 +331,7 @@ class DecodeEventViewServiceTest
             patch.getPatchedRadioIdentifiers().clear();
             patch.getPatchedTalkgroupIdentifiers().clear();
             assertEquals(3, party.radioMembers().size(), "mutable patch updates cannot change the captured projection");
-            assertEquals(List.of("91"), party.talkgroupMembers());
+            assertEquals(List.of("91"), party.talkgroupMembers().stream().map(DecodeEventViewService.PartyIdentifier::text).toList());
             assertEquals("PATCH " + rawPatch, view.details());
 
             ObjectMapper mapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
@@ -338,9 +339,37 @@ class DecodeEventViewServiceTest
             assertEquals(0x49F, json.path("to_party").get(0).path("radio_members").get(0)
                 .path("canonical_identity").path("system_id").asInt());
             assertEquals("56132", json.path("to_party").get(0).path("patch_group").asText());
-            assertEquals("91", json.path("to_party").get(0).path("talkgroup_members").get(0).asText());
+            assertEquals("91", json.path("to_party").get(0).path("talkgroup_members").get(0).path("text").asText());
             assertFalse(json.path("to_party").get(0).path("talkgroup_members_truncated").asBoolean());
             assertFalse(json.path("to_party").get(0).path("radio_members_truncated").asBoolean());
+        }
+    }
+
+    @Test
+    void qualifiedGroupAndPatchMembersCarryHomeTuplesAndOnlyProvenLocalAddresses() throws Exception
+    {
+        var primary = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(3101, 0xABCDE, 0x123, 501);
+        PatchGroup patch = new PatchGroup(primary);
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
+            91, 0xBCDEF, 0x234, 701));
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createTo(801, 0xCDEF0, 0x345, 801));
+        String raw = APCO25PatchGroup.create(patch).toString();
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+            .protocol(Protocol.APCO25).identifiers(new IdentifierCollection(List.of(APCO25PatchGroup.create(patch))))
+            .build();
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            var party = service.view(CONFIGURATION_ID, event).toParty().getFirst();
+            assertEquals(raw, party.text());
+            assertEquals(501, party.canonicalGroupIdentity().talkgroupId());
+            assertEquals(3101, party.observedLocalId());
+            assertEquals(701, party.talkgroupMembers().getFirst().canonicalGroupIdentity().talkgroupId());
+            assertEquals(91, party.talkgroupMembers().getFirst().observedLocalId());
+            assertNull(party.talkgroupMembers().getLast().observedLocalId(), "home-only identity supplies no local proof");
+            ObjectMapper mapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+            var json = mapper.valueToTree(party);
+            assertEquals(0xABCDE, json.path("canonical_group_identity").path("wacn").asInt());
+            assertTrue(json.path("talkgroup_members").get(1).path("observed_local_id").isNull());
         }
     }
 
@@ -392,7 +421,7 @@ class DecodeEventViewServiceTest
             assertTrue(party.text().endsWith("…"));
             assertEquals("56132", party.patchGroup());
             assertEquals(32, party.talkgroupMembers().size());
-            assertEquals("50031", party.talkgroupMembers().getLast());
+            assertEquals("50031", party.talkgroupMembers().getLast().text());
             assertTrue(party.talkgroupMembersTruncated());
             assertEquals(32, party.radioMembers().size());
             assertTrue(party.radioMembersTruncated());

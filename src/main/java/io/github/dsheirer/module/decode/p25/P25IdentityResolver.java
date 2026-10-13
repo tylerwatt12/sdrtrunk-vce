@@ -10,13 +10,22 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierObservation;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
-import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.traffic.P25TalkgroupIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
@@ -31,20 +40,21 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Receiver-scoped, process-local cache of confirmed P25 working-unit assignments.
+ * Receiver-scoped, process-local P25 identity resolver with separate radio and group assignment namespaces.
  *
- * <p>A registration that explicitly carries both a working ID and canonical subscriber may establish or replace a
- * mapping. Accepted affiliation evidence can only refresh an already-current exact mapping. Clears install
+ * <p>A radio registration that explicitly carries both a working ID and canonical subscriber may establish or replace a
+ * mapping. Radio affiliation evidence can only refresh an already-current exact mapping. Clears install
  * process-local tombstones so an older delayed message cannot immediately revive a retired assignment. Nothing in
  * this registry is loaded from or made authoritative by SQLite; a new process relearns assignments from fresh radio
- * traffic.</p>
+ * traffic. A group association requires an accepted affiliation carrying independent local and home group fields;
+ * its conservative observation lifetime is separate from the radio lease.</p>
  *
  * <p>Decoder reads are lock-free and use a fixed number of exact-key probes. Mutation callbacks make one immediate
  * {@link ReentrantLock#tryLock()} attempt. A contended registration or clear, or a saturated index, invalidates the
  * complete cache generation instead of waiting or risking a stale identity. The next accepted registration starts
  * rebuilding the cache.</p>
  */
-public final class P25WuidAssignmentRegistry
+public final class P25IdentityResolver
 {
     /** Shortest standards-valid temporary-WUID lease used when no site lease has been observed. */
     static final int DEFAULT_LEASE_MINUTES = 270;
@@ -61,6 +71,23 @@ public final class P25WuidAssignmentRegistry
     private static final int EVIDENCE_CLEAR = 3;
 
     private final LookupState mLookupState;
+    private final AtomicReferenceArray<GroupAssignment> mGroupsByLocal;
+    private final AtomicReferenceArray<GroupAssignment> mGroupsByHome;
+    private final int mGroupMask;
+    /**
+     * Conservative process-local group association policy, not a TIA lease or advertised WUID lifetime.
+     * An accepted explicit pair is usable for five minutes, subject to the independent observation-gap gate.
+     * Equal-time conflicting pairs become misses until newer accepted evidence or reset.
+     */
+    public static final long GROUP_OBSERVATION_LIFETIME_MILLISECONDS = 300_000L;
+    private static final int DEFAULT_GROUP_SLOT_COUNT = 1 << 16;
+
+    public record GroupEntry(int servingWacn, int servingSystem, int localAddress, P25TalkgroupIdentity talkgroup,
+                             long observedAt, long expiresAt, P25SiteIdentity site, String configurationId) {}
+
+    private record GroupAssignment(int wacn, int system, int local, P25TalkgroupIdentity home, long observedAt,
+                                   long expiresAt, long epoch, boolean blocked, P25SiteIdentity site,
+                                   String configurationId) {}
     /** Entries from an older generation are misses and can be reused without clearing the arrays. */
     private final AtomicLong mCacheEpoch = new AtomicLong();
     /** Odd while the single mutation owner is changing indexes; enrichment never crosses a revision. */
@@ -142,13 +169,22 @@ public final class P25WuidAssignmentRegistry
     /** An immutable observer view, sampled at asOf. A stale view keeps the last successful sample's time and rows. */
     public record Snapshot(long asOf, long generation, long revision, boolean stale, int usableCount,
                            List<Entry> assignments, List<Change> recentChanges, List<SystemObservation> systems,
-                           long droppedMutations, long saturatedMutations)
+                           long droppedMutations, long saturatedMutations, List<GroupEntry> groupAssignments)
     {
+        public Snapshot(long asOf, long generation, long revision, boolean stale, int usableCount,
+                        List<Entry> assignments, List<Change> recentChanges, List<SystemObservation> systems,
+                        long droppedMutations, long saturatedMutations)
+        {
+            this(asOf, generation, revision, stale, usableCount, assignments, recentChanges, systems,
+                droppedMutations, saturatedMutations, List.of());
+        }
+
         public Snapshot
         {
             assignments = List.copyOf(assignments);
             recentChanges = List.copyOf(recentChanges);
             systems = List.copyOf(systems);
+            groupAssignments = List.copyOf(groupAssignments);
         }
     }
 
@@ -158,31 +194,31 @@ public final class P25WuidAssignmentRegistry
     private record SystemGap(int wacn, int system, long gapAt) {}
     private record SystemContinuity(int wacn, int system, long observedAt) {}
 
-    public P25WuidAssignmentRegistry()
+    public P25IdentityResolver()
     {
         this(DEFAULT_SLOT_COUNT, DEFAULT_PROBE_COUNT, () -> {}, () -> {}, () -> {});
     }
 
     /** Small-capacity constructor for deterministic saturation tests. */
-    P25WuidAssignmentRegistry(int slotCount, int probeCount)
+    P25IdentityResolver(int slotCount, int probeCount)
     {
         this(slotCount, probeCount, () -> {}, () -> {}, () -> {});
     }
 
     /** Test seam for proving that a contended mutation is shed instead of waiting on a decoder callback. */
-    P25WuidAssignmentRegistry(int slotCount, int probeCount, Runnable mutationHook)
+    P25IdentityResolver(int slotCount, int probeCount, Runnable mutationHook)
     {
         this(slotCount, probeCount, mutationHook, () -> {}, () -> {});
     }
 
     /** Test seam for pausing a lock-free enrichment before it publishes a replacement. */
-    P25WuidAssignmentRegistry(int slotCount, int probeCount, Runnable mutationHook, Runnable enrichmentHook)
+    P25IdentityResolver(int slotCount, int probeCount, Runnable mutationHook, Runnable enrichmentHook)
     {
         this(slotCount, probeCount, mutationHook, enrichmentHook, () -> {});
     }
 
     /** Test seam for pausing a mutation before its immediate lock attempt. */
-    P25WuidAssignmentRegistry(int slotCount, int probeCount, Runnable mutationHook, Runnable enrichmentHook,
+    P25IdentityResolver(int slotCount, int probeCount, Runnable mutationHook, Runnable enrichmentHook,
                               Runnable beforeMutationLockHook)
     {
         if(Integer.bitCount(slotCount) != 1 || slotCount < 2)
@@ -195,6 +231,10 @@ public final class P25WuidAssignmentRegistry
         }
 
         mLookupState = new LookupState(slotCount);
+        int groupSlots = Math.min(slotCount, DEFAULT_GROUP_SLOT_COUNT);
+        mGroupsByLocal = new AtomicReferenceArray<>(groupSlots);
+        mGroupsByHome = new AtomicReferenceArray<>(groupSlots);
+        mGroupMask = groupSlots - 1;
         mMask = slotCount - 1;
         mProbeCount = probeCount;
         mMutationHook = mutationHook != null ? mutationHook : () -> {};
@@ -375,62 +415,207 @@ public final class P25WuidAssignmentRegistry
         clear(servingSite, presence, observedAt, null);
     }
 
-    /** Promotes ordinary P25 radio identifiers when a current process-local assignment exists. */
+    /**
+     * Learns a group association only from an accepted response carrying an independent usable local/home pair.
+     * Home-only decoder placeholders, zero/Everyone addresses and denials cannot establish assignments.
+     */
+    public boolean observeGroup(P25SiteIdentity servingSite, Identifier<?> identifier, boolean accepted,
+                                long observedAt, String configurationId)
+    {
+        if(!accepted || servingSite == null || !(identifier instanceof FullyQualifiedTalkgroupIdentifier group) ||
+            group.getLocalAddress() == null || group.getResolutionEvidence() != IdentityResolutionEvidence.DIRECT)
+        {
+            return false;
+        }
+        P25TalkgroupIdentity home = P25TalkgroupIdentity.from(group);
+        if(home == null) return false;
+        long timestamp = usableTimestamp(observedAt);
+        if(timestamp <= systemGapAt(servingSite.wacn(), servingSite.system()) ||
+            configurationId != null && !trackedSource(servingSite, configurationId)) return false;
+        long epoch = mCacheEpoch.get();
+        mBeforeMutationLockHook.run();
+        if(!mMutationLock.tryLock())
+        {
+            mDroppedMutations.incrementAndGet();
+            invalidateCache(ChangeReason.CONTENTION);
+            return false;
+        }
+        try
+        {
+            beginMutation();
+            mMutationHook.run();
+            if(epoch != mCacheEpoch.get()) return false;
+            int local = group.getLocalAddress();
+            GroupAssignment byLocal = exactGroup(mGroupsByLocal, epoch, servingSite.wacn(), servingSite.system(), local, home, true);
+            GroupAssignment byHome = exactGroup(mGroupsByHome, epoch, servingSite.wacn(), servingSite.system(), local, home, false);
+            if(byLocal != null && timestamp < byLocal.observedAt() || byHome != null && timestamp < byHome.observedAt()) return false;
+            boolean conflict = byLocal != null && timestamp == byLocal.observedAt() &&
+                    (byLocal.blocked() || !home.equals(byLocal.home())) ||
+                byHome != null && timestamp == byHome.observedAt() && (byHome.blocked() || local != byHome.local());
+            if(!conflict && byLocal != null && byHome != null && timestamp == byLocal.observedAt() &&
+                timestamp == byHome.observedAt()) return false;
+            long expires = timestamp > Long.MAX_VALUE - GROUP_OBSERVATION_LIFETIME_MILLISECONDS ? Long.MAX_VALUE :
+                timestamp + GROUP_OBSERVATION_LIFETIME_MILLISECONDS;
+            GroupAssignment incoming = new GroupAssignment(servingSite.wacn(), servingSite.system(), local, home,
+                timestamp, expires, epoch, conflict, servingSite, configurationId);
+            int localSlot = groupSlot(mGroupsByLocal, incoming, timestamp, true);
+            int homeSlot = groupSlot(mGroupsByHome, incoming, timestamp, false);
+            if(localSlot < 0 || homeSlot < 0)
+            {
+                mSaturatedMutations.incrementAndGet();
+                invalidateCache(ChangeReason.SATURATION);
+                return false;
+            }
+            //Retire displaced directions before publication. A tombstone prevents older delayed revival.
+            if(byHome != null && byHome.local() != local)
+                blockGroup(mGroupsByLocal, byHome, timestamp, expires, true);
+            if(byLocal != null && !byLocal.home().equals(home))
+                blockGroup(mGroupsByHome, byLocal, timestamp, expires, false);
+            mGroupsByHome.set(homeSlot, incoming);
+            mGroupsByLocal.set(localSlot, incoming);
+            return !conflict;
+        }
+        finally
+        {
+            endMutation();
+            mMutationLock.unlock();
+        }
+    }
+
+    /** Promotes radio/group observations and patch members from the same bounded process-local resolver. */
     public void enrich(P25SiteIdentity servingSite, MutableIdentifierCollection identifiers, long observedAt)
     {
-        if(servingSite == null || identifiers == null)
-        {
-            return;
-        }
-
-        long cacheEpoch = mCacheEpoch.get();
-        long mutationRevision = mMutationRevision.get();
-        long scopeRevision = mScopeRevision.get();
-        if((mutationRevision & 1L) != 0L)
-        {
-            return;
-        }
-
+        if(servingSite == null || identifiers == null) return;
+        long epoch = mCacheEpoch.get();
+        long revision = mMutationRevision.get();
+        long scope = mScopeRevision.get();
+        if((revision & 1L) != 0L) return;
         long timestamp = usableTimestamp(observedAt);
         List<Identifier> originalIdentifiers = List.copyOf(identifiers.getIdentifiers());
         for(Identifier<?> identifier: originalIdentifiers)
         {
-            if(identifier instanceof RadioIdentifier radio &&
-                !(identifier instanceof FullyQualifiedRadioIdentifier) &&
-                (identifier.getProtocol() == Protocol.APCO25 || identifier.getProtocol() == Protocol.APCO25_PHASE2))
-            {
-                Assignment assignment = findWorking(cacheEpoch, servingSite.wacn(), servingSite.system(),
-                    radio.getValue(), timestamp);
-                if(assignment != null)
-                {
-                    mEnrichmentHook.run();
-                }
-                if(assignment != null && lookupStillCurrent(cacheEpoch, mutationRevision, scopeRevision, assignment))
-                {
-                    P25SubscriberIdentity subscriber = assignment.subscriber();
-                    Role role = identifier.getRole();
-                    identifiers.update(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(radio.getValue(),
-                        subscriber.homeWacn(), subscriber.homeSystemId(), subscriber.subscriberId(), role,
-                        ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT));
-                }
-            }
+            Identifier<?> enriched = enrichIdentifier(servingSite, identifier, timestamp, epoch, revision, scope);
+            if(enriched != identifier) identifiers.update(enriched);
         }
-
-        //Identifier collections can contain more than one radio role. Roll back all promotions if a mutation or
-        //global or scoped invalidation crossed the operation so callers never receive a mixed cache generation.
-        if(mCacheEpoch.get() != cacheEpoch || mMutationRevision.get() != mutationRevision ||
-            mScopeRevision.get() != scopeRevision)
+        //Never publish observations drawn across different cache/scope generations, including patch members.
+        if(epoch != mCacheEpoch.get() || revision != mMutationRevision.get() || scope != mScopeRevision.get())
         {
             for(Identifier<?> identifier: originalIdentifiers)
             {
-                if(identifier instanceof RadioIdentifier && !(identifier instanceof FullyQualifiedRadioIdentifier) &&
-                    (identifier.getProtocol() == Protocol.APCO25 ||
-                        identifier.getProtocol() == Protocol.APCO25_PHASE2))
+                Identifier<?> changed = identifiers.getIdentifier(identifier.getIdentifierClass(), identifier.getForm(), identifier.getRole());
+                if(changed != identifier)
                 {
+                    identifiers.remove(changed);
                     identifiers.update(identifier);
                 }
             }
         }
+    }
+
+    private Identifier<?> enrichIdentifier(P25SiteIdentity site, Identifier<?> identifier, long timestamp,
+                                           long epoch, long revision, long scope)
+    {
+        if(identifier.getProtocol() != Protocol.APCO25 && identifier.getProtocol() != Protocol.APCO25_PHASE2) return identifier;
+        if(identifier instanceof PatchGroupIdentifier patch)
+        {
+            PatchGroup original = patch.getValue();
+            if(original == null || original.getPatchGroup() == null) return identifier;
+            TalkgroupIdentifier primary = (TalkgroupIdentifier)enrichIdentifier(site, original.getPatchGroup(), timestamp, epoch, revision, scope);
+            PatchGroup copy = new PatchGroup(primary, original.getVersion());
+            boolean changed = primary != original.getPatchGroup();
+            for(TalkgroupIdentifier member: original.getPatchedTalkgroupIdentifiers())
+            {
+                TalkgroupIdentifier enriched = (TalkgroupIdentifier)enrichIdentifier(site, member, timestamp, epoch, revision, scope);
+                copy.addPatchedTalkgroup(enriched);
+                changed |= enriched != member;
+            }
+            for(RadioIdentifier member: original.getPatchedRadioIdentifiers())
+            {
+                RadioIdentifier enriched = (RadioIdentifier)enrichIdentifier(site, member, timestamp, epoch, revision, scope);
+                copy.addPatchedRadio(enriched);
+                changed |= enriched != member;
+            }
+            return changed ? APCO25PatchGroup.create(copy) : identifier;
+        }
+        if(identifier instanceof RadioIdentifier radio && !(radio instanceof FullyQualifiedRadioIdentifier))
+        {
+            Assignment assignment = findWorking(epoch, site.wacn(), site.system(), radio.getValue(), timestamp);
+            if(assignment != null) mEnrichmentHook.run();
+            if(assignment != null && lookupStillCurrent(epoch, revision, scope, assignment))
+            {
+                P25SubscriberIdentity subscriber = assignment.subscriber();
+                return APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(radio.getValue(), subscriber.homeWacn(),
+                    subscriber.homeSystemId(), subscriber.subscriberId(), identifier.getRole(),
+                    IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
+            }
+        }
+        if(identifier instanceof TalkgroupIdentifier group && !(group instanceof FullyQualifiedTalkgroupIdentifier))
+        {
+            GroupAssignment assignment = exactGroup(mGroupsByLocal, epoch, site.wacn(), site.system(), group.getValue(), null, true);
+            if(usableGroup(assignment, epoch, timestamp))
+            {
+                mEnrichmentHook.run();
+                if(epoch == mCacheEpoch.get() && revision == mMutationRevision.get() && scope == mScopeRevision.get() &&
+                    exactGroup(mGroupsByLocal, epoch, site.wacn(), site.system(), group.getValue(), null, true) == assignment)
+                    return APCO25FullyQualifiedTalkgroupIdentifier.createWithLocalAddress(group.getValue(),
+                        assignment.home().homeWacn(), assignment.home().homeSystemId(), assignment.home().talkgroupId(),
+                        identifier.getRole(), IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, group);
+            }
+        }
+        return identifier;
+    }
+
+    private boolean usableGroup(GroupAssignment entry, long epoch, long timestamp)
+    {
+        return entry != null && entry.epoch() == epoch && !entry.blocked() && entry.observedAt() <= timestamp &&
+            entry.expiresAt() >= timestamp && entry.observedAt() > systemGapAt(entry.wacn(), entry.system()) &&
+            observationContinuous(entry.wacn(), entry.system(), timestamp);
+    }
+
+    private GroupAssignment exactGroup(AtomicReferenceArray<GroupAssignment> slots, long epoch, int wacn,
+                                        int system, int local, P25TalkgroupIdentity home, boolean localKey)
+    {
+        int hash = groupHash(wacn, system, local, home, localKey);
+        for(int probe = 0; probe < mProbeCount; probe++)
+        {
+            GroupAssignment entry = slots.get((hash + probe) & mGroupMask);
+            if(entry != null && entry.epoch() == epoch && entry.wacn() == wacn && entry.system() == system &&
+                (localKey ? entry.local() == local : entry.home().equals(home))) return entry;
+        }
+        return null;
+    }
+
+    private int groupSlot(AtomicReferenceArray<GroupAssignment> slots, GroupAssignment incoming, long timestamp, boolean localKey)
+    {
+        int hash = groupHash(incoming.wacn(), incoming.system(), incoming.local(), incoming.home(), localKey);
+        int reusable = -1;
+        for(int probe = 0; probe < mProbeCount; probe++)
+        {
+            int index = (hash + probe) & mGroupMask;
+            GroupAssignment entry = slots.get(index);
+            if(entry != null && entry.epoch() == incoming.epoch() && entry.wacn() == incoming.wacn() &&
+                entry.system() == incoming.system() && (localKey ? entry.local() == incoming.local() : entry.home().equals(incoming.home()))) return index;
+            if(reusable < 0 && (entry == null || entry.epoch() != incoming.epoch() || entry.expiresAt() < timestamp)) reusable = index;
+        }
+        return reusable;
+    }
+
+    private void blockGroup(AtomicReferenceArray<GroupAssignment> slots, GroupAssignment previous, long timestamp,
+                            long expires, boolean localKey)
+    {
+        GroupAssignment current = exactGroup(slots, previous.epoch(), previous.wacn(), previous.system(), previous.local(), previous.home(), localKey);
+        if(current != null && current.local() == previous.local() && current.home().equals(previous.home()))
+        {
+            int index = groupSlot(slots, current, timestamp, localKey);
+            slots.set(index, new GroupAssignment(current.wacn(), current.system(), current.local(), current.home(),
+                timestamp, expires, current.epoch(), true, current.site(), current.configurationId()));
+        }
+    }
+
+    private static int groupHash(int wacn, int system, int local, P25TalkgroupIdentity home, boolean localKey)
+    {
+        return localKey ? mix(wacn * 31 ^ system * 131 ^ local) :
+            mix(wacn * 31 ^ system * 131 ^ home.homeWacn() * 17 ^ home.homeSystemId() * 257 ^ home.talkgroupId());
     }
 
     /** Returns an enriched immutable collection, or the original when no promotion was available. */
@@ -445,7 +630,7 @@ public final class P25WuidAssignmentRegistry
         MutableIdentifierCollection enriched = new MutableIdentifierCollection(identifiers.getIdentifiers(),
             identifiers.getTimeslot());
         enrich(servingSite, enriched, observedAt);
-        return enriched.getIdentifiers().equals(identifiers.getIdentifiers()) ? identifiers : enriched;
+        return IdentifierObservation.sameList(enriched.getIdentifiers(), identifiers.getIdentifiers()) ? identifiers : enriched;
     }
 
     /** Drops every process-local assignment without touching persisted statistics. */
@@ -759,6 +944,19 @@ public final class P25WuidAssignmentRegistry
                     systemIdentities.putIfAbsent(key, new int[]{assignment.servingWacn(), assignment.servingSystem()});
                 }
             }
+            List<GroupEntry> groups = new ArrayList<>();
+            for(int index = 0; index < mGroupsByLocal.length(); index++)
+            {
+                GroupAssignment group = mGroupsByLocal.get(index);
+                if(usableGroup(group, epoch, timestamp))
+                {
+                    groups.add(new GroupEntry(group.wacn(), group.system(), group.local(), group.home(),
+                        group.observedAt(), group.expiresAt(), group.site(), group.configurationId()));
+                    systemIdentities.putIfAbsent(group.wacn() + ":" + group.system(), new int[]{group.wacn(), group.system()});
+                }
+            }
+            groups.sort(Comparator.comparingInt(GroupEntry::servingWacn).thenComparingInt(GroupEntry::servingSystem)
+                .thenComparingInt(GroupEntry::localAddress));
             for(int index = 0; index < SOURCE_CAPACITY; index++)
             {
                 SourceObservation source = mSources.get(index);
@@ -839,14 +1037,14 @@ public final class P25WuidAssignmentRegistry
                 changes = new ArrayList<>(changes.subList(0, RECENT_CHANGE_CAPACITY));
             }
             Snapshot sampled = new Snapshot(timestamp, epoch, revision, false, entries.size(), entries, changes,
-                systems, mDroppedMutations.get(), mSaturatedMutations.get());
+                systems, mDroppedMutations.get(), mSaturatedMutations.get(), groups);
             mLastSnapshot = sampled;
             return sampled;
         }
         Snapshot previous = mLastSnapshot;
         return new Snapshot(previous.asOf(), previous.generation(), previous.revision(), true,
             previous.usableCount(), previous.assignments(), previous.recentChanges(), previous.systems(),
-            mDroppedMutations.get(), mSaturatedMutations.get());
+            mDroppedMutations.get(), mSaturatedMutations.get(), previous.groupAssignments());
     }
 
     private Assignment register(LookupState state, long cacheEpoch, int servingWacn, int servingSystem,

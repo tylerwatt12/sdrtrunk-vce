@@ -338,14 +338,25 @@ async function main() {
       source_form: 'RADIO', source_id: 2_115_288,
       source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 2_115_288 }
     }), 'TGID 91 ← 2115288');
+    const fullGroup = { protocol: 'P25', target_form: 'TALKGROUP', target_id: 77,
+      target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
+      target_observed_local_id: 77, target_home_system_name: 'County Radio', source_id: null };
+    for (const serving_system_key of [null, 'p25:bee00:348']) {
+      assert.equal(labels.callLabel({ ...fullGroup, serving_system_key }), '7001 (Local TG ID 77)');
+      assert.equal(labels.targetLabel({ ...fullGroup, serving_system_key }), '7001 (Local TG ID 77)');
+    }
+    assert.equal(labels.callLabel({ ...fullGroup, serving_system_key: 'p25:00001:047', target_alias: 'Dispatch' }),
+      'Dispatch · County Radio · 7001 (Local TG ID 77)');
+    assert.equal(labels.callLabel({ ...fullGroup, target_form: 'PATCH_GROUP', serving_system_key: null }),
+      '7001 (Local TG ID 77)');
     for (const homeField of ['wacn', 'system_id']) {
       for (const missing of [null, undefined, '', ' ', '\t']) {
-        assert.equal(labels.canonicalRadioLabel({ source_canonical_identity: {
+        assert.equal(labels.canonicalPartyLabel({ source_canonical_identity: {
           wacn: 0xBEE00, system_id: 0x348, subscriber_id: 501, [homeField]: missing
         } }, 'source'), '', 'Missing home IDs must not fabricate a permanent identity containing zero.');
       }
     }
-    assert.equal(labels.canonicalRadioLabel({ source_canonical_identity: {
+    assert.equal(labels.canonicalPartyLabel({ source_canonical_identity: {
       wacn: 0, system_id: 0, subscriber_id: 501
     } }, 'source'), '501', 'Explicit numeric zero remains a valid home ID.');
     const equalWorkingTarget = {
@@ -399,7 +410,7 @@ async function main() {
       'Dispatch · Home System · 2115288', 'The call receiving system takes precedence over playback context.');
     assert.equal(labels.callLabel({ ...localRadioTarget, target_alias: '', target_observed_working_id: 501 }),
       '2115288 (Working ID 501)', 'A local radio retains a different Working ID without repeating the home system.');
-    assert.equal(labels.canonicalRadioLabel({ ...foreignNamedRadio, radio_system_key: '',
+    assert.equal(labels.canonicalPartyLabel({ ...foreignNamedRadio, radio_system_key: '',
       target_home_system_name: 'Home System' }, 'target'), '2115288',
       'Missing receiving scope cannot establish a foreign home system.');
     assert.equal(labels.targetLabel({ ...foreignNamedRadio, serving_system_key: null }), 'Dispatch · 2115288',

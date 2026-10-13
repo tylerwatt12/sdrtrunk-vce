@@ -4,6 +4,8 @@
  */
 package io.github.dsheirer.identifier.radio;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
@@ -15,18 +17,16 @@ import io.github.dsheirer.protocol.Protocol;
  * Local identities remain scoped externally by their serving system or conventional channel.
  */
 public record ResolvedRadioIdentity(Protocol protocol, Integer observedWorkingId,
-                                    P25SubscriberIdentity subscriber, Evidence evidence)
+                                    P25SubscriberIdentity subscriber, IdentityResolutionEvidence evidence)
 {
-    public enum Evidence { DIRECT, CONFIRMED_ASSIGNMENT, UNRESOLVED, UNKNOWN }
-
     public ResolvedRadioIdentity
     {
         boolean p25 = protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2;
         if(protocol == null || evidence == null || observedWorkingId == null && subscriber == null ||
             observedWorkingId != null && (observedWorkingId < 1 || p25 && observedWorkingId > 0xFFFFFC) ||
             subscriber != null && !p25 ||
-            evidence == Evidence.CONFIRMED_ASSIGNMENT && (subscriber == null || observedWorkingId == null) ||
-            evidence == Evidence.UNRESOLVED && subscriber != null)
+            evidence == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT && (subscriber == null || observedWorkingId == null) ||
+            evidence == IdentityResolutionEvidence.UNRESOLVED && subscriber != null)
         {
             throw new IllegalArgumentException("Radio identity requires explicit usable evidence");
         }
@@ -50,7 +50,7 @@ public record ResolvedRadioIdentity(Protocol protocol, Integer observedWorkingId
         {
             return null;
         }
-        return new ResolvedRadioIdentity(radio.getProtocol(), local, null, Evidence.UNRESOLVED);
+        return new ResolvedRadioIdentity(radio.getProtocol(), local, null, IdentityResolutionEvidence.UNRESOLVED);
     }
 
     /**

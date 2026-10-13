@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 
 import io.github.dsheirer.alias.AliasList;
@@ -269,7 +271,7 @@ class AudioCallCoordinatorTest
             assertEquals(system, source.getSystem());
             assertEquals(homeRadio, source.getRadio());
             assertEquals(localRadio, source.getWorkingAddress());
-            assertEquals(ResolvedRadioIdentity.Evidence.DIRECT, source.getResolutionEvidence());
+            assertEquals(IdentityResolutionEvidence.DIRECT, source.getResolutionEvidence());
             assertSame(goodIdentifiers.getFromIdentifier(), source.getRecordingIdentifier(),
                 "Logical identity promotion retains the winning receiver's ordinary radio observation");
             assertEquals("v1-g-abcde-123-9101",
@@ -304,7 +306,7 @@ class AudioCallCoordinatorTest
             int wacn = 0xABCDE;
             int system = 0x321;
             var mapped = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, wacn, system,
-                9_001, role, ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT);
+                9_001, role, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
             var observed = role == Role.FROM ?
                 APCO25FullyQualifiedRadioIdentifier.createFrom(9_001, wacn, system, 9_001) :
                 APCO25FullyQualifiedRadioIdentifier.createTo(9_001, wacn, system, 9_001);
@@ -328,7 +330,7 @@ class AudioCallCoordinatorTest
                 assertEquals(mapped, source, "Recording observations do not change canonical equality");
                 assertEquals(mapped.hashCode(), source.hashCode());
                 assertEquals(501, source.getWorkingAddress());
-                assertEquals(ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT, source.getResolutionEvidence());
+                assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, source.getResolutionEvidence());
                 assertSame(observed, source.getRecordingIdentifier());
                 assertSame(identifiers, call.recordingIdentifierCollection());
                 assertEquals("9001", BasicRecordingContract.sourceIdentifier(source));
@@ -337,6 +339,70 @@ class AudioCallCoordinatorTest
             {
                 coordinator.dispose();
             }
+        }
+    }
+
+    @Test
+    void learnedGroupWinnerPreservesLocalObservationAndEvidenceAtFinalization() throws Exception
+    {
+        AliasList aliasList = aliasList(1728);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        var observed = APCO25Talkgroup.create(1_234);
+        var receiver = new io.github.dsheirer.module.decode.p25.P25IdentityResolver();
+        var site = new P25SiteIdentity(0xBEE00, 0x123, 1, 1);
+        assertTrue(receiver.observeGroup(site, APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(
+            1_234, 0xBEE00, 0x456, 5_678), true, 1_000, null));
+        var identifiers = new io.github.dsheirer.identifier.MutableIdentifierCollection(
+            List.of(observed, APCO25RadioIdentifier.createFrom(77)));
+        receiver.enrich(site, identifiers, 2_000);
+        var group = (APCO25FullyQualifiedTalkgroupIdentifier)identifiers.getToIdentifier();
+        try
+        {
+            Leg winner = leg(123, aliasList, 0xBEE00, 0x123, 1, 1, 1_234, 77,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of());
+            emitLeg(coordinator, winner, fingerprints(40), identifiers);
+            await(() -> resolved.size() == 1);
+            var call = resolved.getFirst();
+            var target = (APCO25FullyQualifiedTalkgroupIdentifier)call.snapshot().identifierCollection().getToIdentifier();
+            assertSame(group, target);
+            assertSame(observed, target.getRecordingIdentifier());
+            assertEquals(1_234, target.getLocalAddress());
+            assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, target.getResolutionEvidence());
+            assertEquals("1234", BasicRecordingContract.targetIdentifier(target));
+            var facts = call.callLegSummaries().getFirst().p25DestinationIdentity();
+            assertEquals(5_678, facts.homeIdentityId());
+            assertEquals(1_234, facts.explicitlyObservedLocalAddress());
+            assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, facts.resolutionEvidence());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void conflictingReceivedSystemEvidencePreventsCallMerging() throws Exception
+    {
+        AliasList aliasList = aliasList(1729);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+        var identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(1_234),
+            APCO25RadioIdentifier.createFrom(77),
+            io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn.create(0xBEE00),
+            io.github.dsheirer.module.decode.p25.identifier.APCO25System.create(0x456)));
+        try
+        {
+            emitLeg(coordinator, leg(124, aliasList, 0xBEE00, 0x123, 1, 1, 1_234, 77,
+                2_000, 5_000, GOOD_QUALITY, true, Set.of()), fingerprints(41), identifiers);
+            emitLeg(coordinator, leg(125, aliasList, 0xBEE00, 0x123, 1, 2, 1_234, 77,
+                2_050, 5_050, GOOD_QUALITY, true, Set.of()), fingerprints(41), identifiers);
+            await(() -> resolved.size() == 2);
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+        }
+        finally
+        {
+            coordinator.dispose();
         }
     }
 

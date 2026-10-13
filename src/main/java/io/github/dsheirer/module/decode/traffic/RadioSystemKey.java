@@ -52,16 +52,35 @@ public final class RadioSystemKey
     public static String p25Broadcast(IdentifierCollection identifiers)
     {
         if(identifiers == null) return null;
-        Identifier<?> wacn = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.WACN, Role.BROADCAST);
-        Identifier<?> system = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SYSTEM, Role.BROADCAST);
-        return wacn != null && wacn.getValue() instanceof Integer wacnValue &&
-            system != null && system.getValue() instanceof Integer systemValue ? p25(wacnValue, systemValue) : null;
+        return p25Broadcast(identifiers.getIdentifier(IdentifierClass.NETWORK, Form.WACN, Role.BROADCAST),
+            identifiers.getIdentifier(IdentifierClass.NETWORK, Form.SYSTEM, Role.BROADCAST));
+    }
+
+    /** Resolves immutable broadcast references captured before an asynchronous observer consumes them. */
+    public static String p25Broadcast(Identifier<?> wacn, Identifier<?> system)
+    {
+        return wacn != null && wacn.getIdentifierClass() == IdentifierClass.NETWORK &&
+            wacn.getForm() == Form.WACN && wacn.getRole() == Role.BROADCAST &&
+            wacn.getValue() instanceof Integer wacnValue && system != null &&
+            system.getIdentifierClass() == IdentifierClass.NETWORK && system.getForm() == Form.SYSTEM &&
+            system.getRole() == Role.BROADCAST && system.getValue() instanceof Integer systemValue ?
+            p25(wacnValue, systemValue) : null;
     }
 
     /** Resolves captured receiver evidence, refusing disagreement rather than guessing which system carried a call. */
     public static String p25Serving(String nativeKey, P25SiteIdentity site, IdentifierCollection identifiers)
     {
-        String networkKey = p25Broadcast(identifiers);
+        return reconcileP25Serving(nativeKey, site, p25Broadcast(identifiers));
+    }
+
+    /** Same receiving-system policy for detached broadcast references, with no temporary collection. */
+    public static String p25Serving(String nativeKey, P25SiteIdentity site, Identifier<?> wacn, Identifier<?> system)
+    {
+        return reconcileP25Serving(nativeKey, site, p25Broadcast(wacn, system));
+    }
+
+    private static String reconcileP25Serving(String nativeKey, P25SiteIdentity site, String networkKey)
+    {
         String systemKey = isP25Native(nativeKey) ? nativeKey : null;
         String siteKey = p25(site);
         if(systemKey != null && siteKey != null && !systemKey.equals(siteKey)) return null;

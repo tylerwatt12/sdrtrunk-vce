@@ -31,6 +31,11 @@ import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
@@ -49,6 +54,7 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
@@ -151,6 +157,147 @@ class StatsWebCallServiceTest
             assertEquals("130002", metadata.get("target_id"));
             assertEquals("92498.926.34006 (Working ID 130002)",
                 ((Map<?,?>)metadata.get("playback_target")).get("label"));
+        }
+    }
+
+    @Test
+    void actualCapturedGroupCallsRetainTypedFactsAndExplicitLocalProofAcrossServingContexts() throws Exception
+    {
+        P25SiteIdentity[] sites = {new P25SiteIdentity(0xBEE00, 0x4A7, 1, 21),
+            new P25SiteIdentity(0xABCDE, 0x123, 1, 1), null,
+            new P25SiteIdentity(0xABCDE, 0x123, 1, 1)};
+        String[] servingKeys = {"p25:bee00:4a7", "p25:abcde:123", null, null};
+        Integer[] localProofs = {3101, 501, null, null};
+        int[] rawValues = {3101, 501, 0, 501};
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            for(int receiver = 0; receiver < sites.length; receiver++)
+            {
+                for(int kind = 0; kind < rawValues.length; kind++)
+                {
+                    Identifier<?> target = localProofs[kind] != null ?
+                        APCO25FullyQualifiedTalkgroupIdentifier.createWithLocalAddress(rawValues[kind], 0xABCDE,
+                            0x123, 501, Role.TO, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT,
+                            APCO25Talkgroup.create(rawValues[kind])) :
+                        APCO25FullyQualifiedTalkgroupIdentifier.createTo(rawValues[kind], 0xABCDE, 0x123, 501);
+                    var call = capturedP25Call(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+                        130_001, 0xBEE00, 0x348, 9_601_699), target, sites[receiver], receiver == 3);
+                    assertEquals(Integer.toString(rawValues[kind]), call.snapshot().recordingMetadata().destinationValue());
+                    service.receive(call);
+                    Map<String,Object> metadata = client.awaitCall();
+                    assertNotNull(metadata);
+                    assertEquals(Integer.toString(rawValues[kind]), metadata.get("target_id"));
+                    assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x123, "talkgroup_id", 501),
+                        metadata.get("target_canonical_group_identity"));
+                    assertTrue(metadata.containsKey("target_observed_local_id"));
+                    assertEquals(localProofs[kind], metadata.get("target_observed_local_id"));
+                    assertFalse(metadata.containsKey("target_canonical_identity"));
+                    assertFalse(metadata.containsKey("target_observed_working_id"));
+                    assertEquals(130_001, metadata.get("source_observed_local_id"));
+                    assertEquals(130_001, metadata.get("source_observed_working_id"));
+                    assertEquals(servingKeys[receiver], metadata.get("serving_system_key"));
+                    assertTrue(metadata.containsKey("serving_system_key"));
+                    assertEquals(metadata, service.get(String.valueOf(metadata.get("call_id"))).metadata(),
+                        "Cached call endpoint and live feed carry the same proven facts");
+                    if(receiver == 2)
+                    {
+                        assertFalse(metadata.containsKey("playback_target"), "Unknown routing is not invented");
+                    }
+                    else
+                    {
+                        String identityLabel = receiver == 0 ? "ABCDE.123.501" : "501";
+                        if(kind == 0) identityLabel += " (Local TG ID 3101)";
+                        assertEquals("Talkgroup " + identityLabel,
+                            ((Map<?,?>)metadata.get("playback_target")).get("label"));
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void actualFromGroupFactsDoNotBroadenRadioAliasMatchingOrBorrowTheDestinationIdentity() throws Exception
+    {
+        var call = capturedP25Call(APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(
+            91, 0xABCDF, 0x124, 701), APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
+            3101, 0xABCDE, 0x123, 501), new P25SiteIdentity(0xBEE00, 0x4A7, 1, 21), false);
+        assertNull(call.snapshot().recordingMetadata().sourceValue(), "Source alias capture remains radio-only");
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call);
+            var metadata = client.awaitCall();
+            assertEquals("91", metadata.get("source_id"));
+            assertEquals("TALKGROUP", metadata.get("source_form"));
+            assertEquals(Map.of("wacn", 0xABCDF, "system_id", 0x124, "talkgroup_id", 701),
+                metadata.get("source_canonical_group_identity"));
+            assertEquals(91, metadata.get("source_observed_local_id"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x123, "talkgroup_id", 501),
+                metadata.get("target_canonical_group_identity"));
+            assertEquals(3101, metadata.get("target_observed_local_id"));
+            assertFalse(metadata.containsKey("source_canonical_identity"));
+            assertFalse(metadata.containsKey("source_observed_working_id"));
+            assertFalse(metadata.containsKey("source_alias"));
+        }
+    }
+
+    @Test
+    void actualPatchCallCarriesBoundedMemberFactsWithoutInventingLocalAddressesOrServingContext() throws Exception
+    {
+        PatchGroup patch = new PatchGroup(APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
+            3101, 0xABCDE, 0x123, 501));
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
+            91, 0xABCDF, 0x124, 701));
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xABCDF, 0x124, 702));
+        for(int local = 93; local < 125; local++) patch.addPatchedTalkgroup(APCO25Talkgroup.create(local));
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(
+            220_078, 0xABCDE, 0x321, 777));
+        patch.addPatchedRadio(APCO25FullyQualifiedRadioIdentifier.createTo(0, 0xABCDF, 0x322, 999));
+        var call = capturedP25Call(APCO25RadioIdentifier.createFrom(9001), APCO25PatchGroup.create(patch), null, false);
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call);
+            var metadata = client.awaitCall();
+            assertEquals("3101", metadata.get("target_id"));
+            assertEquals("PATCH_GROUP", metadata.get("target_form"));
+            assertEquals(3101, metadata.get("patch_group_id"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x123, "talkgroup_id", 501),
+                metadata.get("target_canonical_group_identity"));
+            assertEquals(3101, metadata.get("target_observed_local_id"));
+            assertEquals(36, metadata.get("patch_member_count"));
+            assertEquals(true, metadata.get("patch_members_truncated"));
+            List<?> members = (List<?>)metadata.get("patch_members");
+            assertEquals(34, members.size(), "Both member kinds retain their independent bound");
+            Map<?,?> group = (Map<?,?>)members.getFirst();
+            assertEquals("talkgroup", group.get("kind"));
+            assertEquals(91, group.get("id"));
+            assertEquals(91, group.get("observed_local_id"));
+            assertEquals(Map.of("wacn", 0xABCDF, "system_id", 0x124, "talkgroup_id", 701),
+                group.get("canonical_group_identity"));
+            Map<?,?> homeOnly = (Map<?,?>)members.get(1);
+            assertEquals(0, homeOnly.get("id"));
+            assertTrue(homeOnly.containsKey("observed_local_id"));
+            assertNull(homeOnly.get("observed_local_id"));
+            assertEquals(Map.of("wacn", 0xABCDF, "system_id", 0x124, "talkgroup_id", 702),
+                homeOnly.get("canonical_group_identity"));
+            Map<?,?> radio = (Map<?,?>)members.get(32);
+            assertEquals("radio", radio.get("kind"));
+            assertEquals(220_078, radio.get("id"));
+            assertEquals(220_078, radio.get("observed_working_id"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x321, "subscriber_id", 777),
+                radio.get("canonical_identity"));
+            Map<?,?> homeOnlyRadio = (Map<?,?>)members.get(33);
+            assertEquals(0, homeOnlyRadio.get("id"));
+            assertFalse(homeOnlyRadio.containsKey("observed_working_id"));
+            assertEquals(Map.of("wacn", 0xABCDF, "system_id", 0x322, "subscriber_id", 999),
+                homeOnlyRadio.get("canonical_identity"));
+            for(Object member : members)
+            {
+                assertTrue(((Map<?,?>)member).containsKey("serving_system_key"));
+                assertNull(((Map<?,?>)member).get("serving_system_key"));
+            }
         }
     }
 
@@ -1051,6 +1198,32 @@ class StatsWebCallServiceTest
             130_002, 0x92498, 0x926, 34_006));
         IdentifierCollection collection = new IdentifierCollection(identifiers);
         return withIdentifiers(template, collection, AudioCallRecordingMetadata.captureAtSnapshot(null, collection));
+    }
+
+    private static CompletedAudioCall capturedP25Call(Identifier<?> source, Identifier<?> destination,
+                                                      P25SiteIdentity servingSite, boolean conflict)
+    {
+        CompletedAudioCall template = call();
+        List<Identifier> identifiers = new ArrayList<>(template.snapshot().identifierCollection().getIdentifiers());
+        identifiers.removeIf(identifier -> identifier.getIdentifierClass() == IdentifierClass.USER &&
+            (identifier.getRole() == Role.FROM || identifier.getRole() == Role.TO) ||
+            identifier.getIdentifierClass() == IdentifierClass.NETWORK &&
+                (identifier.getForm() == Form.WACN || identifier.getForm() == Form.SYSTEM));
+        identifiers.add(source);
+        identifiers.add(destination);
+        if(servingSite != null)
+        {
+            identifiers.add(APCO25Wacn.create(conflict ? 0xBEE00 : servingSite.wacn()));
+            identifiers.add(APCO25System.create(conflict ? 0x4A7 : servingSite.system()));
+        }
+        IdentifierCollection collection = new IdentifierCollection(identifiers);
+        AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null, collection);
+        CompletedAudioCall replaced = withIdentifiers(template, collection, metadata);
+        CallLegSource original = replaced.snapshot().callLegSource();
+        replaced = withSource(replaced, new CallLegSource(original.decoderType(), original.channelConfigurationId(),
+            original.channelName(), original.radioResolveId(), original.aliasListId(), servingSite,
+            original.identityDomain(), original.channelKind(), original.trafficChannel()));
+        return new CompletedAudioCall(replaced.snapshot(), replaced.audioBuffers());
     }
 
     private static CompletedAudioCall callWithFailingIdentifiers()

@@ -63,6 +63,10 @@ class MapSnapshotHttpControllerTest
             await(() -> service.snapshot().entities().size() == 1);
             data = MAPPER.readTree(request(client, root.resolve(MapSnapshotHttpController.PATH)).body()).path("data");
             assertEquals("Test System", data.path("entities").get(0).path("system").textValue());
+            JsonNode entity = data.path("entities").get(0);
+            assertTrue(entity.has("serving_system_key"));
+            assertTrue(entity.path("serving_system_key").isNull(), "Navigation names cannot establish receiving proof");
+            assertEquals(1234, entity.path("observed_working_id").intValue());
 
             JsonNode options = MAPPER.readTree(request(client,
                 root.resolve(MapSnapshotHttpController.ICON_CATALOG_PATH)).body()).path("data");

@@ -4,6 +4,8 @@
  */
 package io.github.dsheirer.record;
 
+import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.application.ApplicationInfo;
@@ -26,6 +28,7 @@ import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.util.StringUtils;
 import io.github.dsheirer.util.TimeStamp;
@@ -66,13 +69,24 @@ public final class BasicRecordingContract
     /** Restores the captured over-air identifier for standard recording text and Alias List lookup. */
     public static Identifier<?> recordingIdentifier(Identifier<?> identifier)
     {
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group)
+        {
+            if(group.getRecordingIdentifier() != group)
+            {
+                return recordingIdentifier(group.getRecordingIdentifier());
+            }
+            if(group.getResolutionEvidence() == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)
+            {
+                return new APCO25Talkgroup(group.getValue(), group.getRole());
+            }
+        }
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
             if(radio.getRecordingIdentifier() != radio)
             {
                 return recordingIdentifier(radio.getRecordingIdentifier());
             }
-            if(radio.getResolutionEvidence() == ResolvedRadioIdentity.Evidence.CONFIRMED_ASSIGNMENT)
+            if(radio.getResolutionEvidence() == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)
             {
                 return new APCO25RadioIdentifier(radio.getValue(), radio.getRole());
             }

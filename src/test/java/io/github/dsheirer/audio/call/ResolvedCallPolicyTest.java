@@ -46,7 +46,7 @@ class ResolvedCallPolicyTest
     {
         ResolvedCallPolicy.DestinationIdentity identity =
             ResolvedCallPolicy.DestinationIdentity.from(
-                APCO25FullyQualifiedTalkgroupIdentifier.createTo(99, 0xABCDE, 0x321, 1200));
+                APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(99, 0xABCDE, 0x321, 1200));
 
         assertEquals(Protocol.APCO25, identity.protocol());
         assertEquals(99, identity.localAddress());
@@ -114,11 +114,29 @@ class ResolvedCallPolicyTest
     }
 
     @Test
+    void groupMatchingRequiresAnExplicitLocalPairOrTheProvenHomeSystem()
+    {
+        var local = ResolvedCallPolicy.DestinationIdentity.from(APCO25Talkgroup.create(700));
+        var homeOnly = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(700, 0xABCDE, 0x321, 700));
+        var assigned = ResolvedCallPolicy.DestinationIdentity.from(
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(700, 0xABCDE, 0x322, 800));
+        assertEquals(0, homeOnly.localAddress());
+        assertFalse(homeOnly.matches(local));
+        assertFalse(homeOnly.matches(local, null));
+        assertFalse(homeOnly.matches(local, "p25:abcde:322"));
+        assertTrue(homeOnly.matches(local, "p25:abcde:321"));
+        assertTrue(local.matches(homeOnly, "p25:abcde:321"));
+        assertTrue(assigned.matches(local));
+        assertFalse(assigned.matches(homeOnly), "Two different full group identities remain distinct");
+    }
+
+    @Test
     void resolvedPolicyCapturesQualifiedPatchMembers()
     {
         PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(500));
         TalkgroupIdentifier qualifiedMember =
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(501, 0xABCDE, 0x321, 700);
+            APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(501, 0xABCDE, 0x321, 700);
         patchGroup.addPatchedTalkgroup(qualifiedMember);
         ResolvedCallPolicy policy = ResolvedCallPolicy.capture(snapshot(APCO25PatchGroup.create(patchGroup)));
         Set<ResolvedCallPolicy.DestinationIdentity> destinations = policy.matchContexts().stream()

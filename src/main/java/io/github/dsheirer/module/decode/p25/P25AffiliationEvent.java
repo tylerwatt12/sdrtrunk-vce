@@ -49,7 +49,7 @@ public class P25AffiliationEvent extends P25DecodeEvent
     private final Outcome mOutcome;
     private final Identifier<?> mRadio;
     private final P25RadioPresence mRadioPresence;
-    private final P25WuidAssignmentRegistry.AssignmentObservation mAssignmentObservation;
+    private final P25IdentityResolver.AssignmentObservation mAssignmentObservation;
     private final Identifier<?> mTalkgroup;
     private final Integer mRadioId;
     private final Integer mTalkgroupId;
@@ -62,7 +62,7 @@ public class P25AffiliationEvent extends P25DecodeEvent
 
     public P25AffiliationEvent(DecodeEventType eventType, long timestamp, Outcome outcome,
                                P25RadioPresence radioPresence,
-                               P25WuidAssignmentRegistry.AssignmentObservation assignmentObservation,
+                               P25IdentityResolver.AssignmentObservation assignmentObservation,
                                Identifier<?> radio, Identifier<?> talkgroup)
     {
         super(eventType, timestamp);
@@ -98,7 +98,7 @@ public class P25AffiliationEvent extends P25DecodeEvent
     }
 
     /** Positive assignment established or refreshed while processing this event, otherwise null. */
-    public P25WuidAssignmentRegistry.AssignmentObservation getAssignmentObservation()
+    public P25IdentityResolver.AssignmentObservation getAssignmentObservation()
     {
         return mAssignmentObservation;
     }

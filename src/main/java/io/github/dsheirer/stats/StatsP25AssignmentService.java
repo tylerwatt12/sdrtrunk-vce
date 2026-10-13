@@ -5,8 +5,9 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.module.decode.p25.P25WuidAssignmentRegistry;
+import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.identifier.P25IdentityFormatter;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
@@ -33,21 +34,22 @@ import java.util.function.LongFunction;
 final class StatsP25AssignmentService implements AutoCloseable
 {
     private static final int ENRICHMENT_BATCH_SIZE = 256;
+    private static final int MAXIMUM_GROUP_ROWS = 500;
     private static final long STALE_AFTER_MS = 15_000;
-    private final LongFunction<P25WuidAssignmentRegistry.Snapshot> mSource;
+    private final LongFunction<P25IdentityResolver.Snapshot> mSource;
     private final BiFunction<String,List<Map<String,Object>>,List<Map<String,Object>>> mEnricher;
     private final long mReceiverStartedAt;
     private volatile View mView;
     private volatile long mRunGeneration;
     private ScheduledExecutorService mWorker;
 
-    StatsP25AssignmentService(P25WuidAssignmentRegistry registry, StatsWebDatabase database)
+    StatsP25AssignmentService(P25IdentityResolver registry, StatsWebDatabase database)
     {
         this(registry::snapshot, database::enrichCurrentP25Assignments,
             ManagementFactory.getRuntimeMXBean().getStartTime());
     }
 
-    StatsP25AssignmentService(LongFunction<P25WuidAssignmentRegistry.Snapshot> source,
+    StatsP25AssignmentService(LongFunction<P25IdentityResolver.Snapshot> source,
                              BiFunction<String,List<Map<String,Object>>,List<Map<String,Object>>> enricher,
                              long receiverStartedAt)
     {
@@ -96,7 +98,7 @@ final class StatsP25AssignmentService implements AutoCloseable
                 View previous = mView;
                 if(previous != null && generation == mRunGeneration)
                 {
-                    mView = new View(previous.snapshot(), previous.assignments(), previous.changes(), true);
+                    mView = new View(previous.snapshot(), previous.assignments(), previous.changes(), previous.groupAssociations(), true);
                 }
             }
         }
@@ -109,9 +111,9 @@ final class StatsP25AssignmentService implements AutoCloseable
 
     private void refresh(long now, long generation)
     {
-        P25WuidAssignmentRegistry.Snapshot snapshot = mSource.apply(now);
+        P25IdentityResolver.Snapshot snapshot = mSource.apply(now);
         Map<String,List<Map<String,Object>>> assignments = new LinkedHashMap<>();
-        for(P25WuidAssignmentRegistry.Entry entry: snapshot.assignments())
+        for(P25IdentityResolver.Entry entry: snapshot.assignments())
         {
             String key = RadioSystemKey.p25(entry.servingWacn(), entry.servingSystem());
             Map<String,Object> row = identityRow(key, entry.subscriber(), entry.workingId());
@@ -124,7 +126,7 @@ final class StatsP25AssignmentService implements AutoCloseable
             assignments.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
         }
         Map<String,List<Map<String,Object>>> changes = new LinkedHashMap<>();
-        for(P25WuidAssignmentRegistry.Change change: snapshot.recentChanges())
+        for(P25IdentityResolver.Change change: snapshot.recentChanges())
         {
             String key = change.servingWacn() != null && change.servingSystem() != null ?
                 RadioSystemKey.p25(change.servingWacn(), change.servingSystem()) : "*";
@@ -146,7 +148,33 @@ final class StatsP25AssignmentService implements AutoCloseable
             putSource(row, change.site(), change.configurationId());
             changes.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
         }
-        View view = new View(snapshot, enrich(assignments), enrich(changes), snapshot.stale());
+        Map<String,List<Map<String,Object>>> groups = new LinkedHashMap<>();
+        for(P25IdentityResolver.GroupEntry entry: snapshot.groupAssignments())
+        {
+            String key = RadioSystemKey.p25(entry.servingWacn(), entry.servingSystem());
+            List<Map<String,Object>> scoped = groups.computeIfAbsent(key, ignored -> new ArrayList<>());
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("home_wacn", entry.talkgroup().homeWacn());
+            row.put("home_system_id", entry.talkgroup().homeSystemId());
+            row.put("canonical_wacn", entry.talkgroup().homeWacn());
+            row.put("canonical_system_id", entry.talkgroup().homeSystemId());
+            row.put("canonical_talkgroup_id", entry.talkgroup().talkgroupId());
+            row.put("canonical_group_identity_display", P25IdentityFormatter.format(
+                entry.talkgroup().homeWacn(), entry.talkgroup().homeSystemId(), entry.talkgroup().talkgroupId()));
+            row.put("radio_system_key", key);
+            row.put("serving_system_key", key);
+            row.put("canonical_group_identity", Map.of("wacn", entry.talkgroup().homeWacn(),
+                "system_id", entry.talkgroup().homeSystemId(), "talkgroup_id", entry.talkgroup().talkgroupId()));
+            row.put("observed_local_id", entry.localAddress());
+            row.put("observed_at_ms", entry.observedAt());
+            row.put("expires_at_ms", entry.expiresAt());
+            row.put("evidence", "group_affiliation");
+            putSource(row, entry.site(), entry.configurationId());
+            scoped.add(row);
+        }
+        groups.replaceAll((key, rows) -> List.copyOf(rows));
+        View view = new View(snapshot, enrich(assignments), enrich(changes),
+            enrich(groups), snapshot.stale());
         synchronized(this)
         {
             if(generation < 0 || generation == mRunGeneration)
@@ -237,25 +265,33 @@ final class StatsP25AssignmentService implements AutoCloseable
         boolean stale = stale(view);
         result.put("snapshot_stale", stale);
         List<Map<String,Object>> rows = view != null ? view.assignments().getOrDefault(key, List.of()) : List.of();
-        P25WuidAssignmentRegistry.SystemObservation system = view != null ? view.snapshot().systems().stream()
+        P25IdentityResolver.SystemObservation system = view != null ? view.snapshot().systems().stream()
             .filter(value -> key.equals(RadioSystemKey.p25(value.servingWacn(), value.servingSystem())))
             .findFirst().orElse(null) : null;
+        int groupCount = view != null ? view.groupAssociations().getOrDefault(key, List.of()).size() : 0;
         String state = "learning";
         if(view != null)
         {
-            if(!stale && (system == null || !system.observing()) && rows.isEmpty()) state = "stopped";
+            if(!stale && (system == null || !system.observing()) && rows.isEmpty() && groupCount == 0) state = "stopped";
             else if(stale) state = "needs_confirmation";
-            else if(!rows.isEmpty()) state = "current";
+            else if(!rows.isEmpty() || groupCount > 0) state = "current";
             else if(system != null && system.gapAt() > 0 || view.snapshot().generation() > 0) state = "needs_confirmation";
         }
         result.put("state", state);
         result.put("current_assignment_count", stale ? 0 : rows.size());
         result.put("retained_assignment_count", stale ? rows.size() : 0);
+        List<Map<String,Object>> groups = view != null ?
+            view.groupAssociations().getOrDefault(key, List.of()) : List.of();
+        result.put("group_associations", stale ? List.of() : groups.subList(0, Math.min(groups.size(), MAXIMUM_GROUP_ROWS)));
+        result.put("group_association_count", stale ? 0 : groupCount);
+        result.put("group_associations_truncated", !stale && groupCount > MAXIMUM_GROUP_ROWS);
         long meaningful = rows.stream().filter(row -> meaningfulMapping(key, row, false)).count();
         result.put("meaningful_assignment_count", stale ? 0L : meaningful);
         result.put("retained_meaningful_assignment_count", stale ? meaningful : 0L);
         result.put("observed_channel_count", system != null ? system.configurationIds().size() : 0);
         long confirmed = rows.stream().mapToLong(row -> number(row.get("confirmed_at_ms"))).max().orElse(0);
+        confirmed = Math.max(confirmed, groups.stream().mapToLong(row -> number(row.get("observed_at_ms")))
+            .max().orElse(0));
         result.put("last_confirmation_ms", confirmed > 0 ? confirmed : null);
         result.put("observation_gap_at_ms", system != null && system.gapAt() > 0 ? system.gapAt() : null);
         result.put("dropped_mutations", view != null ? view.snapshot().droppedMutations() : 0L);
@@ -276,6 +312,12 @@ final class StatsP25AssignmentService implements AutoCloseable
     private Map<String,Object> page(String key, StatsRequest request, boolean recent)
     {
         requireP25(key);
+        String identityKind = request.text("identity_kind");
+        boolean group = "talkgroup".equals(identityKind);
+        if(identityKind != null && !"radio".equals(identityKind) && !group || recent && group)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "Unsupported assignment identity kind", "identity_kind");
+        }
         int limit = request.limit();
         int offset = request.offset();
         String search = request.search();
@@ -285,20 +327,25 @@ final class StatsP25AssignmentService implements AutoCloseable
         Integer homeWacn = boundedIdentity(request, "home_wacn", 0xFFFFF);
         Integer homeSystem = boundedIdentity(request, "home_system_id", 0xFFF);
         Integer subscriber = boundedIdentity(request, "subscriber_id", RadioSystemIdentityKey.MAX_P25_RADIO_ID);
-        String sort = request.sort(recent ? "changed_at" : "confirmed_at");
-        Comparator<Map<String,Object>> comparator = comparator(sort, recent);
+        Integer talkgroup = boundedIdentity(request, "talkgroup_id", RadioSystemIdentityKey.MAX_P25_GROUP_ID);
+        if(group && subscriber != null || !group && talkgroup != null)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "Identity filter does not match assignment kind");
+        }
+        String sort = request.sort(group ? "observed_at" : recent ? "changed_at" : "confirmed_at");
+        Comparator<Map<String,Object>> comparator = group ? groupComparator(sort) : comparator(sort, recent);
         if(request.descending(true))
         {
             comparator = comparator.reversed();
         }
-        comparator = comparator.thenComparing(row -> String.valueOf(row.get("canonical_identity_display")))
-            .thenComparingLong(row -> number(row.get("observed_working_id")))
+        comparator = comparator.thenComparing(row -> String.valueOf(row.get(group ? "canonical_group_identity_display" : "canonical_identity_display")))
+            .thenComparingLong(row -> number(row.get(group ? "observed_local_id" : "observed_working_id")))
             .thenComparingLong(row -> number(row.get("sequence")));
         View view = mView;
         List<Map<String,Object>> candidates = new ArrayList<>();
         if(view != null)
         {
-            candidates.addAll((recent ? view.changes() : view.assignments()).getOrDefault(key, List.of()));
+            candidates.addAll((group ? view.groupAssociations() : recent ? view.changes() : view.assignments()).getOrDefault(key, List.of()));
             if(recent)
             {
                 for(Map<String,Object> global: view.changes().getOrDefault("*", List.of()))
@@ -309,16 +356,18 @@ final class StatsP25AssignmentService implements AutoCloseable
                 }
             }
         }
+        if(group && stale(view)) candidates.clear();
         String query = search != null ? search.toLowerCase(Locale.ROOT) : null;
         List<Map<String,Object>> filtered = candidates.stream()
             .filter(row -> isInvalidation(row) || !meaningfulOnly ||
-                (!recent || !"refreshed".equals(row.get("change_reason"))) && meaningfulMapping(key, row, recent))
+                (!recent || !"refreshed".equals(row.get("change_reason"))) &&
+                    (group ? meaningfulGroupMapping(key, row) : meaningfulMapping(key, row, recent)))
             .filter(row -> isInvalidation(row) || configurationId == null || configurationId.equals(row.get("configuration_id")))
             .filter(row -> isInvalidation(row) || !roamingOnly || row.get("canonical_wacn") != null &&
                 !key.equals(RadioSystemKey.p25((int)number(row.get("canonical_wacn")),
                     (int)number(row.get("canonical_system_id")))))
             .filter(row -> isInvalidation(row) || matches(row, "canonical_wacn", homeWacn) && matches(row, "canonical_system_id", homeSystem) &&
-                matches(row, "canonical_subscriber_id", subscriber))
+                matches(row, "canonical_subscriber_id", subscriber) && matches(row, "canonical_talkgroup_id", talkgroup))
             .filter(row -> isInvalidation(row) || query == null || searchable(row).contains(query))
             .sorted(comparator).toList();
         int from = Math.min(offset, filtered.size());
@@ -369,11 +418,40 @@ final class StatsP25AssignmentService implements AutoCloseable
         };
     }
 
+    private static boolean meaningfulGroupMapping(String key, Map<String,Object> row)
+    {
+        return !key.equals(RadioSystemKey.p25((int)number(row.get("canonical_wacn")),
+            (int)number(row.get("canonical_system_id")))) ||
+            number(row.get("observed_local_id")) != number(row.get("canonical_talkgroup_id"));
+    }
+
+    private static Comparator<Map<String,Object>> groupComparator(String sort)
+    {
+        if("canonical_identity".equals(sort))
+        {
+            return Comparator.<Map<String,Object>>comparingLong(row -> number(row.get("canonical_wacn")))
+                .thenComparingLong(row -> number(row.get("canonical_system_id")))
+                .thenComparingLong(row -> number(row.get("canonical_talkgroup_id")));
+        }
+        String field = switch(sort)
+        {
+            case "alias" -> "alias_name";
+            case "local_id" -> "observed_local_id";
+            case "observed_at", "observed_at_ms" -> "observed_at_ms";
+            case "expires_at", "expires_at_ms" -> "expires_at_ms";
+            case "evidence" -> "evidence";
+            default -> throw new StatsApiException(400, "invalid_parameter", "Unsupported group sort", "sort");
+        };
+        return "alias_name".equals(field) || "evidence".equals(field) ?
+            Comparator.comparing(row -> String.valueOf(row.getOrDefault(field, "")), String.CASE_INSENSITIVE_ORDER) :
+            Comparator.comparingLong(row -> number(row.get(field)));
+    }
+
     private static String searchable(Map<String,Object> row)
     {
         StringBuilder text = new StringBuilder();
-        for(String field: List.of("canonical_identity_display", "canonical_wacn", "canonical_system_id",
-            "canonical_subscriber_id", "observed_working_id", "previous_working_id", "alias_name",
+        for(String field: List.of("canonical_identity_display", "canonical_group_identity_display", "canonical_wacn", "canonical_system_id",
+            "canonical_subscriber_id", "canonical_talkgroup_id", "observed_local_id", "observed_working_id", "previous_working_id", "alias_name",
             "last_talker_alias", "home_system_name", "channel_name", "site_name", "configuration_id"))
         {
             appendSearchValue(text, row.get(field));
@@ -457,9 +535,10 @@ final class StatsP25AssignmentService implements AutoCloseable
         }
     }
 
-    private record View(P25WuidAssignmentRegistry.Snapshot snapshot,
+    private record View(P25IdentityResolver.Snapshot snapshot,
                         Map<String,List<Map<String,Object>>> assignments,
-                        Map<String,List<Map<String,Object>>> changes, boolean stale)
+                        Map<String,List<Map<String,Object>>> changes,
+                        Map<String,List<Map<String,Object>>> groupAssociations, boolean stale)
     {
     }
 }

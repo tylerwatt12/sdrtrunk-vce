@@ -173,7 +173,8 @@ public final class BroadcastIdentifierFormatter
                 return Integer.toString(group.getValue() != 0 ? group.getValue() : group.getTalkgroup());
             }
             String home = group.getWacn() + "." + group.getSystem() + "." + group.getTalkgroup();
-            return "ISSI " + (group.isAliased() ? group.getValue() + "(" + home + ")" : home);
+            return "ISSI " + (group.getValue() != 0 && group.getValue() != group.getTalkgroup() ?
+                group.getValue() + "(" + home + ")" : home);
         }
         if(identifier instanceof PatchGroupIdentifier patch)
         {

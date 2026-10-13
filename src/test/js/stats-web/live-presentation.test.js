@@ -130,6 +130,36 @@ for (const change of [
     behavior.liveIdentityRenderKey({ ...sourceIdentity, ...change }, 'source'),
     'Serving scope and home-system details must refresh the displayed identity cell.');
 }
+for (const role of ['source', 'target']) {
+  const group = { protocol: 'P25', serving_system_key: null, radio_system_key: 'p25:00001:001',
+    [`${role}_id`]: '20', [`${role}_form`]: 'TALKGROUP',
+    [`${role}_canonical_group_identity`]: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 1001 },
+    [`${role}_observed_local_id`]: 20 };
+  for (const change of [
+    { [`${role}_canonical_group_identity`]: { wacn: 0xBEE00, system_id: 0x349, talkgroup_id: 1001 } },
+    { [`${role}_canonical_group_identity`]: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 1002 } },
+    { [`${role}_identity_key`]: 'v1-g-bee00-348-1002' },
+    { [`${role}_observed_local_id`]: null },
+    { [`${role}_observed_local_id`]: 0 },
+    { serving_system_key: 'p25:bee00:348' },
+    { serving_system_key: 'p25:00001:001' },
+    { [`${role}_identity_source`]: 'group_affiliation_mapping' }
+  ]) {
+    assert.notEqual(behavior.liveIdentityRenderKey(group, role),
+      behavior.liveIdentityRenderKey({ ...group, ...change }, role),
+      `A same-local-ID ${role} cell refreshes when its own typed home identity, evidence or captured scope changes.`);
+  }
+  const withoutLocalProof = { ...group, [`${role}_observed_local_id`]: null };
+  delete withoutLocalProof[`${role}_observed_local_id`];
+  assert.notEqual(behavior.liveIdentityRenderKey(withoutLocalProof, role),
+    behavior.liveIdentityRenderKey({ ...withoutLocalProof, [`${role}_observed_local_id`]: null }, role),
+    'Authoritative absent local evidence differs from a legacy field omission.');
+  const withoutServingProof = { ...group, serving_system_key: null, radio_system_key: '' };
+  delete withoutServingProof.serving_system_key;
+  assert.notEqual(behavior.liveIdentityRenderKey(withoutServingProof, role),
+    behavior.liveIdentityRenderKey({ ...withoutServingProof, serving_system_key: null }, role),
+    'Captured unknown scope refreshes independently of an absent legacy scope field.');
+}
 const selected = { kind: 'CONTROL', role: 'CURRENT_CONTROL', logicalKey: 'CONTROL:channel',
   transportKey: 'channel:851012500:', rowKey: 'control', configurationId: 'channel',
   bindingFrequencyHz: 851012500, bindingTimeslot: null, label: 'Site', channelLabel: 'Site · LCN 1' };
@@ -277,13 +307,26 @@ assert.deepEqual(keys(behavior.livePresentedTableRows({ table_id: 'conventional'
 const idle = row('conventional', 'IDLE', {
   source_id: '1201', source_alias: 'Engine 1', source_aliases: [{ alias_id: 1 }],
   target_id: '44', target_alias: 'Dispatch', talker_alias: 'CAR 1', encryption_details: 'AES',
-  callsign: 'WPFF205', vc_quality_pct: 98, vc_decoded_frames: 50
+  callsign: 'WPFF205', vc_quality_pct: 98, vc_decoded_frames: 50,
+  source_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 1001 },
+  target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x349, talkgroup_id: 1002 },
+  source_observed_local_id: null, target_observed_local_id: 44,
+  source_identity_key: 'v1-g-bee00-348-1001', target_identity_key: 'v1-p-bee00-349-1002',
+  serving_system_key: null, target_home_system_name: 'County network'
 });
 const conventionalRows = behavior.livePresentedTableRows({ table_id: 'conventional', rows: [idle] },
   preferences);
 assert.equal(conventionalRows.length, 1, 'Active-only filtering must never hide conventional channels');
 assert.equal(conventionalRows[0].source_id, undefined);
 assert.equal(conventionalRows[0].target_alias, undefined);
+for (const field of ['source_canonical_group_identity', 'target_canonical_group_identity',
+  'source_observed_local_id', 'target_observed_local_id', 'source_identity_key', 'target_identity_key',
+  'serving_system_key', 'target_home_system_name']) {
+  assert.equal(Object.prototype.hasOwnProperty.call(conventionalRows[0], field), false,
+    `Clearing an idle call removes its ${field} instead of retaining a hidden old identity.`);
+  assert.equal(Object.prototype.hasOwnProperty.call(idle, field), true,
+    'The shared source row retains captured facts for other consumers.');
+}
 assert.equal(conventionalRows[0].callsign, 'WPFF205', 'Callsign describes the channel, not the completed call');
 assert.equal(idle.source_id, '1201', 'Presentation must not mutate the shared Live row');
 assert.equal(idle.vc_quality_pct, 98, 'Unrelated retained quality must remain on the source row');
@@ -293,6 +336,10 @@ const retained = behavior.livePresentedRow(idle, {
 });
 assert.equal(retained.source_id, '1201');
 assert.equal(retained.target_alias, 'Dispatch');
+assert.equal(retained.target_canonical_group_identity, idle.target_canonical_group_identity);
+assert.equal(Object.prototype.hasOwnProperty.call(retained, 'source_observed_local_id'), true);
+assert.equal(retained.source_observed_local_id, null);
+assert.equal(Object.prototype.hasOwnProperty.call(retained, 'serving_system_key'), true);
 assert.equal(retained.vc_quality_pct, undefined);
 assert.equal(retained.vc_decoded_frames, undefined);
 
