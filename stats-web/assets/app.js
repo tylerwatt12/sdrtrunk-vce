@@ -34,12 +34,13 @@ import { createRetainedStatisticsWorkspace } from './features/retained-statistic
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createAlertsWorkspace } from './features/alerts.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=32';
+import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=1';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
-import { createAudioDock } from './core/audio-dock.js?v=20';
+import { createAudioDock } from './core/audio-dock.js?v=21';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=17';
@@ -33130,7 +33131,7 @@ function adminSettingsGroups() {
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Choose how calls are recorded and how long managed calls are kept.' },
       { id: 'audio-quality', label: 'Audio quality', icon: 'audio-quality', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Set MP3 encoding for recordings and outgoing streams.' },
+        description: 'Choose browser voice enhancement and MP3 encoding for recordings and outgoing streams.' },
       { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
@@ -33247,16 +33248,20 @@ async function renderAdmin() {
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
-    content.append(node('div', 'ui-notice',
-      'These settings apply to MP3 recordings and outgoing streams. Managed recordings use MP3.'));
-    await renderAdminOperationalPreferences(renderContext, {
-      fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio'], title: 'MP3 encoding'
-    });
+    const enhancement = createVoiceEnhancementSettings({ node, section, sectionActionHost, uiToggleField,
+      setUiToggle, formField, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
+      isCurrent: () => renderIsCurrent(renderContext) });
+    body.append(enhancement.element);
+    body.append(node('div', 'ui-notice',
+      'MP3 settings apply to recordings and outgoing streams. Managed recordings use MP3.'));
+    await Promise.all([enhancement.load(), renderAdminOperationalPreferences(renderContext, {
+      target: body, fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio'], title: 'MP3 encoding'
+    })]);
     if (renderIsCurrent(renderContext)) {
       const actions = node('div', 'ui-action-row');
       actions.append(anchor('Recording settings', href('admin', { tab: 'recordings' }), 'ui-button ui-button-secondary'),
         anchor('Streaming behavior', href('streaming'), 'ui-button ui-button-secondary'));
-      content.append(actions);
+      body.append(actions);
     }
   }
   else if (active === 'activity') {

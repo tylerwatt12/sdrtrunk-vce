@@ -8,6 +8,10 @@ const callFormatsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/call-value-format.js'), 'utf8');
 const callFormats = vm.runInNewContext(callFormatsSource.replace(/^export /gm, '') +
   '\n({formatHexDecimal, formatVoiceQuality});');
+const callAudioDetailsSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/call-audio-details.js'), 'utf8');
+const callAudioDetails = vm.runInNewContext(callAudioDetailsSource.replace(/^export /gm, '') +
+  '\n({callAudioDetailGroups});');
 assert.equal(callFormats.formatHexDecimal(0xBEE00, 5), '0xBEE00 (781824)');
 assert.equal(callFormats.formatHexDecimal('0x293', 3), '0x293 (659)');
 assert.equal(callFormats.formatHexDecimal('BEE00', 5), '0xBEE00 (781824)');
@@ -295,7 +299,7 @@ const dockDetails = vm.runInNewContext(`(() => {
     liveState = { current: call, stopped: false, scanLists: [] };
     navigationAllowed = allowed; panelHost.childNodes = []; renderLiveDetails(); return panelHost;
   }, renderIdle() { liveState = {}; panelHost.childNodes = []; renderLiveDetails(); return panelHost; } };
-})()`, { node: detailNode, ...radioLabels, ...systemLabels, ...callFormats,
+})()`, { node: detailNode, ...radioLabels, ...systemLabels, ...callFormats, ...callAudioDetails,
   title: dock.title, sourceName: dock.sourceName, sourceId: dock.sourceId, targetId: dock.targetId,
   date: () => '', entityRefHref: reference => reference?.href || '' });
 const descendants = node => [node, ...node.children.flatMap(descendants)];

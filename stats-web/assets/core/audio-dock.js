@@ -2,6 +2,7 @@ import { systemLabel, systemName } from './system-labels.js?v=1';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
+import { callAudioDetailGroups } from './call-audio-details.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -752,6 +753,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Concealed frames', call.vc_concealed_frames], ['Missing frames', call.vc_missing_frames],
       ['FEC errors', call.vc_fec_errors], ['FEC protected bits', call.vc_fec_protected_bits]
     ], options);
+    if (!options.empty) callAudioDetailGroups(call).forEach(([label, rows]) => group(label, rows));
     group('Call', [
       ['Call ID', call.call_id], ['Identifier', call.id], ['Configuration ID', call.configuration_id, call.entity_ref],
       ['Radio system key', call.radio_system_key, call.radio_system_entity_ref],
@@ -1009,6 +1011,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
         if (source === 'recordings') {
           const mount = node('div'); panelHost.append(mount);
           recordings.renderDetails(mount, active.current, { shell: true, empty: !active.current || active.stopped });
+          if (active.current && !active.stopped) callAudioDetailGroups(active.current).forEach(([label, rows]) => group(label, rows));
           mount.querySelectorAll('details > dl').forEach(list => {
             list.classList.remove('ui-form-section'); const wrapper = node('div', 'ui-section-body'); list.replaceWith(wrapper); wrapper.append(list);
           });

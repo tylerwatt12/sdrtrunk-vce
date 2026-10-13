@@ -81,7 +81,9 @@ class StatsWebJavaScriptBehaviorTest
             CORE_MODULES.resolve("spectrum-display-preferences.js")),
         contract("spectrum automatic range", "spectrum-auto-range.test.js", APP_JAVASCRIPT),
         contract("diagnostic strength encoding", "diagnostic-strength.test.js", APP_JAVASCRIPT),
-        contract("web call player", "web-call-player.test.js", WEB_CALL_PLAYER));
+        contract("web call player", "web-call-player.test.js", WEB_CALL_PLAYER),
+        contract("voice enhancement settings", "voice-enhancement.test.js",
+            Path.of("stats-web", "assets", "features", "voice-enhancement.js")));
 
     @TestFactory
     Stream<DynamicTest> executesEveryBrowserBehaviorContract()
