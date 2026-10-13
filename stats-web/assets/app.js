@@ -29655,7 +29655,7 @@ function renderAdminRemoteLinks(renderContext) {
 
 function alertsWorkspace(renderContext, view) {
   return createAlertsWorkspace({
-    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl,
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
     createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
     identityPicker: activityIdentityPicker, createId: randomLiveClientId, signal: renderContext.signal, view,

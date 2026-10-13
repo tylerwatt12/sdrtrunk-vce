@@ -15,7 +15,7 @@ const PAGE_SIZE = 30;
 // Reuse map: settings panels, shared tables, segmented controls, field builders,
 // notices, browsing pager, and the shared dirty/busy modal lifecycle own appearance.
 export function createAlertsWorkspace(deps) {
-  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl,
+  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
     identityPicker, createId, signal, view = 'topics', selectedTopic = '', selectedAlert = '' } = deps;
@@ -452,29 +452,52 @@ export function createAlertsWorkspace(deps) {
         } else {
           const value = input(condition.value, condition.field === 'duration_seconds' ? 'number' : 'text', true, 512);
           value.addEventListener('input', () => { condition.value = value.value; });
-          valueHost.append(formField('Value', value, condition.operator === 'in' ? 'Separate exact values with commas.' :
+          const help = condition.operator === 'in' ? 'Separate exact values with commas.' :
             ['radio', 'target_radio', 'talkgroup'].includes(condition.field) && !identitySystemKey() ?
-              'Choose a system or channel to search names and aliases.' : ''));
+              'Choose a system or channel to search names and aliases.' : '';
+          if (help) {
+            value.dataset.uiHint = help;
+            value.setAttribute('aria-description', help);
+          }
+          valueHost.append(formField('Value', value));
         }
       }
-      row.append(field.element, operator.element, valueHost,
-        button('Remove condition', () => { parent.items.splice(parent.items.indexOf(condition), 1); renderConditions(); changed(); }));
+      field.element.classList.add('alerts-condition-field');
+      operator.element.classList.add('alerts-condition-match');
+      const remove = iconButton('icon-trash', 'Remove condition', 'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact alerts-condition-remove');
+      remove.addEventListener('click', () => { parent.items.splice(parent.items.indexOf(condition), 1); renderConditions(); changed(); });
+      row.append(field.element, operator.element, valueHost, remove);
       return row;
     }
     function group(condition, parent = null, depth = 0) {
-      const wrapper = node('fieldset', 'alerts-condition-group');
-      wrapper.append(node('legend', '', depth ? 'Condition group' : 'Match conditions'));
-      const match = selectField('Match', [['all', 'All of these'], ['any', 'Any of these'], ['none', 'None of these']],
-        condition.op || 'all', value => { condition.op = value; changed(); });
+      const wrapper = node('div', 'alerts-condition-group ui-surface-inset');
+      wrapper.setAttribute('role', 'group');
+      wrapper.setAttribute('aria-label', depth ? 'Condition group' : 'Match conditions');
+      const header = node('div', 'alerts-condition-header');
+      const match = select([['all', 'All of these'], ['any', 'Any of these'], ['none', 'None of these']], condition.op || 'all');
+      match.setAttribute('aria-label', depth ? 'Match condition group' : 'Match conditions');
+      match.addEventListener('change', () => { condition.op = match.value; changed(); });
+      const matchHost = node('div', 'alerts-condition-group-match');
+      matchHost.append(uiSelectFrame(match));
+      const headerActions = actionRow();
+      if (!depth) headerActions.append(iconButton('icon-about', 'Missing values never match a condition, including “None of these”.',
+        'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact'));
+      if (parent) {
+        const remove = iconButton('icon-trash', 'Remove group', 'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
+        remove.addEventListener('click', () => { parent.items.splice(parent.items.indexOf(condition), 1); renderConditions(); changed(); });
+        headerActions.append(remove);
+      }
+      header.append(matchHost, headerActions);
       const rows = node('div', 'alerts-condition-children');
       for (const child of condition.items || []) rows.append(child.op ? group(child, condition, depth + 1) : leaf(child, condition));
       const newCondition = () => newAlertCondition(draft.trigger === 'health' ? 'issue' : 'talkgroup');
       const addCondition = button('Add condition', () => { condition.items.push(newCondition()); renderConditions(); changed(); });
       const addGroup = button('Add group', () => { condition.items.push({ op: 'any', items: [newCondition()] }); renderConditions(); changed(); });
+      addGroup.className = 'ui-button ui-button-link';
       addGroup.disabled = depth >= 6;
       const actions = actionRow(addCondition, addGroup);
-      if (parent) actions.append(button('Remove group', () => { parent.items.splice(parent.items.indexOf(condition), 1); renderConditions(); changed(); }));
-      wrapper.append(match.element, rows, actions);
+      actions.classList.add('ui-action-row-start');
+      wrapper.append(header, rows, actions);
       return wrapper;
     }
     function renderConditions() {
@@ -483,7 +506,7 @@ export function createAlertsWorkspace(deps) {
       conditionsHost.replaceChildren(group(draft.conditions));
     }
     renderConditions();
-    panels.get('conditions').append(conditionsHost, paragraph('Missing observations don’t match conditions, including “None of these”.'));
+    panels.get('conditions').append(conditionsHost);
 
     function numberField(label, object, key, minimum, maximum) {
       const control = input(object[key], 'number', true);
@@ -536,22 +559,33 @@ export function createAlertsWorkspace(deps) {
     const text = node('textarea', 'ui-textarea'); text.value = draft.body_template; text.required = true; text.maxLength = 2048;
     title.addEventListener('input', () => { draft.title_template = title.value; });
     text.addEventListener('input', () => { draft.body_template = text.value; });
-    const preview = node('div', 'ui-notice');
-    const previewTitle = node('strong'); const previewBody = node('p');
+    const preview = node('aside', 'alerts-notification-preview');
+    preview.setAttribute('aria-label', 'Notification preview');
+    const previewCard = node('div', 'ui-surface ui-section-body');
+    const previewCopy = node('div', 'ui-heading-group');
+    const previewTitle = node('h3'); const previewBody = paragraph('');
     const examples = { talkgroup: 'Fire Tactical', radio: 'Engine 12', site: 'North site', channel: 'Dispatch', vce: 'VCE installation', issue: 'Tuner disconnected', time: '14:32' };
     const expand = value => value.replace(/\{([a-z_]+)\}/g, (match, key) => examples[key] || match);
     const updatePreview = () => { previewTitle.textContent = expand(title.value); previewBody.textContent = expand(text.value); };
-    preview.append(node('span', 'ui-field-detail', 'Sample preview'), previewTitle, previewBody);
+    previewCopy.append(previewTitle, previewBody);
+    previewCard.append(previewCopy);
+    preview.append(node('h3', 'ui-section-heading', 'Preview'), previewCard);
     title.addEventListener('input', updatePreview); text.addEventListener('input', updatePreview); updatePreview();
-    panels.get('message').append(formField('Title', title), formField('Notification text', text,
-      `Available fields: ${ALERT_TEMPLATE_FIELDS.map(field => `{${field}}`).join(', ')}.`),
+    const templateHelp = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
+    templateHelp.append(node('summary', 'ui-section-summary', 'Available fields'),
+      node('div', 'ui-section-body', ALERT_TEMPLATE_FIELDS.map(field => `{${field}}`).join(', ')));
+    const compose = node('div', 'alerts-notification-compose');
+    compose.append(formField('Title', title), formField('Notification text', text), templateHelp,
       selectField('Open when tapped', [['details', 'Alert details'], ['listen', 'Open VCE Listen view (Direct)']], draft.click_action,
-        value => { draft.click_action = value; }, null, 'Cloud notifications open the hosted alert page.').element, preview);
+        value => { draft.click_action = value; }, null, 'Cloud notifications open the hosted alert page.').element);
+    const notificationLayout = node('div', 'alerts-notification-layout');
+    notificationLayout.append(compose, preview);
+    panels.get('message').append(notificationLayout);
     const tabScroll = node('div', 'alerts-tab-scroll');
     tabScroll.append(tabs);
     form.append(tabScroll, ...panels.values(), status, modalFooter(cancel, save));
     modal = openReadOnlyModal(existing ? 'Edit alert rule' : 'Create alert rule', form,
-      { id: 'alert-rule-editor', cleanup: () => identityPickers.forEach(picker => picker.close()) });
+      { id: 'alert-rule-editor', className: 'modal-size-small', cleanup: () => identityPickers.forEach(picker => picker.close()) });
     const localModal = modal;
     await localModal.ready;
     workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal });
@@ -730,7 +764,7 @@ export function createAlertsWorkspace(deps) {
     const filter = selectField('Show alerts from', topics.map(topic => ({ value: topic.id, label: topic.name })), publicTopic,
       value => { publicTopic = value; publicOffset = 0; void loadHistory(); }, 'All topics');
     const timeline = node('div', 'alerts-timeline');
-    const timelineContent = node('div', 'alerts-form ui-surface-inset');
+    const timelineContent = node('div', 'alerts-form ui-section-body');
     timelineContent.append(filter.element, timeline);
     const timelinePanel = section('Recent alerts', timelineContent, button('Refresh', () => void loadHistory()));
     layout.append(sidebar, timelinePanel);
@@ -746,12 +780,19 @@ export function createAlertsWorkspace(deps) {
         if (disposed || current !== generation) return;
         const events = visibleAlertHistory(page.items, snapshot.topics, publicTopic);
         timeline.replaceChildren(...events.map(event => {
-          const card = node('article', 'alerts-event ui-surface');
+          const card = node('article', 'alerts-event ui-surface ui-section-body');
           const when = event.occurred_at ?? event.created_at_ms;
-          const timestamp = node('time', 'muted', formatTime(when));
+          const timestamp = node('time', 'ui-field-detail', formatTime(when));
           if (Number.isFinite(Number(when))) timestamp.dateTime = new Date(Number(when)).toISOString();
-          card.append(node('span', 'ui-field-detail', topicName(event.topic_id)),
-            button(event.title || 'VCE alert', () => openAlert(event)), paragraph(event.body || ''), timestamp);
+          const metadata = node('div', 'alerts-event-meta');
+          metadata.append(node('span', 'ui-field-detail', topicName(event.topic_id)), timestamp);
+          const title = node('h3', 'ui-record-title');
+          const readAlert = button(event.title || 'VCE alert', () => openAlert(event));
+          readAlert.className = 'link-button';
+          title.append(readAlert);
+          const content = node('div', 'ui-heading-group');
+          content.append(title, paragraph(event.body || ''));
+          card.append(metadata, content);
           return card;
         }));
         if (!events.length) timeline.append(paragraph(publicTopic ? 'No alerts have been published to this topic yet.' : 'No alerts have been published yet.'));

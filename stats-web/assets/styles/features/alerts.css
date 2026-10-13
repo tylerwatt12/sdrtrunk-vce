@@ -2,6 +2,8 @@
 .alerts-content,
 .alerts-public-sidebar,
 .alerts-public-topics,
+.alerts-notification-compose,
+.alerts-notification-preview,
 .alerts-form,
 .alerts-conditions,
 .alerts-condition-children,
@@ -21,6 +23,18 @@
   gap: var(--space-4);
 }
 
+.alerts-notification-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.alerts-notification-preview {
+  overflow-wrap: anywhere;
+}
+
 .alerts-topic-grid,
 .alerts-field-grid {
   display: grid;
@@ -29,8 +43,7 @@
   gap: var(--space-2);
 }
 
-.alerts-topic-card,
-.alerts-event {
+.alerts-topic-card {
   display: grid;
   min-width: 0;
   gap: var(--space-2);
@@ -38,7 +51,18 @@
   overflow-wrap: anywhere;
 }
 
-.alerts-condition-group,
+.alerts-event {
+  overflow-wrap: anywhere;
+}
+
+.alerts-event-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
 .alerts-topic-choices {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -48,16 +72,44 @@
   padding: var(--space-3);
 }
 
+.alerts-condition-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.alerts-condition-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.alerts-condition-group-match {
+  min-width: 0;
+  flex: 0 1 16rem;
+}
+
 .alerts-condition-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, .8fr) minmax(0, 1.7fr) max-content;
+  grid-template-areas: 'field match value remove';
   min-width: 0;
   align-items: end;
   gap: var(--space-2);
 }
 
+.alerts-condition-field { grid-area: field; }
+.alerts-condition-match { grid-area: match; }
+.alerts-condition-remove { grid-area: remove; }
+
 .alerts-condition-value {
+  grid-area: value;
+  display: grid;
   min-width: 0;
+  gap: var(--space-2);
 }
 
 .alerts-tab-scroll {
@@ -106,7 +158,12 @@
 }
 
 @media (max-width: 700px) {
-  .alerts-condition-row,
+  .alerts-condition-row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-areas: 'field remove' 'match match' 'value value';
+  }
+
+  .alerts-notification-layout,
   .alerts-direct-test {
     grid-template-columns: minmax(0, 1fr);
   }
