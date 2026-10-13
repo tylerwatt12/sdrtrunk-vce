@@ -30,6 +30,7 @@ import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceFrameFingerprint;
 import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
@@ -276,7 +277,15 @@ class P25P2AudioModuleTest
     }
 
     @Test
-    void publishesDistinctTwentyMillisecondCarrierTimesForAmbeFrames()
+    void publishesBothAmbeFingerprintsWithDistinctTwentyMillisecondCarrierTimes() throws Exception
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            checkAmbeFingerprints(encrypted);
+        }
+    }
+
+    private void checkAmbeFingerprints(boolean encrypted) throws Exception
     {
         IAudioCodec codec = new TestAudioCodec();
         P25P2AudioModule module = new P25P2AudioModule(new UserPreferences(), TIMESLOT,
@@ -293,22 +302,77 @@ class P25P2AudioModuleTest
             {
                 return codec;
             }
+
+            private long fingerprint = 100L;
+
+            @Override
+            protected long getCorrectedVoiceFrameFingerprint(IAudioCodec decodedCodec)
+            {
+                assertEquals(codec, decodedCodec);
+                return ++fingerprint;
+            }
         };
         List<AudioCallEvent> events = new ArrayList<>();
         module.setAudioCallEventListener(events::add);
 
         try
         {
-            module.receive(pushToTalk(1_000L));
+            module.receive(encrypted ? encryptedPushToTalk(1_000L, 0x84, 0, 700_001, 1201) : pushToTalk(1_000L));
+            if(encrypted)
+            {
+                Field decryptor = P25P2AudioModule.class.getDeclaredField("mVoiceFrameDecryptor");
+                decryptor.setAccessible(true);
+                decryptor.set(module, new FingerprintTestDecryptor(9));
+            }
             module.receive(voiceTimeslot(1_060L));
             List<Long> timestamps = events.stream()
                 .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME)
                 .map(AudioCallEvent::voiceFrameTimestamp).toList();
             assertEquals(List.of(1_040L, 1_060L), timestamps);
+            List<AudioCallEvent> frames = events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+            assertEquals(List.of(101L, 102L), frames.stream()
+                .map(AudioCallEvent::correctedVoiceFrameFingerprint).toList());
+            assertTrue(frames.stream().allMatch(event -> event.voiceFrameFingerprint() != 0L));
+            byte[] expected = new byte[9];
+            if(encrypted) expected[0] = (byte)0x80;
+            assertEquals(VoiceFrameFingerprint.compute(expected), frames.getFirst().voiceFrameFingerprint());
         }
         finally
         {
             module.dispose();
+        }
+    }
+
+    @Test
+    void toneHoldoffKeepsEvidenceAttachedToItsOriginalFrame() throws Exception
+    {
+        P25P2AudioModule.ToneMetadataProcessor processor = mAudioModule.new ToneMetadataProcessor();
+        var process = processor.getClass().getDeclaredMethod("processAudio", IAudioWithMetadata.class,
+            long.class, long.class, long.class);
+        process.setAccessible(true);
+        IAudioWithMetadata tone = new IAudioWithMetadata()
+        {
+            public float[] getAudio() { return new float[160]; }
+            public boolean hasMetadata() { return true; }
+            public Map<String,String> getMetadata() { return Map.of("DTMF", "1"); }
+        };
+        assertTrue(((List<?>)process.invoke(processor, tone, 1_000L, 11L, 0L)).isEmpty());
+        assertTrue(((List<?>)process.invoke(processor, tone, 1_020L, 12L, 0L)).isEmpty());
+        List<?> held = (List<?>)process.invoke(processor, tone, 1_040L, 13L, 0L);
+        assertEquals(3, held.size());
+        for(int index = 0; index < held.size(); index++)
+        {
+            Object frame = held.get(index);
+            var timestamp = frame.getClass().getDeclaredMethod("carrierTimestamp");
+            var raw = frame.getClass().getDeclaredMethod("voiceFrameFingerprint");
+            var corrected = frame.getClass().getDeclaredMethod("correctedVoiceFrameFingerprint");
+            timestamp.setAccessible(true);
+            raw.setAccessible(true);
+            corrected.setAccessible(true);
+            assertEquals(1_000L + index * 20L, timestamp.invoke(frame));
+            assertEquals(11L + index, raw.invoke(frame));
+            assertEquals(0L, corrected.invoke(frame), "held tone audio has no corrected speech evidence");
         }
     }
 

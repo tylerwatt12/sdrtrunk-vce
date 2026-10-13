@@ -154,6 +154,7 @@ class AbstractAudioModuleTest
             .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
             .findFirst().orElseThrow();
         assertEquals(0x1234ABCDL, frame.voiceFrameFingerprint());
+        assertEquals(0L, frame.correctedVoiceFrameFingerprint());
         assertEquals(source, completion.snapshot().callLegSource());
         assertEquals(1_000, completion.snapshot().startTimestamp());
         assertEquals(1_400, completion.snapshot().lastActivityTimestamp());
@@ -176,6 +177,26 @@ class AbstractAudioModuleTest
             .findFirst().orElseThrow();
         assertTrue(frame.voiceFrameTimestamp() > 0L);
         assertEquals(frame.voiceFrameTimestamp(), frame.snapshot().lastActivityTimestamp());
+    }
+
+    @Test
+    void correctedFingerprintKeepsItsRawEvidenceAndOriginalCarrierTime()
+    {
+        TestAudioModule module = new TestAudioModule();
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+
+        module.addAudio(new float[160], new VoiceFrameQualityObservation(
+            VoiceFrameQualityObservation.Outcome.DECODED, 1, 72), 1_200L, 123L, 456L);
+        module.closeAt(1_500L);
+
+        AudioCallEvent frame = events.stream().filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME)
+            .findFirst().orElseThrow();
+        assertEquals(123L, frame.voiceFrameFingerprint());
+        assertEquals(456L, frame.correctedVoiceFrameFingerprint());
+        assertEquals(1_200L, frame.voiceFrameTimestamp());
+        assertTrue(events.stream().filter(event -> event.eventType() != AudioCallEventType.AUDIO_FRAME)
+            .allMatch(event -> event.correctedVoiceFrameFingerprint() == 0L));
     }
 
     @Test

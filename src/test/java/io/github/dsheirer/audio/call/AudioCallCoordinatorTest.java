@@ -901,6 +901,187 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void correctedContentMatchesBothP25PhasesWithoutChangingRawSummariesOrQualityWinner() throws Exception
+    {
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            for(boolean sameSite : List.of(false, true))
+            {
+                AliasList aliasList = aliasList(773);
+                List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+                AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+                try
+                {
+                    Leg damaged = withP25Decoder(leg(540, aliasList, 0x7, 7, 70, 71, 9503, null,
+                        1_000, 3_000, DAMAGED_QUALITY, true, Set.of()), decoder);
+                    Leg good = withP25Decoder(leg(541, aliasList, 0x7, 7, 70, sameSite ? 71 : 72, 9503,
+                        3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder);
+
+                    if(sameSite)
+                    {
+                        damaged = withConfiguration(damaged, "shared-channel");
+                        good = withConfiguration(good, "shared-channel");
+                    }
+
+                    emitLegWithCorrectedEvidence(coordinator, damaged, fingerprints(300), fingerprints(500),
+                        List.of(2_000L, 2_020L, 2_040L));
+                    emitLegWithCorrectedEvidence(coordinator, good, fingerprints(400), fingerprints(500),
+                        List.of(2_075L, 2_095L, 2_115L));
+
+                    await(() -> resolved.size() == 1);
+                    CompletedAudioCall call = resolved.getFirst();
+                    assertEquals(2, call.receiverLegCount(), decoder + " corrected content should merge");
+                    assertEquals(good.callId(), call.snapshot().callId(), "Quality still selects the clean audio");
+                    assertEquals(List.of(301L, 302L, 303L), call.callLegSummaries().getFirst()
+                        .voiceFrameFingerprints().stream().map(TimestampedVoiceFingerprint::fingerprint).toList());
+                    assertEquals(List.of(401L, 402L, 403L), call.callLegSummaries().getLast()
+                        .voiceFrameFingerprints().stream().map(TimestampedVoiceFingerprint::fingerprint).toList());
+                }
+                finally
+                {
+                    coordinator.dispose();
+                }
+            }
+        }
+    }
+
+    @Test
+    void rawProofStillMatchesLegacyEventsAgainstOptionalCorrectedEvidence() throws Exception
+    {
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            AliasList aliasList = aliasList(774);
+            List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+            AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+            try
+            {
+                Leg legacy = withP25Decoder(leg(542, aliasList, 0x7, 7, 70, 71, 9504, null,
+                    1_000, 3_000, GOOD_QUALITY, true, Set.of()), decoder);
+                Leg modern = withP25Decoder(leg(543, aliasList, 0x7, 7, 71, 72, 9504, null,
+                    1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder);
+                emitLeg(coordinator, legacy, fingerprints(600));
+                emitLegWithCorrectedEvidence(coordinator, modern, fingerprints(600), fingerprints(700),
+                    List.of(1_100L, 1_120L, 1_140L));
+
+                await(() -> resolved.size() == 1);
+                assertEquals(2, resolved.getFirst().receiverLegCount());
+            }
+            finally
+            {
+                coordinator.dispose();
+            }
+        }
+    }
+
+    @Test
+    void correctedProofRejectsConstantContentTooFewDistinctValuesAndDifferentVoiceBits() throws Exception
+    {
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            AliasList aliasList = aliasList(775);
+            Leg first = withP25Decoder(leg(544, aliasList, 0x7, 7, 70, 71, 9505, null,
+                1_000, 3_000, GOOD_QUALITY, true, Set.of()), decoder);
+            Leg second = withP25Decoder(leg(545, aliasList, 0x7, 7, 71, 72, 9505, 3_150_006,
+                1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder);
+            List<Long> times = List.of(2_000L, 2_020L, 2_040L);
+            assertCorrectedPairSeparate(first, second, List.of(800L, 800L, 800L),
+                List.of(800L, 800L, 800L), times, times);
+            assertCorrectedPairSeparate(first, second, List.of(800L, 801L, 800L),
+                List.of(800L, 801L, 800L), times, times);
+            assertCorrectedPairSeparate(first, second, fingerprints(800), fingerprints(900), times, times);
+        }
+    }
+
+    @Test
+    void correctedProofRetainsTimingScopeAndCodecSeparation() throws Exception
+    {
+        AliasList aliasList = aliasList(776);
+        Leg firstShape = leg(546, aliasList, 0x7, 7, 70, 71, 9506, null,
+            1_000, 3_000, GOOD_QUALITY, true, Set.of());
+        Leg secondShape = leg(547, aliasList, 0x7, 7, 71, 72, 9506, 3_150_006,
+            1_100, 3_100, GOOD_QUALITY, true, Set.of());
+        List<Long> shared = fingerprints(1_000);
+        List<Long> times = List.of(2_000L, 2_020L, 2_040L);
+
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            Leg first = withP25Decoder(firstShape, decoder);
+            Leg second = withP25Decoder(secondShape, decoder);
+            assertCorrectedPairSeparate(first, second, shared, shared, times,
+                List.of(2_100L, 2_300L, 2_500L));
+            assertCorrectedPairSeparate(first, second, shared, shared, times,
+                List.of(2_501L, 2_521L, 2_541L));
+            assertCorrectedPairSeparate(first, withP25Decoder(leg(548, aliasList, 0x8, 7, 71, 72, 9506,
+                3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder), shared, shared, times, times);
+            assertCorrectedPairSeparate(first, withP25Decoder(leg(554, aliasList, 0x7, 8, 71, 72, 9506,
+                3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder), shared, shared, times, times);
+            assertCorrectedPairSeparate(first, withP25Decoder(leg(549, aliasList, 0x7, 7, 71, 72, 9507,
+                3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder), shared, shared, times, times);
+            assertCorrectedPairSeparate(withP25Decoder(leg(550, aliasList, 0x7, 7, 70, 71, 9506, 9001,
+                1_000, 3_000, GOOD_QUALITY, true, Set.of()), decoder), second, shared, shared, times, times);
+            assertCorrectedPairSeparate(first, withP25Decoder(leg(551, aliasList, 0x7, 7, 71, 72, 9506,
+                3_150_006, 3_001, 4_000, GOOD_QUALITY, true, Set.of()), decoder), shared, shared, times, times);
+            Leg sameProducer = withP25Decoder(leg(546, 2, new CallLegId(546, 2, 0), aliasList, 0x7, 7, 71, 72,
+                9506, 3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder);
+            assertCorrectedPairSeparate(first, sameProducer, shared, shared, times, times);
+            Leg encrypted = new Leg(second.callId(), second.callLegId(), second.aliasList(), second.source(),
+                second.talkgroup(), second.radio(), second.start(), second.end(), second.quality(), second.record(),
+                second.routes(), true, null);
+            assertCorrectedPairSeparate(first, encrypted, shared, shared, times, times);
+        }
+
+        assertCorrectedPairSeparate(withP25Decoder(firstShape, DecoderType.P25_PHASE1),
+            withP25Decoder(secondShape, DecoderType.P25_PHASE2), shared, shared, times, times);
+    }
+
+    @Test
+    void rawAndCorrectedHashDomainsNeverCombineToReachThreeSharedValues() throws Exception
+    {
+        AliasList aliasList = aliasList(777);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            Leg first = leg(552, aliasList, 0x7, 7, 70, 71, 9508, null,
+                1_000, 3_000, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(553, aliasList, 0x7, 7, 71, 72, 9508, 3_150_006,
+                1_100, 3_100, GOOD_QUALITY, true, Set.of());
+            List<Long> times = List.of(2_000L, 2_020L, 2_040L);
+            emitLegWithCorrectedEvidence(coordinator, first, fingerprints(1_100), fingerprints(1_200), times);
+            emitLegWithCorrectedEvidence(coordinator, second, fingerprints(1_200), fingerprints(1_100), times);
+            await(() -> resolved.size() == 2);
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    private static void assertCorrectedPairSeparate(Leg first, Leg second, List<Long> firstCorrected,
+                                                     List<Long> secondCorrected, List<Long> firstTimes,
+                                                     List<Long> secondTimes) throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+        try
+        {
+            emitLegWithCorrectedEvidence(coordinator, first, fingerprints(1_300), firstCorrected, firstTimes);
+            emitLegWithCorrectedEvidence(coordinator, second, fingerprints(1_400), secondCorrected, secondTimes);
+            await(() -> resolved.size() == 2);
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1));
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
     void alignedVoiceFramesProveLateEntryWithoutCallStartLimit() throws Exception
     {
         AliasList aliasList = aliasList(771);
@@ -1408,7 +1589,7 @@ class AudioCallCoordinatorTest
             for(int index = 0; index < 2_000; index++)
             {
                 coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active,
-                    new float[160], false, index + 1L, active.lastActivityTimestamp() + index));
+                    new float[160], false, index + 1L, active.lastActivityTimestamp() + index, index + 20_001L));
             }
 
             long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
@@ -1697,17 +1878,19 @@ class AudioCallCoordinatorTest
         {
             List<Long> longHistory = fingerprintRange(2_000, 6_000);
             Leg first = leg(120, aliasList, 0x11, 17, 170, 171, 10_118,
-                1_000, 121_000, GOOD_QUALITY, true, Set.of());
+                null, 1_000, 121_000, GOOD_QUALITY, true, Set.of());
             Leg second = leg(121, aliasList, 0x11, 17, 171, 172, 10_118,
                 1_020, 121_020, GOOD_QUALITY, true, Set.of());
-            emitLeg(coordinator, first, longHistory);
+            emitLegWithCorrectedEvidence(coordinator, first, fingerprintRange(10_000, 6_000), longHistory,
+                carrierTimes(first.start(), 6_000));
             ScheduledThreadPoolExecutor scheduler = deadlineScheduler(coordinator);
             await(() -> scheduler.getQueue().size() == 1 &&
                 coordinator.getDiagnosticSnapshot().counters().completedReceiverLegs() == 1L);
             long refreshBaseline = coordinatorLongField(coordinator, "mAwaitedLegFullRefreshCount");
             long comparisonBaseline = coordinatorLongField(coordinator, "mAwaitedLegScopeComparisonCount");
 
-            emitLeg(coordinator, second, longHistory);
+            emitLegWithCorrectedEvidence(coordinator, second, fingerprintRange(20_000, 6_000), longHistory,
+                carrierTimes(second.start(), 6_000));
             await(() -> coordinator.getDiagnosticSnapshot().counters().completedReceiverLegs() == 2L);
 
             assertEquals(1L,
@@ -1716,6 +1899,46 @@ class AudioCallCoordinatorTest
             assertEquals(1L,
                 coordinatorLongField(coordinator, "mAwaitedLegScopeComparisonCount") - comparisonBaseline,
                 "Awaited-leg matching must compare cached scope once, not scan/copy fingerprints per frame");
+            assertEquals(0L, coordinator.getQueueStatus().droppedIngress());
+            coordinator.dispose();
+            assertEquals(1, resolved.size(), "Bounded corrected histories still resolve to one call");
+            assertEquals(2, resolved.getFirst().receiverLegCount());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void correctedEvidenceStopsAtThePerLegBudgetEvenIfLateFramesWouldMatch() throws Exception
+    {
+        AliasList aliasList = aliasList(839);
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator.ResolverConfiguration configuration = new AudioCallCoordinator.ResolverConfiguration(
+            16_384, 512, 60_000, 60_000, 8, 8, 2_000_000, 4_000_000);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(resolved::add, null, null, null, configuration);
+
+        try
+        {
+            Leg first = leg(560, aliasList, 0x11, 17, 170, 171, 10_119, null,
+                1_000, 121_100, GOOD_QUALITY, true, Set.of());
+            Leg second = leg(561, aliasList, 0x11, 17, 171, 172, 10_119, 9001,
+                1_020, 121_120, GOOD_QUALITY, true, Set.of());
+            List<Long> firstCorrected = new ArrayList<>(fingerprintRange(40_000, 6_000));
+            List<Long> secondCorrected = new ArrayList<>(fingerprintRange(50_000, 6_000));
+            firstCorrected.addAll(fingerprints(60_000));
+            secondCorrected.addAll(fingerprints(60_000));
+            emitLegWithCorrectedEvidence(coordinator, first, fingerprintRange(10_000, 6_003), firstCorrected,
+                carrierTimes(first.start(), 6_003));
+            emitLegWithCorrectedEvidence(coordinator, second, fingerprintRange(20_000, 6_003), secondCorrected,
+                carrierTimes(second.start(), 6_003));
+
+            await(() -> coordinator.getDiagnosticSnapshot().counters().completedReceiverLegs() == 2L);
+            coordinator.dispose();
+            assertEquals(2, resolved.size());
+            assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1),
+                "Proof beyond the bounded retained history must not merge the calls");
             assertEquals(0L, coordinator.getQueueStatus().droppedIngress());
         }
         finally
@@ -2330,6 +2553,17 @@ class AudioCallCoordinatorTest
             leg.callEncryptionEvidence());
     }
 
+    private static Leg withP25Decoder(Leg leg, DecoderType decoderType)
+    {
+        CallLegSource original = leg.source();
+        CallLegSource source = new CallLegSource(decoderType, original.channelConfigurationId(),
+            original.channelName(), original.radioResolveId(), original.aliasListId(), original.p25SiteIdentity(),
+            original.identityDomain(), original.channelKind(), original.trafficChannel());
+        return new Leg(leg.callId(), leg.callLegId(), leg.aliasList(), source, leg.talkgroup(), leg.radio(),
+            leg.start(), leg.end(), leg.quality(), leg.record(), leg.routes(), leg.encrypted(),
+            leg.callEncryptionEvidence());
+    }
+
     private static Leg withConfiguration(Leg leg, String configurationId)
     {
         CallLegSource original = leg.source();
@@ -2450,9 +2684,40 @@ class AudioCallCoordinatorTest
             false, 0L, 0L));
     }
 
+    private static void emitLegWithCorrectedEvidence(AudioCallCoordinator coordinator, Leg leg,
+                                                     List<Long> rawFingerprints, List<Long> correctedFingerprints,
+                                                     List<Long> carrierTimestamps)
+    {
+        assertEquals(rawFingerprints.size(), correctedFingerprints.size());
+        assertEquals(rawFingerprints.size(), carrierTimestamps.size());
+        AudioCallSnapshot active = snapshot(leg, false);
+        coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, active, null, false, 0L, 0L));
+
+        for(int index = 0; index < rawFingerprints.size(); index++)
+        {
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active, new float[160], false,
+                rawFingerprints.get(index), carrierTimestamps.get(index), correctedFingerprints.get(index)));
+        }
+
+        coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot(leg, true), null,
+            false, 0L, 0L));
+    }
+
     private static List<Long> fingerprints(long seed)
     {
         return List.of(seed + 1L, seed + 2L, seed + 3L);
+    }
+
+    private static List<Long> carrierTimes(long start, int count)
+    {
+        List<Long> timestamps = new ArrayList<>(count);
+
+        for(int index = 0; index < count; index++)
+        {
+            timestamps.add(start + index * 20L);
+        }
+
+        return timestamps;
     }
 
     private static List<Long> fingerprintRange(long seed, int count)

@@ -48,6 +48,7 @@ import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import jmbe.iface.IAudioCodec;
 import jmbe.iface.IAudioWithMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -533,9 +534,12 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                 }
 
                 long voiceFrameFingerprint = VoiceFrameFingerprint.compute(frame);
-                IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(frame);
+                IAudioCodec codec = getAudioCodec();
+                IAudioWithMetadata audioWithMetadata = codec.getAudioWithMetadata(frame);
+                long correctedFingerprint = getCorrectedVoiceFrameFingerprint(codec);
                 float[] audio = mGain.apply(audioWithMetadata.getAudio());
-                addAudio(audio, getVoiceFrameQuality(audioWithMetadata), timestamp, voiceFrameFingerprint);
+                addAudio(audio, getVoiceFrameQuality(audioWithMetadata), timestamp, voiceFrameFingerprint,
+                    correctedFingerprint);
                 mLastAudioTimestamp = timestamp;
                 mLastAudioSegmentId = currentSegmentId;
                 timestamp += VOICE_FRAME_DURATION_MILLISECONDS;
@@ -589,9 +593,12 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             {
                 byte[] decryptedFrame = mVoiceFrameDecryptor.decrypt(frame);
                 long voiceFrameFingerprint = VoiceFrameFingerprint.compute(decryptedFrame);
-                IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(decryptedFrame);
+                IAudioCodec codec = getAudioCodec();
+                IAudioWithMetadata audioWithMetadata = codec.getAudioWithMetadata(decryptedFrame);
+                long correctedFingerprint = getCorrectedVoiceFrameFingerprint(codec);
                 float[] audio = mGain.apply(audioWithMetadata.getAudio());
-                addAudio(audio, getVoiceFrameQuality(audioWithMetadata), timestamp, voiceFrameFingerprint);
+                addAudio(audio, getVoiceFrameQuality(audioWithMetadata), timestamp, voiceFrameFingerprint,
+                    correctedFingerprint);
                 mLastAudioTimestamp = timestamp;
                 mLastAudioSegmentId = currentSegmentId;
                 timestamp += VOICE_FRAME_DURATION_MILLISECONDS;

@@ -22,6 +22,7 @@ import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.VoiceFrameFingerprint;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
@@ -149,7 +150,15 @@ class P25P1AudioModuleTest
     }
 
     @Test
-    void publishesDistinctTwentyMillisecondCarrierTimesForImbeFrames()
+    void publishesBothImbeFingerprintsWithDistinctTwentyMillisecondCarrierTimes() throws Exception
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            checkImbeFingerprints(encrypted);
+        }
+    }
+
+    private void checkImbeFingerprints(boolean encrypted) throws Exception
     {
         IAudioCodec codec = new TestAudioCodec();
         P25P1AudioModule module = new P25P1AudioModule(new UserPreferences(), AliasList.empty("timing"))
@@ -165,6 +174,15 @@ class P25P1AudioModuleTest
             {
                 return codec;
             }
+
+            private long fingerprint = 100L;
+
+            @Override
+            protected long getCorrectedVoiceFrameFingerprint(IAudioCodec decodedCodec)
+            {
+                assertEquals(codec, decodedCodec);
+                return ++fingerprint;
+            }
         };
         List<AudioCallEvent> events = new ArrayList<>();
         module.setAudioCallEventListener(events::add);
@@ -172,8 +190,14 @@ class P25P1AudioModuleTest
         try
         {
             module.getDecoderStateListener().receive(new DecoderStateEvent(this,
-                DecoderStateEvent.Event.START, State.CALL));
-            module.receive(encryptedHdu(1_000L, 0x80, 0, 56_132, 1));
+                DecoderStateEvent.Event.START, encrypted ? State.ENCRYPTED : State.CALL));
+            module.receive(encryptedHdu(1_000L, encrypted ? 0x84 : 0x80, 0, 56_132, 1));
+            if(encrypted)
+            {
+                Field decryptor = P25P1AudioModule.class.getDeclaredField("mVoiceFrameDecryptor");
+                decryptor.setAccessible(true);
+                decryptor.set(module, new FingerprintTestDecryptor(18));
+            }
             module.receive(new LDU1Message(new CorrectedBinaryMessage(1_568), 0x123, 1_180L));
 
             List<Long> timestamps = events.stream()
@@ -182,6 +206,14 @@ class P25P1AudioModuleTest
             assertEquals(9, timestamps.size());
             assertEquals(1_020L, timestamps.getFirst());
             assertEquals(1_180L, timestamps.getLast());
+            List<AudioCallEvent> frames = events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+            assertEquals(101L, frames.getFirst().correctedVoiceFrameFingerprint());
+            assertEquals(109L, frames.getLast().correctedVoiceFrameFingerprint());
+            assertTrue(frames.stream().allMatch(event -> event.voiceFrameFingerprint() != 0L));
+            byte[] expected = new byte[18];
+            if(encrypted) expected[0] = (byte)0x80;
+            assertEquals(VoiceFrameFingerprint.compute(expected), frames.getFirst().voiceFrameFingerprint());
 
             for(int index = 1; index < timestamps.size(); index++)
             {

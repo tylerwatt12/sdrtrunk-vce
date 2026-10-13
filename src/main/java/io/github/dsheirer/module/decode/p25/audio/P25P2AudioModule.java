@@ -68,6 +68,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import jmbe.iface.IAudioCodec;
 import jmbe.iface.IAudioWithMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,7 +96,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     private boolean mTrafficCallBindingAttempted;
 
     private record DecodedVoiceFrame(IAudioWithMetadata audioWithMetadata, long carrierTimestamp,
-                                     long voiceFrameFingerprint)
+                                     long voiceFrameFingerprint, long correctedVoiceFrameFingerprint)
     {
     }
 
@@ -452,13 +453,15 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 try
                 {
                     long voiceFrameFingerprint = VoiceFrameFingerprint.compute(voiceFrameBytes);
-                    IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(voiceFrameBytes);
+                    IAudioCodec codec = getAudioCodec();
+                    IAudioWithMetadata audioWithMetadata = codec.getAudioWithMetadata(voiceFrameBytes);
+                    long correctedFingerprint = getCorrectedVoiceFrameFingerprint(codec);
                     // Route audio through the tone processor so it can hold artifact frames during
                     // the holdoff window and discard them if the tone never reaches threshold.
                     // Returns a list of committed buffers — empty while in holdoff or if artifact
                     // was discarded; may contain previously held frames when threshold is first crossed.
                     List<DecodedVoiceFrame> committed = mToneMetadataProcessor.processAudio(audioWithMetadata,
-                        voiceFrameTimestamp, voiceFrameFingerprint);
+                        voiceFrameTimestamp, voiceFrameFingerprint, correctedFingerprint);
 
                     if(!committed.isEmpty())
                     {
@@ -479,7 +482,8 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                         {
                             IAudioWithMetadata audio = decodedVoiceFrame.audioWithMetadata();
                             addAudio(audio.getAudio(), getVoiceFrameQuality(audio),
-                                decodedVoiceFrame.carrierTimestamp(), decodedVoiceFrame.voiceFrameFingerprint());
+                                decodedVoiceFrame.carrierTimestamp(), decodedVoiceFrame.voiceFrameFingerprint(),
+                                decodedVoiceFrame.correctedVoiceFrameFingerprint());
                         }
                     }
                 }
@@ -627,11 +631,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
          * @return decoded frames with their original carrier timestamps and fingerprints; never null, may be empty
          */
         private List<DecodedVoiceFrame> processAudio(IAudioWithMetadata audioWithMetadata, long timestamp,
-                                                     long voiceFrameFingerprint)
+                                                     long voiceFrameFingerprint, long correctedVoiceFrameFingerprint)
         {
             float[] audio = audioWithMetadata.getAudio();
             DecodedVoiceFrame decodedVoiceFrame = new DecodedVoiceFrame(audioWithMetadata, timestamp,
-                voiceFrameFingerprint);
+                voiceFrameFingerprint, correctedVoiceFrameFingerprint);
             boolean hasToneMetadata = audioWithMetadata.getMetadata().entrySet().stream()
                 .anyMatch(entry -> !isVoiceFrameQualityMetadata(entry.getKey()) &&
                     AmbeTone.fromValues(entry.getKey(), entry.getValue()) != AmbeTone.INVALID);

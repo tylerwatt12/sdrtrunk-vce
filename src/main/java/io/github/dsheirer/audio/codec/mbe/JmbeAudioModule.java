@@ -47,7 +47,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     private static final String FRAME_FEC_ERRORS = FRAME_METADATA_PREFIX + "fec_errors";
     private static final String FRAME_FEC_PROTECTED_BITS = FRAME_METADATA_PREFIX + "fec_protected_bits";
     private static final JmbeLibraryLoader LIBRARY_LOADER = JmbeLibraryLoader.getInstance();
-    private volatile IAudioCodec mAudioCodec;
+    private volatile CodecContext mCodecContext;
     private final UserPreferences mUserPreferences;
 
     protected JmbeAudioModule(UserPreferences userPreferences, AliasList aliasList, int timeslot)
@@ -76,7 +76,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
         super.closeAudioSegment(timestamp);
 
         //Reset the audio codec to clear any leftover frame data from the previous call.
-        IAudioCodec audioCodec = mAudioCodec;
+        IAudioCodec audioCodec = getAudioCodec();
 
         if(audioCodec != null)
         {
@@ -93,7 +93,16 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
 
     public IAudioCodec getAudioCodec()
     {
-        return mAudioCodec;
+        CodecContext context = mCodecContext;
+        return context != null ? context.codec() : null;
+    }
+
+    /** Reads evidence from the exact codec that decoded this frame, including during a library replacement. */
+    protected long getCorrectedVoiceFrameFingerprint(IAudioCodec codec)
+    {
+        CodecContext context = mCodecContext;
+        return context != null && context.codec() == codec && context.fingerprint() != null ?
+            context.fingerprint().get() : 0L;
     }
 
     /**
@@ -190,6 +199,11 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     {
         Path path = mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary();
         boolean toneAudioEnabled = !mUserPreferences.getJmbeLibraryPreference().getMuteDecodedAmbeToneFrames();
-        mAudioCodec = LIBRARY_LOADER.getAudioCodec(path, getCodecName(), toneAudioEnabled);
+        IAudioCodec codec = LIBRARY_LOADER.getAudioCodec(path, getCodecName(), toneAudioEnabled);
+        mCodecContext = codec != null ? new CodecContext(codec, JmbeVoiceFrameFingerprint.create(codec)) : null;
+    }
+
+    private record CodecContext(IAudioCodec codec, JmbeVoiceFrameFingerprint fingerprint)
+    {
     }
 }

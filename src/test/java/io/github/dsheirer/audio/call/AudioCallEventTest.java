@@ -6,6 +6,7 @@
 package io.github.dsheirer.audio.call;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -24,6 +25,7 @@ class AudioCallEventTest
 
         audio[0] = 1.0f;
         assertEquals(1_020L, event.voiceFrameTimestamp());
+        assertEquals(0L, event.correctedVoiceFrameFingerprint());
         assertEquals(0.25f, event.audioFrame()[0]);
         assertNotSame(event.audioFrame(), event.audioFrame());
     }
@@ -40,6 +42,26 @@ class AudioCallEventTest
     {
         assertThrows(IllegalArgumentException.class, () ->
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot(), null, false, 1L, 1_020L));
+        assertThrows(IllegalArgumentException.class, () ->
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot(), null, false, 0L, 0L, 2L));
+    }
+
+    @Test
+    void correctedEvidenceIsIndependentFromRawEvidenceInEventEquality()
+    {
+        AudioCallSnapshot snapshot = snapshot();
+        AudioCallEvent first = new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot, new float[160],
+            false, 1L, 1_020L, 2L);
+        AudioCallEvent same = new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot, new float[160],
+            false, 1L, 1_020L, 2L);
+        AudioCallEvent different = new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot, new float[160],
+            false, 1L, 1_020L, 3L);
+
+        assertEquals(first, same);
+        assertEquals(first.hashCode(), same.hashCode());
+        assertNotEquals(first, different);
+        assertEquals(1L, first.voiceFrameFingerprint());
+        assertEquals(2L, first.correctedVoiceFrameFingerprint());
     }
 
     private static AudioCallSnapshot snapshot()

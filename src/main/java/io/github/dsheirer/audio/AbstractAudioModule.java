@@ -502,6 +502,13 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     public void addAudio(float[] audioBuffer, VoiceFrameQualityObservation qualityObservation, long timestamp,
                          long voiceFrameFingerprint)
     {
+        addAudio(audioBuffer, qualityObservation, timestamp, voiceFrameFingerprint, 0L);
+    }
+
+    /** Adds independent raw and optional corrected-content evidence without changing the audio or its carrier time. */
+    public void addAudio(float[] audioBuffer, VoiceFrameQualityObservation qualityObservation, long timestamp,
+                         long voiceFrameFingerprint, long correctedVoiceFrameFingerprint)
+    {
         long carrierTimestamp = timestamp > 0L ? timestamp : System.currentTimeMillis();
         MutableAudioCallBuilder audioCall = getAudioCall();
 
@@ -519,7 +526,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             audioCall.addAudio(audioBuffer, carrierTimestamp);
             audioCall.addVoiceFrameQuality(qualityObservation);
             mAudioSampleCount += audioBuffer.length;
-            emitAudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioBuffer, voiceFrameFingerprint, carrierTimestamp);
+            emitAudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioBuffer, voiceFrameFingerprint, carrierTimestamp,
+                correctedVoiceFrameFingerprint);
         }
         catch(Exception _)
         {
@@ -769,18 +777,20 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, long voiceFrameFingerprint,
-                                    long voiceFrameTimestamp)
+                                    long voiceFrameTimestamp, long correctedVoiceFrameFingerprint)
     {
-        emitAudioCallEvent(eventType, audioFrame, false, voiceFrameFingerprint, voiceFrameTimestamp);
+        emitAudioCallEvent(eventType, audioFrame, false, voiceFrameFingerprint, voiceFrameTimestamp,
+            correctedVoiceFrameFingerprint);
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, boolean continuationExpected)
     {
-        emitAudioCallEvent(eventType, audioFrame, continuationExpected, 0, 0);
+        emitAudioCallEvent(eventType, audioFrame, continuationExpected, 0, 0, 0);
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, boolean continuationExpected,
-                                    long voiceFrameFingerprint, long voiceFrameTimestamp)
+                                    long voiceFrameFingerprint, long voiceFrameTimestamp,
+                                    long correctedVoiceFrameFingerprint)
     {
         Listener<AudioCallEvent> listener = mAudioCallEventListener;
 
@@ -794,7 +804,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         if(snapshot != null)
         {
             listener.receive(new AudioCallEvent(eventType, snapshot, audioFrame,
-                continuationExpected, voiceFrameFingerprint, voiceFrameTimestamp));
+                continuationExpected, voiceFrameFingerprint, voiceFrameTimestamp, correctedVoiceFrameFingerprint));
         }
     }
 

@@ -622,6 +622,17 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return DuplicateEvaluation.merged(LogicalCallMergeProof.SHARED_VOICE_CONTENT);
         }
 
+        //Corrected voice bits are independent local evidence. Only compare the same P25 codec, and never replace
+        //the received-frame fingerprints retained for exports or source/timing fallback.
+        DecoderType firstDecoder = first.snapshot.callLegSource().decoderType();
+
+        if(firstDecoder == second.snapshot.callLegSource().decoderType() &&
+            (firstDecoder == DecoderType.P25_PHASE1 || firstDecoder == DecoderType.P25_PHASE2) &&
+            hasSharedVoiceContent(first.correctedVoiceFingerprintIndex(), second.correctedVoiceFingerprintIndex()))
+        {
+            return DuplicateEvaluation.merged(LogicalCallMergeProof.SHARED_VOICE_CONTENT);
+        }
+
         //An encrypted message indicator is stronger than source/timing fallback and is evaluated first.  It can
         //confirm an opaque late-entry copy without depending on when its local call object happened to begin.
         if(first.snapshot.isEncrypted() && first.encryptionEvidence != null &&
@@ -1489,7 +1500,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         long end = Math.max(start, leg.endTimestamp);
         VoiceCallQuality quality = addQuality(leg.chunkSnapshots.values().stream()
             .map(AudioCallSnapshot::voiceCallQuality).toList());
-        CompletedReceiverLeg projection = new CompletedReceiverLeg(snapshot, List.of(), List.of(),
+        CompletedReceiverLeg projection = new CompletedReceiverLeg(snapshot, List.of(), List.of(), List.of(),
             start, end, 0, quality, leg.audioSampleCount, leg.ingressLoss, leg.audioTruncated,
             destinationIdentity(snapshot), sourceIdentity(snapshot), snapshot != null ?
                 snapshot.callEncryptionEvidence() : null);
@@ -2453,6 +2464,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private final Map<AudioCallId,AudioCallSnapshot> chunkSnapshots = new HashMap<>();
         private final List<float[]> audioBuffers = new ArrayList<>();
         private final List<TimestampedVoiceFingerprint> voiceFrameFingerprints = new ArrayList<>();
+        private final List<TimestampedVoiceFingerprint> correctedVoiceFrameFingerprints = new ArrayList<>();
         private AudioCallSnapshot latestSnapshot;
         private PreliminaryLegScope preliminaryScope = PreliminaryLegScope.INELIGIBLE;
         private long startTimestamp = Long.MAX_VALUE;
@@ -2495,6 +2507,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             {
                 voiceFrameFingerprints.add(new TimestampedVoiceFingerprint(event.voiceFrameFingerprint(),
                     event.voiceFrameTimestamp()));
+            }
+
+            if(correctedVoiceFrameFingerprints.size() < MAXIMUM_FINGERPRINTS_PER_LEG &&
+                event.correctedVoiceFrameFingerprint() != 0L && event.voiceFrameTimestamp() > 0L)
+            {
+                correctedVoiceFrameFingerprints.add(new TimestampedVoiceFingerprint(
+                    event.correctedVoiceFrameFingerprint(), event.voiceFrameTimestamp()));
             }
 
             return frame.length;
@@ -2578,6 +2597,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             long discardedSamples = audioSampleCount;
             audioBuffers.clear();
             voiceFrameFingerprints.clear();
+            correctedVoiceFrameFingerprints.clear();
             chunkSnapshots.clear();
             audioSampleCount = 0L;
             return discardedSamples;
@@ -2603,7 +2623,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             int bursts = chunkSnapshots.values().stream().mapToInt(AudioCallSnapshot::burstCount).sum();
             return new CompletedReceiverLeg(latestSnapshot,
                 copyAudio ? List.copyOf(audioBuffers) : List.of(),
-                List.copyOf(voiceFrameFingerprints), start, end, bursts,
+                List.copyOf(voiceFrameFingerprints), List.copyOf(correctedVoiceFrameFingerprints), start, end, bursts,
                 quality, audioSampleCount, ingressLoss, audioTruncated,
                 destinationIdentity(latestSnapshot), sourceIdentity(latestSnapshot),
                 latestSnapshot.callEncryptionEvidence());
@@ -2615,6 +2635,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private final AudioCallSnapshot snapshot;
         private List<float[]> audioBuffers;
         private final List<TimestampedVoiceFingerprint> voiceFrameFingerprints;
+        private final List<TimestampedVoiceFingerprint> correctedVoiceFrameFingerprints;
         private final long startTimestamp;
         private final long endTimestamp;
         private final int burstCount;
@@ -2627,9 +2648,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private final CallEncryptionEvidence encryptionEvidence;
         private final PreliminaryLegScope preliminaryScope;
         private FingerprintIndex voiceFingerprintIndex;
+        private FingerprintIndex correctedVoiceFingerprintIndex;
 
         private CompletedReceiverLeg(AudioCallSnapshot snapshot, List<float[]> audioBuffers,
                                      List<TimestampedVoiceFingerprint> voiceFrameFingerprints,
+                                     List<TimestampedVoiceFingerprint> correctedVoiceFrameFingerprints,
                                      long startTimestamp, long endTimestamp, int burstCount,
                                      VoiceCallQuality quality, long audioSampleCount, boolean ingressLoss,
                                      boolean audioTruncated, DestinationIdentity destinationIdentity,
@@ -2638,6 +2661,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             this.snapshot = snapshot;
             this.audioBuffers = audioBuffers;
             this.voiceFrameFingerprints = voiceFrameFingerprints;
+            this.correctedVoiceFrameFingerprints = correctedVoiceFrameFingerprints;
             this.startTimestamp = startTimestamp;
             this.endTimestamp = endTimestamp;
             this.burstCount = burstCount;
@@ -2669,6 +2693,16 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             }
 
             return voiceFingerprintIndex;
+        }
+
+        private FingerprintIndex correctedVoiceFingerprintIndex()
+        {
+            if(correctedVoiceFingerprintIndex == null)
+            {
+                correctedVoiceFingerprintIndex = FingerprintIndex.create(correctedVoiceFrameFingerprints);
+            }
+
+            return correctedVoiceFingerprintIndex;
         }
     }
 

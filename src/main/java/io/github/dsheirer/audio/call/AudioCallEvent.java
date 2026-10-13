@@ -30,11 +30,20 @@ import org.jspecify.annotations.Nullable;
  * the same continuing call
  * @param voiceFrameTimestamp carrier timestamp for the vocoder frame fingerprint, or zero when the event does not
  * carry voice-frame evidence
+ * @param correctedVoiceFrameFingerprint optional exact fingerprint of successfully decoded, error-corrected voice
+ * bits; zero when this evidence is unavailable
  */
 public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot,
                              float @Nullable [] audioFrame, boolean continuationExpected,
-                             long voiceFrameFingerprint, long voiceFrameTimestamp)
+                             long voiceFrameFingerprint, long voiceFrameTimestamp,
+                             long correctedVoiceFrameFingerprint)
 {
+    public AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, float @Nullable [] audioFrame,
+                          boolean continuationExpected, long voiceFrameFingerprint, long voiceFrameTimestamp)
+    {
+        this(eventType, snapshot, audioFrame, continuationExpected, voiceFrameFingerprint, voiceFrameTimestamp, 0L);
+    }
+
     public AudioCallEvent
     {
         Objects.requireNonNull(eventType, "Audio call event type is required");
@@ -52,7 +61,8 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
                 throw new IllegalArgumentException("An audio-frame event requires its carrier timestamp");
             }
         }
-        else if(audioFrame != null || voiceFrameFingerprint != 0L || voiceFrameTimestamp != 0L)
+        else if(audioFrame != null || voiceFrameFingerprint != 0L || voiceFrameTimestamp != 0L ||
+            correctedVoiceFrameFingerprint != 0L)
         {
             throw new IllegalArgumentException("Only an audio-frame event can carry audio or voice-frame evidence");
         }
@@ -102,6 +112,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
         return continuationExpected == that.continuationExpected &&
             voiceFrameFingerprint == that.voiceFrameFingerprint &&
             voiceFrameTimestamp == that.voiceFrameTimestamp &&
+            correctedVoiceFrameFingerprint == that.correctedVoiceFrameFingerprint &&
             eventType == that.eventType &&
             Objects.equals(snapshot, that.snapshot) &&
             Arrays.equals(audioFrame, that.audioFrame);
@@ -111,7 +122,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
     public int hashCode()
     {
         int result = Objects.hash(eventType, snapshot, continuationExpected, voiceFrameFingerprint,
-            voiceFrameTimestamp);
+            voiceFrameTimestamp, correctedVoiceFrameFingerprint);
         result = 31 * result + Arrays.hashCode(audioFrame);
         return result;
     }
@@ -126,6 +137,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
             ", continuationExpected=" + continuationExpected +
             ", voiceFrameFingerprint=" + voiceFrameFingerprint +
             ", voiceFrameTimestamp=" + voiceFrameTimestamp +
+            ", correctedVoiceFrameFingerprint=" + correctedVoiceFrameFingerprint +
             "]";
     }
 }
