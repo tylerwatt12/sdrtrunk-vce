@@ -975,14 +975,17 @@ class AudioCallCoordinatorTest
             {
                 AliasList aliasList = aliasList(773);
                 List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
-                AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+                List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+                List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+                List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+                AudioCallCoordinator coordinator = coordinator(resolved, recorded, streamed, web);
 
                 try
                 {
                     Leg damaged = withP25Decoder(leg(540, aliasList, 0x7, 7, 70, 71, 9503, null,
-                        1_000, 3_000, DAMAGED_QUALITY, true, Set.of()), decoder);
+                        1_000, 3_000, DAMAGED_QUALITY, true, Set.of(route("Calls"))), decoder);
                     Leg good = withP25Decoder(leg(541, aliasList, 0x7, 7, 70, sameSite ? 71 : 72, 9503,
-                        3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of()), decoder);
+                        3_150_006, 1_100, 3_100, GOOD_QUALITY, true, Set.of(route("Calls"))), decoder);
 
                     if(sameSite)
                     {
@@ -995,8 +998,12 @@ class AudioCallCoordinatorTest
                     emitLegWithCorrectedEvidence(coordinator, good, fingerprints(400), fingerprints(500),
                         List.of(2_075L, 2_095L, 2_115L));
 
-                    await(() -> resolved.size() == 1);
+                    await(() -> resolved.size() == 1 && recorded.size() == 1 && streamed.size() == 1 &&
+                        web.size() == 1);
                     CompletedAudioCall call = resolved.getFirst();
+                    assertSame(call, recorded.getFirst());
+                    assertSame(call, streamed.getFirst());
+                    assertSame(call, web.getFirst());
                     assertEquals(2, call.receiverLegCount(), decoder + " corrected content should merge");
                     assertEquals(good.callId(), call.snapshot().callId(), "Quality still selects the clean audio");
                     assertEquals(List.of(301L, 302L, 303L), call.callLegSummaries().getFirst()
@@ -1057,6 +1064,64 @@ class AudioCallCoordinatorTest
             assertCorrectedPairSeparate(first, second, List.of(800L, 801L, 800L),
                 List.of(800L, 801L, 800L), times, times);
             assertCorrectedPairSeparate(first, second, fingerprints(800), fingerprints(900), times, times);
+        }
+    }
+
+    @Test
+    void repeatedSharedHashCannotSupplyThreeDistinctProofValuesInEitherDomain() throws Exception
+    {
+        List<Long> firstHashes = new ArrayList<>();
+        List<Long> secondHashes = new ArrayList<>();
+
+        for(int index = 0; index < 32; index++)
+        {
+            firstHashes.add(100L);
+            secondHashes.add(100L);
+        }
+
+        //Both indexes pass the distinct-count gate, but only the repeated value is shared between them.
+        firstHashes.addAll(List.of(101L, 102L));
+        secondHashes.addAll(List.of(201L, 202L));
+        List<Long> times = carrierTimes(2_000L, firstHashes.size());
+
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            for(boolean corrected : List.of(false, true))
+            {
+                AliasList aliasList = aliasList(845);
+                List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+                AudioCallCoordinator coordinator = coordinator(resolved, null, null, null);
+
+                try
+                {
+                    Leg first = withP25Decoder(leg(562, aliasList, 0x7, 7, 70, 71, 9509, null,
+                        1_000, 4_000, GOOD_QUALITY, true, Set.of()), decoder);
+                    Leg second = withP25Decoder(leg(563, aliasList, 0x7, 7, 71, 72, 9509, 3_150_006,
+                        1_100, 4_100, GOOD_QUALITY, true, Set.of()), decoder);
+
+                    if(corrected)
+                    {
+                        emitLegWithCorrectedEvidence(coordinator, first,
+                            fingerprintRange(10_000, firstHashes.size()), firstHashes, times);
+                        emitLegWithCorrectedEvidence(coordinator, second,
+                            fingerprintRange(20_000, secondHashes.size()), secondHashes, times);
+                    }
+                    else
+                    {
+                        emitLegWithFrameEvidence(coordinator, first, firstHashes, times);
+                        emitLegWithFrameEvidence(coordinator, second, secondHashes, times);
+                    }
+
+                    await(() -> resolved.size() == 2);
+                    assertTrue(resolved.stream().allMatch(call -> call.receiverLegCount() == 1),
+                        decoder + " " + (corrected ? "corrected" : "raw") +
+                            " proof must count each shared hash only once");
+                }
+                finally
+                {
+                    coordinator.dispose();
+                }
+            }
         }
     }
 
@@ -1533,6 +1598,67 @@ class AudioCallCoordinatorTest
         finally
         {
             coordinator.dispose();
+        }
+    }
+
+    @Test
+    void correctedAndMixedProofsCannotBridgeAnIncompatibleThirdLeg() throws Exception
+    {
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            for(boolean mixed : List.of(false, true))
+            {
+                AliasList aliasList = aliasList(846);
+                List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+                AudioCallCoordinator.ResolverConfiguration configuration =
+                    new AudioCallCoordinator.ResolverConfiguration(
+                        256, 32, 60_000, 60_000, 8, 8, 100_000, 400_000);
+                AudioCallCoordinator coordinator =
+                    new AudioCallCoordinator(resolved::add, null, null, null, configuration);
+
+                try
+                {
+                    Leg first = withP25Decoder(leg(564, aliasList, 0x9, 9, 90, 91, 9701, null,
+                        1_000, 4_000, GOOD_QUALITY, true, Set.of()), decoder);
+                    Leg bridge = withP25Decoder(leg(565, aliasList, 0x9, 9, 91, 92, 9701, null,
+                        1_050, 4_050, GOOD_QUALITY, true, Set.of()), decoder);
+                    Leg third = withP25Decoder(leg(566, aliasList, 0x9, 9, 92, 93, 9701, null,
+                        1_100, 4_100, GOOD_QUALITY, true, Set.of()), decoder);
+                    List<Long> bridgeRaw = new ArrayList<>();
+                    bridgeRaw.addAll(mixed ? fingerprints(10) : fingerprints(2_000));
+                    bridgeRaw.addAll(fingerprints(3_000));
+                    List<Long> bridgeCorrected = new ArrayList<>();
+                    bridgeCorrected.addAll(mixed ? fingerprints(4_000) : fingerprints(20));
+                    bridgeCorrected.addAll(fingerprints(30));
+
+                    //A-B shares raw or corrected proof; B-C shares corrected proof. A-C has neither.
+                    emitLegWithCorrectedEvidence(coordinator, first,
+                        mixed ? fingerprints(10) : fingerprints(1_000),
+                        mixed ? fingerprints(5_000) : fingerprints(20), carrierTimes(2_000L, 3));
+                    emitLegWithCorrectedEvidence(coordinator, bridge, bridgeRaw, bridgeCorrected,
+                        carrierTimes(2_000L, 6));
+                    emitLegWithCorrectedEvidence(coordinator, third, fingerprints(6_000), fingerprints(30),
+                        carrierTimes(2_060L, 3));
+
+                    await(() -> coordinator.getDiagnosticSnapshot().counters().completedReceiverLegs() == 3L);
+                    coordinator.dispose();
+                    assertEquals(List.of(1, 2), resolved.stream()
+                        .map(CompletedAudioCall::receiverLegCount).sorted().toList(),
+                        decoder + " " + (mixed ? "mixed" : "corrected-only") +
+                            " proof must keep the unmatched third leg separate");
+                    CompletedAudioCall merged = resolved.stream().filter(call -> call.receiverLegCount() == 2)
+                        .findFirst().orElseThrow();
+                    assertEquals(Set.of(first.callLegId(), bridge.callLegId()), Set.copyOf(merged.callLegSummaries()
+                        .stream().map(CallLegSummary::callLegId).toList()));
+                    CompletedAudioCall separate = resolved.stream().filter(call -> call.receiverLegCount() == 1)
+                        .findFirst().orElseThrow();
+                    assertEquals(third.callLegId(), separate.callLegSummaries().getFirst().callLegId());
+                }
+                finally
+                {
+                    coordinator.dispose();
+                }
+            }
         }
     }
 
