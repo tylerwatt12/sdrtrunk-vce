@@ -6,10 +6,19 @@ const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs')
 const path = require('node:path');
 const fs = require('node:fs');
 
-async function auditScreenshot(page, name) {
+async function auditScreenshot(page, name, fullPage = true) {
   if (!process.env.ALERTS_AUDIT_DIR) return;
   fs.mkdirSync(process.env.ALERTS_AUDIT_DIR, { recursive: true });
-  await page.screenshot({ path: path.join(process.env.ALERTS_AUDIT_DIR, name + '.png'), fullPage: true });
+  await page.screenshot({ path: path.join(process.env.ALERTS_AUDIT_DIR, name + '.png'), fullPage });
+}
+
+async function revealPrimaryAction(page, action) {
+  await action.evaluate(button => button.scrollIntoView({ block: 'center' }));
+  await expect.poll(() => action.evaluate(button => {
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(hit && (hit === button || button.contains(hit)));
+  })).toBe(true);
 }
 
 async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
@@ -18,14 +27,15 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     { id: 'fire', name: 'Fire activity', description: 'Dispatch and tactical activity.', visible: true, enabled: true, built_in: false, rule_count: 0, subscription_count: 0 },
     { id: 'paused', name: 'Weather operations', description: 'Regional weather activity.', visible: true, enabled: false, built_in: false },
     { id: 'administrator-alerts', name: 'Administrator alerts', description: 'Tuner and system health.', visible: false, enabled: true, built_in: true }
-  ], rules: [], options: { systems: [{ value: systemKey, label: 'County Public Safety' }],
-    channels: [{ value: channelId, label: 'County Dispatch' }], sites: [{ value: '1', label: 'North site', system_key: systemKey }],
-    protocols: [{ value: 'P25', label: 'P25' }], message_types: [{ value: 'PAGE', label: 'Page' }],
+  ], rules: [], options: { systems: [{ value: systemKey, label: 'County Public Safety', protocol_family: 'P25', system_key: systemKey }],
+    channels: [{ value: channelId, label: 'County Dispatch', protocol_family: 'P25', channel_kind: 'TRUNKED', system_key: systemKey },
+      { value: 'conventional-channel', label: 'Local repeater', protocol_family: 'NBFM', channel_kind: 'CONVENTIONAL', decoder_type: 'NBFM', system_key: '' }],
+    sites: [{ value: '1', label: 'North site', system_key: systemKey, protocol_family: 'P25', channel_id: channelId }],
+    protocols: [{ value: 'APCO25', label: 'P25 Phase I' }, { value: 'DCS', label: 'DCS' }], message_types: [{ value: 'PAGE', label: 'Page' }],
     tone_types: [{ value: 'CALL_PROGRESS_TONE', label: 'Call progress tone' }], dcs_codes: [{ value: 'N023', label: 'DCS 023' }] },
-    config: { revision: 1, enabled: true, mode: 'proxy', site_url: '', registration: { status: 'approved', sender_id: 'synthetic-sender' } },
+    config: { revision: 1, enabled: true, mode: 'proxy', site_url: '', sender_label: 'VCE installation', registration: { status: 'approved', sender_id: 'synthetic-sender' } },
     writes: [], pending: [], enrollmentStatus: 'pending', publicMode: 'proxy', deviceMode: 'proxy', deviceStatus: 'connected', deviceTopics: ['fire'],
-    devicePrefs: { paused: false, quiet_enabled: false, quiet_start: '', quiet_end: '', time_zone: 'UTC' },
-    holdTopic: false, localExpiry: false, enrollmentOutage: false, enrollmentChecks: 0 };
+    holdTopic: false, localExpiry: false, enrollmentOutage: false, enrollmentChecks: 0, registrationFailure: false, publicTestFailure: false };
   await page.route('**/api/v1/**', async route => {
     const request = route.request(); const url = new URL(request.url()); const p = url.pathname;
     const data = value => route.fulfill({ json: { data: value } });
@@ -47,11 +57,20 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     if (p === '/api/v1/admin/alerts/config') {
       if (request.method() === 'GET') return data(state.config);
       const value = request.postDataJSON(); state.writes.push({ p, value });
-      state.config = { ...state.config, ...value }; return data(state.config);
+      state.config = { ...state.config, ...value, revision: state.config.revision + 1 }; return data(state.config);
     }
     if (p === '/api/v1/admin/alerts/public-test') {
       const value = request.postDataJSON(); state.writes.push({ p, value });
+      if (state.publicTestFailure) return route.fulfill({ status: 503, json: { error: { message: 'Public checker unavailable. Try again.' } } });
       return data({ public_access: { status: 'passed', checked_url: value.site_url, message: 'Public access passed.' }, test_token: 'synthetic-proof' });
+    }
+    if (p === '/api/v1/admin/alerts/registration') {
+      if (request.method() !== 'GET') {
+        state.writes.push({ p, method: request.method(), value: request.postDataJSON() });
+        if (state.registrationFailure) return route.fulfill({ status: 503, json: { error: { message: 'Approval service unavailable. Try again.' } } });
+        state.config.registration = { sender_id: 'synthetic-sender', status: request.method() === 'POST' ? 'pending' : 'deregistered' };
+      }
+      return data(state.config.registration);
     }
     if (p === '/api/v1/alerts/topics') return data({ topics: state.topics.filter(topic => topic.visible), mode: state.publicMode, push_enabled: true,
       vapid_public_key: state.publicMode === 'direct' ? 'AQID' : '' });
@@ -71,20 +90,20 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
       if (state.enrollmentOutage) return route.fulfill({ status: 503, json: { error: { message: 'Temporarily unavailable.' } } });
       return data({ id: 'synthetic-enrollment', status: state.enrollmentStatus,
       device_id: state.enrollmentStatus === 'completed' ? 'synthetic-device' : '', enrollment_url: 'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22', code: 'demo-id.demo-pairing-code-22',
-      topic_ids: state.deviceTopics, prefs: state.devicePrefs });
+      topic_ids: state.deviceTopics });
     }
     if (p === '/api/v1/alerts/subscriptions/me') {
       if (request.method() === 'DELETE') { state.writes.push({ p, method: 'DELETE' }); return data({ status: 'disconnected' }); }
       if (request.method() === 'PUT') {
         const value = request.postDataJSON(); state.writes.push({ p, method: 'PUT', value });
-        state.deviceTopics = value.topic_ids; state.devicePrefs = value.prefs;
+        state.deviceTopics = value.topic_ids;
       }
-      return data({ device_id: 'synthetic-device', topic_ids: state.deviceTopics, status: state.deviceStatus, mode: state.deviceMode, prefs: state.devicePrefs });
+      return data({ device_id: 'synthetic-device', topic_ids: state.deviceTopics, status: state.deviceStatus, mode: state.deviceMode });
     }
     if (p === '/api/v1/alerts/subscriptions/me/refresh') {
       state.writes.push({ p, value: request.postDataJSON(), authorization: request.headers().authorization });
       if (request.postDataJSON().subscription.endpoint.endsWith('/fresh')) state.deviceStatus = 'connected';
-      return data({ device_id: 'synthetic-device', topic_ids: state.deviceTopics, status: state.deviceStatus, mode: state.deviceMode, prefs: state.devicePrefs });
+      return data({ device_id: 'synthetic-device', topic_ids: state.deviceTopics, status: state.deviceStatus, mode: state.deviceMode });
     }
     return route.fallback();
   });
@@ -102,12 +121,14 @@ test('guest topics hide private names and connect through RadioResolve without a
   await expect(page.locator('.alerts-topic-card').filter({ hasText: 'Weather operations' }).getByRole('button', { name: 'Subscribe' })).toBeDisabled();
   await page.locator('.alerts-topic-card').filter({ hasText: 'Fire activity' }).getByRole('button', { name: 'Subscribe' }).click();
   const dialog = page.getByRole('dialog', { name: 'Alert subscription' });
-  await expect(dialog.getByRole('textbox')).toHaveCount(1); // Time zone only; no account fields.
+  await expect(dialog.getByRole('textbox')).toHaveCount(0);
+  await expect(dialog.getByRole('checkbox', { name: 'Pause notifications', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('checkbox', { name: 'Quiet hours', exact: true })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Connect notifications', exact: true }).click();
   await expect(dialog.getByRole('link', { name: 'Continue on RadioResolve' })).toBeVisible();
   await auditScreenshot(page, 'subscription-light-phone');
   expect(state.writes[0].value.topic_ids).toEqual(['fire']);
-  expect(state.writes[0].value.prefs.quiet_start).toBe('');
+  expect(state.writes[0].value).not.toHaveProperty('prefs');
   expect(state.writes[0].value).not.toHaveProperty('email');
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Subscribe', exact: true }).first().click();
@@ -122,9 +143,10 @@ test('Direct save waits for the exact URL proof and invalidates it on edit', asy
   const { state, fixture } = await installAlerts(page);
   await page.goto('/app.html?view=admin&tab=push-setup');
   await page.getByRole('button', { name: 'Direct', exact: true }).click();
-  const save = page.getByRole('button', { name: 'Save push settings', exact: true });
+  const save = page.getByRole('button', { name: 'Save settings', exact: true });
   await expect(save).toBeDisabled();
-  await auditScreenshot(page, 'direct-setup-desktop');
+  await revealPrimaryAction(page, save);
+  await auditScreenshot(page, 'direct-setup-desktop', false);
   const url = page.getByRole('textbox', { name: 'VCE site URL', exact: true });
   await url.fill('https://vce.example.net:8443');
   await page.getByRole('button', { name: 'Test public access', exact: true }).click();
@@ -134,9 +156,141 @@ test('Direct save waits for the exact URL proof and invalidates it on edit', asy
   expect(state.config.mode).toBe('proxy');
   await page.getByRole('button', { name: 'Test public access', exact: true }).click();
   await save.click();
-  await expect(page.locator('.alerts-workspace')).toContainText('Push settings saved.');
+  const confirmation = page.getByRole('alertdialog', { name: 'Change delivery', exact: true });
+  await confirmation.getByRole('button', { name: 'Switch delivery', exact: true }).click();
+  await expect(page.locator('.alerts-workspace')).toContainText('Settings saved.');
   expect(state.writes.at(-1).value.test_token).toBe('synthetic-proof');
   expect(state.writes.at(-1).value.site_url).toBe('https://other.example.net');
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('cloud approval saves the installation name and requests approval in one action', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.config.registration = { status: 'unregistered', sender_id: '' };
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  await expect(page.locator('.alerts-workspace')).toContainText('Sends push notifications through the cloud to your device. Choose this if you do not expose VCE for public access.');
+  await expect(page.locator('.alerts-workspace')).toContainText('Usage is subject to approval. Most requests are granted within 24 hours. Abuse is subject to ban.');
+  await expect(page.getByRole('textbox', { name: 'VCE site URL', exact: true })).toHaveCount(0);
+  await revealPrimaryAction(page, page.getByRole('button', { name: 'Request approval', exact: true }));
+  await auditScreenshot(page, 'cloud-delivery-desktop', false);
+  await page.getByRole('textbox', { name: 'VCE name', exact: true }).fill('Regional dispatch');
+  await page.getByRole('button', { name: 'Request approval', exact: true }).click();
+  await expect(page.locator('.alerts-workspace')).toContainText('Awaiting approval');
+  expect(state.writes.map(write => write.p)).toEqual(['/api/v1/admin/alerts/config', '/api/v1/admin/alerts/registration']);
+  expect(state.writes[1].value.sender_label).toBe('Regional dispatch');
+  await page.getByRole('button', { name: 'Check status', exact: true }).click();
+  expect(state.writes).toHaveLength(2);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('rule source selection progressively scopes protocol, system, and site and skips source for health', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('North site call');
+  await expect(dialog.getByRole('combobox', { name: 'Radio system', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('combobox', { name: 'Channel', exact: true })).toHaveCount(0);
+  await dialog.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption('P25');
+  await dialog.getByRole('button', { name: 'System', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Radio system', exact: true }).selectOption(systemKey);
+  await expect(dialog.getByRole('combobox', { name: 'Site', exact: true })).toHaveValue('');
+  await expect(dialog.getByRole('combobox', { name: 'Narrow source', exact: true })).toHaveCount(0);
+  await dialog.getByRole('combobox', { name: 'Site', exact: true }).selectOption('1');
+  await auditScreenshot(page, 'rule-source-desktop');
+  await dialog.getByRole('combobox', { name: 'Activity', exact: true }).selectOption('health');
+  await expect(dialog.getByRole('combobox', { name: 'Protocol', exact: true })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes[0].value.rule.protocol_family).toBe('');
+  expect(state.writes[0].value.rule.system_key).toBe('');
+  expect(state.writes[0].value.rule.site_id).toBe('');
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('conventional source family does not replace its decoded DCS event protocol', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Repeater DCS');
+  await dialog.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption('NBFM');
+  await dialog.getByRole('button', { name: 'Channel', exact: true }).click();
+  const channel = dialog.getByRole('combobox', { name: 'Channel', exact: true });
+  await expect(channel.locator('option')).toHaveCount(2);
+  await channel.selectOption('conventional-channel');
+  await expect(dialog).toContainText('Conventional · NBFM · Local repeater');
+  await dialog.getByRole('combobox', { name: 'Activity', exact: true }).selectOption('dcs');
+  await dialog.getByText('More source filters', { exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Message protocol', exact: true }).selectOption('DCS');
+  await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes[0].value.rule).toMatchObject({ protocol_family: 'NBFM', protocol: 'DCS', channel_id: 'conventional-channel', system_key: '' });
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('system scopes without observed sites omit Site and retain the optional configured channel filter', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.options.sites = [];
+  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await dialog.getByRole('button', { name: 'System', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Radio system', exact: true }).selectOption(systemKey);
+  await expect(dialog.getByRole('combobox', { name: 'Site', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('combobox', { name: 'Channel', exact: true })).toHaveCount(0);
+  await dialog.getByText('More source filters', { exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Channel', exact: true })).toBeVisible();
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('activity choices reflect source capabilities without clearing an existing selection', async ({ page }) => {
+  const { fixture } = await installAlerts(page);
+  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  const family = dialog.getByRole('combobox', { name: 'Protocol', exact: true });
+  const activity = dialog.getByRole('combobox', { name: 'Activity', exact: true });
+  await family.selectOption('DMR');
+  await expect(activity.locator('option[value="dcs"]')).toHaveCount(0);
+  await activity.selectOption('tone');
+  await family.selectOption('NBFM');
+  await expect(activity).toHaveValue('tone');
+  await expect(activity.locator('option[value="tone"]')).toContainText('unavailable for this source');
+  await expect(dialog).toContainText('Choose another activity or source.');
+  await activity.selectOption('dcs');
+  await family.selectOption('AM');
+  await expect(activity).toHaveValue('dcs');
+  await expect(activity.locator('option[value="health"]')).toHaveCount(1);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('approval failure retains the name and uses the new saved revision on retry', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.config.registration = { status: 'unregistered', sender_id: '' };
+  state.registrationFailure = true;
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  await page.getByRole('textbox', { name: 'VCE name', exact: true }).fill('Regional dispatch');
+  await page.getByRole('button', { name: 'Request approval', exact: true }).click();
+  await expect(page.locator('.alerts-workspace')).toContainText('Approval service unavailable. Try again.');
+  await expect(page.getByRole('textbox', { name: 'VCE name', exact: true })).toHaveValue('Regional dispatch');
+  state.registrationFailure = false;
+  await page.getByRole('button', { name: 'Request approval', exact: true }).click();
+  await expect(page.locator('.alerts-workspace')).toContainText('Awaiting approval');
+  expect(state.writes[2].value.revision).toBe(2);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('Direct public-test errors identify the unavailable checker and keep saving disabled', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.publicTestFailure = true;
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  await page.getByRole('button', { name: 'Direct', exact: true }).click();
+  await page.getByRole('textbox', { name: 'VCE site URL', exact: true }).fill('https://vce.example.net');
+  await page.getByRole('button', { name: 'Test public access', exact: true }).click();
+  await expect(page.locator('.alerts-workspace')).toContainText('Public checker unavailable. Try again.');
+  await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeDisabled();
+  expect(state.config.mode).toBe('proxy');
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -233,7 +387,6 @@ test('a declined Direct permission request retains topic choices and shows how t
 test('mode changes require confirmed disconnection before a new enrollment and preserve available choices', async ({ page }) => {
   const { state, fixture } = await installAlerts(page, { guest: true });
   state.deviceMode = 'direct'; state.deviceTopics = ['fire', 'paused', 'administrator-alerts'];
-  state.devicePrefs = { paused: true, quiet_enabled: true, quiet_start: '22:00', quiet_end: '07:00', time_zone: 'UTC' };
   await page.addInitScript(() => localStorage.setItem('vce-alert-device-v1', JSON.stringify({
     id: 'synthetic-device', manage_token: 'synthetic-manage-token', mode: 'direct', status: 'connected' })));
   await page.goto('/app.html?view=topics');
@@ -248,11 +401,11 @@ test('mode changes require confirmed disconnection before a new enrollment and p
   expect(state.writes).toHaveLength(1);
   expect(state.writes[0].method).toBe('DELETE');
   await expect(dialog.getByRole('checkbox', { name: 'Fire activity', exact: true })).toBeChecked();
-  await expect(dialog.getByRole('checkbox', { name: 'Pause notifications', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: 'Pause notifications', exact: true })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Connect notifications', exact: true }).click();
   await expect(dialog.getByRole('link', { name: 'Continue on RadioResolve' })).toBeVisible();
   expect(state.writes[1].value.topic_ids).toEqual(['fire']);
-  expect(state.writes[1].value.prefs.quiet_start).toBe('22:00');
+  expect(state.writes[1].value).not.toHaveProperty('prefs');
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -315,11 +468,10 @@ test('a missing Direct subscription shows reconnect guidance and never prompts a
   expect(fixture.pageErrors).toEqual([]);
 });
 
-test('explicit Direct renewal creates fresh material while retaining device ownership, hidden topics, and quiet preferences', async ({ page }) => {
+test('explicit Direct renewal creates fresh material while retaining device ownership and hidden topics', async ({ page }) => {
   const { state, fixture } = await installAlerts(page, { guest: true });
   state.publicMode = state.deviceMode = 'direct'; state.deviceStatus = 'reconnect_required';
   state.deviceTopics = ['fire', 'paused', 'administrator-alerts'];
-  state.devicePrefs = { paused: true, quiet_enabled: true, quiet_start: '22:00', quiet_end: '07:00', time_zone: 'UTC' };
   await installDirectDevice(page, { manual: true });
   await page.goto('/app.html?view=topics');
   await expect(page.locator('.alerts-workspace')).toContainText('connection expired');
@@ -335,7 +487,7 @@ test('explicit Direct renewal creates fresh material while retaining device owne
   expect(state.writes.filter(write => write.p === '/api/v1/alerts/enrollments')).toHaveLength(0);
   expect(state.writes.some(write => write.method === 'DELETE')).toBe(false);
   expect(state.deviceTopics).toEqual(['fire', 'paused', 'administrator-alerts']);
-  expect(state.devicePrefs.quiet_start).toBe('22:00');
+  expect(state.writes.find(write => write.method === 'PUT').value).not.toHaveProperty('prefs');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('vce-alert-device-v1')).id)).toBe('synthetic-device');
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -359,27 +511,26 @@ test('reclaiming an expired Direct connection keeps management and offers renewa
   expect(fixture.pageErrors).toEqual([]);
 });
 
-test('an expired proxy subscription keeps preference saving and phone reconnect guidance without deletion or enrollment', async ({ page }) => {
+test('an expired cloud subscription keeps topic saving and phone reconnect guidance without deletion or enrollment', async ({ page }) => {
   const { state, fixture } = await installAlerts(page, { guest: true });
   state.deviceStatus = 'reconnect_required';
   state.deviceTopics = ['fire', 'paused', 'administrator-alerts'];
-  state.devicePrefs = { paused: true, quiet_enabled: true, quiet_start: '22:00', quiet_end: '07:00', time_zone: 'UTC' };
   await page.addInitScript(() => localStorage.setItem('vce-alert-device-v1', JSON.stringify({
     id: 'synthetic-device', manage_token: 'synthetic-manage-token', mode: 'proxy', status: 'connected' })));
   await page.goto('/app.html?view=topics');
   await page.getByRole('button', { name: 'Notification settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Alert subscription' });
-  await expect(dialog.getByRole('button', { name: 'Save preferences', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Save topics', exact: true })).toBeEnabled();
   await expect(dialog.getByRole('button', { name: 'Disconnect & reconnect', exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('link', { name: 'RadioResolve notification settings', exact: true })).toHaveAttribute('href',
     'https://radioresolve.com/vce-push/settings.php');
   await expect(dialog.getByRole('img', { name: 'Scan to open RadioResolve notification settings', exact: true })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Save preferences', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Save topics', exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(state.writes).toHaveLength(1);
   expect(state.writes[0].method).toBe('PUT');
   expect(state.deviceTopics).toEqual(['fire', 'paused', 'administrator-alerts']);
-  expect(state.devicePrefs.quiet_start).toBe('22:00');
+  expect(state.writes[0].value).not.toHaveProperty('prefs');
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -458,6 +609,24 @@ test('rule builder preserves nested conditions and uses typed tone codes', async
 });
 
 for (const theme of ['light', 'dark']) {
+  test(`delivery choices and the direct test fit a 320px phone in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 700 });
+    const { fixture } = await installAlerts(page, { theme });
+    await page.goto('/app.html?view=admin&tab=push-setup');
+    await expect(page.getByRole('textbox', { name: 'VCE site URL', exact: true })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace']);
+    await auditScreenshot(page, 'cloud-delivery-' + theme + '-phone');
+    await page.getByRole('button', { name: 'Direct', exact: true }).click();
+    const url = page.getByRole('textbox', { name: 'VCE site URL', exact: true });
+    await url.fill('https://vce.example.net:8443');
+    await page.getByRole('button', { name: 'Test public access', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeEnabled();
+    await revealPrimaryAction(page, page.getByRole('button', { name: 'Save settings', exact: true }));
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace', '.alerts-direct-test']);
+    await auditScreenshot(page, 'direct-delivery-' + theme + '-phone', false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+
   test(`the phone enrollment QR is rendered in black and white and fits 320px in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
     await installAlerts(page, { guest: true, theme });
@@ -497,6 +666,7 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
     await expect(dialog).toBeVisible();
+    await auditScreenshot(page, 'rule-source-' + theme + '-phone');
     await dialog.getByRole('button', { name: 'Conditions', exact: true }).click();
     await dialog.getByRole('button', { name: 'Add condition', exact: true }).click();
     await expectNoHorizontalOverflow(page, ['.read-only-modal', '.alerts-condition-row']);

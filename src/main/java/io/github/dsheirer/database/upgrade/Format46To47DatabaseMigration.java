@@ -1,7 +1,6 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.database.upgrade;
 
-import io.github.dsheirer.alerts.TopicAlertSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
@@ -22,5 +21,5 @@ final class Format46To47DatabaseMigration implements DatabaseMigrationStep
                 "Create eight explicit alert tables; start push delivery disabled and Administrator alerts hidden, with no inferred subscriptions or retained events"));
     }
     @Override public List<DatabaseMigrationEffect> inspectSource(Connection connection) { return declaredEffects(); }
-    @Override public void migrateSource(Connection connection) throws SQLException { TopicAlertSchema.create(connection); }
+    @Override public void migrateSource(Connection connection) throws SQLException { Format47TopicAlertSchema.create(connection); }
 }

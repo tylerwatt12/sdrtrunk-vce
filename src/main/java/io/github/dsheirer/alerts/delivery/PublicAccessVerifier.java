@@ -30,8 +30,8 @@ public final class PublicAccessVerifier
         try
         {
             JsonNode result = mGateway.testPublicAccess(url, challenge);
-            boolean passed = result.path("public_access").asBoolean(false) &&
-                url.equals(result.path("checked_url").asText());
+            if(!result.path("public_access").isBoolean() || !url.equals(result.path("checked_url").asText())) return unavailable(url);
+            boolean passed = result.path("public_access").asBoolean();
             String proof = passed ? token() : "";
             if(passed) mProofs.put(proof, new Proof(url, now + 15 * 60_000));
             return Map.of("public_access", Map.of("status", passed ? "passed" : "failed",
@@ -39,7 +39,25 @@ public final class PublicAccessVerifier
                     "RadioResolve could not reach this VCE site. Check the URL, certificate, and public access, then test again."),
                 "test_token", proof);
         }
+        catch(RadioResolvePushClient.GatewayException exception)
+        {
+            if(exception.status() == 400 || exception.status() == 422)
+                return Map.of("public_access", Map.of("status", "failed", "checked_url", url,
+                    "message", "This public address could not be checked. Check the hostname and public HTTPS access, then test again."), "test_token", "");
+            return unavailable(url);
+        }
+        catch(IOException exception)
+        {
+            return unavailable(url);
+        }
         finally { mChallenges.remove(challenge); }
+    }
+
+    private static Map<String,Object> unavailable(String url)
+    {
+        return Map.of("public_access", Map.of("status", "unavailable", "checked_url", url,
+                "message", "The public-access checker is unavailable. Try again shortly; this test has not checked your VCE address."),
+                "test_token", "");
     }
 
     public boolean hasChallenge(String token)

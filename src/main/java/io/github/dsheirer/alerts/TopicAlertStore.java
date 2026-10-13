@@ -115,7 +115,7 @@ public final class TopicAlertStore
                 for(int i = 0; i < ids.size(); i++) query.setString(i + 1, ids.get(i));
                 try(ResultSet rows = query.executeQuery())
                 {
-                    if(rows.next()) throw new IllegalArgumentException("Pause or hide this topic and wait for queued notifications to finish before deleting it.");
+                    if(rows.next()) throw new IllegalArgumentException("Disable or hide this topic and wait for queued notifications to finish before deleting it.");
                 }
             }
         }
@@ -140,7 +140,7 @@ public final class TopicAlertStore
     /** Indexed membership lookup; only the topic being delivered is needed by the alert worker. */
     synchronized List<AlertDevice> devicesForTopic(String topicId, String method) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT v.* FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id=? AND v.method=? AND v.paused=0 AND v.subscription_expired=0 ORDER BY membership.device_id LIMIT " + (MAXIMUM_DEVICES + 1)))
+        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT v.* FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id=? AND v.method=? AND v.subscription_expired=0 ORDER BY membership.device_id LIMIT " + (MAXIMUM_DEVICES + 1)))
         {
             query.setString(1, topicId); query.setString(2, method);
             List<AlertDevice> result = new ArrayList<>();
@@ -189,8 +189,7 @@ public final class TopicAlertStore
     {
         return new AlertDevice(row.getString("id"), row.getString("name"), row.getString("method"), row.getString("remote_device_id"),
             row.getString("endpoint"), row.getString("p256dh"), row.getString("auth"), row.getString("manage_token_hash"),
-            topicIds, row.getBoolean("paused"),
-            row.getString("quiet_start"), row.getString("quiet_end"), row.getString("time_zone"), row.getBoolean("subscription_expired"));
+            topicIds, row.getBoolean("subscription_expired"));
     }
 
     public synchronized void saveDevice(AlertDevice device) throws SQLException
@@ -214,17 +213,16 @@ public final class TopicAlertStore
         retained.addAll(pairedTopics);
         requireTopics(connection, device.topicIds(), retained);
         try(PreparedStatement update = connection.prepareStatement("""
-            INSERT INTO topic_alert_device(id,name,method,remote_device_id,endpoint,p256dh,auth,manage_token_hash,paused,quiet_start,quiet_end,time_zone,subscription_expired)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,method=excluded.method,
+            INSERT INTO topic_alert_device(id,name,method,remote_device_id,endpoint,p256dh,auth,manage_token_hash,subscription_expired)
+            VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,method=excluded.method,
             remote_device_id=excluded.remote_device_id,endpoint=excluded.endpoint,p256dh=excluded.p256dh,auth=excluded.auth,
-            manage_token_hash=excluded.manage_token_hash,paused=excluded.paused,quiet_start=excluded.quiet_start,quiet_end=excluded.quiet_end,time_zone=excluded.time_zone,subscription_expired=excluded.subscription_expired
+            manage_token_hash=excluded.manage_token_hash,subscription_expired=excluded.subscription_expired
             """))
         {
             update.setString(1, device.id()); update.setString(2, device.name()); update.setString(3, device.method());
             update.setString(4, device.remoteDeviceId()); update.setString(5, device.endpoint()); update.setString(6, device.p256dh());
-            update.setString(7, device.auth()); update.setString(8, device.manageTokenHash()); update.setBoolean(9, device.paused());
-            update.setString(10, device.quietStart()); update.setString(11, device.quietEnd()); update.setString(12, device.timeZone());
-            update.setBoolean(13, device.subscriptionExpired()); update.executeUpdate();
+            update.setString(7, device.auth()); update.setString(8, device.manageTokenHash());
+            update.setBoolean(9, device.subscriptionExpired()); update.executeUpdate();
         }
         replaceMemberships(connection, "topic_alert_membership", "device_id", device.id(), device.topicIds());
     }
@@ -307,18 +305,16 @@ public final class TopicAlertStore
         requireCapacity(connection, "topic_alert_enrollment", enrollment.id(), MAXIMUM_ENROLLMENTS);
         requireTopics(connection, enrollment.topicIds(), Set.copyOf(memberships(connection, "topic_alert_enrollment_topic", "enrollment_id", enrollment.id())));
         try(PreparedStatement update = connection.prepareStatement("""
-            INSERT INTO topic_alert_enrollment(id,remote_enrollment_id,manage_token_hash,paused,quiet_start,quiet_end,time_zone,created_at_ms,expires_at_ms,status,device_id,enrollment_url,code)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET remote_enrollment_id=excluded.remote_enrollment_id,
-            manage_token_hash=excluded.manage_token_hash,paused=excluded.paused,quiet_start=excluded.quiet_start,quiet_end=excluded.quiet_end,
-            time_zone=excluded.time_zone,expires_at_ms=excluded.expires_at_ms,status=excluded.status,device_id=excluded.device_id,
+            INSERT INTO topic_alert_enrollment(id,remote_enrollment_id,manage_token_hash,created_at_ms,expires_at_ms,status,device_id,enrollment_url,code)
+            VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET remote_enrollment_id=excluded.remote_enrollment_id,
+            manage_token_hash=excluded.manage_token_hash,expires_at_ms=excluded.expires_at_ms,status=excluded.status,device_id=excluded.device_id,
             enrollment_url=excluded.enrollment_url,code=excluded.code
             """))
         {
             update.setString(1, enrollment.id()); update.setString(2, enrollment.remoteEnrollmentId()); update.setString(3, enrollment.manageTokenHash());
-            update.setBoolean(4, enrollment.paused()); update.setString(5, enrollment.quietStart()); update.setString(6, enrollment.quietEnd());
-            update.setString(7, enrollment.timeZone()); update.setLong(8, enrollment.createdAtMs()); update.setLong(9, enrollment.expiresAtMs());
-            update.setString(10, enrollment.status()); update.setString(11, enrollment.deviceId().isEmpty() ? null : enrollment.deviceId());
-            update.setString(12, enrollment.enrollmentUrl()); update.setString(13, enrollment.code()); update.executeUpdate();
+            update.setLong(4, enrollment.createdAtMs()); update.setLong(5, enrollment.expiresAtMs());
+            update.setString(6, enrollment.status()); update.setString(7, enrollment.deviceId().isEmpty() ? null : enrollment.deviceId());
+            update.setString(8, enrollment.enrollmentUrl()); update.setString(9, enrollment.code()); update.executeUpdate();
         }
         replaceMemberships(connection, "topic_alert_enrollment_topic", "enrollment_id", enrollment.id(), enrollment.topicIds());
     }
@@ -360,8 +356,7 @@ public final class TopicAlertStore
     private static AlertEnrollment enrollment(Connection connection, ResultSet row) throws SQLException
     {
         return new AlertEnrollment(row.getString("id"), row.getString("remote_enrollment_id"), row.getString("manage_token_hash"),
-            memberships(connection, "topic_alert_enrollment_topic", "enrollment_id", row.getString("id")), row.getBoolean("paused"),
-            row.getString("quiet_start"), row.getString("quiet_end"), row.getString("time_zone"), row.getLong("created_at_ms"),
+            memberships(connection, "topic_alert_enrollment_topic", "enrollment_id", row.getString("id")), row.getLong("created_at_ms"),
             row.getLong("expires_at_ms"), row.getString("status"), row.getString("device_id"), row.getString("enrollment_url"), row.getString("code"));
     }
 
@@ -422,7 +417,7 @@ public final class TopicAlertStore
             connection.setAutoCommit(false);
             try
             {
-                try(PreparedStatement query = connection.prepareStatement("SELECT (SELECT count(*) FROM topic_alert_membership membership JOIN topic_alert_device device ON device.id=membership.device_id WHERE membership.topic_id=? AND device.paused=0 AND device.subscription_expired=0),(SELECT count(*) FROM topic_alert_delivery WHERE state IN ('pending','retry','queued')),(SELECT count(*) FROM topic_alert_delivery WHERE alert_id IN (SELECT alert_id FROM topic_alert_delivery WHERE state IN ('pending','retry','queued')))"))
+                try(PreparedStatement query = connection.prepareStatement("SELECT (SELECT count(*) FROM topic_alert_membership membership JOIN topic_alert_device device ON device.id=membership.device_id WHERE membership.topic_id=? AND device.subscription_expired=0),(SELECT count(*) FROM topic_alert_delivery WHERE state IN ('pending','retry','queued')),(SELECT count(*) FROM topic_alert_delivery WHERE alert_id IN (SELECT alert_id FROM topic_alert_delivery WHERE state IN ('pending','retry','queued')))"))
                 {
                     query.setString(1, topic.id());
                     try(ResultSet rows = query.executeQuery())
@@ -462,7 +457,7 @@ public final class TopicAlertStore
 
     synchronized List<AlertDelivery> pendingDeliveries(int limit, long now) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.state IN ('pending','retry') AND d.next_at_ms<=? AND m.expires_at_ms>? AND t.visible=1 AND t.enabled=1 AND v.paused=0 AND v.subscription_expired=0 ORDER BY d.next_at_ms,d.id LIMIT ?"))
+        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.state IN ('pending','retry') AND d.next_at_ms<=? AND m.expires_at_ms>? AND t.visible=1 AND t.enabled=1 AND v.subscription_expired=0 ORDER BY d.next_at_ms,d.id LIMIT ?"))
         {
             query.setLong(1, now); query.setLong(2, now); query.setInt(3, Math.clamp(limit, 1, 100));
             List<AlertDelivery> result = new ArrayList<>(); try(ResultSet rows = query.executeQuery()) { while(rows.next()) result.add(delivery(rows)); }

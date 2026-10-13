@@ -21,8 +21,8 @@ class Format46To47DatabaseMigrationTest
         Path path = Format46TestDatabase.create(mDirectory.resolve("fingerprint.sqlite"));
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + path))
         {
-            TopicAlertSchema.create(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            Format47TopicAlertSchema.create(connection);
+            assertEquals(DatabaseFormatCatalog.requireVersion(47).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
     }
 
@@ -46,7 +46,7 @@ class Format46To47DatabaseMigrationTest
             assertEquals("0:1", scalar(connection, "SELECT visible||':'||enabled FROM topic_alert_topic WHERE id='administrator-alerts'"));
             assertEquals("0", scalar(connection, "SELECT json_extract(settings_json,'$.push.enabled') FROM application_settings WHERE key='alert.configuration'"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(47, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabase(path);

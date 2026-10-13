@@ -32,7 +32,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createAlertsWorkspace } from './features/alerts.js?v=2';
+import { createAlertsWorkspace } from './features/alerts.js?v=3';
 import { createRecordingsFeature } from './features/recordings.js?v=32';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=1';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';

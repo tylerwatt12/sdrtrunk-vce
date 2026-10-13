@@ -65,7 +65,7 @@ class TopicAlertsHttpControllerTest
             f.service.updateConfiguration(new TopicAlertConfiguration(current.revision(),
                 new TopicAlertConfiguration.PushSettings(true, "direct", "https://vce.example", "VCE"), current.topics(), current.rules()), current.revision());
             String publicKey = WebPushCodec.generateKeys().publicKey();
-            Map<String,Object> request = Map.of("topic_ids", java.util.List.of("fire"), "prefs", Map.of("paused", false),
+            Map<String,Object> request = Map.of("topic_ids", java.util.List.of("fire"), "prefs", Map.of("paused", true, "quiet_enabled", true, "time_zone", "retired-invalid-zone"),
                 "subscription", Map.of("endpoint", "https://fcm.googleapis.com/send/public-test-fixture",
                     "keys", Map.of("p256dh", publicKey, "auth", Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]))));
             assertEquals(403, f.send("POST", "/api/v1/alerts/enrollments", request, null, false).statusCode());
@@ -74,7 +74,7 @@ class TopicAlertsHttpControllerTest
             String token = f.body(enrolled).path("manage_token").asText();
             var device = f.send("GET", "/api/v1/alerts/subscriptions/me", null, token, false);
             assertEquals(200, device.statusCode());
-            for(String secret: java.util.List.of("endpoint", "p256dh", "auth", "manage_token_hash", "remote_device_id"))
+            for(String secret: java.util.List.of("prefs", "paused", "quiet_start", "quiet_end", "time_zone", "endpoint", "p256dh", "auth", "manage_token_hash", "remote_device_id"))
                 assertFalse(f.body(device).has(secret), secret);
             assertEquals(403, f.send("GET", "/api/v1/alerts/subscriptions/me", null, PublicAccessVerifier.token(), false).statusCode());
             assertEquals(422, f.send("PUT", "/api/v1/alerts/subscriptions/me", Map.of("topic_ids", java.util.List.of("administrator-alerts"), "prefs", Map.of()), token, true).statusCode());
@@ -83,12 +83,45 @@ class TopicAlertsHttpControllerTest
         }
     }
 
+    @Test void checkerUnavailableAndUnapprovedRegistrationHaveDistinctActionableErrors() throws Exception
+    {
+        HttpServer gateway = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requestedName = new java.util.concurrent.atomic.AtomicReference<String>();
+        gateway.createContext("/public-test", exchange -> { exchange.sendResponseHeaders(404, -1); exchange.close(); });
+        gateway.createContext("/senders", exchange -> {
+            requestedName.set(JSON.readTree(exchange.getRequestBody()).path("sender_name").asText());
+            exchange.sendResponseHeaders(403, -1); exchange.close();
+        }); gateway.start();
+        try(Fixture f = new Fixture(mDirectory.resolve("gateway-errors.sqlite"), URI.create("http://127.0.0.1:" + gateway.getAddress().getPort() + "/")))
+        {
+            f.login();
+            f.optionsUnavailable = true;
+            var sourceFailure = f.send("GET", "/api/v1/admin/alerts/topics", null, null, false);
+            assertEquals(503, sourceFailure.statusCode());
+            assertEquals("Notifications are temporarily unavailable. Try again later.", f.body(sourceFailure).at("/error/message").asText());
+            f.optionsUnavailable = false;
+            var unavailable = f.send("POST", "/api/v1/admin/alerts/public-test", Map.of("site_url", "https://vce.example"), null, true);
+            assertEquals(200, unavailable.statusCode());
+            assertEquals("unavailable", f.body(unavailable).at("/public_access/status").asText());
+            assertTrue(f.body(unavailable).at("/public_access/message").asText().contains("has not checked"));
+            assertEquals(422, f.send("POST", "/api/v1/admin/alerts/public-test", Map.of("site_url", "http://vce.example"), null, true).statusCode());
+            var rejected = f.send("POST", "/api/v1/admin/alerts/registration", Map.of("sender_label", "Test receiver"), null, true);
+            assertEquals(403, rejected.statusCode());
+            assertEquals("gateway_not_approved", f.body(rejected).at("/error/code").asText());
+            assertEquals("Test receiver", requestedName.get());
+            assertEquals("Test receiver", f.service.configuration().push().senderLabel());
+        }
+        finally { gateway.stop(0); }
+    }
+
     private static final class Fixture implements AutoCloseable
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
         final HttpClient client = HttpClient.newHttpClient(); final WebRequestSecurity security;
+        boolean optionsUnavailable;
         final URI origin; String cookie = "", csrf = "";
-        Fixture(Path database) throws Exception
+        Fixture(Path database) throws Exception { this(database, null); }
+        Fixture(Path database, URI gateway) throws Exception
         {
             SdrTrunkDatabaseStartup.createGlobalDatabase(database);
             try(var connection = SdrTrunkDatabase.open(database); var insert = connection.createStatement())
@@ -97,8 +130,17 @@ class TopicAlertsHttpControllerTest
             access.provisionOrResetPrimaryAdmin("fixture-admin-password".toCharArray());
             var authentication = new WebAuthenticationService(access);
             security = new WebRequestSecurity(access, authentication);
-            service = new TopicAlertService(database); push = new PushDeliveryService(database, service);
-            var controller = new TopicAlertsHttpController(service, push, Map::of);
+            service = new TopicAlertService(database);
+            if(gateway == null) push = new PushDeliveryService(database, service);
+            else
+            {
+                var clientConstructor = io.github.dsheirer.alerts.delivery.RadioResolvePushClient.class.getDeclaredConstructor(URI.class, HttpClient.class);
+                clientConstructor.setAccessible(true);
+                var deliveryConstructor = PushDeliveryService.class.getDeclaredConstructor(Path.class, TopicAlertService.class, io.github.dsheirer.alerts.delivery.RadioResolvePushClient.class);
+                deliveryConstructor.setAccessible(true);
+                push = deliveryConstructor.newInstance(database, service, clientConstructor.newInstance(gateway, HttpClient.newHttpClient()));
+            }
+            var controller = new TopicAlertsHttpController(service, push, () -> { if(optionsUnavailable) throw new IllegalStateException("Alert source choices are temporarily unavailable"); return Map.of(); });
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             new WebSessionHttpController(access, authentication, security).register(server);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, security.protectApi(WebCapability.ADMIN_SETTINGS, controller::handleAdmin));

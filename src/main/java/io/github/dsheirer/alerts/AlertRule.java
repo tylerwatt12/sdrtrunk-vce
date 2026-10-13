@@ -11,7 +11,7 @@ import java.util.Set;
 public record AlertRule(String id, String name, @JsonProperty("topic_id") String topicId, boolean enabled,
                         String trigger, @JsonProperty("system_key") String systemKey,
                         @JsonProperty("site_id") String siteId, @JsonProperty("channel_id") String channelId,
-                        String protocol, Condition conditions, Timing timing, Schedule schedule,
+                        @JsonProperty("protocol_family") String protocolFamily, String protocol, Condition conditions, Timing timing, Schedule schedule,
                         @JsonProperty("cooldown_minutes") int cooldownMinutes,
                         @JsonProperty("repeat_key") String repeatKey,
                         @JsonProperty("notify_recovery") boolean notifyRecovery,
@@ -30,7 +30,10 @@ public record AlertRule(String id, String name, @JsonProperty("topic_id") String
         if(!TRIGGERS.contains(trigger)) throw new IllegalArgumentException("Unsupported alert trigger");
         systemKey = text(systemKey, "System key", 240, true); siteId = text(siteId, "Site ID", 80, true);
         channelId = text(channelId, "Channel ID", 80, true); protocol = text(protocol, "Protocol", 40, true);
-        if("health".equals(trigger) && (!systemKey.isEmpty() || !siteId.isEmpty() || !channelId.isEmpty() || !protocol.isEmpty()))
+        protocolFamily = text(protocolFamily, "Protocol family", 16, true);
+        if(!protocolFamily.isEmpty() && !AlertProtocolFamily.FAMILIES.contains(protocolFamily))
+            throw new IllegalArgumentException("Choose a supported protocol family");
+        if("health".equals(trigger) && (!systemKey.isEmpty() || !siteId.isEmpty() || !channelId.isEmpty() || !protocol.isEmpty() || !protocolFamily.isEmpty()))
             throw new IllegalArgumentException("Health rules use issue conditions; receiver identity scope is unavailable");
         conditions = conditions != null ? conditions : Condition.all();
         conditions.validate(0, new int[]{0});
@@ -46,6 +49,15 @@ public record AlertRule(String id, String name, @JsonProperty("topic_id") String
         bodyTemplate = text(bodyTemplate, "Notification text", 2048, false);
         clickAction = clickAction != null ? clickAction : "details";
         if(!Set.of("details", "listen").contains(clickAction)) throw new IllegalArgumentException("Unknown click action");
+    }
+
+    public AlertRule(String id, String name, String topicId, boolean enabled, String trigger, String systemKey,
+                     String siteId, String channelId, String protocol, Condition conditions, Timing timing, Schedule schedule,
+                     int cooldownMinutes, String repeatKey, boolean notifyRecovery, String titleTemplate,
+                     String bodyTemplate, String clickAction)
+    {
+        this(id, name, topicId, enabled, trigger, systemKey, siteId, channelId, "", protocol, conditions, timing, schedule,
+            cooldownMinutes, repeatKey, notifyRecovery, titleTemplate, bodyTemplate, clickAction);
     }
 
     static String text(String value, String label, int maximum, boolean optional)

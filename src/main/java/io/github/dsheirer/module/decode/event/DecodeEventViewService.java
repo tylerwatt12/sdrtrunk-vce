@@ -531,7 +531,8 @@ public class DecodeEventViewService implements AutoCloseable
                 //A receiver edit cannot turn old discovery proof into a new system assignment.
             }
         }
-        return new AlertFacts(List.copyOf(aliases), List.copyOf(tones), List.copyOf(dcs), siteId, systemKey, siteName);
+        return new AlertFacts(List.copyOf(aliases), List.copyOf(tones), List.copyOf(dcs), siteId, systemKey, siteName, origin != null && origin.channel().getDecodeConfiguration() != null ?
+            io.github.dsheirer.alerts.AlertProtocolFamily.fromDecoder(origin.channel().getDecodeConfiguration().getDecoderType()) : "");
     }
 
     private Parties parties(IdentifierCollection collection, Role role, String servingKey)
@@ -1005,7 +1006,7 @@ public class DecodeEventViewService implements AutoCloseable
     {
     }
 
-    public record AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName)
+    public record AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName, String protocolFamily)
     {
         private static final AlertFacts EMPTY = new AlertFacts(List.of(), List.of(), List.of(), null, null);
         public AlertFacts
@@ -1014,13 +1015,17 @@ public class DecodeEventViewService implements AutoCloseable
             toneCodes = toneCodes != null ? List.copyOf(toneCodes.stream().limit(64).toList()) : List.of();
             dcsCodes = dcsCodes != null ? List.copyOf(dcsCodes.stream().limit(64).toList()) : List.of();
         }
+        public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName)
+        {
+            this(aliasIds, toneCodes, dcsCodes, siteId, systemKey, siteName, "");
+        }
         public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId)
         {
-            this(aliasIds, toneCodes, dcsCodes, siteId, null, null);
+            this(aliasIds, toneCodes, dcsCodes, siteId, null, null, "");
         }
         public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey)
         {
-            this(aliasIds, toneCodes, dcsCodes, siteId, systemKey, null);
+            this(aliasIds, toneCodes, dcsCodes, siteId, systemKey, null, "");
         }
     }
 

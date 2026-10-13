@@ -62,7 +62,7 @@ class TopicAlertStoreTest
         Path path = mDirectory.resolve("fanout.sqlite"); TopicAlertStore store = store(path);
         try(Connection connection = SdrTrunkDatabase.open(path); Statement sql = connection.createStatement())
         {
-            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_device SELECT 'd'||i,'Phone','proxy','remote-'||i,'','','',printf('%064x',i),0,'','','UTC',0 FROM n");
+            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_device SELECT 'd'||i,'Phone','proxy','remote-'||i,'','','',printf('%064x',i),0 FROM n");
             sql.executeUpdate("INSERT INTO topic_alert_membership SELECT id,'fire' FROM topic_alert_device");
         }
         var all = store.devices(); assertEquals(1000, all.size());
@@ -94,7 +94,7 @@ class TopicAlertStoreTest
         }
     }
 
-    @Test void expiredSubscriptionsRetainGuestPreferencesAndFreshMaterialReactivatesNewAlerts() throws Exception
+    @Test void expiredSubscriptionsRetainGuestTopicsAndFreshMaterialReactivatesNewAlerts() throws Exception
     {
         for(String method: List.of("direct", "proxy"))
         {
@@ -107,12 +107,11 @@ class TopicAlertStoreTest
             long oldDelivery = store.pendingDeliveries(1, NOW).getFirst().id(); store.markDeviceExpired(phone.id(), true);
             var restored = new TopicAlertStore(path).findDeviceByTokenHash(phone.manageTokenHash()).orElseThrow();
             assertTrue(restored.subscriptionExpired()); assertEquals(phone.topicIds(), restored.topicIds());
-            assertEquals("22:00", restored.quietStart()); assertEquals("07:00", restored.quietEnd()); assertEquals("America/New_York", restored.timeZone());
             assertEquals("Saved phone", restored.name()); assertTrue(store.devicesForTopic("fire", method).isEmpty());
             assertTrue(store.pendingDeliveries(100, NOW).isEmpty()); assertEquals("expired", store.delivery(oldDelivery).orElseThrow().state());
             var fresh = new AlertDevice(restored.id(), restored.name(), method, restored.remoteDeviceId(),
                 "direct".equals(method) ? "https://example.test/push/new" : "", restored.p256dh(), restored.auth(), restored.manageTokenHash(),
-                restored.topicIds(), restored.paused(), restored.quietStart(), restored.quietEnd(), restored.timeZone(), false);
+                restored.topicIds(), false);
             store.saveDevice(fresh); assertFalse(store.findDeviceByTokenHash(phone.manageTokenHash()).orElseThrow().subscriptionExpired());
             if("direct".equals(method))
             {
@@ -136,12 +135,12 @@ class TopicAlertStoreTest
         try(Connection connection = SdrTrunkDatabase.open(path); Statement sql = connection.createStatement())
         {
             long before = allocated(connection); connection.setAutoCommit(false);
-            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_device SELECT 'd'||i,'Phone','proxy','remote-'||i,'','','',printf('%064x',i),0,'','','UTC',0 FROM n");
+            sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_device SELECT 'd'||i,'Phone','proxy','remote-'||i,'','','',printf('%064x',i),0 FROM n");
             sql.executeUpdate("INSERT INTO topic_alert_membership SELECT id,'fire' FROM topic_alert_device");
             sql.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) INSERT INTO topic_alert_message SELECT 'm'||i,'rule','fire','Fire','Rule name','Title',printf('%02048d',i),'details','call'," + NOW + "+i," + (NOW + 3_600_000) + " FROM n");
             sql.executeUpdate("INSERT INTO topic_alert_delivery(alert_id,device_id,remote_device_id,method,state,attempts,next_at_ms,remote_id,error,updated_at_ms) SELECT 'm'||substr(id,2),id,remote_device_id,'proxy','pending',0," + NOW + ",'',''," + NOW + " FROM topic_alert_device");
             connection.commit();
-            assertTrue(plan(connection, "SELECT v.id FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id='fire' AND v.method='proxy' AND v.paused=0 ORDER BY membership.device_id LIMIT 100").contains("idx_topic_alert_membership_topic"));
+            assertTrue(plan(connection, "SELECT v.id FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id='fire' AND v.method='proxy' ORDER BY membership.device_id LIMIT 100").contains("idx_topic_alert_membership_topic"));
             String historyPlan = plan(connection, "SELECT id FROM topic_alert_message WHERE topic_id='fire' ORDER BY created_at_ms DESC,id LIMIT 100");
             assertTrue(historyPlan.contains("idx_topic_alert_message_topic_time")); assertFalse(historyPlan.contains("TEMP B-TREE"));
             assertTrue(plan(connection, "SELECT m.id FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id WHERE m.id='m500' AND t.visible=1").contains("SEARCH m USING INDEX sqlite_autoindex_topic_alert_message_1"));

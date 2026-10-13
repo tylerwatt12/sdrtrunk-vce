@@ -177,7 +177,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -647,6 +647,16 @@ Notification delivery starts disabled, and the built-in Administrator alerts top
 the same definitions and defaults; runtime startup validates only. The populated format-46 fixture and adjacent
 migration cover preservation, rollback, retry, the exact registered schema fingerprint and SQLite integrity.
 
+The format 47-to-48 step retires personal notification pause and quiet-hour settings. It removes their eight
+columns from devices and enrollment sessions, including saved time zones used only by those personal preferences.
+Existing management ownership, topic choices, pairing state, subscription expiry, notification history and delivery
+snapshots remain intact. Existing subscribed devices receive normally after upgrade; unsubscribing, disconnecting,
+subscription expiry, and administrator topic visibility or availability still control delivery. The migration counts
+subscriptions and pairing sessions with non-default retired preferences. Custom rule schedules keep their time zones.
+Rules can now select a source protocol family independently of an exact decoded event protocol; existing rules have
+no family restriction. Format 47 retains its frozen creator and populated fixture. The adjacent Application Migrator
+removes only the retired fields, and fresh and migrated format-48 schemas match exactly.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -657,7 +667,7 @@ counters, and adds no transcript rows. Catalog format 3 adds a constrained `tran
 transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
 the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
 an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
-is independently at format 47; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
+is independently at format 48; transcript-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

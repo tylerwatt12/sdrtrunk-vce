@@ -64,12 +64,34 @@
   padding-block: var(--space-2);
 }
 
-.alerts-editor-panel[hidden] {
+.alerts-editor-panel[hidden],
+.alerts-source[hidden] {
   display: none;
 }
 
+.alerts-source {
+  margin: 0;
+  min-width: 0;
+}
+
+.alerts-delivery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.alerts-direct-test {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+
 @media (max-width: 700px) {
-  .alerts-condition-row {
+  .alerts-condition-row,
+  .alerts-direct-test {
     grid-template-columns: minmax(0, 1fr);
   }
 }

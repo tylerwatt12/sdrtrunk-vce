@@ -18,6 +18,18 @@ async function main() {
   assert.deepEqual(model.visibleAlertHistory(events, topics, 'hidden'), []);
   assert.equal(model.describeAlertConditions({ op: '', items: [], field: 'radio', operator: 'is', value: '12' }), 'Transmitting radio is 12');
   assert.equal(model.newAlertRule('UTC').click_action, 'details');
+  assert.equal(model.newAlertRule('UTC').protocol_family, '');
+  const sources = [{ value: 'p25', protocol_family: 'P25', system_key: 'county' },
+    { value: 'dmr', protocol_family: 'DMR', system_key: 'regional' }];
+  assert.deepEqual(model.alertSourceChoices(sources, 'P25').map(value => value.value), ['p25']);
+  assert.deepEqual(model.alertSourceChoices(sources, '', 'regional').map(value => value.value), ['dmr']);
+  assert.deepEqual(model.alertSourceChoices(sources, 'P25', 'regional'), []);
+  assert.equal(model.alertActivityChoices('NBFM').some(([key]) => key === 'tone'), false);
+  assert.equal(model.alertActivityChoices('NBFM').some(([key]) => key === 'dcs'), true);
+  assert.equal(model.alertActivityChoices('P25').some(([key]) => key === 'tone'), true);
+  assert.equal(model.alertActivityChoices('P25').some(([key]) => key === 'dcs'), false);
+  assert.equal(model.alertActivityChoices('AM').some(([key]) => key === 'dcs'), true);
+  assert.equal(model.alertActivityChoices('AM').some(([key]) => key === 'health'), true);
   assert.equal(model.ALERT_TRIGGERS.some(([key]) => key === 'audio'), false);
   for (const value of ['http://vce.example.com', 'https://127.0.0.1', 'https://vce.local',
     'https://user:password@vce.example.com', 'https://vce.example.com?token=x', 'https://vce.example.com/path']) {

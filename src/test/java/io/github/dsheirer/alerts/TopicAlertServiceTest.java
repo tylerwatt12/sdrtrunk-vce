@@ -83,7 +83,7 @@ class TopicAlertServiceTest
             service.observe(event("a", START, CHANNEL, "100", "200")); service.drain();
             var delivery = service.pendingDeliveries(1).getFirst(); service.queueRelayAlert(delivery.alertId(), "relay-alert");
             service.deleteRule("r", service.configuration().revision()); long revision = service.configuration().revision();
-            assertEquals("Pause or hide this topic and wait for queued notifications to finish before deleting it.",
+            assertEquals("Disable or hide this topic and wait for queued notifications to finish before deleting it.",
                 assertThrows(IllegalArgumentException.class, () -> service.deleteTopic("fire", revision)).getMessage());
             assertEquals(revision, service.configuration().revision(), "Rejected deletion rolls back the revision");
             service.saveTopic(new AlertTopic("fire", "Fire", "", false, false, false), revision);
@@ -123,6 +123,30 @@ class TopicAlertServiceTest
             @SuppressWarnings("unchecked") var items = (List<Map<String,Object>>)service.history(null, 100, 0).get("items");
             assertTrue(items.stream().anyMatch(item -> item.get("alert_name").equals("Administrator alerts")));
         }
+    }
+
+    @Test void protocolFamilyUsesSourceDecoderAndKeepsDecodedDcsAndP25PhasesIndependent() throws Exception
+    {
+        var rule = new AlertRule("r", "DCS activity", "fire", true, "dcs", "", "", "", "NBFM", "DCS",
+            null, null, null, 0, "rule", false, "DCS", "DCS activity", "details");
+        AtomicLong clock = new AtomicLong(START);
+        Path database = mDirectory.resolve("family-scope.sqlite"); SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(TopicAlertService service = new TopicAlertService(new TopicAlertStore(database), clock::get))
+        {
+            configure(service, rule);
+            service.observe(new AlertEvent("wrong-source", START, "dcs", Map.of("protocol_family", List.of("P25"), "protocol", List.of("DCS")))); service.drain();
+            assertEquals(0, service.history(null, 100, 0).get("total"));
+            service.observe(new AlertEvent("nbfm-dcs", START, "dcs", Map.of("protocol_family", List.of("NBFM"), "protocol", List.of("DCS")))); service.drain();
+            assertEquals(1, service.history(null, 100, 0).get("total"));
+            assertEquals("NBFM", new TopicAlertStore(database).configuration().rules().getFirst().protocolFamily());
+        }
+        var p25 = new AlertRule("r", "P25 activity", "fire", true, "call", "", "", "", "P25", "",
+            null, null, null, 0, "rule", false, "P25", "P25 activity", "details");
+        for(String phase: List.of("APCO25", "APCO25_PHASE2"))
+            assertTrue(TopicAlertService.scopeMatches(p25, new AlertEvent(phase, START, "call", Map.of("protocol_family", List.of("P25"), "protocol", List.of(phase)))));
+        assertFalse(TopicAlertService.scopeMatches(p25, new AlertEvent("unknown-source", START, "call", Map.of("protocol", List.of("APCO25")))));
+        for(var decoder: List.of(io.github.dsheirer.module.decode.DecoderType.DMR, io.github.dsheirer.module.decode.DecoderType.NXDN))
+            assertEquals(decoder.name(), AlertProtocolFamily.fromDecoder(decoder));
     }
 
     private static Map<String,Object> health(List<Map<String,Object>> active, List<Map<String,Object>> resolved)

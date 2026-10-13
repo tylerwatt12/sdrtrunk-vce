@@ -557,9 +557,15 @@ Pending/retry/queued rows temporarily protect their messages and complete recipi
 relay POST outcome cannot change an idempotent retry body. This adds at most 2,000 protected older messages and
 their in-flight recipient rows; aggregate protected recipient snapshots are also capped at 20,000 before a new alert
 is admitted. Expiry releases that protection. Push subscription expiry preserves the guest management token and
-topic/quiet preferences behind an explicit device flag, expires unsent work, and excludes that destination until
+topic choices behind an explicit device flag, expires unsent work, and excludes that destination until
 fresh subscription material reactivates it. Device deletion cancels work while retaining
 its relay recipient snapshot. Enrollment expiry deletes temporary ownership rows and membership children.
+
+Format 48 removes personal pause, quiet-hour and time-zone columns from device and pairing records. Legacy personal
+settings no longer suppress delivery; management ownership, topic choices and subscription expiry remain explicit.
+Rule schedules retain their separate time-zone setting. Optional protocol-family rule scope is stored in the existing
+bounded rule document and matched against the primary source decoder family detached on the existing event observer.
+It adds no activity table, event row, index, network call, or database lookup on the receiver callback.
 
 A fresh SQLite sample with 1,000 messages containing 2,048-byte ASCII bodies, 1,000 devices, 1,000 memberships
 and 1,000 pending deliveries added 4,587,520 allocated database bytes. This measures page allocation for that fixture,

@@ -97,6 +97,28 @@ class DecodeEventViewServiceTest
     }
 
     @Test
+    void alertFactsCapturePrimarySourceFamilyForAuxiliaryDcsOnObserverWorker() throws Exception
+    {
+        Channel channel = new Channel("Analog dispatch"); channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM());
+        ProcessingChain chain = new ProcessingChain(channel, new AliasModel());
+        chain.setSource(new MutableFrequencySource(FREQUENCY));
+        List<DecodeEventViewService.EventView> observed = new CopyOnWriteArrayList<>();
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addListener(observed::add);
+            service.getBoundDecodeEventListener().accept(chain.getDecodeEventSource(),
+                DecodeEvent.builder(DecodeEventType.CALL, 1_000).protocol(Protocol.DCS).identifiers(new IdentifierCollection(
+                    List.of(new io.github.dsheirer.identifier.dcs.DCSIdentifier(io.github.dsheirer.module.decode.dcs.DCSCode.N023)))).build());
+            await(() -> observed.size() == 1);
+            assertEquals("DCS", observed.getFirst().protocol());
+            assertEquals("NBFM", observed.getFirst().alertFacts().protocolFamily());
+            assertEquals(List.of("N023"), observed.getFirst().alertFacts().dcsCodes());
+        }
+        finally { chain.dispose(); }
+    }
+
+    @Test
     void eventCarriesItsOwnCompleteServingIdentityWithoutChangingTheCanonicalParty() throws Exception
     {
         var radio = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x348, 9001);

@@ -158,7 +158,7 @@ public final class TopicAlertService implements AutoCloseable
         for(AlertDelivery delivery: mStore.pendingDeliveries(limit, now))
         {
             Optional<AlertDevice> device = mStore.device(delivery.deviceId());
-            if(device.isPresent() && !device.get().subscriptionExpired() && delivery.method().equals(mConfiguration.push().mode()) && !isQuiet(device.get(), now)) result.add(delivery);
+            if(device.isPresent() && !device.get().subscriptionExpired() && delivery.method().equals(mConfiguration.push().mode())) result.add(delivery);
         }
         return List.copyOf(result);
     }
@@ -195,7 +195,7 @@ public final class TopicAlertService implements AutoCloseable
         {
             facts.put("alias_id", view.alertFacts().aliasIds().stream().map(String::valueOf).toList());
             facts.put("tone", view.alertFacts().toneCodes()); facts.put("dcs", view.alertFacts().dcsCodes()); add(facts, "site_id", view.alertFacts().siteId());
-            add(facts, "site_name", view.alertFacts().siteName());
+            add(facts, "site_name", view.alertFacts().siteName()); add(facts, "protocol_family", view.alertFacts().protocolFamily());
             if(view.alertFacts().systemKey() != null) facts.put("system_key", List.of(view.alertFacts().systemKey()));
         }
         if(facts.getOrDefault("system_key", List.of()).isEmpty() && ("DMR".equals(view.protocol()) || "NXDN".equals(view.protocol())))
@@ -339,7 +339,7 @@ public final class TopicAlertService implements AutoCloseable
     }
     private boolean publish(TopicAlertConfiguration config, AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body, String click, long now) throws SQLException
     {
-        List<AlertDevice> destinations = mStore.devicesForTopic(topic.id(), config.push().mode()).stream().filter(d -> !isQuiet(d, now)).toList();
+        List<AlertDevice> destinations = mStore.devicesForTopic(topic.id(), config.push().mode());
         boolean saved = mStore.publish(topic, ruleId, alertName, event, bounded(title, 128), bounded(body, 2048), click, destinations, now);
         if(!saved) mDropped.incrementAndGet(); return saved;
     }
@@ -372,6 +372,7 @@ public final class TopicAlertService implements AutoCloseable
         return (rule.channelId().isEmpty() || event.values("channel_id").contains(rule.channelId())) &&
             (rule.systemKey().isEmpty() || event.values("system_key").contains(rule.systemKey())) &&
             (rule.siteId().isEmpty() || event.values("site_id").contains(rule.siteId())) &&
+            (rule.protocolFamily().isEmpty() || event.values("protocol_family").contains(rule.protocolFamily())) &&
             (rule.protocol().isEmpty() || event.values("protocol").contains(rule.protocol()));
     }
     enum Match { YES, NO, UNKNOWN }
@@ -419,14 +420,7 @@ public final class TopicAlertService implements AutoCloseable
         if(start.isBefore(end)) return schedule.days().contains(day) && !time.isBefore(start) && time.isBefore(end);
         return !time.isBefore(start) ? schedule.days().contains(day) : time.isBefore(end) && schedule.days().contains((day + 6) % 7);
     }
-    static boolean isQuiet(AlertDevice device, long now)
-    {
-        if(device.quietStart().isEmpty()) return false;
-        LocalTime time = Instant.ofEpochMilli(now).atZone(ZoneId.of(device.timeZone())).toLocalTime();
-        LocalTime start = LocalTime.parse(device.quietStart()), end = LocalTime.parse(device.quietEnd());
-        if(start.equals(end)) return false;
-        return start.isBefore(end) ? !time.isBefore(start) && time.isBefore(end) : !time.isBefore(start) || time.isBefore(end);
-    }
+
     private static String repeatIdentity(AlertRule rule, AlertEvent event)
     {
         String source = event.first("system_key").isEmpty() ? event.first("channel_id") : event.first("system_key");

@@ -98,6 +98,27 @@ class RadioResolvePushClientTest
         finally { server.stop(0); }
     }
 
+    @Test void unavailablePublicCheckerDoesNotClaimTheVceAddressFailed() throws Exception
+    {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var remoteStatus = new java.util.concurrent.atomic.AtomicInteger(404);
+        server.createContext("/public-test", exchange -> { exchange.sendResponseHeaders(remoteStatus.get(), -1); exchange.close(); }); server.start();
+        try(var gateway = client(server))
+        {
+            var verifier = new PublicAccessVerifier(gateway);
+            var result = verifier.test("https://vce.example");
+            @SuppressWarnings("unchecked") var status = (Map<String,Object>)result.get("public_access");
+            assertEquals("unavailable", status.get("status")); assertEquals("", result.get("test_token"));
+            assertTrue(((String)status.get("message")).contains("has not checked"));
+            remoteStatus.set(400);
+            @SuppressWarnings("unchecked") var invalidAddress = (Map<String,Object>)verifier.test("https://vce.example").get("public_access");
+            assertEquals("failed", invalidAddress.get("status"));
+            assertTrue(((String)invalidAddress.get("message")).contains("hostname"));
+            assertThrows(IllegalArgumentException.class, () -> verifier.test("http://vce.example"));
+        }
+        finally { server.stop(0); }
+    }
+
     private static RadioResolvePushClient client(HttpServer server)
     {
         return new RadioResolvePushClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/"),

@@ -63,15 +63,24 @@ public final class PushDeliveryService implements AutoCloseable
         return Map.of("status", credentials.registrationStatus(), "sender_id", credentials.senderId());
     }
 
-    public Map<String,Object> register() throws Exception
+    public Map<String,Object> register() throws Exception { return register(null); }
+
+    public Map<String,Object> register(String senderLabel) throws Exception
     {
         PushCredentialStore.Credentials credentials;
+        String requestedLabel;
         synchronized(this)
         {
             if(mClosed) throw new IllegalStateException("Notifications are unavailable");
+            var current = mAlerts.configuration();
+            var push = current.push();
+            var requested = new PushSettings(push.enabled(), push.mode(), push.siteUrl(), senderLabel != null ? senderLabel : push.senderLabel());
+            if(!requested.senderLabel().equals(push.senderLabel()))
+                mAlerts.updateConfiguration(new io.github.dsheirer.alerts.TopicAlertConfiguration(current.revision(), requested, current.topics(), current.rules()), current.revision());
+            requestedLabel = requested.senderLabel();
             credentials = mCredentials.prepareRegistration();
         }
-        JsonNode result = mGateway.register(credentials.installationId(), mAlerts.configuration().push().senderLabel(),
+        JsonNode result = mGateway.register(credentials.installationId(), requestedLabel,
             credentials.apiKey());
         synchronized(this)
         {
@@ -122,17 +131,17 @@ public final class PushDeliveryService implements AutoCloseable
             "approved".equals(mCredentials.get().registrationStatus()));
     }
 
-    public synchronized Map<String,Object> enroll(List<String> topics, JsonNode prefs, JsonNode subscription) throws Exception
+    public Map<String,Object> enroll(List<String> topics, JsonNode subscription) throws Exception
+    {
+        return enroll(topics, JSON.createObjectNode(), subscription);
+    }
+
+    public synchronized Map<String,Object> enroll(List<String> topics, JsonNode ignoredLegacyPreferences, JsonNode subscription) throws Exception
     {
         if(!ready()) throw new IllegalStateException("Notifications are not ready. Ask the administrator to finish push setup.");
         requireTopics(topics, List.of());
         String token = PublicAccessVerifier.token(), hash = hashToken(token);
         String id = UUID.randomUUID().toString();
-        boolean paused = prefs.path("paused").asBoolean(false);
-        boolean quiet = prefs.path("quiet_enabled").asBoolean(false);
-        String start = quiet ? prefs.path("quiet_start").asText("22:00") : "";
-        String end = quiet ? prefs.path("quiet_end").asText("07:00") : "";
-        String zone = prefs.path("time_zone").asText("UTC");
         if("direct".equals(mAlerts.configuration().push().mode()))
         {
             String endpoint = subscription.path("endpoint").asText();
@@ -146,15 +155,15 @@ public final class PushDeliveryService implements AutoCloseable
             if(existing != null) id = existing.id();
             boolean expired = existing != null && existing.subscriptionExpired();
             mAlerts.saveDevice(new AlertDevice(id, "This browser", "direct", "", endpoint, p256dh, auth, hash,
-                topics, paused, start, end, zone, expired));
+                topics, expired));
             return Map.of("device_id", id, "manage_token", token, "status", expired ? "reconnect_required" : "connected", "mode", "direct");
         }
-        // Validate preferences before creating a remote pairing session.
+        // Validate the local enrollment before creating a remote pairing session.
         long now = System.currentTimeMillis();
-        new AlertEnrollment(id, "pending", hash, topics, paused, start, end, zone, now, now + 900_000, "pending", "");
+        new AlertEnrollment(id, "pending", hash, topics, now, now + 900_000, "pending", "", "", "");
         JsonNode remote = mGateway.createEnrollment(mCredentials.get().apiKey());
         AlertEnrollment enrollment = new AlertEnrollment(id, remote.path("id").asText(), hash, topics,
-            paused, start, end, zone, now, remote.path("expires_at_ms").asLong(now + 900_000), "pending", "",
+            now, remote.path("expires_at_ms").asLong(now + 900_000), "pending", "",
             remote.path("enrollment_url").asText(), remote.path("code").asText());
         java.net.URI enrollmentUrl = java.net.URI.create(enrollment.enrollmentUrl());
         if(!"https".equals(enrollmentUrl.getScheme()) || !"radioresolve.com".equals(enrollmentUrl.getHost()) ||
@@ -178,9 +187,7 @@ public final class PushDeliveryService implements AutoCloseable
             enrollment = completeEnrollment(enrollment, remote);
             return Map.of("id", id, "status", enrollment.status(), "device_id", enrollment.deviceId(),
                 "enrollment_url", enrollment.enrollmentUrl(), "code", enrollment.remoteEnrollmentId() + "." + enrollment.code(),
-                "expires_at_ms", enrollment.expiresAtMs(), "topic_ids", enrollment.topicIds(),
-                "prefs", Map.of("paused", enrollment.paused(), "quiet_enabled", !enrollment.quietStart().isEmpty(),
-                    "quiet_start", enrollment.quietStart(), "quiet_end", enrollment.quietEnd(), "time_zone", enrollment.timeZone()));
+                "expires_at_ms", enrollment.expiresAtMs(), "topic_ids", enrollment.topicIds());
         }
         return Map.of("id", id, "status", enrollment.status(), "device_id", enrollment.deviceId());
     }
@@ -193,15 +200,17 @@ public final class PushDeliveryService implements AutoCloseable
         return device;
     }
 
-    public synchronized void updateDevice(String token, List<String> topics, JsonNode prefs) throws Exception
+    public void updateDevice(String token, List<String> topics) throws Exception
+    {
+        updateDevice(token, topics, JSON.createObjectNode());
+    }
+
+    public synchronized void updateDevice(String token, List<String> topics, JsonNode ignoredLegacyPreferences) throws Exception
     {
         AlertDevice old = managedDevice(token);
         requireTopics(topics, old.topicIds());
-        boolean quiet = prefs.path("quiet_enabled").asBoolean(false);
         mAlerts.saveDevice(new AlertDevice(old.id(), old.name(), old.method(), old.remoteDeviceId(), old.endpoint(),
-            old.p256dh(), old.auth(), old.manageTokenHash(), topics, prefs.path("paused").asBoolean(false),
-            quiet ? prefs.path("quiet_start").asText("22:00") : "", quiet ? prefs.path("quiet_end").asText("07:00") : "",
-            prefs.path("time_zone").asText("UTC"), old.subscriptionExpired()));
+            old.p256dh(), old.auth(), old.manageTokenHash(), topics, old.subscriptionExpired()));
     }
 
     public synchronized void refreshSubscription(String token, JsonNode subscription) throws Exception
@@ -216,7 +225,7 @@ public final class PushDeliveryService implements AutoCloseable
             throw new IllegalArgumentException("This browser subscription is already connected. Disconnect its previous connection first.");
         boolean unchanged = endpoint.equals(old.endpoint()) && p256dh.equals(old.p256dh()) && auth.equals(old.auth());
         mAlerts.saveDevice(new AlertDevice(old.id(), old.name(), old.method(), "", endpoint, p256dh, auth,
-            old.manageTokenHash(), old.topicIds(), old.paused(), old.quietStart(), old.quietEnd(), old.timeZone(),
+            old.manageTokenHash(), old.topicIds(),
             old.subscriptionExpired() && unchanged));
     }
 
@@ -250,7 +259,7 @@ public final class PushDeliveryService implements AutoCloseable
             if(previous == null) previous = mAlerts.byRemoteDeviceId(remoteDevice).orElse(null);
             String deviceId = previous != null ? previous.id() : old.deviceId().isEmpty() ? UUID.randomUUID().toString() : old.deviceId();
             AlertDevice device = new AlertDevice(deviceId, "This device", "proxy", remoteDevice, "", "", "",
-                old.manageTokenHash(), old.topicIds(), old.paused(), old.quietStart(), old.quietEnd(), old.timeZone());
+                old.manageTokenHash(), old.topicIds(), false);
             AlertEnrollment completed = copyEnrollment(old, "completed", deviceId);
             mAlerts.completeEnrollment(completed, device);
             return completed;
@@ -266,7 +275,7 @@ public final class PushDeliveryService implements AutoCloseable
     private static AlertEnrollment copyEnrollment(AlertEnrollment old, String status, String deviceId)
     {
         return new AlertEnrollment(old.id(), old.remoteEnrollmentId(), old.manageTokenHash(), old.topicIds(),
-            old.paused(), old.quietStart(), old.quietEnd(), old.timeZone(), old.createdAtMs(), old.expiresAtMs(), status, deviceId,
+            old.createdAtMs(), old.expiresAtMs(), status, deviceId,
             old.enrollmentUrl(), old.code());
     }
 
@@ -364,7 +373,7 @@ public final class PushDeliveryService implements AutoCloseable
         {
             if(target.remoteDeviceId().isEmpty() || List.of("push_accepted", "opened").contains(target.state())) continue;
             AlertDevice device = devices.get(target.deviceId());
-            if(!topicAllowed || "cancelled".equals(target.state()) || device == null || device.subscriptionExpired() || device.paused() || quietNow(device) ||
+            if(!topicAllowed || "cancelled".equals(target.state()) || device == null || device.subscriptionExpired() ||
                 !device.topicIds().contains(first.topicId()) || !target.remoteDeviceId().equals(device.remoteDeviceId())) ids.add(target.remoteDeviceId());
         }
         return List.copyOf(ids);
@@ -407,8 +416,8 @@ public final class PushDeliveryService implements AutoCloseable
         long now = System.currentTimeMillis();
         AlertDevice device = mAlerts.device(delivery.deviceId()).orElse(null);
         boolean visible = mAlerts.configuration().topics().stream().anyMatch(topic -> topic.id().equals(delivery.topicId()) && topic.visible() && topic.enabled());
-        if(device == null || device.subscriptionExpired() || !visible || device.paused() || !device.topicIds().contains(delivery.topicId()) ||
-            !device.method().equals(mAlerts.configuration().push().mode()) || quietNow(device))
+        if(device == null || device.subscriptionExpired() || !visible || !device.topicIds().contains(delivery.topicId()) ||
+            !device.method().equals(mAlerts.configuration().push().mode()))
         {
             mAlerts.completeDelivery(delivery.id(), "cancelled", "", "Subscription or topic unavailable", 0); return;
         }
@@ -499,15 +508,6 @@ public final class PushDeliveryService implements AutoCloseable
         return body.codePointCount(0, body.length()) > 500 ? body.substring(0, body.offsetByCodePoints(0, 500)) + "…" : body;
     }
 
-    private static boolean quietNow(AlertDevice device)
-    {
-        if(device.quietStart().isEmpty()) return false;
-        var time = java.time.ZonedDateTime.now(java.time.ZoneId.of(device.timeZone())).toLocalTime();
-        var start = java.time.LocalTime.parse(device.quietStart());
-        var end = java.time.LocalTime.parse(device.quietEnd());
-        return !start.equals(end) && (start.isBefore(end) ? !time.isBefore(start) && time.isBefore(end) :
-            !time.isBefore(start) || time.isBefore(end));
-    }
 
     public static String hashToken(String token)
     {

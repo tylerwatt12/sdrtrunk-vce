@@ -1,13 +1,16 @@
 export const ALERT_TRIGGERS = Object.freeze([
   ['call', 'Call activity'], ['emergency', 'Emergency alarm received'], ['paging', 'Paging or call alert'],
   ['affiliation', 'Radio affiliation'], ['command', 'Radio control message'],
-  ['event', 'Decoded trunked message'], ['tone', 'Decoded AMBE tone'], ['dcs', 'DCS code'],
+  ['event', 'Decoded message'], ['tone', 'Decoded AMBE tone'], ['dcs', 'DCS code'],
   ['health', 'Tuner or system health issue']
+]);
+export const ALERT_PROTOCOL_FAMILIES = Object.freeze([
+  ['P25', 'P25'], ['DMR', 'DMR'], ['NXDN', 'NXDN'], ['AM', 'AM'], ['NBFM', 'NBFM']
 ]);
 export const ALERT_FIELDS = Object.freeze([
   ['radio', 'Transmitting radio'], ['target_radio', 'Target radio'], ['talkgroup', 'Talkgroup'],
   ['alias_id', 'Alias'], ['channel_id', 'Channel'], ['system_key', 'Radio system'], ['site_id', 'Site'],
-  ['protocol', 'Protocol'], ['event_type', 'Decoded message type'], ['encrypted', 'Encrypted'],
+  ['protocol', 'Message protocol'], ['event_type', 'Decoded message type'], ['encrypted', 'Encrypted'],
   ['emergency', 'Emergency flag'], ['duration_seconds', 'Call duration (seconds)'],
   ['tone', 'AMBE tone'], ['dcs', 'DCS code'], ['issue', 'Health issue'],
   ['severity', 'Health severity'], ['state', 'Health state']
@@ -25,12 +28,21 @@ export function newAlertCondition(field = 'talkgroup', value = '') {
 }
 export function newAlertRule(timeZone = 'UTC') {
   return { id: '', name: '', topic_id: '', enabled: true, trigger: 'call', system_key: '',
-    site_id: '', channel_id: '', protocol: '', conditions: { op: 'all', items: [] },
+    site_id: '', channel_id: '', protocol_family: '', protocol: '', conditions: { op: 'all', items: [] },
     timing: { mode: 'immediate', minutes: 15, count: 5, window_minutes: 5 },
     schedule: { mode: 'always', days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '17:00', time_zone: timeZone },
     cooldown_minutes: 15, repeat_key: 'rule', notify_recovery: false,
     title_template: '{talkgroup} is active', body_template: '{radio} transmitted on {talkgroup} at {site}.',
     click_action: 'details' };
+}
+export function alertSourceChoices(choices, family = '', systemKey = '') {
+  return (Array.isArray(choices) ? choices : []).filter(choice =>
+    (!family || choice.protocol_family === family) && (!systemKey || choice.system_key === systemKey));
+}
+export function alertActivityChoices(family = '') {
+  return ALERT_TRIGGERS.filter(([trigger]) => !family ||
+    (trigger !== 'tone' || ['P25', 'DMR'].includes(family)) &&
+    (trigger !== 'dcs' || ['AM', 'NBFM'].includes(family)));
 }
 export function alertRuleDescription(rule, topicName = '') {
   const trigger = ALERT_TRIGGERS.find(([id]) => id === rule.trigger)?.[1] || 'Decoded event';

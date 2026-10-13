@@ -43,10 +43,6 @@ public final class TopicAlertSchema
                     p256dh TEXT NOT NULL CHECK(length(p256dh)<=160),
                     auth TEXT NOT NULL CHECK(length(auth)<=160),
                     manage_token_hash TEXT NOT NULL UNIQUE CHECK(length(manage_token_hash)=64),
-                    paused INTEGER NOT NULL CHECK(paused IN (0,1)),
-                    quiet_start TEXT NOT NULL CHECK(length(quiet_start)<=5),
-                    quiet_end TEXT NOT NULL CHECK(length(quiet_end)<=5),
-                    time_zone TEXT NOT NULL CHECK(length(time_zone)<=80),
                     subscription_expired INTEGER NOT NULL DEFAULT 0 CHECK(subscription_expired IN (0,1)),
                     CHECK((method='proxy' AND length(remote_device_id)>0) OR
                         (method='direct' AND length(endpoint)>0 AND length(p256dh)>0 AND length(auth)>0))
@@ -68,10 +64,6 @@ public final class TopicAlertSchema
                     enrollment_url TEXT NOT NULL CHECK(length(enrollment_url)<=2048),
                     code TEXT NOT NULL CHECK(length(code)<=240),
                     manage_token_hash TEXT NOT NULL UNIQUE CHECK(length(manage_token_hash)=64),
-                    paused INTEGER NOT NULL CHECK(paused IN (0,1)),
-                    quiet_start TEXT NOT NULL CHECK(length(quiet_start)<=5),
-                    quiet_end TEXT NOT NULL CHECK(length(quiet_end)<=5),
-                    time_zone TEXT NOT NULL CHECK(length(time_zone)<=80),
                     created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
                     expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms),
                     status TEXT NOT NULL CHECK(status IN ('pending','completed','expired','cancelled')),

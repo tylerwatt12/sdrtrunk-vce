@@ -2,8 +2,6 @@
 package io.github.dsheirer.alerts;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.List;
 
 /** Private transport record; guest API responses must explicitly omit destination material and token hashes. */
@@ -11,10 +9,7 @@ public record AlertDevice(String id, String name, String method,
                           @JsonProperty("remote_device_id") String remoteDeviceId,
                           String endpoint, String p256dh, String auth,
                           @JsonProperty("manage_token_hash") String manageTokenHash,
-                          @JsonProperty("topic_ids") List<String> topicIds, boolean paused,
-                          @JsonProperty("quiet_start") String quietStart,
-                          @JsonProperty("quiet_end") String quietEnd,
-                          @JsonProperty("time_zone") String timeZone,
+                          @JsonProperty("topic_ids") List<String> topicIds,
                           @JsonProperty("subscription_expired") boolean subscriptionExpired)
 {
     public AlertDevice
@@ -30,17 +25,20 @@ public record AlertDevice(String id, String name, String method,
             (endpoint.isEmpty() || p256dh.isEmpty() || auth.isEmpty())) throw new IllegalArgumentException("Incomplete device destination");
         topicIds = topicIds != null ? List.copyOf(topicIds.stream().distinct().toList()) : List.of();
         if(topicIds.size() > 256) throw new IllegalArgumentException("Too many topic subscriptions");
-        quietStart = AlertRule.text(quietStart, "Quiet start", 5, true); quietEnd = AlertRule.text(quietEnd, "Quiet end", 5, true);
-        if(quietStart.isEmpty() != quietEnd.isEmpty()) throw new IllegalArgumentException("Quiet hours require both times");
-        if(!quietStart.isEmpty()) { LocalTime.parse(quietStart); LocalTime.parse(quietEnd); }
-        timeZone = timeZone != null ? timeZone : "UTC"; ZoneId.of(timeZone);
+    }
+
+    /** Source compatibility only: retired personal delivery preferences are discarded. */
+    public AlertDevice(String id, String name, String method, String remoteDeviceId, String endpoint, String p256dh,
+                       String auth, String manageTokenHash, List<String> topicIds, boolean ignoredPaused,
+                       String ignoredQuietStart, String ignoredQuietEnd, String ignoredTimeZone, boolean subscriptionExpired)
+    {
+        this(id, name, method, remoteDeviceId, endpoint, p256dh, auth, manageTokenHash, topicIds, subscriptionExpired);
     }
 
     public AlertDevice(String id, String name, String method, String remoteDeviceId, String endpoint, String p256dh,
-                       String auth, String manageTokenHash, List<String> topicIds, boolean paused,
-                       String quietStart, String quietEnd, String timeZone)
+                       String auth, String manageTokenHash, List<String> topicIds, boolean ignoredPaused,
+                       String ignoredQuietStart, String ignoredQuietEnd, String ignoredTimeZone)
     {
-        this(id, name, method, remoteDeviceId, endpoint, p256dh, auth, manageTokenHash, topicIds, paused,
-            quietStart, quietEnd, timeZone, false);
+        this(id, name, method, remoteDeviceId, endpoint, p256dh, auth, manageTokenHash, topicIds, false);
     }
 }

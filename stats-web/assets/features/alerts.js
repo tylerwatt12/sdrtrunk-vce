@@ -1,7 +1,8 @@
-import { ALERT_TRIGGERS, ALERT_FIELDS, ALERT_OPERATORS, ALERT_TEMPLATE_FIELDS, cloneAlert,
+import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS, ALERT_TEMPLATE_FIELDS, cloneAlert,
   newAlertRule, newAlertCondition, alertRuleDescription, describeAlertConditions,
+  alertSourceChoices, alertActivityChoices,
   visibleAlertTopics, availableAlertTopics, visibleAlertHistory, validAlertSiteUrl,
-  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=1';
+  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=2';
 import { readAlertDevice, saveAlertDevice, forgetAlertDevice } from './alerts-device-storage.js?v=1';
 import { reconcileDirectSubscription, syncDirectWorkerDevice } from './alerts-direct.js?v=1';
 import { enrollmentQrCanvas } from './alerts-qr.js?v=1';
@@ -303,42 +304,104 @@ export function createAlertsWorkspace(deps) {
       renderScope();
       renderConditions();
       renderTiming();
-      capabilityCopy.hidden = !['tone', 'dcs'].includes(value);
+      capabilityCopy.hidden = value !== 'tone';
       healthCopy.hidden = value !== 'health';
     });
-    const capabilityCopy = notice('AMBE tones use the existing DMR and P25 Phase II tone reports. DCS uses decoded DCS codes.');
-    capabilityCopy.hidden = !['tone', 'dcs'].includes(draft.trigger);
-    const healthCopy = notice('Health rules use tuner and system health issues. Source filters are unavailable for these observations.');
+    const capabilityCopy = paragraph('AMBE tones require DMR or P25 Phase II.');
+    capabilityCopy.hidden = draft.trigger !== 'tone';
+    const healthCopy = paragraph('Matches tuner and system health issues.');
     healthCopy.hidden = draft.trigger !== 'health';
-    const system = selectField('Radio system', options('systems'), draft.system_key, value => {
-      draft.system_key = value;
-      draft.site_id = '';
-      renderScope();
-      renderConditions();
-    }, 'Any system');
-    const channel = selectField('Channel', options('channels'), draft.channel_id, value => { draft.channel_id = value; }, 'Any channel');
-    const scopeHost = node('div', 'alerts-field-grid');
-    const protocol = selectField('Protocol', options('protocols'), draft.protocol, value => { draft.protocol = value; }, 'Any protocol');
+    const activityWarning = notice('Choose another activity or source.', 'warning');
+    activityWarning.hidden = true;
+    let sourceMode = draft.system_key ? 'system' : draft.channel_id ? 'channel' : 'all';
+    draft.protocol_family ||= '';
+    const scopeHost = node('fieldset', 'alerts-source ui-surface-inset alerts-form');
+    const sourceChoices = (key, systemKey = '') => alertSourceChoices(options(key), draft.protocol_family, systemKey);
+    const selectedChannel = () => options('channels').find(channel => channel.value === draft.channel_id);
+    function refreshActivity() {
+      const family = draft.protocol_family || selectedChannel()?.protocol_family ||
+        options('systems').find(system => system.value === draft.system_key)?.protocol_family || '';
+      const choices = alertActivityChoices(family);
+      const supported = choices.some(([id]) => id === draft.trigger);
+      if (!supported) choices.push([draft.trigger, `${ALERT_TRIGGERS.find(([id]) => id === draft.trigger)?.[1] || draft.trigger} · unavailable for this source`]);
+      trigger.control.replaceChildren(...select(choices, draft.trigger).childNodes);
+      trigger.control.value = draft.trigger;
+      activityWarning.hidden = supported;
+    }
     function renderScope() {
       const health = draft.trigger === 'health';
+      scopeHost.hidden = health;
       if (health) {
-        draft.system_key = draft.site_id = draft.channel_id = draft.protocol = '';
-        system.control.value = channel.control.value = protocol.control.value = '';
+        draft.system_key = draft.site_id = draft.channel_id = draft.protocol = draft.protocol_family = '';
+        sourceMode = 'all';
+        scopeHost.replaceChildren();
+        refreshActivity();
+        return;
       }
-      system.control.disabled = channel.control.disabled = protocol.control.disabled = health;
-      const sites = options('sites').filter(site => !draft.system_key || !site.system_key || site.system_key === draft.system_key);
-      const site = selectField('Site', sites, draft.site_id, value => { draft.site_id = value; }, 'Any site');
-      site.control.disabled = health;
-      scopeHost.replaceChildren(site.element, protocol.element);
+      const family = selectField('Protocol', ALERT_PROTOCOL_FAMILIES, draft.protocol_family, value => {
+        draft.protocol_family = value;
+        if (draft.system_key && !sourceChoices('systems').some(system => system.value === draft.system_key)) {
+          draft.system_key = draft.site_id = draft.channel_id = '';
+        }
+        if (draft.channel_id && !sourceChoices('channels').some(channel => channel.value === draft.channel_id)) draft.channel_id = '';
+        renderScope(); renderConditions(); changed();
+      }, 'All protocols');
+      const source = uiSegmentedControl([{ value: 'all', label: 'All' }, { value: 'system', label: 'System' }, { value: 'channel', label: 'Channel' }],
+        sourceMode, value => {
+          sourceMode = value; draft.system_key = draft.site_id = draft.channel_id = '';
+          renderScope(); renderConditions(); changed();
+        });
+      source.setAttribute('aria-label', 'Alert source');
+      const sourceRow = node('div', 'alerts-field-grid'); sourceRow.append(family.element, formField('Source', source));
+      scopeHost.replaceChildren(node('legend', 'ui-section-heading', 'Radio source'), sourceRow);
+      if (sourceMode === 'system') {
+        const system = selectField('Radio system', sourceChoices('systems'), draft.system_key, value => {
+          draft.system_key = value; draft.site_id = draft.channel_id = '';
+          renderScope(); renderConditions(); changed();
+        }, 'Choose a system');
+        system.control.required = true;
+        const systemRow = node('div', 'alerts-field-grid'); systemRow.append(system.element);
+        scopeHost.append(systemRow);
+        if (draft.system_key) {
+          const sites = sourceChoices('sites', draft.system_key);
+          if (sites.length || draft.site_id) {
+            const site = selectField('Site', sites, draft.site_id, value => { draft.site_id = value; }, 'All sites');
+            systemRow.append(site.element);
+          }
+        }
+      } else if (sourceMode === 'channel') {
+        const channel = selectField('Channel', sourceChoices('channels'), draft.channel_id, value => {
+          draft.channel_id = value; renderScope(); renderConditions(); changed();
+        }, 'Choose a channel');
+        channel.control.required = true; scopeHost.append(channel.element);
+      }
+      const channel = selectedChannel();
+      if (channel) scopeHost.append(paragraph([
+        channel.channel_kind === 'TRUNKED' ? 'Trunked' : channel.channel_kind === 'CONVENTIONAL' ? 'Conventional' : '',
+        channel.protocol_family, channel.label
+      ].filter(Boolean).join(' · ')));
+      const more = node('details', 'alerts-form');
+      more.open = Boolean(draft.protocol || draft.site_id && sourceMode !== 'system' || draft.channel_id && sourceMode === 'system');
+      more.append(node('summary', '', 'More source filters'),
+        selectField('Message protocol', options('protocols'), draft.protocol, value => { draft.protocol = value; }, 'Any message protocol').element);
+      if (sourceMode === 'system' && draft.system_key) more.append(
+        selectField('Channel', sourceChoices('channels', draft.system_key), draft.channel_id, value => {
+          draft.channel_id = value; renderScope(); renderConditions(); changed();
+        }, 'All channels').element);
+      if (draft.site_id && sourceMode !== 'system') more.append(
+        selectField('Site', options('sites'), draft.site_id, value => { draft.site_id = value; }, 'Any site').element);
+      scopeHost.append(more);
+      refreshActivity();
     }
     renderScope();
-    panels.get('when').append(formField('Rule name', name), topics.element, trigger.element, capabilityCopy, healthCopy,
-      system.element, channel.element, scopeHost, enabled.element);
+    const ruleIdentity = node('div', 'alerts-field-grid'); ruleIdentity.append(formField('Rule name', name), topics.element);
+    panels.get('when').append(ruleIdentity, scopeHost, trigger.element, activityWarning, capabilityCopy, healthCopy, enabled.element);
 
     const conditionsHost = node('div', 'alerts-conditions');
     const identityPickers = [];
+    const identitySystemKey = () => draft.system_key || selectedChannel()?.system_key || '';
     function fieldOptions(field) {
-      return ({ channel_id: options('channels'), system_key: options('systems'), site_id: options('sites').filter(
+      return ({ channel_id: sourceChoices('channels'), system_key: sourceChoices('systems'), site_id: sourceChoices('sites').filter(
         site => !draft.system_key || !site.system_key || site.system_key === draft.system_key),
         protocol: options('protocols'), event_type: options('message_types'), tone: options('tone_types'),
         dcs: options('dcs_codes'), issue: options('health_issues').length ? options('health_issues') :
@@ -375,9 +438,9 @@ export function createAlertsWorkspace(deps) {
           valueHost.append(field);
           }
         } else if (['radio', 'target_radio', 'talkgroup'].includes(condition.field) &&
-          ['is', 'not'].includes(condition.operator) && draft.system_key && identityPicker) {
+          ['is', 'not'].includes(condition.operator) && identitySystemKey() && identityPicker) {
           const kind = condition.field === 'talkgroup' ? 'talkgroup' : 'radio';
-          const picker = identityPicker({ radioSystemKey: draft.system_key }, { destination: kind === 'talkgroup',
+          const picker = identityPicker({ radioSystemKey: identitySystemKey() }, { destination: kind === 'talkgroup',
             allowedKinds: [kind], exactOnly: true, label: 'Identity', nativeValue: condition.value,
             onSelection: entry => { condition.value = entry?.id != null ? String(entry.id) : ''; changed(); } });
           identityPickers.push(picker);
@@ -390,8 +453,8 @@ export function createAlertsWorkspace(deps) {
           const value = input(condition.value, condition.field === 'duration_seconds' ? 'number' : 'text', true, 512);
           value.addEventListener('input', () => { condition.value = value.value; });
           valueHost.append(formField('Value', value, condition.operator === 'in' ? 'Separate exact values with commas.' :
-            ['radio', 'target_radio', 'talkgroup'].includes(condition.field) && !draft.system_key ?
-              'Choose a radio system to search observed names and aliases.' : ''));
+            ['radio', 'target_radio', 'talkgroup'].includes(condition.field) && !identitySystemKey() ?
+              'Choose a system or channel to search names and aliases.' : ''));
         }
       }
       row.append(field.element, operator.element, valueHost,
@@ -420,7 +483,7 @@ export function createAlertsWorkspace(deps) {
       conditionsHost.replaceChildren(group(draft.conditions));
     }
     renderConditions();
-    panels.get('conditions').append(conditionsHost, paragraph('An unavailable observation does not count as a match, including in “None of these” groups.'));
+    panels.get('conditions').append(conditionsHost, paragraph('Missing observations don’t match conditions, including “None of these”.'));
 
     function numberField(label, object, key, minimum, maximum) {
       const control = input(object[key], 'number', true);
@@ -483,7 +546,7 @@ export function createAlertsWorkspace(deps) {
     panels.get('message').append(formField('Title', title), formField('Notification text', text,
       `Available fields: ${ALERT_TEMPLATE_FIELDS.map(field => `{${field}}`).join(', ')}.`),
       selectField('Open when tapped', [['details', 'Alert details'], ['listen', 'Open VCE Listen view (Direct)']], draft.click_action,
-        value => { draft.click_action = value; }, null, 'RadioResolve opens its hosted alert details when proxy delivery is used.').element, preview);
+        value => { draft.click_action = value; }, null, 'Cloud notifications open the hosted alert page.').element, preview);
     const tabScroll = node('div', 'alerts-tab-scroll');
     tabScroll.append(tabs);
     form.append(tabScroll, ...panels.values(), status, modalFooter(cancel, save));
@@ -512,73 +575,75 @@ export function createAlertsWorkspace(deps) {
   }
 
   function renderSetup() {
-    const saved = cloneAlert(snapshot);
+    let saved = cloneAlert(snapshot);
     const draft = { enabled: saved.enabled, mode: saved.mode, site_url: saved.site_url || '', sender_label: saved.sender_label || 'VCE installation' };
     let proof = null;
     let testing = false;
     const form = node('form', 'alerts-form settings-page-form ui-settings-form');
     const status = node('div');
-    const save = button('Save push settings', null, true); save.type = 'submit';
+    const save = button('Save settings', null, true); save.type = 'submit';
     const enabled = toggle('Enable push notifications', draft.enabled, value => { draft.enabled = value; });
-    const senderName = input(draft.sender_label, 'text', true, 80);
-    senderName.setAttribute('aria-label', 'VCE name');
-    senderName.addEventListener('input', () => {
-      draft.sender_label = senderName.value.trim();
-      const register = detail.querySelector('[data-alert-action="register"]');
-      if (register) register.disabled = draft.sender_label !== saved.sender_label;
-    });
-    const mode = uiSegmentedControl([{ value: 'proxy', label: 'RadioResolve proxy · Recommended' }, { value: 'direct', label: 'Direct' }],
+    const deliveryStatus = node('div');
+    const header = node('div', 'alerts-delivery-header'); header.append(enabled.element, deliveryStatus);
+    const mode = uiSegmentedControl([{ value: 'proxy', label: 'Cloud · Recommended' }, { value: 'direct', label: 'Direct' }],
       draft.mode, value => { draft.mode = value; renderMode(); workflow.setDirty(true); });
     mode.setAttribute('aria-label', 'Notification delivery');
-    const deliveryField = node('div', 'ui-field');
-    deliveryField.append(node('span', 'ui-field-label', 'Delivery'), mode);
     const detail = node('div', 'alerts-form');
     const footer = node('footer', 'settings-form-footer'); footer.append(status, save);
-    form.append(enabled.element, formField('VCE name', senderName, 'Save this name before registering the sender.'), deliveryField, detail, footer);
+    form.append(header, mode, detail, footer);
     const workflow = createFormWorkflow({ form, submit: save, feedback: status });
+    function needsApproval() {
+      if (snapshot.registration?.status === 'banned') return false;
+      return !snapshot.registration?.sender_id || ['unregistered', 'deregistered'].includes(snapshot.registration?.status);
+    }
     function updateSaveAvailability() {
+      save.textContent = draft.mode === 'proxy' && needsApproval() ? 'Request approval' : 'Save settings';
       workflow.setReady(draft.mode !== 'direct' || Boolean(proof && proof.url === draft.site_url && validAlertSiteUrl(draft.site_url)));
+      if (draft.mode === 'direct') deliveryStatus.replaceChildren(uiStatus(proof ? 'Verified' : 'Needs public test', 'neutral'));
     }
     function renderMode() {
       detail.replaceChildren();
       if (draft.mode === 'proxy') {
-        detail.append(paragraph('Sends push notifications through RadioResolve to your device. Choose this if you do not expose VCE for public access.'));
+        detail.append(paragraph('Sends push notifications through the cloud to your device. Choose this if you do not expose VCE for public access.'),
+          paragraph('Usage is subject to approval. Most requests are granted within 24 hours. Abuse is subject to ban.'));
+        const senderName = input(draft.sender_label, 'text', true, 80);
+        senderName.addEventListener('input', () => { draft.sender_label = senderName.value.trim(); });
+        detail.append(formField('VCE name', senderName));
         const registration = snapshot.registration || {};
         const registrationStatus = String(registration.status).toLowerCase();
         const label = ({ approved: 'Approved', pending: 'Awaiting approval', rejected: 'Not approved', banned: 'Banned',
-          deregistered: 'Deregistered', unregistered: 'Not registered' })[registrationStatus] || 'Not registered';
+          deregistered: 'Deregistered', unregistered: 'Not requested' })[registrationStatus] || 'Not requested';
+        deliveryStatus.replaceChildren(uiStatus(label, 'neutral'));
         const actions = actionRow();
-        const register = button('Register VCE sender', () => void registrationAction('POST'));
-        register.dataset.alertAction = 'register';
-        register.disabled = draft.sender_label !== saved.sender_label;
-        const check = button('Check approval', () => void registrationAction('GET'));
-        const disconnect = button('Deregister sender', async () => {
-          if (await confirmAction('Deregister this VCE sender from RadioResolve? Proxy notifications will stop.',
-            { title: 'Deregister sender', confirmLabel: 'Deregister sender', tone: 'danger' })) void registrationAction('DELETE');
+        const check = button('Check status', () => void registrationAction('GET'));
+        const disconnect = button('Disconnect cloud', async () => {
+          if (await confirmAction('Stop cloud notifications for this VCE installation?',
+            { title: 'Disconnect cloud', confirmLabel: 'Disconnect cloud', tone: 'danger' })) void registrationAction('DELETE');
         });
-        if ((!registration.sender_id || registrationStatus === 'deregistered') && registrationStatus !== 'banned') actions.append(register);
-        else actions.append(check, ...(registrationStatus === 'banned' ? [] : [disconnect]));
-        detail.append(uiStatus(label, 'neutral'), paragraph('The RadioResolve owner approves each VCE sender. Devices enroll on RadioResolve’s HTTPS site.'), actions);
-        if (registration.sender_id) {
+        if (!needsApproval()) actions.append(check);
+        if (registration.sender_id && !['banned', 'deregistered'].includes(registrationStatus)) actions.append(disconnect);
+        detail.append(actions);
+        if (registration.moderation_reason) detail.append(notice(registration.moderation_reason));
+        if (registration.sender_id && registrationStatus !== 'deregistered') {
           const reference = node('dl', 'ui-fact-list');
           reference.append(node('dt', '', 'Registration reference'), node('dd', '', registration.sender_id));
-          detail.append(reference);
+          const more = node('details'); more.append(node('summary', '', 'Registration details'), reference);
+          detail.append(more);
         }
       } else {
-        detail.append(paragraph('Requires a domain name, trusted HTTPS, and public access to VCE. Choose this if you have configured port forwarding or a service such as Cloudflare.'));
+        detail.append(paragraph('Requires a public domain and HTTPS. Choose this if VCE is accessible through port forwarding or a service such as Cloudflare.'));
         const url = input(draft.site_url, 'url', true, 2048);
-        url.setAttribute('aria-label', 'VCE site URL');
         url.placeholder = 'https://vce.example.com';
         const testStatus = node('div');
         const test = button('Test public access', async () => {
           if (testing) return;
-          if (!validAlertSiteUrl(url.value.trim())) { testStatus.replaceChildren(notice('Enter a full HTTPS address with a domain name, then test again.', 'danger')); return; }
+          if (!validAlertSiteUrl(url.value.trim())) { testStatus.replaceChildren(notice('Enter an HTTPS domain address, then test again.', 'danger')); return; }
           testing = true;
           const controls = [...form.querySelectorAll('input,select,button')];
           const disabled = controls.map(control => control.disabled);
           controls.forEach(control => { control.disabled = true; });
           form.setAttribute('aria-busy', 'true');
-          testStatus.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Checking this VCE installation from outside your network…'));
+          testStatus.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Checking public access…'));
           const testedUrl = url.value.trim();
           try {
             const result = await write(ADMIN + '/public-test', 'POST', { site_url: testedUrl });
@@ -586,67 +651,53 @@ export function createAlertsWorkspace(deps) {
             proof = result.test_token ? { url: testedUrl, token: result.test_token } : null;
             const passed = proof && ['passed', 'success', 'verified'].includes(String(result.public_access?.status).toLowerCase());
             if (!passed) proof = null;
-            testStatus.replaceChildren(notice(result.public_access?.message || (passed ? 'Public HTTPS access was verified for this VCE installation.' : 'Public access could not be verified. Check the address and HTTPS setup, then test again.'), passed ? '' : 'danger'));
-          } catch (error) { proof = null; testStatus.replaceChildren(notice(error.message || 'Public access could not be tested. Try again.', 'danger')); }
+            testStatus.replaceChildren(notice(passed ? 'Public access verified.' : result.public_access?.message || 'Couldn’t verify VCE. Check the address and HTTPS, then try again.', passed ? '' : 'danger'));
+          } catch (error) { proof = null; testStatus.replaceChildren(notice(error.message || 'Couldn’t test public access. Try again.', 'danger')); }
           finally {
             controls.forEach((control, index) => { control.disabled = disabled[index]; });
             testing = false; form.removeAttribute('aria-busy'); updateSaveAvailability();
           }
         });
-        url.addEventListener('input', () => { draft.site_url = url.value.trim(); proof = null; updateSaveAvailability(); testStatus.replaceChildren(paragraph('Test this address before saving Direct delivery.')); });
-        detail.append(formField('VCE site URL', url, 'Enter the public HTTPS address, including its port when needed.'), test,
-          testStatus, paragraph('The outside check requires a valid HTTPS certificate, public access, and confirmation of this VCE installation.'));
+        url.addEventListener('input', () => { draft.site_url = url.value.trim(); proof = null; updateSaveAvailability(); testStatus.replaceChildren(); });
+        const testRow = node('div', 'alerts-direct-test'); testRow.append(formField('VCE site URL', url), test);
+        detail.append(testRow, testStatus);
       }
-      detail.append(paragraph('Existing topic choices remain saved. Changing delivery mode requires devices to reconnect notifications.'));
       updateSaveAvailability();
     }
     async function registrationAction(method) {
-      const controls = [...detail.querySelectorAll('button')]; controls.forEach(control => { control.disabled = true; });
+      const controls = [...form.querySelectorAll('input,select,button')];
+      const disabled = controls.map(control => control.disabled);
+      controls.forEach(control => { control.disabled = true; });
       try {
         snapshot.registration = method === 'GET' ? await read(ADMIN + '/registration') : await write(ADMIN + '/registration', method, method === 'POST' ? {} : undefined);
         renderMode();
-      } catch (error) { status.replaceChildren(notice(error.message || 'Sender registration could not be updated. Try again.', 'danger')); }
-      finally { controls.forEach(control => { control.disabled = false; }); }
+      } catch { status.replaceChildren(notice('Couldn’t update approval. Try again.', 'danger')); }
+      finally { controls.forEach((control, index) => { control.disabled = disabled[index]; }); updateSaveAvailability(); }
     }
     renderMode();
-    form.addEventListener('submit', event => {
+    form.addEventListener('submit', async event => {
       event.preventDefault();
+      if (saved.mode !== draft.mode && !await confirmAction('Switch notification delivery? Connected devices will need to reconnect.',
+        { title: 'Change delivery', confirmLabel: 'Switch delivery' })) return;
+      const requestApproval = draft.mode === 'proxy' && needsApproval();
       void workflow.save(async () => {
         if (draft.mode === 'direct' && (!proof || proof.url !== draft.site_url || !validAlertSiteUrl(draft.site_url))) {
-          throw new Error('Test public access for this VCE address before saving Direct delivery.');
+          throw new Error('Test public access before saving.');
         }
-        return write(ADMIN + '/config', 'PUT', { revision: saved.revision, ...draft,
+        const value = await write(ADMIN + '/config', 'PUT', { revision: saved.revision, ...draft,
           site_url: draft.mode === 'direct' ? draft.site_url : '', test_token: draft.mode === 'direct' ? proof.token : '' });
-      }, { onSuccess: value => { snapshot = value; renderSetup(); feedback.replaceChildren(node('div', 'ui-feedback', 'Push settings saved.')); } });
+        saved = value;
+        snapshot = value;
+        if (requestApproval) {
+          await write(ADMIN + '/registration', 'POST', { sender_label: draft.sender_label });
+          return read(ADMIN + '/config');
+        }
+        return value;
+      }, { saving: requestApproval ? 'Requesting approval…' : 'Saving…',
+        onSuccess: value => { snapshot = value; renderSetup(); feedback.replaceChildren(node('div', 'ui-feedback', requestApproval ? 'Approval requested.' : 'Settings saved.')); },
+        onError: error => ({ state: 'error', message: error.message || (requestApproval ? 'Couldn’t request approval. Try again.' : 'Couldn’t save settings. Try again.') }) });
     });
-    body.replaceChildren(section('Delivery settings', form));
-  }
-
-  function prefsDefault() { return { paused: false, quiet_enabled: false, quiet_start: '', quiet_end: '', time_zone: timeZone() }; }
-  function prefsFields(prefs) {
-    const fields = node('div', 'alerts-form');
-    const quietFields = node('div', 'alerts-field-grid');
-    const start = input(prefs.quiet_start || '22:00', 'time', true);
-    const end = input(prefs.quiet_end || '07:00', 'time', true);
-    const zone = input(prefs.time_zone || timeZone(), 'text', true, 80);
-    start.addEventListener('input', () => { prefs.quiet_start = start.value; });
-    end.addEventListener('input', () => { prefs.quiet_end = end.value; });
-    zone.addEventListener('input', () => { prefs.time_zone = zone.value; });
-    function updateQuiet() {
-      quietFields.hidden = !prefs.quiet_enabled;
-      start.disabled = end.disabled = !prefs.quiet_enabled;
-    }
-    fields.append(toggle('Pause notifications', prefs.paused, value => { prefs.paused = value; }).element,
-      toggle('Quiet hours', prefs.quiet_enabled, value => {
-        prefs.quiet_enabled = value;
-        prefs.quiet_start = value ? start.value : '';
-        prefs.quiet_end = value ? end.value : '';
-        updateQuiet();
-      }).element);
-    quietFields.append(formField('From', start), formField('Until', end));
-    fields.append(quietFields, formField('Time zone', zone, 'For example, America/New_York.'));
-    updateQuiet();
-    return fields;
+    body.replaceChildren(section('Delivery', form));
   }
 
   async function renderPublic() {
@@ -737,11 +788,10 @@ export function createAlertsWorkspace(deps) {
     const form = node('form', 'alerts-form');
     const status = node('div');
     const fields = node('div', 'alerts-form');
-    const save = button(device?.status === 'connected' ? 'Save preferences' : 'Connect notifications', null, true); save.type = 'submit';
+    const save = button(device?.status === 'connected' ? 'Save topics' : 'Connect notifications', null, true); save.type = 'submit';
     const cancel = button('Close', () => modal?.close());
     let currentDevice = null;
     let topicIds = initialTopic ? [initialTopic] : [];
-    let prefs = prefsDefault();
     let localPollController = null;
     let pollFailures = 0;
     let workflow;
@@ -761,17 +811,15 @@ export function createAlertsWorkspace(deps) {
           forgetAlertDevice(window.localStorage); device = null;
         } else {
           topicIds = Array.isArray(pending.topic_ids) ? pending.topic_ids.slice() : topicIds;
-          prefs = { ...prefsDefault(), ...pending.prefs };
         }
       }
       if (device?.status === 'connected') {
         currentDevice = await requestJson(PUBLIC + '/subscriptions/me', { headers: authorize(), csrf: false, signal, page: false });
         topicIds = [...new Set([...(currentDevice.topic_ids || []), ...(initialTopic ? [initialTopic] : [])])];
-        prefs = { ...prefsDefault(), ...currentDevice.prefs };
       }
     } catch (error) {
       if (error?.status === 403 || error?.status === 404) { forgetAlertDevice(window.localStorage); device = null; }
-      else { workflow.showFeedback('error', 'Device preferences could not be loaded. Close and try again.'); return; }
+      else { workflow.showFeedback('error', 'Couldn’t load subscriptions. Close and try again.'); return; }
     }
     function renderFields() {
       fields.replaceChildren();
@@ -798,9 +846,9 @@ export function createAlertsWorkspace(deps) {
         const label = node('label', 'alerts-check-row'); label.append(check, node('span', '', topic.name + (!topic.enabled ? ' · paused' : ''))); choices.append(label);
       });
       if (topicIds.some(id => !publicIds.has(id))) choices.append(paragraph('Some saved subscriptions are unavailable to listeners. Their choices are retained.'));
-      fields.append(choices, prefsFields(prefs));
+      fields.append(choices);
       if (needsReconnect && currentDevice && !directRenewal && !proxyRenewal) fields.append(button('Disconnect & reconnect', async () => {
-        if (!await confirmAction('Disconnect the previous notification connection? You can then connect again using the selected available topics and these preferences.',
+        if (!await confirmAction('Disconnect the previous connection, then reconnect with your selected topics?',
           { title: 'Reconnect notifications', confirmLabel: 'Disconnect previous connection', tone: 'danger' })) return;
         workflow.setReady(true);
         await workflow.save(async () => {
@@ -818,7 +866,7 @@ export function createAlertsWorkspace(deps) {
           onError: error => { workflow.setReady(false); return { state: 'error', message: error.message || 'The previous connection could not be disconnected. Try again.' }; } });
       }));
       if (proxyRenewal) {
-        save.textContent = 'Save preferences';
+        save.textContent = 'Save topics';
         const settingsUrl = 'https://radioresolve.com/vce-push/settings.php';
         const qr = enrollmentQrCanvas(document, settingsUrl);
         qr.setAttribute('aria-label', 'Scan to open RadioResolve notification settings');
@@ -826,20 +874,19 @@ export function createAlertsWorkspace(deps) {
         open.target = '_blank'; open.rel = 'noopener noreferrer';
         const guide = node('div', 'alerts-form ui-surface-inset');
         guide.append(paragraph('Open notification settings in RadioResolve on the phone and choose Reconnect notifications. On iPhone, open RadioResolve from its Home Screen icon.'),
-          qr, open, paragraph('Your topic choices and quiet hours stay saved while the phone reconnects.'));
+          qr, open);
         fields.append(guide);
       } else if (!currentDevice || needsReconnect) {
         save.textContent = 'Connect notifications';
-        if (snapshot.mode === 'proxy') fields.append(notice('Continue on RadioResolve to enable notifications on this phone. RadioResolve hosts alert details when this VCE installation is private.'));
-        else {
+        if (snapshot.mode === 'direct') {
           const support = directPushSupport(window);
           if (!support.supported) fields.append(notice(support.message, 'warning'));
           if (support.install) fields.append(paragraph('On iPhone, use Share → Add to Home Screen, then reopen VCE from its icon.'));
           if (window.Notification?.permission === 'denied') fields.append(notice('Notifications are blocked for this site. Allow them in your browser or phone settings, then reconnect.', 'warning'));
         }
       } else {
-        save.textContent = 'Save preferences';
-        fields.append(uiStatus(prefs.paused ? 'Paused on this device' : 'Connected', 'neutral'));
+        save.textContent = 'Save topics';
+        fields.append(uiStatus('Connected', 'neutral'));
       }
       if (currentDevice && !deliveryChanged) fields.append(button('Unsubscribe this device', async () => {
           if (!await confirmAction('Stop all alert notifications on this device?', { title: 'Unsubscribe device', confirmLabel: 'Unsubscribe', tone: 'danger' })) return;
@@ -855,7 +902,7 @@ export function createAlertsWorkspace(deps) {
         }));
       if (device?.status === 'pending') {
         fields.append(paragraph(needsReconnect ? 'Finish the previous RadioResolve connection, then disconnect it here before reconnecting.' :
-          'Finish connecting on RadioResolve before changing these preferences.'));
+          'Finish connecting on RadioResolve before changing topics.'));
         fields.querySelectorAll('input,select,button').forEach(control => { control.disabled = true; });
         save.textContent = 'Waiting for device';
       }
@@ -882,7 +929,7 @@ export function createAlertsWorkspace(deps) {
         if (result.status === 'connected' || result.status === 'completed') {
           device = saveAlertDevice(window.localStorage, { ...device, id: result.device_id || result.id || device.id, status: 'connected' });
           currentDevice = await requestJson(PUBLIC + '/subscriptions/me', { headers: authorize(), csrf: false, signal, page: false });
-          topicIds = currentDevice.topic_ids || topicIds; prefs = { ...prefs, ...currentDevice.prefs };
+          topicIds = currentDevice.topic_ids || topicIds;
           workflow.showFeedback('status', 'Notifications connected.'); renderFields();
         } else if (['expired', 'rejected', 'disconnected', 'cancelled'].includes(result.status)) {
           forgetAlertDevice(window.localStorage); device = null;
@@ -944,8 +991,7 @@ export function createAlertsWorkspace(deps) {
       event.preventDefault();
       void workflow.save(async () => {
         if (!topicIds.length) throw new Error('Choose at least one topic.');
-        const settings = { topic_ids: topicIds, prefs: { ...prefs,
-          quiet_start: prefs.quiet_enabled ? prefs.quiet_start : '', quiet_end: prefs.quiet_enabled ? prefs.quiet_end : '' } };
+        const settings = { topic_ids: topicIds };
         if (currentDevice && currentDevice.mode === snapshot.mode) {
           if (snapshot.mode === 'direct' && (directConnection.state === 'reconnect' || currentDevice.status === 'reconnect_required')) {
             currentDevice = await write(PUBLIC + '/subscriptions/me/refresh', 'POST',
@@ -970,7 +1016,7 @@ export function createAlertsWorkspace(deps) {
           status: result.status === 'pending' ? 'pending' : 'connected', expires_at_ms: result.expires_at_ms });
         if (device.mode === 'direct') await syncDirectWorkerDevice(navigator, device);
         return result;
-      }, { saving: currentDevice ? 'Saving preferences…' : 'Connecting notifications…', success: 'Preferences saved.',
+      }, { saving: currentDevice ? 'Saving topics…' : 'Connecting notifications…', success: 'Topics saved.',
         onSuccess: async result => {
           if (result.managed) { localModal.setDirty(false); localModal.close(); await renderPublic(); return; }
           if (result.status === 'pending') { localModal.setDirty(false); showEnrollmentLink(result); renderFields(); }

@@ -90,12 +90,29 @@ public final class TopicAlertsHttpController
         }
         catch(IllegalStateException exception)
         {
-            ApiHttpResponse.sendError(exchange, 409, "alerts_not_ready", "Notifications are not ready. Ask the administrator to finish push setup.");
+            if(admin) ApiHttpResponse.sendError(exchange, 503, "alerts_unavailable", "Notifications are temporarily unavailable. Try again later.");
+            else ApiHttpResponse.sendError(exchange, 409, "alerts_not_ready", "Notifications are not ready. Ask the administrator to finish push setup.");
+        }
+        catch(io.github.dsheirer.alerts.delivery.RadioResolvePushClient.GatewayException exception)
+        {
+            int status = exception.status();
+            if(status == 401 || status == 403)
+                ApiHttpResponse.sendError(exchange, 403, "gateway_not_approved", "The cloud connection is not approved. Check the approval status.");
+            else if(status == 429)
+                ApiHttpResponse.sendError(exchange, 429, "gateway_busy", "Too many requests. Try again later.");
+            else if(status == 404 || status >= 500)
+                ApiHttpResponse.sendError(exchange, 503, "gateway_unavailable", "The cloud notification service is unavailable. Try again later.");
+            else ApiHttpResponse.sendError(exchange, 422, "gateway_request_rejected", "The cloud notification service did not accept this request. Check the notification settings and try again.");
+        }
+        catch(IOException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 503, "gateway_unavailable",
+                "Notifications are temporarily unavailable. Try again later.");
         }
         catch(Exception exception)
         {
             if(exception instanceof InterruptedException) Thread.currentThread().interrupt();
-            ApiHttpResponse.sendError(exchange, 503, "alerts_unavailable", "Alert settings could not be completed. Try again shortly.");
+            ApiHttpResponse.sendError(exchange, 503, "alerts_unavailable", "Notifications are temporarily unavailable. Try again later.");
         }
     }
 
@@ -152,7 +169,9 @@ public final class TopicAlertsHttpController
             case "/registration" -> {
                 if("POST".equals(method))
                 {
-                    WebHttpSupport.readJsonObject(exchange, Set.of()); send(exchange, mPush.register());
+                    JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("sender_label"));
+                    String senderLabel = body.has("sender_label") ? text(body, "sender_label", 80) : null;
+                    send(exchange, mPush.register(senderLabel)); mConfigurationChanged.run();
                 }
                 else if("GET".equals(method)) send(exchange, mPush.refreshRegistration());
                 else if("DELETE".equals(method)) { mPush.deregister(); send(exchange, mPush.registration()); }
@@ -212,7 +231,7 @@ public final class TopicAlertsHttpController
                 if(!method(exchange, "POST") || !WebHttpSupport.requireNoQuery(exchange)) return;
                 if(!admit(exchange)) return;
                 JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("topic_ids", "prefs", "subscription"));
-                send(exchange, mPush.enroll(topicIds(body), body.path("prefs"), body.path("subscription")));
+                send(exchange, mPush.enroll(topicIds(body), body.path("subscription")));
             }
             case "/subscriptions/me" -> {
                 if(!WebHttpSupport.requireNoQuery(exchange)) return;
@@ -221,7 +240,7 @@ public final class TopicAlertsHttpController
                 else if("PUT".equals(method))
                 {
                     JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("topic_ids", "prefs"));
-                    mPush.updateDevice(token, topicIds(body), body.path("prefs"));
+                    mPush.updateDevice(token, topicIds(body));
                     send(exchange, publicDevice(mPush.managedDevice(token)));
                 }
                 else if("DELETE".equals(method)) { mPush.disconnect(token); send(exchange, Map.of("status", "disconnected")); }
@@ -268,9 +287,7 @@ public final class TopicAlertsHttpController
 
     private static Map<String,Object> publicDevice(AlertDevice device)
     {
-        return Map.of("device_id", device.id(), "topic_ids", device.topicIds(), "status", device.subscriptionExpired() ? "reconnect_required" : "connected", "mode", device.method(),
-            "prefs", Map.of("paused", device.paused(), "quiet_enabled", !device.quietStart().isEmpty(), "quiet_start", device.quietStart(),
-                "quiet_end", device.quietEnd(), "time_zone", device.timeZone()));
+        return Map.of("device_id", device.id(), "topic_ids", device.topicIds(), "status", device.subscriptionExpired() ? "reconnect_required" : "connected", "mode", device.method());
     }
 
     private synchronized boolean admit(HttpExchange exchange) throws IOException

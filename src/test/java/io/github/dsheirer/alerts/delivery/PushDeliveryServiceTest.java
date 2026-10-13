@@ -24,7 +24,7 @@ class PushDeliveryServiceTest
     private static final String REMOTE_A = "a".repeat(32), REMOTE_B = "b".repeat(32);
     @TempDir Path directory;
 
-    @Test void oneEventQueuesOneImmutableBatchAndPauseSuppressesOnlyThatPhone() throws Exception
+    @Test void oneEventQueuesOneImmutableBatchAndUnsubscribeSuppressesOnlyThatPhone() throws Exception
     {
         try(Fixture f = new Fixture(directory.resolve("batch.sqlite")))
         {
@@ -36,7 +36,7 @@ class PushDeliveryServiceTest
             assertEquals("Dispatch activity", original.path("alert_name").asText());
             assertEquals(List.of(REMOTE_A, REMOTE_B), JSON.convertValue(original.path("device_ids"), List.class));
             assertTrue(f.service.deliveriesForAlert(first.alertId()).stream().allMatch(d -> d.state().equals("queued")));
-            f.push.updateDevice(f.tokenB, List.of("fire"), JSON.valueToTree(Map.of("paused", true)));
+            f.push.updateDevice(f.tokenB, List.of());
             f.push.reconcileQueuedRelay();
             JsonNode changed = f.requests.getLast();
             assertEquals(original.path("device_ids"), changed.path("device_ids"));
@@ -97,7 +97,7 @@ class PushDeliveryServiceTest
         }
     }
 
-    @Test void relayExpiryAndRenewalKeepGuestTopicsAndQuietPreferences() throws Exception
+    @Test void relayExpiryAndRenewalKeepGuestTopicsWhileRetiredPreferencesAreIgnored() throws Exception
     {
         try(Fixture f = new Fixture(directory.resolve("renew-relay.sqlite")))
         {
@@ -116,7 +116,9 @@ class PushDeliveryServiceTest
             AlertDevice renewed = f.push.managedDevice(f.tokenA);
             assertFalse(renewed.subscriptionExpired());
             assertEquals(List.of("fire"), renewed.topicIds());
-            assertEquals("21:00", renewed.quietStart());
+            assertFalse(JSON.valueToTree(renewed).has("paused"));
+            assertFalse(JSON.valueToTree(renewed).has("quiet_start"));
+            assertFalse(JSON.valueToTree(renewed).has("time_zone"));
         }
     }
 
@@ -131,7 +133,7 @@ class PushDeliveryServiceTest
             f.push.enrollment("second-pairing", newToken);
             assertEquals(2, f.service.devices().size());
             assertEquals("phone-a", f.push.managedDevice(newToken).id());
-            assertTrue(f.push.managedDevice(newToken).paused());
+            assertEquals(List.of("fire"), f.push.managedDevice(newToken).topicIds());
             assertThrows(SecurityException.class, () -> f.push.managedDevice(f.tokenA));
         }
     }
@@ -155,8 +157,6 @@ class PushDeliveryServiceTest
             assertFalse(renewed.subscriptionExpired());
             assertEquals("direct-phone", renewed.id());
             assertEquals(List.of("fire"), renewed.topicIds());
-            assertTrue(renewed.paused());
-            assertEquals("22:00", renewed.quietStart());
         }
     }
 
@@ -200,11 +200,39 @@ class PushDeliveryServiceTest
         }
     }
 
+    @Test void registrationSavesTheRequestedNameWithoutUnnecessaryRevisionChanges() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("register-name.sqlite")))
+        {
+            long revision = f.service.configuration().revision();
+            f.push.register("New installation name");
+            assertEquals("New installation name", f.service.configuration().push().senderLabel());
+            assertEquals("New installation name", f.registrationRequest.path("sender_name").asText());
+            assertEquals(revision + 1, f.service.configuration().revision());
+            f.push.register("New installation name");
+            assertEquals(revision + 1, f.service.configuration().revision());
+            assertThrows(IllegalArgumentException.class, () -> f.push.register(""));
+        }
+    }
+
+    @Test void legacyPersonalPreferencesCannotSuppressAnExistingSubscription() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("retired-prefs.sqlite")))
+        {
+            f.push.updateDevice(f.tokenA, List.of("fire"), JSON.valueToTree(Map.of("paused", true,
+                "quiet_enabled", true, "quiet_start", "00:00", "quiet_end", "00:00", "time_zone", "invalid-retired-zone")));
+            var delivery = f.publish(); f.push.deliverRelayBatch(delivery);
+            assertTrue(f.requests.getFirst().path("suppressed_device_ids").isEmpty());
+            assertFalse(JSON.valueToTree(f.push.managedDevice(f.tokenA)).has("time_zone"));
+        }
+    }
+
     private static final class Fixture implements AutoCloseable
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
         final List<JsonNode> requests = new ArrayList<>(); final AtomicInteger alertStatus = new AtomicInteger(202), httpCalls = new AtomicInteger();
         final String tokenA = PublicAccessVerifier.token(), tokenB = PublicAccessVerifier.token();
+        JsonNode registrationRequest;
         JsonNode updates = JSON.valueToTree(Map.of("cursor", "0", "updates", List.of()));
         Fixture(Path database) throws Exception
         {
@@ -226,6 +254,7 @@ class PushDeliveryServiceTest
                     requests.add(JSON.readTree(exchange.getRequestBody())); status = alertStatus.get();
                     response = Map.of("alert_id", "remote-alert", "status", "queued");
                 }
+                else if(exchange.getRequestURI().getPath().equals("/senders")) { registrationRequest = JSON.readTree(exchange.getRequestBody()); response = Map.of("sender_id", "sender-fixture", "status", "approved"); }
                 else if(exchange.getRequestURI().getPath().equals("/senders/me")) response = Map.of("sender_id", "sender-fixture", "status", "approved");
                 else response = updates;
                 byte[] body = JSON.writeValueAsBytes(response); exchange.sendResponseHeaders(status, body.length);
