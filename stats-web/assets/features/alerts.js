@@ -1,11 +1,11 @@
 import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS, ALERT_TEMPLATE_FIELDS, cloneAlert,
   newAlertRule, newAlertCondition, alertRuleDescription, describeAlertConditions,
-  alertSourceChoices, alertActivityChoices,
+  alertSourceChoices, alertActivityChoices, alertActionLabel, alertPopupAction,
   visibleAlertTopics, availableAlertTopics, visibleAlertHistory, validAlertSiteUrl,
-  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=2';
+  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=3';
 import { readAlertDevice, saveAlertDevice, forgetAlertDevice } from './alerts-device-storage.js?v=1';
 import { reconcileDirectSubscription, syncDirectWorkerDevice } from './alerts-direct.js?v=1';
-import { enrollmentQrCanvas } from './alerts-qr.js?v=1';
+import { enrollmentQrCanvas } from './alerts-qr.js?v=2';
 import { receiverHealthAlertGroups } from '../core/receiver-health-alerts.js?v=3';
 
 const ADMIN = '/api/v1/admin/alerts';
@@ -15,7 +15,7 @@ const PAGE_SIZE = 30;
 // Reuse map: settings panels, shared tables, segmented controls, field builders,
 // notices, browsing pager, and the shared dirty/busy modal lifecycle own appearance.
 export function createAlertsWorkspace(deps) {
-  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton,
+  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
     identityPicker, createId, signal, view = 'topics', selectedTopic = '', selectedAlert = '' } = deps;
@@ -100,9 +100,54 @@ export function createAlertsWorkspace(deps) {
   function catalogPanel(title, rows, columns, emptyText, type, action) {
     const actions = sectionActionHost(action);
     const panel = section(title, null, actions);
-    panel.append(table(rows, columns, emptyText,
-      { type, layoutMenuHost: actions, rowKey: row => row.id }));
+    const contents = node('div');
+    const controller = {};
+    let offset = 0;
+    const renderPage = () => {
+      const visible = rows.slice(offset, offset + PAGE_SIZE);
+      contents.replaceChildren(table(visible, columns, emptyText, {
+        type, controller, layoutMenuHost: actions, rowKey: row => row.id,
+        recordList: true, sortable: false, tableClass: 'ui-record-list-compact alerts-catalog',
+        layoutMenuLabels: { trigger: 'Displayed fields', title: 'Displayed fields', item: 'field',
+          description: 'Show and arrange catalog details.', reset: 'Reset displayed fields' }
+      }));
+      if (rows.length > PAGE_SIZE) contents.append(browsingWorkflows.createBrowsingPager({ node,
+        ariaLabel: title + ' pages', countText: browsingWorkflows.pageRangeText({
+          offset, visible: visible.length, total: rows.length, label: title }),
+        previous: { enabled: offset > 0, onClick: () => { offset -= PAGE_SIZE; renderPage(); } },
+        next: { enabled: offset + visible.length < rows.length,
+          onClick: () => { offset += PAGE_SIZE; renderPage(); } }
+      }));
+    };
+    renderPage();
+    panel.append(contents);
     return panel;
+  }
+
+  function catalogName(name, description, action, builtIn = false) {
+    const copy = node('div', 'ui-heading-group alerts-catalog-copy');
+    const title = node('div', 'ui-record-title alerts-catalog-heading');
+    const nameLink = button(name, action);
+    nameLink.className = 'ui-button ui-button-link';
+    title.append(nameLink);
+    if (builtIn) title.append(uiStatus('Built-in', 'neutral'));
+    copy.append(title);
+    if (description) copy.append(paragraph(description));
+    return copy;
+  }
+  function catalogDelete(label, action) {
+    const control = iconButton('icon-trash', label, 'ui-button ui-button-secondary ui-icon-button ui-button-danger-quiet');
+    control.addEventListener('click', action);
+    return control;
+  }
+  function catalogPublicTopic(topic) {
+    const label = 'View public topic: ' + topic.name;
+    const control = node('a', 'ui-button ui-button-secondary ui-icon-button');
+    control.href = href('topics', { topic: topic.id });
+    control.setAttribute('aria-label', label);
+    control.title = label;
+    control.append(iconGlyph('icon-open-details'));
+    return control;
   }
   function replaceSnapshot(value) {
     snapshot = value;
@@ -131,29 +176,36 @@ export function createAlertsWorkspace(deps) {
       const add = button('Create alert rule', () => void editRule(), true);
       add.disabled = !snapshot.topics?.length;
       body.append(catalogPanel('Alert rules', snapshot.rules || [], [
-        { id: 'name', label: 'Rule', render: rule => button(rule.name, () => void editRule(rule)) },
+        { id: 'name', label: 'Rule', essential: true, className: 'alerts-catalog-title',
+          render: rule => catalogName(rule.name, alertRuleDescription(rule), () => void editRule(rule)) },
         { id: 'topic', label: 'Topic', render: rule => topicName(rule.topic_id) },
-        { id: 'trigger', label: 'When', render: rule => alertRuleDescription(rule) },
         { id: 'enabled', label: 'State', render: rule => uiStatus(rule.enabled ? 'Enabled' : 'Paused', 'neutral') },
-        { id: 'actions', label: 'Actions', render: rule => button('Delete', () => void deleteRule(rule)) }
+        { id: 'actions', label: 'Actions', essential: true, className: 'ui-record-action alerts-catalog-actions',
+          render: rule => catalogDelete('Delete rule: ' + rule.name, () => void deleteRule(rule)) }
       ], 'No alert rules yet. Create a rule to publish activity to a topic.', 'alert-rules', add));
-      body.append(paragraph('Administrator alerts also receive the existing tuner and system health alerts.'));
     } else {
       body.append(catalogPanel('Topics', snapshot.topics || [], [
-        { id: 'name', label: 'Topic', render: topic => button(topic.name, () => void editTopic(topic)) },
-        { id: 'visibility', label: 'Listeners', render: topic => uiStatus(topic.visible ? 'Available to listeners' : 'Hidden from listeners', 'neutral') },
-        { id: 'enabled', label: 'State', render: topic => uiStatus(topic.enabled ? 'Enabled' : 'Paused', 'neutral') },
-        { id: 'rules', label: 'Rules', render: topic => String(topic.rule_count || 0) },
-        { id: 'subscriptions', label: 'Subscriptions', render: topic => String(topic.subscription_count || 0) },
-        { id: 'actions', label: 'Actions', render: topic => {
-          const actions = actionRow();
-          if (topic.visible) actions.append(link('View public topic', href('topics', { topic: topic.id })));
-          if (!topic.built_in) actions.append(button('Delete', () => void deleteTopic(topic)));
+        { id: 'name', label: 'Topic', essential: true, className: 'alerts-catalog-title',
+          render: topic => catalogName(topic.name, topic.description, () => void editTopic(topic), topic.built_in) },
+        { id: 'visibility', label: 'Availability', render: topic => {
+          const status = node('div', 'alerts-catalog-status');
+          status.append(uiStatus(topic.visible ? 'Available to listeners' : 'Hidden from listeners', 'neutral'));
+          if (!topic.enabled) status.append(uiStatus('Paused', 'neutral'));
+          return status;
+        } },
+        { id: 'following', label: 'Following', render: topic => {
+          const rules = Number(topic.rule_count || 0).toLocaleString();
+          const subscriptions = Number(topic.subscription_count || 0).toLocaleString();
+          return `${rules} ${Number(topic.rule_count || 0) === 1 ? 'rule' : 'rules'} · ${subscriptions} ${Number(topic.subscription_count || 0) === 1 ? 'subscription' : 'subscriptions'}`;
+        } },
+        { id: 'actions', label: 'Actions', essential: true, className: 'ui-record-action alerts-catalog-actions', render: topic => {
+          const actions = node('div', 'alerts-catalog-action-row');
+          if (topic.visible) actions.append(catalogPublicTopic(topic));
+          if (!topic.built_in) actions.append(catalogDelete('Delete topic: ' + topic.name, () => void deleteTopic(topic)));
           return actions;
         } }
       ], 'No topics yet. Create one for listeners to follow.', 'alert-topics',
       button('Create topic', () => void editTopic(), true)));
-      body.append(paragraph('Making a topic available lets anyone with this VCE address read its alerts and subscribe without an account.'));
     }
   }
 
@@ -173,6 +225,7 @@ export function createAlertsWorkspace(deps) {
   async function editTopic(existing = null) {
     const draft = existing ? cloneAlert(existing) : { id: createId(), name: '', description: '', visible: true, enabled: true, built_in: false };
     const revision = snapshot.revision;
+    let builtinActionEnabled = snapshot.builtin_action_button_enabled === true;
     const form = node('form', 'alerts-form');
     const name = input(draft.name, 'text', true, 100);
     name.disabled = draft.built_in === true;
@@ -188,7 +241,8 @@ export function createAlertsWorkspace(deps) {
     const save = button(existing ? 'Save topic' : 'Create topic', null, true);
     save.type = 'submit';
     form.append(formField('Topic name', name), formField('Description', description), visible.element, enabled.element);
-    if (draft.built_in) form.append(notice('Administrator alerts receive the existing tuner and system health alerts.'));
+    if (draft.built_in) form.append(notice('Administrator alerts receive the existing tuner and system health alerts.'),
+      toggle('Show action button', builtinActionEnabled, value => { builtinActionEnabled = value; }, 'Opens Live for tuner and system alerts.').element);
     form.append(status, modalFooter(cancel, save));
     modal = openReadOnlyModal(existing ? 'Edit topic' : 'Create topic', form,
       { id: 'alert-topic-editor', className: 'modal-size-small' });
@@ -205,7 +259,8 @@ export function createAlertsWorkspace(deps) {
         await workflow.save(async () => {
         const topic = { id: draft.id, name: name.value.trim(), description: description.value.trim(),
           visible: draft.visible, enabled: draft.enabled, built_in: draft.built_in };
-        return write(ADMIN + '/topics', existing ? 'PUT' : 'POST', { revision, topic });
+        return write(ADMIN + '/topics', existing ? 'PUT' : 'POST', { revision, topic,
+          ...(draft.built_in ? { builtin_action_button_enabled: builtinActionEnabled } : {}) });
       }, { onSuccess: value => { replaceSnapshot(value); localModal.setDirty(false); localModal.close(); } });
       })();
     });
@@ -304,6 +359,7 @@ export function createAlertsWorkspace(deps) {
       renderScope();
       renderConditions();
       renderTiming();
+      updatePreview();
       capabilityCopy.hidden = value !== 'tone';
       healthCopy.hidden = value !== 'health';
     });
@@ -566,7 +622,16 @@ export function createAlertsWorkspace(deps) {
     const previewTitle = node('h3'); const previewBody = paragraph('');
     const examples = { talkgroup: 'Fire Tactical', radio: 'Engine 12', site: 'North site', channel: 'Dispatch', vce: 'VCE installation', issue: 'Tuner disconnected', time: '14:32' };
     const expand = value => value.replace(/\{([a-z_]+)\}/g, (match, key) => examples[key] || match);
-    const updatePreview = () => { previewTitle.textContent = expand(title.value); previewBody.textContent = expand(text.value); };
+    const previewAction = button('', null, true); previewAction.disabled = true;
+    const previewActions = actionRow(previewAction); previewActions.classList.add('ui-action-row-start');
+    function updatePreview() {
+      previewTitle.textContent = expand(title.value); previewBody.textContent = expand(text.value);
+      const kind = ({ call: 'talkgroup', emergency: 'radio', paging: 'radio', affiliation: 'radio', command: 'radio',
+        event: 'channel', tone: 'channel', dcs: 'channel', health: 'live' })[draft.trigger];
+      previewAction.textContent = alertActionLabel(kind);
+      if (draft.action_button_enabled) previewCard.append(previewActions);
+      else previewActions.remove();
+    }
     previewCopy.append(previewTitle, previewBody);
     previewCard.append(previewCopy);
     preview.append(node('h3', 'ui-section-heading', 'Preview'), previewCard);
@@ -576,6 +641,9 @@ export function createAlertsWorkspace(deps) {
       node('div', 'ui-section-body', ALERT_TEMPLATE_FIELDS.map(field => `{${field}}`).join(', ')));
     const compose = node('div', 'alerts-notification-compose');
     compose.append(formField('Title', title), formField('Notification text', text), templateHelp,
+      toggle('Show action button', draft.action_button_enabled === true, value => {
+        draft.action_button_enabled = value; updatePreview();
+      }, 'The destination follows the alert type and available public pages.').element,
       selectField('Open when tapped', [['details', 'Alert details'], ['listen', 'Open VCE Listen view (Direct)']], draft.click_action,
         value => { draft.click_action = value; }, null, 'Cloud notifications open the hosted alert page.').element);
     const notificationLayout = node('div', 'alerts-notification-layout');
@@ -613,12 +681,16 @@ export function createAlertsWorkspace(deps) {
     const draft = { enabled: saved.enabled, mode: saved.mode, site_url: saved.site_url || '', sender_label: saved.sender_label || 'VCE installation' };
     let proof = null;
     let testing = false;
-    const form = node('form', 'alerts-form settings-page-form ui-settings-form');
+    const form = node('form', 'alerts-form ui-settings-form ui-settings-form-plain');
+    const setup = node('div', 'alerts-setup-layout');
+    const fields = node('div', 'alerts-form ui-section-body');
+    const connection = node('div', 'alerts-form ui-section-body');
+    const connectionDetail = node('div', 'alerts-form');
     const status = node('div');
     const save = button('Save settings', null, true); save.type = 'submit';
     const enabled = toggle('Enable push notifications', draft.enabled, value => { draft.enabled = value; });
     const deliveryStatus = node('div');
-    const header = node('div', 'alerts-delivery-header'); header.append(enabled.element, deliveryStatus);
+    connection.append(deliveryStatus, connectionDetail);
     const senderName = input(draft.sender_label, 'text', true, 80);
     senderName.addEventListener('input', () => {
       draft.sender_label = senderName.value.trim();
@@ -627,9 +699,12 @@ export function createAlertsWorkspace(deps) {
     const mode = uiSegmentedControl([{ value: 'proxy', label: 'Cloud · Recommended' }, { value: 'direct', label: 'Direct' }],
       draft.mode, value => { draft.mode = value; renderMode(); workflow.setDirty(true); });
     mode.setAttribute('aria-label', 'Notification delivery');
+    const modeHost = node('div', 'alerts-delivery-choice'); modeHost.append(mode);
     const detail = node('div', 'alerts-form');
     const footer = node('footer', 'settings-form-footer'); footer.append(status, save);
-    form.append(header, formField('VCE name', senderName), mode, detail, footer);
+    fields.append(enabled.element, formField('VCE name', senderName), modeHost, detail, footer);
+    setup.append(section('Delivery', fields), section('Connection', connection));
+    form.append(setup);
     const workflow = createFormWorkflow({ form, submit: save, feedback: status });
     function needsApproval() {
       if (snapshot.registration?.status === 'banned') return false;
@@ -642,15 +717,18 @@ export function createAlertsWorkspace(deps) {
     }
     function renderMode() {
       detail.replaceChildren();
+      connectionDetail.replaceChildren();
       if (draft.mode === 'proxy') {
-        detail.append(paragraph('Sends push notifications through the cloud to your device. Choose this if you do not expose VCE for public access.'),
+        const explanation = node('div', 'ui-heading-group');
+        explanation.append(paragraph('Sends push notifications through the cloud to your device. Choose this if you do not expose VCE for public access.'),
           paragraph('Usage is subject to approval. Most requests are granted within 24 hours. Abuse is subject to ban.'));
+        detail.append(explanation);
         const registration = snapshot.registration || {};
         const registrationStatus = String(registration.status).toLowerCase();
         const label = ({ approved: 'Approved', pending: 'Awaiting approval', rejected: 'Not approved', banned: 'Banned',
           deregistered: 'Deregistered', unregistered: 'Not requested' })[registrationStatus] || 'Not requested';
         deliveryStatus.replaceChildren(uiStatus(label, 'neutral'));
-        const actions = actionRow();
+        const actions = actionRow(); actions.classList.add('ui-action-row-start');
         const check = button('Check status', () => void registrationAction('GET'));
         const disconnect = button('Disconnect cloud', async () => {
           if (await confirmAction('Stop cloud notifications for this VCE installation?',
@@ -658,28 +736,40 @@ export function createAlertsWorkspace(deps) {
         });
         if (!needsApproval()) actions.append(check);
         if (registration.sender_id && !['banned', 'deregistered'].includes(registrationStatus)) actions.append(disconnect);
-        detail.append(actions);
-        if (registration.moderation_reason) detail.append(notice(registration.moderation_reason));
+        connectionDetail.append(actions);
+        if (registration.moderation_reason) connectionDetail.append(notice(registration.moderation_reason));
         if (registration.sender_id && registrationStatus !== 'deregistered') {
           const reference = node('dl', 'ui-fact-list');
           reference.append(node('dt', '', 'Registration reference'), node('dd', '', registration.sender_id));
-          const more = node('details'); more.append(node('summary', '', 'Registration details'), reference);
-          detail.append(more);
+          const more = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
+          const moreBody = node('div', 'ui-section-body'); moreBody.append(reference);
+          more.append(node('summary', 'ui-section-summary', 'Registration details'), moreBody);
+          connectionDetail.append(more);
         }
       } else {
-        detail.append(paragraph('Requires a public domain and HTTPS. Choose this if VCE is accessible through port forwarding or a service such as Cloudflare.'));
+        const explanation = node('div', 'ui-heading-group');
+        explanation.append(paragraph('Requires a public domain and HTTPS. Choose this if VCE is accessible through port forwarding or a service such as Cloudflare.'));
+        detail.append(explanation);
         const url = input(draft.site_url, 'url', true, 2048);
         url.placeholder = 'https://vce.example.com';
         const testStatus = node('div');
+        testStatus.setAttribute('role', 'status');
+        testStatus.setAttribute('aria-live', 'polite');
+        testStatus.hidden = true;
+        const showTestStatus = content => {
+          testStatus.replaceChildren(content);
+          testStatus.hidden = false;
+          testStatus.scrollIntoView({ block: 'nearest' });
+        };
         const test = button('Test public access', async () => {
           if (testing) return;
-          if (!validAlertSiteUrl(url.value.trim())) { testStatus.replaceChildren(notice('Enter an HTTPS domain address, then test again.', 'danger')); return; }
+          if (!validAlertSiteUrl(url.value.trim())) { showTestStatus(notice('Enter an HTTPS domain address, then test again.', 'danger')); return; }
           testing = true;
           const controls = [...form.querySelectorAll('input,select,button')];
           const disabled = controls.map(control => control.disabled);
           controls.forEach(control => { control.disabled = true; });
           form.setAttribute('aria-busy', 'true');
-          testStatus.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Checking public access…'));
+          showTestStatus(node('div', 'ui-feedback ui-feedback-loading', 'Checking public access…'));
           const testedUrl = url.value.trim();
           try {
             const result = await write(ADMIN + '/public-test', 'POST', { site_url: testedUrl });
@@ -687,14 +777,14 @@ export function createAlertsWorkspace(deps) {
             proof = result.test_token ? { url: testedUrl, token: result.test_token } : null;
             const passed = proof && ['passed', 'success', 'verified'].includes(String(result.public_access?.status).toLowerCase());
             if (!passed) proof = null;
-            testStatus.replaceChildren(notice(passed ? 'Public access verified.' : result.public_access?.message || 'Couldn’t verify VCE. Check the address and HTTPS, then try again.', passed ? '' : 'danger'));
-          } catch (error) { proof = null; testStatus.replaceChildren(notice(error.message || 'Couldn’t test public access. Try again.', 'danger')); }
+            showTestStatus(notice(passed ? 'Public access verified.' : result.public_access?.message || 'Couldn’t verify VCE. Check the address and HTTPS, then try again.', passed ? '' : 'danger'));
+          } catch (error) { proof = null; showTestStatus(notice(error.message || 'Couldn’t test public access. Try again.', 'danger')); }
           finally {
             controls.forEach((control, index) => { control.disabled = disabled[index]; });
             testing = false; form.removeAttribute('aria-busy'); updateSaveAvailability();
           }
         });
-        url.addEventListener('input', () => { draft.site_url = url.value.trim(); proof = null; updateSaveAvailability(); testStatus.replaceChildren(); });
+        url.addEventListener('input', () => { draft.site_url = url.value.trim(); proof = null; updateSaveAvailability(); testStatus.replaceChildren(); testStatus.hidden = true; });
         const testRow = node('div', 'alerts-direct-test'); testRow.append(formField('VCE site URL', url), test);
         detail.append(testRow, testStatus);
       }
@@ -733,7 +823,7 @@ export function createAlertsWorkspace(deps) {
         onSuccess: value => { snapshot = value; renderSetup(); feedback.replaceChildren(node('div', 'ui-feedback', requestApproval ? 'Approval requested.' : 'Settings saved.')); },
         onError: error => ({ state: 'error', message: error.message || (requestApproval ? 'Couldn’t request approval. Try again.' : 'Couldn’t save settings. Try again.') }) });
     });
-    body.replaceChildren(section('Delivery', form));
+    body.replaceChildren(form);
   }
 
   async function renderPublic() {
@@ -824,7 +914,12 @@ export function createAlertsWorkspace(deps) {
     const detail = node('div', 'alerts-form');
     detail.append(node('span', 'ui-field-detail', topicName(event.topic_id)), paragraph(event.body || ''),
       node('time', 'muted', formatTime(event.occurred_at ?? event.created_at_ms)));
-    if (event.click_action === 'listen') detail.append(link('Listen', href('live')));
+    const action = alertPopupAction(event);
+    if (action) {
+      const control = link(action.label, action.href);
+      control.className = 'ui-button ui-button-primary';
+      detail.append(actionRow(control));
+    }
     const alertModal = openReadOnlyModal(event.title || 'VCE alert', detail, { id: 'public-alert-detail', className: 'modal-size-small' });
     const first = detail.querySelector('a');
     void alertModal.ready.then(() => { if (first) alertModal.focus(first); });
@@ -833,6 +928,8 @@ export function createAlertsWorkspace(deps) {
   async function openSubscription(initialTopic = '') {
     const form = node('form', 'alerts-form');
     const status = node('div');
+    const connection = node('div');
+    status.hidden = connection.hidden = true;
     const fields = node('div', 'alerts-form');
     const save = button(device?.status === 'connected' ? 'Save topics' : 'Connect notifications', null, true); save.type = 'submit';
     const cancel = button('Close', () => modal?.close());
@@ -840,11 +937,12 @@ export function createAlertsWorkspace(deps) {
     let topicIds = initialTopic ? [initialTopic] : [];
     let localPollController = null;
     let pollFailures = 0;
+    let shownEnrollmentUrl = '';
     let workflow;
     const localModal = openReadOnlyModal('Alert subscription', form, { id: 'public-alert-subscription', className: 'modal-size-small',
       cleanup: () => { clearTimeout(pollTimer); localPollController?.abort(); } });
     modal = localModal;
-    form.append(fields, status, modalFooter(cancel, save));
+    form.append(connection, fields, status, modalFooter(cancel, save));
     await localModal.ready;
     workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal, ready: false });
     try {
@@ -869,6 +967,9 @@ export function createAlertsWorkspace(deps) {
     }
     function renderFields() {
       fields.replaceChildren();
+      const pending = device?.status === 'pending';
+      if (!pending) { connection.replaceChildren(); connection.hidden = true; shownEnrollmentUrl = ''; }
+      save.hidden = pending;
       const knownMode = currentDevice?.mode || device?.mode;
       const deliveryChanged = Boolean(knownMode && knownMode !== snapshot.mode);
       const directRenewal = Boolean(currentDevice?.mode === 'direct' && snapshot.mode === 'direct' &&
@@ -879,7 +980,12 @@ export function createAlertsWorkspace(deps) {
       if (needsReconnect) fields.append(notice(deliveryChanged ? 'Notification delivery changed. Reconnect this device to receive alerts.' :
         proxyRenewal ? 'Notifications need to be reconnected in RadioResolve on the phone.' :
           'The notification connection expired or is unavailable. Reconnect this device to receive alerts.', 'warning'));
-      const choices = node('fieldset', 'alerts-topic-choices'); choices.append(node('legend', '', 'Topics'));
+      const choices = node('section', 'ui-surface-inset alerts-subscription-topics');
+      const choicesTitle = node('h3', 'ui-section-heading', 'Topics');
+      choicesTitle.id = 'alert-subscription-topics-title';
+      choices.setAttribute('aria-labelledby', choicesTitle.id);
+      choices.append(choicesTitle);
+      const topicChoices = node('div', 'alerts-subscription-choices');
       const available = new Set(availableAlertTopics(snapshot.topics).map(topic => topic.id));
       const publicIds = new Set(visibleAlertTopics(snapshot.topics).map(topic => topic.id));
       visibleAlertTopics(snapshot.topics).forEach(topic => {
@@ -889,10 +995,26 @@ export function createAlertsWorkspace(deps) {
           topicIds = check.checked ? [...new Set([...topicIds, topic.id])] : topicIds.filter(id => id !== topic.id);
           if (!available.has(topic.id) && !check.checked) check.disabled = true;
         });
-        const label = node('label', 'alerts-check-row'); label.append(check, node('span', '', topic.name + (!topic.enabled ? ' · paused' : ''))); choices.append(label);
+        const label = node('label', 'alerts-check-row');
+        label.append(check, node('span', '', topic.name + (!topic.enabled ? ' · paused' : '')));
+        topicChoices.append(label);
       });
+      choices.append(topicChoices);
       if (topicIds.some(id => !publicIds.has(id))) choices.append(paragraph('Some saved subscriptions are unavailable to listeners. Their choices are retained.'));
-      fields.append(choices);
+      if (pending) {
+        const chosenNames = visibleAlertTopics(snapshot.topics).filter(topic => topicIds.includes(topic.id)).map(topic => topic.name);
+        const selected = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
+        const selectedSummary = node('summary', 'ui-section-summary');
+        const selectedCopy = node('span', 'ui-disclosure-copy');
+        selectedCopy.append(node('span', '', 'Selected topics'),
+          node('small', '', chosenNames.length ? chosenNames.join(' · ') : 'Saved topic choices are retained.'));
+        selectedSummary.append(selectedCopy);
+        const selectedBody = node('div', 'ui-section-body');
+        choicesTitle.hidden = true;
+        selectedBody.append(choices);
+        selected.append(selectedSummary, selectedBody);
+        fields.append(selected);
+      } else fields.append(choices);
       if (needsReconnect && currentDevice && !directRenewal && !proxyRenewal) fields.append(button('Disconnect & reconnect', async () => {
         if (!await confirmAction('Disconnect the previous connection, then reconnect with your selected topics?',
           { title: 'Reconnect notifications', confirmLabel: 'Disconnect previous connection', tone: 'danger' })) return;
@@ -946,9 +1068,8 @@ export function createAlertsWorkspace(deps) {
             forgetAlertDevice(window.localStorage); device = null;
           }, { success: 'This device is unsubscribed.', onSuccess: () => { localModal.setDirty(false); localModal.close(); void renderPublic(); } });
         }));
-      if (device?.status === 'pending') {
-        fields.append(paragraph(needsReconnect ? 'Finish the previous RadioResolve connection, then disconnect it here before reconnecting.' :
-          'Finish connecting on RadioResolve before changing topics.'));
+      if (pending) {
+        if (needsReconnect) fields.append(paragraph('Finish the previous RadioResolve connection, then disconnect it here before reconnecting.'));
         fields.querySelectorAll('input,select,button').forEach(control => { control.disabled = true; });
         save.textContent = 'Waiting for device';
       }
@@ -972,6 +1093,7 @@ export function createAlertsWorkspace(deps) {
           { headers: authorize(), csrf: false, signal: localPollController.signal, page: false });
         if (!form.isConnected || disposed) return;
         pollFailures = 0;
+        workflow.showFeedback('status', '');
         if (result.status === 'connected' || result.status === 'completed') {
           device = saveAlertDevice(window.localStorage, { ...device, id: result.device_id || result.id || device.id, status: 'connected' });
           currentDevice = await requestJson(PUBLIC + '/subscriptions/me', { headers: authorize(), csrf: false, signal, page: false });
@@ -1000,11 +1122,20 @@ export function createAlertsWorkspace(deps) {
     function showEnrollmentLink(result) {
       let url;
       try { url = new URL(result.enrollment_url); if (url.protocol !== 'https:' || url.username || url.password) return; } catch { return; }
-      const open = link('Continue on RadioResolve', url.href); open.target = '_blank'; open.rel = 'noopener noreferrer';
-      const panel = node('div', 'alerts-form');
-      panel.append(node('h3', 'ui-section-heading', 'Connect a phone'),
-        paragraph('Scan with your phone’s camera, or open RadioResolve on this phone. Enable notifications there and add RadioResolve to your Home Screen on iPhone.'),
-        enrollmentQrCanvas(document, url.href), open);
+      if (shownEnrollmentUrl === url.href && connection.childElementCount) return;
+      const open = link('Continue on RadioResolve', url.href);
+      open.className = 'ui-button ui-button-primary';
+      open.target = '_blank'; open.rel = 'noopener noreferrer';
+      const panel = node('section', 'alerts-subscription-connect');
+      const copy = node('div', 'alerts-form');
+      const heading = node('div', 'ui-heading-group');
+      heading.append(node('h3', 'ui-section-heading', 'Connect a phone'),
+        paragraph('Scan this code with your phone’s camera, or continue on this phone.'));
+      copy.append(heading, open,
+        node('p', 'ui-field-detail', 'Enable notifications in RadioResolve. On iPhone, add RadioResolve to your Home Screen and open it from that icon.'));
+      panel.append(enrollmentQrCanvas(document, url.href), copy);
+      const guide = node('div', 'alerts-form');
+      guide.append(panel, node('p', 'ui-field-detail', 'Waiting for your phone. The connection link expires after 15 minutes.'));
       if (result.code) {
         const code = input(result.code); code.readOnly = true;
         code.setAttribute('aria-label', 'Connection code');
@@ -1012,10 +1143,15 @@ export function createAlertsWorkspace(deps) {
           try { await navigator.clipboard.writeText(result.code); copy.textContent = 'Code copied'; }
           catch { code.focus(); code.select(); copy.textContent = 'Select and copy code'; }
         });
-        panel.append(formField('Connection code', code), copy);
+        const details = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
+        const manual = node('div', 'alerts-subscription-code ui-section-body');
+        manual.append(formField('Connection code', code), copy);
+        details.append(node('summary', 'ui-section-summary', 'Use a connection code'), manual);
+        guide.append(details);
       }
-      panel.append(paragraph('This connection link expires after 15 minutes. This VCE browser manages the chosen topics; the phone can disconnect in RadioResolve notification settings.'));
-      status.replaceChildren(panel);
+      connection.replaceChildren(guide);
+      connection.hidden = false;
+      shownEnrollmentUrl = url.href;
     }
     renderFields();
     async function directSubscription(forceRenewal = false) {
@@ -1065,7 +1201,10 @@ export function createAlertsWorkspace(deps) {
       }, { saving: currentDevice ? 'Saving topics…' : 'Connecting notifications…', success: 'Topics saved.',
         onSuccess: async result => {
           if (result.managed) { localModal.setDirty(false); localModal.close(); await renderPublic(); return; }
-          if (result.status === 'pending') { localModal.setDirty(false); showEnrollmentLink(result); renderFields(); }
+          if (result.status === 'pending') {
+            localModal.setDirty(false); showEnrollmentLink(result); renderFields();
+            localModal.focus(connection.querySelector('a') || cancel);
+          }
           else if (result.status === 'reconnect_required') {
             currentDevice = await requestJson(PUBLIC + '/subscriptions/me', { headers: authorize(), csrf: false, signal, page: false });
             directConnection = { state: 'reconnect', message: 'The notification connection expired. Open Notification settings to reconnect this device.' };
@@ -1075,7 +1214,7 @@ export function createAlertsWorkspace(deps) {
           else { localModal.setDirty(false); localModal.close(); await renderPublic(); }
         } });
     });
-    localModal.focus(fields.querySelector('input') || save);
+    localModal.focus(device?.status === 'pending' ? cancel : fields.querySelector('input') || save);
   }
 
   function close() {

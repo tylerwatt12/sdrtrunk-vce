@@ -18,6 +18,23 @@ async function main() {
   assert.deepEqual(model.visibleAlertHistory(events, topics, 'hidden'), []);
   assert.equal(model.describeAlertConditions({ op: '', items: [], field: 'radio', operator: 'is', value: '12' }), 'Transmitting radio is 12');
   assert.equal(model.newAlertRule('UTC').click_action, 'details');
+  assert.equal(model.newAlertRule('UTC').action_button_enabled, false);
+  assert.deepEqual(model.alertPopupAction({ action: { kind: 'live', entity_ref: null } }),
+    { label: 'View live channels', href: '/?view=live' });
+  assert.deepEqual(model.alertPopupAction({ action: { kind: 'radio', entity_ref: {
+    kind: 'radio', radio_system_key: 'p25:abcde:123', identity_key: 'v1-r-abcde-123-1101' } } }),
+    { label: 'View radio', href: '/?view=radio&radio_system_key=p25%3Aabcde%3A123&identity_key=v1-r-abcde-123-1101' });
+  assert.deepEqual(model.alertPopupAction({ action: { kind: 'channel', entity_ref: {
+    kind: 'channel', key: '12345678-1234-1234-1234-123456789abc' } } }),
+    { label: 'View channel', href: '/?view=channel&configuration_id=12345678-1234-1234-1234-123456789abc' });
+  for (const action of [null, { kind: 'admin', entity_ref: null },
+    { kind: 'channel', entity_ref: { kind: 'channel', key: '/?view=admin' } },
+    { kind: 'radio', entity_ref: { kind: 'radio', radio_system_key: 'p25:abcde:123', identity_key: 'https://example.com' } },
+    { kind: 'live', entity_ref: { kind: 'admin', key: 'settings' } }]) {
+    assert.equal(model.alertPopupAction({ action }), null, 'Disabled, malformed and administrator destinations have no button');
+  }
+  assert.equal(model.alertPopupAction({ click_action: 'listen', action: null }), null,
+    'Notification tap behavior cannot enable a disabled popup action');
   assert.equal(model.newAlertRule('UTC').protocol_family, '');
   const sources = [{ value: 'p25', protocol_family: 'P25', system_key: 'county' },
     { value: 'dmr', protocol_family: 'DMR', system_key: 'regional' }];

@@ -21,8 +21,7 @@ export function enrollmentQrCanvas(documentValue, value) {
   canvas.setAttribute('aria-label', 'Scan to connect a phone on RadioResolve');
   const context = canvas.getContext('2d');
   const colors = documentValue.defaultView.getComputedStyle(documentValue.documentElement);
-  context.fillStyle = colors.getPropertyValue('--qr-code-paper').trim();
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.clearRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = colors.getPropertyValue('--qr-code-ink').trim();
   matrix.forEach((row, y) => row.forEach((dark, x) => {
     if (dark) context.fillRect((x + quiet) * scale, (y + quiet) * scale, scale, scale);

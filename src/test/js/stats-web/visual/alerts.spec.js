@@ -133,8 +133,9 @@ test('guest topics hide private names and connect through RadioResolve without a
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Subscribe', exact: true }).first().click();
   await expect(page.getByRole('dialog').getByRole('link', { name: 'Continue on RadioResolve' })).toBeVisible();
+  await page.getByRole('dialog').getByText('Selected topics', { exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('checkbox', { name: 'Fire activity', exact: true })).toBeChecked();
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Waiting for device', exact: true })).toBeDisabled();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Waiting for device', exact: true, includeHidden: true })).toBeDisabled();
   await expectNoHorizontalOverflow(page, ['.alerts-workspace', '.read-only-modal']);
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -301,6 +302,7 @@ test('Direct public-test errors identify the unavailable checker and keep saving
   await page.getByRole('textbox', { name: 'VCE site URL', exact: true }).fill('https://vce.example.net');
   await page.getByRole('button', { name: 'Test public access', exact: true }).click();
   await expect(page.locator('.alerts-workspace')).toContainText('Public checker unavailable. Try again.');
+  await expect(page.getByRole('status').filter({ hasText: 'Public checker unavailable. Try again.' })).toHaveAttribute('aria-live', 'polite');
   await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeDisabled();
   expect(state.config.mode).toBe('proxy');
   expect(fixture.pageErrors).toEqual([]);
@@ -313,7 +315,7 @@ for (const terminal of ['expired', 'cancelled']) {
     await page.locator('.alerts-topic-card').filter({ hasText: 'Fire activity' }).getByRole('button', { name: 'Subscribe', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Alert subscription' });
     await dialog.getByRole('button', { name: 'Connect notifications', exact: true }).click();
-    await expect(dialog.getByRole('button', { name: 'Waiting for device', exact: true })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Waiting for device', exact: true, includeHidden: true })).toBeDisabled();
     state.enrollmentStatus = terminal;
     await expect(dialog.getByRole('button', { name: 'Connect notifications', exact: true })).toBeEnabled();
     await expect(dialog.getByRole('checkbox', { name: 'Fire activity', exact: true })).toBeEnabled();
@@ -351,10 +353,11 @@ test('a temporary pending enrollment outage retries the same session without an 
   const dialog = page.getByRole('dialog', { name: 'Alert subscription' });
   await dialog.getByRole('button', { name: 'Connect notifications', exact: true }).click();
   await expect(dialog).toContainText('Retrying shortly');
-  await expect(dialog.getByRole('button', { name: 'Waiting for device', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Waiting for device', exact: true, includeHidden: true })).toBeDisabled();
   state.enrollmentOutage = false;
   await expect(dialog.getByRole('link', { name: 'Continue on RadioResolve', exact: true })).toBeVisible();
-  expect(state.enrollmentChecks).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => state.enrollmentChecks, { timeout: 6000 }).toBeGreaterThanOrEqual(2);
+  await expect(dialog).not.toContainText('Retrying shortly');
   expect(state.writes.filter(write => write.p === '/api/v1/alerts/enrollments')).toHaveLength(1);
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   expect(fixture.pageErrors).toEqual([]);
@@ -639,7 +642,7 @@ for (const theme of ['light', 'dark']) {
     expect(fixture.pageErrors).toEqual([]);
   });
 
-  test(`the phone enrollment QR is rendered in black and white and fits 320px in ${theme}`, async ({ page }) => {
+  test(`the transparent phone enrollment QR fits 320px and follows theme changes in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
     await installAlerts(page, { guest: true, theme });
     await page.goto('/app.html?view=topics');
@@ -652,19 +655,35 @@ for (const theme of ['light', 'dark']) {
     await dialog.getByRole('button', { name: 'Connect notifications', exact: true }).click();
     const qr = dialog.getByRole('img', { name: 'Scan to connect a phone on RadioResolve', exact: true });
     await expect(qr).toBeVisible();
+    await expect(qr).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(qr).toHaveCSS('filter', theme === 'dark' ? 'invert(1)' : 'none');
     const pixels = await qr.evaluate(canvas => {
       const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
       const colors = new Set();
       for (let index = 0; index < data.length; index += 4) colors.add([data[index], data[index + 1], data[index + 2], data[index + 3]].join(','));
       return [...colors].sort();
     });
-    expect(pixels).toEqual(['0,0,0,255', '255,255,255,255']);
+    expect(pixels).toEqual(['0,0,0,0', '0,0,0,255']);
     const bounds = await qr.boundingBox();
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+    await expect(dialog.getByRole('textbox', { name: 'Connection code', exact: true })).toHaveCount(0);
+    await dialog.getByText('Use a connection code', { exact: true }).click();
     await expect(dialog.getByRole('textbox', { name: 'Connection code', exact: true })).toHaveValue('demo-id.demo-pairing-code-22');
+    await expect(dialog.getByRole('button', { name: 'Copy connection code', exact: true })).toBeEnabled();
+    await dialog.getByText('Use a connection code', { exact: true }).click();
     if (process.env.ALERTS_AUDIT_DIR) {
       await qr.screenshot({ path: path.join(process.env.ALERTS_AUDIT_DIR, 'phone-enrollment-qr-' + theme + '.png') });
       await auditScreenshot(page, 'phone-enrollment-dialog-' + theme);
+    }
+    // Exercise the existing theme control while the same QR remains mounted.
+    await page.locator('#theme-toggle').evaluate(control => control.click());
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    await expect(qr).toHaveCSS('filter', nextTheme === 'dark' ? 'invert(1)' : 'none');
+    await expect(qr).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(dialog.getByRole('link', { name: 'Continue on RadioResolve', exact: true })).toHaveAttribute('href',
+      'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22');
+    if (process.env.ALERTS_AUDIT_DIR) {
+      await qr.screenshot({ path: path.join(process.env.ALERTS_AUDIT_DIR, `phone-enrollment-qr-${theme}-to-${nextTheme}.png`) });
     }
   });
 
@@ -694,3 +713,181 @@ for (const theme of ['light', 'dark']) {
     expect(fixture.pageErrors).toEqual([]);
   });
 }
+
+test('topic catalog keeps edit, public navigation, protected built-in, and confirmed delete actions distinct', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.topics[0].rule_count = 2; state.topics[0].subscription_count = 18;
+  await page.route('**/api/v1/admin/alerts/topics/fire', async route => {
+    expect(route.request().method()).toBe('DELETE');
+    state.writes.push({ p: '/api/v1/admin/alerts/topics/fire', method: 'DELETE', value: route.request().postDataJSON() });
+    state.topics = state.topics.filter(topic => topic.id !== 'fire');
+    state.revision++;
+    return route.fulfill({ json: { data: state } });
+  });
+  await page.goto('/app.html?view=admin&tab=alert-topics');
+  const catalog = page.locator('.alerts-catalog');
+  const fire = catalog.locator('tbody tr[data-id="fire"]');
+  await expect(fire).toContainText('Dispatch and tactical activity.');
+  await expect(fire).toContainText('2 rules · 18 subscriptions');
+  await expect(fire.getByRole('button', { name: 'Fire activity', exact: true })).toHaveClass(/ui-button-link/);
+  await expect(fire.getByRole('link', { name: 'View public topic: Fire activity', exact: true })).toHaveAttribute('href', /view=topics.*topic=fire/);
+  const builtIn = catalog.locator('tbody tr[data-id="administrator-alerts"]');
+  await expect(builtIn).toContainText('Built-in');
+  await expect(builtIn.getByRole('button', { name: /Delete/ })).toHaveCount(0);
+  await expect(builtIn.getByRole('link')).toHaveCount(0);
+  await fire.getByRole('button', { name: 'Fire activity', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit topic', exact: true })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await fire.getByRole('button', { name: 'Delete topic: Fire activity', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete topic', exact: true });
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(state.writes).toHaveLength(0);
+  await fire.getByRole('button', { name: 'Delete topic: Fire activity', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete topic', exact: true }).click();
+  await expect(catalog.getByRole('button', { name: 'Fire activity', exact: true })).toHaveCount(0);
+  expect(state.writes[0].value.revision).toBe(1);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('rule catalog keeps linked rule names, topic context, and confirmed deletion', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.rules.push({ id: 'dispatch', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call',
+    conditions: { op: 'all', items: [] }, timing: { mode: 'immediate' }, schedule: { mode: 'always' },
+    cooldown_minutes: 15, repeat_key: 'rule', click_action: 'details', title_template: 'Dispatch is active', body_template: '{radio} transmitted.' });
+  await page.route('**/api/v1/admin/alerts/rules/dispatch', async route => {
+    expect(route.request().method()).toBe('DELETE');
+    state.writes.push({ p: '/api/v1/admin/alerts/rules/dispatch', value: route.request().postDataJSON() });
+    state.rules = []; state.revision++;
+    return route.fulfill({ json: { data: state } });
+  });
+  await page.goto('/app.html?view=admin&tab=alert-rules');
+  const rule = page.locator('.alerts-catalog tbody tr[data-id="dispatch"]');
+  await expect(rule).toContainText('Call activity when an event matches.');
+  await expect(rule).toContainText('Fire activity');
+  await expect(rule.getByRole('button', { name: 'Dispatch activity', exact: true })).toHaveClass(/ui-button-link/);
+  await rule.getByRole('button', { name: 'Dispatch activity', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit alert rule', exact: true })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await rule.getByRole('button', { name: 'Delete rule: Dispatch activity', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Delete alert rule', exact: true }).getByRole('button', { name: 'Delete rule', exact: true }).click();
+  await expect(page.locator('.alerts-catalog')).toContainText('No alert rules yet.');
+  expect(state.writes[0].value.revision).toBe(1);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('topic catalog pages the complete bounded catalog and keeps later edit actions reachable', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.topics = Array.from({ length: 65 }, (_, index) => ({ id: 'topic-' + index, name: 'Topic ' + (index + 1),
+    description: 'Activity alerts.', visible: true, enabled: true, rule_count: 0, subscription_count: 0 }));
+  await page.goto('/app.html?view=admin&tab=alert-topics');
+  const pager = page.getByRole('navigation', { name: 'Topics pages', exact: true });
+  await expect(page.locator('.alerts-catalog tbody tr')).toHaveCount(30);
+  await expect(pager).toContainText('Topics 1–30 of 65');
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(pager).toContainText('Topics 31–60 of 65');
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(pager).toContainText('Topics 61–65 of 65');
+  await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await page.locator('.alerts-catalog').getByRole('button', { name: 'Topic 65', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit topic', exact: true }).getByRole('textbox', { name: 'Topic name', exact: true })).toHaveValue('Topic 65');
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('rule action toggle previews the activity destination and saves an explicit choice', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Dispatch popup action');
+  await dialog.getByRole('button', { name: 'Notification', exact: true }).click();
+  const preview = dialog.getByRole('complementary', { name: 'Notification preview', exact: true });
+  const toggle = dialog.getByRole('checkbox', { name: 'Show action button', exact: true });
+  await expect(toggle).not.toBeChecked();
+  await expect(preview.getByRole('button')).toHaveCount(0);
+  await toggle.focus(); await toggle.press('Space');
+  await expect(toggle).toBeChecked();
+  await expect(preview.getByRole('button', { name: 'View talkgroup', exact: true })).toBeDisabled();
+  await dialog.getByRole('textbox', { name: 'Title', exact: true }).fill('{radio} called {talkgroup}');
+  await expect(preview).toContainText('Engine 12 called Fire Tactical');
+  await dialog.getByRole('button', { name: 'When', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Activity', exact: true }).selectOption('health');
+  await dialog.getByRole('button', { name: 'Notification', exact: true }).click();
+  await expect(preview.getByRole('button', { name: 'View live channels', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes[0].value.rule.action_button_enabled).toBe(true);
+  expect(state.writes[0].value.rule.trigger).toBe('health');
+  await page.locator('.alerts-catalog').getByRole('button', { name: 'Dispatch popup action', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit alert rule', exact: true });
+  await edit.getByRole('button', { name: 'Notification', exact: true }).click();
+  const editToggle = edit.getByRole('checkbox', { name: 'Show action button', exact: true });
+  await editToggle.focus(); await editToggle.press('Space');
+  await expect(editToggle).not.toBeChecked();
+  await expect(edit.getByRole('complementary', { name: 'Notification preview', exact: true }).getByRole('button')).toHaveCount(0);
+  await edit.getByRole('button', { name: 'Save rule', exact: true }).click();
+  await expect(edit).toBeHidden();
+  expect(state.writes[1].value.rule.action_button_enabled).toBe(false);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('built-in topic saves its independent action flag and confirms new public visibility', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.builtin_action_button_enabled = false;
+  await page.goto('/app.html?view=admin&tab=alert-topics');
+  await page.locator('.alerts-catalog').getByRole('button', { name: 'Administrator alerts', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit topic', exact: true });
+  await expect(dialog.getByRole('textbox', { name: 'Topic name', exact: true })).toBeDisabled();
+  const actionToggle = dialog.getByRole('checkbox', { name: 'Show action button', exact: true });
+  await actionToggle.focus(); await actionToggle.press('Space');
+  const publicToggle = dialog.getByRole('checkbox', { name: 'Available to listeners', exact: true });
+  await publicToggle.focus(); await publicToggle.press('Space');
+  await dialog.getByRole('button', { name: 'Save topic', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Make administrator alerts public', exact: true });
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(state.writes).toHaveLength(0);
+  await expect(dialog.getByRole('checkbox', { name: 'Show action button', exact: true })).toBeChecked();
+  await dialog.getByRole('button', { name: 'Save topic', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Make available', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes[0].value.builtin_action_button_enabled).toBe(true);
+  expect(state.writes[0].value.topic.visible).toBe(true);
+  expect(state.writes[0].value.topic.name).toBe('Administrator alerts');
+  await page.locator('.alerts-catalog').getByRole('button', { name: 'Fire activity', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('checkbox', { name: 'Show action button', exact: true })).toHaveCount(0);
+  await page.getByRole('dialog').getByRole('button', { name: 'Save topic', exact: true }).click();
+  expect(state.writes[1].value).not.toHaveProperty('builtin_action_button_enabled');
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('public alert popup exposes only validated public entity actions and never administrator destinations', async ({ page }) => {
+  const { fixture } = await installAlerts(page, { guest: true });
+  const scenarios = [
+    { name: 'Radio action', action: { kind: 'radio', entity_ref: { kind: 'radio', radio_system_key: 'p25:00001:001', identity_key: 'v1-r-00001-001-12' } }, label: 'View radio', destination: 'radio' },
+    { name: 'Talkgroup action', action: { kind: 'talkgroup', entity_ref: { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00001-001-1201' } }, label: 'View talkgroup', destination: 'group-identity' },
+    { name: 'Patch group action', action: { kind: 'patch_group', entity_ref: { kind: 'patch_group', radio_system_key: 'p25:00001:001', identity_key: 'v1-p-00001-001-1202' } }, label: 'View patch group', destination: 'group-identity' },
+    { name: 'Channel action', action: { kind: 'channel', entity_ref: { kind: 'channel', key: channelId } }, label: 'View channel', destination: 'channel' },
+    { name: 'System action', action: { kind: 'radio_system', entity_ref: { kind: 'radio_system', key: systemKey } }, label: 'View radio system', destination: 'radio-system' },
+    { name: 'Live action', action: { kind: 'live', entity_ref: null }, label: 'View live channels', destination: 'live' },
+    { name: 'Disabled action', action: null, click_action: 'listen' },
+    { name: 'Absent action' },
+    { name: 'Administrator action', action: { kind: 'admin', entity_ref: { kind: 'admin', key: 'settings' } } },
+    { name: 'Injected channel action', action: { kind: 'channel', entity_ref: { kind: 'channel', key: '/?view=admin&tab=push-setup' } } }
+  ];
+  await page.route('**/api/v1/alerts/history?**', route => route.fulfill({ json: { data: { items: scenarios.map((item, index) => ({
+    id: 'event-' + index, topic_id: 'fire', title: item.name, body: 'Synthetic alert details.', created_at_ms: 1770000000000, ...item
+  })), total: scenarios.length } } }));
+  await page.goto('/app.html?view=topics');
+  for (const scenario of scenarios) {
+    await page.locator('.alerts-timeline').getByRole('button', { name: scenario.name, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: scenario.name, exact: true });
+    if (scenario.label) {
+      const action = dialog.getByRole('link', { name: scenario.label, exact: true });
+      await expect(action).toHaveAttribute('href', new RegExp('^/\\?view=' + scenario.destination + '(?:&|$)'));
+      await expect(action).toHaveClass(/ui-button-primary/);
+    } else await expect(dialog.getByRole('link')).toHaveCount(0);
+    await expect(dialog.locator('a[href*="view=admin"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+  }
+  expect(fixture.pageErrors).toEqual([]);
+});

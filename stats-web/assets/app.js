@@ -32,7 +32,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createAlertsWorkspace } from './features/alerts.js?v=5';
+import { createAlertsWorkspace } from './features/alerts.js?v=6';
 import { createRecordingsFeature } from './features/recordings.js?v=32';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=2';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
@@ -29655,7 +29655,7 @@ function renderAdminRemoteLinks(renderContext) {
 
 function alertsWorkspace(renderContext, view) {
   return createAlertsWorkspace({
-    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton,
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
     createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
     identityPicker: activityIdentityPicker, createId: randomLiveClientId, signal: renderContext.signal, view,

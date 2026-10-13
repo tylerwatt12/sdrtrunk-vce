@@ -5,7 +5,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 async function main() {
-  const { enrollmentQrMatrix } = await import(pathToFileURL(path.resolve(__dirname,
+  const { enrollmentQrMatrix, enrollmentQrCanvas } = await import(pathToFileURL(path.resolve(__dirname,
     '../../../../stats-web/assets/features/alerts-qr.js')).href);
   const target = 'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22';
   const matrix = enrollmentQrMatrix(target);
@@ -17,6 +17,18 @@ async function main() {
   assert.notDeepEqual(enrollmentQrMatrix(target + 'x'), matrix, 'The actual connection URL determines the QR modules');
   assert.throws(() => enrollmentQrMatrix('http://radioresolve.example.net'), /unavailable/);
   assert.throws(() => enrollmentQrMatrix('https://user:password@radioresolve.example.net'), /unavailable/);
-  console.log('Pinned QR encoder renders the independently decoded connection URL and rejects unsafe addresses.');
+  const rectangles = []; const cleared = []; const attributes = {};
+  const context = { fillStyle: '', clearRect: (...value) => cleared.push(value),
+    fillRect: (...value) => rectangles.push({ ink: context.fillStyle, value }) };
+  const canvas = { setAttribute: (name, value) => { attributes[name] = value; }, getContext: type => { assert.equal(type, '2d'); return context; } };
+  const documentValue = { documentElement: {}, createElement: tag => { assert.equal(tag, 'canvas'); return canvas; },
+    defaultView: { getComputedStyle: () => ({ getPropertyValue: name => { assert.equal(name, '--qr-code-ink'); return '#000000'; } }) } };
+  assert.equal(enrollmentQrCanvas(documentValue, target), canvas);
+  assert.equal(canvas.width, 225); assert.equal(canvas.height, 225);
+  assert.deepEqual(cleared, [[0, 0, 225, 225]], 'Background pixels and the four-module quiet zone remain transparent');
+  const expected = matrix.flatMap((row, y) => row.flatMap((dark, x) => dark ? [{ ink: '#000000', value: [(x + 4) * 5, (y + 4) * 5, 5, 5] }] : []));
+  assert.deepEqual(rectangles, expected, 'Only dark modules are painted, with the full quiet-zone margin');
+  assert.equal(attributes.role, 'img'); assert.match(attributes['aria-label'], /connect a phone/);
+  console.log('Pinned QR matrix, transparent background, four-module quiet zone, accessible canvas and safe URL contracts passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

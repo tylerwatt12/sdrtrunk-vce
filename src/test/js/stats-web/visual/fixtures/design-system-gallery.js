@@ -8,7 +8,7 @@ import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
 import { openSetupGuide } from '/assets/core/setup-guide.js?v=2';
-import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=1';
+import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
   'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));

@@ -1,3 +1,5 @@
+import { href as entityRefHref } from '../core/entity-ref.js?v=1';
+
 export const ALERT_TRIGGERS = Object.freeze([
   ['call', 'Call activity'], ['emergency', 'Emergency alarm received'], ['paging', 'Paging or call alert'],
   ['affiliation', 'Radio affiliation'], ['command', 'Radio control message'],
@@ -33,7 +35,23 @@ export function newAlertRule(timeZone = 'UTC') {
     schedule: { mode: 'always', days: [0, 1, 2, 3, 4, 5, 6], start: '09:00', end: '17:00', time_zone: timeZone },
     cooldown_minutes: 15, repeat_key: 'rule', notify_recovery: false,
     title_template: '{talkgroup} is active', body_template: '{radio} transmitted on {talkgroup} at {site}.',
-    click_action: 'details' };
+    click_action: 'details', action_button_enabled: false };
+}
+
+export function alertActionLabel(kind) {
+  return ({ live: 'View live channels', channel: 'View channel', radio: 'View radio',
+    talkgroup: 'View talkgroup', patch_group: 'View patch group', radio_system: 'View radio system' })[kind] || '';
+}
+
+export function alertPopupAction(event) {
+  const action = event?.action;
+  if (!action || typeof action !== 'object' || Array.isArray(action)) return null;
+  const label = alertActionLabel(action.kind);
+  if (!label) return null;
+  if (action.kind === 'live') return action.entity_ref == null ? { label, href: '/?view=live' } : null;
+  if (action.entity_ref?.kind !== action.kind) return null;
+  const href = entityRefHref(action.entity_ref);
+  return href ? { label, href } : null;
 }
 export function alertSourceChoices(choices, family = '', systemKey = '') {
   return (Array.isArray(choices) ? choices : []).filter(choice =>

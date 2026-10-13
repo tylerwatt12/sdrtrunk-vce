@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -719,7 +720,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("--chart-call:"));
         assertTrue(css.contains(".ui-button-header"));
         assertFalse(css.contains("button:not(.auth-action):not(.auth-session-button)"));
-        assertFalse(css.contains("filter: invert("));
+        assertFalse(Pattern.compile("(?m)^\\s*filter:\\s*invert\\(").matcher(css).find(),
+            "Theme changes must not invert page elements directly; QR polarity uses its scoped semantic token");
     }
 
     @Test

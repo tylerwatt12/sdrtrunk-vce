@@ -834,6 +834,7 @@
   max-width: 100%;
   height: auto;
   background: var(--qr-code-paper);
+  filter: var(--qr-code-filter);
   image-rendering: pixelated;
 }
 
