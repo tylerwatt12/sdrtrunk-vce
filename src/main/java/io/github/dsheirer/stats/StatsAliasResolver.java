@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -90,6 +91,36 @@ class StatsAliasResolver
     {
         return system + ".system_key=printf('p25:%05x:%03x'," + summary + ".home_wacn," +
             summary + ".home_system_id)";
+    }
+
+    /** A foreign group's permanent number is not an observed address on the receiving system. */
+    private static boolean homeSystemTalkgroup(Map<String,Object> row, String summaryIdColumn)
+    {
+        Integer wacn = null;
+        Integer system = null;
+        String key = string(row.get(summaryIdColumn.replace("_summary_id", "_key")));
+        if(key != null)
+        {
+            try
+            {
+                RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(key);
+                if(!identity.hasHome() || identity.kindCode() == RadioSystemIdentityKey.KIND_RADIO) return false;
+                wacn = identity.homeWacn();
+                system = identity.homeSystemId();
+            }
+            catch(IllegalArgumentException exception)
+            {
+                return false;
+            }
+        }
+        else if("identity_summary_id".equals(summaryIdColumn))
+        {
+            wacn = integer(row.get("home_wacn"));
+            system = integer(row.get("home_system_id"));
+        }
+        String serving = string(row.get("radio_system_key"));
+        return wacn != null && system != null && serving != null &&
+            serving.equals(String.format(Locale.ROOT, "p25:%05x:%03x", wacn, system));
     }
 
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
@@ -852,7 +883,8 @@ class StatsAliasResolver
                 if(evidence.isEmpty())
                 {
                     Set<Long> aliasLists = aliasListsBySystem.getOrDefault(systemKey, Set.of());
-                    if(identifier != null && (subscriberIdentityId == null ||
+                    if(identifier != null && (type != RuleType.TALKGROUP || homeSystemTalkgroup(row, summaryIdColumn)) &&
+                        (subscriberIdentityId == null ||
                         localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")))
                     {
                         p25Targets.add(aliasLists, identifier);
@@ -910,7 +942,8 @@ class StatsAliasResolver
                         aliasListsBySystem.getOrDefault(systemKey, Set.of())) :
                         p25Subscribers.best(subscriberIdentityId, evidence, false);
                 }
-                if(best == null && (subscriberIdentityId == null || !evidence.isEmpty() ||
+                if(best == null && (type != RuleType.TALKGROUP || !evidence.isEmpty() ||
+                    homeSystemTalkgroup(row, summaryIdColumn)) && (subscriberIdentityId == null || !evidence.isEmpty() ||
                     localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")))
                 {
                     best = identifier == null ? null : evidence.isEmpty() ? p25.best(identifier,

@@ -270,6 +270,97 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void foreignTalkgroupRequiresObservedLocalEvidenceForExactAndRangeAliases() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("foreign-talkgroup-alias.sqlite");
+        createDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'County','P25')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value,min_value,max_value)
+                VALUES (1,1,'School Buses','TALKGROUP','APCO25',9000,NULL,NULL),
+                       (2,1,'School Fleet','TALKGROUP_RANGE','APCO25',NULL,8900,9100),
+                       (3,1,'Fire Dispatch','TALKGROUP','APCO25',301,NULL,NULL)
+                """);
+            insertP25Channel(statement,77,P25_CONFIGURATION_ID,P25_RADIORESOLVE_ID,1);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms)
+                VALUES (7001,77,1,0xBEE00,0x348,9000,1,2),
+                       (7002,77,1,0xBEE00,0x349,9000,1,2)
+                """);
+            Map<String,Object> home = canonicalEvidenceRow(7001,1,9000);
+            home.put("home_wacn",0xBEE00);
+            home.put("home_system_id",0x348);
+            Map<String,Object> foreign = canonicalEvidenceRow(7002,1,9000);
+            foreign.put("home_wacn",0xBEE00);
+            foreign.put("home_system_id",0x349);
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(home,foreign),
+                "identity_summary_id","identity_id","alias_");
+            assertEquals("School Buses",home.get("alias_name"));
+            assertNull(foreign.get("alias_name"),
+                "A foreign canonical number is not a receiving-system talkgroup address");
+
+            Map<String,Object> affiliated = new LinkedHashMap<>(home);
+            affiliated.put("affiliated_talkgroup_identity_summary_id",7002L);
+            affiliated.put("affiliated_talkgroup_id",9000);
+            affiliated.put("affiliated_talkgroup_identity_key","v1-g-bee00-349-9000");
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(affiliated),
+                "affiliated_talkgroup_identity_summary_id","affiliated_talkgroup_id","affiliated_talkgroup_alias_");
+            assertNull(affiliated.get("affiliated_talkgroup_alias_name"),
+                "A radio's home system must not qualify its foreign affiliated talkgroup");
+            affiliated.put("affiliated_talkgroup_identity_summary_id",7001L);
+            affiliated.put("affiliated_talkgroup_identity_key","v1-g-bee00-348-9000");
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(affiliated),
+                "affiliated_talkgroup_identity_summary_id","affiliated_talkgroup_id","affiliated_talkgroup_alias_");
+            assertEquals("School Buses",affiliated.get("affiliated_talkgroup_alias_name"));
+
+            statement.executeUpdate("DELETE FROM alias WHERE id=1");
+            home.remove("alias_name");
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(home,foreign),
+                "identity_summary_id","identity_id","alias_");
+            assertEquals("School Fleet",home.get("alias_name"));
+            assertNull(foreign.get("alias_name"),
+                "Range aliases require the same receiving-system address evidence as exact aliases");
+
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code,
+                    target_identity_summary_id,target_kind_code,target_observed_local_id)
+                VALUES (77,77,2,12,7002,1,301)
+                """);
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(foreign),
+                "identity_summary_id","identity_id","alias_");
+            assertEquals("Fire Dispatch",foreign.get("alias_name"));
+
+            statement.executeUpdate("DELETE FROM receiver_activity_event WHERE target_identity_summary_id=7002");
+            foreign.remove("alias_name");
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(foreign),
+                "identity_summary_id","identity_id","alias_");
+            assertNull(foreign.get("alias_name"),
+                "Removing detailed history must not replace the local Alias with a foreign-number match");
+
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site(learned_site_id,radio_system_id,rfss,site,first_seen_ms,last_seen_ms)
+                VALUES (701,77,1,1,1,2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(radio_system_id,learned_site_id,channel_id,
+                    bucket_start_ms,identity_role_code,identity_kind_code,identity_summary_id,
+                    observed_local_id,last_observed_at_ms,observed_call_count)
+                VALUES (77,701,77,0,1,1,7002,301,2,1)
+                """);
+            resolver.enrichCanonicalSystemTalkgroups(connection,rows(foreign),
+                "identity_summary_id","identity_id","alias_");
+            assertEquals("Fire Dispatch",foreign.get("alias_name"),
+                "Compact local evidence must resolve the Alias without detailed history");
+        }
+    }
+
+    @Test
     void homeCanonicalRadioRetainsOrdinaryAliasWhileForeignSubscriberRequiresWorkingEvidence() throws Exception
     {
         Path database = mTemporaryFolder.resolve("home-canonical-alias.sqlite");
@@ -1377,6 +1468,11 @@ class StatsAliasResolverTest
         row.put("identity_summary_id", summaryId);
         row.put("identity_kind_code", identityKind);
         row.put("identity_id", identityId);
+        if(identityKind == 1)
+        {
+            row.put("home_wacn", 0xBEE00);
+            row.put("home_system_id", 0x348);
+        }
         return row;
     }
 

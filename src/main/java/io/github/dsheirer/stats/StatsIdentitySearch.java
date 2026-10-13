@@ -182,7 +182,8 @@ final class StatsIdentitySearch
             .append(" AND ").append(matchedAlias())
             .append(" AND (system.protocol_code<>1 OR ")
             .append(kind == 2 ? "(summary.p25_subscriber_identity_id IS NULL OR " +
-                StatsAliasResolver.homeSystemSql("summary", "system") + ") AND " : "")
+                StatsAliasResolver.homeSystemSql("summary", "system") + ") AND " :
+                StatsAliasResolver.homeSystemSql("summary", "system") + " AND ")
             .append("NOT (")
             .append(p25ProjectedEvidencePresent(kind)).append(")))");
         for(LocalEvidenceSource source: compactSources(kind))

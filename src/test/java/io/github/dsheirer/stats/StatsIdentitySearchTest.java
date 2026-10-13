@@ -160,6 +160,54 @@ class StatsIdentitySearchTest
     }
 
     @Test
+    void foreignTalkgroupAliasSearchRequiresObservedLocalEvidence() throws Exception
+    {
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary VALUES
+                    (1101,1,9000,0xBEE00,1,NULL,NULL),
+                    (1102,1,9000,0xBEE00,2,NULL,NULL)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias VALUES
+                    (100,10,'School Buses',NULL,NULL,'TALKGROUP','APCO25',9000,NULL,NULL),
+                    (101,10,'School Fleet',NULL,NULL,'TALKGROUP_RANGE','APCO25',NULL,8900,9100),
+                    (102,10,'Fire Dispatch',NULL,NULL,'TALKGROUP','APCO25',301,NULL,NULL)
+                """);
+            assertEquals(List.of(1101L),search(1,"school buses","TALKGROUP"),
+                "Only the home-system identity may use an unevidenced exact number Alias");
+            assertEquals(List.of(1101L),search(1,"school fleet","TALKGROUP"),
+                "Only the home-system identity may use an unevidenced range Alias");
+            assertEquals(List.of(),search(1,"fire dispatch","TALKGROUP"));
+
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,target_identity_summary_id,target_observed_local_id)
+                VALUES (90,1,1102,301)
+                """);
+            assertEquals(List.of(1102L),search(1,"fire dispatch","TALKGROUP"));
+            assertEquals(List.of(1101L),search(1,"school buses","TALKGROUP"));
+            assertEquals(List.of(1101L),search(1,"school fleet","TALKGROUP"));
+
+            statement.executeUpdate("DELETE FROM receiver_activity_event WHERE id=90");
+            assertEquals(List.of(),search(1,"fire dispatch","TALKGROUP"));
+            assertEquals(List.of(1101L),search(1,"school buses","TALKGROUP"),
+                "Removing detailed history must not expose an unrelated exact Alias");
+            assertEquals(List.of(1101L),search(1,"school fleet","TALKGROUP"),
+                "Removing detailed history must not expose an unrelated range Alias");
+
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(identity_summary_id,channel_id,observed_local_id)
+                VALUES (1102,1,301)
+                """);
+            assertEquals(List.of(1102L),search(1,"fire dispatch","TALKGROUP"),
+                "Compact local evidence must support Alias search without detailed history");
+            assertEquals(List.of(1101L),search(1,"school buses","TALKGROUP"));
+            assertEquals(List.of(1101L),search(1,"school fleet","TALKGROUP"));
+        }
+    }
+
+    @Test
     void matchesConfiguredAndHomeSystemNamesWithoutRepeatingNamesForEachIdentity() throws Exception
     {
         List<Long> all = List.of(1001L,1002L,1003L,1004L,1005L,1006L,1007L,1008L,1009L,1010L);
