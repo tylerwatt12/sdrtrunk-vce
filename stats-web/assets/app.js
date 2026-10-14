@@ -14160,6 +14160,7 @@ const TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB = 0;
 const TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB = 5;
 const TUNER_SPECTRUM_MAXIMUM_ZOOM = 64;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
+const TUNER_SPECTRUM_WHEEL_EVENTS_PER_ZOOM = 3;
 const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_WATERFALL_HISTORY_ROWS = 256;
@@ -16208,6 +16209,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   let hoverFlag = null;
   let drag = null;
   let suppressClick = false;
+  let wheelZoomEvents = 0;
   let dbFloor = initialFloor;
   let dbCeiling = initialCeiling;
   let fftAutoFloorDb = null;
@@ -16798,6 +16800,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   };
 
   const resetPlots = (message) => {
+    wheelZoomEvents = 0;
     if (automaticDisplayRange.selectTarget(selectedTargetId())) resetAutomaticDisplayRange();
     generation = -1;
     sequence = null;
@@ -17204,6 +17207,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function zoomAt(anchor, factor) {
+    wheelZoomEvents = 0;
     if (!fullViewport || !viewport) return;
     const fullSpan = fullViewport.endHz - fullViewport.startHz;
     const oldSpan = viewport.endHz - viewport.startHz;
@@ -17220,6 +17224,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function resetViewport() {
+    wheelZoomEvents = 0;
     if (!shouldRun() || !fullViewport || zoomAmount() <= 1.0001) return;
     applyViewport({ ...fullViewport }, 'immediate');
   }
@@ -17449,11 +17454,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotWheel(event) {
-    if (!wheelZoom || !canInteract()) return;
+    if (!wheelZoom || !canInteract()) { wheelZoomEvents = 0; return; }
+    if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
     event.preventDefault();
+    const direction = Math.sign(event.deltaY);
+    wheelZoomEvents = Math.sign(wheelZoomEvents) === direction ? wheelZoomEvents + direction : direction;
+    if (Math.abs(wheelZoomEvents) < TUNER_SPECTRUM_WHEEL_EVENTS_PER_ZOOM) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const anchor = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    zoomAt(anchor, event.deltaY < 0 ? 1 / TUNER_SPECTRUM_ZOOM_FACTOR : TUNER_SPECTRUM_ZOOM_FACTOR);
+    zoomAt(anchor, direction < 0 ? 1 / TUNER_SPECTRUM_ZOOM_FACTOR : TUNER_SPECTRUM_ZOOM_FACTOR);
   }
 
   function onPlotKeyDown(event) {

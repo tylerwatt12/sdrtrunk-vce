@@ -791,6 +791,12 @@ test('wheel zoom and drag pan preserve viewport requests, and a click still sele
   const canvas = plot(page);
   await canvas.hover();
   await page.mouse.wheel(0, -200);
+  await settle(page);
+  await page.mouse.wheel(0, -200);
+  await settle(page);
+  await expect(page.locator('.tuner-spectrum-layout')).not.toHaveClass(/zoomed/);
+  expect(state.controls.filter((parameters) => parameters?.viewport_start_hz != null)).toHaveLength(0);
+  await page.mouse.wheel(0, -200);
   await expect(page.locator('.tuner-spectrum-layout')).toHaveClass(/zoomed/);
   await expect.poll(() => state.controls.filter((parameters) =>
     parameters?.viewport_start_hz != null).length).toBeGreaterThan(0);
