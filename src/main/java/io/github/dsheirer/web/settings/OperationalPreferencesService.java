@@ -10,6 +10,7 @@ import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.preference.audio.AudioOutputPreference;
 import io.github.dsheirer.preference.call.CallManagementPreference;
 import io.github.dsheirer.preference.mp3.MP3Preference;
 import io.github.dsheirer.preference.record.RecordPreference;
@@ -29,20 +30,24 @@ public final class OperationalPreferencesService
     private final CallManagementPreference mCalls;
     private final RecordPreference mRecord;
     private final MP3Preference mMp3;
+    private final AudioOutputPreference mAudioOutput;
     private final ApplicationPreference mApplication;
 
     public OperationalPreferencesService(UserPreferences preferences)
     {
         this(preferences.getCallManagementPreference(), preferences.getRecordPreference(),
-            preferences.getMP3Preference(), preferences.getApplicationPreference());
+            preferences.getMP3Preference(), preferences.getAudioOutputPreference(),
+            preferences.getApplicationPreference());
     }
 
     OperationalPreferencesService(CallManagementPreference calls, RecordPreference record,
-                                  MP3Preference mp3, ApplicationPreference application)
+                                  MP3Preference mp3, AudioOutputPreference audioOutput,
+                                  ApplicationPreference application)
     {
         mCalls = Objects.requireNonNull(calls);
         mRecord = Objects.requireNonNull(record);
         mMp3 = Objects.requireNonNull(mp3);
+        mAudioOutput = Objects.requireNonNull(audioOutput);
         mApplication = Objects.requireNonNull(application);
     }
 
@@ -50,6 +55,7 @@ public final class OperationalPreferencesService
     {
         Settings settings = new Settings(mCalls.getPatchGroupStreamingOption(), mRecord.getAudioRecordFormat(),
             mMp3.getMP3Setting(), mMp3.getAudioSampleRate(), mMp3.isNormalizeAudioBeforeEncode(),
+            mAudioOutput.isContinuousAgcEnabled(),
             mApplication.isStatsLoggingEnabled(), mApplication.isStatsDetailedHistoryEnabled(),
             mApplication.getStatsLoggingRetentionDays());
         return new Snapshot(revision(settings), settings, options());
@@ -97,6 +103,10 @@ public final class OperationalPreferencesService
             case MP3_NORMALIZE_AUDIO -> {
                 boolean normalize = requireBoolean(value);
                 if(normalize != current.mp3NormalizeAudio()) mMp3.setNormalizeAudioBeforeEncode(normalize);
+            }
+            case AUDIO_CONTINUOUS_AGC -> {
+                boolean enabled = requireBoolean(value);
+                if(enabled != current.audioContinuousAgc()) mAudioOutput.setContinuousAgcEnabled(enabled);
             }
             case STATS_LOGGING_ENABLED -> {
                 boolean enabled = requireBoolean(value);
@@ -151,6 +161,7 @@ public final class OperationalPreferencesService
         String canonical = String.join("\u0000", settings.patchGroupStreamingOption().name(),
             settings.audioRecordFormat().name(), settings.mp3Setting().name(),
             settings.mp3InputAudioFormat().name(), Boolean.toString(settings.mp3NormalizeAudio()),
+            Boolean.toString(settings.audioContinuousAgc()),
             Boolean.toString(settings.statsLoggingEnabled()),
             Boolean.toString(settings.statsDetailedHistoryEnabled()),
             Integer.toString(settings.statsLoggingRetentionDays()));
@@ -192,6 +203,7 @@ public final class OperationalPreferencesService
         MP3_SETTING("mp3_setting"),
         MP3_INPUT_AUDIO_FORMAT("mp3_input_audio_format"),
         MP3_NORMALIZE_AUDIO("mp3_normalize_audio"),
+        AUDIO_CONTINUOUS_AGC("audio_continuous_agc"),
         STATS_LOGGING_ENABLED("stats_logging_enabled"),
         STATS_DETAILED_HISTORY_ENABLED("stats_detailed_history_enabled"),
         STATS_LOGGING_RETENTION_DAYS("stats_logging_retention_days");
@@ -215,6 +227,7 @@ public final class OperationalPreferencesService
 
     public record Settings(PatchGroupStreamingOption patchGroupStreamingOption, RecordFormat audioRecordFormat,
                            MP3Setting mp3Setting, InputAudioFormat mp3InputAudioFormat, boolean mp3NormalizeAudio,
+                           boolean audioContinuousAgc,
                            boolean statsLoggingEnabled, boolean statsDetailedHistoryEnabled,
                            int statsLoggingRetentionDays)
     {

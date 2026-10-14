@@ -108,6 +108,7 @@ final class StatsWebCallService implements AutoCloseable
     private final AtomicLong mEncoderFailures = new AtomicLong();
     private final AtomicLong mEnhancementSkippedBacklog = new AtomicLong();
     private final AtomicBoolean mLossPending = new AtomicBoolean();
+    private final java.util.function.BooleanSupplier mContinuousAgcEnabled;
     private final AtomicLong mRunGeneration = new AtomicLong();
     private final AtomicInteger mActiveFeeds = new AtomicInteger();
     private final AtomicLong mFeedActiveUntilNanos = new AtomicLong();
@@ -139,7 +140,15 @@ final class StatsWebCallService implements AutoCloseable
                         VoiceEnhancementService voiceEnhancement)
     {
         this(scanListModel, navigationCatalog, voiceEnhancement, P25PagingToneService.getInstance()::lookupCompleted,
-            P25PagingToneService.getInstance()::addCompletedToneListener);
+            P25PagingToneService.getInstance()::addCompletedToneListener, () -> false);
+    }
+
+    StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
+                        VoiceEnhancementService voiceEnhancement,
+                        java.util.function.BooleanSupplier continuousAgcEnabled)
+    {
+        this(scanListModel, navigationCatalog, voiceEnhancement, P25PagingToneService.getInstance()::lookupCompleted,
+            P25PagingToneService.getInstance()::addCompletedToneListener, continuousAgcEnabled);
     }
 
     /** Isolated outcome seam: browser playback never performs a second tone-analysis pass. */
@@ -147,17 +156,19 @@ final class StatsWebCallService implements AutoCloseable
                         VoiceEnhancementService voiceEnhancement,
                         java.util.function.Function<AudioCallSnapshot,CompletedToneSequence> toneLookup)
     {
-        this(scanListModel, navigationCatalog, voiceEnhancement, toneLookup, ignored -> () -> {});
+        this(scanListModel, navigationCatalog, voiceEnhancement, toneLookup, ignored -> () -> {}, () -> false);
     }
 
     private StatsWebCallService(ScanListModel scanListModel, WebEntityNavigationCatalog navigationCatalog,
                         VoiceEnhancementService voiceEnhancement,
                         java.util.function.Function<AudioCallSnapshot,CompletedToneSequence> toneLookup,
-                        java.util.function.Function<io.github.dsheirer.sample.Listener<CompletedToneSequence>,AutoCloseable> subscribe)
+                        java.util.function.Function<io.github.dsheirer.sample.Listener<CompletedToneSequence>,AutoCloseable> subscribe,
+                        java.util.function.BooleanSupplier continuousAgcEnabled)
     {
         mScanListMatcher = scanListModel != null ? new CompletedCallScanListMatcher(scanListModel) : null;
         mNavigationCatalog = navigationCatalog;
         mVoiceEnhancement = voiceEnhancement;
+        mContinuousAgcEnabled = java.util.Objects.requireNonNull(continuousAgcEnabled);
         mToneLookup = java.util.Objects.requireNonNull(toneLookup);
         mEncoderThread = new NamingThreadFactory("stats completed call audio").newThread(this::runEncoder);
         mEncoderThread.setPriority(Thread.MIN_PRIORITY + 1);
@@ -631,11 +642,15 @@ final class StatsWebCallService implements AutoCloseable
         boolean backlog = mEncoderIngress.size() > 0;
         if(backlog && mVoiceEnhancement != null && mVoiceEnhancement.isEnabled())
             mEnhancementSkippedBacklog.incrementAndGet();
-        VoiceEnhancementService.RenderedAudio rendered = mVoiceEnhancement != null && !backlog ?
-            mVoiceEnhancement.render(call) : null;
+        boolean continuousAgcRequested = mContinuousAgcEnabled.getAsBoolean();
+        CompletedAudioCall processingCall = tones != null && tones.matches(nativeSnapshot) ?
+            call.withCompletedTones(tones) : call;
+        VoiceEnhancementService.RenderedAudio rendered = mVoiceEnhancement != null ?
+            mVoiceEnhancement.render(processingCall, continuousAgcRequested, !backlog) : null;
         List<float[]> output = rendered != null ? List.of(rendered.samples()) : call.audioBuffers();
         int sampleRate = rendered != null ? rendered.sampleRate() : SAMPLE_RATE;
-        float gain = phase1 || rendered != null ?
+        boolean continuousAgc = continuousAgcRequested && rendered != null;
+        float gain = !continuousAgc && (phase1 || rendered != null) ?
             new PeakAudioGain(phase1 ? 5.0f : 1.0f, 0.95f).calculateGain(output) : 1.0f;
         byte[] wave = wave(output, checkedWaveLength(output), sampleRate, gain);
 
@@ -649,8 +664,9 @@ final class StatsWebCallService implements AutoCloseable
         long created = System.currentTimeMillis();
         Map<String,Object> metadata = new LinkedHashMap<>(metadata(id, call, created, scanListIds));
         metadata.put("audio_sample_rate", sampleRate);
-        metadata.put("voice_enhancement", rendered != null);
-        if(rendered != null) metadata.put("voice_model", rendered.modelId());
+        metadata.put("voice_enhancement", rendered != null && sampleRate == 16000);
+        metadata.put("continuous_agc", continuousAgc);
+        if(rendered != null && rendered.modelId() != null) metadata.put("voice_model", rendered.modelId());
         synchronized(this)
         {
             if(!isCurrentGeneration(generation))

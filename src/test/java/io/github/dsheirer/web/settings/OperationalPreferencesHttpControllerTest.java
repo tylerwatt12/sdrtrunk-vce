@@ -37,7 +37,9 @@ class OperationalPreferencesHttpControllerTest
             HttpResponse<String> initialResponse = send(client, request(origin, "").GET());
             JsonNode initial = MAPPER.readTree(initialResponse.body());
             assertEquals(200, initialResponse.statusCode());
-            assertEquals(8, initial.path("settings").size());
+            assertEquals(9, initial.path("settings").size());
+            assertTrue(initial.at("/settings/audio_continuous_agc").isBoolean());
+            assertFalse(initial.at("/settings/audio_continuous_agc").booleanValue());
             assertTrue(initial.at("/settings/stats_logging_enabled").isBoolean());
             assertEquals("MP3", initial.at("/settings/audio_record_format").textValue());
             assertEquals("CBR_16", initial.at("/settings/mp3_setting").textValue());
@@ -65,6 +67,19 @@ class OperationalPreferencesHttpControllerTest
             assertEquals(409, stale.statusCode());
             assertEquals(30, fixture.application.getStatsLoggingRetentionDays());
             String newEtag = updatedResponse.headers().firstValue("ETag").orElseThrow();
+
+            HttpResponse<String> gainResponse = send(client,
+                jsonRequest(origin, "/audio_continuous_agc").header("If-Match", newEtag)
+                    .PUT(HttpRequest.BodyPublishers.ofString("{\"value\":true}")));
+            assertEquals(200, gainResponse.statusCode());
+            JsonNode gain = MAPPER.readTree(gainResponse.body());
+            assertTrue(gain.at("/settings/audio_continuous_agc").booleanValue());
+            assertFalse(gain.at("/settings/mp3_normalize_audio").booleanValue());
+            assertEquals(1, fixture.audioOutput.mWrites);
+            newEtag = gainResponse.headers().firstValue("ETag").orElseThrow();
+            assertEquals(422, send(client, jsonRequest(origin, "/audio_continuous_agc")
+                .header("If-Match", newEtag).PUT(HttpRequest.BodyPublishers.ofString("{\"value\":\"true\"}")))
+                .statusCode());
 
             assertEquals(428, send(client, jsonRequest(origin, "/stats_logging_retention_days")
                 .PUT(HttpRequest.BodyPublishers.ofString("{\"value\":60}"))).statusCode());

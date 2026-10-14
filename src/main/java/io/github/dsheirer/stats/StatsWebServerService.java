@@ -412,8 +412,11 @@ public class StatsWebServerService implements AutoCloseable
             PortableApplicationPaths.getDataRoot().resolve("audio-analysis/paging-tones.json"),
             P25PagingToneService.getInstance()::setEnabled);
         mVoiceEnhancementService = new VoiceEnhancementService(
-            PortableApplicationPaths.getDataRoot().resolve("audio-models"));
-        mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog, mVoiceEnhancementService);
+            PortableApplicationPaths.getDataRoot().resolve("audio-models"),
+            () -> io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().getVocoderAudioProcessor(
+                mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary()));
+        mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog, mVoiceEnhancementService,
+            () -> mUserPreferences.getAudioOutputPreference().isContinuousAgcEnabled());
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mSavedActivityLiveService = new SavedActivityLiveService(new SavedActivityLiveService.Source()

@@ -10,6 +10,7 @@ import io.github.dsheirer.audio.broadcast.PatchGroupStreamingOption;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.preference.audio.AudioOutputPreference;
 import io.github.dsheirer.preference.call.CallManagementPreference;
 import io.github.dsheirer.preference.mp3.MP3Preference;
 import io.github.dsheirer.preference.record.RecordPreference;
@@ -44,6 +45,37 @@ class OperationalPreferencesServiceTest
         assertFalse(fixture.service.update(updated.snapshot().revision(),
             OperationalPreferencesService.Field.STATS_LOGGING_ENABLED, true).updated());
         assertFalse(fixture.application.isStatsLoggingEnabled());
+    }
+
+    @Test
+    void continuousGainIsIndependentOfMp3AndParticipatesInRevisionAndValidation()
+    {
+        Fixture fixture = new Fixture();
+        OperationalPreferencesService.Snapshot initial = fixture.service.snapshot();
+        assertFalse(initial.settings().audioContinuousAgc());
+        assertEquals(OperationalPreferencesService.Field.AUDIO_CONTINUOUS_AGC,
+            OperationalPreferencesService.Field.fromPath("audio_continuous_agc"));
+        assertThrows(IllegalArgumentException.class, () -> fixture.service.update(initial.revision(),
+            OperationalPreferencesService.Field.AUDIO_CONTINUOUS_AGC, "true"));
+        assertEquals(0, fixture.audioOutput.mWrites);
+
+        OperationalPreferencesService.Snapshot enabled = fixture.service.update(initial.revision(),
+            OperationalPreferencesService.Field.AUDIO_CONTINUOUS_AGC, true).snapshot();
+        assertTrue(enabled.settings().audioContinuousAgc());
+        assertTrue(fixture.audioOutput.isContinuousAgcEnabled());
+        assertNotEquals(initial.revision(), enabled.revision());
+        assertFalse(enabled.settings().mp3NormalizeAudio());
+        assertEquals(0, fixture.mp3.mWrites);
+        assertEquals(1, fixture.audioOutput.mWrites);
+        assertFalse(fixture.service.update(initial.revision(),
+            OperationalPreferencesService.Field.AUDIO_CONTINUOUS_AGC, false).updated());
+        fixture.service.update(enabled.revision(), OperationalPreferencesService.Field.AUDIO_CONTINUOUS_AGC, true);
+        assertEquals(1, fixture.audioOutput.mWrites);
+
+        fixture.audioOutput.setContinuousAgcEnabled(false);
+        assertFalse(fixture.service.update(enabled.revision(),
+            OperationalPreferencesService.Field.MP3_NORMALIZE_AUDIO, true).updated());
+        assertEquals(0, fixture.mp3.mWrites);
     }
 
     @Test
@@ -86,8 +118,10 @@ class OperationalPreferencesServiceTest
         final Calls calls = new Calls();
         final Record record = new Record();
         final Mp3 mp3 = new Mp3();
+        final AudioOutput audioOutput = new AudioOutput();
         final Application application = new Application();
-        final OperationalPreferencesService service = new OperationalPreferencesService(calls, record, mp3, application);
+        final OperationalPreferencesService service = new OperationalPreferencesService(calls, record, mp3,
+            audioOutput, application);
     }
 
     static final class Calls extends CallManagementPreference
@@ -140,5 +174,15 @@ class OperationalPreferencesServiceTest
         @Override public void setStatsDetailedHistoryEnabled(boolean value) { mDetailed = value; mWrites++; }
         @Override public int getStatsLoggingRetentionDays() { return mRetention; }
         @Override public void setStatsLoggingRetentionDays(int value) { mRetention = value; mWrites++; }
+    }
+
+    static final class AudioOutput extends AudioOutputPreference
+    {
+        private boolean mEnabled;
+        int mWrites;
+
+        AudioOutput() { super(ignored -> {}); }
+        @Override public boolean isContinuousAgcEnabled() { return mEnabled; }
+        @Override public void setContinuousAgcEnabled(boolean value) { mEnabled = value; mWrites++; }
     }
 }

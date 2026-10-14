@@ -23,7 +23,9 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
-import io.github.dsheirer.dsp.gain.P25AudioGain;
+import io.github.dsheirer.dsp.gain.AudioOutputGain;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -102,8 +104,8 @@ public class AudioStreamingManager
                                  Consumer<CompletedAudioCall> streamedCallConsumer)
     {
         this(listener, broadcastFormat, userPreferences, streamedCallConsumer, ThreadPool.SCHEDULED,
-            (call, path, preferences, identifiers) ->
-                AudioCallRecorder.write(call, path, RecordFormat.MP3, preferences, identifiers));
+            (call, path, preferences, identifiers, normalizeAudio) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, preferences, identifiers, normalizeAudio));
     }
 
     AudioStreamingManager(Listener<AudioRecording> listener, BroadcastFormat broadcastFormat,
@@ -228,8 +230,25 @@ public class AudioStreamingManager
             try
             {
                 //Gain is applied on this encoding worker; raw PCM and frozen delivery evidence remain unchanged.
-                mRecordingWriter.write(P25AudioGain.forEncoding(completedAudioCall), path, mUserPreferences,
-                    identifierCollection);
+                boolean continuousAgc = mUserPreferences.getAudioOutputPreference().isContinuousAgcEnabled();
+                boolean normalizeAudio = mUserPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
+                CompletedAudioCall encodingSource = completedAudioCall;
+                if(continuousAgc && encodingSource.completedToneSequence() == null)
+                {
+                    try
+                    {
+                        CompletedToneSequence tones = P25PagingToneService.getInstance().lookupCompleted(completedAudioCall);
+                        if(tones != null) encodingSource = encodingSource.withCompletedTones(tones);
+                    }
+                    catch(RuntimeException optionalFailure)
+                    {
+                        //An optional observer failure must not discard a streamed call.
+                    }
+                }
+                AudioOutputGain.Prepared prepared = AudioOutputGain.prepare(encodingSource, continuousAgc,
+                    mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary());
+                mRecordingWriter.write(prepared.call(), path, mUserPreferences,
+                    identifierCollection, normalizeAudio && !prepared.agcApplied());
 
                 if(!Files.isRegularFile(path) || Files.size(path) <= 0)
                 {
@@ -711,6 +730,6 @@ public class AudioStreamingManager
     interface StreamingRecordingWriter
     {
         void write(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
-                   IdentifierCollection identifierCollection) throws IOException;
+                   IdentifierCollection identifierCollection, boolean normalizeAudio) throws IOException;
     }
 }

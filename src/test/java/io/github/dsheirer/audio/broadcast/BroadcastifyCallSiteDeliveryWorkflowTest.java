@@ -299,7 +299,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                 mRecordings.add(recording);
                 mBroadcastModel.receive(recording);
             }, BroadcastFormat.MP3, mPreferences, mStreamedCalls::add, mScheduler,
-                (call, path, preferences, identifiers) ->
+                (call, path, preferences, identifiers, normalizeAudio) ->
                     Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW));
             mStreamingManager.start();
             mCoordinator = new AudioCallCoordinator(null, mStreamingManager, null, null, decision -> {

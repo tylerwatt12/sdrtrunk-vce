@@ -40,6 +40,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
     private final List<URLClassLoader> mClassLoaders = new ArrayList<>();
     private LibraryFingerprint mFingerprint;
     private IAudioCodecLibrary mLibrary;
+    private JmbeVocoderAudio mVocoderAudio;
     private String mLastError;
 
     JmbeLibraryLoader(ClassLoader parentClassLoader, boolean registerShutdownHook)
@@ -120,6 +121,30 @@ public final class JmbeLibraryLoader implements AutoCloseable
         }
     }
 
+    /** Worker-only capability; codec construction never loads or warms an enhancement model. */
+    public synchronized JmbeVocoderAudio getVocoderAudioProcessor(Path libraryPath)
+    {
+        if(libraryPath == null) return null;
+        try
+        {
+            LibraryFingerprint requested = LibraryFingerprint.from(libraryPath);
+            if(!requested.equals(mFingerprint)) load(requested);
+            if(mVocoderAudio == null)
+            {
+                Object provider;
+                try { provider = mLibrary.getClass().getMethod("getVocoderAudioProcessor").invoke(mLibrary); }
+                catch(NoSuchMethodException unavailable) { return null; }
+                mVocoderAudio = new JmbeVocoderAudio(provider);
+            }
+            return mVocoderAudio;
+        }
+        catch(IOException | ReflectiveOperationException | LinkageError | RuntimeException exception)
+        {
+            logErrorOnce("JMBE optional audio processing is unavailable", exception);
+            return null;
+        }
+    }
+
     private void load(LibraryFingerprint fingerprint) throws IOException, ReflectiveOperationException
     {
         URLClassLoader classLoader = new URLClassLoader(new java.net.URL[]{fingerprint.path().toUri().toURL()},
@@ -145,6 +170,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
 
             mClassLoaders.add(classLoader);
             mLibrary = library;
+            mVocoderAudio = null;
             mFingerprint = fingerprint;
             mLastError = null;
             mLog.info("JMBE audio conversion library loaded from [{}]: {}", fingerprint.path(), library.getVersion());
@@ -191,6 +217,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
 
         mClassLoaders.clear();
         mLibrary = null;
+        mVocoderAudio = null;
         mFingerprint = null;
     }
 

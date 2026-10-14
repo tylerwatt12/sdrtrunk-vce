@@ -61,10 +61,26 @@ public class AudioCallRecorder
                              UserPreferences userPreferences, IdentifierCollection identifierCollection)
         throws IOException
     {
+        write(completedAudioCall, path, recordFormat, userPreferences, identifierCollection,
+            userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode());
+    }
+
+    public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
+                             UserPreferences userPreferences, boolean normalizeAudio) throws IOException
+    {
+        write(completedAudioCall, path, recordFormat, userPreferences,
+            completedAudioCall.recordingIdentifierCollection(), normalizeAudio);
+    }
+
+    /** Uses the worker's captured normalization choice, independent of later preference changes. */
+    public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
+                             UserPreferences userPreferences, IdentifierCollection identifierCollection,
+                             boolean normalizeAudio) throws IOException
+    {
         switch(recordFormat)
         {
             case MP3:
-                recordMP3(completedAudioCall, path, userPreferences, identifierCollection);
+                recordMP3(completedAudioCall, path, userPreferences, identifierCollection, normalizeAudio);
                 break;
             case WAVE:
                 recordWAVE(completedAudioCall, path, identifierCollection);
@@ -76,6 +92,13 @@ public class AudioCallRecorder
 
     public static void recordMP3(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
                                  IdentifierCollection identifierCollection) throws IOException
+    {
+        recordMP3(completedAudioCall, path, userPreferences, identifierCollection,
+            userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode());
+    }
+
+    public static void recordMP3(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
+                                 IdentifierCollection identifierCollection, boolean normalizeAudio) throws IOException
     {
         if(completedAudioCall.hasAudio())
         {
@@ -91,8 +114,6 @@ public class AudioCallRecorder
 
                 InputAudioFormat inputAudioFormat = userPreferences.getMP3Preference().getAudioSampleRate();
                 MP3Setting mp3Setting = userPreferences.getMP3Preference().getMP3Setting();
-                boolean normalizeAudio = userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-
                 MP3AudioConverter converter = new MP3AudioConverter(inputAudioFormat, mp3Setting, normalizeAudio);
 
                 for(byte[] mp3Frame: converter.convert(completedAudioCall.audioBuffers()))

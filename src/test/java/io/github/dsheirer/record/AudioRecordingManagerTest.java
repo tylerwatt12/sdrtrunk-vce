@@ -78,6 +78,105 @@ class AudioRecordingManagerTest
     private RecordingMode mOriginalMode;
 
     @Test
+    void continuousAgcRunsOnlyOnRecordingWorkerAndKeepsNativeCallForObservers() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
+        boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<CompletedAudioCall> written = new ArrayList<>(), observed = new ArrayList<>();
+        List<Boolean> normalization = new ArrayList<>();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
+            (call, path, format, prefs, normalizeAudio) -> {
+                written.add(call);
+                prefs.getAudioOutputPreference().setContinuousAgcEnabled(false);
+                normalization.add(normalizeAudio);
+                Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW);
+            },
+            null, null, call -> null);
+        float[] samples = new float[8000];
+        for(int i = 0; i < samples.length; i++) samples[i] = (float)(.025 * Math.sin(i * Math.PI / 4));
+        float[] before = samples.clone();
+        CompletedAudioCall source = withDecoder(completedCall(91, List.of(samples)), DecoderType.P25_PHASE2);
+        try
+        {
+            preferences.getJmbeLibraryPreference().setPathJmbeLibrary(
+                io.github.dsheirer.audio.codec.mbe.VocoderLibraryFixture.create(mTemporaryFolder));
+            preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
+            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            manager.start(); manager.receive(source);
+            assertTrue(written.isEmpty());
+            manager.stop();
+            assertEquals(1, written.size());
+            assertEquals(List.of(false), normalization, "Successful gain suppresses normalization despite a later preference change");
+            assertSame(source, observed.getFirst());
+            assertSame(source.snapshot(), written.getFirst().snapshot());
+            assertEquals(source.getDuration(), written.getFirst().getDuration());
+            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[7997]) > Math.abs(samples[7997]));
+            assertArrayEquals(before, samples);
+        }
+        finally
+        {
+            manager.stop(); scheduler.shutdownNow();
+            preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
+            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    @Test
+    void missingAgcCapabilityPreservesCapturedNormalizationAndFailedProcessingPreservesRawAudio() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
+        boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Boolean> normalization = new ArrayList<>();
+        CompletedAudioCall source = withDecoder(completedCall(92, List.of(new float[]{0.1f, -0.2f})),
+            DecoderType.P25_PHASE2);
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
+            (call, path, format, prefs, normalizeAudio) -> {
+                prefs.getMP3Preference().setNormalizeAudioBeforeEncode(false);
+                normalization.add(normalizeAudio);
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+            }, null, null, call -> null);
+        try
+        {
+            preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
+            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
+            manager.start();
+            manager.receive(source);
+            manager.stop();
+            assertEquals(List.of(true), normalization, "Unavailable gain must retain the captured MP3 normalization");
+            var provider = io.github.dsheirer.audio.enhance.VocoderAudioFixtures.provider("failure");
+            provider.fail = true;
+            var failed = io.github.dsheirer.dsp.gain.AudioOutputGain.prepare(source, provider.bridge());
+            assertFalse(failed.agcApplied());
+            assertSame(source, failed.call());
+            assertArrayEquals(new float[]{0.1f, -0.2f}, source.audioBuffers().getFirst());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
+            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+        }
+    }
+
+    @Test
     void recordingWorkerCapturesOneSharedResultForFileCatalogAndObserverWithoutWaitingInReceive() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
@@ -91,7 +190,7 @@ class AudioRecordingManagerTest
             List.of(new io.github.dsheirer.audio.tone.CompletedToneSequence.Element(List.of(1_000_000),null,0L,60,.9)));
         AtomicInteger lookups = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
-            (call,path,format,prefs) -> { written.add(call); Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW); },
+            (call, path, format, prefs, normalizeAudio) -> { written.add(call); Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW); },
             null,null,call -> { assertSame(source,call); lookups.incrementAndGet(); return sequence; });
         try
         {
@@ -122,7 +221,7 @@ class AudioRecordingManagerTest
         List<CompletedAudioCall> written = new ArrayList<>(), observed = new ArrayList<>();
         CompletedAudioCall source = completedCall();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,observed::add,scheduler,
-            (call,path,format,prefs) -> { written.add(call); Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW); },
+            (call, path, format, prefs, normalizeAudio) -> { written.add(call); Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW); },
             null,null,call -> { throw new IllegalStateException("Unavailable optional observer"); });
         try
         {
@@ -147,7 +246,7 @@ class AudioRecordingManagerTest
         List<CompletedAudioCall> written = new ArrayList<>();
         List<CompletedAudioCall> observed = new ArrayList<>();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
-            (call, path, format, userPreferences) -> {
+            (call, path, format, userPreferences, normalizeAudio) -> {
                 written.add(call);
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
             });
@@ -259,7 +358,7 @@ class AudioRecordingManagerTest
         List<Path> writtenPaths = new ArrayList<>();
         AtomicInteger recorded = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences, normalizeAudio) -> {
                 writtenPaths.add(path);
                 Files.write(path, new byte[]{(byte)call.logicalCallId().sequence()}, StandardOpenOption.CREATE_NEW);
             });
@@ -306,10 +405,10 @@ class AudioRecordingManagerTest
         List<Path> attempted = new ArrayList<>();
         AtomicInteger recorded = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences, normalizeAudio) -> {
                 attempted.add(path);
                 if(attempted.size() == 1) Files.write(path, new byte[]{9}, StandardOpenOption.CREATE_NEW);
-                AudioCallRecorder.write(call, path, format, userPreferences);
+                AudioCallRecorder.write(call, path, format, userPreferences, normalizeAudio);
             });
         try
         {
@@ -346,11 +445,11 @@ class AudioRecordingManagerTest
         List<Path> attempted = new ArrayList<>();
         AtomicInteger recorded = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences, normalizeAudio) -> {
                 attempted.add(path);
                 //Simulate another writer claiming the chosen path after its existence check.
                 if(attempted.size() == 1) Files.write(path, new byte[]{9}, StandardOpenOption.CREATE_NEW);
-                AudioCallRecorder.write(call, path, format, userPreferences);
+                AudioCallRecorder.write(call, path, format, userPreferences, normalizeAudio);
             });
         AliasList aliases = new AliasList(new AliasListDefinition("SyntheticAliases", AliasListFamily.P25));
         Alias canonical = new Alias("Canonical Unit");
@@ -427,8 +526,8 @@ class AudioRecordingManagerTest
         List<Path> written = new ArrayList<>();
         AtomicInteger recorded = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
-                AudioCallRecorder.write(call, path, format, userPreferences);
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences, normalizeAudio) -> {
+                AudioCallRecorder.write(call, path, format, userPreferences, normalizeAudio);
                 written.add(path);
             });
         AliasList aliases = new AliasList(new AliasListDefinition("SyntheticAliases", AliasListFamily.P25));
@@ -522,7 +621,7 @@ class AudioRecordingManagerTest
         UserPreferences preferences = new UserPreferences();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            (call, path, format, userPreferences) -> {});
+            (call, path, format, userPreferences, normalizeAudio) -> {});
 
         try
         {
@@ -554,7 +653,7 @@ class AudioRecordingManagerTest
         UserPreferences preferences = new UserPreferences();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            (call, path, format, userPreferences) -> {});
+            (call, path, format, userPreferences, normalizeAudio) -> {});
         float[] sharedEightMiBBuffer = new float[2 * 1024 * 1024];
         CompletedAudioCall call = completedCall(1, List.of(sharedEightMiBBuffer));
 
@@ -587,7 +686,7 @@ class AudioRecordingManagerTest
         UserPreferences preferences = new UserPreferences();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            (call, path, format, userPreferences) -> {});
+            (call, path, format, userPreferences, normalizeAudio) -> {});
 
         try
         {
@@ -621,7 +720,7 @@ class AudioRecordingManagerTest
         AtomicInteger recorded = new AtomicInteger();
         AtomicReference<Runnable> indexedObserver = new AtomicReference<>();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences, normalizeAudio) -> {
                 paths.add(path);
                 formats.add(format);
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
@@ -681,7 +780,7 @@ class AudioRecordingManagerTest
             mTemporaryFolder.resolve("managed.sqlite"), managed))
         {
             AudioRecordingManager manager = new AudioRecordingManager(preferences,
-                ignored -> recorded.countDown(), scheduler, (call, path, format, userPreferences) ->
+                ignored -> recorded.countDown(), scheduler, (call, path, format, userPreferences, normalizeAudio) ->
                     Files.write(path, new byte[]{'I', 'D', '3', 'a', 'b'}, StandardOpenOption.CREATE_NEW),
                 catalog::submit, managed);
             try
@@ -715,7 +814,7 @@ class AudioRecordingManagerTest
         List<Path> written = new ArrayList<>();
         AtomicInteger recorded = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences,
-            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences, normalizeAudio) -> {
                 written.add(path);
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
             }, (path, call, size, onIndexed) -> false, mTemporaryFolder.resolve("managed"));
@@ -748,7 +847,7 @@ class AudioRecordingManagerTest
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
         AtomicInteger writes = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            (call, path, format, userPreferences) -> writes.incrementAndGet());
+            (call, path, format, userPreferences, normalizeAudio) -> writes.incrementAndGet());
 
         try
         {
@@ -779,7 +878,7 @@ class AudioRecordingManagerTest
         List<Path> written = new ArrayList<>();
         AtomicInteger indexed = new AtomicInteger();
         AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            (call, path, format, userPreferences) -> {
+            (call, path, format, userPreferences, normalizeAudio) -> {
                 written.add(path);
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
                 throw new IOException("simulated encoder failure");

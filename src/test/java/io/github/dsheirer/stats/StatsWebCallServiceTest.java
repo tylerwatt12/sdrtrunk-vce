@@ -29,7 +29,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
-import io.github.dsheirer.audio.enhance.ModelBundleFixtures;
+import io.github.dsheirer.audio.enhance.VocoderAudioFixtures;
 import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.ToneSummaryPayload;
@@ -87,10 +87,41 @@ import org.junit.jupiter.api.io.TempDir;
 class StatsWebCallServiceTest
 {
     @Test
+    void continuousAgcIsCapturedPerBrowserCallWithoutChangingRawAudioOrCachedOutput(@TempDir Path directory) throws Exception
+    {
+        var enabled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        CompletedAudioCall source = pagingCall();
+        float[] before = source.audioBuffers().getFirst().clone();
+        var processor = VocoderAudioFixtures.provider("embedded-model");
+        var enhancement = new VoiceEnhancementService(directory, processor::bridge);
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement, enabled::get));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(source);
+            var off = client.awaitCall();
+            assertEquals(false, off.get("continuous_agc"));
+            byte[] original = service.get(String.valueOf(off.get("call_id"))).wave().clone();
+            enabled.set(true);
+            service.receive(source);
+            var on = client.awaitCall();
+            assertEquals(true, on.get("continuous_agc"));
+            byte[] adjusted = service.get(String.valueOf(on.get("call_id"))).wave();
+            assertEquals(original.length, adjusted.length);
+            assertFalse(java.util.Arrays.equals(original, adjusted));
+            assertArrayEquals(original, service.get(String.valueOf(off.get("call_id"))).wave());
+            assertArrayEquals(before, source.audioBuffers().getFirst());
+            enabled.set(false);
+            service.receive(source);
+            var restored = client.awaitCall();
+            assertArrayEquals(original, service.get(String.valueOf(restored.get("call_id"))).wave());
+        }
+    }
+
+    @Test
     void optionalModelUsesExplicit16kWaveAndPreservesNativeCallAndDuration(@TempDir Path directory) throws Exception
     {
-        var enhancement = new VoiceEnhancementService(directory);
-        enhancement.install(enhancement.snapshot().revision(), ModelBundleFixtures.bundle("first-model"));
+        var selected = new AtomicReference<>(VocoderAudioFixtures.provider("first-model").bridge());
+        var enhancement = new VoiceEnhancementService(directory, selected::get);
         try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement));
             FeedClient client = listen(service, Set.of()))
         {
@@ -116,7 +147,7 @@ class StatsWebCallServiceTest
             assertArrayEquals(before, source.audioBuffers().getFirst());
             assertEquals(100L, source.getDuration());
 
-            enhancement.install(enhancement.snapshot().revision(), ModelBundleFixtures.bundle("updated-model"));
+            selected.set(VocoderAudioFixtures.provider("updated-model").bridge());
             service.receive(source);
             assertEquals("updated-model", client.awaitCall().get("voice_model"));
             enhancement.setEnabled(enhancement.snapshot().revision(), false);
@@ -128,7 +159,7 @@ class StatsWebCallServiceTest
     @Test
     void sharedToneDetailsDoNotRequireEnhancementOrBrowserAnalysis(@TempDir Path directory) throws Exception
     {
-        var enhancement = new VoiceEnhancementService(directory);
+        var enhancement = new VoiceEnhancementService(directory, () -> null);
         CompletedAudioCall source = pagingCall();
         CompletedToneSequence sequence = inferredTones(source.snapshot());
         try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement,

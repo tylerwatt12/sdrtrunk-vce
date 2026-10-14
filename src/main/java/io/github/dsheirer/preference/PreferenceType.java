@@ -25,6 +25,7 @@ package io.github.dsheirer.preference;
 public enum PreferenceType
 {
     APPLICATION,
+    AUDIO_OUTPUT,
     CALIBRATION,
     DIRECTORY,
     CALL_MANAGEMENT,
