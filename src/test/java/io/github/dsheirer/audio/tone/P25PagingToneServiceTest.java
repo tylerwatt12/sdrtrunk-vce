@@ -529,6 +529,60 @@ class P25PagingToneServiceTest
     }
 
     @Test
+    void smallCarrierTimestampJitterPreservesContinuousPcm()
+    {
+        for(long boundaryDelta = 15; boundaryDelta <= 25; boundaryDelta++)
+        {
+            P25PagingToneService service = new P25PagingToneService(100, 64000, 8,
+                new P25PagingToneDetector()::detect);
+            var registration = service.register();
+            List<IMessage> messages = new ArrayList<>();
+            registration.setMessageListener(messages::add);
+            callEventsWithTimestampShift(boundaryDelta).forEach(registration::receive);
+            service.drain();
+
+            assertEquals(1, service.analyzedCalls(), "Boundary delta " + boundaryDelta);
+            assertEquals(1, messages.size());
+            assertEquals(800.0, ((DecodedPagingToneMessage)messages.getFirst())
+                .toneIdentifier().getValue().getFirst().frequencyHz(), 1.0);
+            assertEquals(0, service.droppedEvents());
+            assertEquals(0, service.retainedBytes());
+        }
+    }
+
+    @Test
+    void missingDuplicateBackwardAndExcessivelyShiftedFramesStillInvalidateTheWholeCall()
+    {
+        for(long boundaryDelta: new long[]{14, 26, 0, -20, 40})
+        {
+            P25PagingToneService service = new P25PagingToneService(100, 64000, 8, buffers -> List.of(TONE));
+            var registration = service.register();
+            List<IMessage> messages = new ArrayList<>();
+            registration.setMessageListener(messages::add);
+            callEventsWithTimestampShift(boundaryDelta).forEach(registration::receive);
+            service.drain();
+
+            assertEquals(0, service.analyzedCalls(), "Boundary delta " + boundaryDelta);
+            assertTrue(messages.isEmpty());
+            assertTrue(service.droppedEvents() > 0);
+            assertEquals(0, service.retainedBytes());
+        }
+    }
+
+    private static List<AudioCallEvent> callEventsWithTimestampShift(long boundaryDelta)
+    {
+        List<AudioCallEvent> events = callEvents(1, 40);
+        for(int index = 10; index < events.size() - 1; index++)
+        {
+            AudioCallEvent frame = events.get(index);
+            events.set(index, new AudioCallEvent(frame.eventType(), frame.snapshot(), frame.audioFrame(),
+                frame.continuationExpected(), frame.voiceFrameFingerprint(),
+                frame.voiceFrameTimestamp() + boundaryDelta - 20, frame.correctedVoiceFrameFingerprint()));
+        }
+        return events;
+    }
+
+    @Test
     void timestampDiscontinuityAndNonfiniteFramesInvalidateRatherThanConcatenate()
     {
         P25PagingToneService service = new P25PagingToneService(200, 128000, 8, buffers -> List.of(TONE));

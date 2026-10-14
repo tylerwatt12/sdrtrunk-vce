@@ -15,6 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,13 +25,19 @@ import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceFrameFingerprint;
 import io.github.dsheirer.audio.tone.DecodedPagingToneMessage;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HeaderData;
@@ -274,6 +282,112 @@ class P25P1AudioModuleTest
         finally
         {
             module.dispose();
+        }
+    }
+
+    @Test
+    void jitteredLduCarrierTimesPublishGlobalToneWithoutChangingNativeAudioEvidence() throws Exception
+    {
+        float[] raw = new float[160];
+        for(int index = 0; index < raw.length; index++)
+            raw[index] = (float)(0.1 * Math.sin(2 * Math.PI * 800 * index / 8000));
+        //800 Hz has sixteen complete cycles per frame, so these repeated buffers form continuous native PCM.
+        TestAudioCodec codec = new TestAudioCodec(raw);
+        CallLegSource source = new CallLegSource(DecoderType.P25_PHASE1,
+            "00000000-0000-4000-8000-000000000801", "synthetic-tone", null, 0, null, null,
+            ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
+        P25P1AudioModule module = new P25P1AudioModule(new UserPreferences(), AliasList.empty("tone jitter"), source)
+        {
+            @Override
+            protected boolean hasAudioCodec() { return true; }
+
+            @Override
+            public IAudioCodec getAudioCodec() { return codec; }
+
+            private long fingerprint = 100L;
+
+            @Override
+            protected long getCorrectedVoiceFrameFingerprint(IAudioCodec decodedCodec)
+            {
+                assertSame(codec, decodedCodec);
+                return ++fingerprint;
+            }
+        };
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        //Global stored-call evidence must not require an optional receiver-message audience.
+        CountDownLatch detected = new CountDownLatch(1);
+        AtomicReference<CompletedToneSequence> sequence = new AtomicReference<>();
+        AtomicReference<String> deliveryThread = new AtomicReference<>();
+        P25PagingToneService tones = P25PagingToneService.getInstance();
+        AutoCloseable observer = tones.addCompletedToneListener(completed -> {
+            if(source.channelConfigurationId().equals(completed.callLegSource().channelConfigurationId()))
+            {
+                sequence.set(completed);
+                deliveryThread.set(Thread.currentThread().getName());
+                detected.countDown();
+            }
+        });
+
+        try
+        {
+            module.getDecoderStateListener().receive(new DecoderStateEvent(this,
+                DecoderStateEvent.Event.START, State.CALL));
+            module.receive(encryptedHdu(1_000L, 0x80, 0, 56_132, 1));
+            List<Long> expectedTimestamps = new ArrayList<>();
+            List<Long> expectedFingerprints = new ArrayList<>();
+            //Each LDU retains its received carrier time: cross-batch deltas are21,19,22 and18 ms.
+            for(long ending: new long[]{1_180L, 1_361L, 1_540L, 1_722L, 1_900L})
+            {
+                LDU1Message ldu = new LDU1Message(new CorrectedBinaryMessage(1_568), 0x123, ending);
+                List<byte[]> encodedFrames = ldu.getIMBEFrames();
+                assertEquals(9, encodedFrames.size());
+                for(int index = 0; index < encodedFrames.size(); index++)
+                {
+                    expectedTimestamps.add(ending - 160 + index * 20L);
+                    expectedFingerprints.add(VoiceFrameFingerprint.compute(encodedFrames.get(index)));
+                }
+                module.receive(ldu);
+            }
+            module.getDecoderStateListener().receive(new DecoderStateEvent(this,
+                DecoderStateEvent.Event.END, State.IDLE));
+
+            List<AudioCallEvent> frames = events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+            assertEquals(45, frames.size());
+            assertEquals(expectedTimestamps, frames.stream().map(AudioCallEvent::voiceFrameTimestamp).toList());
+            assertEquals(expectedFingerprints, frames.stream().map(AudioCallEvent::voiceFrameFingerprint).toList());
+            for(int index = 0; index < frames.size(); index++)
+            {
+                assertArrayEquals(raw, frames.get(index).audioFrame());
+                assertEquals(101L + index, frames.get(index).correctedVoiceFrameFingerprint());
+            }
+            assertArrayEquals(raw, codec.mLastDecodedSamples);
+            List<AudioCallEvent> completed = events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+            assertEquals(1, completed.size());
+            assertTrue(detected.await(3, TimeUnit.SECONDS));
+            CompletedToneSequence result = sequence.get();
+            assertNotNull(result);
+            assertEquals(CompletedToneSequence.Source.DECODED_AUDIO, result.source());
+            assertEquals(CompletedToneSequence.Method.P25_PCM_TONE_V1, result.method());
+            assertEquals(Protocol.APCO25, result.protocol());
+            assertEquals(1_000L, result.firstVoiceSampleTimestamp());
+            assertEquals(1, result.tones().size());
+            assertEquals(800.0, result.tones().getFirst().frequenciesMilliHertz().getFirst() / 1000., 1.0);
+            assertTrue(result.tones().getFirst().durationMilliseconds() >= 700);
+            assertEquals("p25-paging-tone-observer", deliveryThread.get());
+            var nativeSnapshot = completed.getFirst().snapshot();
+            assertTrue(result.matches(nativeSnapshot));
+            assertSame(result, tones.lookupCompleted(nativeSnapshot));
+            CompletedAudioCall nativeCall = new CompletedAudioCall(nativeSnapshot,
+                frames.stream().map(AudioCallEvent::audioFrame).toList());
+            assertSame(result, tones.lookupCompleted(nativeCall));
+        }
+        finally
+        {
+            module.dispose();
+            observer.close();
         }
     }
 

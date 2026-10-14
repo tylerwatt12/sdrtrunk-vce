@@ -70,6 +70,11 @@ public final class P25PagingToneService
     private final CopyOnWriteArrayList<CompletedListener> mCompletedListeners = new CopyOnWriteArrayList<>();
     private static final int MAXIMUM_COMPLETED = 512;
     private static final long COMPLETED_AGE_MILLISECONDS = TimeUnit.MINUTES.toMillis(30);
+    //P1 carrier time is re-anchored from native-buffer timestamps at each LDU boundary. A small clock shift does
+    //not imply missing PCM: every accepted voice frame still contributes exactly 160 samples. Keep this allowance
+    //below a missing 20 ms frame, and continue invalidating larger gaps, duplicate/backward frames and queue loss.
+    private static final long MINIMUM_PCM_FRAME_DELTA_MILLISECONDS = 15;
+    private static final long MAXIMUM_PCM_FRAME_DELTA_MILLISECONDS = 25;
     private final AtomicBoolean mWakeRequested = new AtomicBoolean();
     private final AtomicBoolean mStopped = new AtomicBoolean();
     private final AtomicLong mWorkerWakeCount = new AtomicLong();
@@ -515,9 +520,11 @@ public final class P25PagingToneService
         {
             Context context = mContexts.get(key);
             if(context == null) return false;
+            long frameDelta = event.voiceFrameTimestamp() - context.lastFrameTimestamp;
             if(event.audioFrameSampleCount() != 160 || context.samples > P25PagingToneDetector.MAXIMUM_SAMPLES - 160 ||
                 (!queued.registration().encoded() && context.lastFrameTimestamp != 0 &&
-                    event.voiceFrameTimestamp() != context.lastFrameTimestamp + 20))
+                    (frameDelta < MINIMUM_PCM_FRAME_DELTA_MILLISECONDS ||
+                        frameDelta > MAXIMUM_PCM_FRAME_DELTA_MILLISECONDS)))
             {
                 mContexts.remove(key);
                 release(context);
