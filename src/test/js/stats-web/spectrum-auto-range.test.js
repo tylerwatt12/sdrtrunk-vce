@@ -68,13 +68,16 @@ async function panelHarness({ auto = true } = {}) {
     'acceptTunerState', 'acceptTunerFrame']) vm.runInContext(functionSource(name), context);
   vm.runInContext(bindingSource('const resetPlots = (message) =>') + ';', context);
   const confirm = ({ target = context.target, center = 150_000_000, generation = 1, revision = 1,
-    live = true } = {}) => context.acceptTunerState({ generation, sequence: revision,
+    live = true, requested = null, visible = null } = {}) => context.acceptTunerState({ generation, sequence: revision,
     state: { target_id: target, center_frequency_hz: center, sample_rate_hz: 2_400_000,
-      profile: 'balanced', stream_state: live ? 'live' : 'waiting' } });
+      profile: 'balanced', stream_state: live ? 'live' : 'waiting',
+      requested_start_frequency_hz: requested?.startHz, requested_end_frequency_hz: requested?.endHz,
+      visible_start_frequency_hz: visible?.startHz, visible_end_frequency_hz: visible?.endHz } });
   const frame = ({ floor = -63, center = 150_000_000, generation = 1, sequence = 1,
-    values = noise(floor) } = {}) => context.acceptTunerFrame({ type: 4, generation, sequence,
-    centerFrequencyHz: center, sampleRateHz: 2_400_000, fftSize: values.length,
-    valueCount: values.length, sourceBinCount: values.length, values });
+    values = noise(floor), sampleRate = 2_400_000, fftSize = values.length,
+    firstBin = 0, sourceBinCount = fftSize } = {}) => context.acceptTunerFrame({ type: 4, generation, sequence,
+    centerFrequencyHz: center, sampleRateHz: sampleRate, fftSize, firstBin,
+    valueCount: values.length, sourceBinCount, values });
   const rebind = (target) => {
     context.target = target;
     vm.runInContext('resetPlots("Waiting for tuner data…")', context);
@@ -106,7 +109,7 @@ test('display pixel maxima prevent deep raw-bin nulls from setting the range', a
   assert.equal(estimateSpectrumDisplayFloor(new Float32Array(100).fill(-196), 0), null);
 });
 
-test('shared panel samples visible pixels only after layout and freezes both floors until retune', async () => {
+test('shared panel samples visible pixels only after layout and holds both floors at the same resolution', async () => {
   const { context: panel, confirm, frame } = await panelHarness();
   confirm();
   panel.canvasWidth = 0;
@@ -136,7 +139,7 @@ test('invalid samples wait for valid data and bounds preserve the configured upp
   assert.equal(estimateSpectrumDisplayFloor(noise(-90), NaN), null);
 });
 
-test('captures once initially and once after retune, with no recalibration on zoom/profile/gain changes', async () => {
+test('state confirmations capture initially and after retune, independently of producer restarts', async () => {
   const { createSpectrumAutoRange } = await helper;
   const range = createSpectrumAutoRange();
   assert.equal(range.selectTarget('first'), true);
@@ -151,6 +154,136 @@ test('captures once initially and once after retune, with no recalibration on zo
   range.confirm(state({ generation: 2, revision: 2, centerFrequencyHz: 151_000_000 }));
   assert.equal(range.sample(noise(-87), 2, -20), -87);
   assert.equal(range.sample(noise(-110), 2, -20), null);
+});
+
+test('accepted resolution changes arm capture once and invalid samples keep it pending', async () => {
+  const { createSpectrumAutoRange } = await helper;
+  const range = createSpectrumAutoRange();
+  range.selectTarget('first');
+  range.confirm(state());
+  range.observeResolution(24_000, 1);
+  assert.equal(range.sample(noise(-63), 1, 0), -63);
+  for (const width of [0, -1, NaN, Infinity]) range.observeResolution(width, 1);
+  range.observeResolution(12_000, 0);
+  range.observeResolution(24_000, 1);
+  assert.equal(range.needsSample(), false, 'invalid or stale observations cannot change the baseline');
+  range.observeResolution(12_000, 1);
+  assert.equal(range.needsSample(), true);
+  assert.equal(range.sample([NaN, Infinity, -196], 1, 0), null);
+  assert.equal(range.needsSample(), true);
+  assert.equal(range.sample(noise(-81), 1, 0), -81);
+  range.observeResolution(12_000, 1);
+  assert.equal(range.sample(noise(-100), 1, 0), null, 'ordinary same-resolution frames keep the captured range');
+  range.observeResolution(24_000, 1);
+  assert.equal(range.sample(noise(-70), 1, 0), -70, 'zooming out also captures the new resolution');
+});
+
+test('resolution baseline survives same-tuner rebinds and resets for a different tuner', async () => {
+  const { createSpectrumAutoRange } = await helper;
+  const range = createSpectrumAutoRange();
+  range.selectTarget('first');
+  range.confirm(state());
+  range.observeResolution(24_000, 1);
+  range.sample(noise(-63), 1, 0);
+  range.discard();
+  range.selectTarget('');
+  range.observeResolution(12_000, 1);
+  range.selectTarget('first');
+  range.confirm(state({ generation: 2 }));
+  range.observeResolution(24_000, 2);
+  assert.equal(range.sample(noise(-100), 2, 0), null, 'same-frequency rebind retains manual capture suppression');
+  range.observeResolution(12_000, 2);
+  assert.equal(range.sample(noise(-81), 2, 0), -81, 'a real resolution change after rebind still captures');
+  range.selectTarget('second');
+  range.confirm(state({ targetId: 'second', generation: 3 }));
+  range.discard();
+  range.observeResolution(24_000, 3);
+  assert.equal(range.needsSample(), false, 'the new tuner establishes its own first resolution baseline');
+});
+
+test('shared panel recalibrates both plots when zoom crosses actual FFT resolution thresholds', async () => {
+  const { context: panel, confirm, frame } = await panelHarness();
+  confirm();
+  frame();
+  assert.equal(panel.spectrumDisplayFloorDb(), -63);
+  panel.viewport = { startHz: 149_600_000, endHz: 150_400_000 };
+  panel.awaitingViewportState = true;
+  const lens = { startHz: 149_400_000, endHz: 150_600_000 };
+  frame({ sampleRate: 1_200_000, sequence: 2, floor: -81 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -63, 'frames wait for the requested viewport confirmation');
+  confirm({ revision: 2, requested: panel.viewport, visible: lens });
+  frame({ sampleRate: 1_200_000, sequence: 3, values: new Float32Array(100).fill(NaN) });
+  assert.equal(panel.automaticDisplayRange.needsSample(), true);
+  assert.equal(panel.spectrumDisplayFloorDb(), -63, 'invalid first FFT retains the prior range while waiting');
+  frame({ sampleRate: 1_200_000, sequence: 4, floor: -81 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -81);
+  assert.equal(panel.waterfallDisplayFloorDb(), -81);
+  frame({ sampleRate: 1_200_000, sequence: 5, floor: -110 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -81, 'same-resolution frames do not recalibrate');
+  panel.viewport = { ...panel.fullViewport };
+  panel.awaitingViewportState = true;
+  confirm({ revision: 3, visible: panel.fullViewport });
+  frame({ sequence: 6, floor: -70 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -70);
+  assert.equal(panel.waterfallDisplayFloorDb(), -70);
+  assert.equal(panel.dbFloor, -140);
+  assert.equal(panel.dbCeiling, -15, 'resolution changes preserve the configured upper limit');
+});
+
+test('same raw resolution preserves capture through crops, transport changes and gain-only frames', async () => {
+  const { context: panel, confirm, frame } = await panelHarness();
+  confirm();
+  frame();
+  panel.viewport = { startHz: 149_500_000, endHz: 150_500_000 };
+  const cropped = { startHz: 149_400_000, endHz: 150_600_000 };
+  confirm({ revision: 2, requested: panel.viewport, visible: cropped });
+  frame({ sequence: 2, fftSize: 100, firstBin: 25, sourceBinCount: 50,
+    values: new Float32Array(50).fill(-81) });
+  assert.equal(panel.spectrumDisplayFloorDb(), -63, 'cropping the same FFT does not change its bin width');
+  frame({ sequence: 3, fftSize: 100, firstBin: 25, sourceBinCount: 50,
+    values: new Float32Array(25).fill(-100) });
+  assert.equal(panel.waterfallDisplayFloorDb(), -63, 'transport aggregation alone does not change FFT resolution');
+  frame({ sequence: 4, fftSize: 100, firstBin: 25, sourceBinCount: 50,
+    values: new Float32Array(25).fill(-110) });
+  assert.equal(panel.spectrumDisplayFloorDb(), -63, 'gain-only strength changes keep the captured floor');
+});
+
+test('disabled auto range preserves manual floors through resolution changes and samples when enabled', async () => {
+  const { context: panel, confirm, frame } = await panelHarness();
+  confirm();
+  frame();
+  panel.autoRangeInput.checked = false;
+  panel.dbFloor = -120;
+  panel.resetAutomaticDisplayRange();
+  panel.viewport = { startHz: 149_600_000, endHz: 150_400_000 };
+  confirm({ revision: 2, requested: panel.viewport,
+    visible: { startHz: 149_400_000, endHz: 150_600_000 } });
+  const preparations = panel.preparations;
+  frame({ sampleRate: 1_200_000, sequence: 2, floor: -81 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -120);
+  assert.equal(panel.waterfallDisplayFloorDb(), -120);
+  assert.equal(panel.fftAutoFloorDb, null);
+  assert.equal(panel.preparations, preparations, 'disabled auto range does not measure layout or sample');
+  panel.autoRangeInput.checked = true;
+  frame({ sampleRate: 1_200_000, sequence: 3, floor: -87 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -87);
+  assert.equal(panel.waterfallDisplayFloorDb(), -87);
+  assert.equal(panel.dbFloor, -120, 'enabling retains the saved manual baseline');
+});
+
+test('rejected FFT generations, sequences and analysis windows cannot replace the resolution baseline', async () => {
+  const { context: panel, confirm, frame } = await panelHarness();
+  confirm({ generation: 2 });
+  frame({ generation: 2, sequence: 10 });
+  const values = new Float32Array(200).fill(-100);
+  frame({ generation: 1, sequence: 11, values });
+  frame({ generation: 2, sequence: 9, values });
+  frame({ generation: 2, sequence: 11, center: 151_000_000, values });
+  frame({ generation: 2, sequence: 12, floor: -110 });
+  assert.equal(panel.spectrumDisplayFloorDb(), -63,
+    'a later valid same-resolution frame does not see a fabricated change from rejected frames');
+  assert.equal(panel.automaticDisplayRange.needsSample(), false);
+  assert.equal(panel.sequence, 12);
 });
 
 test('stale generations, stale states, wrong targets and unavailable samples cannot consume a pending retune', async () => {

@@ -40,7 +40,7 @@ import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMa
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
-import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
+import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createAudioDock } from './core/audio-dock.js?v=23';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=3';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
@@ -17041,6 +17041,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     updateSpectrumSmoothing(values, frame, domain);
     frameMetadata = frame;
     analysisViewport = nextAnalysis;
+    automaticDisplayRange.observeResolution(domain.rawBinWidthHz, frame.generation);
     applyAutomaticDisplayRange(frame);
     updateSpectrumPeak();
     const now = performance.now();

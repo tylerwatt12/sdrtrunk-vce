@@ -28,11 +28,12 @@ export function estimateSpectrumDisplayFloor(values, ceilingDb, minimumDb = -200
   return Math.max(minimumDb, Math.min(ceilingDb - minimumSpanDb, Math.floor(lowest)));
 }
 
-/** Capture one valid FFT after a confirmed tuner/center change, independently of producer restarts or zoom. */
+/** Capture one valid FFT after a confirmed tuner/center or actual bin-resolution change. */
 export function createSpectrumAutoRange() {
   let selectedTarget = '';
   let retainedTarget = '';
   let centerHz = null;
+  let binWidthHz = null;
   let generation = -1;
   let revision = -1;
   let live = false;
@@ -47,6 +48,7 @@ export function createSpectrumAutoRange() {
       if (!next || next === retainedTarget) return false;
       retainedTarget = next;
       centerHz = null;
+      binWidthHz = null;
       generation = revision = -1;
       pending = false;
       return true;
@@ -68,6 +70,11 @@ export function createSpectrumAutoRange() {
       return true;
     },
     acceptsFrame(frameGeneration) { return live && frameGeneration === generation; },
+    observeResolution(nextBinWidthHz, frameGeneration) {
+      if (!this.acceptsFrame(frameGeneration) || !Number.isFinite(nextBinWidthHz) || nextBinWidthHz <= 0) return;
+      if (binWidthHz !== null && nextBinWidthHz !== binWidthHz) pending = true;
+      binWidthHz = nextBinWidthHz;
+    },
     needsSample() { return pending && live; },
     requestSample() { pending = true; },
     sample(values, frameGeneration, ceilingDb, points = values?.length) {
