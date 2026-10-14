@@ -48,6 +48,7 @@ import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.AudioCallRecorder;
 import io.github.dsheirer.record.RecordFormat;
@@ -102,6 +103,7 @@ public class AudioStreamingManagerTest
     @Test
     void continuousAgcRunsOnStreamingWorkerAndPreservesRawPhase2Evidence() throws Exception
     {
+        String originalDataRoot = System.getProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
         boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
@@ -122,8 +124,10 @@ public class AudioStreamingManagerTest
         CompletedAudioCall source = withDecoder(withAudioBuffers(List.of(samples)), DecoderType.P25_PHASE2);
         try
         {
+            setPortableDataRoot(mTemporaryFolder.resolve("portable-data").toString());
             preferences.getJmbeLibraryPreference().setPathJmbeLibrary(
                 io.github.dsheirer.audio.codec.mbe.VocoderLibraryFixture.create(mTemporaryFolder));
+            assertTrue(preferences.getJmbeLibraryPreference().getPathJmbeLibrary().startsWith(mTemporaryFolder));
             preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
             preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
             preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
@@ -144,10 +148,20 @@ public class AudioStreamingManagerTest
             manager.stop(); scheduler.shutdownNow();
             preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
             preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
+            setPortableDataRoot(originalDataRoot);
             if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
             else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
             preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
         }
+    }
+
+    private static void setPortableDataRoot(String value) throws ReflectiveOperationException
+    {
+        if(value == null) System.clearProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
+        else System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY, value);
+        var reset = PortableApplicationPaths.class.getDeclaredMethod("resetForTest");
+        reset.setAccessible(true);
+        reset.invoke(null);
     }
 
     @Test
