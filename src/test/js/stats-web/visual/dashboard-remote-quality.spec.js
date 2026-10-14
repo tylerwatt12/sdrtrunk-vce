@@ -53,15 +53,27 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
     await expect(card(id(4)).locator('.signal-state')).toHaveText('Monitoring');
     await expect(card(id(4)).locator('.signal-state')).not.toHaveClass(/ui-pill-(success|warning|danger)/);
     await expect(card(id(4)).locator('.signal-current-power strong')).toHaveText('—');
+    for (const configurationId of [channelId, id(2), id(3), id(4)]) {
+      const pill = card(configurationId).locator('.signal-state');
+      await expect(pill.locator('svg')).toHaveCount(1);
+      await expect(pill.locator('svg use')).toHaveAttribute('href', '#icon-cloud');
+      await expect(pill).toHaveAttribute('aria-label', /^Remote source · /);
+      expect(await pill.evaluate(element => getComputedStyle(element.querySelector('svg')).color ===
+        getComputedStyle(element).color)).toBe(true);
+    }
+    await expect(remote.locator('.signal-state')).toHaveAttribute('title', 'Remote source · 99.3% decode quality');
+    await expect(card(id(4)).locator('.signal-state')).toHaveAttribute('title', 'Remote source · Decode quality unavailable');
     await expect(card(id(6))).toHaveCount(0);
     await expect(card(id(7))).toHaveCount(0);
     const localNoRf = card(id(5));
     await expect(localNoRf.locator('.signal-state')).toHaveText('No signal');
+    await expect(localNoRf.locator('.signal-state svg')).toHaveCount(0);
     await expect(localNoRf.locator('.signal-current-power strong')).toHaveText('—');
     await expect(localNoRf.locator('.signal-current-power span')).toHaveText('30s avg —');
     await expect(localNoRf.locator('.signal-current-details')).toContainText('Decode 99.3%');
     await expect(card(id(8)).locator('.signal-current-power strong')).toHaveText('-51.0 dBFS');
     await expect(card(id(8)).locator('.signal-current-power span')).toHaveText('30s avg -52.0 dBFS');
+    await expect(card(id(8)).locator('.signal-state svg')).toHaveCount(0);
     await remote.screenshot({ path: testInfo.outputPath(`remote-quality-card-${theme}.png`) });
     await page.locator('.signal-health').screenshot({ path: testInfo.outputPath(`signal-quality-cards-${theme}.png`) });
     expect(fixture.unexpected).toEqual([]);

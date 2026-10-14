@@ -8842,7 +8842,16 @@ function updateSignalCurrentTile(tile, channel) {
   const tone = state.className === 'healthy' ? 'ui-pill-success' :
     state.className === 'degraded' ? 'ui-pill-warning' :
       state.className === 'poor' ? 'ui-pill-danger' : '';
-  header.append(labels, badge(state.label, `signal-state ${tone}`));
+  const statePill = decodeOnly ? uiPill(state.label, tone.replace('ui-pill-', '') || 'neutral', 'icon-cloud') :
+    badge(state.label, tone);
+  statePill.classList.add('signal-state');
+  if (decodeOnly) {
+    const decodeLabel = Number.isFinite(optionalNumber(channel.decode_health_pct)) ?
+      `${percentNumber(channel.decode_health_pct)} decode quality` : 'Decode quality unavailable';
+    statePill.title = `Remote source · ${decodeLabel}`;
+    statePill.setAttribute('aria-label', `Remote source · ${state.label}`);
+  }
+  header.append(labels, statePill);
   const power = node('div', 'signal-current-power');
   if (decodeOnly) {
     power.append(node('strong', '', percentNumber(channel.decode_health_pct)),
