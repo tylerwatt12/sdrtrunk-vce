@@ -29,7 +29,7 @@ function operatorSettings(overrides = {}) {
       { minimum: 0, maximum: 15, step: 1, unit: 'dB' }),
     setting('automatic_ppm', 'Automatic PPM', 'calibration', 'boolean', false),
     setting('frequency_correction_ppm', 'Frequency correction', 'calibration', 'decimal', 0,
-      { minimum: -200, maximum: 200, step: 1, unit: 'ppm',
+      { minimum: -200, maximum: 200, step: 0.01, unit: 'ppm',
         dependencies: [{ setting_id: 'automatic_ppm', equals: false }],
         unavailable_reason: 'Turn off Auto PPM' }),
     setting('minimum_frequency_mhz', 'Minimum frequency', 'frequency', 'decimal', 24,
@@ -432,7 +432,7 @@ test('descriptor availability and dependencies control common and device setting
   const automaticPpm = controls.getByLabel('Automatic PPM');
   const manualPpm = controls.getByLabel('Frequency correction (ppm)');
   await expect(manualPpm).toBeDisabled();
-  await expect(manualPpm).toHaveValue('0');
+  await expect(manualPpm).toHaveValue('-0.02');
   await expect(page.locator('[data-setting-id="frequency_correction_ppm"]')).toHaveAttribute(
     'aria-disabled', 'true');
   await expect(controls.getByRole('button', { name: 'Turn off Auto PPM to adjust' })).toBeVisible();
@@ -447,7 +447,7 @@ test('descriptor availability and dependencies control common and device setting
   await expect(controls.getByText(/queued/i)).toHaveCount(0);
 });
 
-test('manual PPM presents and applies whole-number steps', async ({ page }) => {
+test('manual PPM presents and applies hundredth-PPM steps without saving display rounding', async ({ page }) => {
   const mutations = [];
   const settings = operatorSettings({
     frequency_correction_ppm: { value: -0.017398311918371955 }
@@ -456,17 +456,38 @@ test('manual PPM presents and applies whole-number steps', async ({ page }) => {
   await page.goto('/app.html?view=tuners');
 
   const manualPpm = page.locator('.tuners-controls').getByLabel('Frequency correction (ppm)');
-  await expect(manualPpm).toHaveAttribute('step', '1');
-  await expect(manualPpm).toHaveValue('0');
+  const form = page.locator('[data-setting-id="frequency_correction_ppm"]');
+  const save = form.getByRole('button', { name: 'Save' });
+  await expect(manualPpm).toHaveAttribute('step', '0.01');
+  await expect(manualPpm).toHaveValue('-0.02');
   await manualPpm.press('Enter');
   await page.waitForTimeout(50);
   expect(mutations).toEqual([]);
   await manualPpm.press('ArrowUp');
-  await expect(manualPpm).toHaveValue('1');
-  await page.locator('[data-setting-id="frequency_correction_ppm"]').getByRole('button', { name: 'Save' }).click();
+  await expect(manualPpm).toHaveValue('-0.01');
+  await save.click();
   await expect.poll(() => mutations.at(-1)).toEqual({
-    type: 'setting', setting: 'frequency_correction_ppm', value: 1
+    type: 'setting', setting: 'frequency_correction_ppm', value: -0.01
   });
+  await expect(save).toBeHidden();
+  await manualPpm.press('ArrowDown');
+  await expect(manualPpm).toHaveValue('-0.02');
+  await save.click();
+  await expect.poll(() => mutations.at(-1)).toEqual({
+    type: 'setting', setting: 'frequency_correction_ppm', value: -0.02
+  });
+  await expect(save).toBeHidden();
+  await manualPpm.fill('0.20');
+  await save.click();
+  await expect.poll(() => mutations.at(-1)).toEqual({
+    type: 'setting', setting: 'frequency_correction_ppm', value: 0.2
+  });
+  await expect(save).toBeHidden();
+  await expect(manualPpm).toHaveValue('0.20');
+  await manualPpm.fill('0.21');
+  await form.getByRole('button', { name: 'Discard' }).click();
+  await expect(manualPpm).toHaveValue('0.20');
+  expect(mutations).toHaveLength(3);
 });
 
 test('boolean settings auto-save without flashing actions and allow failure recovery', async ({ page }) => {

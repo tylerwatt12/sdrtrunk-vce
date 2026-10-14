@@ -29820,7 +29820,8 @@ function tunerSettingInputValue(setting, value) {
     const fractionDigits = (coefficient.split('.')[1] || '').length;
     const decimalPlaces = Math.min(12, Math.max(0, fractionDigits - Number(exponentText)));
     const rounded = Number(numeric.toFixed(decimalPlaces));
-    return String(Object.is(rounded, -0) ? 0 : rounded);
+    const normalized = Object.is(rounded, -0) ? 0 : rounded;
+    return setting.id === 'frequency_correction_ppm' ? normalized.toFixed(decimalPlaces) : String(normalized);
   }
   return String(value);
 }
@@ -30450,7 +30451,7 @@ async function renderTuners() {
         if (!control) return;
         settingDrafts.delete(draftKey);
         if (setting.kind === 'boolean') setUiToggle(control.input, Boolean(baseValue));
-        else control.input.value = String(baseValue);
+        else control.input.value = tunerSettingInputValue(setting, baseValue);
         const output = control.element.querySelector('.tuners-gain-value');
         if (output) output.textContent = tunerSettingValue(setting, baseValue);
         message.textContent = '';

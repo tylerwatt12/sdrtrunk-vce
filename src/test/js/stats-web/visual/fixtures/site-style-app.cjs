@@ -127,7 +127,7 @@ function operatorSettings(overrides = {}) {
       { minimum: 0, maximum: 15, step: 1, unit: 'dB' }),
     setting('automatic_ppm', 'Automatic PPM', 'calibration', 'boolean', false),
     setting('frequency_correction_ppm', 'Frequency correction', 'calibration', 'decimal', 0,
-      { minimum: -200, maximum: 200, step: 1, unit: 'ppm',
+      { minimum: -200, maximum: 200, step: 0.01, unit: 'ppm',
         dependencies: [{ setting_id: 'automatic_ppm', equals: false }],
         unavailable_reason: 'Turn off Auto PPM' }),
     setting('minimum_frequency_mhz', 'Minimum frequency', 'frequency', 'decimal', 24,
