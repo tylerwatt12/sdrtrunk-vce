@@ -621,7 +621,7 @@ public final class SetupWizard extends JDialog
                 page.removeAll();
                 notice("Ready to bring your settings over", "Your previous installation will stay unchanged. We’ll check the copied settings before using them.", false);
                 paragraph("Import from: " + selection.path());
-                selectedScope = selection.portableProfile() ? "Your settings, encryption vault, digital voice library and optional tools will be copied when available. Folders inside the old data folder will point to this installation. Recordings and logs are not copied; shared folders outside it stay unchanged." : "Only the database contents will be copied. Your vault, digital voice library and other files stay where they are. Saved output folders will not be changed — review them before starting reception.";
+                selectedScope = selection.portableProfile() ? "Your settings and Remote Links pairing will be copied, along with your encryption vault, digital voice library and optional tools when available. Folders inside the old data folder will point to this installation. Recordings and logs are not copied; shared folders outside it stay unchanged." : "Only the database contents will be copied. Your vault, digital voice library and other files stay where they are. Saved output folders will not be changed — review them before starting reception.";
                 notice("What will be carried over",selectedScope,false);
                 migrationDetails(plan);
                 button("Choose a different source", () -> showPage(SetupStep.SOURCE));

@@ -16,6 +16,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.AclEntry;
@@ -23,6 +25,7 @@ import java.nio.file.attribute.AclEntryFlag;
 import java.nio.file.attribute.AclEntryPermission;
 import java.nio.file.attribute.AclEntryType;
 import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.UserPrincipal;
@@ -39,6 +42,7 @@ import java.util.UUID;
 public final class RemoteLinkSettingsStore
 {
     public static final String DEFAULT_BIND_ADDRESS = "0.0.0.0";
+    private static final int MAXIMUM_SETTINGS_BYTES = 256_000;
     private static final Set<PosixFilePermission> OWNER_ONLY = Set.of(
         PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
     private final Path mPath;
@@ -57,7 +61,7 @@ public final class RemoteLinkSettingsStore
             return Settings.defaults();
         }
         if(Files.isSymbolicLink(mPath) || Files.isSymbolicLink(mPath.getParent()) ||
-            !Files.isRegularFile(mPath) || Files.size(mPath) > 256_000)
+            !Files.isRegularFile(mPath) || Files.size(mPath) > MAXIMUM_SETTINGS_BYTES)
         {
             throw new IOException("Remote-link settings file is invalid");
         }
@@ -79,6 +83,73 @@ public final class RemoteLinkSettingsStore
     public synchronized void save(Settings settings) throws IOException
     {
         validate(settings);
+        write(mMapper.writeValueAsBytes(settings));
+    }
+
+    /**
+     * Copies validated settings into a new portable profile without changing the source contents or permissions.
+     * Original bytes retain all credential fields, including settings a newer writer may have added.
+     */
+    public synchronized boolean copyTo(Path targetDataRoot) throws IOException
+    {
+        Path sourceDirectory = mPath.getParent();
+        BasicFileAttributes directoryAttributes = attributesIfPresent(sourceDirectory);
+        if(directoryAttributes == null) return false;
+        if(directoryAttributes.isSymbolicLink() || !directoryAttributes.isDirectory())
+        {
+            throw new IOException("Remote-link settings path is invalid");
+        }
+        BasicFileAttributes fileAttributes = attributesIfPresent(mPath);
+        if(fileAttributes == null) return false;
+        if(fileAttributes.isSymbolicLink() || !fileAttributes.isRegularFile() ||
+            fileAttributes.size() > MAXIMUM_SETTINGS_BYTES)
+        {
+            throw new IOException("Remote-link settings file is invalid");
+        }
+
+        byte[] contents;
+        try(var input = Files.newInputStream(mPath, LinkOption.NOFOLLOW_LINKS))
+        {
+            contents = input.readNBytes(MAXIMUM_SETTINGS_BYTES + 1);
+        }
+        if(contents.length > MAXIMUM_SETTINGS_BYTES)
+        {
+            throw new IOException("Remote-link settings file is invalid");
+        }
+        try
+        {
+            validate(mMapper.readValue(contents, Settings.class));
+        }
+        catch(JsonProcessingException | RuntimeException exception)
+        {
+            //Never attach Jackson diagnostics, which can quote credentials from an invalid source.
+            throw new IOException("Remote-link settings file is invalid");
+        }
+
+        RemoteLinkSettingsStore target = new RemoteLinkSettingsStore(targetDataRoot);
+        if(attributesIfPresent(target.mPath) != null || target.mPath.equals(mPath))
+        {
+            throw new IOException("The destination already has remote-link settings");
+        }
+        target.write(contents);
+        return true;
+    }
+
+    private static BasicFileAttributes attributesIfPresent(Path path) throws IOException
+    {
+        try
+        {
+            return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        }
+        catch(NoSuchFileException missing)
+        {
+            //Unlike exists(), this does not mistake inaccessible credentials for an unconfigured profile.
+            return null;
+        }
+    }
+
+    private void write(byte[] contents) throws IOException
+    {
         Files.createDirectories(mPath.getParent());
         if(Files.isSymbolicLink(mPath.getParent())) throw new IOException("Remote-link settings path is invalid");
         ownerOnly(mPath.getParent(), true);
@@ -86,7 +157,7 @@ public final class RemoteLinkSettingsStore
         try
         {
             ownerOnly(temporary, false);
-            mMapper.writeValue(temporary.toFile(), settings);
+            Files.write(temporary, contents);
             try
             {
                 Files.move(temporary, mPath, StandardCopyOption.ATOMIC_MOVE,

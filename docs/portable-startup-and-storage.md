@@ -66,6 +66,7 @@ pause the countdown.
 | Saved item | Copy an installation / data folder | Import a SQLite database only |
 | --- | --- | --- |
 | Channels, aliases, accounts, preferences, and application activity stored in the database | Imported, with any required conversion and declared repairs or resets | Imported, with the same conversion policy |
+| Remote Links pairing and connection settings | Copied when present; unsafe or unreadable settings stop the import | Not copied |
 | Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Copied when present and usable; missing or skipped items appear in the report | Not copied |
 | Logs, call audio, event logs, screenshots, streaming output, and the separate Managed Recordings catalog | Not copied; stay at their existing locations | Not copied; stay at their existing locations |
 | Saved output and library paths inside the previous data folder | Changed to the matching location in the new data folder | Kept as stored |

@@ -12,7 +12,7 @@ the [documentation index](README.md).
 | What you want to do | Where to start | What changes |
 | --- | --- | --- |
 | Use a newer build with the same active VCE data folder | Accept the database **Update** offered during startup | The active database is updated in place, with a recovery backup selected by default. |
-| Bring a previous VCE installation into a new download | **Copy a previous VCE installation / data folder** in first-run setup | A checked copy is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
+| Bring a previous VCE installation into a new download | **Copy a previous VCE installation / data folder** in first-run setup | A checked copy is installed in the new data folder, including saved Remote Links pairing. Available vault, JMBE, and optional module files are also copied. |
 | Start a new installation from a VCE database file | **Import a SQLite database only** in first-run setup | Only the selected database contents are imported. Neighboring files and saved output paths are not moved. |
 | Replace the settings in an installation you already use | **File → Import SQLite Database…**, or **Help → Setup Wizard… → Replace settings from a SQLite database** | The whole application database is replaced after backing up the current one. This does not merge profiles. |
 | Add another supported XML playlist | **Help → Setup Wizard… → Import a legacy XML playlist** | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
@@ -59,6 +59,10 @@ Usable channels, aliases, accounts, credentials, and settings are preserved or c
 Some older activity, signal history, or cached information may be reset when it cannot be carried forward reliably;
 new reception rebuilds those observations. An unusable setting or configuration component may be repaired, defaulted,
 or skipped independently. The plan describes these possibilities and the final report names the actual effects.
+
+A full installation/data-folder import preserves saved Remote Links pairing and connection settings. If those settings
+are present but cannot be copied safely, the import stops so the saved pairing is not lost. Check Remote Links in the
+previous installation and retry. Profiles that have never configured Remote Links need no settings file.
 
 A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
 Missing or unusable optional files are reported; you can select or set them up again. Logs, recordings, screenshots,
@@ -814,7 +818,11 @@ interrupted. Old in-memory preferences are closed before replacement and are nev
 ## Input Scope
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
-as the vault, JMBE library, optional modules, and paths that need remapping. An unavailable optional artifact is
+as Remote Links pairing, the vault, JMBE library, optional modules, and paths that need remapping. Existing Remote Links
+settings are validated and copied with owner-only permissions before promotion, without changing the selected source.
+Missing settings are normal; malformed, unreadable, or unsafe existing settings refuse the import without reporting
+their contents. Remote Links network destinations and stable channel/sender identities are preserved without path
+remapping. An unavailable optional artifact is
 reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the
 selected scope can attempt; completion reports what was copied, unavailable, or skipped. File-only migration must never
