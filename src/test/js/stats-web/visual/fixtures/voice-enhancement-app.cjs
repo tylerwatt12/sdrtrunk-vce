@@ -59,7 +59,7 @@ async function openVoiceEnhancementApp(page, options = {}) {
         enabled: request.postDataJSON().value, status: 'ready' };
       return route.fulfill({ json: paging.current });
     }
-    if (pathname.startsWith('/api/v1/admin/voice-enhancement/')) {
+    if (pathname === '/api/v1/admin/voice-enhancement/enabled') {
       state.writes.push({ action: pathname.split('/').at(-1), method: request.method(),
         headers: request.headers(), body: request.postDataBuffer() });
       if (state.held) await state.held;
@@ -69,14 +69,14 @@ async function openVoiceEnhancementApp(page, options = {}) {
           json: { error: { code: 'invalid_model', message: 'The change could not be saved.' } } });
       }
       if (request.headers()['if-match'] !== `"${state.current.revision}"`) return route.fulfill({ status: 409, json: state.current });
-      const action = pathname.split('/').at(-1);
       state.current = { ...state.current, revision: (state.writes.length % 2 ? 'b' : 'e').repeat(64),
-        ...(action === 'enabled' ? { enabled: request.postDataJSON().value } : { status: 'ready', model: model('voice-model-2') }) };
+        enabled: request.postDataJSON().value };
       return route.fulfill({ json: state.current });
     }
     if (pathname === '/api/v1/admin/operational-preferences') return route.fulfill({ json: {
       revision: 'f'.repeat(64), settings: { patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3',
         mp3_setting: 'CBR_16', mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false,
+        audio_continuous_agc: false,
         stats_logging_enabled: true, stats_detailed_history_enabled: false, stats_logging_retention_days: 30 },
       options: { patch_group_streaming_options: [], audio_record_formats: [],
         mp3_settings: [{ value: 'CBR_16', label: '16 kbps' }],

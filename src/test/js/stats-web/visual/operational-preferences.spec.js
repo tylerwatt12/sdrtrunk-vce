@@ -16,7 +16,8 @@ function preferences() {
     revision: 'a'.repeat(64),
     settings: {
       patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, stats_logging_enabled: true,
+      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, audio_continuous_agc: false,
+      stats_logging_enabled: true,
       stats_detailed_history_enabled: false, stats_logging_retention_days: 30
     },
     options: {
@@ -136,7 +137,7 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   const app = await openApp(page);
   const workspace = page.locator('.operational-preferences');
   await expect(workspace).toBeVisible();
-  await expect(workspace.locator('.settings-card')).toHaveCount(4);
+  await expect(workspace.locator('.settings-card')).toHaveCount(5);
   await expect(workspace.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
   const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
   await patch.locator('select').selectOption('TALKGROUPS');

@@ -220,13 +220,13 @@
 .audio-dock-notice { position: fixed; z-index: calc(var(--audio-dock-layer) + 1); min-width: 0; margin: 0; overflow: auto; overflow-wrap: anywhere; }
 :root:has(body.has-audio-dock) { scroll-padding-top: calc(var(--app-header-offset, 0px) + var(--space-2)); }
 @media (min-width: 901px) {
-  body.has-audio-dock:is([data-view="recordings"], [data-view="channel"], [data-view="radio-system"], [data-view="topics"]) .content::after {
+  body.has-audio-dock:is([data-view="recordings"], [data-view="channel"], [data-view="radio-system"], [data-view="topics"], [data-view="admin"]) .content::after {
     content: "";
     display: block;
     flex: 0 0 auto;
     height: calc(var(--audio-dock-height, 0px) + var(--audio-dock-inset) + var(--space-5));
   }
-  :root:has(body.has-audio-dock:is([data-view="recordings"], [data-view="channel"], [data-view="radio-system"], [data-view="topics"])) {
+  :root:has(body.has-audio-dock:is([data-view="recordings"], [data-view="channel"], [data-view="radio-system"], [data-view="topics"], [data-view="admin"])) {
     scroll-padding-bottom: calc(var(--audio-dock-height, 0px) + var(--audio-dock-inset) + var(--space-2));
   }
 }

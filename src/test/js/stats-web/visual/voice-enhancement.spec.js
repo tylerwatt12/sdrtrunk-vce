@@ -6,35 +6,35 @@ const { openVoiceEnhancementApp, model } = require('./fixtures/voice-enhancement
 const { openAudioApp, liveCall, recording } = require('./fixtures/audio-dock-app.cjs');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
-const zip = { name: 'voice-model.zip', mimeType: 'application/zip', buffer: Buffer.from([80, 75, 3, 4]) };
 const panel = page => page.locator('[data-voice-enhancement]');
 const toggle = page => panel(page).getByRole('checkbox', { name: '16 kHz voice enhancement', exact: true });
 const save = page => panel(page).getByRole('button', { name: 'Save', exact: true });
-const update = page => panel(page).getByRole('button', { name: 'Update model', exact: true });
 
 async function screenshot(page, name) {
   if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`), fullPage: true });
 }
 
-test('voice enhancement saves revisions, blocks duplicate writes, and retains a model after rejected replacement', async ({ page }) => {
+test('embedded JMBE enhancement saves revisions and blocks duplicate writes without model upload', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openVoiceEnhancementApp(page, { holdStatus: true,
     snapshot: { model: model('voice-model-' + 'long-'.repeat(25)) } });
   await expect(panel(page)).toContainText('Loading voice enhancement…');
   await expect(page.locator('.admin-settings-content [data-voice-enhancement]')).toHaveCount(1);
   await expect(toggle(page)).toBeDisabled(); await expect(save(page)).toBeDisabled();
-  await expect(panel(page).locator('input[type=file]')).toBeDisabled();
+  await expect(panel(page).locator('input[type=file]')).toHaveCount(0);
   state.releaseStatus();
   await expect(toggle(page)).toBeEnabled();
   await expect(save(page)).toBeDisabled();
-  await expect(panel(page)).toContainText('Applies to new browser calls.');
+  await expect(panel(page)).toContainText('Enhances new browser calls');
+  await expect(panel(page)).toContainText('JMBE model');
   await toggle(page).focus();
   await screenshot(page, 'administration-light-desktop');
   await toggle(page).press('Space');
   const release = state.holdWrite();
   await save(page).click();
   await expect(panel(page).locator('form').first()).toHaveAttribute('aria-busy', 'true');
-  await expect(toggle(page)).toBeDisabled(); await expect(update(page)).toBeDisabled();
+  await expect(toggle(page)).toBeDisabled();
+  await expect(panel(page).getByRole('button', { name: 'Update model', exact: true })).toHaveCount(0);
   await panel(page).locator('form').first().evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   await expect.poll(() => state.writes.length).toBe(1);
   release();
@@ -42,20 +42,7 @@ test('voice enhancement saves revisions, blocks duplicate writes, and retains a 
   expect(state.writes[0].headers['if-match']).toBe(`"${'a'.repeat(64)}"`);
   expect(state.writes[0].headers['x-csrf-token']).toBe('test-only-csrf');
   expect(JSON.parse(state.writes[0].body)).toEqual({ value: true });
-  const file = panel(page).locator('input[type=file]');
-  await file.setInputFiles({ ...zip, name: 'model.json' });
-  await expect(update(page)).toBeDisabled();
-  await expect(panel(page).getByRole('alert')).toContainText('Choose a ZIP file');
-  await file.setInputFiles(zip);
-  state.nextFailure = 422;
-  await update(page).click();
-  await expect(panel(page).getByRole('alert')).toContainText('The current model is unchanged.');
   await expect(panel(page)).toContainText(state.current.model.id);
-  await update(page).click();
-  await expect(panel(page)).toContainText('Model updated.');
-  expect(state.writes.at(-1).headers['content-type']).toBe('application/zip');
-  expect(state.writes.at(-1).body).toEqual(zip.buffer);
-  expect(state.writes.at(-1).headers['if-match']).toBe(`"${'b'.repeat(64)}"`);
   state.current = { ...state.current, revision: 'c'.repeat(64), enabled: false };
   await toggle(page).press('Space'); await save(page).click();
   await expect(panel(page)).toContainText('The latest saved settings were loaded.');
@@ -69,29 +56,23 @@ test('voice enhancement saves revisions, blocks duplicate writes, and retains a 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('missing and unavailable model states explain original audio fallback on a phone', async ({ page }) => {
+test('older JMBE explains unavailable processing on a phone and preserves the option to turn it off', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const state = await openVoiceEnhancementApp(page, { theme: 'dark', snapshot: { status: 'no_model', model: null } });
-  await expect(panel(page)).toContainText('Install a model to turn this on. Browser calls use original audio.');
+  const state = await openVoiceEnhancementApp(page, { theme: 'dark', snapshot: { status: 'unavailable', model: null } });
+  await expect(panel(page)).toContainText('Install a current JMBE library to use voice enhancement and continuous automatic gain.');
+  await expect(panel(page)).toContainText('Browser calls use original audio.');
   await expect(toggle(page)).toBeDisabled(); await expect(save(page)).toBeDisabled();
-  const fieldBounds = await panel(page).locator('input[type=file]').evaluate(input => {
-    const field = input.closest('.ui-field').getBoundingClientRect(), control = input.getBoundingClientRect();
-    return { fieldRight: field.right, controlRight: control.right, fieldLeft: field.left, controlLeft: control.left };
-  });
-  expect(fieldBounds.controlRight).toBeLessThanOrEqual(fieldBounds.fieldRight + 1);
-  expect(fieldBounds.controlLeft).toBeGreaterThanOrEqual(fieldBounds.fieldLeft - 1);
+  await expect(panel(page).locator('input[type=file]')).toHaveCount(0);
   await screenshot(page, 'administration-dark-phone');
-  await panel(page).locator('input[type=file]').setInputFiles(zip);
-  await update(page).click(); await expect(toggle(page)).toBeEnabled();
-  state.current = { ...state.current, enabled: true, status: 'unavailable' };
+  state.current = { ...state.current, revision: 'c'.repeat(64), enabled: true };
   await panel(page).getByRole('button', { name: 'Reload status' }).click();
-  await expect(panel(page)).toContainText('The model is unavailable. Browser calls use original audio.');
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).toBeChecked();
   await toggle(page).press('Space'); await save(page).click();
   await expect(toggle(page)).not.toBeChecked(); await expect(toggle(page)).toBeDisabled();
-  state.current = { ...state.current, model: null };
+  state.current = { ...state.current, revision: 'e'.repeat(64), status: 'ready', model: model('newly-selected-jmbe-model') };
   await panel(page).getByRole('button', { name: 'Reload status' }).click();
-  await expect(panel(page)).toContainText('Model unavailable');
+  await expect(toggle(page)).toBeEnabled();
+  await expect(panel(page)).toContainText('newly-selected-jmbe-model');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

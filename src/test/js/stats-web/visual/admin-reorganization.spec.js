@@ -27,7 +27,7 @@ function operationalDocument() {
     revision: 'a'.repeat(64),
     settings: {
       patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false,
+      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, audio_continuous_agc: false,
       stats_logging_enabled: true, stats_detailed_history_enabled: true, stats_logging_retention_days: 30
     },
     options: {
@@ -163,23 +163,38 @@ test('desktop administration navigation includes every grouped page and its icon
 test('audio quality retains server choices, dependent options, draft fields, and revision saves', async ({ page }) => {
   const app = await openAdmin(page);
   await expect.poll(() => preferenceIds(page))
-    .toEqual(['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
+    .toEqual(['audio_continuous_agc', 'mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
+  const gain = page.locator('form[data-preference="audio_continuous_agc"]');
   const quality = page.locator('form[data-preference="mp3_setting"]');
   const sampleRate = page.locator('form[data-preference="mp3_input_audio_format"]');
   const normalize = page.locator('form[data-preference="mp3_normalize_audio"]');
+  await expect(gain.locator('input')).not.toBeChecked();
+  await expect(gain).toContainText('Balances speech volume in new browser calls, recordings, and outgoing streams.');
   await expect(quality.locator('option')).toHaveText(['16 kbps', 'Variable']);
   await expect(sampleRate.locator('option')).toHaveText(['8 kHz', '16 kHz']);
   await normalize.locator('.ui-toggle').click();
+  await gain.locator('.ui-toggle').click();
+  await gain.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(gain.locator('input')).toBeChecked();
+  await expect(normalize.getByText('Unsaved change')).toBeVisible();
+  await expect(normalize.locator('input')).toBeDisabled();
+  await expect(normalize.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await expect(normalize).toContainText('Continuous automatic gain replaces MP3 volume normalization');
   await quality.locator('select').selectOption('VBR_5');
   await quality.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(sampleRate.locator('option')).toHaveText(['16 kHz', '44.1 kHz']);
   await expect(normalize.getByText('Unsaved change')).toBeVisible();
+  await gain.locator('.ui-toggle').click();
+  await gain.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(normalize.locator('input')).toBeEnabled();
   await normalize.getByRole('button', { name: 'Save', exact: true }).click();
   expect(app.writes).toEqual([
-    { field: 'mp3_setting', value: 'VBR_5', revision: `"${'a'.repeat(64)}"` },
+    { field: 'audio_continuous_agc', value: true, revision: `"${'a'.repeat(64)}"` },
+    { field: 'mp3_setting', value: 'VBR_5', revision: `"${'b'.repeat(64)}"` },
+    { field: 'audio_continuous_agc', value: false, revision: `"${'b'.repeat(64)}"` },
     { field: 'mp3_normalize_audio', value: true, revision: `"${'b'.repeat(64)}"` }
   ]);
-  await expect(page.locator('.admin-settings-content .admin-form-message')).toHaveText('Saved.');
+  await expect(page.locator('.operational-preferences .admin-form-message')).toHaveText('Saved.');
 });
 
 test('activity settings keep collection switches and server retention limits together', async ({ page }) => {
@@ -219,7 +234,7 @@ test('a focused settings page can retry its initial failed load', async ({ page 
   await expect(retry).toBeEnabled();
   await retry.click();
   await expect.poll(() => preferenceIds(page))
-    .toEqual(['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
+    .toEqual(['audio_continuous_agc', 'mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
   expect(app.requests.filter((request) => request === '/api/v1/admin/operational-preferences'))
     .toHaveLength(2);
   await expect(page.getByText('Settings temporarily unavailable. Reload saved settings and try again.'))

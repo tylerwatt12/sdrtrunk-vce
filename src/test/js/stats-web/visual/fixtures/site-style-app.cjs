@@ -53,7 +53,8 @@ const pageOf = (rows, limit = 100) => ({ rows, total_count: rows.length, limit,
   offset: 0, has_more: false, next_offset: null });
 const operational = { revision: 'a'.repeat(64), settings: {
   patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-  mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, stats_logging_enabled: true,
+  mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, audio_continuous_agc: false,
+  stats_logging_enabled: true,
   stats_detailed_history_enabled: true, stats_logging_retention_days: 30 }, options: {
   patch_group_streaming_options: [{ value: 'PATCH_GROUP', label: 'Patch Group' }, { value: 'TALKGROUPS', label: 'Individual Talkgroups' }],
   audio_record_formats: [{ value: 'MP3', label: 'MP3' }, { value: 'WAVE', label: 'WAV' }],

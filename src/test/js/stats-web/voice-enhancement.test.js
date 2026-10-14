@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 
 async function main() {
   const modulePath = path.resolve(process.argv[2] || path.join(__dirname, '../../../../stats-web/assets/features/voice-enhancement.js'));
-  const { decodeVoiceEnhancement, validateModelZip, requestVoiceEnhancement, MODEL_ZIP_MAX_BYTES } =
+  const { decodeVoiceEnhancement, requestVoiceEnhancement } =
     await import(pathToFileURL(modulePath).href);
   const { callAudioDetailGroups, formatPagingToneSummary } = await import(pathToFileURL(path.join(path.dirname(modulePath), '../core/call-audio-details.js')).href);
   const revision = 'a'.repeat(64);
@@ -21,12 +21,6 @@ async function main() {
     { ...ready, model: { ...ready.model, codecs: ['IMBE'] } }]) {
     assert.throws(() => decodeVoiceEnhancement(value), /Reload/);
   }
-  assert.match(validateModelZip(null), /Choose/);
-  assert.match(validateModelZip({ name: 'weights.json', size: 32 }), /ZIP/);
-  assert.match(validateModelZip({ name: 'model.zip', size: 0 }), /empty/);
-  assert.match(validateModelZip({ name: 'model.zip', size: MODEL_ZIP_MAX_BYTES + 1 }), /16 MB/);
-  assert.equal(validateModelZip({ name: 'MODEL.ZIP', size: MODEL_ZIP_MAX_BYTES }), '');
-
   const calls = [];
   let response = { ok: true, status: 200, json: async () => ready };
   const fetchDocument = async (url, options) => { calls.push({ url, options }); return response; };
@@ -36,24 +30,17 @@ async function main() {
   assert.equal(calls.at(-1).options.method, 'PUT');
   assert.equal(calls.at(-1).options.headers['If-Match'], `"${revision}"`);
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { value: true });
-  const zip = new File([new Uint8Array([80, 75, 3, 4])], 'model.zip', { type: 'application/zip' });
-  await requestVoiceEnhancement(fetchDocument, { action: 'model', revision, file: zip });
-  assert.equal(calls.at(-1).url, '/api/v1/admin/voice-enhancement/model');
-  assert.equal(calls.at(-1).options.method, 'POST');
-  assert.equal(calls.at(-1).options.headers['Content-Type'], 'application/zip');
-  assert.strictEqual(calls.at(-1).options.body, zip, 'Upload must retain the raw file body.');
   const beforeInvalid = calls.length;
-  await assert.rejects(requestVoiceEnhancement(fetchDocument, { action: 'model', revision,
-    file: { name: 'model.zip', size: MODEL_ZIP_MAX_BYTES + 1 } }), /16 MB/);
+  await assert.rejects(requestVoiceEnhancement(fetchDocument, { action: 'model', revision }), /Unknown voice enhancement action/);
   await assert.rejects(requestVoiceEnhancement(fetchDocument, { action: 'enabled', revision: '', value: true }), /Reload/);
   assert.equal(calls.length, beforeInvalid, 'Rejected local inputs must not write to the server.');
   const changed = { ...ready, revision: 'c'.repeat(64), enabled: true };
   response = { ok: false, status: 409, json: async () => changed };
   await assert.rejects(requestVoiceEnhancement(fetchDocument, { action: 'enabled', revision, value: true }),
     error => error.status === 409 && error.current.revision === changed.revision);
-  response = { ok: false, status: 422, json: async () => ({ error: { code: 'invalid_model', message: 'Choose a compatible model.' } }) };
-  await assert.rejects(requestVoiceEnhancement(fetchDocument, { action: 'model', revision, file: zip }),
-    error => error.status === 422 && error.code === 'invalid_model');
+  response = { ok: false, status: 422, json: async () => ({ error: { code: 'invalid_voice_enhancement', message: 'Install a current JMBE library.' } }) };
+  await assert.rejects(requestVoiceEnhancement(fetchDocument, { action: 'enabled', revision, value: true }),
+    error => error.status === 422 && error.code === 'invalid_voice_enhancement' && /JMBE/.test(error.message));
   const stalled = (_url, { signal }) => new Promise((_resolve, reject) => {
     const abort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
     if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
@@ -118,7 +105,7 @@ async function main() {
     { frequencies_hz: [600], duration_milliseconds: 20, confidence: 2 }
   ] }), null);
   assert.equal(formatPagingToneSummary({ ...encoded, tones: Array.from({ length: 100 }, () => encoded.tones[0]) }).tones.length, 32);
-  console.log('Voice enhancement API, raw ZIP, conflict, cancellation, and measured audio detail contracts passed.');
+  console.log('Embedded JMBE status, enabled setting, removed upload, conflict, cancellation, and audio detail contracts passed.');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });
