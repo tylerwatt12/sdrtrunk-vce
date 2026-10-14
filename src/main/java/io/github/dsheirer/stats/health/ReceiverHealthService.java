@@ -26,6 +26,7 @@ import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.stats.activity.ReceiverHealthIncidentRecord;
+import io.github.dsheirer.support.WebDiagnosticLogService;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.file.FileStore;
@@ -91,6 +92,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private volatile Supplier<Map<String,Object>> mWebStatusSupplier = Map::of;
     private volatile Supplier<ChannelActivityModel.SnapshotSet> mChannelActivitySnapshotSupplier;
     private volatile Map<String,Object> mSnapshot;
+    private volatile WebDiagnosticLogService mWebDiagnosticLogService;
     private long mLastStorageSampleMs;
     private StorageSnapshot mStorageSnapshot = StorageSnapshot.unavailable();
     private long mLastGcCollectionTimeMs = -1;
@@ -183,6 +185,12 @@ public final class ReceiverHealthService implements AutoCloseable
         return mSnapshot;
     }
 
+    /** A single bounded handoff owned by the web service; sampling remains independent of web clients. */
+    public void setWebDiagnosticLogService(WebDiagnosticLogService service)
+    {
+        mWebDiagnosticLogService = service;
+    }
+
     void sampleNow()
     {
         sample();
@@ -240,6 +248,8 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("computer", ComputerInformation.current().snapshot());
         response.put("radioresolve_accepted_calls", mRadioResolveAcceptedCalls.getAsLong());
         mSnapshot = Map.copyOf(response);
+        WebDiagnosticLogService diagnostics = mWebDiagnosticLogService;
+        if(diagnostics != null) diagnostics.recordHealth(mSnapshot);
     }
 
     private void publishIncidentChanges(List<Map<String,Object>> incidents, long now)

@@ -74,6 +74,8 @@ public final class ApplicationLogService implements AutoCloseable
     private static final Pattern USER_PATH = Pattern.compile(
         "(?i)(?:/Users/|/home/|[a-z]:\\\\Users\\\\)[^\\r\\n\\\"'<>]*");
     private final Supplier<Path> mDirectory;
+    private final String mCurrentFile;
+    private final Pattern mArchive;
     private final LongSupplier mNanoClock;
     private final LongSupplier mWallClock;
     private final Semaphore mReader = new Semaphore(1);
@@ -93,7 +95,21 @@ public final class ApplicationLogService implements AutoCloseable
 
     ApplicationLogService(Supplier<Path> directory, LongSupplier nanoClock, LongSupplier wallClock)
     {
+        this(directory, CURRENT_FILE, ARCHIVE, nanoClock, wallClock);
+    }
+
+    /** Internal fixed-filename reuse for the dedicated diagnostic log; HTTP callers cannot select a path. */
+    ApplicationLogService(Supplier<Path> directory, String currentFile, Pattern archive)
+    {
+        this(directory, currentFile, archive, System::nanoTime, System::currentTimeMillis);
+    }
+
+    private ApplicationLogService(Supplier<Path> directory, String currentFile, Pattern archive,
+                                  LongSupplier nanoClock, LongSupplier wallClock)
+    {
         mDirectory = Objects.requireNonNull(directory);
+        mCurrentFile = Objects.requireNonNull(currentFile);
+        mArchive = Objects.requireNonNull(archive);
         mNanoClock = Objects.requireNonNull(nanoClock);
         mWallClock = Objects.requireNonNull(wallClock);
     }
@@ -191,7 +207,7 @@ public final class ApplicationLogService implements AutoCloseable
         // The configured directory is administrator-owned, not an HTTP path. Canonicalize it once so legitimate
         // platform aliases (for example macOS /var) work, then open only fixed filenames without following links.
         Path directory = configured.toRealPath();
-        Path file = "current".equals(log) ? directory.resolve(CURRENT_FILE) : previousFile(directory);
+        Path file = "current".equals(log) ? directory.resolve(mCurrentFile) : previousFile(directory);
         if(file == null || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS))
         {
             return unavailable(log, directory, previous, now);
@@ -248,7 +264,7 @@ public final class ApplicationLogService implements AutoCloseable
     private Cached unavailable(String log, Path directory, Cached previous, long now)
     {
         String generation = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-        Snapshot snapshot = new Snapshot(log, "current".equals(log) ? CURRENT_FILE : null, false, List.of(),
+        Snapshot snapshot = new Snapshot(log, "current".equals(log) ? mCurrentFile : null, false, List.of(),
             mWallClock.getAsLong(), MAXIMUM_ENTRIES, false, null, false, "", null, false, null);
         return new Cached(snapshot, now, directory, null, 0, new byte[0], new byte[0], generation,
             previous != null && !directory.equals(previous.directory()) ? "source_changed" : "rotation");
@@ -259,7 +275,7 @@ public final class ApplicationLogService implements AutoCloseable
         return previous.length <= current.length && Arrays.equals(previous, 0, previous.length, current, 0, previous.length);
     }
 
-    private static Path previousFile(Path directory) throws IOException
+    private Path previousFile(Path directory) throws IOException
     {
         Path newest = null;
         int inspected = 0;
@@ -271,7 +287,7 @@ public final class ApplicationLogService implements AutoCloseable
                 {
                     throw new IOException("Application log directory exceeds scan limit");
                 }
-                Matcher archive = ARCHIVE.matcher(file.getFileName().toString());
+                Matcher archive = mArchive.matcher(file.getFileName().toString());
                 if(archive.matches() && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS))
                 {
                     try

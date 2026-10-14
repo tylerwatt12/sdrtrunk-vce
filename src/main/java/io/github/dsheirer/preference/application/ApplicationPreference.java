@@ -39,6 +39,7 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_LOGGING_RETENTION_DAYS =
         "p25.activity.logging.retention.days";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED = "stats.web.server.enabled";
+    private static final String PREFERENCE_KEY_WEB_DIAGNOSTIC_LOGGING_ENABLED = "web.diagnostic.logging.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED = "stats.web.server.any.ip.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED = "stats.web.server.https.enabled";
@@ -63,6 +64,7 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsDetailedHistoryEnabled;
     private Integer mStatsLoggingRetentionDays;
     private Boolean mStatsWebServerEnabled;
+    private Boolean mWebDiagnosticLoggingEnabled;
     private Integer mStatsWebServerPort;
     private Boolean mStatsWebServerAnyIpEnabled;
     private Boolean mStatsWebServerHttpsEnabled;
@@ -182,6 +184,23 @@ public class ApplicationPreference extends Preference
         mStatsWebServerEnabled = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED, enabled);
         notifyPreferenceUpdated();
+    }
+
+    /** Optional diagnostic logging is off for both new and existing profiles. */
+    public boolean isWebDiagnosticLoggingEnabled()
+    {
+        if(mWebDiagnosticLoggingEnabled == null)
+        {
+            mWebDiagnosticLoggingEnabled = mPreferences.getBoolean(PREFERENCE_KEY_WEB_DIAGNOSTIC_LOGGING_ENABLED, false);
+        }
+        return mWebDiagnosticLoggingEnabled;
+    }
+
+    /** The logging service applies this immediately; do not recycle the web listener or receiver. */
+    public void setWebDiagnosticLoggingEnabled(boolean enabled)
+    {
+        mPreferences.putBoolean(PREFERENCE_KEY_WEB_DIAGNOSTIC_LOGGING_ENABLED, enabled);
+        mWebDiagnosticLoggingEnabled = enabled;
     }
 
     /**

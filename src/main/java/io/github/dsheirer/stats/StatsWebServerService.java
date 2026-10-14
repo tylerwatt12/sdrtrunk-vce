@@ -71,6 +71,7 @@ import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.stats.health.ReceiverHealthService;
 import io.github.dsheirer.support.ApplicationLogService;
+import io.github.dsheirer.support.WebDiagnosticLogService;
 import io.github.dsheirer.support.SupportBundleService;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialException;
@@ -103,6 +104,8 @@ import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
 import io.github.dsheirer.web.http.SpectrumSnapPresetHttpController;
 import io.github.dsheirer.web.http.SupportReportHttpController;
 import io.github.dsheirer.web.http.ApplicationLogHttpController;
+import io.github.dsheirer.web.http.WebDiagnosticLogHttpController;
+import io.github.dsheirer.web.http.WebDiagnosticHttpFilter;
 import io.github.dsheirer.web.http.TunerAdminHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
@@ -144,6 +147,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -222,6 +226,8 @@ public class StatsWebServerService implements AutoCloseable
     private boolean mTopicAlertObservationActive;
     private final SupportBundleService mSupportBundleService;
     private final ApplicationLogService mApplicationLogService;
+    private final WebDiagnosticLogService mWebDiagnosticLogService;
+    private final AtomicLong mDiagnosticConnectionIds = new AtomicLong();
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
     private final Object mDecodeEventSubscriptionLock = new Object();
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
@@ -498,6 +504,10 @@ public class StatsWebServerService implements AutoCloseable
             mReceiverHealthService::snapshot);
         mApplicationLogService = new ApplicationLogService(
             () -> mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
+        mWebDiagnosticLogService = new WebDiagnosticLogService(
+            () -> mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog(),
+            mUserPreferences.getApplicationPreference());
+        mReceiverHealthService.setWebDiagnosticLogService(mWebDiagnosticLogService);
         mReceiverHealthService.setWebStatusSupplier(this::receiverHealthObserverStatus);
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
@@ -862,7 +872,10 @@ public class StatsWebServerService implements AutoCloseable
 
         ExecutorService executor = new ThreadPoolExecutor(REQUEST_MAXIMUM_THREADS, REQUEST_MAXIMUM_THREADS,
             60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(REQUEST_QUEUE_CAPACITY),
-            new NamingThreadFactory("stats web server"), new ThreadPoolExecutor.AbortPolicy());
+            new NamingThreadFactory("stats web server"), (task, pool) -> {
+                mWebDiagnosticLogService.event("request_queue_full", Map.of());
+                throw new RejectedExecutionException("Web request capacity is in use");
+            });
 
         try
         {
@@ -874,9 +887,11 @@ public class StatsWebServerService implements AutoCloseable
             }
             else
             {
-                registerContexts(server, requested.assetRoot(), webClientRevision);
+                registerContexts(WebDiagnosticHttpFilter.instrumentContexts(server, mWebDiagnosticLogService),
+                    requested.assetRoot(), webClientRevision);
             }
             server.start();
+            mWebDiagnosticLogService.event("listener_started", Map.of());
             return new ListenerRuntime(server, executor, configuration);
         }
         catch(RuntimeException exception)
@@ -1089,6 +1104,11 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext(ApplicationLogHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, applicationLogController::handle));
 
+        WebDiagnosticLogHttpController webDiagnosticLogController =
+            new WebDiagnosticLogHttpController(mWebDiagnosticLogService);
+        server.createContext(WebDiagnosticLogHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, webDiagnosticLogController::handle));
+
         WebUserPreferencesHttpController userPreferencesController = new WebUserPreferencesHttpController(
             mWebRequestSecurity, new WebUserPreferencesService(mWebAccessDatabasePath));
         server.createContext(WebUserPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
@@ -1275,9 +1295,10 @@ public class StatsWebServerService implements AutoCloseable
         stopRuntimeServices();
     }
 
-    private static void stopListener(ListenerRuntime listener)
+    private void stopListener(ListenerRuntime listener)
     {
         EmbeddedHttpServerShutdown.stop(listener.server(), listener.executor());
+        mWebDiagnosticLogService.event("listener_stopped", Map.of());
     }
 
     private static boolean bindingsConflict(ListenerRuntime previous, RequestedConfiguration requested)
@@ -1290,6 +1311,7 @@ public class StatsWebServerService implements AutoCloseable
                                                        Exception exception, boolean restorationAttempted)
     {
         mLog.warn("Unable to start or reload stats web server on requested port [{}]", requested.port(), exception);
+        mWebDiagnosticLogService.event("listener_failed", Map.of());
 
         if(active != null)
         {
@@ -1586,6 +1608,7 @@ public class StatsWebServerService implements AutoCloseable
             {
                 mMultiplexClients.remove(clientId, client);
                 mMultiplexClientPermits.release();
+                mWebDiagnosticLogService.event("live_disconnected", Map.of("client_id", client.mDiagnosticId));
             }
         };
         MultiplexOutput output = null;
@@ -1598,6 +1621,7 @@ public class StatsWebServerService implements AutoCloseable
             headers.set("Connection", "keep-alive");
             headers.set("X-Accel-Buffering", "no");
             exchange.sendResponseHeaders(200, 0);
+            mWebDiagnosticLogService.event("live_connected", Map.of("client_id", client.mDiagnosticId));
             HttpServer server = exchange.getHttpContext().getServer();
             MultiplexOutput connectedOutput = new MultiplexOutput(exchange.getResponseBody(), Duration.ofSeconds(8),
                 false, () -> {}, releaseConnection, gzip);
@@ -1640,6 +1664,7 @@ public class StatsWebServerService implements AutoCloseable
                     if(connectedOutput.isPersistentlySlow())
                     {
                         mMultiplexSlowDisconnects.incrementAndGet();
+                        mWebDiagnosticLogService.event("live_slow_disconnect", Map.of("client_id", client.mDiagnosticId));
                         mLog.debug("Closing slow multiplex client [{}]", clientId);
                         break;
                     }
@@ -2837,6 +2862,7 @@ public class StatsWebServerService implements AutoCloseable
         mTlsMaintenanceExecutor.shutdownNow();
         MyEventBus.getGlobalEventBus().unregister(this);
         stopActiveListener();
+        mWebDiagnosticLogService.close();
         mAudioCallCoordinator = null;
         mLogicalCallDiagnosticService = null;
         mRuntimeState = stoppedState("Web server is stopped.");
@@ -3475,6 +3501,7 @@ public class StatsWebServerService implements AutoCloseable
         private static final int MAXIMUM_AGGREGATE_MESSAGES_PER_PUMP = 64;
         private static final int MAXIMUM_RECOVERY_DISCARD = 512;
         private final String mClientId;
+        private final long mDiagnosticId = mDiagnosticConnectionIds.incrementAndGet();
         private volatile MultiplexOutput mOutput;
         private final HttpExchange mExchange;
         private final MultiplexClientLifecycle mLifecycle = new MultiplexClientLifecycle(Thread.currentThread());
@@ -3822,12 +3849,16 @@ public class StatsWebServerService implements AutoCloseable
                     {
                         openTopic(topic, wanted, output);
                         mActiveParameters.put(topic, wanted);
+                        mWebDiagnosticLogService.event("stream_topic_open", Map.of("client_id", mDiagnosticId,
+                            "topic", topic));
                         mTopicRetryPolicy.succeeded(topic);
                     }
                     catch(RuntimeException exception)
                     {
                         closeTopic(topic);
                         mTopicRetryPolicy.failed(topic, wanted, now);
+                        mWebDiagnosticLogService.event("stream_topic_failed", Map.of("client_id", mDiagnosticId,
+                            "topic", topic));
                         mLog.debug("Unable to open multiplex topic [{}] for client [{}]", topic, mClientId,
                             exception);
                         writeMultiplexJson(output, topicId(topic), "error",
@@ -4097,6 +4128,9 @@ public class StatsWebServerService implements AutoCloseable
 
         private void closeTopic(String topic)
         {
+            if(mActiveParameters.containsKey(topic))
+                mWebDiagnosticLogService.event("stream_topic_close", Map.of("client_id", mDiagnosticId,
+                    "topic", topic));
             switch(topic)
             {
                 case "channel_activity" -> {

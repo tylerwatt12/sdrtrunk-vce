@@ -17,6 +17,28 @@ import org.junit.jupiter.api.Test;
 class ApplicationPreferenceWebServerDefaultTest
 {
     @Test
+    void diagnosticLoggingStartsOffPersistsAndDoesNotNotifyListenerReload() throws Exception
+    {
+        Preferences node = Preferences.userRoot().node("/sdrtrunk-vce-tests/web-diagnostic-default-" + UUID.randomUUID());
+        Preferences parent = node.parent();
+        java.util.concurrent.atomic.AtomicInteger updates = new java.util.concurrent.atomic.AtomicInteger();
+        try
+        {
+            ApplicationPreference fresh = new ApplicationPreference(ignored -> updates.incrementAndGet());
+            usePreferences(fresh, node);
+            assertFalse(fresh.isWebDiagnosticLoggingEnabled());
+            fresh.setWebDiagnosticLoggingEnabled(true);
+            node.flush();
+            ApplicationPreference reloaded = new ApplicationPreference(ignored -> updates.incrementAndGet());
+            usePreferences(reloaded, node);
+            assertTrue(reloaded.isWebDiagnosticLoggingEnabled());
+            reloaded.setWebDiagnosticLoggingEnabled(false);
+            assertEquals(0, updates.get());
+        }
+        finally { node.removeNode(); parent.flush(); }
+    }
+
+    @Test
     void acceptsFullPortRangeAndClampsInvalidValues() throws Exception
     {
         Preferences node = Preferences.userRoot().node("/sdrtrunk-vce-tests/web-server-port-" + UUID.randomUUID());

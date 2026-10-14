@@ -34,6 +34,7 @@ import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
 import io.github.dsheirer.web.http.ApplicationLogHttpController;
+import io.github.dsheirer.web.http.WebDiagnosticLogHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
@@ -314,6 +315,33 @@ class StatsWebServerServiceLifecycleTest
             assertEquals(200, initial.statusCode(), initial.body());
             assertEquals("Saved log route works",
                 OBJECT_MAPPER.readTree(initial.body()).at("/data/entries/0/message").asText());
+            URI diagnosticEndpoint = origin.resolve(WebDiagnosticLogHttpController.PATH);
+            assertEquals(401, client.send(HttpRequest.newBuilder(diagnosticEndpoint).GET().build(),
+                HttpResponse.BodyHandlers.discarding()).statusCode());
+            HttpResponse<String> status = client.send(HttpRequest.newBuilder(diagnosticEndpoint)
+                .header("Cookie", cookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, status.statusCode(), status.body());
+            assertFalse(OBJECT_MAPPER.readTree(status.body()).at("/data/enabled").asBoolean());
+            HttpResponse<String> session = client.send(HttpRequest.newBuilder(origin.resolve("/api/v1/auth/session"))
+                .header("Cookie", cookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+            String csrf = OBJECT_MAPPER.readTree(session.body()).at("/data/csrf_token").asText();
+            WebServerRuntimeState beforeLogging = service.getRuntimeState();
+            HttpResponse<String> enabled = client.send(HttpRequest.newBuilder(diagnosticEndpoint)
+                .timeout(Duration.ofSeconds(5)).header("Cookie", cookie).header("Origin", origin.toString())
+                .header(WebRequestSecurity.CSRF_HEADER_NAME, csrf).header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("{\"enabled\":true}")).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, enabled.statusCode(), enabled.body());
+            assertTrue(OBJECT_MAPPER.readTree(enabled.body()).at("/data/enabled").asBoolean());
+            assertEquals(beforeLogging, service.getRuntimeState(), "Logging must not recycle the listener");
+            client.send(HttpRequest.newBuilder(origin.resolve("/api/v1/status"))
+                .header("Cookie", cookie).GET().build(), HttpResponse.BodyHandlers.discarding());
+            long logDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            Path webLog = logDirectory.resolve("sdrtrunk_web.log");
+            while((!Files.exists(webLog) || !Files.readString(webLog).contains("/api/v1/status")) &&
+                System.nanoTime() < logDeadline) Thread.sleep(10);
+            assertTrue(Files.readString(webLog).contains("/api/v1/status"), "Registered API contexts must be observed");
+            assertFalse(Files.readString(webLog).contains(csrf));
+            assertFalse(Files.readString(webLog).contains("application-log-lifecycle-password"));
             WebServerRuntimeState reloadedState = service.reloadActiveListener();
             assertTrue(reloadedState.running());
             HttpRequest reloadedRequest = HttpRequest.newBuilder(
@@ -870,6 +898,7 @@ class StatsWebServerServiceLifecycleTest
     {
         private volatile int mPort;
         private volatile boolean mEnabled = true;
+        private volatile boolean mWebDiagnosticLoggingEnabled;
         private final boolean mAnyIpEnabled;
         private final boolean mHttpsEnabled;
         private boolean mCertificateModeConfigured;
@@ -900,6 +929,9 @@ class StatsWebServerServiceLifecycleTest
         {
             return mEnabled;
         }
+
+        @Override public boolean isWebDiagnosticLoggingEnabled() { return mWebDiagnosticLoggingEnabled; }
+        @Override public void setWebDiagnosticLoggingEnabled(boolean enabled) { mWebDiagnosticLoggingEnabled = enabled; }
 
         @Override
         public int getStatsWebServerPort()
