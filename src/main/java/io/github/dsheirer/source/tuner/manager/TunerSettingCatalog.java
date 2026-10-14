@@ -712,7 +712,7 @@ public final class TunerSettingCatalog
         }
 
         specs.add(spec("frequency_correction_ppm", "Frequency correction", "getFrequencyCorrection",
-            "setFrequencyCorrection", -200.0, 200.0, 1.0, "ppm"));
+            "setFrequencyCorrection", -200.0, 200.0, 0.01, "ppm"));
         long hardwareMinimum = hardwareMinimum(configuration);
         long hardwareMaximum = hardwareMaximum(configuration);
         if(hardwareMinimum > 0 && hardwareMaximum > hardwareMinimum)
