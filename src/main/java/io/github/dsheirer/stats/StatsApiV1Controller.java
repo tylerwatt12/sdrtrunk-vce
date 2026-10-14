@@ -19,6 +19,7 @@ import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.remote.RemoteOriginLookup;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -53,6 +54,7 @@ final class StatsApiV1Controller
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
     private final StatsP25AssignmentService mP25AssignmentService;
     private final IntSupplier mTrafficGrantAgeOutMilliseconds;
+    private final RemoteOriginLookup mRemoteOriginLookup;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
@@ -84,6 +86,16 @@ final class StatsApiV1Controller
                          StatsP25AssignmentService p25AssignmentService,
                          IntSupplier trafficGrantAgeOutMilliseconds)
     {
+        this(database, statusSupplier, requestSecurity, tunerDiagnosticService, receiverHealthSupplier,
+            p25AssignmentService, trafficGrantAgeOutMilliseconds, RemoteOriginLookup.EMPTY);
+    }
+
+    StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
+                         WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService,
+                         Supplier<Map<String,Object>> receiverHealthSupplier,
+                         StatsP25AssignmentService p25AssignmentService,
+                         IntSupplier trafficGrantAgeOutMilliseconds, RemoteOriginLookup remoteOriginLookup)
+    {
         mDatabase = database;
         mStatusSupplier = statusSupplier;
         mRequestSecurity = requestSecurity;
@@ -91,6 +103,7 @@ final class StatsApiV1Controller
         mReceiverHealthSupplier = receiverHealthSupplier;
         mP25AssignmentService = p25AssignmentService;
         mTrafficGrantAgeOutMilliseconds = trafficGrantAgeOutMilliseconds;
+        mRemoteOriginLookup = remoteOriginLookup != null ? remoteOriginLookup : RemoteOriginLookup.EMPTY;
     }
 
     void register(HttpServer server)
@@ -111,7 +124,7 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.QUALITY, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("range", "points", "include_history", "limit", "offset");
-                return collection(mDatabase.qualityHistory(request), "channels");
+                return quality(mDatabase.qualityHistory(request));
             }));
         create(server, StatsApiV1.ALIAS_LISTS, WebCapability.ADMIN_ALIASES,
             exchange -> handleJson(exchange, StatsApiV1.ALIAS_LISTS, this::aliasLists));
@@ -456,7 +469,7 @@ final class StatsApiV1Controller
             }
             case "quality" -> {
                 request.requireOnly("range", "points", "include_history");
-                yield collection(mDatabase.channelQuality(configurationId, request), "channels");
+                yield quality(mDatabase.channelQuality(configurationId, request));
             }
             case "frequency-bands" -> {
                 request.requireOnly("limit", "offset");
@@ -807,6 +820,34 @@ final class StatsApiV1Controller
     private static JsonBody page(Map<String,Object> result)
     {
         return collection(result, "rows");
+    }
+
+    private JsonBody quality(Map<String,Object> result)
+    {
+        RemoteOriginLookup.OriginSnapshot snapshot = mRemoteOriginLookup.originSnapshot();
+        RemoteOriginLookup.OriginSnapshot origins = snapshot != null ? snapshot : RemoteOriginLookup.OriginSnapshot.EMPTY;
+        @SuppressWarnings("unchecked")
+        List<Map<String,Object>> channels = (List<Map<String,Object>>)result.get("channels");
+        List<Map<String,Object>> rows = new ArrayList<>(channels.size());
+
+        for(Map<String,Object> channel: channels)
+        {
+            Map<String,Object> row = new LinkedHashMap<>(channel);
+            row.remove("remote_origin");
+
+            if(row.get("configuration_id") instanceof String configurationId && origins.find(configurationId) != null)
+            {
+                //Dashboard quality can be public. Only identify the source type; sender/feed details stay in the
+                //administrator-only Remote Links API.
+                row.put("remote_origin", Map.of("remote", true));
+            }
+
+            rows.add(row);
+        }
+
+        Map<String,Object> response = new LinkedHashMap<>(result);
+        response.put("channels", rows);
+        return collection(response, "channels");
     }
 
     private static JsonBody collection(Map<String,Object> result, String field)

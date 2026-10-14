@@ -1157,7 +1157,8 @@ public class StatsWebServerService implements AutoCloseable
 
         new StatsApiV1Controller(mDatabase, this::status, mWebRequestSecurity, mTunerDiagnosticService,
             mReceiverHealthService::snapshot, mP25AssignmentService,
-            mUserPreferences.getNowPlayingPreference()::getTrafficGrantAgeOutMilliseconds)
+            mUserPreferences.getNowPlayingPreference()::getTrafficGrantAgeOutMilliseconds,
+            mRemoteLinkAdministrationService)
             .register(server);
         RetainedStatisticsAdminHttpController retainedStatistics = new RetainedStatisticsAdminHttpController(
             new RetainedStatisticsCatalog(SdrTrunkDatabasePath.getDatabasePath(mUserPreferences)),
