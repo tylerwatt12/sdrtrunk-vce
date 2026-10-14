@@ -145,12 +145,13 @@ test('desktop administration navigation includes every grouped page and its icon
   await openAdmin(page);
   const navigation = page.getByRole('navigation', { name: 'Administration sections' });
   const links = navigation.getByRole('link');
-  await expect(links).toHaveText(['Receiver status', 'Call matching', 'Application log', 'Report a problem',
-    'Recording settings', 'Audio quality', 'Transcription', 'Activity settings', 'Saved data cleanup',
+  await expect(links).toHaveText(['Receiver status', 'Application log', 'Web server log', 'Report a problem',
+    'Call matching', 'Tuner allocation', 'Recording settings', 'Audio quality', 'Transcription',
+    'Alert topics', 'Alert rules', 'Push setup', 'Activity settings', 'Saved data cleanup',
     'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(14);
+  await expect(links.locator('svg')).toHaveCount(19);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
-  for (const label of ['Status & support', 'Audio & recordings', 'Activity & storage',
+  for (const label of ['Status & support', 'Decisions engine', 'Audio & recordings', 'Alerts', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {
     await expect(navigation.getByText(label, { exact: true })).toBeVisible();
   }

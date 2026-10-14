@@ -292,6 +292,12 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/receiver-health') return respond(health);
     if (p === '/api/v1/application-log') return respond(
       url.searchParams.get('log') === 'previous' ? previousApplicationLog : applicationLog);
+    if (p === '/api/v1/admin/web-diagnostic-log') return respond({ enabled: false, active: false,
+      file_name: 'sdrtrunk_web.log', retention_days: 7, maximum_bytes: 104857600,
+      queue_depth: 0, dropped_records: 0, written_records: 0, last_error: null, can_download: true });
+    if (p === '/api/v1/admin/web-diagnostic-log/entries') return respond({
+      ...(url.searchParams.get('log') === 'previous' ? previousApplicationLog : applicationLog),
+      file_name: 'sdrtrunk_web.log' });
     if (p === '/api/v1/channel-catalog' || p === '/api/v1/admin/channels') return respond({ revision: 1, channels: [channel] });
     if (p === '/api/v1/admin/channels/options') return respond({ revision: 1, alias_lists: [list], tuners: [] });
     if (p === '/api/v1/admin/channels/protocols') return respond(require(path.join(root, 'src/main/resources/channel-protocols.json')));

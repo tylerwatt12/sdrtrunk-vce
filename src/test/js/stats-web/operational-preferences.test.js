@@ -86,7 +86,7 @@ async function main() {
   assert.deepEqual(plain(groups.map((group) => group.label)), ['Status & support', 'Decisions engine',
     'Audio & recordings', 'Alerts', 'Activity & storage', 'Receiver configuration', 'Web interface']);
   assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
-    ['health', 'application-log', 'support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
+    ['health', 'application-log', 'web-diagnostic-log', 'support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
     ['alert-topics', 'alert-rules', 'push-setup'],
     ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
   ]);

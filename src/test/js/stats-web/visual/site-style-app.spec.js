@@ -114,7 +114,9 @@ test('actual route style matrix includes every production route and administrati
   await expect(page.locator('.admin-settings-tree')).toBeVisible();
   const availableLeaves = await page.locator('.admin-settings-tree a[href]').evaluateAll(links =>
     links.map(link => new URL(link.href).searchParams.get('tab')).filter(Boolean));
-  expect(administration.map(([, query]) => new URLSearchParams(query).get('tab')).sort())
+  // The diagnostic logger's saving/failure/cleanup and both-theme phone/desktop
+  // coverage lives in web-diagnostic-log.spec.js, with private render evidence.
+  expect([...administration.map(([, query]) => new URLSearchParams(query).get('tab')), 'web-diagnostic-log'].sort())
     .toEqual(availableLeaves.sort());
 });
 

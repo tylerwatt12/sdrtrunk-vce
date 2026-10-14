@@ -40,6 +40,8 @@ class StatsWebJavaScriptBehaviorTest
     private static final List<Contract> CONTRACTS = List.of(
         contract("admin system status", "admin-system-status.test.js", APP_JAVASCRIPT),
         contract("application log", "application-log.test.js", APPLICATION_LOG),
+        contract("web diagnostic log", "web-diagnostic-log.test.js",
+            Path.of("stats-web", "assets", "features", "web-diagnostic-log.js")),
         contract("Activity filters", "activity-filters.test.js", APP_JAVASCRIPT),
         contract("Alias editor", "alias-editor.test.js", APP_JAVASCRIPT),
         contract("analog Alias inventory", "analog-alias-inventory.test.js", APP_JAVASCRIPT),

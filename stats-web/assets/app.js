@@ -43,7 +43,8 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=3';
 import { createAudioDock } from './core/audio-dock.js?v=22';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=2';
-import { createApplicationLogWorkspace } from './core/application-log.js?v=4';
+import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
+import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=1';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=18';
 
@@ -29758,6 +29759,15 @@ function renderAdminApplicationLog(renderContext) {
   pageConnections.add(workspace);
 }
 
+function renderAdminWebDiagnosticLog(renderContext) {
+  const workspace = createWebDiagnosticLogWorkspace({
+    node, section, sectionActionHost, formField, uiSelectFrame, uiToggleField, setUiToggle,
+    uiStatus, iconButton, setIconButton, uiActionButton, api, requestJson, signal: renderContext.signal
+  });
+  content.append(workspace.element);
+  pageConnections.add(workspace);
+}
+
 function renderListenMap() {
   const renderContext = captureRenderContext();
   const map = createListenMap({
@@ -33196,6 +33206,8 @@ function adminSettingsGroups() {
         description: 'Check the receiver and issues that need attention.' },
       { id: 'application-log', label: 'Application log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'View recent receiver messages and errors.' },
+      { id: 'web-diagnostic-log', label: 'Web server log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Record web activity and receiver conditions to investigate tuner errors and lost radio data.' },
       { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Create and submit a support report.' }
     ] },
@@ -33303,6 +33315,7 @@ async function renderAdmin() {
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
   else if (active === 'tuner-allocation') await renderAdminTunerAllocation(renderContext);
   else if (active === 'application-log') renderAdminApplicationLog(renderContext);
+  else if (active === 'web-diagnostic-log') renderAdminWebDiagnosticLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
   else if (active === 'display') {
     const display = node('div', 'admin-display-settings');

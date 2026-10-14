@@ -43,6 +43,10 @@ export function mergeApplicationLogSnapshot(previous, next) {
 export function createApplicationLogWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton,
     uiActionButton, api, signal } = deps;
+  const logPath = deps.logPath || LOG_PATH;
+  const logName = deps.logName || 'Application log';
+  const lowerName = logName.toLocaleLowerCase();
+  const downloadPrefix = deps.downloadPrefix || 'application-log';
   const element = node('div', 'application-log-workspace');
   const controls = node('div', 'application-log-controls');
   const search = node('input', 'ui-input');
@@ -69,7 +73,7 @@ export function createApplicationLogWorkspace(deps) {
   stateHost.setAttribute('role', 'status');
   const pause = iconButton('icon-pause', 'Pause log updates');
   pause.setAttribute('aria-pressed', 'false');
-  const refreshButton = iconButton('icon-refresh', 'Refresh application log');
+  const refreshButton = iconButton('icon-refresh', `Refresh ${lowerName}`);
   const liveControls = node('div', 'ui-action-row application-log-live-controls');
   liveControls.append(stateHost, pause, refreshButton);
   controls.append(searchField, formField('Level', uiSelectFrame(level)),
@@ -107,11 +111,11 @@ export function createApplicationLogWorkspace(deps) {
   const viewport = node('div', 'application-log-viewport');
   viewport.tabIndex = 0;
   viewport.setAttribute('role', 'region');
-  viewport.setAttribute('aria-label', 'Application log messages');
+  viewport.setAttribute('aria-label', `${logName} messages`);
   const rows = node('div', 'application-log-rows');
   viewport.append(rows);
   const panel = node('section', 'ui-surface application-log-panel');
-  panel.setAttribute('aria-label', 'Saved application log');
+  panel.setAttribute('aria-label', `Saved ${lowerName}`);
   panel.append(heading, viewport);
   const footer = node('div', 'application-log-footer ui-label ui-muted');
   const windowInfo = node('span', '', 'Loading recent messages…');
@@ -239,17 +243,17 @@ export function createApplicationLogWorkspace(deps) {
       }
     });
     if (!shown.length) {
-      const text = !snapshot ? (disconnected ? 'Application log could not be loaded. Try refreshing.' :
-        'Loading application log…') : !snapshot.available ?
-        `No ${savedLog.value === 'previous' ? 'previous' : 'current'} application log is available.` :
+      const text = !snapshot ? (disconnected ? `${logName} could not be loaded. Try refreshing.` :
+        `Loading ${lowerName}…`) : !snapshot.available ?
+        `No ${savedLog.value === 'previous' ? 'previous' : 'current'} ${lowerName} is available.` :
         snapshot.entries.length ? 'No loaded messages match these filters.' : snapshot.truncated ?
-          'No complete messages fit within this viewer’s limit. The complete text remains in the saved application log.' :
+          `No complete messages fit within this viewer’s limit. The complete text remains in the saved ${lowerName}.` :
           'No messages in this log yet.';
       rows.append(node('div', `ui-feedback ui-feedback-${!snapshot && !disconnected ? 'loading' : 'empty'}`, text));
     }
     count.textContent = `${shown.length} shown · ${snapshot?.entries.length || 0} loaded`;
     fileName.textContent = snapshot?.file_name ||
-      (savedLog.value === 'previous' ? 'Previous application log' : 'Current application log');
+      (savedLog.value === 'previous' ? `Previous ${lowerName}` : `Current ${lowerName}`);
     const shortened = snapshot?.entries.some((entry) => entry.truncated);
     windowInfo.textContent = snapshot ? [
       snapshot.truncated ? `Newest ${snapshot.entries.length} messages loaded` :
@@ -283,11 +287,11 @@ export function createApplicationLogWorkspace(deps) {
     const sequence = ++requestSequence;
     syncState();
     try {
-      const next = await api(LOG_PATH, { log: savedLog.value, compact: true, after: snapshot?.latest_id, revision: snapshot?.revision },
+      const next = await api(logPath, { log: savedLog.value, compact: true, after: snapshot?.latest_id, revision: snapshot?.revision },
         { signal: controller.signal, page: false });
       if (disposed || sequence !== requestSequence) return;
       if (!next || !Array.isArray(next.entries) || typeof next.available !== 'boolean') {
-        throw new Error('The receiver returned an invalid application log.');
+        throw new Error(`The receiver returned an invalid ${lowerName}.`);
       }
       if (!next.available && snapshot?.entries.length) {
         disconnected = false;
@@ -305,7 +309,7 @@ export function createApplicationLogWorkspace(deps) {
       if (next.change_reason === 'rotation') retainedNotice =
         'The saved log changed or rotated. The latest available messages are shown.';
       else if (next.change_reason === 'source_changed') retainedNotice =
-        'The application log location changed. The latest available messages are shown.';
+        `The ${lowerName} location changed. The latest available messages are shown.`;
       else if (next.gap) retainedNotice =
         'Some messages arrived outside this viewer’s limit. The newest available messages are shown.';
       notice.textContent = retainedNotice;
@@ -322,17 +326,17 @@ export function createApplicationLogWorkspace(deps) {
         entryNodes.clear();
         rows.replaceChildren();
         search.disabled = level.disabled = savedLog.disabled = follow.disabled = expand.disabled = true;
-        fileName.textContent = 'Application log';
+        fileName.textContent = logName;
         count.textContent = '';
         windowInfo.textContent = '';
         updated.textContent = '';
-        errorNotice.textContent = 'Application log access is no longer available. Sign in with an administrator account.';
+        errorNotice.textContent = `${logName} access is no longer available. Sign in with an administrator account.`;
         shown = [];
       } else {
         disconnected = true;
         errorNotice.textContent = snapshot ?
           'The receiver could not be reached. Last loaded messages are kept; updates will retry.' :
-          'The application log could not be loaded. Updates will retry, or use Refresh.';
+          `The ${lowerName} could not be loaded. Updates will retry, or use Refresh.`;
         if (!snapshot) drawRows();
       }
       errorNotice.hidden = false;
@@ -374,7 +378,7 @@ export function createApplicationLogWorkspace(deps) {
     objectUrls.add(objectUrl);
     const link = node('a');
     link.href = objectUrl;
-    link.download = `application-log-${savedLog.value}-shown.txt`;
+    link.download = `${downloadPrefix}-${savedLog.value}-shown.txt`;
     link.hidden = true;
     element.append(link);
     link.click();
