@@ -6,6 +6,8 @@ import io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader;
 import io.github.dsheirer.audio.codec.mbe.JmbeVocoderAudio;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /** Worker adapter to JMBE. VCE owns no vocoder gain algorithm or model weights. */
@@ -42,7 +44,15 @@ public final class AudioOutputGain
         float[] input = flatten(call.audioBuffers());
         long[][] tones = toneIntervals(call.completedToneSequence());
         float[] output = processor.process(input, "NONE", false, true, tones[0], tones[1]);
-        CompletedAudioCall prepared = new CompletedAudioCall(call.logicalCallId(), call.snapshot(), List.of(output), call.resolvedPolicy(),
+        // JMBE processes one continuous call; encoders and resamplers still require the original small packets.
+        List<float[]> buffers = new ArrayList<>(call.audioBuffers().size());
+        int offset = 0;
+        for(float[] original : call.audioBuffers())
+        {
+            buffers.add(Arrays.copyOfRange(output, offset, offset + original.length));
+            offset += original.length;
+        }
+        CompletedAudioCall prepared = new CompletedAudioCall(call.logicalCallId(), call.snapshot(), buffers, call.resolvedPolicy(),
             call.callLegSummaries(), call.recordingIdentifierCollection(), call.nativeAudioSnapshot(),
             call.completedToneSequence());
         return new Prepared(prepared, true);

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mpatric.mp3agic.ID3v24Tag;
+import com.mpatric.mp3agic.Mp3File;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -25,6 +26,10 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.audio.convert.InputAudioFormat;
+import io.github.dsheirer.audio.convert.MP3Setting;
+import io.github.dsheirer.audio.enhance.VocoderAudioFixtures;
+import io.github.dsheirer.dsp.gain.AudioOutputGain;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -55,6 +60,62 @@ import org.junit.jupiter.api.io.TempDir;
 class AudioCallRecorderTest
 {
     @TempDir Path mDirectory;
+
+    @Test
+    void longAgcCallRecordsResampledMp3WithoutChangingNativePcmOrBufferBoundaries() throws Exception
+    {
+        List<float[]> buffers = new ArrayList<>(), original = new ArrayList<>();
+        for(int frame = 0; frame < 600; frame++)
+        {
+            float[] samples = new float[160];
+            for(int index = 0; index < samples.length; index++)
+                samples[index] = (float)(.1 * Math.sin((frame * 160 + index) * Math.PI / 10));
+            buffers.add(samples);
+            original.add(samples.clone());
+        }
+        CompletedAudioCall source = new CompletedAudioCall(callWithQuality().snapshot(), buffers);
+        var provider = VocoderAudioFixtures.provider("recording-buffer-test");
+        provider.mutateInput = true;
+        var prepared = AudioOutputGain.prepare(source, provider.bridge());
+        assertTrue(prepared.agcApplied());
+        assertEquals(1, provider.processCount, "JMBE still processes the entire call continuously once");
+        assertEquals(12_000, prepared.call().getDuration());
+
+        UserPreferences preferences = new UserPreferences();
+        InputAudioFormat originalRate = preferences.getMP3Preference().getAudioSampleRate();
+        MP3Setting originalSetting = preferences.getMP3Preference().getMP3Setting();
+        try
+        {
+            for(InputAudioFormat rate: List.of(InputAudioFormat.getDefault(), InputAudioFormat.SR_44100))
+            {
+                preferences.getMP3Preference().setMP3Setting(rate == InputAudioFormat.SR_44100 ?
+                    MP3Setting.VBR_5 : MP3Setting.getDefault());
+                preferences.getMP3Preference().setAudioSampleRate(rate);
+                Path file = mDirectory.resolve("long-agc-" + rate.name() + ".mp3");
+                AudioCallRecorder.write(prepared.call(), file, RecordFormat.MP3, preferences, false);
+                Mp3File recorded = new Mp3File(file.toString());
+                assertEquals((int)rate.getSampleRate(), recorded.getSampleRate());
+                assertTrue(recorded.hasId3v2Tag());
+                assertTrue(recorded.getFrameCount() > 100, "Recording contains audio frames beyond its ID3 tag");
+                assertTrue(recorded.getLengthInMilliseconds() >= 11_900 &&
+                    recorded.getLengthInMilliseconds() <= 12_300, "All twelve seconds were encoded");
+            }
+        }
+        finally
+        {
+            preferences.getMP3Preference().setMP3Setting(originalSetting);
+            preferences.getMP3Preference().setAudioSampleRate(originalRate);
+        }
+        assertEquals(buffers.size(), prepared.call().audioBuffers().size());
+        for(int frame = 0; frame < buffers.size(); frame++)
+        {
+            assertArrayEquals(original.get(frame), buffers.get(frame), "Native PCM remains immutable");
+            float[] output = prepared.call().audioBuffers().get(frame);
+            assertEquals(buffers.get(frame).length, output.length);
+            for(int index = 0; index < output.length; index++)
+                assertEquals(original.get(frame)[index] * 2, output[index], "Processed order and gain are preserved");
+        }
+    }
 
     @Test
     void completeMp3AndWavUseLocalIdTagsInBothRecordingModes() throws Exception
