@@ -35,7 +35,7 @@ const snapshot = {
   ]
 };
 
-async function openLive(page, showOnlyActiveTrunkedChannels = false) {
+async function openLive(page, showOnlyActiveTrunkedChannels = false, liveSnapshot = snapshot, theme = 'light') {
   let diagnosticSubscriptions = 0;
   await page.addInitScript((liveSnapshot) => {
     const originalFetch = window.fetch.bind(window);
@@ -63,7 +63,7 @@ async function openLive(page, showOnlyActiveTrunkedChannels = false) {
       });
       return Promise.resolve(new Response(stream, { status: 200 }));
     };
-  }, snapshot);
+  }, liveSnapshot);
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
@@ -73,6 +73,7 @@ async function openLive(page, showOnlyActiveTrunkedChannels = false) {
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: {
         ...defaultPreferences,
+        appearance: { ...defaultPreferences.appearance, theme },
         presentation: { ...defaultPreferences.presentation,
           show_only_active_trunked_channels: showOnlyActiveTrunkedChannels }
       } } });
@@ -131,6 +132,44 @@ test('new Live presentation preferences start with active trunked channels only'
   await page.getByRole('button', { name: 'Live presentation settings' }).click();
   const dialog = page.getByRole('dialog', { name: 'Live presentation' });
   await expect(dialog.getByRole('checkbox', { name: 'Show only active trunked channels' })).toBeChecked();
+});
+
+for (const [width, dark] of [[1280, false], [320, true]]) {
+  test(`remote picker keeps its cloud and decode bars with long titles at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const liveSnapshot = structuredClone(snapshot);
+    const remote = liveSnapshot.tables[0];
+    remote.title = 'P25-1: BEE00:348 02-03 (Remote site with a long configured name)';
+    remote.control_active = true;
+    Object.assign(remote.rows[0], { role: 'CURRENT_CONTROL', quality_observed_at_ms: Date.now(), decode_health_pct: 98.7,
+      signal_dbfs: null });
+    await openLive(page, false, liveSnapshot, dark ? 'dark' : 'light');
+    if (dark) await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    if (width <= 900) await page.locator('.live-picker-toggle').click();
+    const pickerRow = page.locator('.channels-live-tab[data-table-id="remote-site"]');
+    await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/ui-quality-healthy ui-quality-level-4/);
+    await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /98\.7% decode quality.*Remote source/);
+    await expect(pickerRow.getByRole('tab')).not.toHaveAttribute('aria-label', /signal strength/i);
+    await expect(pickerRow.locator('.live-remote-origin')).toBeVisible();
+    expect(await pickerRow.locator('.channels-tab-title').evaluate((title) => {
+      const cloud = title.querySelector('.live-remote-origin').getBoundingClientRect();
+      const bounds = title.getBoundingClientRect();
+      return title.scrollWidth > title.clientWidth && cloud.left >= bounds.left && cloud.right <= bounds.right &&
+        title.querySelector('.live-remote-origin').contains(
+          document.elementFromPoint((cloud.left + cloud.right) / 2, (cloud.top + cloud.bottom) / 2));
+    })).toBe(true);
+  });
+}
+
+test('remote picker keeps stale decode samples unavailable', async ({ page }) => {
+  const liveSnapshot = structuredClone(snapshot);
+  const remote = liveSnapshot.tables[0];
+  remote.control_active = true;
+  Object.assign(remote.rows[0], { role: 'CURRENT_CONTROL', quality_observed_at_ms: Date.now() - 120_000, decode_health_pct: 99 });
+  await openLive(page, false, liveSnapshot);
+  const pickerRow = page.locator('.channels-live-tab[data-table-id="remote-site"]');
+  await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/ui-quality-unavailable ui-quality-level-0/);
+  await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /Decode quality unavailable.*Remote source/);
 });
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 1024, height: 550 }]) {

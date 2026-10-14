@@ -59,6 +59,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('livePickerNavigationIndex')}
   ${functionSource('liveDetailsPanelPercent')}
   ${functionSource('liveRemoteOriginLabel')}
+  ${functionSource('optionalNumber')}
+  ${functionSource('decodeQualityBarLevel')}
   ${functionSource('liveShowRowRemoteOrigin')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
@@ -71,6 +73,7 @@ const behavior = vm.runInNewContext(`(() => {
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
     livePickerNavigationIndex, liveDetailsPanelPercent,
     liveRemoteOriginLabel,
+    decodeQualityBarLevel,
     liveShowRowRemoteOrigin,
     liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
@@ -107,6 +110,15 @@ assert.equal(behavior.liveRemoteOriginLabel({ remote: true, sender_id: 'private-
   feed_id: 'private-feed', state: 'CONNECTED', dependency_state: 'READY' }), 'Remote source');
 assert.equal(behavior.liveRemoteOriginLabel({ remote: false }), '');
 assert.equal(behavior.liveRemoteOriginLabel(null), '');
+assert.equal(behavior.decodeQualityBarLevel(null), 0);
+assert.equal(behavior.decodeQualityBarLevel(undefined), 0);
+assert.equal(behavior.decodeQualityBarLevel(''), 0);
+assert.equal(behavior.decodeQualityBarLevel(0), 1);
+assert.equal(behavior.decodeQualityBarLevel(25), 1);
+assert.equal(behavior.decodeQualityBarLevel(25.1), 2);
+assert.equal(behavior.decodeQualityBarLevel(50), 2);
+assert.equal(behavior.decodeQualityBarLevel(75), 3);
+assert.equal(behavior.decodeQualityBarLevel(98.7), 4);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'remote-site', remote_origin: { remote: true } }), false);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'conventional', remote_origin: { remote: true } }), true);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'local-site' }), true);
@@ -384,8 +396,10 @@ assert.match(channels,
   /`Show live channels for \$\{label\}, \$\{operatingState\}, \$\{signalLabel\}, \$\{qualityLabel\}\$\{originSuffix\}`/,
   'Operational state, signal strength, and decode quality must remain in the accessible picker name');
 assert.match(channels,
-  /const remote = liveRemoteOriginBadge\(value\.remote_origin\);[\s\S]*if \(remote\) title\.append\(remote\)/,
-  'A remote Live system must carry its cloud badge in the picker title');
+  /const remote = liveRemoteOriginBadge\(value\.remote_origin\);[\s\S]*if \(remote\) title\.append\(remote, document\.createTextNode\(' '\)\);[\s\S]*title\.append\(document\.createTextNode\(label\)\)/,
+  'A remote Live cloud must precede the title so long labels cannot clip it');
+assert.match(channels, /else if \(remoteLabel\) \{\s*const level = decodeQualityBarLevel\(decodeQuality\)/,
+  'Remote picker bars must reflect decode quality without an RF signal-strength reading');
 assert.match(channels, /const originSuffix = remoteLabel \? ` · \$\{remoteLabel\}` : ''/,
   'A generic remote marker must remain available in pointer and accessible picker labels');
 assert.match(channels, /sortable: false/,

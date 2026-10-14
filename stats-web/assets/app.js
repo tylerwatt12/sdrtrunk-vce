@@ -8618,6 +8618,11 @@ function signalBarLevel(value) {
   return 1;
 }
 
+function decodeQualityBarLevel(value) {
+  const percent = optionalNumber(value);
+  return Number.isFinite(percent) ? Math.max(1, Math.min(4, Math.ceil(percent / 25))) : 0;
+}
+
 function percentNumber(value) {
   const numeric = optionalNumber(value);
   return Number.isFinite(numeric) ? `${numeric.toFixed(1)}%` : '—';
@@ -18848,7 +18853,7 @@ function liveChannelsSection(onSelectionChange) {
     if (!text) return '';
     const values = decodeQualityValues(row);
     const percent = values.length ? Math.max(0, Math.min(100, Math.min(...values))) : null;
-    const level = percent == null ? 0 : Math.max(1, Math.min(4, Math.ceil(percent / 25)));
+    const level = decodeQualityBarLevel(percent);
     const state = percent == null ? 'unavailable' :
       (percent >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
         (percent >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
@@ -19230,9 +19235,10 @@ function liveChannelsSection(onSelectionChange) {
     const metadataSignature = JSON.stringify([label, meta, value.channel_running, value.remote_origin || null]);
     if (metadataSignature !== tab.liveMetadataSignature) {
       tab.liveMetadataSignature = metadataSignature;
-      title.replaceChildren(document.createTextNode(label));
+      title.replaceChildren();
       const remote = liveRemoteOriginBadge(value.remote_origin);
-      if (remote) title.append(remote);
+      if (remote) title.append(remote, document.createTextNode(' '));
+      title.append(document.createTextNode(label));
       tab.querySelector('.channels-tab-meta').textContent = meta;
       tab.dataset.search = `${label} ${meta}`.toLowerCase();
       pickerSummaryDirty = true;
@@ -19259,6 +19265,18 @@ function liveChannelsSection(onSelectionChange) {
         quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
         tab.title = `${label} · ${operatingState}${originSuffix}`;
         select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}${originSuffix}`);
+        stateLabel.textContent = operatingState;
+      } else if (remoteLabel) {
+        const level = decodeQualityBarLevel(decodeQuality);
+        const state = decodeQuality === null ? 'unavailable' :
+          (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
+            (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
+        quality.className = `channels-tab-quality ui-quality-bars ui-quality-${state} ui-quality-level-${level}`;
+        const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
+          `${decodeQuality.toFixed(1)}% decode quality`;
+        tab.title = `${label} · ${operatingState} · ${qualityLabel}${originSuffix}`;
+        select.setAttribute('aria-label',
+          `Show live channels for ${label}, ${operatingState}, ${qualityLabel}${originSuffix}`);
         stateLabel.textContent = operatingState;
       } else if (signalStrength === null && decodeQuality === null) {
         quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
