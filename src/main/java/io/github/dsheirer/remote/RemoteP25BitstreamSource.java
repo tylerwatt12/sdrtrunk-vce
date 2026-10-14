@@ -9,12 +9,15 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.SampleType;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
+import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Bounded decoded-bit source used by a host processing chain. Transport threads offer immutable packets without ever
@@ -25,12 +28,17 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
 {
     public static final int DEFAULT_QUEUE_CAPACITY = 8;
     private static final long POLL_MILLISECONDS = 100L;
+    private static final long HEARTBEAT_INTERVAL_NANOSECONDS = TimeUnit.MILLISECONDS.toNanos(POLL_MILLISECONDS);
+    private static final int HEARTBEAT_QUEUE_CAPACITY = 256;
+    private static final BoundedMpscReferenceQueue<SourceRun> HEARTBEAT_QUEUE =
+        new BoundedMpscReferenceQueue<>(HEARTBEAT_QUEUE_CAPACITY);
+    private static final Thread HEARTBEAT_WORKER = startHeartbeatWorker();
     private final AtomicLong mFrequency;
     private final double mSymbolRate;
     private final String mThreadName;
     private final ArrayBlockingQueue<QueuedPacket> mQueue;
     private final AtomicBoolean mAccepting = new AtomicBoolean(true);
-    private final AtomicBoolean mWorkerRunning = new AtomicBoolean();
+    private final AtomicReference<SourceRun> mRun = new AtomicReference<>();
     private final AtomicBoolean mDiscontinuityPending = new AtomicBoolean(true);
     private final AtomicLong mDroppedPacketCount = new AtomicLong();
     private final AtomicLong mFrequencyEpoch = new AtomicLong();
@@ -38,7 +46,6 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
     private volatile long mExpectedSequence = -1L;
     private volatile Listener<P25RemoteBitstreamPacket> mPacketListener;
     private volatile Listener<SourceEvent> mSourceEventListener;
-    private volatile Thread mWorker;
     private volatile CompletableFuture<Void> mDrained = new CompletableFuture<>();
 
     public RemoteP25BitstreamSource(long frequency, P25RemotePhase phase, String threadName)
@@ -95,7 +102,8 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
     public CompletableFuture<Void> close()
     {
         mAccepting.set(false);
-        Thread worker = mWorker;
+        SourceRun run = mRun.get();
+        Thread worker = run != null ? run.worker : null;
 
         if(worker != null)
         {
@@ -118,6 +126,14 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
         mDiscontinuityPending.set(true);
         mAccepting.set(true);
         mDrained = new CompletableFuture<>();
+        SourceRun run = mRun.get();
+
+        if(run != null)
+        {
+            //A control feed can reset while its source worker remains running between remote connections.
+            run.drained = mDrained;
+        }
+
         broadcastOverflowState(false);
     }
 
@@ -160,11 +176,13 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
     @Override
     public void start()
     {
-        if(mWorkerRunning.compareAndSet(false, true))
+        SourceRun run = new SourceRun(this, mDrained);
+
+        if(mRun.compareAndSet(null, run))
         {
-            Thread worker = new Thread(this::run, mThreadName);
+            Thread worker = new Thread(() -> run(run), mThreadName);
             worker.setDaemon(true);
-            mWorker = worker;
+            run.worker = worker;
             worker.start();
         }
     }
@@ -173,8 +191,8 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
     public void stop()
     {
         mAccepting.set(false);
-        mWorkerRunning.set(false);
-        Thread worker = mWorker;
+        SourceRun run = mRun.getAndSet(null);
+        Thread worker = run != null ? run.worker : null;
 
         if(worker != null)
         {
@@ -186,11 +204,13 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
         broadcastOverflowState(false);
     }
 
-    private void run()
+    private void run(SourceRun run)
     {
+        long lastHeartbeat = System.nanoTime() - HEARTBEAT_INTERVAL_NANOSECONDS;
+
         try
         {
-            while(mWorkerRunning.get())
+            while(mRun.get() == run)
             {
                 if(!mAccepting.get() && mQueue.isEmpty())
                 {
@@ -203,29 +223,93 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
 
                     if(packet != null)
                     {
-                        dispatch(packet);
+                        dispatch(packet, run);
                     }
                 }
                 catch(InterruptedException ignored)
                 {
                     //Re-check running/closed state and continue draining accepted packets after close().
                 }
+
+                long now = System.nanoTime();
+
+                if(now - lastHeartbeat >= HEARTBEAT_INTERVAL_NANOSECONDS)
+                {
+                    lastHeartbeat = now;
+                    offerHeartbeat(run);
+                }
             }
         }
         finally
         {
-            mWorkerRunning.set(false);
-            mWorker = null;
+            mRun.compareAndSet(run, null);
 
             if(!mAccepting.get() && mQueue.isEmpty())
             {
-                mDrained.complete(null);
+                run.drained.complete(null);
             }
         }
     }
 
-    private void dispatch(QueuedPacket queuedPacket)
+    /** One coalesced token per running source; a slow heartbeat observer never delays the remote decoder. */
+    private void offerHeartbeat(SourceRun run)
     {
+        if(mRun.get() != run || !run.heartbeatQueued.compareAndSet(false, true))
+        {
+            return;
+        }
+
+        if(HEARTBEAT_QUEUE.offer(run))
+        {
+            LockSupport.unpark(HEARTBEAT_WORKER);
+        }
+        else
+        {
+            //Drop this observer tick on saturation or contention. The next polling interval retries it.
+            run.heartbeatQueued.set(false);
+        }
+    }
+
+    private static Thread startHeartbeatWorker()
+    {
+        Thread worker = new Thread(() ->
+        {
+            while(!Thread.currentThread().isInterrupted())
+            {
+                SourceRun run = HEARTBEAT_QUEUE.poll();
+
+                if(run != null)
+                {
+                    try
+                    {
+                        run.source.getHeartbeatManager().broadcastIf(() -> run.source.mRun.get() == run);
+                    }
+                    finally
+                    {
+                        run.heartbeatQueued.set(false);
+                    }
+                }
+                else
+                {
+                    LockSupport.parkNanos(RemoteP25BitstreamSource.class, HEARTBEAT_INTERVAL_NANOSECONDS);
+                }
+            }
+        }, "sdrtrunk-remote-heartbeat-1");
+        worker.setDaemon(true);
+        worker.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+        worker.start();
+        return worker;
+    }
+
+    private void dispatch(QueuedPacket queuedPacket, SourceRun run)
+    {
+        Listener<P25RemoteBitstreamPacket> listener = mPacketListener;
+
+        if(mRun.get() != run)
+        {
+            return;
+        }
+
         if(queuedPacket.frequencyEpoch() != mFrequencyEpoch.get())
         {
             mDroppedPacketCount.incrementAndGet();
@@ -246,8 +330,6 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
         boolean discontinuity = mDiscontinuityPending.getAndSet(false) ||
             (mExpectedSequence >= 0L && sequence != mExpectedSequence);
         mExpectedSequence = sequence == Long.MAX_VALUE ? -1L : sequence + 1L;
-        Listener<P25RemoteBitstreamPacket> listener = mPacketListener;
-
         if(listener != null)
         {
             listener.receive(new P25RemoteBitstreamPacket(packet.dibits(), packet.captureTimestamp(), sequence,
@@ -310,5 +392,19 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
 
     private record QueuedPacket(P25RemoteBitstreamPacket packet, long frequencyEpoch)
     {
+    }
+
+    private static final class SourceRun
+    {
+        private final RemoteP25BitstreamSource source;
+        private volatile CompletableFuture<Void> drained;
+        private final AtomicBoolean heartbeatQueued = new AtomicBoolean();
+        private volatile Thread worker;
+
+        private SourceRun(RemoteP25BitstreamSource source, CompletableFuture<Void> drained)
+        {
+            this.source = source;
+            this.drained = drained;
+        }
     }
 }

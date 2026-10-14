@@ -20,6 +20,7 @@ package io.github.dsheirer.source.heartbeat;
 
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
+import java.util.function.BooleanSupplier;
 
 public class HeartbeatManager
 {
@@ -32,6 +33,12 @@ public class HeartbeatManager
     public void broadcast()
     {
         mHeartbeatBroadcaster.broadcast(HEARTBEAT);
+    }
+
+    /** Captures the listener set before rejecting a stopped or replaced asynchronous source lifecycle. */
+    public void broadcastIf(BooleanSupplier deliveryGuard)
+    {
+        mHeartbeatBroadcaster.broadcastIf(HEARTBEAT, deliveryGuard);
     }
 
     /**
