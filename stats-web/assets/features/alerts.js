@@ -962,7 +962,9 @@ export function createAlertsWorkspace(deps) {
         topicIds = [...new Set([...(currentDevice.topic_ids || []), ...(initialTopic ? [initialTopic] : [])])];
       }
     } catch (error) {
-      if (error?.status === 403 || error?.status === 404) { forgetAlertDevice(window.localStorage); device = null; }
+      if ([401, 403, 404, 410].includes(error?.status)) {
+        forgetAlertDevice(window.localStorage); device = null; currentDevice = null; directConnection = { state: 'none' };
+      }
       else { workflow.showFeedback('error', 'Couldn’t load subscriptions. Close and try again.'); return; }
     }
     function renderFields() {
@@ -1065,7 +1067,7 @@ export function createAlertsWorkspace(deps) {
             if (snapshot.mode === 'direct') {
               try { await (await navigator.serviceWorker.getRegistration('/'))?.pushManager.getSubscription().then(subscription => subscription?.unsubscribe()); } catch { /* The revoked device no longer receives sends. */ }
             }
-            forgetAlertDevice(window.localStorage); device = null;
+            forgetAlertDevice(window.localStorage); device = null; currentDevice = null; directConnection = { state: 'none' };
           }, { success: 'This device is unsubscribed.', onSuccess: () => { localModal.setDirty(false); localModal.close(); void renderPublic(); } });
         }));
       if (pending) {

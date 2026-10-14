@@ -483,6 +483,87 @@ async function installDirectDevice(page, { missing = false, manual = false, stor
   }, { missing, manual, stored });
 }
 
+test('unsubscribing an expired Direct device resets renewal state only after success and allows a fresh subscription', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page, { guest: true });
+  state.publicMode = state.deviceMode = 'direct';
+  await installDirectDevice(page, { missing: true, manual: true });
+  let rejectDisconnect = true;
+  await page.route('**/api/v1/alerts/subscriptions/me', route => {
+    if (route.request().method() === 'DELETE' && rejectDisconnect) return route.fulfill({ status: 503,
+      json: { error: { message: 'Could not disconnect. Try again.' } } });
+    return route.fallback();
+  });
+  await page.goto('/app.html?view=topics');
+  const introduction = page.locator('.alerts-public-sidebar > header');
+  await introduction.getByRole('button', { name: 'Notification settings', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'Alert subscription' });
+  const unsubscribe = async () => {
+    await dialog.getByRole('button', { name: 'Unsubscribe this device', exact: true }).click();
+    await page.getByRole('alertdialog', { name: 'Unsubscribe device', exact: true })
+      .getByRole('button', { name: 'Unsubscribe', exact: true }).click();
+  };
+  await unsubscribe();
+  await expect(dialog.getByRole('alert')).toContainText('Could not disconnect. Try again.');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('vce-alert-device-v1')).id)).toBe('synthetic-device');
+  await expect(dialog.getByRole('button', { name: 'Reconnect notifications', exact: true })).toBeEnabled();
+  await expect(page.locator('.alerts-workspace')).toContainText('connection expired');
+  expect(await page.evaluate(() => window.syntheticPermissionCalls)).toBe(0);
+
+  rejectDisconnect = false;
+  await unsubscribe();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('vce-alert-device-v1'))).toBeNull();
+  await expect(page.locator('.alerts-workspace')).not.toContainText('connection expired');
+  await introduction.getByRole('button', { name: 'Subscribe', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Alert subscription' });
+  await dialog.getByRole('checkbox', { name: 'Fire activity', exact: true }).check();
+  const connect = dialog.getByRole('button', { name: 'Connect notifications', exact: true });
+  await expect(connect).toBeEnabled();
+  await expect(dialog.getByRole('checkbox', { name: 'Fire activity', exact: true })).toBeChecked();
+  expect(await page.evaluate(() => window.syntheticPermissionCalls)).toBe(0);
+  expect(state.writes.filter(write => write.p === '/api/v1/alerts/enrollments')).toHaveLength(0);
+  if (process.env.ALERTS_AUDIT_DIR) {
+    fs.mkdirSync(process.env.ALERTS_AUDIT_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(process.env.ALERTS_AUDIT_DIR, 'direct-resubscribe-ready.png'), fullPage: true, animations: 'disabled' });
+  }
+  await connect.click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.syntheticPermissionCalls)).toBe(1);
+  expect(await page.evaluate(() => window.syntheticSubscribeCalls)).toBe(1);
+  expect(state.writes.filter(write => write.p === '/api/v1/alerts/enrollments')).toHaveLength(1);
+  expect(state.writes.find(write => write.p === '/api/v1/alerts/enrollments').value.topic_ids).toEqual(['fire']);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+for (const status of [401, 403, 404, 410]) {
+  test(`lost Direct ownership (${status}) clears stale renewal state and waits for explicit permission before a fresh subscription`, async ({ page }) => {
+    const { state, fixture } = await installAlerts(page, { guest: true });
+    state.publicMode = state.deviceMode = 'direct';
+    await installDirectDevice(page, { missing: true, manual: true });
+    await page.route('**/api/v1/alerts/subscriptions/me', route => {
+      if (route.request().method() === 'GET') return route.fulfill({ status,
+        json: { error: { message: 'This device connection is unavailable. Subscribe again.' } } });
+      return route.fallback();
+    });
+    await page.goto('/app.html?view=topics');
+    await page.getByRole('button', { name: 'Notification settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Alert subscription' });
+    await dialog.getByRole('checkbox', { name: 'Fire activity', exact: true }).check();
+    const connect = dialog.getByRole('button', { name: 'Connect notifications', exact: true });
+    await expect(connect).toBeEnabled();
+    await expect(dialog).not.toContainText('expired or is unavailable');
+    expect(await page.evaluate(() => localStorage.getItem('vce-alert-device-v1'))).toBeNull();
+    expect(await page.evaluate(() => window.syntheticPermissionCalls)).toBe(0);
+    expect(state.writes).toHaveLength(0);
+    await connect.click();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => window.syntheticPermissionCalls)).toBe(1);
+    expect(state.writes.filter(write => write.p === '/api/v1/alerts/enrollments')).toHaveLength(1);
+    expect(state.writes.some(write => write.method === 'DELETE')).toBe(false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
 test('opening Topics renews a Direct endpoint using the existing token without permission prompts', async ({ page }) => {
   const { state, fixture } = await installAlerts(page, { guest: true });
   state.publicMode = state.deviceMode = 'direct';
