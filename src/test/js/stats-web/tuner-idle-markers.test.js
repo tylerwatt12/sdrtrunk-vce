@@ -269,7 +269,7 @@ function embeddedSpectrumInteractionHarness(wheelZoom = false) {
     drag: null,
     TUNER_SPECTRUM_MAXIMUM_ZOOM: 64,
     TUNER_SPECTRUM_ZOOM_FACTOR: 1.5,
-    TUNER_SPECTRUM_WHEEL_EVENTS_PER_ZOOM: 3,
+    TUNER_SPECTRUM_WHEEL_EVENTS_PER_ZOOM: 10,
     shouldRun: () => true,
     applyViewport: (nextViewport, requestMode) => viewportUpdates.push({ ...nextViewport, requestMode }),
     queueViewportUpdate: () => {},
@@ -344,20 +344,22 @@ test('embedded spectrum keeps the shared cursor and zoom handlers without enabli
   assert.equal(h.viewportUpdates.length, 0, 'the embedded Tuners view ignores wheel zoom');
 
   const spectrum = embeddedSpectrumInteractionHarness(true);
+  for (let eventIndex = 0; eventIndex < 9; eventIndex += 1) {
+    spectrum.context.onPlotWheel(spectrum.event({ clientX: 300 }));
+  }
+  assert.equal(spectrum.viewportUpdates.length, 0, 'the first nine wheel events leave the viewport unchanged');
   spectrum.context.onPlotWheel(spectrum.event({ clientX: 300 }));
-  spectrum.context.onPlotWheel(spectrum.event({ clientX: 300 }));
-  assert.equal(spectrum.viewportUpdates.length, 0, 'the first two wheel events leave the viewport unchanged');
-  spectrum.context.onPlotWheel(spectrum.event({ clientX: 300 }));
-  assert.equal(spectrum.viewportUpdates.length, 1, 'the third wheel event zooms the Spectrum page');
+  assert.equal(spectrum.viewportUpdates.length, 1, 'the tenth wheel event zooms the Spectrum page');
   assert.ok(spectrum.viewportUpdates[0].endHz - spectrum.viewportUpdates[0].startHz < 100);
   spectrum.setViewport(spectrum.viewportUpdates[0].startHz, spectrum.viewportUpdates[0].endHz);
   spectrum.context.onPlotWheel(spectrum.event());
   spectrum.context.onPlotWheel(spectrum.event());
+  for (let eventIndex = 0; eventIndex < 9; eventIndex += 1) {
+    spectrum.context.onPlotWheel(spectrum.event({ deltaY: 1 }));
+  }
+  assert.equal(spectrum.viewportUpdates.length, 1, 'reversing direction starts a fresh ten-event step');
   spectrum.context.onPlotWheel(spectrum.event({ deltaY: 1 }));
-  spectrum.context.onPlotWheel(spectrum.event({ deltaY: 1 }));
-  assert.equal(spectrum.viewportUpdates.length, 1, 'reversing direction starts a fresh three-event step');
-  spectrum.context.onPlotWheel(spectrum.event({ deltaY: 1 }));
-  assert.equal(spectrum.viewportUpdates.length, 2, 'the third event in the new direction zooms out');
+  assert.equal(spectrum.viewportUpdates.length, 2, 'the tenth event in the new direction zooms out');
   assert.ok(Math.abs(spectrum.viewportUpdates[1].endHz - spectrum.viewportUpdates[1].startHz - 100) < 0.0001);
 
   h.viewportUpdates.length = 0;
