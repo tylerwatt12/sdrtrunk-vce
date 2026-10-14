@@ -424,6 +424,35 @@ test('mode changes require confirmed disconnection before a new enrollment and p
   expect(fixture.pageErrors).toEqual([]);
 });
 
+test('the Follow alert topics Subscribe button starts a fresh cloud connection after unsubscribe', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page, { guest: true });
+  await page.addInitScript(() => localStorage.setItem('vce-alert-device-v1', JSON.stringify({
+    id: 'synthetic-device', manage_token: 'synthetic-old-token', mode: 'proxy', status: 'connected' })));
+  await page.goto('/app.html?view=topics');
+  const introduction = page.locator('.alerts-public-sidebar > header');
+  await introduction.getByRole('button', { name: 'Notification settings', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'Alert subscription' });
+  await dialog.getByRole('button', { name: 'Unsubscribe this device', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Unsubscribe device', exact: true })
+    .getByRole('button', { name: 'Unsubscribe', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('vce-alert-device-v1'))).toBeNull();
+  expect(state.writes).toEqual([{ p: '/api/v1/alerts/subscriptions/me', method: 'DELETE' }]);
+
+  await introduction.getByRole('button', { name: 'Subscribe', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Alert subscription' });
+  await expect(dialog.getByRole('checkbox', { name: 'Fire activity', exact: true })).not.toBeChecked();
+  await dialog.getByRole('checkbox', { name: 'Fire activity', exact: true }).check();
+  expect(state.writes).toHaveLength(1);
+  await dialog.getByRole('button', { name: 'Connect notifications', exact: true }).click();
+  await expect(dialog.getByRole('link', { name: 'Continue on RadioResolve', exact: true })).toBeVisible();
+  await expect(dialog).toContainText('add VCE Notifications to your Home Screen');
+  await auditScreenshot(page, 'resubscribe-connect-notifications');
+  expect(state.writes).toHaveLength(2);
+  expect(state.writes[1]).toEqual({ p: '/api/v1/alerts/enrollments', value: { topic_ids: ['fire'] } });
+  expect(fixture.pageErrors).toEqual([]);
+});
+
 async function installDirectDevice(page, { missing = false, manual = false, stored = true } = {}) {
   await page.addInitScript(({ missing, manual, stored }) => {
     if (stored) localStorage.setItem('vce-alert-device-v1', JSON.stringify({ id: 'synthetic-device',

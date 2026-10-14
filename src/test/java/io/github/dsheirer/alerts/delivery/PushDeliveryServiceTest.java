@@ -160,6 +160,29 @@ class PushDeliveryServiceTest
         }
     }
 
+    @Test void unsubscribedCloudPhoneCanStartANewPairingWithoutRevivingItsOldToken() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("cloud-unsubscribe-pair-again.sqlite")))
+        {
+            long now = System.currentTimeMillis();
+            f.service.saveEnrollment(new AlertEnrollment("old-pairing", "e".repeat(32), PushDeliveryService.hashToken(f.tokenA),
+                List.of("fire"), now, now + 900_000, "completed", "phone-a", "https://radioresolve.com/vce-push/enroll.php", "old-code"));
+            f.push.disconnect(f.tokenA);
+            assertEquals("cancelled", f.service.enrollment("old-pairing").orElseThrow().status());
+            assertThrows(SecurityException.class, () -> f.push.managedDevice(f.tokenA));
+
+            var pairing = f.push.enroll(List.of("fire"), JSON.createObjectNode());
+            assertEquals("pending", pairing.get("status"));
+            assertEquals(List.of("fire"), f.service.enrollment((String)pairing.get("id")).orElseThrow().topicIds());
+            f.updates = JSON.valueToTree(Map.of("status", "completed", "device_id", REMOTE_A));
+            var completed = f.push.enrollment((String)pairing.get("id"), (String)pairing.get("manage_token"));
+            assertEquals("completed", completed.get("status"));
+            assertEquals(2, f.service.devices().size());
+            assertEquals(List.of("fire"), f.push.managedDevice((String)pairing.get("manage_token")).topicIds());
+            assertThrows(SecurityException.class, () -> f.push.managedDevice(f.tokenA));
+        }
+    }
+
     @Test void directEnrollmentReusesExactBrowserMaterialWithoutRestoringExpiry() throws Exception
     {
         try(Fixture f = new Fixture(directory.resolve("direct-pair-again.sqlite")))
@@ -256,6 +279,10 @@ class PushDeliveryServiceTest
                 }
                 else if(exchange.getRequestURI().getPath().equals("/senders")) { registrationRequest = JSON.readTree(exchange.getRequestBody()); response = Map.of("sender_id", "sender-fixture", "status", "approved"); }
                 else if(exchange.getRequestURI().getPath().equals("/senders/me")) response = Map.of("sender_id", "sender-fixture", "status", "approved");
+                else if(exchange.getRequestURI().getPath().equals("/enrollments")) response = Map.of(
+                    "id", "f".repeat(32), "expires_at_ms", System.currentTimeMillis() + 900_000,
+                    "enrollment_url", "https://radioresolve.com/vce-push/enroll.php?code=synthetic-session.synthetic-code",
+                    "code", "synthetic-code");
                 else response = updates;
                 byte[] body = JSON.writeValueAsBytes(response); exchange.sendResponseHeaders(status, body.length);
                 exchange.getResponseBody().write(body); exchange.close();

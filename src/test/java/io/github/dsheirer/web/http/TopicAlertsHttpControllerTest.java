@@ -2,6 +2,9 @@ package io.github.dsheirer.web.http;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.alerts.TopicAlertConfiguration;
 import io.github.dsheirer.alerts.TopicAlertService;
@@ -18,12 +21,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.IOException;
+import java.sql.SQLException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TopicAlertsHttpControllerTest
@@ -148,6 +154,69 @@ class TopicAlertsHttpControllerTest
         }
     }
 
+    @Test void malformedCloudPairingResponseLogsItsOperationAndParserTypeWithoutSubscriptionSecrets() throws Exception
+    {
+        String secretEndpoint = "https://private.example/push?token=synthetic-endpoint-token";
+        var credential = new java.util.concurrent.atomic.AtomicReference<String>();
+        HttpServer gateway = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        gateway.createContext("/senders", exchange -> {
+            credential.set(JSON.readTree(exchange.getRequestBody()).path("credential").asText());
+            byte[] body = JSON.writeValueAsBytes(Map.of("sender_id", "synthetic-sender", "status", "approved"));
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
+        gateway.createContext("/enrollments", exchange -> {
+            byte[] body = ("invalid response " + secretEndpoint + " " + credential.get()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
+        gateway.start();
+        Logger logger = (Logger)LoggerFactory.getLogger(TopicAlertsHttpController.class);
+        ListAppender<ILoggingEvent> messages = new ListAppender<>(); messages.start(); logger.addAppender(messages);
+        try(Fixture f = new Fixture(mDirectory.resolve("pairing-failure-diagnostics.sqlite"),
+            URI.create("http://127.0.0.1:" + gateway.getAddress().getPort() + "/")))
+        {
+            f.service.saveTopic(new io.github.dsheirer.alerts.AlertTopic("fire", "Fire", "", true, true, false), f.service.configuration().revision());
+            var current = f.service.configuration();
+            f.service.updateConfiguration(new TopicAlertConfiguration(current.revision(),
+                new TopicAlertConfiguration.PushSettings(true, "proxy", "", "VCE"), current.topics(), current.rules()), current.revision());
+            f.push.register();
+            var failed = f.send("POST", "/api/v1/alerts/enrollments", Map.of("topic_ids", java.util.List.of("fire")), null, true);
+            assertEquals(503, failed.statusCode());
+            assertEquals("Notifications are temporarily unavailable. Try again later.", f.body(failed).at("/error/message").asText());
+            ILoggingEvent event = messages.list.getLast();
+            assertTrue(event.getFormattedMessage().contains("operation=PUBLIC_PAIRING"));
+            assertTrue(event.getFormattedMessage().contains("exception=IOException, cause=JsonParseException"));
+            assertFalse(event.getFormattedMessage().contains(secretEndpoint));
+            assertFalse(event.getFormattedMessage().contains(credential.get()));
+            assertNull(event.getThrowableProxy(), "No exception message or stack trace may be attached to the log event");
+        }
+        finally { logger.detachAppender(messages); messages.stop(); gateway.stop(0); }
+    }
+
+    @Test void diagnosticsKeepDatabaseAndNetworkFailureTypesButNeverDynamicPathsOrMessages() throws Exception
+    {
+        String secret = "https://private.example/push?code=synthetic-secret";
+        Logger logger = (Logger)LoggerFactory.getLogger(TopicAlertsHttpController.class);
+        ListAppender<ILoggingEvent> messages = new ListAppender<>(); messages.start(); logger.addAppender(messages);
+        try(Fixture f = new Fixture(mDirectory.resolve("database-failure-diagnostics.sqlite")))
+        {
+            f.login();
+            f.optionsFailure = new RuntimeException(secret, new SQLException(secret, "HY000", 5));
+            assertEquals(503, f.send("GET", "/api/v1/admin/alerts/topics", null, null, false).statusCode());
+            assertTrue(messages.list.getLast().getFormattedMessage().contains("operation=ADMIN_TOPICS, exception=RuntimeException, cause=SQLException, sql_state=HY000, sql_code=5"));
+            var operation = TopicAlertsHttpController.failureOperation(false, "GET", "/enrollments/" + secret);
+            TopicAlertsHttpController.logFailure(operation, new IOException(secret, new java.net.http.HttpTimeoutException(secret)));
+            assertTrue(messages.list.getLast().getFormattedMessage().contains("operation=PUBLIC_PAIRING_STATUS, exception=IOException, cause=HttpTimeoutException"));
+            TopicAlertsHttpController.logFailure(operation, new SQLException(secret, secret, 19));
+            assertTrue(messages.list.getLast().getFormattedMessage().contains("sql_state=none, sql_code=19"));
+            for(var event: messages.list)
+            {
+                assertFalse(event.getFormattedMessage().contains(secret));
+                assertNull(event.getThrowableProxy());
+            }
+        }
+        finally { logger.detachAppender(messages); messages.stop(); }
+    }
+
     @Test void builtinActionSettingOnlyAcceptsTheBuiltinTopicAndSurvivesPushSettingsSave() throws Exception
     {
         try(Fixture f = new Fixture(mDirectory.resolve("builtin-action-edit.sqlite")))
@@ -177,6 +246,7 @@ class TopicAlertsHttpControllerTest
         final WebAccessService access; final Path database;
         final HttpClient client = HttpClient.newHttpClient(); final WebRequestSecurity security;
         boolean optionsUnavailable;
+        RuntimeException optionsFailure;
         final URI origin; String cookie = "", csrf = "";
         Fixture(Path database) throws Exception { this(database, null); }
         Fixture(Path database, URI gateway) throws Exception
@@ -199,7 +269,11 @@ class TopicAlertsHttpControllerTest
                 deliveryConstructor.setAccessible(true);
                 push = deliveryConstructor.newInstance(database, service, clientConstructor.newInstance(gateway, HttpClient.newHttpClient()));
             }
-            var controller = new TopicAlertsHttpController(service, push, () -> { if(optionsUnavailable) throw new IllegalStateException("Alert source choices are temporarily unavailable"); return Map.of(); }, () -> { }, access);
+            var controller = new TopicAlertsHttpController(service, push, () -> {
+                if(optionsFailure != null) throw optionsFailure;
+                if(optionsUnavailable) throw new IllegalStateException("Alert source choices are temporarily unavailable");
+                return Map.of();
+            }, () -> { }, access);
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             new WebSessionHttpController(access, authentication, security).register(server);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, security.protectApi(WebCapability.ADMIN_SETTINGS, controller::handleAdmin));

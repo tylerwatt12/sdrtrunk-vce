@@ -1041,7 +1041,7 @@ export function createAlertsWorkspace(deps) {
         const open = link('RadioResolve notification settings', settingsUrl);
         open.target = '_blank'; open.rel = 'noopener noreferrer';
         const guide = node('div', 'alerts-form ui-surface-inset');
-        guide.append(paragraph('Open notification settings in RadioResolve on the phone and choose Reconnect notifications. On iPhone, open RadioResolve from its Home Screen icon.'),
+        guide.append(paragraph('Open notification settings in RadioResolve on the phone and choose Reconnect notifications. On iPhone, open VCE Notifications from its Home Screen icon.'),
           qr, open);
         fields.append(guide);
       } else if (!currentDevice || needsReconnect) {
@@ -1132,7 +1132,7 @@ export function createAlertsWorkspace(deps) {
       heading.append(node('h3', 'ui-section-heading', 'Connect a phone'),
         paragraph('Scan this code with your phone’s camera, or continue on this phone.'));
       copy.append(heading, open,
-        node('p', 'ui-field-detail', 'Enable notifications in RadioResolve. On iPhone, add RadioResolve to your Home Screen and open it from that icon.'));
+        node('p', 'ui-field-detail', 'Enable notifications there. On iPhone, add VCE Notifications to your Home Screen and open it from that icon.'));
       panel.append(enrollmentQrCanvas(document, url.href), copy);
       const guide = node('div', 'alerts-form');
       guide.append(panel, node('p', 'ui-field-detail', 'Waiting for your phone. The connection link expires after 15 minutes.'));

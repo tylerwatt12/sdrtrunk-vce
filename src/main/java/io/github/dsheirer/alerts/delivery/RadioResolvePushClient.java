@@ -101,15 +101,15 @@ public final class RadioResolvePushClient implements AutoCloseable
         var pending = mHttp.sendAsync(builder.build(), info -> new BoundedBody());
         HttpResponse<byte[]> response;
         try { response = pending.get(13, TimeUnit.SECONDS); }
-        catch(java.util.concurrent.ExecutionException exception) { throw new IOException("RadioResolve could not be reached"); }
-        catch(java.util.concurrent.TimeoutException exception) { pending.cancel(true); throw new IOException("RadioResolve timed out"); }
+        catch(java.util.concurrent.ExecutionException exception) { throw new IOException("RadioResolve could not be reached", exception.getCause()); }
+        catch(java.util.concurrent.TimeoutException exception) { pending.cancel(true); throw new IOException("RadioResolve timed out", exception); }
         catch(InterruptedException exception) { pending.cancel(true); throw exception; }
         byte[] bytes = response.body();
         if(response.statusCode() < 200 || response.statusCode() >= 300)
             throw new GatewayException(response.statusCode());
         if(bytes.length == 0) return JSON.createObjectNode();
         try { return JSON.readTree(bytes); }
-        catch(IOException ignored) { throw new IOException("RadioResolve returned an invalid response"); }
+        catch(IOException exception) { throw new IOException("RadioResolve returned an invalid response", exception); }
     }
 
     private static String safeId(String id)
@@ -144,7 +144,7 @@ public final class RadioResolvePushClient implements AutoCloseable
             }
             mSubscription.request(1);
         }
-        @Override public void onError(Throwable error) { mBody.completeExceptionally(new IOException("Gateway response failed")); }
+        @Override public void onError(Throwable error) { mBody.completeExceptionally(new IOException("Gateway response failed", error)); }
         @Override public void onComplete() { mBody.complete(mBytes.toByteArray()); }
     }
 

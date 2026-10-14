@@ -119,6 +119,19 @@ class RadioResolvePushClientTest
         finally { server.stop(0); }
     }
 
+    @Test void networkFailureRetainsItsTypeBehindASafeConstantMessage() throws Exception
+    {
+        HttpServer closedGateway = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = closedGateway.getAddress().getPort(); closedGateway.start(); closedGateway.stop(0);
+        try(var client = new RadioResolvePushClient(URI.create("http://127.0.0.1:" + port + "/"),
+            HttpClient.newBuilder().connectTimeout(java.time.Duration.ofMillis(500)).build()))
+        {
+            var failure = assertThrows(java.io.IOException.class, () -> client.status(PublicAccessVerifier.token()));
+            assertEquals("RadioResolve could not be reached", failure.getMessage());
+            assertInstanceOf(java.net.ConnectException.class, failure.getCause());
+        }
+    }
+
     private static RadioResolvePushClient client(HttpServer server)
     {
         return new RadioResolvePushClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/"),

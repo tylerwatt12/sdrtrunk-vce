@@ -15,6 +15,7 @@ import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
 import java.util.LinkedHashMap;
@@ -23,6 +24,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Administration uses existing capability/CSRF security; visible Topics independently admit anonymous listeners. */
 public final class TopicAlertsHttpController
@@ -30,6 +33,7 @@ public final class TopicAlertsHttpController
     public static final String ADMIN_PATH = "/api/v1/admin/alerts";
     public static final String PUBLIC_PATH = "/api/v1/alerts";
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final Logger LOG = LoggerFactory.getLogger(TopicAlertsHttpController.class);
     private final TopicAlertService mAlerts;
     private final PushDeliveryService mPush;
     private final Supplier<Map<String,Object>> mOptions;
@@ -117,14 +121,74 @@ public final class TopicAlertsHttpController
         }
         catch(IOException exception)
         {
+            logFailure(failureOperation(admin, exchange.getRequestMethod(), path), exception);
             ApiHttpResponse.sendError(exchange, 503, "gateway_unavailable",
                 "Notifications are temporarily unavailable. Try again later.");
         }
         catch(Exception exception)
         {
             if(exception instanceof InterruptedException) Thread.currentThread().interrupt();
+            logFailure(failureOperation(admin, exchange.getRequestMethod(), path), exception);
             ApiHttpResponse.sendError(exchange, 503, "alerts_unavailable", "Notifications are temporarily unavailable. Try again later.");
         }
+    }
+
+    /** Only fixed operation names and exception types reach logs; subscription material never does. */
+    enum FailureOperation
+    {
+        ADMIN_SETUP, ADMIN_TOPICS, ADMIN_RULES, ADMIN_PUBLIC_TEST, ADMIN_REGISTRATION, ADMIN_REQUEST,
+        PUBLIC_TOPICS, PUBLIC_HISTORY, PUBLIC_PAIRING, PUBLIC_PAIRING_STATUS, PUBLIC_SUBSCRIPTION_READ,
+        PUBLIC_SUBSCRIPTION_SAVE, PUBLIC_UNSUBSCRIBE, PUBLIC_SUBSCRIPTION_REFRESH, PUBLIC_REQUEST
+    }
+
+    static FailureOperation failureOperation(boolean admin, String method, String path)
+    {
+        if(admin) return switch(path)
+        {
+            case "/config" -> FailureOperation.ADMIN_SETUP;
+            case "/topics" -> FailureOperation.ADMIN_TOPICS;
+            case "/rules" -> FailureOperation.ADMIN_RULES;
+            case "/public-test" -> FailureOperation.ADMIN_PUBLIC_TEST;
+            case "/registration" -> FailureOperation.ADMIN_REGISTRATION;
+            default -> path.startsWith("/topics/") ? FailureOperation.ADMIN_TOPICS :
+                path.startsWith("/rules/") ? FailureOperation.ADMIN_RULES : FailureOperation.ADMIN_REQUEST;
+        };
+        return switch(path)
+        {
+            case "/topics" -> FailureOperation.PUBLIC_TOPICS;
+            case "/history" -> FailureOperation.PUBLIC_HISTORY;
+            case "/enrollments" -> FailureOperation.PUBLIC_PAIRING;
+            case "/subscriptions/me/refresh" -> FailureOperation.PUBLIC_SUBSCRIPTION_REFRESH;
+            case "/subscriptions/me" -> switch(method)
+            {
+                case "GET" -> FailureOperation.PUBLIC_SUBSCRIPTION_READ;
+                case "PUT" -> FailureOperation.PUBLIC_SUBSCRIPTION_SAVE;
+                case "DELETE" -> FailureOperation.PUBLIC_UNSUBSCRIBE;
+                default -> FailureOperation.PUBLIC_REQUEST;
+            };
+            default -> path.startsWith("/enrollments/") ? FailureOperation.PUBLIC_PAIRING_STATUS :
+                path.startsWith("/history/") ? FailureOperation.PUBLIC_HISTORY : FailureOperation.PUBLIC_REQUEST;
+        };
+    }
+
+    static void logFailure(FailureOperation operation, Exception failure)
+    {
+        Throwable cause = failure;
+        SQLException databaseFailure = null;
+        String causeClass = "none";
+        for(int depth = 0; cause != null && depth < 8; depth++, cause = cause.getCause())
+        {
+            if(cause instanceof SQLException sql && databaseFailure == null) databaseFailure = sql;
+            if(cause != failure) causeClass = cause.getClass().getSimpleName();
+            if(cause instanceof java.net.http.HttpTimeoutException || cause instanceof java.net.SocketException ||
+                cause instanceof java.net.UnknownHostException || cause instanceof javax.net.ssl.SSLException ||
+                cause instanceof java.util.concurrent.TimeoutException) break;
+        }
+        String sqlState = databaseFailure != null ? databaseFailure.getSQLState() : null;
+        if(sqlState == null || !sqlState.matches("[A-Z0-9]{5}")) sqlState = "none";
+        LOG.warn("Topic notification request failed: operation={}, exception={}, cause={}, sql_state={}, sql_code={}",
+            operation.name(), failure.getClass().getSimpleName(), causeClass, sqlState,
+            databaseFailure != null ? databaseFailure.getErrorCode() : 0);
     }
 
     private void admin(HttpExchange exchange, String path) throws Exception
