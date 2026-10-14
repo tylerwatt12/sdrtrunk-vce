@@ -400,9 +400,8 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("PRAGMA ignore_check_constraints=ON");
             }
 
-            try
+            try(ApplicationMigrationTransaction transaction = ApplicationMigrationTransaction.begin(connection, statement))
             {
-                statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
                 DatabaseFormatCatalog.DetectedFormat lockedSource = DatabaseFormatCatalog.inspectForMigration(connection);
                 if(lockedSource.version() != expectedSource.version() ||

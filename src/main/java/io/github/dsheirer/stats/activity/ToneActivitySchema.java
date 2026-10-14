@@ -4,6 +4,7 @@ package io.github.dsheirer.stats.activity;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationTransaction;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -141,8 +142,7 @@ public final class ToneActivitySchema
     /** Preserve legacy raw/encoded rows; only admit the explicit new prospective nominal PCM method. */
     public static void upgradeFrom51(Connection connection) throws SQLException
     {
-        if(connection.getAutoCommit())
-            throw new SQLException("Tone method upgrade requires the Application Migrator transaction");
+        ApplicationMigrationTransaction.requireActive(connection);
         try(Statement statement = connection.createStatement())
         {
             try(var row = statement.executeQuery("PRAGMA foreign_keys"))

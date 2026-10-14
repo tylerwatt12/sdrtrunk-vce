@@ -3,6 +3,7 @@ package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.stats.activity.ToneActivitySchema;
 import java.nio.file.Files;
@@ -15,12 +16,101 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class Format51To52DatabaseMigrationTest
 {
     @TempDir Path directory;
+
+    @Test void applicationMigrationServicePreservesPopulatedFiftyOneWithEitherBackupChoice() throws Exception
+    {
+        for(boolean backup: List.of(false, true))
+        {
+            Path dataRoot = directory.resolve("service-" + backup);
+            Path database = populatedPrior(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+            Map<String,List<String>> before;
+            List<String> indexes;
+            try(Connection connection = open(database))
+            {
+                before = contents(connection);
+                indexes = indexDefinitions(connection);
+            }
+            List<String> progress = new ArrayList<>();
+            var result = new ApplicationMigrationService().migrateCurrent(dataRoot, backup, progress::add);
+            assertEquals(51, result.sourceFormat().version());
+            assertEquals("Database update committed", progress.getLast());
+            try(Connection connection = open(database))
+            {
+                assertEquals(52, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(before, contents(connection), "Retain every value, tone fact, statistic and allocator");
+                assertEquals(indexes, indexDefinitions(connection));
+                integrity(connection);
+            }
+            if(backup)
+            {
+                assertNotNull(result.safetyBackup());
+                try(Connection connection = open(result.safetyBackup()))
+                {
+                    assertEquals(51, DatabaseFormatCatalog.inspect(connection).version());
+                    assertEquals(before, contents(connection));
+                    integrity(connection);
+                }
+            }
+            else
+            {
+                assertNull(result.safetyBackup());
+                assertFalse(Files.exists(database.getParent().resolve("backups")));
+            }
+        }
+    }
+
+    @Test void applicationMigrationServiceRollsBackBeforeCommitAndRetainsSourceAndBackupForRetry() throws Exception
+    {
+        for(boolean backup: List.of(false, true))
+        {
+            Path dataRoot = directory.resolve("service-rollback-" + backup);
+            Path database = populatedPrior(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+            Map<String,List<String>> before;
+            try(Connection connection = open(database)) { before = contents(connection); }
+            assertThrows(CancellationException.class, () -> new ApplicationMigrationService().migrateCurrent(
+                dataRoot, backup, message ->
+                {
+                    if(message.equals("Committing the database update"))
+                        throw new CancellationException("Injected pre-commit cancellation");
+                }));
+            try(Connection connection = open(database))
+            {
+                assertEquals(51, DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(before, contents(connection));
+                integrity(connection);
+            }
+            Path backups = database.getParent().resolve("backups");
+            if(backup)
+            {
+                try(var paths = Files.list(backups))
+                {
+                    List<Path> retained = paths.toList();
+                    assertEquals(1, retained.size());
+                    try(Connection connection = open(retained.getFirst()))
+                    {
+                        assertEquals(51, DatabaseFormatCatalog.inspect(connection).version());
+                        assertEquals(before, contents(connection));
+                        integrity(connection);
+                    }
+                }
+            }
+            else assertFalse(Files.exists(backups));
+            new ApplicationMigrationService().migrateCurrent(dataRoot, false, null);
+            try(Connection connection = open(database))
+            {
+                assertEquals(52, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(before, contents(connection));
+                integrity(connection);
+            }
+        }
+    }
 
     @Test void frozenPriorFormatsAndPopulatedUpgradePreserveEveryValueStatisticAndAllocator() throws Exception
     {
@@ -159,6 +249,17 @@ class Format51To52DatabaseMigrationTest
             Collections.sort(values); result.put(table,values);
         }
         return result;
+    }
+    private static Path populatedPrior(Path database) throws Exception
+    {
+        Files.createDirectories(database.getParent());
+        Format51TestDatabase.create(database);
+        try(Connection connection = open(database); var sql = connection.createStatement())
+        {
+            sql.executeUpdate("UPDATE sqlite_sequence SET seq=seq+5000 WHERE name='receiver_activity_event'");
+            sql.execute("ANALYZE receiver_activity_tone_sequence");
+        }
+        return database;
     }
     private static List<String> indexDefinitions(Connection connection) throws Exception
     {
