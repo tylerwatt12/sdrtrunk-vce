@@ -206,6 +206,10 @@ const aliasListMetadata = adminLists.slice(0, 100).map((row) => ({
 }));
 const merged = context.editorLists(adminLists, aliasListMetadata);
 assert.equal(merged.length, 150, 'The complete Alias Editor catalog must drive list visibility.');
+const capabilityList = context.editorLists([{ alias_list_id: 1, name: 'Analog', family: 'NBFM' }],
+  [{ alias_list_id: 1, capabilities: { observed_group_discovery: false, configured_assignment: true } }])[0];
+assert.equal(capabilityList.capabilities.observed_group_discovery, false,
+  'Shared server capabilities must reach the Alias Editor instead of being discarded with catalog metadata.');
 const channelsByList = context.channelUsage([
   { configuration_id: '00000000-0000-0000-0000-000000000002', alias_list_id: 2, name: 'Dispatch 10' },
   { configuration_id: '00000000-0000-0000-0000-000000000001', alias_list_id: 2, name: 'Dispatch 2' },

@@ -36,19 +36,19 @@ class Format49To50DatabaseMigrationTest
             List<String> creationOrder = indexCreationOrder(connection);
             long highWater = scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'");
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(List.of("format-49-to-50"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            new Format49To50DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 50); connection.commit();
             assertEquals(before, contents(connection));
             assertEquals(indexes, indexDefinitions(connection));
             assertEquals(creationOrder,indexCreationOrder(connection));
             assertEquals(highWater, scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
             assertEquals(0, count(connection, "receiver_activity_tone_sequence"));
             assertEquals(0, count(connection, "receiver_activity_tone"));
-            assertEquals(50, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(50, DatabaseFormatCatalog.inspect(connection).version());
             integrity(connection);
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertEquals(DatabaseFormatCatalog.requireVersion(50).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(prior);
+        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(prior));
         Path fresh = directory.resolve("fresh.sqlite"); SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(fresh))
         { assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection)); integrity(connection); }
@@ -67,8 +67,9 @@ class Format49To50DatabaseMigrationTest
         assertArrayEquals(original, Files.readAllBytes(prior));
         try(Connection connection = open(prior))
         {
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(50, DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
+            connection.setAutoCommit(false); new Format49To50DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 50); connection.commit();
+            assertEquals(50, DatabaseFormatCatalog.inspect(connection).version()); integrity(connection);
         }
     }
 
@@ -80,7 +81,8 @@ class Format49To50DatabaseMigrationTest
             sql.execute("PRAGMA foreign_keys=ON"); sql.executeUpdate("DELETE FROM receiver_activity_event");
             sql.executeUpdate("UPDATE sqlite_sequence SET seq=6000000000 WHERE name='receiver_activity_event'");
             sql.execute("PRAGMA foreign_keys=OFF");
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
+            connection.setAutoCommit(false); new Format49To50DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 50); connection.commit();
             assertEquals(6000000000L, scalar(connection,"SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
             assertEquals(0,count(connection,"receiver_activity_event")); integrity(connection);
         }

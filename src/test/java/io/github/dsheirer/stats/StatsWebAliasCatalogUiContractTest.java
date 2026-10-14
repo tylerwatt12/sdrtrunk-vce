@@ -499,8 +499,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(tabs.contains("observedGroupIdentityDiscoverySupported(selectedList)"));
         assertTrue(view.contains("observedGroupIdentityDiscoverySupported(selectedList)"));
         assertTrue(renderer.contains("aliasEditorView(selectedList)"));
-        assertTrue(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
-        assertFalse(discoverySupport.contains("'NBFM'"));
+        assertTrue(discoverySupport.contains("capabilities?.observed_group_discovery !== false"));
+        assertFalse(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
+        assertTrue(observed.contains("analog ? 'Assigned number' : 'Identity'"));
+        assertTrue(observed.contains("analog ? 'Unmatched assignments' : 'Observed Groups'"));
         assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
         assertTrue(checkbox.contains("'alias-check-option ui-choice-card'"));
         assertTrue(policy.contains("uiToggleField('Record calls'"));

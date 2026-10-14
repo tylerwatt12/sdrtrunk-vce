@@ -586,7 +586,7 @@ class ReceiverActivityMapper
             p25TargetIdentity(targetIdentifier, isP25Decoder(facts.decoder())),
             p25Identity(sourceIdentifier, isP25Decoder(facts.decoder())),
             facts.p25PatchMemberIdentities(), p25WorkingAddress(sourceIdentifier),
-            p25WorkingAddress(targetIdentifier));
+            p25WorkingAddress(targetIdentifier), snapshot.analogCallAttribution());
     }
 
     private ReceiverActivityRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
@@ -604,6 +604,9 @@ class ReceiverActivityMapper
         {
             return null;
         }
+
+        var analogAttribution = event instanceof io.github.dsheirer.module.decode.analog.AnalogCallEvent analog ?
+            analog.getAttribution() : null;
 
         //DMR/NXDN voice statistics are owned by their immutable call-start/completion notifications. Mutable raw
         //tracker updates must never become a second call or action observation.
@@ -625,7 +628,9 @@ class ReceiverActivityMapper
         String channelDescriptor = firstNonBlank(descriptor != null ? descriptor.toString() : null,
             facts.channelDescriptor(), facts.logicalChannelName());
         Integer timeslot = event.hasTimeslot() ? Integer.valueOf(event.getTimeslot()) : facts.timeslot();
-        DecoderType decoderType = channel.getDecodeConfiguration().getDecoderType();
+        DecoderType decoderType = analogAttribution != null ?
+            analogAttribution.protocol() == Protocol.AM ? DecoderType.AM : DecoderType.NBFM :
+            channel.getDecodeConfiguration().getDecoderType();
         ReceiverActivityRecords.Action action = actionOverride != null ? actionOverride :
             normalizeAction(event, decoderType);
 
@@ -645,7 +650,8 @@ class ReceiverActivityMapper
             return null;
         }
 
-        ReceiverActivityRecords.ReceiverKind receiverKind = receiverKind(channel, decoderType);
+        ReceiverActivityRecords.ReceiverKind receiverKind = analogAttribution != null ?
+            ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG : receiverKind(channel, decoderType);
 
         if(receiverKind == null)
         {
@@ -667,7 +673,8 @@ class ReceiverActivityMapper
 
         String lcn = channelDescriptor;
         String protocol = protocolName(event.getProtocol(), facts, decoderType);
-        String configurationId = ChannelConfigurationKey.configured(channel);
+        String configurationId = analogAttribution != null ? analogAttribution.channelConfigurationId() :
+            ChannelConfigurationKey.configured(channel);
 
         if(configurationId == null)
         {
@@ -760,7 +767,8 @@ class ReceiverActivityMapper
             radioPresenceUpdate, configuredIdentityDomain, p25TargetIdentity,
             p25SourceIdentity,
             facts.p25PatchMemberIdentities(), radioSystemKey, sourceObservedWorkingId,
-            targetObservedWorkingId, p25WuidObservation);
+            targetObservedWorkingId, p25WuidObservation,
+            analogAttribution);
     }
 
     /** Identity enrichment is a meaningful observation even when the displayed radio number is unchanged. */
@@ -773,6 +781,10 @@ class ReceiverActivityMapper
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
     {
+        if(event instanceof io.github.dsheirer.module.decode.analog.AnalogCallEvent)
+        {
+            return false;
+        }
         if(channel == null || channel.getDecodeConfiguration() == null || event == null ||
             event.getEventType() == null || !event.getEventType().isVoiceCallEvent())
         {

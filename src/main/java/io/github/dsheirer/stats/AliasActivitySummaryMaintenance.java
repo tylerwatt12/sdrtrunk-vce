@@ -54,11 +54,11 @@ public final class AliasActivitySummaryMaintenance
         long updatedAt = Math.max(1L, System.currentTimeMillis());
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO alias_activity_summary(
-                alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
+                alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms, last_reset_ms
             )
             SELECT alias_id, alias_list_id, protocol_code,
                    CASE WHEN protocol_code = 0 THEN 'unsupported' ELSE 'not_collected' END,
-                   ?
+                   ?, ?
             FROM (
                 SELECT id AS alias_id, alias_list_id,
                        CASE
@@ -70,6 +70,8 @@ public final class AliasActivitySummaryMaintenance
                                WHEN 'APCO25_PHASE2' THEN 1
                                WHEN 'DMR' THEN 3
                                WHEN 'NXDN' THEN 4
+                               WHEN 'NBFM' THEN CASE WHEN matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 10 ELSE 0 END
+                               WHEN 'AM' THEN CASE WHEN matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 11 ELSE 0 END
                                ELSE 0
                            END
                            ELSE 0
@@ -80,6 +82,7 @@ public final class AliasActivitySummaryMaintenance
             """))
         {
             statement.setLong(1, updatedAt);
+            statement.setLong(2, updatedAt);
             statement.executeUpdate();
         }
         return deleted;

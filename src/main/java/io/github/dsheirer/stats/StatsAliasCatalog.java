@@ -142,12 +142,61 @@ final class StatsAliasCatalog
             WHEN alias.protocol IN ('APCO25', 'APCO25_PHASE2') THEN 1
             WHEN alias.protocol = 'DMR' THEN 3
             WHEN alias.protocol = 'NXDN' THEN 4
+            WHEN alias.protocol = 'NBFM' THEN 10
+            WHEN alias.protocol = 'AM' THEN 11
             ELSE 0
         END
         """.strip();
-    private static final String SUPPORTED_ALIAS_SQL = "(" + ALIAS_PROTOCOL_CODE_SQL +
-        " > 0 AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'P25_SUBSCRIBER_IDENTITY', " +
-        "'RADIO_ID', 'RADIO_ID_RANGE'))";
+    static final String SUPPORTED_ALIAS_SQL = "(" + ALIAS_PROTOCOL_CODE_SQL +
+        " > 0 AND (alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') OR " +
+        "(" + ALIAS_PROTOCOL_CODE_SQL + " IN (1, 3, 4) AND alias.matcher_type IN " +
+        "('P25_SUBSCRIBER_IDENTITY', 'RADIO_ID', 'RADIO_ID_RANGE'))))";
+
+    /** Current analog coverage credits only the exact/range winner for a saved assigned number. */
+    static final String ANALOG_COVERAGE_COUNT_SQL = """
+        (SELECT count(*)
+         FROM configuration_channel analog_configuration
+         JOIN receiver_channel analog_receiver
+           ON analog_receiver.configuration_id = analog_configuration.configuration_id
+         WHERE analog_configuration.alias_list_id = alias.alias_list_id
+           AND analog_configuration.channel_kind = 'CONVENTIONAL'
+           AND ((alias.protocol = 'AM' AND analog_configuration.decoder_type = 'AM')
+             OR (alias.protocol = 'NBFM' AND analog_configuration.decoder_type = 'NBFM'))
+           AND $assigned BETWEEN 1 AND 65535
+           AND ((alias.matcher_type = 'TALKGROUP' AND alias.value = $assigned
+                 AND NOT EXISTS (
+                     SELECT 1 FROM alias exact_winner
+                     WHERE exact_winner.alias_list_id = alias.alias_list_id
+                       AND exact_winner.protocol = alias.protocol AND exact_winner.matcher_type = 'TALKGROUP'
+                       AND exact_winner.value = $assigned AND exact_winner.id > alias.id))
+             OR (alias.matcher_type = 'TALKGROUP_RANGE'
+                 AND alias.min_value <= $assigned AND alias.max_value >= $assigned
+                 AND NOT EXISTS (
+                     SELECT 1 FROM alias exact_winner
+                     WHERE exact_winner.alias_list_id = alias.alias_list_id
+                       AND exact_winner.protocol = alias.protocol AND exact_winner.matcher_type = 'TALKGROUP'
+                       AND exact_winner.value = $assigned)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM alias range_winner
+                     WHERE range_winner.alias_list_id = alias.alias_list_id
+                       AND range_winner.protocol = alias.protocol
+                       AND range_winner.matcher_type = 'TALKGROUP_RANGE'
+                       AND range_winner.min_value <= $assigned AND range_winner.max_value >= $assigned
+                       AND (range_winner.min_value > alias.min_value
+                         OR (range_winner.min_value = alias.min_value AND range_winner.max_value > alias.max_value)
+                         OR (range_winner.min_value = alias.min_value AND range_winner.max_value = alias.max_value
+                           AND range_winner.id > alias.id)))))
+        )
+        """.replace("$assigned", """
+            (CASE
+                WHEN json_type(analog_configuration.config_json, '$.decodeConfiguration.talkgroup') IS NULL THEN 1
+                WHEN json_type(analog_configuration.config_json, '$.decodeConfiguration.talkgroup') = 'integer'
+                    THEN json_extract(analog_configuration.config_json, '$.decodeConfiguration.talkgroup')
+                ELSE NULL
+             END)
+            """.strip()).strip();
+    private static final String CURRENT_COVERAGE_COUNT_SQL = "(CASE WHEN alias.protocol IN ('AM', 'NBFM') THEN " +
+        ANALOG_COVERAGE_COUNT_SQL + " ELSE coalesce(coverage.coverage_source_count, 0) END)";
 
     private final StatsAliasResolver mResolver;
 
@@ -184,6 +233,7 @@ final class StatsAliasCatalog
 
         List<Map<String,Object>> totals = queryRows(connection, "SELECT count(*) AS count FROM alias_list");
         Map<String,Object> response = new LinkedHashMap<>();
+        rows.forEach(AliasListCapabilities::decorate);
         response.put("rows", rows);
         response.put("total_count", totals.isEmpty() ? 0 : number(totals.getFirst().get("count")));
         response.put("limit", request.limit());
@@ -268,6 +318,17 @@ final class StatsAliasCatalog
             throw new StatsApiException(404, "Alias not found");
         }
 
+        if(aliasProtocolCode(rows.getFirst()) == 10 || aliasProtocolCode(rows.getFirst()) == 11)
+        {
+            //The durable Alias total is authoritative. Historical source counts cannot be reconstructed
+            //from today's matcher or channel assignment after edits.
+            rows.getFirst().put("observed_source_count", null);
+            applyConfigurationDiagnostics(connection, rows);
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("alias", rows.getFirst());
+            response.put("breakdown", List.of());
+            return response;
+        }
         Map<String,Object> breakdownRow = new LinkedHashMap<>(rows.getFirst());
         Map<Long,List<Map<String,Object>>> breakdown = enrich(connection, List.of(breakdownRow), true);
         copyRelationshipMetrics(breakdownRow, rows.getFirst());
@@ -710,36 +771,45 @@ final class StatsAliasCatalog
                             OR coalesce(coverage.coverage_source_count, 0) > 0)
                         THEN coalesce(summary.stream_submitted_logical_call_count, 0)
                         END AS stream_submitted_logical_call_count,
-                    CASE WHEN %s AND (summary.metrics_state = 'observed'
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM') AND (summary.metrics_state = 'observed'
                             OR coalesce(coverage.coverage_source_count, 0) > 0)
                         THEN coalesce(summary.encrypted_logical_call_count, 0)
                         END AS encrypted_logical_call_count,
-                    CASE WHEN %s AND (summary.grant_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.grant_observation_count IS NOT NULL
                             OR coalesce(coverage.p25_trunked_source_count, 0) > 0)
                         THEN coalesce(summary.grant_observation_count, 0) END AS grant_observation_count,
-                    CASE WHEN %s AND (summary.join_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.join_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.join_observation_count, 0) END AS join_observation_count,
-                    CASE WHEN %s AND (summary.emergency_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.emergency_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.emergency_observation_count, 0) END AS emergency_observation_count,
-                    CASE WHEN %s AND (summary.register_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.register_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.register_observation_count, 0) END AS register_observation_count,
-                    CASE WHEN %s AND (summary.logout_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.logout_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.logout_observation_count, 0) END AS logout_observation_count,
-                    CASE WHEN %s AND (summary.denial_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.denial_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.denial_observation_count, 0) END AS denial_observation_count,
-                    CASE WHEN %s AND (summary.data_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.data_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.data_observation_count, 0) END AS data_observation_count,
-                    CASE WHEN %s AND (summary.other_signaling_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.other_signaling_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.other_signaling_observation_count, 0)
                         END AS other_signaling_observation_count,
-                    CASE WHEN %s AND (summary.signaling_observation_count IS NOT NULL
+                    CASE WHEN %s AND coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                        AND (summary.signaling_observation_count IS NOT NULL
                             OR coalesce(coverage.trunked_source_count, 0) > 0)
                         THEN coalesce(summary.signaling_observation_count, 0) END AS signaling_observation_count,
                     NULL AS relationship_count, NULL AS join_relationship_count,
@@ -759,7 +829,8 @@ final class StatsAliasCatalog
             SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL,
             SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL,
             SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL, SUPPORTED_ALIAS_SQL,
-            SUPPORTED_ALIAS_SQL, indexedSelect, summaryFrom, ALIAS_PROTOCOL_CODE_SQL));
+            SUPPORTED_ALIAS_SQL, indexedSelect, summaryFrom, ALIAS_PROTOCOL_CODE_SQL)
+                .replace("coalesce(coverage.coverage_source_count, 0)", CURRENT_COVERAGE_COUNT_SQL));
         List<Object> parameters = new ArrayList<>();
 
         if(indexedSort != null)
@@ -2018,6 +2089,8 @@ final class StatsAliasCatalog
                     String matcher = resultSet.getString("matcher_type");
                     int protocol = "P25_SUBSCRIBER_IDENTITY".equals(matcher) ? 1 :
                         protocolCode(resultSet.getString("protocol"));
+                    //Historical compact analog evidence did not preserve assigned-number attribution.
+                    if(protocol == 10 || protocol == 11) protocol = 0;
                     boolean supported = protocol > 0 && ("TALKGROUP".equals(matcher) ||
                         "TALKGROUP_RANGE".equals(matcher) || "P25_SUBSCRIBER_IDENTITY".equals(matcher) ||
                         "RADIO_ID".equals(matcher) || "RADIO_ID_RANGE".equals(matcher));
@@ -2656,7 +2729,9 @@ final class StatsAliasCatalog
     private static boolean isSupportedIdentity(Map<String,Object> alias)
     {
         String type = text(alias.get("identity_type"));
-        return ("talkgroup".equals(type) || "radio".equals(type)) && aliasProtocolCode(alias) > 0;
+        int protocol = aliasProtocolCode(alias);
+        return "talkgroup".equals(type) && protocol > 0 || "radio".equals(type) &&
+            (protocol == 1 || protocol == 3 || protocol == 4);
     }
 
     private static int aliasProtocolCode(Map<String,Object> alias)
@@ -2680,6 +2755,14 @@ final class StatsAliasCatalog
             return 4;
         }
 
+        else if("NBFM".equals(protocol))
+        {
+            return 10;
+        }
+        else if("AM".equals(protocol))
+        {
+            return 11;
+        }
         return 0;
     }
 

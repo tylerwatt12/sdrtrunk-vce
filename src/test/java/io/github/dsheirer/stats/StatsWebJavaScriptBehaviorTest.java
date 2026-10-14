@@ -42,6 +42,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("application log", "application-log.test.js", APPLICATION_LOG),
         contract("Activity filters", "activity-filters.test.js", APP_JAVASCRIPT),
         contract("Alias editor", "alias-editor.test.js", APP_JAVASCRIPT),
+        contract("analog Alias inventory", "analog-alias-inventory.test.js", APP_JAVASCRIPT),
         contract("topic alert workflows", "alerts.test.js", Path.of("stats-web", "assets", "features", "alerts-model.js")),
         contract("anonymous alert device persistence", "alerts-device-storage.test.js", Path.of("stats-web", "assets", "features", "alerts-device-storage.js")),
         contract("Direct push renewal", "alerts-direct.test.js", Path.of("stats-web", "assets", "features", "alerts-direct.js")),

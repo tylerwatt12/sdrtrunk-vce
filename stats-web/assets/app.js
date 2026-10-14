@@ -4022,7 +4022,9 @@ function aliasEditorSourceBreakdownColumns() {
       const value = node('div', 'alias-source-identity');
       const label = radioSystemPrimaryName(row) || row.source_label || radioSystemDisplayName(row);
       const primary = node('strong');
-      primary.append(radioSystemLink(row.radio_system_entity_ref, availableValue(label)));
+      const target = row.channel_entity_ref ? entityTarget(row.channel_entity_ref) : '';
+      primary.append(target ? anchor(availableValue(label), target) :
+        radioSystemLink(row.radio_system_entity_ref, availableValue(label)));
       value.append(primary);
       if (row.topology) value.append(node('span', 'muted', availableValue(row.topology)));
       return value;
@@ -4227,6 +4229,8 @@ function aliasEditorLists(configurationRows, metadataRows = []) {
     const metadata = metadataById.get(aliasListId(row));
     return {
       ...row,
+      ...(row.capabilities || metadata?.capabilities ?
+        { capabilities: row.capabilities || metadata.capabilities } : {}),
       ...(metadata?.alias_count !== undefined ? { alias_count: metadata.alias_count } : {}),
       ...(metadata?.assigned_channel_count !== undefined ?
         { assigned_channel_count: metadata.assigned_channel_count } : {})
@@ -5364,8 +5368,8 @@ function aliasActivityContent(response) {
   wrapper.append(section('Calls', aliasDetailMetricBand(alias, [
     ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
     ['Submitted', 'stream_submitted_logical_call_count'], ['Encrypted', 'encrypted_logical_call_count']
-  ])));
-  wrapper.append(section('Signaling', fragment(
+  ].filter(([, field]) => !configuredAliasAssignment(alias) || field !== 'encrypted_logical_call_count'))));
+  if (!configuredAliasAssignment(alias)) wrapper.append(section('Signaling', fragment(
     aliasDetailMetricBand(alias, [
       ['Total', 'signaling_observation_count'],
       ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
@@ -5377,8 +5381,8 @@ function aliasActivityContent(response) {
       'The total also includes other recognized signaling actions. Calls and signaling can describe the same ' +
       'transmission, so they should not be added together. Logout means unit deregistration, not leaving a group.')
   )));
-  wrapper.append(section('Related State', fragment(
-    aliasDetailMetricBand(alias, [
+  wrapper.append(section(configuredAliasAssignment(alias) ? 'Activity dates' : 'Related State', fragment(
+    configuredAliasAssignment(alias) ? null : aliasDetailMetricBand(alias, [
       ['Relationships', 'relationship_count'],
       ['Join Relationships', 'join_relationship_count'], ['Current Affiliations', 'current_affiliation_count']
     ]),
@@ -5386,12 +5390,12 @@ function aliasActivityContent(response) {
       ['First Seen', aliasMetricTime(alias, 'first_evidence_ms')],
       ['Last Seen', aliasMetricTime(alias, 'last_evidence_ms')]
     ]),
-    node('p', 'ui-section-note',
+    configuredAliasAssignment(alias) ? null : node('p', 'ui-section-note',
       'Relationships and current affiliations are derived from retained call and signaling activity and are not ' +
       'included in the Signaling total. ' +
       'An em dash means unavailable; 0 means monitored with none observed.')
   )));
-  wrapper.append(tableSection('Source Breakdown', sourceRows, aliasEditorSourceBreakdownColumns(),
+  if (!configuredAliasAssignment(alias)) wrapper.append(tableSection('Source Breakdown', sourceRows, aliasEditorSourceBreakdownColumns(),
     'No compatible monitored sources', { type: 'alias-editor-source-breakdown' },
     node('p', 'ui-section-note',
       'Each source is a radio system or saved channel. Calls and signaling remain separate.')));
@@ -6245,7 +6249,21 @@ function openFullScanListMembershipModal(scanList, operation) {
 }
 
 function observedGroupIdentityDiscoverySupported(selectedList) {
-  return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
+  return Boolean(selectedList) && selectedList?.capabilities?.observed_group_discovery !== false;
+}
+
+function analogAliasList(selectedList) {
+  return ['NBFM', 'AM'].includes(aliasListFamily(selectedList));
+}
+
+function configuredAliasAssignment(row) {
+  return row?.identity_origin === 'configured_assignment' ||
+    ['AM', 'NBFM'].includes(String(row?.protocol || '').toUpperCase());
+}
+
+function aliasIdentityDetailTarget(row, reference = row?.entity_ref) {
+  return entityTarget(reference, configuredAliasAssignment(row) ? {} :
+    { channel: row?.identity_type === 'radio' ? 'radios' : 'groups' });
 }
 
 function unmatchedTalkgroupsSupported(selectedList) {
@@ -7021,6 +7039,7 @@ function observedGroupIdentityPromotionReason(row) {
 function observedGroupIdentityValue(row) {
   const wrapper = node('div', 'observed-group-identity-value');
   wrapper.append(node('strong', '', groupIdentifierText(row, row.group_identity_id)));
+  if (configuredAliasAssignment(row)) wrapper.append(node('small', '', 'Assigned number'));
   if (observedGroupIdentityMatchKind(row) === 'range') {
     wrapper.append(node('small', '', `Covered by range · ${row.matched_alias_name ||
       `Alias ${identifierNumber(row.matched_alias_id)}`}`));
@@ -7030,13 +7049,14 @@ function observedGroupIdentityValue(row) {
 
 function observedGroupIdentitySystem(row) {
   const wrapper = node('div', 'observed-group-identity-system');
-  const label = radioSystemPrimaryName(row) || row.channel_names ||
+  const label = (configuredAliasAssignment(row) ? row.channel_names : null) || radioSystemPrimaryName(row) || row.channel_names ||
     (row.radio_system_key ? radioSystemDisplayName(row) : 'Unknown source');
   const details = [protocolFamily(row), row.topology,
     row.channel_names && row.channel_names !== label ? row.channel_names : null]
     .filter(Boolean).join(' · ');
   const primary = node('strong');
-  primary.append(radioSystemLink(row.radio_system_entity_ref, label));
+  const target = configuredAliasAssignment(row) ? entityTarget(row.channel_entity_ref || row.entity_ref) : '';
+  primary.append(target ? anchor(label, target) : radioSystemLink(row.radio_system_entity_ref, label));
   wrapper.append(primary);
   if (details) wrapper.append(node('small', '', details));
   return wrapper;
@@ -7203,12 +7223,14 @@ function observedGroupIdentityDetail(row, selectedList) {
   const activityColumn = node('div', 'observed-group-identity-detail-column');
   const localP25 = isP25(row) && String(row?.topology || '').toUpperCase() === 'TRUNKED';
   const identity = [
-    [localP25 ? 'Local Talkgroup' : groupIdentityLabel(row, null, false),
+    [configuredAliasAssignment(row) ? 'Assigned number' : localP25 ? 'Local Talkgroup' : groupIdentityLabel(row, null, false),
       localP25 ? identityNumber(row, row.group_identity_id) : groupIdentifierText(row, row.group_identity_id)],
     ['Protocol', protocolFamily(row) || row.protocol],
     ['System', radioSystemLink(row.radio_system_entity_ref, radioSystemPrimaryName(row) ||
       (row.radio_system_key ? radioSystemDisplayName(row) : '—'))],
-    ['Channel', row.channel_names || '—'],
+    ['Channel', configuredAliasAssignment(row) && entityTarget(row.channel_entity_ref || row.entity_ref) ?
+      anchor(row.channel_names || row.configuration_id || 'Channel', entityTarget(row.channel_entity_ref || row.entity_ref)) :
+      row.channel_names || '—'],
     ['Topology', row.topology || '—'],
     ['WACN', row.wacn === null || row.wacn === undefined ? '—' : hexDecimalPair(row.wacn, 5)],
     ['System ID', row.system_id === null || row.system_id === undefined ? '—' : hexDecimalPair(row.system_id, 3)],
@@ -7217,7 +7239,8 @@ function observedGroupIdentityDetail(row, selectedList) {
       frequency(row.frequency_hz)],
     ['Timeslot', row.timeslot === null || row.timeslot === undefined ? '—' :
       identifierNumber(row.timeslot)]
-  ];
+  ].filter(([label]) => !configuredAliasAssignment(row) ||
+    !['Topology', 'WACN', 'System ID', 'Network ID', 'Timeslot'].includes(label));
   identityColumn.append(section('Identity', keyValues(identity)));
   const coverage = [['Match', observedGroupIdentityMatch(row)]];
   if (!observedGroupIdentityPromotionSupported(row)) {
@@ -7228,8 +7251,8 @@ function observedGroupIdentityDetail(row, selectedList) {
   identityColumn.append(section('Calls', aliasDetailMetricBand(row, [
     ['Logical Calls', 'logical_call_count'], ['Recorded', 'recorded_logical_call_count'],
     ['Submitted', 'stream_submitted_logical_call_count'], ['Encrypted', 'encrypted_logical_call_count']
-  ])));
-  activityColumn.append(section('Signaling', fragment(
+  ].filter(([, field]) => !configuredAliasAssignment(row) || field !== 'encrypted_logical_call_count'))));
+  if (!configuredAliasAssignment(row)) activityColumn.append(section('Signaling', fragment(
     aliasDetailMetricBand(row, [
       ['Total', 'signaling_observation_count'],
       ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
@@ -7255,14 +7278,17 @@ function observedGroupIdentityDetail(row, selectedList) {
 
 function openObservedGroupIdentityDetail(row, selectedList) {
   const id = groupIdentifierText(row, row.group_identity_id);
-  const modal = openReadOnlyModal(`Observed ${groupIdentityLabel(row, null, false)} ${id}`,
+  const title = configuredAliasAssignment(row) ? `Assigned number ${id}` :
+    `Observed ${groupIdentityLabel(row, null, false)} ${id}`;
+  const modal = openReadOnlyModal(title,
     observedGroupIdentityDetail(row, selectedList), {
     id: `observed-group-identity-${id}`, className: 'alias-editor-modal observed-group-identity-modal'
   });
   const target = entityReferenceAllowed(row?.entity_ref) ?
-    entityTarget(row.entity_ref, { channel: 'groups' }) : '';
+    aliasIdentityDetailTarget(row) : '';
   if (modal && target) {
-    const label = `Open ${groupIdentityLabel(row, null, false).toLowerCase()} details in a new tab`;
+    const label = configuredAliasAssignment(row) ? 'Open channel details in a new tab' :
+      `Open ${groupIdentityLabel(row, null, false).toLowerCase()} details in a new tab`;
     const open = externalAnchor(iconGlyph('icon-open-details'), target,
       'ui-button ui-button-secondary ui-icon-button');
     open.setAttribute('aria-label', label);
@@ -7289,7 +7315,7 @@ function observedGroupIdentityToolbar(selectedList) {
   const search = node('label', 'alias-filter alias-search-filter ui-field');
   search.append(node('span', 'ui-field-label', 'Search'));
   const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
-  input.placeholder = 'Group, system, or channel';
+  input.placeholder = analogAliasList(selectedList) ? 'Assigned number or channel' : 'Group, system, or channel';
   search.append(input);
   form.append(search, node('button', 'ui-button ui-button-primary', 'Search'));
   if (route.get('q')) {
@@ -7307,11 +7333,13 @@ function observedGroupIdentityToolbar(selectedList) {
 
 function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary) {
   const rows = [...(page.rows || [])].filter((row) => observedGroupIdentityMatchKind(row) !== 'exact');
+  const analog = analogAliasList(selectedList);
   let appliedQuery = new URLSearchParams(route);
   const columns = [
-    { id: 'group-identity-id', label: 'Identity', fullLabel: 'Group identity', sort: 'group_identity',
+    { id: 'group-identity-id', label: analog ? 'Assigned number' : 'Identity',
+      fullLabel: analog ? 'Assigned number' : 'Group identity', sort: 'group_identity',
       render: observedGroupIdentityValue },
-    { id: 'source', label: 'System / Channel', sort: 'system', className: 'alias-cell',
+    { id: 'source', label: analog ? 'Channel' : 'System / Channel', sort: 'system', className: 'alias-cell',
       render: observedGroupIdentitySystem },
     { id: 'calls', label: 'Calls', sort: 'logical_call_count', className: 'numeric',
       render: (row) => aliasMetricValue(row, 'logical_call_count') },
@@ -7320,13 +7348,15 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
     { id: 'last-seen', label: 'Last Seen', sort: 'last_seen',
       render: (row) => observedGroupIdentityTime(row, row.last_seen_ms) },
     { id: 'action', label: '', render: (row) => observedGroupIdentityCreateButton(row, selectedList) }
-  ];
+  ].filter((column) => !analog || column.id !== 'signaling');
+  if (analog) columns.unshift(...columns.splice(1, 1));
   const host = node('div', 'alias-catalog-table-host observed-group-identity-table-host');
   const tableController = {};
   const controller = {};
   const actions = node('div', 'section-title-actions ui-section-actions');
   const drawTable = () => table(rows, columns,
-    'No observed groups without an exact alias are available for this list', {
+    analog ? 'No unmatched heard assignments are available for this list' :
+      'No observed groups without an exact alias are available for this list', {
       type: 'alias-observed-group-identities', serverSort: true, sortable: false,
       defaultSort: 'last_seen', defaultDirection: 'desc',
       controller: tableController,
@@ -7334,13 +7364,14 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
       onRowClick: (row) => openObservedGroupIdentityDetail(row, selectedList), layoutMenuHost: actions
     });
   host.append(drawTable());
-  const block = section('Observed Groups', host, actions);
+  const block = section(analog ? 'Unmatched assignments' : 'Observed Groups', host, actions);
   block.classList.add('alias-editor-table-section', 'observed-group-identity-section');
   const pagerHost = node('div');
   pagerHost.append(pager({ ...page, rows }));
   block.append(node('p', 'ui-section-note',
-    'This list contains talkgroups and patch groups observed on assigned systems or channels that do not have an ' +
-    'exact alias. Existing range coverage appears beneath the identity.'), pagerHost);
+    analog ? 'Assigned numbers from received calls with no exact or range alias in this list.' :
+      'This list contains talkgroups and patch groups observed on assigned systems or channels that do not have an ' +
+      'exact alias. Existing range coverage appears beneath the identity.'), pagerHost);
   main.append(block);
   Object.assign(controller, {
     isCurrent: () => aliasEditorPageController === controller &&
@@ -25679,30 +25710,32 @@ function aliasCoverageTime(value, emptyLabel = 'Never heard') {
 
 function aliasCoverageAliasCell(row) {
   const details = [row.description, row.group].filter(Boolean).join(' · ');
-  const target = entityTarget(row.entity_ref,
-    { channel: row.identity_type === 'radio' ? 'radios' : 'groups' });
+  const target = aliasIdentityDetailTarget(row);
   return identitySummaryValue(row.name || `Alias ${row.alias_id}`, details, target);
 }
 
 function aliasCoverageIdentityCell(row) {
-  const type = row.matcher_label || (row.identity_type === 'radio' ? 'Radio' :
+  const type = configuredAliasAssignment(row) ? row.min_value != null ? 'Assigned number range' : 'Assigned number' :
+    row.matcher_label || (row.identity_type === 'radio' ? 'Radio' :
     row.identity_type === 'talkgroup' ? 'Talkgroup' : 'Alias');
   const target = row.identity_type === 'radio' || row.identity_type === 'talkgroup' ?
-    entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' }) : '';
+    aliasIdentityDetailTarget(row) : '';
   return identitySummaryValue(row.identity_display || identityActivityValue(row), type, target);
 }
 
 function aliasCoverageMetric(row, field) {
-  return row.metrics_state === 'unsupported' ? node('span', 'muted', 'Not tracked') :
-    number(row[field] || 0);
+  if (row.metrics_state === 'unsupported') return node('span', 'muted', 'Not tracked');
+  if (row.metrics_state === 'not_collected') return node('span', 'muted', 'Not collected');
+  return row[field] == null ? node('span', 'muted', 'Not tracked') : number(row[field]);
 }
 
 function aliasCoverageEvidenceTime(row, field) {
-  return aliasCoverageTime(row.metrics_state === 'unsupported' ? null : row[field],
-    row.metrics_state === 'unsupported' ? 'Not tracked' : 'Never heard');
+  const label = row.metrics_state === 'unsupported' ? 'Not tracked' :
+    row.metrics_state === 'not_collected' ? 'Not collected' : 'Never heard';
+  return aliasCoverageTime(row[field], label);
 }
 
-function aliasCoverageAliasesColumns() {
+function aliasCoverageAliasesColumns(analog = false) {
   return [
     { id: 'name', label: 'Alias', render: aliasCoverageAliasCell,
       className: 'alias-cell', sort: 'name' },
@@ -25715,13 +25748,18 @@ function aliasCoverageAliasesColumns() {
       sort: 'first_evidence' },
     { id: 'heard', label: 'Last heard', render: (row) => aliasCoverageEvidenceTime(row, 'last_evidence_ms'),
       sort: 'last_evidence' }
-  ];
+  ].filter((column) => !analog || column.id !== 'signals');
 }
 
 function aliasCoverageOwnerCell(row) {
   const owner = node('span', 'identity-summary');
-  const systemLabel = radioSystemDisplayName(row);
+  const systemLabel = configuredAliasAssignment(row) ? radioSystemPrimaryName(row) : radioSystemDisplayName(row);
   const channelLabel = row.channel_names || row.configuration_id;
+  if (configuredAliasAssignment(row)) {
+    return identitySummaryValue(channelLabel || 'Channel',
+      [systemLabel, protocolFamily(row), Number(row.frequency_hz) > 0 ? `${frequency(row.frequency_hz)} MHz` : '']
+        .filter(Boolean).join(' · '), aliasIdentityDetailTarget(row, row.channel_entity_ref || row.entity_ref));
+  }
   if (systemLabel) {
     const target = entityRefHref(row.radio_system_entity_ref);
     const primary = node('span', 'identity-summary-primary');
@@ -25729,7 +25767,7 @@ function aliasCoverageOwnerCell(row) {
     owner.append(primary);
   }
   if (channelLabel) {
-    const target = entityTarget(row.channel_entity_ref, { channel: 'groups' });
+    const target = aliasIdentityDetailTarget(row, row.channel_entity_ref);
     const context = node('small', 'identity-summary-context');
     context.append(target ? anchor(channelLabel, target) : channelLabel);
     owner.append(context);
@@ -25739,20 +25777,24 @@ function aliasCoverageOwnerCell(row) {
 }
 
 function aliasCoverageUnassignedIdentity(row) {
-  const label = `${groupIdentityLabel(row, null, false)} ${groupIdentifierText(row, row.group_identity_id)}`;
-  return identitySummaryValue(label, '', entityTarget(row.entity_ref, { channel: 'groups' }));
+  const label = configuredAliasAssignment(row) ? groupIdentifierText(row, row.group_identity_id) :
+    `${groupIdentityLabel(row, null, false)} ${groupIdentifierText(row, row.group_identity_id)}`;
+  return identitySummaryValue(label, configuredAliasAssignment(row) ? 'Assigned number' : '',
+    aliasIdentityDetailTarget(row));
 }
 
-function aliasCoverageUnassignedColumns() {
-  return [
-    { id: 'identity', label: 'Identity', render: aliasCoverageUnassignedIdentity,
+function aliasCoverageUnassignedColumns(analog = false) {
+  const columns = [
+    { id: 'identity', label: analog ? 'Assigned number' : 'Identity', render: aliasCoverageUnassignedIdentity,
       className: 'numeric', sort: 'group_identity' },
-    { id: 'system', label: 'System / Channel', render: aliasCoverageOwnerCell, sort: 'system' },
+    { id: 'system', label: analog ? 'Channel' : 'System / Channel', render: aliasCoverageOwnerCell, sort: 'system' },
     { id: 'calls', label: 'Calls', render: (row) => number(row.logical_call_count || 0), className: 'numeric',
       sort: 'logical_call_count' },
     { id: 'first', label: 'First heard', render: (row) => aliasCoverageTime(row.first_seen_ms), sort: 'first_seen' },
     { id: 'last', label: 'Last heard', render: (row) => aliasCoverageTime(row.last_seen_ms), sort: 'last_seen' }
   ];
+  if (analog) columns.unshift(...columns.splice(1, 1));
+  return columns;
 }
 
 function aliasCoverageSearch(placeholder, onNavigate) {
@@ -25787,7 +25829,7 @@ function aliasCoverageSearch(placeholder, onNavigate) {
   return form;
 }
 
-function aliasCoverageSummaryCards(totals, unassigned, countFailed = false) {
+function aliasCoverageSummaryCards(totals, unassigned, countFailed = false, analog = false) {
   const configured = Number(totals.configured_alias_count || 0);
   const activityEligible = Number(totals.activity_eligible_alias_count ?? configured);
   const recent = Number(totals.active_alias_count || 0);
@@ -25795,8 +25837,13 @@ function aliasCoverageSummaryCards(totals, unassigned, countFailed = false) {
     ['Configured aliases', configured, 'icon-identities', 'blue'],
     ['Heard in period', recent, 'icon-live', 'success'],
     ['Not heard in period', Math.max(0, activityEligible - recent), 'icon-pause', 'neutral'],
-    ['Unassigned observed', unassigned?.total_count, 'icon-warning',
-      unassigned ? 'warning' : 'neutral', unassigned ? undefined : countFailed ? 'Unavailable' : 'Loading…']
+    [analog ? 'Unmatched assignments' : 'Unassigned observed', unassigned?.total_count, 'icon-warning',
+      unassigned ? 'warning' : 'neutral', unassigned ? undefined : countFailed ? 'Unavailable' : 'Loading…'],
+    ...(totals.logical_call_count != null ? [
+      ['Total calls', totals.logical_call_count, 'icon-live', 'blue'],
+      ['Matched calls', totals.matched_logical_call_count, 'icon-identities', 'success'],
+      ['Unmatched calls', totals.unmatched_logical_call_count, 'icon-warning', 'neutral']
+    ] : [])
   ].map(([label, value, icon, tone, displayValue]) => [label, value, displayValue, { icon, tone }]), true);
   summary.classList.add('alias-coverage-summary');
   return summary;
@@ -25804,12 +25851,14 @@ function aliasCoverageSummaryCards(totals, unassigned, countFailed = false) {
 
 function aliasCoverageScope(overview) {
   const rows = Array.isArray(overview.channels) ? overview.channels : [];
+  const systems = Number(overview.correlated_radio_system_count || 0);
   const scope = node('section', 'ui-surface alias-coverage-scope');
   const header = node('header', 'alias-coverage-section-header');
   const copy = node('div');
   copy.append(node('h2', '', 'Channels using this Alias List'),
     node('p', 'muted', rows.length ?
-      `${number(rows.length)} channel${rows.length === 1 ? '' : 's'} across ${number(overview.correlated_radio_system_count || 0)} radio system${Number(overview.correlated_radio_system_count) === 1 ? '' : 's'}` :
+      `${number(rows.length)} channel${rows.length === 1 ? '' : 's'}${systems > 0 ?
+        ` across ${number(systems)} radio system${systems === 1 ? '' : 's'}` : ''}` :
       'No configured channels currently reference this Alias List'));
   header.append(copy);
   const list = node('div', 'alias-coverage-scope-list');
@@ -25821,7 +25870,7 @@ function aliasCoverageScope(overview) {
     const channel = node('strong', '');
     channel.append(channelTarget ? anchor(channelLabel, channelTarget) : channelLabel);
     const context = node('span', 'muted');
-    const systemLabel = radioSystemDisplayName(row);
+    const systemLabel = configuredAliasAssignment(row) ? radioSystemPrimaryName(row) : radioSystemDisplayName(row);
     if (systemLabel) context.append(systemTarget ? anchor(systemLabel, systemTarget) : systemLabel);
     if (row.site_name && row.site_name !== channelLabel) context.append(` · ${row.site_name}`);
     item.append(channel, context);
@@ -25840,8 +25889,7 @@ async function loadAliasCoverageModel(parameters, previous = null, signal = null
     parameters.get('alias_status') : 'all';
   const options = { signal };
   const availableLists = previous?.lists || await apiPage('/api/v1/identities/lists', { limit: 500 }, options);
-  const lists = { ...availableLists, rows: availableLists.rows.filter((row) =>
-    ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(row))) };
+  const lists = availableLists;
   const requested = parameters.get('alias_list_id');
   const selected = lists.rows.find((row) => String(row.alias_list_id) === requested);
   if (!selected) return { lists, selectedListId: null, selectedRange, activeTab, aliasStatus };
@@ -25901,10 +25949,10 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       label: `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count)} ` +
         (Number(row.alias_count) === 1 ? 'alias' : 'aliases') })),
       selectedListId, true, lists.rows.length ? 'Select an alias list' :
-        'No P25, DMR, or NXDN alias lists configured');
+        'No alias lists configured');
     listSelect.disabled = !lists.rows.length;
     listSelect.addEventListener('change', () => navigateCoverage(currentHref({ alias_list_id: listSelect.value,
-      q: null, offset: null, sort: null, direction: null })));
+      q: null, type: null, offset: null, sort: null, direction: null })));
     listControl.append(uiSelectFrame(listSelect));
     toolbar.append(listControl);
     if (!selectedListId) {
@@ -25925,12 +25973,15 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     rangeControl.append(uiSelectFrame(rangeSelect));
     toolbar.append(rangeControl);
     const totals = overview.totals || {};
-    const summary = aliasCoverageSummaryCards(totals, unassigned, model.unassignedCountFailed);
+    const selectedList = overview.alias_list || lists.rows.find((row) => row.alias_list_id === selectedListId);
+    const analog = analogAliasList(selectedList);
+    const summary = aliasCoverageSummaryCards(totals, unassigned, model.unassignedCountFailed, analog);
 
     const tabs = uiSegmentedControl([
       { value: 'configured', label: 'Configured aliases' },
       { value: 'unassigned', label: activeTab === 'unassigned' ?
-        `Unassigned observations (${number(unassigned.total_count || 0)})` : 'Unassigned observations' }
+        `${analog ? 'Unmatched assignments' : 'Unassigned observations'} (${number(unassigned.total_count || 0)})` :
+        analog ? 'Unmatched assignments' : 'Unassigned observations' }
     ], activeTab, (value) => navigateCoverage(currentHref({ identity_tab: value === 'configured' ? null : value,
       q: null, offset: null, sort: null, direction: null })));
     tabs.setAttribute('aria-label', 'Alias inventory');
@@ -25943,7 +25994,8 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     tableHeader.append(tableHeading, tabs, tableActions);
     const tableToolbar = node('div', 'alias-coverage-table-toolbar');
     tableToolbar.append(aliasCoverageSearch(activeTab === 'unassigned' ?
-      'Search unassigned observations' : 'Search configured aliases', navigateCoverage));
+      analog ? 'Search assigned numbers or channels' : 'Search unassigned observations' :
+      'Search configured aliases', navigateCoverage));
     if (activeTab === 'configured') {
       const status = uiSegmentedControl([
         { value: 'all', label: 'All' }, { value: 'recent', label: 'Recently heard' },
@@ -25953,19 +26005,21 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
         offset: null, sort: null, direction: null })));
       status.setAttribute('aria-label', 'Alias activity status');
       const kind = uiSegmentedControl([
-        { value: 'all', label: 'All' }, { value: 'talkgroup', label: 'Talkgroups' },
-        { value: 'radio', label: 'Radios' }, { value: 'other', label: 'Other' }
+        { value: 'all', label: 'All' }, { value: 'talkgroup', label: analog ? 'Assigned numbers' : 'Talkgroups' },
+        ...(!analog ? [{ value: 'radio', label: 'Radios' }] : []), { value: 'other', label: 'Other' }
       ], route.get('type') || 'all', (value) => navigateCoverage(currentHref({ type: value === 'all' ? null : value,
         offset: null })));
       kind.setAttribute('aria-label', 'Alias type');
       tableToolbar.append(status, kind);
     }
     tableSection.append(tableHeader, tableToolbar, activeTab === 'unassigned' ?
-      pagedTableContent(unassigned, aliasCoverageUnassignedColumns(), 'alias-coverage-unassigned-v1', {
-        itemLabel: 'Observations', emptyText: 'Every observed identity is assigned in this Alias List',
+      pagedTableContent(unassigned, aliasCoverageUnassignedColumns(analog), 'alias-coverage-unassigned-v1', {
+        itemLabel: analog ? 'Assignments' : 'Observations', emptyText: analog ?
+          'Every heard assignment has a matching alias in this Alias List' :
+          'Every observed identity is assigned in this Alias List',
         tableOptions: { defaultSort: 'logical_call_count', defaultDirection: 'desc',
           layoutMenuHost: tableActions } }) :
-      pagedTableContent(aliases, aliasCoverageAliasesColumns(), 'alias-coverage-configured-v1', {
+      pagedTableContent(aliases, aliasCoverageAliasesColumns(analog), 'alias-coverage-configured-v1', {
         itemLabel: 'Aliases', emptyText: 'No configured aliases match these filters',
         tableOptions: { defaultSort: aliasStatus === 'recent' ? 'last_evidence' : 'name',
           defaultDirection: aliasStatus === 'recent' ? 'desc' : 'asc', layoutMenuHost: tableActions } }));
@@ -25981,7 +26035,9 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       event.preventDefault();
       navigateCoverage(link.href, { scrollToTable: Boolean(link.closest('.pager')) });
     });
-    wrapper.append(toolbar, summary, aliasCoverageScope(overview), tableSection);
+    wrapper.append(toolbar, summary, analog ? node('p', 'ui-section-note',
+      'Call totals cover retained activity since alias tracking began. Recent period applies to last heard.') : null,
+      aliasCoverageScope(overview), tableSection);
     return wrapper;
   };
 
@@ -26006,7 +26062,8 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       if (countController === controller) countController = null;
     }
     if (isCurrent()) directory.host.querySelector('.alias-coverage-summary')?.replaceWith(
-      aliasCoverageSummaryCards(model.overview.totals || {}, model.unassigned, model.unassignedCountFailed));
+      aliasCoverageSummaryCards(model.overview.totals || {}, model.unassigned, model.unassignedCountFailed,
+        analogAliasList(model.overview.alias_list || model.lists.rows.find((row) => row.alias_list_id === model.selectedListId))));
   };
 
   const refreshCoverage = async (parameters, options = {}) => {

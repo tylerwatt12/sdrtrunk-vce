@@ -228,8 +228,8 @@ public class AliasDatabaseStore
         long updatedAt = Math.max(1L, System.currentTimeMillis());
         try(PreparedStatement insert = connection.prepareStatement("""
             INSERT INTO alias_activity_summary(
-                alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
-            ) VALUES (?, ?, ?, ?, ?)
+                alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms, last_reset_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """))
         {
             for(SummarySeed seed: seeds)
@@ -250,7 +250,7 @@ public class AliasDatabaseStore
                 logout_observation_count = NULL, denial_observation_count = NULL,
                 data_observation_count = NULL, other_signaling_observation_count = NULL,
                 signaling_observation_count = NULL,
-                first_evidence_ms = NULL, last_evidence_ms = NULL, updated_at_ms = ?
+                first_evidence_ms = NULL, last_evidence_ms = NULL, updated_at_ms = ?, last_reset_ms = ?
             WHERE alias_id = ?
             """))
         {
@@ -260,7 +260,8 @@ public class AliasDatabaseStore
                 reset.setInt(2, seed.protocolCode());
                 reset.setString(3, seed.initialState());
                 reset.setLong(4, updatedAt);
-                reset.setLong(5, seed.aliasId());
+                reset.setLong(5, updatedAt);
+                reset.setLong(6, seed.aliasId());
                 reset.addBatch();
             }
             reset.executeBatch();
@@ -292,6 +293,7 @@ public class AliasDatabaseStore
         statement.setInt(3, seed.protocolCode());
         statement.setString(4, seed.initialState());
         statement.setLong(5, updatedAt);
+        statement.setLong(6, updatedAt);
     }
 
     private static MatcherSignature matcherSignature(ResultSet resultSet) throws SQLException
@@ -311,6 +313,8 @@ public class AliasDatabaseStore
             case "APCO25", "APCO25_PHASE2" -> 1;
             case "DMR" -> 3;
             case "NXDN" -> 4;
+            case "NBFM" -> 10;
+            case "AM" -> 11;
             default -> 0;
         };
     }
@@ -328,6 +332,7 @@ public class AliasDatabaseStore
         private int activityProtocolCode()
         {
             return "P25_SUBSCRIBER_IDENTITY".equals(matcherType) ? 1 : protocolCode > 0 &&
+                (protocolCode < 10 || "TALKGROUP".equals(matcherType) || "TALKGROUP_RANGE".equals(matcherType)) &&
                 ("TALKGROUP".equals(matcherType) ||
                 "TALKGROUP_RANGE".equals(matcherType) || "RADIO_ID".equals(matcherType) ||
                 "RADIO_ID_RANGE".equals(matcherType)) ? protocolCode : 0;

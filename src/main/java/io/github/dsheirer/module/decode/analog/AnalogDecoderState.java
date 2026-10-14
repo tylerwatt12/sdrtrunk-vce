@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.module.decode.analog;
 
+import io.github.dsheirer.alias.AnalogCallAttributionTracker;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -26,7 +27,6 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
-import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventListener;
@@ -40,6 +40,12 @@ public abstract class AnalogDecoderState extends DecoderState implements ISource
     private Listener<SourceEvent> mSourceEventListener = new SourceEventListener();
     private DecodeEvent mDecodeEvent;
     private IChannelDescriptor mChannelDescriptor = null;
+    private AnalogCallAttributionTracker mCallAttributionTracker;
+
+    public void setCallAttributionTracker(AnalogCallAttributionTracker tracker)
+    {
+        mCallAttributionTracker = tracker;
+    }
 
     protected AnalogDecoderState()
     {
@@ -98,11 +104,13 @@ public abstract class AnalogDecoderState extends DecoderState implements ISource
 
         if(mDecodeEvent == null)
         {
-            mDecodeEvent = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis())
-                    .channel(mChannelDescriptor)
-                    .details(getDecoderType().name())
-                    .identifiers(new IdentifierCollection(getIdentifierCollection().getIdentifiers()))
-                    .build();
+            var attribution = mCallAttributionTracker != null ? mCallAttributionTracker.start() : null;
+            mDecodeEvent = new AnalogCallEvent(attribution != null ? attribution.startedAt() :
+                System.currentTimeMillis(), attribution);
+            mDecodeEvent.setChannelDescriptor(mChannelDescriptor);
+            mDecodeEvent.setDetails(getDecoderType().name());
+            mDecodeEvent.setProtocol(getDecoderType().getProtocol());
+            mDecodeEvent.setIdentifierCollection(new IdentifierCollection(getIdentifierCollection().getIdentifiers()));
 
             broadcast(mDecodeEvent);
         }
@@ -132,6 +140,10 @@ public abstract class AnalogDecoderState extends DecoderState implements ISource
         {
             mDecodeEvent.end(System.currentTimeMillis());
             broadcast(mDecodeEvent);
+            if(mCallAttributionTracker != null && mDecodeEvent instanceof AnalogCallEvent analog)
+            {
+                mCallAttributionTracker.end(analog.getAttribution());
+            }
             mDecodeEvent = null;
         }
 

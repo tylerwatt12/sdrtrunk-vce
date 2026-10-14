@@ -84,6 +84,7 @@ final class ReceiverActivityScopedDeletion
             return ReceiverActivityDeletion.Result.deleted(removed);
         }
 
+        resetAnalogBoundary(connection, plan, System.currentTimeMillis());
         int deleted = 0;
         for(Step step: plan.steps)
         {
@@ -163,6 +164,7 @@ final class ReceiverActivityScopedDeletion
         }
         if(has(target, "summary"))
         {
+            addAnalogSummary(plan, target);
             for(String table: List.of("conventional_activity_summary", "dmr_conventional_radio_summary",
                 "dmr_conventional_talkgroup_summary", "p25_site_channel_tag_summary",
                 "p25_site_channel_summary", "p25_site_frequency_band_summary",
@@ -462,6 +464,7 @@ final class ReceiverActivityScopedDeletion
                 {
                     if(has(target, "summary"))
                     {
+                        addAnalogSummary(plan, target);
                         plan.updateChannel("summary", "conventional_activity_summary",
                             CONVENTIONAL_CALL_RESET, CONVENTIONAL_CALL_MATCH);
                         // These rows retain calls only and require call_count>0; removing the row is the
@@ -689,6 +692,33 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
+    private static void addAnalogSummary(Plan plan, ScopedData target)
+    {
+        if(plan.scope.conventional && target.frequencyHz() == null && target.fromMs() == null && target.toMs() == null)
+        {
+            plan.add("summary", "alias_list_analog_activity_summary",
+                "channel_configuration_id=(SELECT configuration_id FROM receiver_channel WHERE id=?)",
+                List.of(plan.scope.channelId), null, List.of(), null);
+        }
+    }
+
+    private static void resetAnalogBoundary(Connection connection, Plan plan, long cutoff) throws SQLException
+    {
+        if(plan.scope != null && plan.scope.conventional && plan.steps.stream().anyMatch(step ->
+            "alias_list_analog_activity_summary".equals(step.table)))
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                UPDATE configuration_channel SET analog_activity_reset_ms=max(coalesce(analog_activity_reset_ms,0),?)
+                WHERE configuration_id=(SELECT configuration_id FROM receiver_channel WHERE id=?)
+                """))
+            {
+                statement.setLong(1, Math.max(1, cutoff + 1));
+                statement.setLong(2, plan.scope.channelId);
+                statement.executeUpdate();
+            }
+        }
+    }
+
     private static void addSiteState(Plan plan)
     {
         if(plan.scope.conventional) return;
@@ -702,22 +732,26 @@ final class ReceiverActivityScopedDeletion
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT OR IGNORE INTO alias_activity_summary
-                (alias_id,alias_list_id,protocol_code,metrics_state,updated_at_ms)
+                (alias_id,alias_list_id,protocol_code,metrics_state,updated_at_ms,last_reset_ms)
             SELECT id,alias_list_id,
                    CASE WHEN matcher_type IN
                        ('TALKGROUP','TALKGROUP_RANGE','RADIO_ID','RADIO_ID_RANGE')
                        THEN CASE protocol WHEN 'APCO25' THEN 1 WHEN 'APCO25_PHASE2' THEN 1
-                           WHEN 'DMR' THEN 3 WHEN 'NXDN' THEN 4 ELSE 0 END
+                           WHEN 'DMR' THEN 3 WHEN 'NXDN' THEN 4
+                           WHEN 'NBFM' THEN CASE WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 10 ELSE 0 END
+                           WHEN 'AM' THEN CASE WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 11 ELSE 0 END ELSE 0 END
                        ELSE 0 END,
                    CASE WHEN matcher_type IN
                        ('TALKGROUP','TALKGROUP_RANGE','RADIO_ID','RADIO_ID_RANGE')
-                       AND protocol IN ('APCO25','APCO25_PHASE2','DMR','NXDN')
-                       THEN 'not_collected' ELSE 'unsupported' END, ?
+                       AND (protocol IN ('APCO25','APCO25_PHASE2','DMR','NXDN') OR
+                           protocol IN ('AM','NBFM') AND matcher_type IN ('TALKGROUP','TALKGROUP_RANGE'))
+                       THEN 'not_collected' ELSE 'unsupported' END, ?, ?
             FROM alias WHERE id=?
             """))
         {
             statement.setLong(1, Math.max(1L, System.currentTimeMillis()));
-            statement.setLong(2, aliasId);
+            statement.setLong(2, Math.max(1L, System.currentTimeMillis()));
+            statement.setLong(3, aliasId);
             statement.executeUpdate();
         }
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -730,12 +764,13 @@ final class ReceiverActivityScopedDeletion
                 logout_observation_count=NULL, denial_observation_count=NULL,
                 data_observation_count=NULL, other_signaling_observation_count=NULL,
                 signaling_observation_count=NULL, first_evidence_ms=NULL, last_evidence_ms=NULL,
-                updated_at_ms=?
+                updated_at_ms=?,last_reset_ms=?
             WHERE alias_id=?
             """))
         {
             statement.setLong(1, Math.max(1L, System.currentTimeMillis()));
-            statement.setLong(2, aliasId);
+            statement.setLong(2, Math.max(1L, System.currentTimeMillis()));
+            statement.setLong(3, aliasId);
             return statement.executeUpdate();
         }
     }
@@ -1024,6 +1059,7 @@ final class ReceiverActivityScopedDeletion
                 outcome = valid;
                 return 0;
             }
+            resetAnalogBoundary(connection, plan, cutoffMs);
             int remaining = MAXIMUM_ROWS_PER_PASS;
             int changed = 0;
             int nextCursor = cursor;
@@ -1074,7 +1110,7 @@ final class ReceiverActivityScopedDeletion
                 "emergency_observation_count=NULL,register_observation_count=NULL,logout_observation_count=NULL," +
                 "denial_observation_count=NULL,data_observation_count=NULL,other_signaling_observation_count=NULL," +
                 "signaling_observation_count=NULL,first_evidence_ms=NULL,last_evidence_ms=NULL," +
-                "updated_at_ms=" + Math.max(1, cutoffMs + 1);
+                "updated_at_ms=" + Math.max(1, cutoffMs + 1) + ",last_reset_ms=" + Math.max(1, cutoffMs + 1);
             plan.add("summary", "alias_activity_summary", target.recordKey() == null ? "1=1" : "alias_id=?",
                 target.recordKey() == null ? List.of() : List.of(parsePositive(target.recordKey())), null, List.of(), reset);
         }
@@ -1225,7 +1261,7 @@ final class ReceiverActivityScopedDeletion
             try(var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'p25_%' OR name LIKE 'trunked_%' " +
                     "OR name LIKE 'conventional_%' OR name LIKE 'dmr_conventional_%' OR name LIKE 'radio_system%' " +
-                    "OR name LIKE 'receiver_activity_tone%' OR name IN ('receiver_channel','receiver_activity_event','activity_event_identity_member','alias_activity_summary'))"))
+                    "OR name LIKE 'receiver_activity_tone%' OR name IN ('receiver_channel','receiver_activity_event','activity_event_identity_member','alias_activity_summary','alias_list_analog_activity_summary'))"))
             {
                 while(rows.next()) names.add(rows.getString(1));
             }

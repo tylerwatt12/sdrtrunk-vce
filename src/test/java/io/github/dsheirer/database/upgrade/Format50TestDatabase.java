@@ -16,7 +16,7 @@ public final class Format50TestDatabase
             connection.setAutoCommit(false);
             try { new Format49To50DatabaseMigration().migrate(connection); DatabaseFormatCatalog.stamp(connection, 50); connection.commit(); }
             catch(Exception error) { connection.rollback(); throw error; }
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 50) throw new IllegalStateException("Expected exact format 50");
         }
         return database;
     }

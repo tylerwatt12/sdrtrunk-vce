@@ -70,6 +70,15 @@ final class AliasActivityProjection
             return;
         }
 
+        if(activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG)
+        {
+            if(activity.countedCall())
+            {
+                AnalogAliasActivityProjection.recordCall(connection, activity.analogCallAttribution());
+            }
+            return;
+        }
+
         int protocol = protocolCode(activity.protocol());
         Resolver resolver = new Resolver(connection, protocol, activity.observedAtEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
@@ -143,6 +152,11 @@ final class AliasActivityProjection
                                                ReceiverActivityRecords.ConventionalCallOutput output)
         throws SQLException
     {
+        if(output.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG)
+        {
+            // Frozen analog output evidence is projected before legacy channel-output eligibility checks.
+            return;
+        }
         int protocol = protocolCode(output.protocol());
         Resolver resolver = new Resolver(connection, protocol, output.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();

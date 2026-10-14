@@ -1619,6 +1619,12 @@ class ReceiverActivityServiceLifecycleTest
     private static CompletedAudioCall conventionalCompletedCall(long sequence, String configurationId, String guid,
                                                                  long frequency, long timestamp)
     {
+        return conventionalCompletedCall(sequence, configurationId, guid, frequency, timestamp, null);
+    }
+
+    private static CompletedAudioCall conventionalCompletedCall(long sequence, String configurationId, String guid,
+        long frequency, long timestamp, io.github.dsheirer.alias.AnalogCallAttribution attribution)
+    {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
         if(guid != null && !guid.isBlank())
@@ -1627,6 +1633,10 @@ class ReceiverActivityServiceLifecycleTest
         }
         identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
+        if(attribution != null)
+        {
+            identifiers.update(new io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup(attribution.assignedTalkgroup()));
+        }
         AudioCallId callId = new AudioCallId(sequence, sequence + 1, 0);
         CallLegSource source = new CallLegSource(DecoderType.NBFM, configurationId, "Conventional NBFM", guid,
             0, null, TrunkedIdentityDomain.STANDARD,
@@ -1634,7 +1644,7 @@ class ReceiverActivityServiceLifecycleTest
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null,
             identifiers, Set.of(), timestamp, timestamp + 100L, 1, 1, timestamp, timestamp + 100L,
             false, true, CallEncryptionState.CLEAR, true, null, VoiceCallQuality.EMPTY,
-            CallLegId.from(callId), source, null);
+            CallLegId.from(callId), source, null, attribution);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 
@@ -1911,6 +1921,12 @@ class ReceiverActivityServiceLifecycleTest
         SdrTrunkTestDatabase.create(database);
         Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000301");
         persistChannels(database, channel);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(900001," + channel.getAliasListId() + ",'Repeater','TALKGROUP','NBFM',1)");
+        }
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
@@ -1920,27 +1936,50 @@ class ReceiverActivityServiceLifecycleTest
 
         try
         {
-            DecodeEvent first = DecodeEvent.builder(DecodeEventType.CALL, start)
-                .channel(new StandardChannel(frequency))
-                .identifiers(new IdentifierCollection())
-                .build();
+            var firstAttribution = new io.github.dsheirer.alias.AnalogCallAttribution(channel.getConfigurationId(),
+                channel.getAliasListId(), Protocol.NBFM, 1, start,
+                List.of(new io.github.dsheirer.alias.AnalogCallAttribution.Match(900001, "TALKGROUP", 1, 1)));
+            var first = new io.github.dsheirer.module.decode.analog.AnalogCallEvent(start, firstAttribution);
+            first.setProtocol(Protocol.NBFM);
+            first.setChannelDescriptor(new StandardChannel(frequency));
+            first.setIdentifierCollection(new IdentifierCollection(List.of(
+                new io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup(1))));
             service.getDecodeEventListener().accept(channel, first);
             first.update(start + 100L);
             service.getDecodeEventListener().accept(channel, first);
             first.end(start + 200L);
             service.getDecodeEventListener().accept(channel, first);
 
-            DecodeEvent second = DecodeEvent.builder(DecodeEventType.CALL, start + 500L)
-                .channel(new StandardChannel(frequency))
-                .identifiers(new IdentifierCollection())
-                .build();
+            var secondAttribution = new io.github.dsheirer.alias.AnalogCallAttribution(channel.getConfigurationId(),
+                channel.getAliasListId(), Protocol.NBFM, 1, start + 500L, firstAttribution.matches());
+            var second = new io.github.dsheirer.module.decode.analog.AnalogCallEvent(start + 500L, secondAttribution);
+            second.setProtocol(Protocol.NBFM);
+            second.setChannelDescriptor(new StandardChannel(frequency));
+            second.setIdentifierCollection(first.getIdentifierCollection());
             service.getDecodeEventListener().accept(channel, second);
 
+            CompletedAudioCall output = conventionalCompletedCall(91, channel.getConfigurationId(), null,
+                frequency, start, firstAttribution);
+            service.receiveRecordedCall(output);
+            service.receiveRecordedCall(output);
+            service.receiveStreamedCall(output);
+            service.receiveStreamedCall(output);
+
             awaitCount(database, "receiver_activity_event", 2);
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            disposeAndAwait(service);
             assertEquals(2, scalar(database,
                 "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(2, scalar(database,
                 "SELECT call_count FROM conventional_activity_bucket"));
+            assertEquals(2, scalar(database,
+                "SELECT logical_call_count FROM alias_activity_summary WHERE alias_id=900001"));
+            assertEquals(2, scalar(database,
+                "SELECT call_count FROM alias_list_analog_activity_summary"));
+            assertEquals(1, scalar(database,
+                "SELECT recorded_count FROM alias_list_analog_activity_summary"));
+            assertEquals(1, scalar(database,
+                "SELECT streamed_count FROM alias_list_analog_activity_summary"));
         }
         finally
         {

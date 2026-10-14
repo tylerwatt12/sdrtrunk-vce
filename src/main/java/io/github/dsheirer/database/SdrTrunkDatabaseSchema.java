@@ -280,7 +280,7 @@ public final class SdrTrunkDatabaseSchema
                 CHECK(typeof(p25_subscriber_identity_id) = 'integer' AND p25_subscriber_identity_id > 0)
         ) WITHOUT ROWID
         """;
-    private static final String ALIAS_ACTIVITY_SUMMARY_TABLE_SQL = """
+    private static final String FORMAT_50_ALIAS_ACTIVITY_SUMMARY_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS alias_activity_summary (
             alias_id INTEGER PRIMARY KEY CHECK(typeof(alias_id) = 'integer' AND alias_id > 0),
             alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE
@@ -334,6 +334,42 @@ public final class SdrTrunkDatabaseSchema
                 (protocol_code IN (1, 3, 4) AND metrics_state <> 'unsupported'))
         )
         """;
+    private static final String ALIAS_ACTIVITY_SUMMARY_TABLE_SQL = FORMAT_50_ALIAS_ACTIVITY_SUMMARY_TABLE_SQL
+        .replace("protocol_code IN (0, 1, 3, 4)", "protocol_code IN (0, 1, 3, 4, 10, 11)")
+        .replace("protocol_code IN (1, 3, 4)", "protocol_code IN (1, 3, 4, 10, 11)")
+        .replace("updated_at_ms INTEGER NOT NULL", "last_reset_ms INTEGER CHECK(last_reset_ms IS NULL OR " +
+            "(typeof(last_reset_ms) = 'integer' AND last_reset_ms > 0)),\n            updated_at_ms INTEGER NOT NULL");
+    private static final String ANALOG_ACTIVITY_SUMMARY_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_list_analog_activity_summary (
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE,
+            channel_configuration_id TEXT NOT NULL REFERENCES configuration_channel(configuration_id)
+                ON DELETE CASCADE,
+            protocol_code INTEGER NOT NULL CHECK(
+                typeof(protocol_code) = 'integer' AND protocol_code IN (10, 11)),
+            assigned_talkgroup INTEGER NOT NULL CHECK(
+                typeof(assigned_talkgroup) = 'integer' AND assigned_talkgroup BETWEEN 1 AND 65535),
+            call_count INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(call_count) = 'integer' AND call_count >= 0),
+            unmatched_call_count INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(unmatched_call_count) = 'integer' AND unmatched_call_count >= 0
+                AND unmatched_call_count <= call_count),
+            recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(recorded_count) = 'integer' AND recorded_count >= 0),
+            streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(streamed_count) = 'integer' AND streamed_count >= 0),
+            first_seen_ms INTEGER NOT NULL CHECK(typeof(first_seen_ms) = 'integer' AND first_seen_ms > 0),
+            last_seen_ms INTEGER NOT NULL CHECK(typeof(last_seen_ms) = 'integer' AND last_seen_ms >= first_seen_ms),
+            updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0),
+            PRIMARY KEY(alias_list_id, channel_configuration_id, protocol_code, assigned_talkgroup)
+        ) WITHOUT ROWID
+        """;
+    private static final List<SqliteSchemaValidator.Definition> ANALOG_ACTIVITY_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("table", "alias_list_analog_activity_summary",
+            ANALOG_ACTIVITY_SUMMARY_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_analog_activity_channel", """
+            CREATE INDEX IF NOT EXISTS idx_alias_list_analog_activity_channel
+            ON alias_list_analog_activity_summary(channel_configuration_id, alias_list_id)
+            """));
     private static final String SCAN_LIST_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS scan_list (
             id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
@@ -539,6 +575,18 @@ public final class SdrTrunkDatabaseSchema
             )
         )
         """;
+    private static final String ANALOG_ACTIVITY_RESET_COLUMN_SQL = """
+        analog_activity_reset_ms INTEGER CHECK(analog_activity_reset_ms IS NULL OR
+            (typeof(analog_activity_reset_ms) = 'integer' AND analog_activity_reset_ms > 0))
+        """.strip();
+    private static final String CURRENT_CONFIGURATION_CHANNEL_TABLE_SQL = CONFIGURATION_CHANNEL_TABLE_SQL.replace(
+        """
+            CHECK(
+                (decoder_type = 'NXDN' AND address_domain_code IN (1, 2))
+        """, ANALOG_ACTIVITY_RESET_COLUMN_SQL + ",\n" + """
+            CHECK(
+                (decoder_type = 'NXDN' AND address_domain_code IN (1, 2))
+        """);
     /** Frozen predecessor DDL used only while the adjacent format-14 migration constructs exact format 15. */
     private static final String FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL = CONFIGURATION_CHANNEL_TABLE_SQL.replace(
         """
@@ -835,7 +883,7 @@ public final class SdrTrunkDatabaseSchema
             """));
     private static final List<SqliteSchemaValidator.Definition> EXACT_CONFIGURATION_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "configuration_channel",
-            CONFIGURATION_CHANNEL_TABLE_SQL),
+            CURRENT_CONFIGURATION_CHANNEL_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "configuration_broadcast_stream",
             CONFIGURATION_BROADCAST_STREAM_TABLE_SQL));
     private static final List<SqliteSchemaValidator.Definition> EXACT_CORE_OBJECTS = List.of(
@@ -867,6 +915,7 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_activity_calls",
         "idx_alias_activity_signaling",
         "idx_alias_activity_last_seen",
+        "idx_alias_list_analog_activity_channel",
         "idx_alias_broadcast_configuration",
         "idx_scan_list_one_default",
         "idx_alias_scan_list_by_list",
@@ -903,7 +952,10 @@ public final class SdrTrunkDatabaseSchema
                 "encrypted_logical_call_count", "grant_observation_count", "join_observation_count",
                 "emergency_observation_count", "register_observation_count", "logout_observation_count",
                 "denial_observation_count", "data_observation_count", "other_signaling_observation_count",
-                "signaling_observation_count", "first_evidence_ms", "last_evidence_ms", "updated_at_ms"),
+                "signaling_observation_count", "first_evidence_ms", "last_evidence_ms", "last_reset_ms", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("alias_list_analog_activity_summary", "alias_list_id", "channel_configuration_id",
+                "protocol_code", "assigned_talkgroup", "call_count", "unmatched_call_count", "recorded_count",
+                "streamed_count", "first_seen_ms", "last_seen_ms", "updated_at_ms"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id",
                 "broadcast_configuration_id"),
             new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_stream", "id", "alias_list_id",
@@ -920,7 +972,7 @@ public final class SdrTrunkDatabaseSchema
             new SqliteSchemaValidator.Table("configuration_channel", "id", "configuration_id", "channel_kind",
                 "sort_order", "system_name", "site_name",
                 "name", "alias_list_id", "radioresolve_id", "auto_start", "auto_start_order", "decoder_type",
-                "address_domain_code", "primary_frequency_hz", "config_json"),
+                "address_domain_code", "primary_frequency_hz", "config_json", "analog_activity_reset_ms"),
             new SqliteSchemaValidator.Table("configuration_broadcast_stream", "id", "configuration_id",
                 "sort_order", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
@@ -938,7 +990,7 @@ public final class SdrTrunkDatabaseSchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL, true);
+        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL, true, ALIAS_LIST_TABLE_SQL, true);
         createReceiverHealthIncidentTable(connection);
     }
 
@@ -964,6 +1016,13 @@ public final class SdrTrunkDatabaseSchema
     private static void create(Connection connection, String configurationChannelTableSql,
                                boolean currentAliasSchema, String aliasListTableSql) throws SQLException
     {
+        create(connection, configurationChannelTableSql, currentAliasSchema, aliasListTableSql, false);
+    }
+
+    private static void create(Connection connection, String configurationChannelTableSql,
+                               boolean currentAliasSchema, String aliasListTableSql, boolean analogActivity)
+        throws SQLException
+    {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(DATABASE_METADATA_TABLE_SQL);
@@ -983,14 +1042,16 @@ public final class SdrTrunkDatabaseSchema
             if(CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql))
             {
                 createAliasCatalogIndexes(connection);
-                createAliasActivitySummary(connection);
+                createAliasActivitySummary(connection, analogActivity);
             }
             statement.executeUpdate("""
                 INSERT INTO scan_list (sort_order, name, description, published, is_default)
                 SELECT 0, 'Default', NULL, 1, 1
                 WHERE NOT EXISTS (SELECT 1 FROM scan_list)
                 """);
-            statement.executeUpdate(configurationChannelTableSql);
+            statement.executeUpdate(analogActivity ? CURRENT_CONFIGURATION_CHANNEL_TABLE_SQL :
+                configurationChannelTableSql);
+            if(analogActivity) createAnalogActivitySummary(connection);
             statement.executeUpdate(CONFIGURATION_BROADCAST_STREAM_TABLE_SQL);
             statement.executeUpdate(APPLICATION_SETTINGS_TABLE_SQL);
             statement.executeUpdate(APPLICATION_ICONS_TABLE_SQL);
@@ -1063,13 +1124,75 @@ public final class SdrTrunkDatabaseSchema
     /** Creates the durable Alias Activity read model for fresh databases and the adjacent staged migrator only. */
     public static void createAliasActivitySummary(Connection connection) throws SQLException
     {
+        createAliasActivitySummary(connection, false);
+    }
+
+    private static void createAliasActivitySummary(Connection connection, boolean analogActivity) throws SQLException
+    {
         try(Statement statement = connection.createStatement())
         {
             for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS)
             {
-                statement.executeUpdate(definition.sql());
+                statement.executeUpdate(!analogActivity && definition.name().equals("alias_activity_summary") ?
+                    FORMAT_50_ALIAS_ACTIVITY_SUMMARY_TABLE_SQL : definition.sql());
             }
         }
+    }
+
+    /** Creates prospective analog aggregates for fresh databases and the adjacent Application Migrator only. */
+    public static void createAnalogActivitySummary(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            for(var definition: ANALOG_ACTIVITY_OBJECTS) statement.executeUpdate(definition.sql());
+        }
+    }
+
+    /** Extends supported Alias counters without reinterpreting any old analog activity. */
+    public static void upgradeAliasActivityFrom50(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(ALIAS_ACTIVITY_SUMMARY_TABLE_SQL.replaceFirst("alias_activity_summary",
+                "alias_activity_summary_format51"));
+            statement.executeUpdate("""
+                INSERT INTO alias_activity_summary_format51
+                SELECT alias_id,alias_list_id,protocol_code,metrics_state,logical_call_count,
+                    recorded_logical_call_count,stream_submitted_logical_call_count,encrypted_logical_call_count,
+                    grant_observation_count,join_observation_count,emergency_observation_count,register_observation_count,
+                    logout_observation_count,denial_observation_count,data_observation_count,
+                    other_signaling_observation_count,signaling_observation_count,first_evidence_ms,last_evidence_ms,
+                    NULL,updated_at_ms FROM alias_activity_summary
+                """);
+            statement.executeUpdate("DROP TABLE alias_activity_summary");
+            statement.executeUpdate("ALTER TABLE alias_activity_summary_format51 RENAME TO alias_activity_summary");
+            try(PreparedStatement update = connection.prepareStatement("""
+                UPDATE alias_activity_summary SET
+                    protocol_code = (SELECT CASE alias.protocol WHEN 'NBFM' THEN 10 WHEN 'AM' THEN 11 END
+                        FROM alias WHERE alias.id = alias_activity_summary.alias_id),
+                    metrics_state = 'not_collected', last_reset_ms = ?,
+                    logical_call_count = NULL, recorded_logical_call_count = NULL,
+                    stream_submitted_logical_call_count = NULL, encrypted_logical_call_count = NULL,
+                    grant_observation_count = NULL, join_observation_count = NULL,
+                    emergency_observation_count = NULL, register_observation_count = NULL,
+                    logout_observation_count = NULL, denial_observation_count = NULL,
+                    data_observation_count = NULL, other_signaling_observation_count = NULL,
+                    signaling_observation_count = NULL, first_evidence_ms = NULL, last_evidence_ms = NULL
+                WHERE protocol_code = 0 AND alias_id IN (
+                    SELECT id FROM alias WHERE protocol IN ('NBFM', 'AM')
+                        AND matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE'))
+                """))
+            {
+                update.setLong(1, Math.max(1L, System.currentTimeMillis()));
+                update.executeUpdate();
+            }
+        }
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE configuration_channel ADD COLUMN " + ANALOG_ACTIVITY_RESET_COLUMN_SQL);
+        }
+        createAliasActivitySummary(connection, true);
+        createAnalogActivitySummary(connection);
     }
 
     /** Creates the independent New Alias routing tables for fresh databases and the adjacent staged migrator only. */
@@ -1089,7 +1212,7 @@ public final class SdrTrunkDatabaseSchema
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
+            statement.executeUpdate(CURRENT_CONFIGURATION_CHANNEL_TABLE_SQL);
         }
     }
 
@@ -1285,6 +1408,7 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, ANALOG_ACTIVITY_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);

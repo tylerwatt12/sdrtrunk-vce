@@ -22,6 +22,11 @@ record ReceiverChannelMetadata(String configurationId, long firstSeenEpochMillis
 {
     static ReceiverChannelMetadata from(ReceiverActivityRecords.ActivityEvent activity)
     {
+        if(activity.analogCallAttribution() != null && activity.analogCallAttribution().startedAt() > 0)
+        {
+            return new ReceiverChannelMetadata(activity.configurationId(),
+                activity.analogCallAttribution().startedAt(), activity.observedAtEpochMilliseconds());
+        }
         return observed(activity.configurationId(), activity.observedAtEpochMilliseconds());
     }
 

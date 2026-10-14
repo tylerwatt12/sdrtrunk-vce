@@ -368,8 +368,10 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertTrue(result.startApplication());
         assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
-        assertEquals("3", scalar(catalog, "PRAGMA user_version"));
-        assertEquals("3", scalar(catalog, "SELECT format_version FROM catalog_metadata WHERE id=1"));
+        assertEquals(Integer.toString(ManagedRecordingSchema.CURRENT_FORMAT_VERSION),
+            scalar(catalog, "PRAGMA user_version"));
+        assertEquals(Integer.toString(ManagedRecordingSchema.CURRENT_FORMAT_VERSION),
+            scalar(catalog, "SELECT format_version FROM catalog_metadata WHERE id=1"));
         assertEquals("1", scalar(catalog, "SELECT COUNT(*) FROM recording_call"));
         assertEquals("5", scalar(catalog, "SELECT total_bytes FROM catalog_metadata WHERE id=1"));
         assertEquals("0", scalar(catalog, "SELECT COUNT(*) FROM recording_transcript"));

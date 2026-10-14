@@ -344,6 +344,7 @@ async function checkAliasCoverageIndependentCount() {
     beginPage: (_renderContext, ...children) => { content.replaceChildren(...children); return true; },
     pageHeader: () => node('header'), radioDirectoryPerspectiveControl: () => node('div'),
     aliasListFamily: (row) => row.family, aliasListFamilyLabel: () => 'P25', number: String,
+    analogAliasList: (row) => ['NBFM', 'AM'].includes(row?.family),
     uiSelect: () => node('select'), uiSelectFrame: (select) => select,
     uiSegmentedControl: (choices, selected, onChange) => {
       const control = node('div'); control.onChange = onChange;
@@ -374,7 +375,7 @@ async function checkAliasCoverageIndependentCount() {
     }
   };
   vm.createContext(context);
-  for (const signature of ['aliasCoverageSummaryCards(totals, unassigned, countFailed = false)',
+  for (const signature of ['aliasCoverageSummaryCards(totals, unassigned, countFailed = false, analog = false)',
     'async loadAliasCoverageModel(parameters, previous = null, signal = null)',
     'async renderAliasCoverageDirectory(renderContext, embedded = false)']) {
     const [asyncPrefix, declaration] = signature.startsWith('async ') ? ['async ', signature.slice(6)] : ['', signature];
@@ -1157,14 +1158,15 @@ async function main() {
   const unselectedCoverage = await loadAliasCoverageModel(new URLSearchParams());
   assert.equal(unselectedCoverage.selectedListId, null,
     'A list must be explicitly selected before coverage data loads');
-  assert.deepEqual(Array.from(unselectedCoverage.lists.rows, (row) => row.family), ['P25', 'DMR', 'NXDN']);
+  assert.deepEqual(Array.from(unselectedCoverage.lists.rows, (row) => row.family), ['NBFM', 'P25', 'AM', 'DMR', 'NXDN']);
   assert.deepEqual(coverageRequests, ['/api/v1/identities/lists'],
     'The unselected view should request only the Alias List catalog');
   coverageRequests.length = 0;
-  const unsupportedCoverage = await loadAliasCoverageModel(new URLSearchParams('alias_list_id=1'));
-  assert.equal(unsupportedCoverage.selectedListId, null,
-    'An unsupported list must not trigger observed-group discovery');
-  assert.deepEqual(coverageRequests, ['/api/v1/identities/lists']);
+  const analogCoverage = await loadAliasCoverageModel(new URLSearchParams('alias_list_id=1'));
+  assert.equal(analogCoverage.selectedListId, 1,
+    'Analog lists use the shared inventory and activity endpoints');
+  assert.deepEqual(coverageRequests, ['/api/v1/identities/lists',
+    '/api/v1/identities/lists/1/overview', '/api/v1/identities/lists/1/aliases']);
   coverageRequests.length = 0;
   const selectedCoverage = await loadAliasCoverageModel(new URLSearchParams('alias_list_id=2'));
   assert.equal(selectedCoverage.selectedListId, 2);

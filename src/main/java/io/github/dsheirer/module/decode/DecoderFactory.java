@@ -208,8 +208,14 @@ public class DecoderFactory
         }
 
         modules.add(new AMDecoder(config));
-        modules.add(new AMDecoderState(channel.getName(), config));
-        modules.add(new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList)));
+        AMDecoderState state = new AMDecoderState(channel.getName(), config);
+        AudioModule audio = new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList));
+        var tracker = new io.github.dsheirer.alias.AnalogCallAttributionTracker(channel.getConfigurationId(),
+            aliasList, new io.github.dsheirer.module.decode.am.AMTalkgroup(config.getTalkgroup()));
+        state.setCallAttributionTracker(tracker);
+        audio.setCallAttributionTracker(tracker);
+        modules.add(state);
+        modules.add(audio);
     }
 
     /**
@@ -492,8 +498,14 @@ public class DecoderFactory
 
         DecodeConfigNBFM decodeConfigNBFM = (DecodeConfigNBFM)decodeConfig;
         modules.add(new NBFMDecoder(decodeConfigNBFM));
-        modules.add(new NBFMDecoderState(channel.getName(), decodeConfigNBFM));
-        modules.add(new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList)));
+        NBFMDecoderState state = new NBFMDecoderState(channel.getName(), decodeConfigNBFM);
+        AudioModule audio = new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList));
+        var tracker = new io.github.dsheirer.alias.AnalogCallAttributionTracker(channel.getConfigurationId(),
+            aliasList, new io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup(decodeConfigNBFM.getTalkgroup()));
+        state.setCallAttributionTracker(tracker);
+        audio.setCallAttributionTracker(tracker);
+        modules.add(state);
+        modules.add(audio);
     }
 
     /**

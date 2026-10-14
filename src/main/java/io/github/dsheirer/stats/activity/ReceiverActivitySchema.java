@@ -656,7 +656,8 @@ public class ReceiverActivitySchema
         int activityProtocolCode = protocolCode(activity.protocol());
 
         if(!configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()),
-            activityProtocolCode, activity.identityDomain()))
+            activityProtocolCode, activity.identityDomain()) ||
+            !AnalogAliasActivityProjection.acceptsObservation(connection, activity))
         {
             return null;
         }
@@ -686,7 +687,8 @@ public class ReceiverActivitySchema
         {
             int protocol = protocolCode(activity.protocol());
             if(configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()),
-                protocol, activity.identityDomain()))
+                protocol, activity.identityDomain()) &&
+                AnalogAliasActivityProjection.acceptsObservation(connection, activity))
             {
                 accepted.add(activity);
                 ReceiverChannelMetadata metadata = ReceiverChannelMetadata.from(activity);
@@ -1123,6 +1125,11 @@ public class ReceiverActivitySchema
             return false;
         }
 
+        boolean analogCredited = conventionalOutput.receiverKind() ==
+            ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG &&
+            AnalogAliasActivityProjection.recordOutput(connection, conventionalOutput.analogCallAttribution(),
+                conventionalOutput.output());
+
         ReceiverChannelIdentity channel = selectReceiverChannelIdentity(connection,
             conventionalOutput.configurationId());
 
@@ -1133,7 +1140,7 @@ public class ReceiverActivitySchema
             channel == null ||
             conventionalOutput.callStartEpochMilliseconds() < channel.firstSeenEpochMilliseconds())
         {
-            return false;
+            return analogCredited;
         }
 
         int recorded = conventionalOutput.output() == ReceiverActivityRecords.CallOutput.RECORDED ? 1 : 0;
@@ -1149,7 +1156,7 @@ public class ReceiverActivitySchema
 
             if(frequency <= 0)
             {
-                return false;
+                return analogCredited;
             }
 
             int timeslot = summaryTimeslot(conventionalOutput.timeslot());
@@ -2428,6 +2435,7 @@ public class ReceiverActivitySchema
         deleted += deleteAll(connection, "p25_learned_site");
         deleted += deleteAll(connection, "conventional_activity_bucket");
         deleted += deleteAll(connection, "conventional_activity_summary");
+        deleted += deleteAll(connection, "alias_list_analog_activity_summary");
         deleted += deleteAll(connection, "p25_site_patch_group_radio_summary");
         deleted += deleteAll(connection, "p25_site_patch_group_talkgroup_summary");
         deleted += deleteAll(connection, "p25_site_patch_group_summary");
@@ -2470,6 +2478,21 @@ public class ReceiverActivitySchema
         }
 
         int deleted = 0;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE configuration_channel SET analog_activity_reset_ms=?
+            WHERE configuration_id=?
+            """))
+        {
+            statement.setLong(1, Math.max(1, System.currentTimeMillis() + 1));
+            statement.setString(2, configurationId);
+            statement.executeUpdate();
+        }
+        try(PreparedStatement statement = connection.prepareStatement(
+            "DELETE FROM alias_list_analog_activity_summary WHERE channel_configuration_id = ?"))
+        {
+            statement.setString(1, configurationId);
+            deleted += statement.executeUpdate();
+        }
         try(PreparedStatement statement = connection.prepareStatement(
             "DELETE FROM receiver_channel WHERE configuration_id = ?"))
         {

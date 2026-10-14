@@ -135,6 +135,24 @@ The global **Reset Stats** action clears every Alias Activity counter and immedi
 A channel-only statistics clear does not try to subtract that channel's historical contribution from durable Alias
 counters because the projection deliberately keeps no per-channel attribution ledger.
 
+AM and NBFM call attribution is captured at squelch-open using the same exact-before-range Alias lookup as audio
+policy. The immutable observation carries the saved channel, Alias List, protocol, assigned number, and matching
+Alias IDs and matcher signatures to the background writer. It does not re-read the channel's current assignment.
+An explicit `alias_activity_summary.last_reset_ms` rejects observations from before a matcher change or Alias reset.
+These metrics cover assigned talkgroup matchers; other analog signaling matchers remain unsupported.
+
+`alias_list_analog_activity_summary` stores one row per received list/channel/protocol/assigned-number combination.
+Its fixed counters record accepted calls, calls unmatched at the time, recordings, and streams, with first/last call
+times. The list-first primary key serves list totals and Discover, and a channel-first index serves source clearing.
+Rows grow with distinct configured assignments that receive calls, rather than every transmission or elapsed hour.
+They are retained until a statistics clear or deletion of their saved channel or Alias List; detailed Activity
+retention does not prune them. List totals count each accepted call once, independently of how many aliases match.
+Discover compares these received numbers with current exact/range definitions, so adding an alias resolves a current
+gap without changing historical unmatched counts. Channel reassignment leaves earlier observations with their
+original list. Channel-only clearing removes these per-channel rows but preserves lifetime individual Alias counters;
+`configuration_channel.analog_activity_reset_ms` prevents late callbacks from restoring the cleared rows. No analog
+history is inferred at migration, and no per-call attribution ledger or synthetic radio-system identity is created.
+
 `idx_alias_list_id(alias_list_id, id)` provides deterministic whole-list/export order, while
 `idx_alias_list_name_sort(alias_list_id, lower(coalesce(name, '')), id)` serves normal name browsing. List-first
 matcher, identity-type, group, and displayed-value indexes serve the other sortable Alias fields. The summary's

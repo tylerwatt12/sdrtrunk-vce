@@ -979,7 +979,7 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
-    /** Public Alias List choices used by the read-only Alias coverage directory. */
+    /** Public Alias List choices used by the read-only Alias inventory. */
     Map<String,Object> publicIdentityLists(StatsRequest request)
     {
         int limit = request.limit();
@@ -995,6 +995,7 @@ class StatsWebDatabase
                     WHEN 'NXDN' THEN 3 ELSE 4 END, lower(list.name), list.id
                 LIMIT ? OFFSET ?
                 """, limit + 1, offset);
+            rows.forEach(AliasListCapabilities::decorate);
             Map<String,Object> response = page(rows, limit, offset);
             response.put("total_count", scalarLong(connection, "SELECT count(*) FROM alias_list"));
             return response;
@@ -1051,22 +1052,29 @@ class StatsWebDatabase
 
             Map<String,Object> totals = first(queryRows(connection, """
                 SELECT count(*) AS configured_alias_count,
-                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
-                        'RADIO_ID', 'RADIO_ID_RANGE') THEN 1 END) AS activity_eligible_alias_count,
-                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
-                        'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms >= ?
+                    count(CASE WHEN %1$s THEN 1 END) AS activity_eligible_alias_count,
+                    count(CASE WHEN %1$s AND summary.last_evidence_ms >= ?
                         THEN 1 END) AS active_alias_count,
-                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
-                        'RADIO_ID', 'RADIO_ID_RANGE') AND coalesce(summary.logical_call_count, 0) = 0
+                    count(CASE WHEN %1$s AND coalesce(summary.logical_call_count, 0) = 0
                         THEN 1 END)
                         AS zero_call_alias_count,
-                    count(CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
-                        'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms IS NULL
+                    count(CASE WHEN %1$s AND summary.last_evidence_ms IS NULL
                         THEN 1 END) AS never_heard_alias_count
                 FROM alias
                 LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
                 WHERE alias.alias_list_id = ?
-                """, activeAfter, aliasListId), "Alias List was not found");
+                """.formatted(StatsAliasCatalog.SUPPORTED_ALIAS_SQL), activeAfter, aliasListId),
+                "Alias List was not found");
+
+            if("NBFM".equals(aliasList.get("family")))
+            {
+                totals.putAll(first(queryRows(connection, """
+                    SELECT coalesce(sum(call_count), 0) AS logical_call_count,
+                        coalesce(sum(call_count - unmatched_call_count), 0) AS matched_logical_call_count,
+                        coalesce(sum(unmatched_call_count), 0) AS unmatched_logical_call_count
+                    FROM alias_list_analog_activity_summary WHERE alias_list_id = ?
+                    """, aliasListId), "Alias List totals were not found"));
+            }
 
             long systems = channels.stream().map(row -> row.get("radio_system_key"))
                 .filter(java.util.Objects::nonNull).distinct().count();
@@ -1123,29 +1131,34 @@ class StatsWebDatabase
                     ELSE coalesce(CAST(alias.value AS TEXT), CAST(alias.numeric_value AS TEXT),
                         alias.text_value, alias.tone_sequence, '') END AS identity_display,
                 alias.protocol, alias.value, alias.min_value, alias.max_value,
-                CASE WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
-                    'RADIO_ID', 'RADIO_ID_RANGE')
-                    THEN coalesce(summary.metrics_state, 'not_collected')
-                    ELSE 'unsupported' END AS metrics_state,
-                summary.logical_call_count, summary.signaling_observation_count,
+                CASE WHEN NOT %1$s THEN 'unsupported'
+                    WHEN summary.metrics_state = 'observed' THEN 'observed'
+                    WHEN alias.protocol IN ('AM', 'NBFM') AND %2$s > 0 THEN 'covered_no_evidence'
+                    ELSE coalesce(summary.metrics_state, 'not_collected') END AS metrics_state,
+                CASE WHEN %1$s AND alias.protocol IN ('AM', 'NBFM')
+                        AND (summary.metrics_state = 'observed' OR %2$s > 0)
+                    THEN coalesce(summary.logical_call_count, 0)
+                    ELSE summary.logical_call_count END AS logical_call_count,
+                CASE WHEN coalesce(alias.protocol, '') NOT IN ('AM', 'NBFM')
+                    THEN summary.signaling_observation_count END AS signaling_observation_count,
                 summary.first_evidence_ms, summary.last_evidence_ms
             FROM alias
             LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
             WHERE alias.alias_list_id = ?
-            """);
+            """.formatted(StatsAliasCatalog.SUPPORTED_ALIAS_SQL, StatsAliasCatalog.ANALOG_COVERAGE_COUNT_SQL));
         List<Object> parameters = new ArrayList<>(List.of(aliasListId));
         switch(status)
         {
             case "recent" ->
             {
-                sql.append(" AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                    "'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms >= ?");
+                sql.append(" AND ").append(StatsAliasCatalog.SUPPORTED_ALIAS_SQL)
+                    .append(" AND summary.last_evidence_ms >= ?");
                 parameters.add(activeAfter);
             }
-            case "zero_calls" -> sql.append(" AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                "'RADIO_ID', 'RADIO_ID_RANGE') AND coalesce(summary.logical_call_count, 0) = 0");
-            case "never_heard" -> sql.append(" AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                "'RADIO_ID', 'RADIO_ID_RANGE') AND summary.last_evidence_ms IS NULL");
+            case "zero_calls" -> sql.append(" AND ").append(StatsAliasCatalog.SUPPORTED_ALIAS_SQL)
+                .append(" AND coalesce(summary.logical_call_count, 0) = 0");
+            case "never_heard" -> sql.append(" AND ").append(StatsAliasCatalog.SUPPORTED_ALIAS_SQL)
+                .append(" AND summary.last_evidence_ms IS NULL");
             default -> { }
         }
         if(type != null)
@@ -1176,6 +1189,14 @@ class StatsWebDatabase
         return readSnapshot(connection -> {
             requirePublicAliasList(connection, aliasListId);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            for(Map<String,Object> row: rows)
+            {
+                if(Set.of("AM", "NBFM").contains(textValue(row.get("protocol"))) &&
+                    Set.of("TALKGROUP", "TALKGROUP_RANGE").contains(textValue(row.get("matcher_type"))))
+                {
+                    row.put("identity_origin", "configured_assignment");
+                }
+            }
             decoratePublicAliasEntityReferences(connection, aliasListId, rows);
             Map<String,Object> response = page(rows, limit, offset);
             response.put("range", identityActivityRange(request));
@@ -1200,6 +1221,22 @@ class StatsWebDatabase
         List<WebConfiguredEntityRepository.ConfiguredChannel> channels = mConfiguredEntities.channels(connection)
             .stream().filter(channel -> channel.aliasListId() != null && channel.aliasListId() == aliasListId)
             .toList();
+        Map<String,Long> assignedNumbers = new LinkedHashMap<>();
+        for(Map<String,Object> row: queryRows(connection, """
+            SELECT configuration_id,
+                CASE WHEN json_type(config_json, '$.decodeConfiguration.talkgroup') IS NULL THEN 1
+                    WHEN json_type(config_json, '$.decodeConfiguration.talkgroup') = 'integer'
+                        THEN json_extract(config_json, '$.decodeConfiguration.talkgroup')
+                    ELSE NULL END AS assigned_number
+            FROM configuration_channel INDEXED BY idx_configuration_channel_alias_list
+            WHERE alias_list_id = ? AND decoder_type IN ('AM', 'NBFM')
+            """, aliasListId))
+        {
+            if(row.get("assigned_number") instanceof Number assigned)
+            {
+                assignedNumbers.put(textValue(row.get("configuration_id")), assigned.longValue());
+            }
+        }
 
         for(Map<String,Object> alias: aliases)
         {
@@ -1215,6 +1252,11 @@ class StatsWebDatabase
             for(WebConfiguredEntityRepository.ConfiguredChannel channel: channels)
             {
                 if(channel.protocol() != aliasProtocol)
+                {
+                    continue;
+                }
+                if((aliasProtocol == StatsApiProtocol.AM || aliasProtocol == StatsApiProtocol.NBFM) &&
+                    !Long.valueOf(value.longValue()).equals(assignedNumbers.get(channel.configurationId())))
                 {
                     continue;
                 }
@@ -1407,6 +1449,13 @@ class StatsWebDatabase
                 WHERE id = ?
                 """, aliasListId), "Alias list not found");
             String family = String.valueOf(aliasList.get("family"));
+            AliasListCapabilities.decorate(aliasList);
+
+            if("NBFM".equals(family))
+            {
+                return observedAnalogAssignments(connection, aliasList, request, queryObserver,
+                    includeExact, onlyUnassigned);
+            }
 
             if(!Set.of("P25", "DMR", "NXDN").contains(family))
             {
@@ -1705,6 +1754,99 @@ class StatsWebDatabase
             response.put("include_exact", includeExact);
             return response;
         });
+    }
+
+    /**
+     * Analog discovery is configuration coverage over calls already received. The number is assigned locally,
+     * and the saved call-time list remains its owner even after the source channel is assigned to another list.
+     */
+    private Map<String,Object> observedAnalogAssignments(Connection connection, Map<String,Object> aliasList,
+        StatsRequest request, Consumer<ObservedGroupIdentityQuery> queryObserver, boolean includeExact,
+        boolean onlyUnassigned) throws SQLException
+    {
+        long aliasListId = number(aliasList.get("alias_list_id"));
+        String matchPredicate = """
+            definition.alias_list_id = observed.alias_list_id AND definition.protocol = observed.protocol
+              AND ((definition.matcher_type = 'TALKGROUP' AND definition.value = observed.group_identity_id)
+                OR (definition.matcher_type = 'TALKGROUP_RANGE'
+                  AND observed.group_identity_id BETWEEN definition.min_value AND definition.max_value))
+            """;
+        StringBuilder sql = new StringBuilder("""
+            WITH observed AS (
+                SELECT summary.alias_list_id, list.name AS alias_list_name, list.family,
+                    NULL AS radio_system_id, NULL AS radio_system_key, NULL AS channel_id,
+                    summary.channel_configuration_id AS configuration_id, summary.protocol_code,
+                    CASE summary.protocol_code WHEN 10 THEN 'NBFM' WHEN 11 THEN 'AM' END AS protocol,
+                    'CONVENTIONAL' AS topology, 'configured_assignment' AS identity_origin,
+                    nullif(trim(config.system_name), '') AS system_name,
+                    nullif(trim(config.name), '') AS channel_names,
+                    config.primary_frequency_hz AS frequency_hz, NULL AS timeslot,
+                    summary.assigned_talkgroup, summary.assigned_talkgroup AS native_id,
+                    summary.assigned_talkgroup AS group_identity_id, 1 AS group_identity_kind_code,
+                    NULL AS identity_key, summary.first_seen_ms, summary.last_seen_ms,
+                    summary.call_count AS logical_call_count,
+                    summary.unmatched_call_count AS unmatched_logical_call_count,
+                    summary.recorded_count AS recorded_logical_call_count,
+                    summary.streamed_count AS stream_submitted_logical_call_count,
+                    NULL AS encrypted_logical_call_count, NULL AS signaling_observation_count,
+                    NULL AS grant_observation_count, NULL AS join_observation_count,
+                    NULL AS emergency_observation_count, NULL AS register_observation_count
+                FROM alias_list_analog_activity_summary summary
+                JOIN alias_list list ON list.id = summary.alias_list_id
+                JOIN configuration_channel config
+                  ON config.configuration_id = summary.channel_configuration_id
+                WHERE summary.alias_list_id = ? AND summary.call_count > 0
+            ) SELECT observed.*, count(*) OVER () AS result_total_count FROM observed WHERE 1 = 1
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(aliasListId));
+        if(!includeExact || onlyUnassigned)
+        {
+            sql.append(" AND NOT EXISTS (SELECT 1 FROM alias definition WHERE ")
+                .append(matchPredicate).append(')');
+        }
+        if(request.search() != null)
+        {
+            sql.append("""
+                 AND (lower(coalesce(system_name, '') || ' ' || coalesce(channel_names, '') || ' ' ||
+                   configuration_id || ' ' || protocol || ' assigned number ' ||
+                   CAST(group_identity_id AS TEXT) || ' ' || coalesce(CAST(frequency_hz AS TEXT), '')) LIKE ?
+                   OR EXISTS (SELECT 1 FROM alias definition WHERE
+                """).append(matchPredicate).append("""
+                     AND lower(definition.name || ' ' || coalesce(definition.group_name, '') || ' ' ||
+                       coalesce(definition.description, '')) LIKE ?))
+                """);
+            parameters.add(like(request.search()));
+            parameters.add(like(request.search()));
+        }
+        String countSql = sql.toString().replace(
+            "SELECT observed.*, count(*) OVER () AS result_total_count FROM observed WHERE 1 = 1",
+            "SELECT count(*) AS result_total_count FROM observed WHERE 1 = 1");
+        List<Object> countParameters = List.copyOf(parameters);
+        sql.append(" ORDER BY ").append(order(request, OBSERVED_GROUP_IDENTITY_SORT_COLUMNS, "last_seen"))
+            .append(", configuration_id, protocol_code, group_identity_id LIMIT ? OFFSET ?");
+        addPageParameters(parameters, request);
+        ObservedGroupIdentityQuery query = new ObservedGroupIdentityQuery(sql.toString(), parameters);
+        queryObserver.accept(query);
+        List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
+        mAliasResolver.resolveObservedGroupIdentities(connection, rows);
+        long totalCount = rows.isEmpty() ? 0 : number(rows.getFirst().get("result_total_count"));
+        if(rows.isEmpty() && request.offset() > 0)
+        {
+            // A newly added alias may shrink the result while the browser is on a later page.
+            totalCount = scalarLong(connection, countSql, countParameters.toArray());
+        }
+        for(Map<String,Object> row: rows)
+        {
+            row.remove("result_total_count");
+            WebEntityRef channel = WebEntityRef.channel(textValue(row.get("configuration_id")));
+            WebEntityRef.put(row, "channel_entity_ref", channel);
+            WebEntityRef.put(row, channel);
+        }
+        Map<String,Object> response = page(rows, request);
+        response.put("total_count", totalCount);
+        response.put("alias_list", aliasList);
+        response.put("include_exact", includeExact);
+        return response;
     }
 
     /** Exact statement and bindings used by the observed-group-identity read model. */
@@ -7980,11 +8122,13 @@ class StatsWebDatabase
             throw new StatsApiException(400, "alias_list_id is invalid");
         }
 
-        return first(queryRows(connection, """
+        Map<String,Object> list = first(queryRows(connection, """
             SELECT id AS alias_list_id, name, family
             FROM alias_list
             WHERE id = ?
             """, aliasListId), "Alias List was not found");
+        AliasListCapabilities.decorate(list);
+        return list;
     }
 
     private Path getDatabasePath()

@@ -2036,6 +2036,161 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void analogInventoryStartsProspectivelyAndKeepsUnsupportedMatchersOutOfHeardCounts() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (7301, 73, 'Fire Dispatch', 'TALKGROUP', 'NBFM', 100),
+                    (7302, 73, 'Aircraft', 'TALKGROUP', 'AM', 100)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, text_value)
+                VALUES (7303, 73, 'Squelch code', 'DCS', NULL, 'N023')
+                """);
+        }
+        Map<String,Object> list = rowWith(rows(mDatabase.publicIdentityLists(request("/?limit=100"))),
+            "name", "Analog County");
+        assertEquals(true, map(list, "capabilities").get("configured_assignment"));
+        Map<String,Object> overview = mDatabase.publicIdentityOverview(73, request("/?range=24h"));
+        Map<String,Object> totals = map(overview, "totals");
+        assertEquals(3, number(totals.get("configured_alias_count")));
+        assertEquals(2, number(totals.get("activity_eligible_alias_count")));
+        assertEquals(2, number(totals.get("never_heard_alias_count")));
+        assertEquals(0, number(totals.get("logical_call_count")),
+            "Old channel totals cannot establish which Alias List received the calls");
+        assertTrue(rows(mDatabase.observedGroupIdentities(73, request("/"))).isEmpty());
+        List<Map<String,Object>> aliases = rows(mDatabase.publicIdentityAliases(73, request("/?limit=100")));
+        assertEquals("configured_assignment", rowWith(aliases, "name", "Fire Dispatch").get("identity_origin"));
+        assertEquals("unsupported", rowWith(aliases, "name", "Squelch code").get("metrics_state"));
+        assertEquals(2, rows(mDatabase.publicIdentityAliases(73,
+            request("/?status=never_heard&limit=100"))).size());
+    }
+
+    @Test
+    void analogDiscoveryUsesReceivedAssignmentsAndCurrentCoverageWithoutRewritingHistoricalCounts() throws Exception
+    {
+        String amChannel = "00000000-0000-0000-0000-000000000085";
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, name, alias_list_id,
+                    decoder_type, primary_frequency_hz, config_json)
+                VALUES ('%s', 'CONVENTIONAL', 85, 'Airport Ground', 73, 'AM', 121900000,
+                    '{"decodeConfiguration":{"talkgroup":100}}')
+                """.formatted(amChannel));
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (7301, 73, 'Exact Match Label', 'TALKGROUP', 'NBFM', 100)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                VALUES (7302, 73, 'Range Match Label', 'TALKGROUP_RANGE', 'NBFM', 140, 160)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_list_analog_activity_summary(alias_list_id, channel_configuration_id,
+                    protocol_code, assigned_talkgroup, call_count, unmatched_call_count, recorded_count,
+                    streamed_count, first_seen_ms, last_seen_ms, updated_at_ms)
+                VALUES (73, '%1$s', 10, 100, 3, 2, 1, 1, 1000, 4000, 4000),
+                    (73, '%1$s', 10, 150, 1, 0, 0, 0, 2000, 5000, 5000),
+                    (73, '%2$s', 11, 100, 4, 4, 0, 0, 3000, 6000, 6000)
+                """.formatted(ANALOG_CHANNEL, amChannel));
+        }
+        List<Map<String,Object>> missing = rows(mDatabase.observedGroupIdentities(73, request("/")));
+        assertEquals(1, missing.size(), "An exact alias or range covers only its own protocol");
+        Map<String,Object> assignment = missing.getFirst();
+        assertEquals("AM", assignment.get("protocol"));
+        assertEquals("configured_assignment", assignment.get("identity_origin"));
+        assertEquals("Airport Ground", assignment.get("channel_names"));
+        assertEquals("none", assignment.get("match_kind"));
+        assertEquals(true, assignment.get("promotion_supported"));
+        assertEquals(Map.of("kind", "channel", "key", amChannel), map(assignment, "entity_ref"));
+        assertEquals(4, number(assignment.get("logical_call_count")));
+        assertEquals(3000, number(assignment.get("first_seen_ms")));
+
+        Map<String,Object> firstPage = mDatabase.observedGroupIdentities(73,
+            request("/?include_exact=true&sort=protocol&direction=asc&limit=2"));
+        assertEquals(3, number(firstPage.get("total_count")));
+        assertEquals(true, firstPage.get("has_more"));
+        Map<String,Object> stalePage = mDatabase.observedGroupIdentities(73,
+            request("/?include_exact=true&limit=2&offset=10"));
+        assertTrue(rows(stalePage).isEmpty());
+        assertEquals(3, number(stalePage.get("total_count")),
+            "A stale page must retain the actual filtered total after results shrink");
+        assertEquals(List.of("exact", "range"), rows(firstPage).stream().map(row -> row.get("match_kind")).toList());
+        assertEquals(1, rows(mDatabase.observedGroupIdentities(73,
+            request("/?include_exact=true&q=exact%20match%20label"))).size());
+        assertEquals(1, rows(mDatabase.unassignedGroupIdentities(73,
+            request("/?include_exact=true"))).size());
+
+        Map<String,Object> before = map(mDatabase.publicIdentityOverview(73, request("/")), "totals");
+        assertEquals(8, number(before.get("logical_call_count")));
+        assertEquals(2, number(before.get("matched_logical_call_count")));
+        assertEquals(6, number(before.get("unmatched_logical_call_count")));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (7303, 73, 'Ground', 'TALKGROUP', 'AM', 100)
+                """);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES (85,'New Analog','NBFM')");
+            statement.executeUpdate("UPDATE configuration_channel SET alias_list_id=85 WHERE configuration_id='" +
+                amChannel + "'");
+        }
+        assertTrue(rows(mDatabase.observedGroupIdentities(73, request("/"))).isEmpty(),
+            "Creating the alias closes the configuration gap");
+        Map<String,Object> after = map(mDatabase.publicIdentityOverview(73, request("/")), "totals");
+        for(String metric: List.of("logical_call_count", "matched_logical_call_count", "unmatched_logical_call_count"))
+        {
+            assertEquals(before.get(metric), after.get(metric),
+                "Creating an alias or reassigning a channel must preserve historic " + metric);
+        }
+        assertEquals(0, number(map(mDatabase.publicIdentityOverview(85, request("/")), "totals")
+            .get("logical_call_count")));
+        assertTrue(rows(mDatabase.observedGroupIdentities(85, request("/"))).isEmpty());
+    }
+
+    @Test
+    void analogInventoryLinksOnlyTheChannelWhoseAssignedNumberMatchesAndDiscoveryUsesCompactSummary() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET config_json=" +
+                "'{\"decodeConfiguration\":{\"talkgroup\":100}}' WHERE configuration_id='" + ANALOG_CHANNEL + "'");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (7301, 73, 'Matching', 'TALKGROUP', 'NBFM', 100),
+                    (7302, 73, 'Another number', 'TALKGROUP', 'NBFM', 101),
+                    (7303, 73, 'Other protocol', 'TALKGROUP', 'AM', 100)
+                """);
+        }
+        List<Map<String,Object>> aliases = rows(mDatabase.publicIdentityAliases(73, request("/?limit=100")));
+        assertEquals(Map.of("kind", "channel", "key", ANALOG_CHANNEL),
+            map(rowWith(aliases, "name", "Matching"), "entity_ref"));
+        assertEquals("covered_no_evidence", rowWith(aliases, "name", "Matching").get("metrics_state"));
+        assertEquals(0, number(rowWith(aliases, "name", "Matching").get("logical_call_count")));
+        assertEquals("not_collected", rowWith(aliases, "name", "Another number").get("metrics_state"));
+        assertNull(rowWith(aliases, "name", "Another number").get("logical_call_count"));
+        assertEquals("not_collected", rowWith(aliases, "name", "Other protocol").get("metrics_state"));
+        assertNull(rowWith(aliases, "name", "Another number").get("entity_ref"));
+        assertNull(rowWith(aliases, "name", "Other protocol").get("entity_ref"));
+        StatsWebDatabase.ObservedGroupIdentityQuery[] query = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        mDatabase.observedGroupIdentities(73, request("/?limit=25"), observed -> query[0] = observed);
+        assertFalse(query[0].sql().contains("receiver_activity_event"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("SEARCH summary") &&
+                detail.contains("alias_list_id=?")), plan.toString());
+        }
+    }
+
+    @Test
     void protocolReservedIdentitiesAreRejectedByDetailsAndRelationships()
     {
         StatsApiException group = assertThrows(StatsApiException.class,

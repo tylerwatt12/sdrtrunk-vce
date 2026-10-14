@@ -20,6 +20,7 @@
 package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AnalogCallAttribution;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import java.util.Objects;
@@ -36,8 +37,23 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                                 boolean recordAudio,
                                 AudioCallRecordingMetadata recordingMetadata, VoiceCallQuality voiceCallQuality,
                                 CallLegId callLegId, CallLegSource callLegSource,
-                                CallEncryptionEvidence callEncryptionEvidence)
+                                CallEncryptionEvidence callEncryptionEvidence,
+                                AnalogCallAttribution analogCallAttribution)
 {
+    public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
+        IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
+        long startTimestamp, long lastActivityTimestamp, int burstCount, long burstGeneration,
+        long lastBurstStartTimestamp, long lastBurstEndTimestamp, boolean burstActive, boolean complete,
+        CallEncryptionState encryptionState, boolean recordAudio, AudioCallRecordingMetadata recordingMetadata,
+        VoiceCallQuality voiceCallQuality, CallLegId callLegId, CallLegSource callLegSource,
+        CallEncryptionEvidence callEncryptionEvidence)
+    {
+        this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
+            lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
+            burstActive, complete, encryptionState, recordAudio, recordingMetadata, voiceCallQuality, callLegId,
+            callLegSource, callEncryptionEvidence, null);
+    }
+
     public AudioCallSnapshot
     {
         encryptionState = encryptionState != null ? encryptionState : CallEncryptionState.UNKNOWN;

@@ -90,7 +90,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/quality` | Current quality across a bounded channel page. Global requests cannot include history. |
 | `GET /api/v1/identities` | Bounded directory of recently active talkgroups, patch groups, and radios. |
 | `GET /api/v1/alias-lists` | Paged Alias List catalog. |
-| `GET /api/v1/alias-lists/{id}/observed-group-identities` | Paged unmatched talkgroup and patch-group discovery for one Alias List. |
+| `GET /api/v1/alias-lists/{id}/observed-group-identities` | Paged talkgroup/patch-group discovery, or received AM/NBFM assigned numbers, for one Alias List. |
 | `GET /api/v1/aliases` | Paged Alias catalog and bounded activity metrics. |
 | `GET /api/v1/aliases/{id}` | One Alias and its bounded activity breakdown. |
 | `GET /api/v1/scan-lists` | Published Scan Lists available to the signed-in browser listener. |

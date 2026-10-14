@@ -640,7 +640,13 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(),
             audioCall.getEncryptionState(),
             audioCall.isRecordAudio(), audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality(),
-            mCurrentCallLegId, callLegSource, audioCall.getCallEncryptionEvidence());
+            mCurrentCallLegId, callLegSource, audioCall.getCallEncryptionEvidence(), getAnalogCallAttribution());
+    }
+
+    /** Analog subclasses supply the same frozen match decision carried by their decoder event. */
+    protected io.github.dsheirer.alias.AnalogCallAttribution getAnalogCallAttribution()
+    {
+        return null;
     }
 
     /** Runs only while the audio producer already owns this module's monitor. */

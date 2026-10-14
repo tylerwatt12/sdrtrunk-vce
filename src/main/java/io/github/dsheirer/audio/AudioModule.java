@@ -19,6 +19,8 @@
 package io.github.dsheirer.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AnalogCallAttribution;
+import io.github.dsheirer.alias.AnalogCallAttributionTracker;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
@@ -43,6 +45,19 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     private final IRealFilter mHighPassFilter = AudioFilterFactory.getAudioHighPassFilter();
     private final SquelchStateListener mSquelchStateListener = new SquelchStateListener();
     private SquelchState mSquelchState = SquelchState.SQUELCH;
+    private AnalogCallAttributionTracker mCallAttributionTracker;
+    private AnalogCallAttribution mCallAttribution;
+
+    public void setCallAttributionTracker(AnalogCallAttributionTracker tracker)
+    {
+        mCallAttributionTracker = tracker;
+    }
+
+    @Override
+    protected AnalogCallAttribution getAnalogCallAttribution()
+    {
+        return mCallAttribution;
+    }
 
     /**
      * Creates an Audio Module.
@@ -163,6 +178,7 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
                 }
                 else
                 {
+                    mCallAttribution = mCallAttributionTracker != null ? mCallAttributionTracker.start() : null;
                     if(currentAudioCall != null)
                     {
                         mLog.warn("Analog audio unsquelch with open segment:{} buffers:{} bursts:{} burstActive:{}",

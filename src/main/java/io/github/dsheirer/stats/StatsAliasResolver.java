@@ -679,6 +679,12 @@ class StatsAliasResolver
         RuleIndex p25 = snapshot.talkgroups();
         RuleIndex dmr = snapshot.dmrTalkgroups();
         RuleIndex nxdn = snapshot.nxdnTalkgroups();
+        RuleIndex nbfm = index(loadRules(connection, RuleType.TALKGROUP, List.of("NBFM"),
+            ruleTargets(rows, StatsAliasResolver::assignedAliasList,
+                source("group_identity_id", row -> protocolCode(row) == 10))));
+        RuleIndex am = index(loadRules(connection, RuleType.TALKGROUP, List.of("AM"),
+            ruleTargets(rows, StatsAliasResolver::assignedAliasList,
+                source("group_identity_id", row -> protocolCode(row) == 11))));
 
         for(Map<String,Object> row: rows)
         {
@@ -690,13 +696,18 @@ class StatsAliasResolver
                 case 1 -> p25;
                 case 3 -> dmr;
                 case 4 -> nxdn;
+                case 10 -> nbfm;
+                case 11 -> am;
                 default -> null;
             } : null;
             Rule best = null;
-            boolean promotionSupported = protocol != null && protocol != 1;
-            String promotionReason = null;
+            boolean validIdentifier = identifier != null && identifier > 0 &&
+                (protocol == null || protocol != 10 && protocol != 11 || identifier <= 65535);
+            boolean validScope = validIdentifier && aliasListId != null && rules != null;
+            boolean promotionSupported = validScope && protocol != 1;
+            String promotionReason = validScope ? null : "The observation has no supported assigned identity";
 
-            if(identifier != null && aliasListId != null && rules != null)
+            if(validScope)
             {
                 if(protocol == 1 && "TRUNKED".equals(row.get("topology")))
                 {
@@ -1903,6 +1914,8 @@ class StatsAliasResolver
             case "P25", "APCO25", "APCO25_PHASE2" -> 1;
             case "DMR" -> 3;
             case "NXDN" -> 4;
+            case "NBFM" -> 10;
+            case "AM" -> 11;
             default -> 0;
         };
     }

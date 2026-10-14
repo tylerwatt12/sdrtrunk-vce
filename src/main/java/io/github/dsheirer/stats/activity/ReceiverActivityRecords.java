@@ -461,9 +461,30 @@ final class ReceiverActivityRecords
                          List<P25PatchMemberIdentity> p25PatchMemberIdentities,
                          String radioSystemKey,
                          Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
-                         P25WuidObservation p25WuidObservation)
+                         P25WuidObservation p25WuidObservation,
+                         io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution)
         implements ReceiverActivityRecord
     {
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                      P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities, String radioSystemKey,
+                      Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                      P25WuidObservation p25WuidObservation)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
+                countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId, targetObservedWorkingId,
+                p25WuidObservation, null);
+        }
+
         ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
                       String protocol, Action action, String eventType, String sourceRadioId, String targetId,
                       String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
@@ -529,7 +550,7 @@ final class ReceiverActivityRecords
                 lcn, timeslot, encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
                 talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, targetIdentity,
                 sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId,
-                p25WuidObservation);
+                p25WuidObservation, analogCallAttribution);
         }
 
     }
@@ -625,9 +646,24 @@ final class ReceiverActivityRecords
                                TrunkedIdentityDomain identityDomain, P25Identity p25TargetIdentity,
                                P25Identity p25SourceIdentity,
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities,
-                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                               io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution)
         implements ReceiverActivityRecord
     {
+        ConventionalCallOutput(long callStartEpochMilliseconds, String configurationId,
+                               ReceiverKind receiverKind, String protocol, Long frequencyHertz, Integer timeslot,
+                               int destinationId, String targetKind, List<Integer> patchMemberTalkgroupIds,
+                               Integer sourceRadioId, CallOutput output, TrunkedIdentityDomain identityDomain,
+                               P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                               List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+        {
+            this(callStartEpochMilliseconds, configurationId, receiverKind, protocol, frequencyHertz, timeslot,
+                destinationId, targetKind, patchMemberTalkgroupIds, sourceRadioId, output, identityDomain,
+                p25TargetIdentity, p25SourceIdentity, p25PatchMemberIdentities, sourceObservedWorkingId,
+                targetObservedWorkingId, null);
+        }
+
         ConventionalCallOutput(long callStartEpochMilliseconds, String configurationId,
                                ReceiverKind receiverKind, String protocol, Long frequencyHertz, Integer timeslot,
                                int destinationId, String targetKind, List<Integer> patchMemberTalkgroupIds,

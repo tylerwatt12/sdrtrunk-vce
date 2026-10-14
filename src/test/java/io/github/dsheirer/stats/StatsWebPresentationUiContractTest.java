@@ -66,7 +66,7 @@ class StatsWebPresentationUiContractTest
         assertTrue(activity.contains("section(title, activityTable, titleActions)"));
         assertTrue(activity.contains("titleActions.prepend(refreshControls)"));
         assertTrue(discover.contains("layoutMenuHost: actions"));
-        assertTrue(discover.contains("section('Observed Groups', host, actions)"));
+        assertTrue(discover.contains("section(analog ? 'Unmatched assignments' : 'Observed Groups', host, actions)"));
         assertTrue(scanList.contains("layoutMenuHost: actions"));
         assertTrue(aliases.contains("layoutMenuHost: actions"));
         assertTrue(source.contains("const actions = sectionActionHost(action);"));

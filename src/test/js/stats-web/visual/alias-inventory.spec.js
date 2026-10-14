@@ -11,7 +11,7 @@ test.beforeAll(async () => {
   defaultPreferences = (await import(pathToFileURL(file).href)).defaults;
 });
 
-test('Alias inventory waits for a supported list selection', async ({ page }) => {
+test('Alias inventory waits for a list selection and includes analog lists', async ({ page }) => {
   const coverageRequests = [];
   let releaseUnassignedCount;
   const unassignedCountReady = new Promise((resolve) => { releaseUnassignedCount = resolve; });
@@ -72,7 +72,8 @@ test('Alias inventory waits for a supported list selection', async ({ page }) =>
   expect(await listSelect.evaluate((select) => select.matches(':focus-visible'))).toBe(true);
   await expect(listSelect).toHaveValue('');
   await expect(listSelect.locator('option')).toHaveText([
-    'Select an alias list', 'County Public Safety · P25 · 2 aliases',
+    'Select an alias list', 'Analog · Conventional Analog (AM/NBFM) · 1 alias',
+    'County Public Safety · P25 · 2 aliases', 'Airband · AM · 1 alias',
     'City Services · DMR · 1 alias', 'Regional · NXDN · 1 alias'
   ]);
   await expect(inventory.locator('.alias-coverage-field')).toHaveCount(1);

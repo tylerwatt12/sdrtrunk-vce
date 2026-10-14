@@ -262,6 +262,46 @@ class AliasDatabaseStoreTest
     }
 
     @Test
+    void analogActivityLifecyclePreservesCountersAndCutoffUntilItsMatcherChanges() throws Exception
+    {
+        Path database = database("analog-activity-lifecycle.sqlite");
+        AliasDatabaseStore store = new AliasDatabaseStore(database);
+        AliasListDefinition definition = definition("Conventional", AliasListFamily.NBFM);
+        Alias analog = alias("Dispatch", definition, 100);
+        analog.setMatchIdentifier(new Talkgroup(Protocol.NBFM, 100));
+        AliasConfigurationSnapshot committed = replace(store, List.of(analog), List.of(definition));
+        definition = committed.definitions().getFirst();
+        analog = committed.aliases().getFirst();
+        long id = analog.getId();
+        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT protocol_code,last_reset_ms FROM alias_activity_summary WHERE alias_id=" + id))
+        {
+            assertTrue(rows.next());
+            assertEquals(10, rows.getInt("protocol_code"));
+            assertTrue(rows.getLong("last_reset_ms") > 0);
+        }
+        execute(database, "UPDATE alias_activity_summary SET metrics_state='observed',logical_call_count=17," +
+            "recorded_logical_call_count=3,first_evidence_ms=1000,last_evidence_ms=2000,last_reset_ms=500 WHERE alias_id=" + id);
+        analog.setName("Renamed dispatch");
+        committed = replace(store, List.of(analog), List.of(definition));
+        analog = committed.aliases().getFirst();
+        assertSummary(database, id, "observed", 17L, 3L, 1000L, 2000L);
+        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT last_reset_ms FROM alias_activity_summary WHERE alias_id=" + id))
+        {
+            assertTrue(rows.next()); assertEquals(500, rows.getLong(1));
+        }
+        analog.setMatchIdentifier(new Talkgroup(Protocol.AM, 100));
+        replace(store, List.of(analog), List.of(definition));
+        assertSummary(database, id, "not_collected", null, null, null, null);
+        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT protocol_code,last_reset_ms FROM alias_activity_summary WHERE alias_id=" + id))
+        {
+            assertTrue(rows.next()); assertEquals(11, rows.getInt(1)); assertTrue(rows.getLong(2) > 500);
+        }
+    }
+
+    @Test
     void persistsEmptyProtocolOwnedList() throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database("empty-list.sqlite"));

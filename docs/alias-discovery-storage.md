@@ -14,6 +14,12 @@ The Alias page can show P25, DMR, and NXDN talkgroups or patch groups observed f
 aliases are hidden by default. A covering range is reported without changing the identity received over the air. An
 administrator may use a result to prefill a normal Alias.
 
+Analog lists show received AM/NBFM assigned numbers. These numbers come from channel settings. Discover initially
+shows numbers with neither an exact alias nor a covering range; the API's `include_exact=true` option also includes
+covered numbers. Each row identifies its saved channel and protocol, and can prefill an AM or NBFM Alias. An assignment that
+has never produced an accepted call does not appear. Adding an alias resolves the current gap without rewriting the
+historical unmatched-call count.
+
 Each P25, DMR, NXDN, or analog (AM/NBFM) Alias List can also define an Unmatched Talkgroups policy for recording,
 streaming, and scan-list routing. The policy is not a catch-all alias: it has no matcher, display identity, or Stream As
 value. It routes a completed call under the received identity only when that Alias List has no exact or covering-range match.
@@ -23,13 +29,17 @@ identities remain separate Alias evidence and never replace that destination.
 
 ## One authoritative relationship
 
-`configuration_channel.alias_list_id` is the only stored relationship between a saved channel and its Alias List.
+`configuration_channel.alias_list_id` is the authoritative current assignment of a saved channel to its Alias List.
 Queries join `alias_list` by ID. They do not copy or match an Alias List name in activity tables. Renaming an Alias
 List therefore changes display text without changing ownership or requiring synchronized activity updates.
 
-Each observation is owned by the saved channel UUID through `receiver_channel.configuration_id`. A proven native
+Digital observations are owned by the saved channel UUID through `receiver_channel.configuration_id`. A proven native
 radio system can then collect system-wide summaries from several channels. Display names, system/site labels, decoder
 choices, and RadioResolve identifiers do not participate in identity.
+
+Analog call accounting captures the assigned list and number when the call starts. Its compact observations retain
+the original list ID and saved channel UUID after a channel is reassigned. Those fields describe call-time evidence;
+they do not establish another current assignment or make the list an owner of the channel.
 
 For trunked systems:
 
@@ -76,7 +86,7 @@ receiver uptime.
 
 ## Observed identity sources
 
-Discovery reads existing compact call buckets and summaries; it creates no new activity table and performs no writes.
+Discovery reads compact call buckets and summaries and performs no writes.
 
 ### Trunked P25, DMR, and NXDN
 
@@ -130,7 +140,7 @@ uses exact channel-local evidence when available and withholds ambiguous roaming
 are capped at 100,000 rows per radio system. Existing rows continue updating after the cap. Rows contain first/last
 times and fixed counters, not immutable events or JSON.
 
-### Conventional channels
+### Conventional digital channels
 
 Conventional P25 and NXDN discovery reads the protocol-neutral hourly call-identity bucket by `channel_id`.
 Conventional DMR reads its carrier- and native-timeslot-specific talkgroup summary by `channel_id`. The saved channel's
@@ -151,11 +161,20 @@ LIMIT ?;
 The same talkgroup number on another conventional channel is a separate observed source because its `channel_id`
 differs. For DMR, frequency and timeslot 1 or 2 further prevent unrelated traffic from collapsing together.
 
+### Analog channels
+
+`alias_list_analog_activity_summary` records fixed totals and first/last call times for each Alias List, saved channel,
+AM/NBFM protocol, and assigned number that has produced evidence. It starts empty when analog accounting is enabled.
+Discovery selects rows with accepted calls and checks current exact/range coverage in that row's original list.
+AM and NBFM stay distinct, and several channels sharing one number remain separate sources. Alias counters use the
+call's captured matching aliases; list totals count each accepted call once. Recording and streaming receipts update
+their own counters without incrementing calls. These observations create no analog radio-system/group directory.
+
 ## Matching and response rules
 
 Exact and range checks use the normal Alias matcher indexes. A source is excluded as exact only when the selected
-list has an exact matcher for the same protocol and identity. A covering range is returned as useful context, not as a
-replacement identity.
+list has an exact matcher for the same protocol and identity. Digital Discover returns covering ranges as useful
+context. Analog Discover hides both exact and range-covered assignments by default and can show them on request.
 
 The storage and query layer uses these keys:
 
@@ -173,13 +192,17 @@ Discovery itself adds zero writes. Normal activity reaches the single background
 statistics queue. Initial activity, late attribution, and completed recording/streaming output merge into an existing
 summary key whenever possible. Normal steady-state row creation approaches zero after identities are learned.
 
-Observed summaries use the configured Statistics retention period of 1 through 365 days. Time-first indexes select at
+Digital observed summaries use the configured Statistics retention period of 1 through 365 days. Time-first indexes select at
 most 256 expired rows per cleanup task, within a shared 1,000-row maintenance-pass limit. Deleting a saved channel
 cascades its channel-owned conventional facts.
 Deleting a saved channel cascades any explicitly owned channel-scoped DMR or NXDN radio system and its summaries. A
 shared native P25, standard DMR Tier III, or NXDN Type-C system remains while another receiver channel or retained
 system fact uses it, then bounded orphan cleanup removes it. Incomplete P25 observations never create a provisional
 system.
+
+Analog assignment totals are retained until statistics are cleared or their saved channel or list is deleted; optional
+detailed Activity retention does not remove them. Channel clears set an explicit analog reset timestamp so late call
+or output callbacks cannot restore old counts. Clearing a channel leaves individual Alias lifetime totals intact.
 
 Alias policies, routes, and scan-list memberships are configuration and remain until an administrator changes or
 deletes them. Statistics clear never deletes those configuration rows.
@@ -197,7 +220,8 @@ Representative-volume tests require indexed searches for:
 - receiver channels to radio systems by numeric IDs;
 - P25 destination call evidence by `channel_id`, joined to its canonical identity;
 - DMR/NXDN logical-call evidence by `radio_system_id`;
-- conventional identities by `channel_id`; and
+- conventional digital identities by `channel_id`;
+- analog assignment totals by Alias List primary-key prefix, and source clearing by the channel-first index; and
 - exact and covering-range Alias matches by the existing matcher indexes.
 
 The release audit found no successfully published nightly with the intermediate Alias v5 layout. The source-recovered

@@ -1275,7 +1275,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             winner.burstCount, winnerSnapshot.burstGeneration(), winnerSnapshot.lastBurstStartTimestamp(),
             winnerSnapshot.lastBurstEndTimestamp(), false, true, winnerSnapshot.encryptionState(),
             policy.recordAudio(), recordingMetadata, measuredWinnerQuality,
-            winnerSnapshot.callLegId(), winnerSnapshot.callLegSource(), winner.encryptionEvidence);
+            winnerSnapshot.callLegId(), winnerSnapshot.callLegSource(), winner.encryptionEvidence,
+            winnerSnapshot.analogCallAttribution());
 
         List<CallLegSummary> summaries = legs.stream()
             .sorted((first, second) -> compareCallLegIds(first.snapshot.callLegId(), second.snapshot.callLegId()))
