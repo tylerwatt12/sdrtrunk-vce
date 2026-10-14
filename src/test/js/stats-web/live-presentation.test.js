@@ -48,6 +48,9 @@ const behavior = vm.runInNewContext(`(() => {
   function sourceNameDisplayMode() { return 'talker_alias'; }
   ${constantSource('LIVE_IDLE_CALL_FIELDS', '];')}
   ${constantSource('LIVE_VOICE_QUALITY_FIELDS', '];')}
+  ${constantSource('SIGNAL_OFFLINE_MILLISECONDS', ';')}
+  ${constantSource('DECODE_HEALTHY_MINIMUM_PERCENT', ';')}
+  ${constantSource('DECODE_DEGRADED_MINIMUM_PERCENT', ';')}
   ${functionSource('liveRowIsActive')}
   ${functionSource('livePresentedRow')}
   ${functionSource('liveChannelSortMethod')}
@@ -61,6 +64,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveRemoteOriginLabel')}
   ${functionSource('optionalNumber')}
   ${functionSource('decodeQualityBarLevel')}
+  ${functionSource('signalChannelState')}
   ${functionSource('liveShowRowRemoteOrigin')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
@@ -74,6 +78,7 @@ const behavior = vm.runInNewContext(`(() => {
     livePickerNavigationIndex, liveDetailsPanelPercent,
     liveRemoteOriginLabel,
     decodeQualityBarLevel,
+    signalChannelState,
     liveShowRowRemoteOrigin,
     liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
@@ -119,6 +124,18 @@ assert.equal(behavior.decodeQualityBarLevel(25.1), 2);
 assert.equal(behavior.decodeQualityBarLevel(50), 2);
 assert.equal(behavior.decodeQualityBarLevel(75), 3);
 assert.equal(behavior.decodeQualityBarLevel(98.7), 4);
+const qualityNow = 1_000_000;
+const remoteQuality = { remote_origin: { remote: true }, last_observed_ms: qualityNow,
+  average_signal_dbfs: null, decode_health_pct: 99.3 };
+assert.equal(behavior.signalChannelState(remoteQuality, qualityNow).label, 'Healthy');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, decode_health_pct: 75 }, qualityNow).label, 'Degraded');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, decode_health_pct: 74.9 }, qualityNow).label, 'Poor');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, decode_health_pct: null }, qualityNow).label, 'Monitoring');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, last_observed_ms: qualityNow - 45_001 }, qualityNow).label, 'Offline');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, last_observed_ms: null }, qualityNow).label, 'Offline');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null }, qualityNow).label, 'No signal');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: { remote: false } }, qualityNow).label, 'No signal');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null, average_signal_dbfs: -65 }, qualityNow).label, 'Healthy');
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'remote-site', remote_origin: { remote: true } }), false);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'conventional', remote_origin: { remote: true } }), true);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'local-site' }), true);

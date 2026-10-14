@@ -15,7 +15,7 @@ const remoteId = '11111111-1111-4111-8111-111111111111';
 const localId = '22222222-2222-4222-8222-222222222222';
 const sampleTime = Date.UTC(2026, 8, 28, 12);
 
-async function openQuality(page, configurationId, { samples = false, theme = 'light' } = {}) {
+async function openQuality(page, configurationId, { samples = false, theme = 'light', rowOriginOnly = false } = {}) {
   let qualityRequests = 0;
   const requestedRanges = [];
   const channel = {
@@ -41,7 +41,7 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
       await respond({ channel });
     } else if (pathname === '/api/v1/channel-catalog') {
       await respond({ revision: 1, channels: [
-        { configuration_id: remoteId, remote_origin: { remote: true } },
+        { configuration_id: remoteId, remote_origin: rowOriginOnly ? null : { remote: true } },
         { configuration_id: localId, remote_origin: null }
       ] });
     } else if (pathname === `/api/v1/channels/${configurationId}/quality`) {
@@ -63,6 +63,7 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
       }));
       await respond({ from_ms: sampleTime - durationMs, to_ms: sampleTime, bucket_ms: bucketMs,
         rows: samples ? [{ configuration_id: configurationId, name: channel.name,
+          remote_origin: configurationId === remoteId ? { remote: true } : null,
           decode_health_pct: 97.3, signal_dbfs: null, average_signal_dbfs: null,
           last_observed_ms: sampleTime - 30_000, series }] : [] });
     } else {
@@ -109,6 +110,16 @@ test('remote decode history fits dark mobile without RF fields', async ({ page }
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(quality.locator('.signal-chart')).toHaveCount(0);
   await expect(quality).toHaveScreenshot('remote-channel-quality-dark-mobile.png');
+});
+
+test('channel quality uses the explicit returned origin when channel metadata has none', async ({ page }) => {
+  await page.clock.install({ time: new Date(sampleTime) });
+  await openQuality(page, remoteId, { samples: true, rowOriginOnly: true });
+  const quality = page.locator('.site-signal-history-section');
+  await expect(quality.locator('.decode-chart')).toHaveCount(1);
+  await expect(quality.locator('.signal-chart')).toHaveCount(0);
+  await expect(quality.locator('.signal-history-overview .ui-metric')).toHaveCount(2);
+  await expect(quality).not.toContainText(/30s average|dBFS/);
 });
 
 test('remote channel Quality explains when decode samples are not yet retained', async ({ page }) => {

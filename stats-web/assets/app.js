@@ -8643,7 +8643,7 @@ function signalChannelState(channel, now = Date.now()) {
     return { label: 'Offline', className: 'offline', rank: 0 };
   }
   const decode = optionalNumber(channel.decode_health_pct);
-  if (!Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
+  if (channel?.remote_origin?.remote !== true && !Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
     return { label: 'No signal', className: 'poor', rank: 1 };
   }
   if (!Number.isFinite(decode)) return { label: 'Monitoring', className: 'unknown', rank: 2 };
@@ -8832,6 +8832,7 @@ function qualityChartPanel(title, description, chart) {
 
 function updateSignalCurrentTile(tile, channel) {
   const state = signalChannelState(channel);
+  const decodeOnly = channel?.remote_origin?.remote === true;
   const header = node('div', 'signal-current-header');
   const labels = node('div', 'signal-current-labels');
   labels.append(channelNameSummary(channel));
@@ -8843,18 +8844,22 @@ function updateSignalCurrentTile(tile, channel) {
       state.className === 'poor' ? 'ui-pill-danger' : '';
   header.append(labels, badge(state.label, `signal-state ${tone}`));
   const power = node('div', 'signal-current-power');
-  power.append(node('strong', '', signalNumber(channel.signal_dbfs)),
-    node('span', '', `30s avg ${signalNumber(channel.average_signal_dbfs)}`));
+  if (decodeOnly) {
+    power.append(node('strong', '', percentNumber(channel.decode_health_pct)),
+      node('span', '', 'Decode quality'));
+  } else {
+    power.append(node('strong', '', signalNumber(channel.signal_dbfs)),
+      node('span', '', `30s avg ${signalNumber(channel.average_signal_dbfs)}`));
+  }
   const details = node('div', 'signal-current-details');
   const qualityFrequency = channel.quality_frequency_hz || channel.current_control_hz;
   const decode = optionalNumber(channel.decode_health_pct);
   const decodeClass = !Number.isFinite(decode) ? '' :
     (decode >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
       (decode >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'quality-warn' : 'quality-bad'));
-  details.append(node('span', decodeClass,
-  `Decode ${percentNumber(channel.decode_health_pct)}`),
-  node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
-  node('span', '', elapsedLabel(channel.last_observed_ms)));
+  if (!decodeOnly) details.append(node('span', decodeClass, `Decode ${percentNumber(channel.decode_health_pct)}`));
+  details.append(node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
+    node('span', '', elapsedLabel(channel.last_observed_ms)));
   tile.dataset.configurationId = channel.configuration_id || '';
   tile.replaceChildren(header, power, details);
   return tile;
@@ -8870,7 +8875,7 @@ function sortSignalChannels(channels) {
       String(left.configuration_id || '').localeCompare(String(right.configuration_id || '')));
 }
 
-function signalOverview(channel, includeName = true, decodeOnly = false) {
+function signalOverview(channel, includeName = true, decodeOnly = channel?.remote_origin?.remote === true) {
   const overview = node('div', 'signal-history-overview ui-metric-grid');
   overview.classList.toggle('without-identity', !includeName);
   overview.classList.toggle('decode-only', decodeOnly);
@@ -9015,7 +9020,7 @@ async function channelSignalHistorySection(channel) {
   const host = node('div', 'site-signal-history');
   const block = section('Control Channel Quality History', host);
   block.classList.add('site-signal-history-section');
-  const decodeOnly = channel?.remote_origin?.remote === true;
+  const configuredDecodeOnly = channel?.remote_origin?.remote === true;
   let selectedRange = '1h';
   let loadingSequence = 0;
   let loading = false;
@@ -9047,6 +9052,7 @@ async function channelSignalHistorySection(channel) {
       });
       if (sequence !== loadingSequence) return;
       const qualitySite = (response.rows || [])[0];
+      const decodeOnly = configuredDecodeOnly || qualitySite?.remote_origin?.remote === true;
       disconnectPageObserversWithin(host);
       host.replaceChildren();
       if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
