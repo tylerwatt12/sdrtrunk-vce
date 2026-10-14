@@ -23,6 +23,15 @@ import org.junit.jupiter.api.Test;
 
 class P25PagingToneDetectorTest
 {
+    @Test
+    void messageFrequencyKeepsTheExactAllowedQuarterHertzValue()
+    {
+        var tone = new P25PagingToneDetector.DetectedTone(343.183, 514, 900, .99,
+            "decoded_audio", "p25_pcm_ambe_tone_v2");
+        assertEquals("343.75 Hz (900 ms)", new io.github.dsheirer.identifier.tone.DetectedPagingToneIdentifier(
+            List.of(tone)).toString());
+    }
+
     private final P25PagingToneDetector mDetector = new P25PagingToneDetector();
 
     @Test
@@ -34,28 +43,79 @@ class P25PagingToneDetectorTest
         var result = mDetector.detect(frames(samples, 160));
 
         assertEquals(2, result.size());
-        assertEquals(600.0, result.get(0).frequencyHz(), 1.0);
-        assertEquals(880.0, result.get(1).frequencyHz(), 1.0);
+        assertEquals(593.75, result.get(0).frequencyHz());
+        assertEquals(875.0, result.get(1).frequencyHz());
         assertTrue(result.get(0).offsetMilliseconds() >= 200);
         assertTrue(result.get(1).offsetMilliseconds() >= 700);
         assertTrue(result.get(0).durationMilliseconds() >= 200);
         assertTrue(result.get(1).durationMilliseconds() >= 200);
         assertEquals("decoded_audio", result.get(0).source());
-        assertEquals("p25_pcm_tone_v1", result.get(0).method());
+        assertEquals("p25_pcm_ambe_tone_v2", result.get(0).method());
         assertTrue(result.stream().allMatch(value -> value.confidence() >= 0.90));
         assertThrows(UnsupportedOperationException.class, result::clear);
     }
 
     @Test
-    void estimatesOffGridFrequenciesWithoutAnAmbeEnumeration()
+    void reportsOffGridInputAtTheNearestAmbeNominalAfterQualification()
     {
         float[] samples = new float[8000];
         tone(samples, 0, samples.length, 731.37, 0.04, 2.1);
         var result = mDetector.detect(List.of(samples));
 
         assertEquals(1, result.size());
-        assertEquals(731.37, result.getFirst().frequencyHz(), 1.0);
+        assertEquals(718.75, result.getFirst().frequencyHz());
         assertTrue(result.getFirst().durationMilliseconds() >= 800);
+    }
+
+    @Test
+    void sustainedToneSweepReportsOnlyExpectedAmbeNominals()
+    {
+        double[][] frequencies = {{200.5,187.5},{205,218.75},{218.75,218.75},{343.183,343.75},
+            {387.660,375},{435.251,437.5},{566.379,562.5},{598.065,593.75},{731.37,718.75},
+            {800,812.5},{914.305,906.25},{1003.41,1000},{2687.5,2687.5},{2718.75,2718.75},{2999,3000}};
+        for(double[] frequency: frequencies)
+        {
+            float[] samples = new float[8000];
+            tone(samples, 0, samples.length, frequency[0], 0.1, 0.3);
+            var result = mDetector.detect(frames(samples, 160));
+            assertEquals(1, result.size(), "Raw input " + frequency[0]);
+            assertEquals(frequency[1], result.getFirst().frequencyHz(), "Raw input " + frequency[0]);
+            assertEquals("p25_pcm_ambe_tone_v2", result.getFirst().method());
+        }
+    }
+
+    @Test
+    void differentRawPitchesInOneNominalBandRemainSeparateAndCannotBorrowQualificationTime()
+    {
+        //Both pitches map to 812.5 Hz, but their 16 Hz separation exceeds the raw 4 Hz continuity guard.
+        float[] qualified = new float[8000];
+        tone(qualified, 0, 4000, 804, 0.1, 0.2);
+        tone(qualified, 4000, 4000, 820, 0.1, 0.7);
+        var separate = mDetector.detect(frames(qualified, 160));
+        assertEquals(2, separate.size());
+        assertTrue(separate.stream().allMatch(value -> value.frequencyHz() == 812.5));
+        assertTrue(separate.getFirst().offsetMilliseconds() + separate.getFirst().durationMilliseconds() <=
+            separate.getLast().offsetMilliseconds());
+
+        float[] shortAlternating = new float[12800];
+        for(int index = 0; index < 10; index++)
+            tone(shortAlternating, index * 1280, 1280, index % 2 == 0 ? 804 : 820, 0.1, 0.2);
+        assertTrue(mDetector.detect(frames(shortAlternating, 160)).isEmpty(),
+            "Ten 160 ms pitches may not form one nominal-band qualification run");
+    }
+
+    @Test
+    void reportedToneConstructorAcceptsFullNominalRangeAndRejectsOutsideBeforeRounding()
+    {
+        assertEquals(156.25, reported(156.25).frequencyHz());
+        assertEquals(3812.5, reported(3812.5).frequencyHz());
+        assertEquals(562.5, reported(578.125).frequencyHz());
+        assertEquals(593.75, reported(578.126).frequencyHz());
+        assertEquals("decoded_audio", reported(800).source());
+        assertEquals("p25_pcm_ambe_tone_v2", reported(800).method());
+        for(double invalid: new double[]{156.2499,3812.5001,0,-1,Double.NaN,
+            Double.NEGATIVE_INFINITY,Double.POSITIVE_INFINITY})
+            assertThrows(IllegalArgumentException.class, () -> reported(invalid));
     }
 
     @Test
@@ -66,6 +126,8 @@ class P25PagingToneDetectorTest
         float[] original = samples.clone();
         var expected = mDetector.detect(List.of(samples));
 
+        assertEquals(1, expected.size());
+        assertEquals(1000.0, expected.getFirst().frequencyHz());
         assertEquals(expected, mDetector.detect(frames(samples, 160)));
         assertEquals(expected, mDetector.detect(frames(samples, 73)));
         assertTrue(Arrays.equals(original, samples));
@@ -157,6 +219,11 @@ class P25PagingToneDetectorTest
         {
             samples[offset + index] += (float)(amplitude * Math.sin(phase + 2.0 * Math.PI * frequency * index / 8000));
         }
+    }
+
+    private static P25PagingToneDetector.DetectedTone reported(double frequency)
+    {
+        return new P25PagingToneDetector.DetectedTone(frequency, 0, 200, 0.99, "ignored", "ignored");
     }
 
     private static List<float[]> frames(float[] samples, int frameLength)

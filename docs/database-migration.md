@@ -177,7 +177,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -692,6 +692,12 @@ Alias and channel reset timestamps prevent delayed observations from restoring c
 format-50 schema and fixture remain frozen. Fresh and migrated format-51 databases share the same exact signature;
 normal receiver startup only validates that format.
 
+The format 51-to-52 step admits an explicit nominal-frequency PCM tone method. New decoded-audio tone reports use
+only predefined AMBE single-tone frequencies; encoded tone metadata keeps its existing identity. Existing measured
+and encoded tone rows, sequence order, timing, events, counters, settings and allocators remain unchanged. The
+adjacent Application Migrator updates only the tone-context method constraints. The populated format-51 fixture and
+its exact signature remain supported, and fresh and migrated format-52 databases share the same target signature.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -705,8 +711,10 @@ an administrator action. Fresh format-3 catalogs use the same status default and
 context and at most 32 ordered tone facts for the recorded native-audio winner. Its adjacent format-3-to-4 step
 preserves every recording, ID, path, access code, transcript, transcription status, relationship, counter and
 allocator, adding no historical tone rows. The exact format-3 signature remains frozen independently of the current
-creator; fresh and migrated format-4 catalogs share the same authoritative definitions. The main application database
-is independently at format 51; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+creator; fresh and migrated format-4 catalogs share the same authoritative definitions. Catalog format 5 admits the
+same new nominal-frequency PCM method, preserving every existing recording and tone fact through its adjacent
+format-4-to-5 step. The format-4 signature remains frozen and the upgrade neither converts old measured frequencies
+nor backfills tones. The main application database is independently at format 52; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

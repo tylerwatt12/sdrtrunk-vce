@@ -130,6 +130,36 @@ class VceRecordingMetadataFileTest
     }
 
     @Test
+    void nominalPcmFrequencyIsTheOnlyFrequencyWrittenWithoutChangingAudio() throws Exception
+    {
+        CompletedAudioCall plain = call(groupIdentifiers(),
+            source(DecoderType.P25_PHASE1, 0xBEE00, 0x456, 1, 7), QUALITY, CallEncryptionState.CLEAR, 1);
+        var detected = new io.github.dsheirer.audio.tone.P25PagingToneDetector.DetectedTone(
+            566.379, 514, 900, .99, "decoded_audio", "p25_pcm_ambe_tone_v2");
+        assertEquals(562.5, detected.frequencyHz());
+        var sequence = new CompletedToneSequence(plain.nativeAudioSnapshot(), 1_000,
+            CompletedToneSequence.Source.DECODED_AUDIO, CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2,
+            List.of(new CompletedToneSequence.Element(List.of((int)Math.round(detected.frequencyHz() * 1000)),
+                null, detected.offsetMilliseconds(), detected.durationMilliseconds(), detected.confidence())));
+        for(RecordFormat format: RecordFormat.values())
+        {
+            Recording before = writeAndRead(plain, "nominal-plain", format, null);
+            Recording after = writeAndRead(plain.withCompletedTones(sequence), "nominal", format, null);
+            assertEquals("562.5", after.vceFields().get("VCE_PAGING_TONE_1_FREQUENCY_1_HZ"));
+            assertEquals("p25_pcm_ambe_tone_v2", after.vceFields().get("VCE_PAGING_TONE_METHOD"));
+            assertEquals("514", after.vceFields().get("VCE_PAGING_TONE_1_OFFSET_MS"));
+            assertEquals("900", after.vceFields().get("VCE_PAGING_TONE_1_DURATION_MS"));
+            assertFalse(after.vceFields().keySet().stream().anyMatch(key -> key.contains("MATCHING") || key.contains("MEASURED")));
+            assertFalse(after.vceFields().containsKey("VCE_PAGING_TONE_1_FREQUENCY_2_HZ"));
+            if(format == RecordFormat.WAVE)
+                assertArrayEquals(before.waveChunks().get("data"), after.waveChunks().get("data"));
+            else
+                assertArrayEquals(Arrays.copyOfRange(before.id3(), 10 + synchsafe(before.id3(), 6), before.id3().length),
+                    Arrays.copyOfRange(after.id3(), 10 + synchsafe(after.id3(), 6), after.id3().length));
+        }
+    }
+
+    @Test
     void everyAvailableFieldSurvivesInActualMp3AndWaveWithoutChangingStandardFields() throws Exception
     {
         CompletedAudioCall call = call(groupIdentifiers(), SOURCE, QUALITY, CallEncryptionState.CLEAR, 1);

@@ -21,13 +21,14 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 4;
+    public static final int CURRENT_FORMAT_VERSION = 5;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
     private static final Map<String,String> FORMAT_TWO_DDL = formatTwoSchema();
     private static final Map<String,String> FORMAT_THREE_DDL = formatThreeSchema();
-    static final Map<String,String> DDL = formatFourSchema();
+    private static final Map<String,String> FORMAT_FOUR_DDL = formatFourSchema();
+    static final Map<String,String> DDL = formatFiveSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -39,7 +40,8 @@ public final class ManagedRecordingSchema
             case 1 -> FORMAT_ONE_DDL;
             case 2 -> FORMAT_TWO_DDL;
             case 3 -> FORMAT_THREE_DDL;
-            case 4 -> DDL;
+            case 4 -> FORMAT_FOUR_DDL;
+            case 5 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -99,6 +101,35 @@ public final class ManagedRecordingSchema
     }
 
     private static Map<String,String> formatFourSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_THREE_DDL);
+        // Frozen format 4: do not obtain historical constraints from the current tone creator.
+        schema.put("recording_tone_sequence", "CREATE TABLE recording_tone_sequence (" +
+            "call_id INTEGER PRIMARY KEY REFERENCES recording_call(id) ON DELETE CASCADE," +
+            "source_code INTEGER NOT NULL CHECK(source_code IN(1,2))," +
+            "method_code INTEGER NOT NULL CHECK(method_code IN(1,2))," +
+            "phase INTEGER CHECK(phase IS NULL OR phase IN(1,2))," +
+            "call_started_at_ms INTEGER NOT NULL CHECK(call_started_at_ms>0)," +
+            "first_voice_sample_at_ms INTEGER CHECK(first_voice_sample_at_ms IS NULL OR first_voice_sample_at_ms>0)," +
+            "completed_at_ms INTEGER NOT NULL CHECK(completed_at_ms>=call_started_at_ms)," +
+            "tone_count INTEGER NOT NULL CHECK(tone_count BETWEEN 1 AND 32)," +
+            "CHECK(source_code=method_code)) STRICT");
+        schema.put("recording_tone", "CREATE TABLE recording_tone (" +
+            "call_id INTEGER NOT NULL REFERENCES recording_tone_sequence(call_id) ON DELETE CASCADE," +
+            "ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31)," +
+            "frequency_1_millihz INTEGER CHECK(frequency_1_millihz IS NULL OR frequency_1_millihz BETWEEN 1 AND 8000000)," +
+            "frequency_2_millihz INTEGER CHECK(frequency_2_millihz IS NULL OR frequency_2_millihz BETWEEN 1 AND 8000000)," +
+            "codec_symbol TEXT CHECK(codec_symbol IS NULL OR (length(codec_symbol) BETWEEN 1 AND 64 AND codec_symbol NOT GLOB '*[^A-Z0-9_]*'))," +
+            "offset_ms INTEGER CHECK(offset_ms IS NULL OR offset_ms>=0)," +
+            "duration_ms INTEGER NOT NULL CHECK(duration_ms>0)," +
+            "confidence_ppm INTEGER CHECK(confidence_ppm IS NULL OR confidence_ppm BETWEEN 0 AND 1000000)," +
+            "PRIMARY KEY(call_id,ordinal)," +
+            "CHECK(frequency_2_millihz IS NULL OR frequency_1_millihz IS NOT NULL)," +
+            "CHECK(frequency_1_millihz IS NOT NULL OR codec_symbol IS NOT NULL)) WITHOUT ROWID, STRICT");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    private static Map<String,String> formatFiveSchema()
     {
         Map<String,String> schema = new LinkedHashMap<>(FORMAT_THREE_DDL);
         schema.putAll(ManagedRecordingTones.ddl());

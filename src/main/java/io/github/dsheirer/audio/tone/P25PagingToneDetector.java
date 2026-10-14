@@ -21,7 +21,9 @@ import org.jtransforms.fft.FloatFFT_1D;
  *
  * Examines 128 ms Hann windows every 20 ms. A candidate must have 90% of its spectral power within five bins of one
  * 200-3000 Hz peak, at least 12 dB separation from any other peak, energy in every 32 ms quarter-window, and continuous
- * frequency within 4 Hz for at least 200 ms of qualified window centers. Short gaps are not bridged. Offsets/durations
+ * frequency within 4 Hz for at least 200 ms of qualified window centers. Qualified tone reports use the nearest
+ * allowed AMBE single-tone frequency. Continuity still uses the unsnapped spectral estimates, so different pitches
+ * in the same nominal band cannot borrow each other's qualification time. Short gaps are not bridged. Offsets/durations
  * describe the qualified
  * centers, with window-limited onset accuracy; short or distorted real tones may be missed. Confidence is an evidence
  * score, not a calibrated probability. Pure sustained whistles or nearly sinusoidal speech can also qualify.
@@ -50,15 +52,17 @@ public final class P25PagingToneDetector
     {
         public DetectedTone
         {
-            if(!Double.isFinite(frequencyHz) || frequencyHz < MINIMUM_FREQUENCY_HZ ||
-                frequencyHz > MAXIMUM_FREQUENCY_HZ || offsetMilliseconds < 0 || durationMilliseconds < 200 ||
+            if(!Double.isFinite(frequencyHz) || frequencyHz < 156.25 ||
+                frequencyHz > 3812.5 || offsetMilliseconds < 0 || durationMilliseconds < 200 ||
                 !Double.isFinite(confidence) || confidence < 0.0 || confidence > 1.0)
             {
                 throw new IllegalArgumentException("Invalid detected tone evidence");
             }
 
+            frequencyHz = AmbeToneFrequencyMapping.nearest((int)Math.round(frequencyHz * 1000))
+                .orElseThrow(() -> new IllegalArgumentException("Tone frequency is outside the AMBE table")).frequencyHz();
             source = "decoded_audio";
-            method = "p25_pcm_tone_v1";
+            method = "p25_pcm_ambe_tone_v2";
         }
     }
 
@@ -258,7 +262,7 @@ public final class P25PagingToneDetector
             tones.add(new DetectedTone(run.frequencyHz(),
                 (run.firstCenter - HOP_SIZE / 2) * 1000L / SAMPLE_RATE,
                 qualifiedSamples * 1000L / SAMPLE_RATE, run.confidenceSum / run.count,
-                "decoded_audio", "p25_pcm_tone_v1"));
+                "decoded_audio", "p25_pcm_ambe_tone_v2"));
         }
     }
 

@@ -216,6 +216,20 @@ public final class ManagedRecordingCatalogMigrator
                     statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone_sequence"));
                     statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone"));
                 }
+                case 4 ->
+                {
+                    // Rebuild the constrained parent with foreign keys still enabled. Retain child values in a
+                    // transaction-local table before dropping the old parent, whose cascade would delete them.
+                    statement.execute("CREATE TEMP TABLE recording_tone_before_format5 AS SELECT * FROM recording_tone");
+                    statement.execute("DROP TABLE recording_tone");
+                    statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format4");
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone_sequence"));
+                    statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format4");
+                    statement.execute("DROP TABLE recording_tone_sequence_format4");
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone"));
+                    statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format5");
+                    statement.execute("DROP TABLE temp.recording_tone_before_format5");
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

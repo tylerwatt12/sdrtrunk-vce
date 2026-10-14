@@ -463,7 +463,7 @@ class ManagedRecordingCatalogMigratorTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + catalog);
             Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA user_version=4");
+            statement.execute("PRAGMA user_version=" + (ManagedRecordingSchema.CURRENT_FORMAT_VERSION + 1));
         }
         String original = SqliteDatabaseSnapshot.sha256(catalog);
         assertThrows(SQLException.class, () -> ManagedRecordingCatalogMigrator.inspect(catalog));

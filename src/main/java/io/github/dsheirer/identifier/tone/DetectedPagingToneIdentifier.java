@@ -16,8 +16,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.protocol.Protocol;
+import java.math.BigDecimal;
 import java.util.List;
-import java.util.Locale;
 import java.util.stream.Collectors;
 
 /** Inferred continuous PCM tones, deliberately separate from the codec-provided AMBE ToneIdentifier type. */
@@ -39,7 +39,7 @@ public final class DetectedPagingToneIdentifier extends Identifier<List<Detected
     @Override
     public String toString()
     {
-        return getValue().stream().map(tone -> String.format(Locale.ROOT, "%.1f Hz (%d ms)",
-            tone.frequencyHz(), tone.durationMilliseconds())).collect(Collectors.joining(", "));
+        return getValue().stream().map(tone -> BigDecimal.valueOf(tone.frequencyHz()).stripTrailingZeros().toPlainString()
+            + " Hz (" + tone.durationMilliseconds() + " ms)").collect(Collectors.joining(", "));
     }
 }

@@ -46,8 +46,40 @@ class ToneActivitySchemaTest
             var rows = page(connection); ToneActivitySchema.enrichPage(connection, rows);
             assertEquals(851_000_000L, ((Number)rows.getFirst().get("frequency_hz")).longValue());
             assertEquals(ToneSummaryPayload.summary(sequence), rows.getFirst().get("paging_tone_summary"));
+            Map<?,?> summary = (Map<?,?>)rows.getFirst().get("paging_tone_summary");
+            assertEquals("p25_pcm_tone_v1", summary.get("method"));
+            assertFalse(summary.containsKey("frequency_mapping"));
+            Map<?,?> firstTone = (Map<?,?>)((List<?>)summary.get("tones")).getFirst();
+            assertEquals(List.of(1000.123), firstTone.get("frequencies_hz"));
+            assertFalse(firstTone.containsKey("matching_frequency_hz"));
+            assertFalse(firstTone.containsKey("matching_code"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone WHERE ordinal=0 AND frequency_1_millihz=1000123 AND frequency_2_millihz IS NULL AND codec_symbol IS NULL AND offset_ms=100 AND duration_ms=200"));
             assertEquals(24, ReceiverActivityFilterCatalog.actionCode("TONE"));
             assertEquals(62, ReceiverActivityFilterCatalog.eventTypeCode("tone"));
+            integrity(connection);
+        }
+    }
+
+    @Test void nominalPcmMethodPersistsItsVersionAndOnlyTheReportedNominalFrequency() throws Exception
+    {
+        try(Connection connection = open(":memory:"))
+        {
+            var previous = sequence(100, false, 1);
+            var sequence = new CompletedToneSequence(previous.snapshot(), previous.firstVoiceSampleTimestamp(),
+                CompletedToneSequence.Source.DECODED_AUDIO, CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2,
+                List.of(new CompletedToneSequence.Element(List.of(1000_000), null, 100L, 200, .91234567)));
+            assertTrue(ToneActivitySchema.record(connection, new ReceiverActivityMapper().mapCompletedToneSequence(sequence), true));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone_sequence WHERE source_code=1 AND method_code=3"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone WHERE frequency_1_millihz=1000000 AND frequency_2_millihz IS NULL AND codec_symbol IS NULL"));
+            var rows = page(connection); ToneActivitySchema.enrichPage(connection, rows);
+            assertEquals(ToneSummaryPayload.summary(sequence), rows.getFirst().get("paging_tone_summary"));
+            var summary = (Map<?,?>)rows.getFirst().get("paging_tone_summary");
+            assertEquals("p25_pcm_ambe_tone_v2", summary.get("method"));
+            assertFalse(summary.containsKey("frequency_mapping"));
+            var tone = (Map<?,?>)((List<?>)summary.get("tones")).getFirst();
+            assertEquals(List.of(1000.), tone.get("frequencies_hz"));
+            assertFalse(tone.containsKey("matching_frequency_hz"));
+            assertFalse(tone.containsKey("matching_code"));
             integrity(connection);
         }
     }

@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 public final class ToneActivitySchema
 {
     private ToneActivitySchema() {}
-    private static final String SEQUENCE_SQL = """
+    private static final String FORMAT_50_SEQUENCE_SQL = """
         CREATE TABLE receiver_activity_tone_sequence (
             event_id INTEGER PRIMARY KEY REFERENCES receiver_activity_event(id) ON DELETE CASCADE,
             source_code INTEGER NOT NULL CHECK(source_code IN (1,2)),
@@ -35,6 +35,10 @@ public final class ToneActivitySchema
             CHECK(source_code=method_code)
         ) STRICT
         """;
+    private static final String SEQUENCE_SQL = FORMAT_50_SEQUENCE_SQL
+        .replace("method_code IN (1,2)", "method_code IN (1,2,3)")
+        .replace("CHECK(source_code=method_code)",
+            "CHECK((source_code=1 AND method_code IN (1,3)) OR (source_code=2 AND method_code=2))");
     private static final String TONE_SQL = """
         CREATE TABLE receiver_activity_tone (
             event_id INTEGER NOT NULL REFERENCES receiver_activity_tone_sequence(event_id) ON DELETE CASCADE,
@@ -51,8 +55,19 @@ public final class ToneActivitySchema
         ) WITHOUT ROWID, STRICT
         """;
 
-    /** Fresh creation and the sole adjacent migrator use identical authoritative definitions. */
+    /** Frozen format-50/51 definition for the historical adjacent step. */
     public static void upgradeFrom49(Connection connection) throws SQLException
+    {
+        addToneHistory(connection, FORMAT_50_SEQUENCE_SQL);
+    }
+
+    /** Fresh current schema uses the same authoritative method definitions as the format-51-to-52 step. */
+    public static void createCurrent(Connection connection) throws SQLException
+    {
+        addToneHistory(connection, SEQUENCE_SQL);
+    }
+
+    private static void addToneHistory(Connection connection, String sequenceSql) throws SQLException
     {
         List<String> indexes = new ArrayList<>(); List<String[]> statistics = new ArrayList<>();
         List<IndexSample> samples = new ArrayList<>(); Long sequence;
@@ -117,9 +132,56 @@ public final class ToneActivitySchema
             }
             else statement.executeUpdate("DELETE FROM sqlite_sequence WHERE name='receiver_activity_event' AND NOT EXISTS(SELECT 1 FROM receiver_activity_event)");
             ReceiverActivitySchema.createFormat50ResolvedView(connection);
-            statement.executeUpdate(SEQUENCE_SQL); statement.executeUpdate(TONE_SQL);
+            statement.executeUpdate(sequenceSql); statement.executeUpdate(TONE_SQL);
             //Reload the preserved estimates without collecting new statistics or changing retained samples.
             if(!statistics.isEmpty() || !samples.isEmpty()) statement.execute("ANALYZE sqlite_schema");
+        }
+    }
+
+    /** Preserve legacy raw/encoded rows; only admit the explicit new prospective nominal PCM method. */
+    public static void upgradeFrom51(Connection connection) throws SQLException
+    {
+        if(connection.getAutoCommit())
+            throw new SQLException("Tone method upgrade requires the Application Migrator transaction");
+        try(Statement statement = connection.createStatement())
+        {
+            try(var row = statement.executeQuery("PRAGMA foreign_keys"))
+            {
+                if(row.next() && row.getInt(1) != 0)
+                    throw new SQLException("Tone method upgrade requires the Application Migrator foreign-key boundary");
+            }
+            List<String[]> statistics = new ArrayList<>();
+            try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"))
+            {
+                if(exists.next()) try(Statement stats = connection.createStatement(); var rows = stats.executeQuery(
+                    "SELECT idx,stat FROM sqlite_stat1 WHERE tbl='receiver_activity_tone_sequence'"))
+                {
+                    while(rows.next()) statistics.add(new String[]{rows.getString(1),rows.getString(2)});
+                }
+            }
+            statement.executeUpdate(SEQUENCE_SQL.replace("receiver_activity_tone_sequence (",
+                "receiver_activity_tone_sequence_format52 ("));
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone_sequence_format52
+                    (event_id,source_code,method_code,phase,call_started_at_ms,first_voice_sample_at_ms,completed_at_ms,tone_count)
+                SELECT event_id,source_code,method_code,phase,call_started_at_ms,first_voice_sample_at_ms,completed_at_ms,tone_count
+                FROM receiver_activity_tone_sequence
+                """);
+            statement.executeUpdate("DROP TABLE receiver_activity_tone_sequence");
+            statement.executeUpdate("ALTER TABLE receiver_activity_tone_sequence_format52 RENAME TO receiver_activity_tone_sequence");
+            if(!statistics.isEmpty())
+            {
+                try(PreparedStatement restore = connection.prepareStatement(
+                    "INSERT INTO sqlite_stat1(tbl,idx,stat) VALUES('receiver_activity_tone_sequence',?,?)"))
+                {
+                    for(String[] row: statistics)
+                    {
+                        restore.setString(1,row[0]); restore.setString(2,row[1]); restore.addBatch();
+                    }
+                    restore.executeBatch();
+                }
+                statement.execute("ANALYZE sqlite_schema");
+            }
         }
     }
 

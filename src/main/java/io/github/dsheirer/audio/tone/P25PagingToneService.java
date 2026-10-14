@@ -587,7 +587,7 @@ public final class P25PagingToneService
                 List.of((int)Math.round(tone.frequencyHz() * 1000)),null,tone.offsetMilliseconds(),
                 tone.durationMilliseconds(),tone.confidence())).toList();
             publishCompleted(queued,new CompletedToneSequence(event.snapshot(),Math.max(0,context.firstFrameTimestamp - 20),
-                CompletedToneSequence.Source.DECODED_AUDIO,CompletedToneSequence.Method.P25_PCM_TONE_V1,elements));
+                CompletedToneSequence.Source.DECODED_AUDIO,CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2,elements));
             Binding legacy = queued.registration().legacyBinding(queued);
             if(!tones.isEmpty() && current(queued.epoch()) && queued.registration().legacyCurrent(legacy) &&
                 queued.epoch().claim())

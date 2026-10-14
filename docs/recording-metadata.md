@@ -109,6 +109,18 @@ RSSI, SNR, and BER are not currently captured with recorded audio legs, so this 
 It does not borrow live signal displays, control-channel statistics, later database records, or measurements from
 another leg.
 
+## Paging Tone Frequencies
+
+When a completed tone sequence is available for the recorded leg, numbered `VCE_PAGING_TONE_n_FREQUENCY_1_HZ`
+fields contain the reported frequency in decimal hertz. New PCM detections report only the nearest allowed AMBE
+single-tone frequency, from 156.25–3812.5 Hz in 31.25 Hz steps; an exact halfway case chooses the lower value.
+For example, a detected pitch near 566.38 Hz is reported as `562.5`.
+
+`VCE_PAGING_TONE_METHOD=p25_pcm_ambe_tone_v2` identifies these nominal reports. Older files using
+`p25_pcm_tone_v1` retain their original measured values. Codec-provided `ambe_tone_v1` metadata retains its existing
+single-tone or dual-tone values and symbols. There are no separate measured/matching tags in new reports.
+The recording's audio, tone offsets and qualified durations are unchanged by assigning a nominal frequency.
+
 ## Synthetic Group-Call Example
 
 The following exact text values are illustrative and do not represent a captured call. A source with home identity

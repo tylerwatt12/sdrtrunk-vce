@@ -116,6 +116,14 @@ retained tone contexts. Scoped deletion expands and counts both child levels und
 Stats clears children before parents. The separate Managed Recordings catalog format 4 uses the same typed summary
 shape but follows recording ownership and deletion, independently of Activity retention.
 
+The current PCM detector reports only predefined AMBE single-tone nominal frequencies. It uses the original
+spectral estimates to qualify a sustained tone, then assigns the nearest nominal, with exact halfway cases choosing
+the lower frequency. New reports use method code 3 (`p25_pcm_ambe_tone_v2`); existing method-1 measurements and
+method-2 encoded metadata keep their original stored values. The Activity and recording readouts show one nominal
+frequency for PCM tones, including older detections, rather than separate measured and matching values. There are
+no extra matching-frequency columns or per-tone matching fields. Formats 52 (application) and 5 (Managed Recordings)
+admit the new explicit method while preserving prior tone rows during upgrade.
+
 ### Alias Editor large-list indexes
 
 The web Alias Editor never builds a whole-list activity snapshot. SQLite applies the selected Alias List, search, and

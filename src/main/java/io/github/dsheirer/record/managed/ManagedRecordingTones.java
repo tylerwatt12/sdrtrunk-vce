@@ -23,13 +23,13 @@ public final class ManagedRecordingTones
         definitions.put("recording_tone_sequence", "CREATE TABLE recording_tone_sequence (" +
             "call_id INTEGER PRIMARY KEY REFERENCES recording_call(id) ON DELETE CASCADE," +
             "source_code INTEGER NOT NULL CHECK(source_code IN(1,2))," +
-            "method_code INTEGER NOT NULL CHECK(method_code IN(1,2))," +
+            "method_code INTEGER NOT NULL CHECK(method_code IN(1,2,3))," +
             "phase INTEGER CHECK(phase IS NULL OR phase IN(1,2))," +
             "call_started_at_ms INTEGER NOT NULL CHECK(call_started_at_ms>0)," +
             "first_voice_sample_at_ms INTEGER CHECK(first_voice_sample_at_ms IS NULL OR first_voice_sample_at_ms>0)," +
             "completed_at_ms INTEGER NOT NULL CHECK(completed_at_ms>=call_started_at_ms)," +
             "tone_count INTEGER NOT NULL CHECK(tone_count BETWEEN 1 AND 32)," +
-            "CHECK(source_code=method_code)) STRICT");
+            "CHECK((source_code=1 AND method_code IN(1,3)) OR (source_code=2 AND method_code=2))) STRICT");
         definitions.put("recording_tone", "CREATE TABLE recording_tone (" +
             "call_id INTEGER NOT NULL REFERENCES recording_tone_sequence(call_id) ON DELETE CASCADE," +
             "ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 31)," +

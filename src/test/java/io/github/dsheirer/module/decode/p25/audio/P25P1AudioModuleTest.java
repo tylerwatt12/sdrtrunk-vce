@@ -275,7 +275,8 @@ class P25P1AudioModuleTest
                 DecoderStateEvent.Event.END, State.IDLE));
             assertTrue(detected.await(3, TimeUnit.SECONDS));
             assertEquals(Protocol.APCO25, message.get().getProtocol());
-            assertEquals(800.0, message.get().toneIdentifier().getValue().getFirst().frequencyHz(), 1.0);
+            assertEquals(812.5, message.get().toneIdentifier().getValue().getFirst().frequencyHz());
+            assertEquals("p25_pcm_ambe_tone_v2", message.get().toneIdentifier().getValue().getFirst().method());
             assertEquals(1020, message.get().firstVoiceFrameTimestamp());
             assertEquals("p25-paging-tone-observer", deliveryThread.get());
         }
@@ -370,11 +371,11 @@ class P25P1AudioModuleTest
             CompletedToneSequence result = sequence.get();
             assertNotNull(result);
             assertEquals(CompletedToneSequence.Source.DECODED_AUDIO, result.source());
-            assertEquals(CompletedToneSequence.Method.P25_PCM_TONE_V1, result.method());
+            assertEquals(CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2, result.method());
             assertEquals(Protocol.APCO25, result.protocol());
             assertEquals(1_000L, result.firstVoiceSampleTimestamp());
             assertEquals(1, result.tones().size());
-            assertEquals(800.0, result.tones().getFirst().frequenciesMilliHertz().getFirst() / 1000., 1.0);
+            assertEquals(812_500, result.tones().getFirst().frequenciesMilliHertz().getFirst());
             assertTrue(result.tones().getFirst().durationMilliseconds() >= 700);
             assertEquals("p25-paging-tone-observer", deliveryThread.get());
             var nativeSnapshot = completed.getFirst().snapshot();

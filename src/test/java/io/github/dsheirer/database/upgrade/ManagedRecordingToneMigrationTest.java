@@ -21,7 +21,7 @@ class ManagedRecordingToneMigrationTest
 {
     @TempDir Path directory;
 
-    @Test void frozenPopulatedThreePreservesEveryValueAndAllocatorThroughFour() throws Exception
+    @Test void frozenPopulatedThreePreservesEveryValueAndAllocatorThroughCurrent() throws Exception
     {
         Path prior = createPrior(directory.resolve("prior.sqlite"));
         Map<String,List<String>> before;
@@ -35,7 +35,7 @@ class ManagedRecordingToneMigrationTest
         assertTrue(migrated.migrated()); assertNotNull(migrated.backup());
         try(Connection connection = open(prior))
         {
-            ManagedRecordingSchema.validate(connection,4); assertEquals(before, contents(connection));
+            ManagedRecordingSchema.validate(connection,ManagedRecordingSchema.CURRENT_FORMAT_VERSION); assertEquals(before, contents(connection));
             assertEquals(0, scalar(connection,"SELECT count(*) FROM recording_tone_sequence"));
             assertEquals(0, scalar(connection,"SELECT count(*) FROM recording_tone")); integrity(connection);
         }
@@ -49,7 +49,7 @@ class ManagedRecordingToneMigrationTest
         Path prior = createPrior(directory.resolve("retry.sqlite")); Map<String,List<String>> before;
         try(Connection connection = open(prior)) { before = contents(connection); }
         assertThrows(SQLException.class, () -> ManagedRecordingCatalogMigrator.migrate(prior,false,
-            connection -> { throw new SQLException("Injected format4 final boundary"); }, ManagedRecordingToneMigrationTest::open));
+            connection -> { throw new SQLException("Injected current-format final boundary"); }, ManagedRecordingToneMigrationTest::open));
         try(Connection connection = open(prior))
         {
             ManagedRecordingSchema.validate(connection,3); assertEquals(before,contents(connection));
@@ -57,7 +57,7 @@ class ManagedRecordingToneMigrationTest
         }
         assertTrue(ManagedRecordingCatalogMigrator.migrate(prior,false).migrated());
         try(Connection connection = open(prior))
-        { ManagedRecordingSchema.validate(connection,4); assertEquals(before,contents(connection)); integrity(connection); }
+        { ManagedRecordingSchema.validate(connection,ManagedRecordingSchema.CURRENT_FORMAT_VERSION); assertEquals(before,contents(connection)); integrity(connection); }
     }
 
     @Test void mixedOrNewerCatalogIsRefusedBeforeMutation() throws Exception
@@ -71,7 +71,7 @@ class ManagedRecordingToneMigrationTest
         assertArrayEquals(original, Files.readAllBytes(prior));
         Path newer = createPrior(directory.resolve("newer.sqlite"));
         try(Connection connection = open(newer); var sql = connection.createStatement())
-        { sql.execute("PRAGMA user_version=5"); }
+        { sql.execute("PRAGMA user_version=" + (ManagedRecordingSchema.CURRENT_FORMAT_VERSION + 1)); }
         byte[] future = Files.readAllBytes(newer);
         assertThrows(SQLException.class, () -> ManagedRecordingCatalogMigrator.migrate(newer,false));
         assertArrayEquals(future, Files.readAllBytes(newer));

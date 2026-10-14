@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Test;
 class P25PagingToneServiceTest
 {
     private static final P25PagingToneDetector.DetectedTone TONE =
-        new P25PagingToneDetector.DetectedTone(800, 54, 200, 0.98, "decoded_audio", "p25_pcm_tone_v1");
+        new P25PagingToneDetector.DetectedTone(800, 54, 200, 0.98, "decoded_audio", "p25_pcm_ambe_tone_v2");
 
     @Test
     void defaultsOnAndDisabledOffersNeverRetainOrAnalyze()
@@ -543,8 +543,8 @@ class P25PagingToneServiceTest
 
             assertEquals(1, service.analyzedCalls(), "Boundary delta " + boundaryDelta);
             assertEquals(1, messages.size());
-            assertEquals(800.0, ((DecodedPagingToneMessage)messages.getFirst())
-                .toneIdentifier().getValue().getFirst().frequencyHz(), 1.0);
+            assertEquals(812.5, ((DecodedPagingToneMessage)messages.getFirst())
+                .toneIdentifier().getValue().getFirst().frequencyHz());
             assertEquals(0, service.droppedEvents());
             assertEquals(0, service.retainedBytes());
         }
@@ -619,7 +619,8 @@ class P25PagingToneServiceTest
         offerCall(registration, 5, 40);
         service.drain();
         var message = (DecodedPagingToneMessage)messages.getFirst();
-        assertEquals(800.0, message.toneIdentifier().getValue().getFirst().frequencyHz(), 1.0);
+        assertEquals(812.5, message.toneIdentifier().getValue().getFirst().frequencyHz());
+        assertEquals("p25_pcm_ambe_tone_v2", message.toneIdentifier().getValue().getFirst().method());
         assertNotEquals("ToneIdentifier", message.toneIdentifier().getClass().getSimpleName());
     }
 

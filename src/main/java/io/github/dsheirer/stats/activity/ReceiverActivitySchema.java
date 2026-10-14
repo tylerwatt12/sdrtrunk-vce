@@ -209,7 +209,7 @@ public class ReceiverActivitySchema
     public static void create(Connection connection) throws SQLException
     {
         createFormat48(connection);
-        ToneActivitySchema.upgradeFrom49(connection);
+        ToneActivitySchema.createCurrent(connection);
     }
 
     /** Exact historical current creator retained for the adjacent migration. */

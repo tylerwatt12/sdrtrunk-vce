@@ -34,7 +34,8 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
 
     public enum Method
     {
-        P25_PCM_TONE_V1(1, "p25_pcm_tone_v1"), AMBE_TONE_V1(2, "ambe_tone_v1");
+        P25_PCM_TONE_V1(1, "p25_pcm_tone_v1"), AMBE_TONE_V1(2, "ambe_tone_v1"),
+        P25_PCM_AMBE_TONE_V2(3, "p25_pcm_ambe_tone_v2");
         private final int mCode;
         private final String mValue;
         Method(int code, String value) { mCode = code; mValue = value; }
@@ -66,13 +67,15 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
         tones = List.copyOf(tones);
         if(snapshot.callId() == null || snapshot.callLegId() == null || !snapshot.complete() ||
             firstVoiceSampleTimestamp < 0 || tones.size() > MAXIMUM_TONES ||
-            (source == Source.DECODED_AUDIO) != (method == Method.P25_PCM_TONE_V1))
+            source == Source.DECODED_AUDIO && method != Method.P25_PCM_TONE_V1 && method != Method.P25_PCM_AMBE_TONE_V2 ||
+            source == Source.ENCODED && method != Method.AMBE_TONE_V1)
             throw new IllegalArgumentException("Complete bounded native-call context required");
         for(Element element: tones)
         {
             if(source == Source.ENCODED && (element.codecSymbol() == null || element.confidence() != null) ||
                 source == Source.DECODED_AUDIO && (element.codecSymbol() != null || element.frequenciesMilliHertz().size() != 1))
                 throw new IllegalArgumentException("Tone source and fields differ");
+            if(method == Method.P25_PCM_AMBE_TONE_V2) requireNominalPcmTone(element);
         }
         //Detach on the observer worker. Existing AMBE ToneIdentifiers contain mutable duration objects;
         //the explicit elements own that evidence, so do not retain those identifiers in captured call facts.
@@ -82,6 +85,17 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(), true,
             snapshot.encryptionState(), snapshot.recordAudio(), snapshot.recordingMetadata(), snapshot.voiceCallQuality(),
             snapshot.callLegId(), snapshot.callLegSource(), snapshot.callEncryptionEvidence());
+    }
+
+    /** New nominal PCM evidence must not be confused with legacy measured-frequency evidence. */
+    static void requireNominalPcmTone(Element element)
+    {
+        if(element.codecSymbol() != null || element.frequenciesMilliHertz().size() != 1 ||
+            AmbeToneFrequencyMapping.nearest(element.frequenciesMilliHertz().getFirst())
+                .filter(match -> match.frequencyMilliHertz() == element.frequenciesMilliHertz().getFirst()).isEmpty())
+        {
+            throw new IllegalArgumentException("Nominal PCM tone method requires a predefined single frequency");
+        }
     }
 
     public AudioCallId callId() { return snapshot.callId(); }
