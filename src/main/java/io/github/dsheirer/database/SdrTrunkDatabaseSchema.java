@@ -1412,6 +1412,7 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);
+        io.github.dsheirer.database.settings.ReceiverSettingsSchema.validate(connection);
 
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("""

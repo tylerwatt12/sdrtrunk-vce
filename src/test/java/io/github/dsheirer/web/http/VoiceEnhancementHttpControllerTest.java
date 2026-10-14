@@ -7,6 +7,8 @@ import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.audio.codec.mbe.JmbeVocoderAudio;
 import io.github.dsheirer.audio.enhance.VocoderAudioFixtures;
 import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -27,7 +29,9 @@ class VoiceEnhancementHttpControllerTest
     void selectedJmbeOwnsTheModelAndOnlyTheEnabledSettingCanBeWritten() throws Exception
     {
         AtomicReference<JmbeVocoderAudio> selected = new AtomicReference<>();
-        var service = new VoiceEnhancementService(temporary, selected::get);
+        Path database = temporary.resolve("settings.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        var service = new VoiceEnhancementService(new ApplicationSettingsStore(database), selected::get);
         var controller = new VoiceEnhancementHttpController(service);
         var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext(VoiceEnhancementHttpController.PATH, controller::handle);

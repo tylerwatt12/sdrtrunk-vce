@@ -104,11 +104,11 @@ class SdrTrunkDatabaseStartupTest
     void freshSchemaOmitsRetiredNamedChannelMaps() throws Exception
     {
         Path database = mTemporaryFolder.resolve("fresh-schema.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             assertEquals("0", scalar(statement, """
                 SELECT COUNT(*) FROM sqlite_master

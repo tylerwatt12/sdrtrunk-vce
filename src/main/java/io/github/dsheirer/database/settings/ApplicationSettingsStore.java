@@ -78,6 +78,32 @@ public class ApplicationSettingsStore
         }
     }
 
+    /**
+     * Reads a bounded stored document for an owning service that must validate its exact syntax before decoding.
+     * Only an absent row is empty; a present non-text or oversized value is invalid.
+     */
+    public Optional<String> loadJson(String key, int maximumBytes) throws IOException, SQLException
+    {
+        if(maximumBytes < 1) throw new IllegalArgumentException("Maximum settings size must be positive");
+        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT CASE WHEN typeof(settings_json)='text' AND length(CAST(settings_json AS BLOB))<=?
+                            THEN settings_json END
+                FROM application_settings WHERE key=?
+                """))
+        {
+            statement.setInt(1, maximumBytes);
+            statement.setString(2, key);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                if(!resultSet.next()) return Optional.empty();
+                String json = resultSet.getString(1);
+                if(json == null) throw new IOException("Application settings value is invalid");
+                return Optional.of(json);
+            }
+        }
+    }
+
     public void save(String key, Object value) throws IOException, SQLException
     {
         saveJson(mDatabasePath, key, mObjectMapper.writeValueAsString(value));

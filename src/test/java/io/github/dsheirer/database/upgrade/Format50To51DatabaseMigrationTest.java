@@ -35,8 +35,8 @@ class Format50To51DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-50-to-51", "format-51-to-52"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
-            assertEquals(52, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(List.of("format-50-to-51", "format-51-to-52", "format-52-to-53"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(17, scalar(connection, "SELECT logical_call_count FROM alias_activity_summary WHERE alias_id=900002"));
             assertEquals(2000, scalar(connection, "SELECT last_evidence_ms FROM alias_activity_summary WHERE alias_id=900002"));
             assertEquals("11:not_collected", text(connection, "SELECT protocol_code||':'||metrics_state FROM alias_activity_summary WHERE alias_id=900001"));
@@ -72,7 +72,7 @@ class Format50To51DatabaseMigrationTest
             assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_table_info('alias_activity_summary') WHERE name='last_reset_ms'"));
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(52, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             integrity(connection);
         }
     }

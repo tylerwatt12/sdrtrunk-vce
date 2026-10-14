@@ -43,7 +43,7 @@ class Format51To52DatabaseMigrationTest
             assertEquals("Database update committed", progress.getLast());
             try(Connection connection = open(database))
             {
-                assertEquals(52, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(before, contents(connection), "Retain every value, tone fact, statistic and allocator");
                 assertEquals(indexes, indexDefinitions(connection));
                 integrity(connection);
@@ -105,7 +105,7 @@ class Format51To52DatabaseMigrationTest
             new ApplicationMigrationService().migrateCurrent(dataRoot, false, null);
             try(Connection connection = open(database))
             {
-                assertEquals(52, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(before, contents(connection));
                 integrity(connection);
             }
@@ -133,9 +133,9 @@ class Format51To52DatabaseMigrationTest
             var before = contents(connection); var indexes = indexDefinitions(connection);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(List.of("format-51-to-52"),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-51-to-52", "format-52-to-53"),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before,contents(connection)); assertEquals(indexes,indexDefinitions(connection));
-            assertEquals(52,DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
             assertEquals(1,scalar(connection,"SELECT count(*) FROM receiver_activity_tone_sequence s JOIN receiver_activity_tone t USING(event_id) WHERE s.source_code=1 AND s.method_code=1 AND t.frequency_1_millihz=343300"));
             assertEquals(1,scalar(connection,"SELECT count(*) FROM receiver_activity_tone_sequence s JOIN receiver_activity_tone t USING(event_id) WHERE s.source_code=2 AND s.method_code=2 AND t.codec_symbol='HZ_812_50' AND t.frequency_1_millihz=812500"));
@@ -163,7 +163,7 @@ class Format51To52DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(52,DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
         }
     }
 
@@ -233,7 +233,8 @@ class Format51To52DatabaseMigrationTest
         {
             List<String> values=new ArrayList<>();
             try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT * FROM \""+table.replace("\"","\"\"")+"\""+
-                (table.equals("database_metadata")?" WHERE key<>'database_format_version'":"")))
+                (table.equals("database_metadata")?" WHERE key<>'database_format_version'":
+                    table.equals("application_settings")?" WHERE key NOT IN ('remote.links','audio.paging_tones','audio.voice_enhancement')":"")))
             {
                 while(rows.next())
                 {

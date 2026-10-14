@@ -12,24 +12,48 @@ import io.github.dsheirer.audio.codec.mbe.JmbeVocoderAudio;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.DecoderType;
-import java.nio.file.Files;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class VoiceEnhancementServiceTest
 {
     @TempDir Path temporary;
+    private ApplicationSettingsStore mSettingsStore;
+
+    @BeforeEach
+    void createDatabase() throws Exception
+    {
+        Path database = temporary.resolve("settings.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        mSettingsStore = new ApplicationSettingsStore(database);
+    }
 
     @Test
     void defaultsOffAndDoesNotLoadJmbeUntilAnAdministrationRequestOrWorkerNeedsIt() throws Exception
     {
         AtomicInteger reads = new AtomicInteger();
-        VoiceEnhancementService service = new VoiceEnhancementService(temporary.resolve("models"), () -> {
+        AtomicInteger databaseReads = new AtomicInteger();
+        ApplicationSettingsStore guarded = new ApplicationSettingsStore(mSettingsStore.getDatabasePath())
+        {
+            @Override
+            public java.util.Optional<String> loadJson(String key, int maximumBytes) throws IOException, SQLException
+            {
+                assertEquals(1, databaseReads.incrementAndGet(), "Live audio must use the cached selection");
+                return super.loadJson(key, maximumBytes);
+            }
+        };
+        VoiceEnhancementService service = new VoiceEnhancementService(guarded, () -> {
             reads.incrementAndGet();
             return null;
         });
@@ -42,27 +66,27 @@ class VoiceEnhancementServiceTest
         assertNull(before.model());
         assertThrows(IllegalArgumentException.class, () -> service.setEnabled(before.revision(), true));
         assertNull(service.render(call(DecoderType.P25_PHASE1), true));
-        assertFalse(Files.exists(temporary.resolve("models")));
+        assertEquals(1, databaseReads.get());
+        assertFalse(mSettingsStore.load(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
+            VoiceEnhancementService.Settings.class).orElseThrow().enabled());
     }
 
     @Test
     void savesOnlyTheEnabledFlagAndUsesTheCurrentlySelectedJmbeModel() throws Exception
     {
-        Path directory = temporary.resolve("models");
         AtomicReference<JmbeVocoderAudio> selected = new AtomicReference<>(VocoderAudioFixtures.provider("first").bridge());
-        VoiceEnhancementService service = new VoiceEnhancementService(directory, selected::get);
+        VoiceEnhancementService service = new VoiceEnhancementService(mSettingsStore, selected::get);
         var before = service.snapshot();
         assertEquals("ready", before.status());
         assertEquals("first", before.model().get("id"));
         assertTrue(service.setEnabled(before.revision(), true).updated());
         String enabledRevision = service.snapshot().revision();
-        assertEquals(service.snapshot(), new VoiceEnhancementService(directory, selected::get).snapshot());
-        String saved = Files.readString(directory.resolve("selection.json"));
-        var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(saved);
-        assertEquals(2, json.size());
-        assertEquals(2, json.path("version").intValue());
-        assertTrue(json.path("enabled").booleanValue());
-        assertFalse(saved.contains("sha256"));
+        assertEquals(service.snapshot(), new VoiceEnhancementService(mSettingsStore, selected::get).snapshot());
+        var saved = mSettingsStore.load(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
+            com.fasterxml.jackson.databind.JsonNode.class).orElseThrow();
+        assertEquals(1, saved.size());
+        assertTrue(saved.path("enabled").booleanValue());
+        assertFalse(saved.has("sha256"));
         assertFalse(service.setEnabled(before.revision(), false).updated());
 
         selected.set(VocoderAudioFixtures.provider("replacement").bridge());
@@ -77,37 +101,80 @@ class VoiceEnhancementServiceTest
     }
 
     @Test
-    void legacySelectionPreservesItsEnabledChoiceWithoutLoadingOrDeletingOldArchives() throws Exception
+    void startupReadsCommittedChoiceWithoutLoadingTheProviderOrRewritingSettings() throws Exception
     {
-        Path directory = temporary.resolve("models");
-        Files.createDirectories(directory);
-        byte[] oldArchive = {1, 2, 3};
-        Path archive = directory.resolve("a".repeat(64) + ".zip");
-        Files.write(archive, oldArchive);
-        Path selection = directory.resolve("selection.json");
-        String legacy = "{\"version\":1,\"enabled\":true,\"bundle_sha256\":\"" + "a".repeat(64) + "\"}";
-        Files.writeString(selection, legacy);
-        var provider = VocoderAudioFixtures.provider("embedded").bridge();
-        VoiceEnhancementService service = new VoiceEnhancementService(directory, () -> provider);
+        mSettingsStore.save(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
+            new VoiceEnhancementService.Settings(true));
+        var original = mSettingsStore.load(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
+            com.fasterxml.jackson.databind.JsonNode.class).orElseThrow();
+        AtomicInteger reads = new AtomicInteger();
+
+        VoiceEnhancementService service = new VoiceEnhancementService(mSettingsStore, () -> {
+            reads.incrementAndGet();
+            return null;
+        });
+
         assertTrue(service.isEnabled());
-        assertEquals("embedded", service.snapshot().model().get("id"));
-        assertEquals(legacy, Files.readString(selection), "Compatibility reads do not rewrite saved data");
-        assertTrue(service.setEnabled(service.snapshot().revision(), false).updated());
-        assertEquals(2, new com.fasterxml.jackson.databind.ObjectMapper().readTree(Files.readString(selection))
-            .path("version").intValue());
-        assertArrayEquals(oldArchive, Files.readAllBytes(archive));
+        assertEquals(0, reads.get());
+        assertEquals(original, mSettingsStore.load(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
+            com.fasterxml.jackson.databind.JsonNode.class).orElseThrow());
     }
 
     @Test
     void failedSettingsWriteLeavesEnabledStateUnchanged() throws Exception
     {
-        Path directory = temporary.resolve("models");
         var provider = VocoderAudioFixtures.provider("embedded").bridge();
-        VoiceEnhancementService service = new VoiceEnhancementService(directory, () -> provider);
+        ApplicationSettingsStore failing = new ApplicationSettingsStore(mSettingsStore.getDatabasePath())
+        {
+            @Override
+            public void save(String key, Object value) throws IOException, SQLException
+            {
+                throw new SQLException("Synthetic write failure");
+            }
+        };
+        VoiceEnhancementService service = new VoiceEnhancementService(failing, () -> provider);
         var before = service.snapshot();
-        Files.writeString(directory, "a file cannot be a model directory");
-        assertThrows(java.io.IOException.class, () -> service.setEnabled(before.revision(), true));
+
+        IOException failure = assertThrows(IOException.class, () -> service.setEnabled(before.revision(), true));
+
+        assertNull(failure.getCause());
         assertEquals(before, service.snapshot());
+        assertFalse(mSettingsStore.load(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
+            VoiceEnhancementService.Settings.class).orElseThrow().enabled());
+    }
+
+    @Test
+    void duplicateTrailingAndOversizedStoredValuesDoNotEnableAudioOrChangeSavedSettings() throws Exception
+    {
+        for(String raw: new String[]{"{\"enabled\":false,\"enabled\":true}", "{\"enabled\":true} {}",
+            " ".repeat(257) + "{\"enabled\":true}"})
+        {
+            try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + mSettingsStore.getDatabasePath());
+                var statement = connection.createStatement();
+                var update = connection.prepareStatement(
+                    "UPDATE application_settings SET settings_json = ? WHERE key = ?"))
+            {
+                //Model an already damaged row without changing the fixture schema.
+                statement.execute("PRAGMA ignore_check_constraints=ON");
+                update.setString(1, raw);
+                update.setString(2, ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY);
+                assertEquals(1, update.executeUpdate());
+            }
+
+            var service = new VoiceEnhancementService(mSettingsStore, () -> null);
+
+            assertFalse(service.isEnabled());
+            try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + mSettingsStore.getDatabasePath());
+                var query = connection.prepareStatement("SELECT settings_json FROM application_settings WHERE key = ?"))
+            {
+                query.setString(1, ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY);
+                try(var row = query.executeQuery())
+                {
+                    assertTrue(row.next());
+                    assertEquals(raw, row.getString(1));
+                }
+            }
+        }
     }
 
     @Test
@@ -116,7 +183,7 @@ class VoiceEnhancementServiceTest
         var provider = VocoderAudioFixtures.provider("embedded");
         provider.mutateInput = true;
         provider.failModelInfo = true;
-        VoiceEnhancementService service = new VoiceEnhancementService(temporary, provider::bridge);
+        VoiceEnhancementService service = new VoiceEnhancementService(mSettingsStore, provider::bridge);
         CompletedAudioCall call = call(DecoderType.P25_PHASE1);
         float[] before = call.audioBuffers().getFirst().clone();
         var agc = service.render(call, true);
@@ -150,7 +217,7 @@ class VoiceEnhancementServiceTest
     void passesBoundedToneProtectionToJmbeAndKeepsEnhancementScopedToValidatedP25() throws Exception
     {
         var provider = VocoderAudioFixtures.provider("embedded");
-        VoiceEnhancementService service = new VoiceEnhancementService(temporary, provider::bridge);
+        VoiceEnhancementService service = new VoiceEnhancementService(mSettingsStore, provider::bridge);
         CompletedAudioCall call = call(DecoderType.P25_PHASE2);
         CompletedToneSequence tones = new CompletedToneSequence(call.nativeAudioSnapshot(), 1000,
             CompletedToneSequence.Source.ENCODED, CompletedToneSequence.Method.AMBE_TONE_V1,
@@ -178,7 +245,7 @@ class VoiceEnhancementServiceTest
     {
         var provider = VocoderAudioFixtures.provider("embedded");
         provider.failModelInfo = true;
-        VoiceEnhancementService service = new VoiceEnhancementService(temporary, provider::bridge);
+        VoiceEnhancementService service = new VoiceEnhancementService(mSettingsStore, provider::bridge);
         CompletedAudioCall template = call(DecoderType.AM);
         float[] samples = new float[VoiceEnhancementService.MAXIMUM_INPUT_SAMPLES + 1];
         samples[0] = .1f;
@@ -205,7 +272,7 @@ class VoiceEnhancementServiceTest
     void modelMetadataOrInferenceFailureRetainsIndependentGainAndReCopiesNativeAudio() throws Exception
     {
         var provider = VocoderAudioFixtures.provider("embedded");
-        VoiceEnhancementService service = new VoiceEnhancementService(temporary, provider::bridge);
+        VoiceEnhancementService service = new VoiceEnhancementService(mSettingsStore, provider::bridge);
         service.setEnabled(service.snapshot().revision(), true);
         CompletedAudioCall call = call(DecoderType.P25_PHASE1);
         float[] before = call.audioBuffers().getFirst().clone();

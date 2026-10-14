@@ -12,7 +12,7 @@ the [documentation index](README.md).
 | What you want to do | Where to start | What changes |
 | --- | --- | --- |
 | Use a newer build with the same active VCE data folder | Accept the database **Update** offered during startup | The active database is updated in place, with a recovery backup selected by default. |
-| Bring a previous VCE installation into a new download | **Copy a previous VCE installation / data folder** in first-run setup | A checked copy is installed in the new data folder, including saved Remote Links pairing. Available vault, JMBE, and optional module files are also copied. |
+| Bring a previous VCE installation into a new download | **Copy a previous VCE installation / data folder** in first-run setup | A checked copy of the database and its saved settings is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
 | Start a new installation from a VCE database file | **Import a SQLite database only** in first-run setup | Only the selected database contents are imported. Neighboring files and saved output paths are not moved. |
 | Replace the settings in an installation you already use | **File → Import SQLite Database…**, or **Help → Setup Wizard… → Replace settings from a SQLite database** | The whole application database is replaced after backing up the current one. This does not merge profiles. |
 | Add another supported XML playlist | **Help → Setup Wizard… → Import a legacy XML playlist** | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
@@ -60,9 +60,9 @@ Some older activity, signal history, or cached information may be reset when it 
 new reception rebuilds those observations. An unusable setting or configuration component may be repaired, defaulted,
 or skipped independently. The plan describes these possibilities and the final report names the actual effects.
 
-A full installation/data-folder import preserves saved Remote Links pairing and connection settings. If those settings
-are present but cannot be copied safely, the import stops so the saved pairing is not lost. Check Remote Links in the
-previous installation and retry. Profiles that have never configured Remote Links need no settings file.
+Remote Links pairing and connection settings, paging-tone detection, and voice-enhancement choices are stored in the
+application database. Both folder imports and SQLite-only imports preserve these saved choices with the rest of the
+database configuration.
 
 A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
 Missing or unusable optional files are reported; you can select or set them up again. Logs, recordings, screenshots,
@@ -181,7 +181,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -702,6 +702,20 @@ and encoded tone rows, sequence order, timing, events, counters, settings and al
 adjacent Application Migrator updates only the tone-context method constraints. The populated format-51 fixture and
 its exact signature remain supported, and fresh and migrated format-52 databases share the same target signature.
 
+The format 52-to-53 step makes Remote Links connection and pairing settings, paging-tone detection, and voice
+enhancement required settings in the existing `application_settings` table. The distinct keys are `remote.links`,
+`audio.paging_tones`, and `audio.voice_enhancement`. Existing valid values, credentials, and revisions are preserved.
+Absent records are created explicitly with Remote Links disabled, paging-tone detection enabled, and voice
+enhancement disabled; the plan and completion report count these defaults. Malformed existing values refuse the
+update without exposing their contents. Every other setting, retained observation, relationship, and allocator
+remains unchanged.
+
+Fresh format-53 creation installs the same records, and normal startup validates them without creating or repairing
+missing values. Folder imports, SQLite-file imports, and whole-database replacement carry these settings with the
+database contents. The table layout is unchanged, so the authoritative global marker distinguishes the semantic
+formats. Format 52 keeps its frozen populated fixture and signature; the adjacent migration, rollback, and retry
+checks reach the same exact format-53 contract.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -718,7 +732,7 @@ allocator, adding no historical tone rows. The exact format-3 signature remains 
 creator; fresh and migrated format-4 catalogs share the same authoritative definitions. Catalog format 5 admits the
 same new nominal-frequency PCM method, preserving every existing recording and tone fact through its adjacent
 format-4-to-5 step. The format-4 signature remains frozen and the upgrade neither converts old measured frequencies
-nor backfills tones. The main application database is independently at format 52; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+nor backfills tones. The main application database is independently at format 53; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -818,11 +832,9 @@ interrupted. Old in-memory preferences are closed before replacement and are nev
 ## Input Scope
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
-as Remote Links pairing, the vault, JMBE library, optional modules, and paths that need remapping. Existing Remote Links
-settings are validated and copied with owner-only permissions before promotion, without changing the selected source.
-Missing settings are normal; malformed, unreadable, or unsafe existing settings refuse the import without reporting
-their contents. Remote Links network destinations and stable channel/sender identities are preserved without path
-remapping. An unavailable optional artifact is
+as the vault, JMBE library, optional modules, and paths that need remapping. Remote Links settings and the paging-tone
+and voice-enhancement choices are part of the application database for every import scope. Remote Links network
+destinations and stable channel/sender identities are preserved without path remapping. An unavailable optional artifact is
 reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the
 selected scope can attempt; completion reports what was copied, unavailable, or skipped. File-only migration must never

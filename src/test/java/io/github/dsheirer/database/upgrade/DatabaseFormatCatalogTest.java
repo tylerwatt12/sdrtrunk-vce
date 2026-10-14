@@ -248,7 +248,9 @@ class DatabaseFormatCatalogTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, plan.steps().size());
             assertEquals("format-30-to-31", plan.steps().getFirst().id());
 
+            connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            connection.commit();
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, report.steps().size());
             assertEquals("format-30-to-31", report.steps().getFirst().id());
             assertTrue(report.target().markerPresent());
@@ -269,8 +271,10 @@ class DatabaseFormatCatalogTest
             assertFalse(source.markerPresent());
             assertEquals("format-32-to-33", DatabaseMigrationChain.validateSource(connection, source)
                 .steps().getFirst().id());
+            connection.setAutoCommit(false);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseMigrationChain.migrate(connection).target().version());
+            connection.commit();
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
@@ -308,7 +312,9 @@ class DatabaseFormatCatalogTest
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, migration);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, plan.steps().size());
             assertEquals("format-38-to-39", plan.steps().getFirst().id());
+            connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            connection.commit();
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 38, report.steps().size());
             assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
             assertTrue(report.target().markerPresent());
@@ -331,7 +337,9 @@ class DatabaseFormatCatalogTest
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 39, plan.steps().size());
             assertEquals("format-39-to-40", plan.steps().getFirst().id());
+            connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            connection.commit();
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 39, report.steps().size());
             assertEquals("format-39-to-40", report.steps().getFirst().id());
             assertEquals(DatabaseFormatCatalog.requireVersion(39).fingerprint(), fingerprint);
@@ -355,7 +363,9 @@ class DatabaseFormatCatalogTest
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.validateSource(connection, detected);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 40, plan.steps().size());
             assertEquals("format-40-to-41", plan.steps().getFirst().id());
+            connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            connection.commit();
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 40, report.steps().size());
             assertEquals("format-40-to-41", report.steps().getFirst().id());
             assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(), fingerprint);

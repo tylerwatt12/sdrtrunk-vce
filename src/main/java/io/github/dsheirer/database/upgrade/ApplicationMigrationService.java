@@ -20,7 +20,6 @@ import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
-import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -987,18 +986,7 @@ public final class ApplicationMigrationService
 
     private List<String> copyProfileData(Path sourceRoot, Path stageRoot) throws IOException
     {
-        List<String> statuses = new ArrayList<>(4);
-        try
-        {
-            statuses.add(new RemoteLinkSettingsStore(sourceRoot).copyTo(stageRoot) ?
-                optionalCopied("Remote Links settings") : optionalMissing("Remote Links settings"));
-        }
-        catch(IOException | RuntimeException failure)
-        {
-            //Pairing is saved receiver configuration. Do not silently discard it or expose credential diagnostics.
-            throw new IOException("Remote Links settings could not be copied safely. Close the previous VCE " +
-                "installation and check its Remote Links settings before trying the import again.");
-        }
+        List<String> statuses = new ArrayList<>(3);
         statuses.add(copyOptionalDirectory(sourceRoot.resolve(JMBE_DIRECTORY), stageRoot.resolve(JMBE_DIRECTORY),
             "JMBE library files", "Select the JMBE library again after setup."));
         statuses.add(copyOptionalDirectory(sourceRoot.resolve(MODULES_DIRECTORY),

@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.audio.tone.PagingToneSettingsService;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -22,7 +24,9 @@ class PagingToneHttpControllerTest
     @Test
     void validatesRequestsAndPublishesAtomicSavedToggle() throws Exception
     {
-        var service = new PagingToneSettingsService(directory.resolve("paging-tones.json"), ignored -> {});
+        Path database = directory.resolve("settings.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        var service = new PagingToneSettingsService(new ApplicationSettingsStore(database), ignored -> {});
         var controller = new PagingToneHttpController(service);
         var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext(PagingToneHttpController.PATH, controller::handle);

@@ -36,7 +36,7 @@ import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.audio.tone.PagingToneSettingsService;
 import io.github.dsheirer.web.http.PagingToneHttpController;
-import io.github.dsheirer.portable.PortableApplicationPaths;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.web.http.VoiceEnhancementHttpController;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.controller.NamingThreadFactory;
@@ -408,11 +408,11 @@ public class StatsWebServerService implements AutoCloseable
         mRadioReferenceImportService = radioReferenceImportService;
         mDatabase = new StatsWebDatabase(userPreferences);
         mEntityCatalog = new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
-        mPagingToneSettingsService = new PagingToneSettingsService(
-            PortableApplicationPaths.getDataRoot().resolve("audio-analysis/paging-tones.json"),
+        ApplicationSettingsStore receiverSettings = new ApplicationSettingsStore(
+            SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mPagingToneSettingsService = new PagingToneSettingsService(receiverSettings,
             P25PagingToneService.getInstance()::setEnabled);
-        mVoiceEnhancementService = new VoiceEnhancementService(
-            PortableApplicationPaths.getDataRoot().resolve("audio-models"),
+        mVoiceEnhancementService = new VoiceEnhancementService(receiverSettings,
             () -> io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().getVocoderAudioProcessor(
                 mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary()));
         mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog, mVoiceEnhancementService,

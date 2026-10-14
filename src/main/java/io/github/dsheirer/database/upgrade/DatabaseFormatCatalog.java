@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 52;
+    public static final int CURRENT_VERSION = 53;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -588,13 +588,21 @@ public final class DatabaseFormatCatalog
             "Retain all previously stored tone frequencies and encoded symbols unchanged",
             "Use AMBE+2 frequencies for newly detected tones without rewriting existing tone history"));
 
+    private static final FormatDescriptor FORMAT_53 = new FormatDescriptor(53, "database-receiver-settings-v1",
+        "Database-owned Remote Links, paging-tone and voice-enhancement settings", FORMAT_52.fingerprint(), Map.of(),
+        List.of("main format 53"), "src/test/java/io/github/dsheirer/database/upgrade/Format53TestDatabase.java", List.of(
+            "Preserve every valid existing configuration, credential, observation, relationship, counter and allocator",
+            "Require distinct typed Remote Links, paging-tone and voice-enhancement application_settings rows",
+            "Initialize absent rows only during fresh creation or the adjacent migration; refuse malformed saved values",
+            "Keep startup validation-only and preserve these settings through database imports and replacement"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
             FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52);
+            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -701,7 +709,8 @@ public final class DatabaseFormatCatalog
         }
 
         if(FORMAT_25_FINGERPRINT.equals(fingerprint) || FORMAT_28_FINGERPRINT.equals(fingerprint) ||
-            FORMAT_33_FINGERPRINT.equals(fingerprint) || FORMAT_45_FINGERPRINT.equals(fingerprint))
+            FORMAT_33_FINGERPRINT.equals(fingerprint) || FORMAT_45_FINGERPRINT.equals(fingerprint) ||
+            FORMAT_52.fingerprint().equals(fingerprint))
         {
             //These DDL families contain adjacent semantic formats with identical preserved row content.
             //Keep the authoritative marker requirement for the whole family, including later preference revisions
@@ -775,7 +784,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_52;
+        return FORMAT_53;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -970,6 +979,10 @@ public final class DatabaseFormatCatalog
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor,
                                            boolean allowRecoverableCurrentData) throws SQLException
     {
+        if(descriptor.version() >= 53)
+        {
+            io.github.dsheirer.database.settings.ReceiverSettingsSchema.validate(connection);
+        }
         if(allowRecoverableCurrentData && descriptor.version() == CURRENT_VERSION)
         {
             //Only the staged Application Migrator uses this admission. It repairs each bounded current component
@@ -1092,7 +1105,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
-            case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52 -> 11;
+            case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

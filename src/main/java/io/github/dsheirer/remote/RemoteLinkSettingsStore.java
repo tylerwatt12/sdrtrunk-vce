@@ -10,172 +10,70 @@
  */
 package io.github.dsheirer.remote;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.AclEntry;
-import java.nio.file.attribute.AclEntryFlag;
-import java.nio.file.attribute.AclEntryPermission;
-import java.nio.file.attribute.AclEntryType;
-import java.nio.file.attribute.AclFileAttributeView;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.PosixFileAttributeView;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.UserPrincipal;
-import java.util.EnumSet;
-import java.util.List;
+import java.sql.SQLException;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * Portable receiver-owned remote-link settings.  This file contains link credentials; never serialize a Settings
- * instance into diagnostics, an HTTP response, or a log.
+ * Receiver-owned remote-link settings in the application database. These settings contain link credentials; never
+ * serialize a Settings instance into diagnostics, an HTTP response, or a log.
  */
 public final class RemoteLinkSettingsStore
 {
     public static final String DEFAULT_BIND_ADDRESS = "0.0.0.0";
+    public static final String SETTINGS_KEY = ReceiverSettingsSchema.REMOTE_LINKS_KEY;
     private static final int MAXIMUM_SETTINGS_BYTES = 256_000;
-    private static final Set<PosixFilePermission> OWNER_ONLY = Set.of(
-        PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-    private final Path mPath;
-    private final ObjectMapper mMapper = new ObjectMapper()
-        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private final ApplicationSettingsStore mSettings;
 
-    public RemoteLinkSettingsStore(Path dataRoot)
+    public RemoteLinkSettingsStore(Path databasePath)
     {
-        mPath = dataRoot.toAbsolutePath().normalize().resolve("remote-links").resolve("settings.json");
+        mSettings = new ApplicationSettingsStore(databasePath);
     }
 
     public synchronized Settings load() throws IOException
     {
-        if(!Files.exists(mPath))
-        {
-            return Settings.defaults();
-        }
-        if(Files.isSymbolicLink(mPath) || Files.isSymbolicLink(mPath.getParent()) ||
-            !Files.isRegularFile(mPath) || Files.size(mPath) > MAXIMUM_SETTINGS_BYTES)
-        {
-            throw new IOException("Remote-link settings file is invalid");
-        }
-        ownerOnly(mPath.getParent(), true);
-        ownerOnly(mPath, false);
         try
         {
-            Settings settings = mMapper.readValue(mPath.toFile(), Settings.class);
+            String json = mSettings.loadJson(SETTINGS_KEY, MAXIMUM_SETTINGS_BYTES)
+                .orElseThrow(() -> new IOException("Remote-link settings are missing"));
+            ReceiverSettingsSchema.validateJson(SETTINGS_KEY, json);
+            Settings settings = JSON.readValue(json, Settings.class);
             validate(settings);
             return settings;
         }
-        catch(JsonProcessingException | RuntimeException exception)
+        catch(IOException | SQLException | RuntimeException exception)
         {
             // Jackson diagnostics can quote a malformed credential value. Never put its cause in receiver logs.
-            throw new IOException("Remote-link settings file is invalid");
+            throw new IOException("Remote-link settings could not be loaded; restore a valid application database");
         }
     }
 
     public synchronized void save(Settings settings) throws IOException
     {
         validate(settings);
-        write(mMapper.writeValueAsBytes(settings));
-    }
-
-    /**
-     * Copies validated settings into a new portable profile without changing the source contents or permissions.
-     * Original bytes retain all credential fields, including settings a newer writer may have added.
-     */
-    public synchronized boolean copyTo(Path targetDataRoot) throws IOException
-    {
-        Path sourceDirectory = mPath.getParent();
-        BasicFileAttributes directoryAttributes = attributesIfPresent(sourceDirectory);
-        if(directoryAttributes == null) return false;
-        if(directoryAttributes.isSymbolicLink() || !directoryAttributes.isDirectory())
-        {
-            throw new IOException("Remote-link settings path is invalid");
-        }
-        BasicFileAttributes fileAttributes = attributesIfPresent(mPath);
-        if(fileAttributes == null) return false;
-        if(fileAttributes.isSymbolicLink() || !fileAttributes.isRegularFile() ||
-            fileAttributes.size() > MAXIMUM_SETTINGS_BYTES)
-        {
-            throw new IOException("Remote-link settings file is invalid");
-        }
-
-        byte[] contents;
-        try(var input = Files.newInputStream(mPath, LinkOption.NOFOLLOW_LINKS))
-        {
-            contents = input.readNBytes(MAXIMUM_SETTINGS_BYTES + 1);
-        }
-        if(contents.length > MAXIMUM_SETTINGS_BYTES)
-        {
-            throw new IOException("Remote-link settings file is invalid");
-        }
         try
         {
-            validate(mMapper.readValue(contents, Settings.class));
+            //Character bounds alone do not bound UTF-8 size. Never commit a value startup would refuse.
+            ReceiverSettingsSchema.validateJson(SETTINGS_KEY, JSON.writeValueAsString(settings));
+            //Commit credentials before the caller can replace its runtime settings snapshot.
+            mSettings.save(SETTINGS_KEY, settings);
         }
-        catch(JsonProcessingException | RuntimeException exception)
+        catch(IOException | SQLException | RuntimeException exception)
         {
-            //Never attach Jackson diagnostics, which can quote credentials from an invalid source.
-            throw new IOException("Remote-link settings file is invalid");
-        }
-
-        RemoteLinkSettingsStore target = new RemoteLinkSettingsStore(targetDataRoot);
-        if(attributesIfPresent(target.mPath) != null || target.mPath.equals(mPath))
-        {
-            throw new IOException("The destination already has remote-link settings");
-        }
-        target.write(contents);
-        return true;
-    }
-
-    private static BasicFileAttributes attributesIfPresent(Path path) throws IOException
-    {
-        try
-        {
-            return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        }
-        catch(NoSuchFileException missing)
-        {
-            //Unlike exists(), this does not mistake inaccessible credentials for an unconfigured profile.
-            return null;
+            //Database and serialization diagnostics may contain credential material. Keep the boundary cause-free.
+            throw new IOException("Remote-link settings could not be saved");
         }
     }
 
-    private void write(byte[] contents) throws IOException
-    {
-        Files.createDirectories(mPath.getParent());
-        if(Files.isSymbolicLink(mPath.getParent())) throw new IOException("Remote-link settings path is invalid");
-        ownerOnly(mPath.getParent(), true);
-        Path temporary = Files.createTempFile(mPath.getParent(), "settings-", ".tmp");
-        try
-        {
-            ownerOnly(temporary, false);
-            Files.write(temporary, contents);
-            try
-            {
-                Files.move(temporary, mPath, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            catch(AtomicMoveNotSupportedException ignored)
-            {
-                Files.move(temporary, mPath, StandardCopyOption.REPLACE_EXISTING);
-            }
-            ownerOnly(mPath, false);
-        }
-        finally
-        {
-            Files.deleteIfExists(temporary);
-        }
-    }
-
-    private static void validate(Settings settings) throws IOException
+    public static void validate(Settings settings) throws IOException
     {
         if(settings == null || settings.revision() < 1L || !validPort(settings.listenPort()) ||
             settings.bindAddress() == null || settings.bindAddress().length() > 255 ||
@@ -229,40 +127,7 @@ public final class RemoteLinkSettingsStore
         catch(IllegalArgumentException ignored) { return false; }
     }
 
-    private static void ownerOnly(Path path, boolean directory) throws IOException
-    {
-        boolean protectedByFileSystem = false;
-        PosixFileAttributeView posix = Files.getFileAttributeView(path, PosixFileAttributeView.class);
-        if(posix != null)
-        {
-            Set<PosixFilePermission> permissions = directory ? Set.of(PosixFilePermission.OWNER_READ,
-                PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE) : OWNER_ONLY;
-            posix.setPermissions(permissions);
-            if(!posix.readAttributes().permissions().equals(permissions))
-            {
-                throw new IOException("Unable to restrict remote-link settings permissions");
-            }
-            protectedByFileSystem = true;
-        }
-        AclFileAttributeView acl = Files.getFileAttributeView(path, AclFileAttributeView.class);
-        if(acl != null)
-        {
-            UserPrincipal owner = acl.getOwner();
-            AclEntry.Builder entry = AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(owner)
-                .setPermissions(EnumSet.allOf(AclEntryPermission.class));
-            if(directory) entry.setFlags(AclEntryFlag.FILE_INHERIT, AclEntryFlag.DIRECTORY_INHERIT);
-            acl.setAcl(List.of(entry.build()));
-            List<AclEntry> actual = acl.getAcl();
-            if(actual.isEmpty() || actual.stream().anyMatch(rule -> !owner.equals(rule.principal())))
-            {
-                throw new IOException("Unable to restrict remote-link settings access control");
-            }
-            protectedByFileSystem = true;
-        }
-        if(!protectedByFileSystem) throw new IOException("Remote-link settings filesystem has no access controls");
-    }
-
-    /** autoAdopt is retained only to read and safely rewrite existing credential files; setup is unconditional. */
+    /** The saved autoAdopt preference is retained; automatic channel setup is unconditional. */
     public record TrustedSender(String senderId, String displayName, String secret, boolean autoAdopt,
                                 Long defaultAliasListId, long pairedAtMs, boolean revoked)
     {

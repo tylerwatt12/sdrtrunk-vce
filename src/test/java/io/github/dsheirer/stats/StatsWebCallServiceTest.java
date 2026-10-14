@@ -34,6 +34,8 @@ import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Form;
@@ -93,7 +95,7 @@ class StatsWebCallServiceTest
         CompletedAudioCall source = pagingCall();
         float[] before = source.audioBuffers().getFirst().clone();
         var processor = VocoderAudioFixtures.provider("embedded-model");
-        var enhancement = new VoiceEnhancementService(directory, processor::bridge);
+        var enhancement = new VoiceEnhancementService(settings(directory), processor::bridge);
         try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement, enabled::get));
             FeedClient client = listen(service, Set.of()))
         {
@@ -121,7 +123,7 @@ class StatsWebCallServiceTest
     void optionalModelUsesExplicit16kWaveAndPreservesNativeCallAndDuration(@TempDir Path directory) throws Exception
     {
         var selected = new AtomicReference<>(VocoderAudioFixtures.provider("first-model").bridge());
-        var enhancement = new VoiceEnhancementService(directory, selected::get);
+        var enhancement = new VoiceEnhancementService(settings(directory), selected::get);
         try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement));
             FeedClient client = listen(service, Set.of()))
         {
@@ -159,7 +161,7 @@ class StatsWebCallServiceTest
     @Test
     void sharedToneDetailsDoNotRequireEnhancementOrBrowserAnalysis(@TempDir Path directory) throws Exception
     {
-        var enhancement = new VoiceEnhancementService(directory, () -> null);
+        var enhancement = new VoiceEnhancementService(settings(directory), () -> null);
         CompletedAudioCall source = pagingCall();
         CompletedToneSequence sequence = inferredTones(source.snapshot());
         try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement,
@@ -1819,4 +1821,11 @@ class StatsWebCallServiceTest
         field.setAccessible(true);
         return (AtomicLong)field.get(service);
     }
+    private static ApplicationSettingsStore settings(Path directory) throws Exception
+    {
+        Path database = directory.resolve("settings.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        return new ApplicationSettingsStore(database);
+    }
+
 }

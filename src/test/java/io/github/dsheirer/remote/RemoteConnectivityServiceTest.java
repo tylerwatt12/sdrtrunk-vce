@@ -12,6 +12,7 @@ import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -40,6 +41,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -59,6 +62,35 @@ class RemoteConnectivityServiceTest
 {
     @TempDir
     Path mTemp;
+
+    @Test
+    void failedPairingWriteKeepsTheRuntimeRevisionAndSenderSnapshotUnchanged() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("failed-save-host")))
+        {
+            var original = host.remote.snapshot();
+            try(Connection connection = SdrTrunkDatabase.open(host.configuration.getDatabasePath());
+                Statement statement = connection.createStatement())
+            {
+                statement.execute("""
+                    CREATE TRIGGER refuse_remote_settings BEFORE INSERT ON application_settings
+                    WHEN NEW.key='remote.links'
+                    BEGIN SELECT RAISE(ABORT, 'sensitive-sentinel'); END
+                    """);
+            }
+
+            var error = assertThrows(RemoteLinkAdministrationService.UnavailableException.class,
+                () -> host.remote.createSender(original.revision(),
+                    new RemoteLinkAdministrationService.CreateSenderRequest("Unsaved receiver")));
+
+            assertEquals(original, host.remote.snapshot());
+            assertEquals(original.revision(), new RemoteLinkSettingsStore(host.configuration.getDatabasePath())
+                .load().revision());
+            assertTrue(new RemoteLinkSettingsStore(host.configuration.getDatabasePath()).load().trustedSenders().isEmpty());
+            assertFalse(error.toString().contains("sensitive-sentinel"));
+            assertNull(error.getCause());
+        }
+    }
 
     @Test
     void choosesPreferredThenFactoryThenLowestP25AliasListWithoutRequiringSenderOptIn()
@@ -233,7 +265,7 @@ class RemoteConnectivityServiceTest
             assertTrue(discovered.stream().filter(sender -> eastPair.senderId().equals(sender.senderId()))
                 .findFirst().orElseThrow().feeds().getFirst().advertisedName().length() <= 120,
                 "long saved names must not kill the catalog connection");
-            assertTrue(new RemoteLinkSettingsStore(mTemp.resolve("host")).load().trustedSenders().stream()
+            assertTrue(new RemoteLinkSettingsStore(host.configuration.getDatabasePath()).load().trustedSenders().stream()
                 .allMatch(sender -> !sender.autoAdopt() && sender.defaultAliasListId() == null),
                 "old disabled sender preferences must not gate automatic setup");
             await(() -> host.remote.snapshot().senders().stream().allMatch(sender ->
@@ -338,7 +370,7 @@ class RemoteConnectivityServiceTest
             configuration = new ConfigurationManager(preferences, null, aliases,
                 new EventLogManager(aliases, preferences), null);
             configuration.init();
-            remote = new RemoteConnectivityService(configuration, preferences,
+            remote = new RemoteConnectivityService(configuration,
                 ChannelAdministrationServiceTestSupport.create(configuration));
             configuration.getChannelProcessingManager().setP25RemoteBitstreamService(remote);
         }

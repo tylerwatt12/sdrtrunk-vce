@@ -1,25 +1,18 @@
 /* Copyright (C) 2026. Licensed under GPL-3.0-or-later. */
 package io.github.dsheirer.audio.enhance;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.codec.mbe.JmbeVocoderAudio;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.io.IOException;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -35,41 +28,29 @@ public final class VoiceEnhancementService
     public static final int MAXIMUM_INPUT_SAMPLES = 120 * 8000;
     public static final int MAXIMUM_AGC_INPUT_SAMPLES = 16_777_216;
     private static final Logger LOG = LoggerFactory.getLogger(VoiceEnhancementService.class);
-    private static final ObjectMapper JSON = new ObjectMapper(JsonFactory.builder()
-        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-    private final Path mDirectory;
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private final ApplicationSettingsStore mSettingsStore;
     private final Supplier<JmbeVocoderAudio> mProviderSupplier;
     private final AtomicLong mFailures = new AtomicLong();
     private volatile boolean mEnabled;
 
-    public VoiceEnhancementService(Path directory, Supplier<JmbeVocoderAudio> providerSupplier)
+    public VoiceEnhancementService(ApplicationSettingsStore settingsStore, Supplier<JmbeVocoderAudio> providerSupplier)
     {
-        mDirectory = directory.toAbsolutePath().normalize();
+        mSettingsStore = Objects.requireNonNull(settingsStore);
         mProviderSupplier = Objects.requireNonNull(providerSupplier);
         loadEnabled();
     }
 
     private void loadEnabled()
     {
-        Path settings = mDirectory.resolve("selection.json");
-        if(!Files.exists(settings, LinkOption.NOFOLLOW_LINKS)) return;
         try
         {
-            if(!Files.isRegularFile(settings, LinkOption.NOFOLLOW_LINKS) || Files.size(settings) > 4096)
-                throw new IOException("Invalid audio setting");
-            JsonNode value = JSON.readTree(Files.readAllBytes(settings));
-            if(value == null || !value.isObject() || !value.path("version").isInt() ||
-                !value.path("enabled").isBoolean()) throw new IOException("Invalid audio setting");
-            int version = value.path("version").intValue();
-            // Explicit compatibility read: version 1 also selected an uploaded bundle. Keep only its enabled flag;
-            // the selected JMBE library now owns the model. Existing archives and the old file stay untouched.
-            if(version == 1 && (value.size() != 3 || !value.path("bundle_sha256").isTextual()) ||
-                version == 2 && value.size() != 2 || version != 1 && version != 2)
-                throw new IOException("Unsupported audio setting");
-            mEnabled = value.path("enabled").booleanValue();
+            String json = mSettingsStore.loadJson(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, 256)
+                .orElseThrow(() -> new IOException("Voice enhancement setting is missing"));
+            ReceiverSettingsSchema.validateJson(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, json);
+            mEnabled = JSON.readValue(json, Settings.class).enabled();
         }
-        catch(IOException | RuntimeException exception)
+        catch(IOException | SQLException | RuntimeException exception)
         {
             LOG.warn("Voice enhancement setting is unavailable; using original audio");
         }
@@ -250,16 +231,14 @@ public final class VoiceEnhancementService
 
     private void persist(boolean enabled) throws IOException
     {
-        Files.createDirectories(mDirectory);
-        Path target = mDirectory.resolve("selection.json");
-        Path temporary = Files.createTempFile(mDirectory, ".voice-setting-", ".tmp");
         try
         {
-            Files.write(temporary, JSON.writeValueAsBytes(Map.of("version", 2, "enabled", enabled)));
-            try(FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) { channel.force(true); }
-            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            mSettingsStore.save(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, new Settings(enabled));
         }
-        finally { Files.deleteIfExists(temporary); }
+        catch(IOException | SQLException | RuntimeException exception)
+        {
+            throw new IOException("Voice enhancement setting could not be saved");
+        }
     }
 
     private static String revision(boolean enabled, String status, Map<String,Object> model)
@@ -273,6 +252,7 @@ public final class VoiceEnhancementService
         catch(NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); }
     }
 
+    public record Settings(boolean enabled) {}
     public record Snapshot(String revision, boolean enabled, String status, Map<String,Object> model) {}
     public record UpdateResult(boolean updated, Snapshot snapshot) {}
     public record RenderedAudio(float[] samples, int sampleRate, String modelId) {}

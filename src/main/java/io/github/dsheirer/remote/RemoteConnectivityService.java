@@ -24,7 +24,6 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1NACPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.Outbound;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.Settings;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.TrustedSender;
@@ -111,20 +110,20 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final Thread mPublisher;
     private final Thread mConnector;
 
-    public RemoteConnectivityService(ConfigurationManager configuration, UserPreferences preferences)
+    public RemoteConnectivityService(ConfigurationManager configuration)
         throws IOException
     {
-        this(configuration, preferences, configuration.getChannelAdministrationService());
+        this(configuration, configuration.getChannelAdministrationService());
     }
 
     /** Headless test seam; production uses the configuration manager's normal administration boundary. */
-    RemoteConnectivityService(ConfigurationManager configuration, UserPreferences preferences,
+    RemoteConnectivityService(ConfigurationManager configuration,
                               ChannelAdministrationService channels) throws IOException
     {
         mConfiguration = Objects.requireNonNull(configuration);
         mChannels = Objects.requireNonNull(channels);
         mProcessing = configuration.getChannelProcessingManager();
-        mStore = new RemoteLinkSettingsStore(preferences.getDirectoryPreference().getDirectoryApplicationRoot());
+        mStore = new RemoteLinkSettingsStore(configuration.getDatabasePath());
         mSettings = mStore.load();
         mConfiguration.getChannelModel().addListener(mSavedChannelListener);
         mConfiguration.getAliasModel().aliasListDefinitions().addListener(mAliasListListener);

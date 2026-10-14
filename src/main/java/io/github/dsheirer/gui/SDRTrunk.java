@@ -238,7 +238,7 @@ public class SDRTrunk
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
         try
         {
-            mRemoteConnectivityService = new RemoteConnectivityService(mConfigurationManager, mUserPreferences);
+            mRemoteConnectivityService = new RemoteConnectivityService(mConfigurationManager);
             mConfigurationManager.getChannelProcessingManager().setP25RemoteBitstreamService(mRemoteConnectivityService);
         }
         catch(IOException exception)

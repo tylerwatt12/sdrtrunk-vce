@@ -68,6 +68,7 @@ public final class SdrTrunkDatabaseStartup
                 io.github.dsheirer.gui.setup.SetupProgress.write(connection,
                     new io.github.dsheirer.gui.setup.SetupProgress(false, false));
                 SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
+                io.github.dsheirer.database.settings.ReceiverSettingsSchema.initializeMissing(connection);
                 //The whole-file marker is authoritative only after every current schema, seed row, and required
                 //fresh-profile marker has been installed successfully.
                 DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);

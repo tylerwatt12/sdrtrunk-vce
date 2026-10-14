@@ -1,23 +1,15 @@
 /* Copyright (C) 2026. Licensed under GPL-3.0-or-later. */
 package io.github.dsheirer.audio.tone;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import java.io.IOException;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.util.HexFormat;
-import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -27,31 +19,23 @@ import org.slf4j.LoggerFactory;
 public final class PagingToneSettingsService
 {
     private static final Logger LOG = LoggerFactory.getLogger(PagingToneSettingsService.class);
-    private static final ObjectMapper JSON = new ObjectMapper(JsonFactory.builder()
-        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
-        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-    private final Path mFile;
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private final ApplicationSettingsStore mSettingsStore;
     private final Consumer<Boolean> mApply;
-    private State mState = new State(true, false);
+    private State mState = new State(false, true);
 
-    public PagingToneSettingsService(Path file, Consumer<Boolean> apply)
+    public PagingToneSettingsService(ApplicationSettingsStore settingsStore, Consumer<Boolean> apply)
     {
-        mFile = file.toAbsolutePath().normalize();
+        mSettingsStore = Objects.requireNonNull(settingsStore);
         mApply = Objects.requireNonNull(apply);
         try
         {
-            if(!Files.notExists(mFile, LinkOption.NOFOLLOW_LINKS))
-            {
-                if(!Files.isRegularFile(mFile, LinkOption.NOFOLLOW_LINKS) || Files.size(mFile) > 4096)
-                    throw new IOException("Invalid paging-tone settings");
-                JsonNode value = JSON.readTree(Files.readAllBytes(mFile));
-                if(value == null || !value.isObject() || value.size() != 2 ||
-                    !value.path("version").isInt() || value.path("version").intValue() != 1 ||
-                    !value.path("enabled").isBoolean()) throw new IOException("Invalid paging-tone settings");
-                mState = new State(value.path("enabled").booleanValue(), false);
-            }
+            String json = mSettingsStore.loadJson(ReceiverSettingsSchema.PAGING_TONES_KEY, 256)
+                .orElseThrow(() -> new IOException("Paging-tone setting is missing"));
+            ReceiverSettingsSchema.validateJson(ReceiverSettingsSchema.PAGING_TONES_KEY, json);
+            mState = new State(JSON.readValue(json, Settings.class).enabled(), false);
         }
-        catch(IOException | RuntimeException exception)
+        catch(IOException | SQLException | RuntimeException exception)
         {
             //Preserve a potential saved Off choice when the preference cannot be read.
             mState = new State(false, true);
@@ -72,15 +56,14 @@ public final class PagingToneSettingsService
         State next = new State(enabled, false);
         if(!next.equals(mState))
         {
-            Files.createDirectories(mFile.getParent());
-            Path temporary = Files.createTempFile(mFile.getParent(), ".paging-tones-", ".tmp");
             try
             {
-                Files.write(temporary, JSON.writeValueAsBytes(Map.of("version", 1, "enabled", enabled)));
-                try(FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) { channel.force(true); }
-                Files.move(temporary, mFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                mSettingsStore.save(ReceiverSettingsSchema.PAGING_TONES_KEY, new Settings(enabled));
             }
-            finally { Files.deleteIfExists(temporary); }
+            catch(IOException | SQLException | RuntimeException exception)
+            {
+                throw new IOException("Paging-tone setting could not be saved");
+            }
             mApply.accept(enabled);
             mState = next;
         }
@@ -98,6 +81,7 @@ public final class PagingToneSettingsService
     }
 
     private record State(boolean enabled, boolean unavailable) {}
+    public record Settings(boolean enabled) {}
     public record Snapshot(String revision, boolean enabled, String status) {}
     public record UpdateResult(boolean updated, Snapshot snapshot) {}
 }
