@@ -41,7 +41,9 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
@@ -77,6 +79,9 @@ public class JmbeLibraryPreferenceEditor extends VBox
     private HBox mButtonsBox;
     private CheckBox mAlertUserWhenMissingCheckBox;
     private CheckBox mMuteDecodedAmbeToneFramesCheckBox;
+    private Label mLibraryStatusLabel;
+    private boolean mInstalling;
+    private boolean mDisposed;
 
     public JmbeLibraryPreferenceEditor(UserPreferences userPreferences)
     {
@@ -87,12 +92,13 @@ public class JmbeLibraryPreferenceEditor extends VBox
 
         setPadding(new Insets(10,10,10,10));
         setSpacing(10);
-        getChildren().addAll(getEditorPane(), getButtonsBox(), getAlertUserWhenMissingCheckBox(),
+        getChildren().addAll(getEditorPane(), getButtonsBox(), getLibraryStatusLabel(), getAlertUserWhenMissingCheckBox(),
             getMuteDecodedAmbeToneFramesCheckBox());
     }
 
     public void dispose()
     {
+        mDisposed = true;
         MyEventBus.getGlobalEventBus().unregister(this);
     }
 
@@ -150,6 +156,12 @@ public class JmbeLibraryPreferenceEditor extends VBox
             mEditorPane = new GridPane();
             mEditorPane.setVgap(10);
             mEditorPane.setHgap(10);
+            ColumnConstraints labels = new ColumnConstraints();
+            labels.setMinWidth(Region.USE_PREF_SIZE);
+            ColumnConstraints values = new ColumnConstraints();
+            values.setMinWidth(0);
+            values.setHgrow(Priority.ALWAYS);
+            mEditorPane.getColumnConstraints().addAll(labels, values);
 
             int row = 0;
 
@@ -317,6 +329,7 @@ public class JmbeLibraryPreferenceEditor extends VBox
                 {
                     FileChooser fileChooser = new FileChooser();
                     fileChooser.setTitle("Select JMBE Audio Library Location");
+                    fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JMBE library (*.jar)", "*.jar"));
 
                     Path path = mUserPreferences.getDirectoryPreference().getDefaultJmbeDirectory();
 
@@ -330,7 +343,7 @@ public class JmbeLibraryPreferenceEditor extends VBox
 
                     if(selected != null)
                     {
-                        mUserPreferences.getJmbeLibraryPreference().setPathJmbeLibrary(selected.toPath());
+                        installLibrary(selected.toPath());
                     }
                 }
             });
@@ -339,12 +352,65 @@ public class JmbeLibraryPreferenceEditor extends VBox
         return mSelectButton;
     }
 
+    private Label getLibraryStatusLabel()
+    {
+        if(mLibraryStatusLabel == null)
+        {
+            mLibraryStatusLabel = new Label();
+            mLibraryStatusLabel.setWrapText(true);
+            mLibraryStatusLabel.setVisible(false);
+            mLibraryStatusLabel.setManaged(false);
+        }
+        return mLibraryStatusLabel;
+    }
+
+    private void showLibraryStatus(String message)
+    {
+        getLibraryStatusLabel().setText(message);
+        getLibraryStatusLabel().setVisible(true);
+        getLibraryStatusLabel().setManaged(true);
+    }
+
+    private void installLibrary(Path source)
+    {
+        if(mInstalling) return;
+        mInstalling = true;
+        getButtonsBox().setDisable(true);
+        showLibraryStatus("Checking and selecting your JMBE library…");
+        ThreadPool.CACHED.execute(() -> {
+            String failure = null;
+            try
+            {
+                io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.validateLibrary(source);
+                mUserPreferences.getJmbeLibraryPreference().installLibrary(source);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Unable to install the selected JMBE library", e);
+                failure = "The JMBE library could not be selected. Choose a compatible JMBE .jar file " +
+                    "and check that this installation’s data folder is writable, then try again. Your previous selection is unchanged.";
+            }
+            String error = failure;
+            Platform.runLater(() -> {
+                mInstalling = false;
+                if(mDisposed) return;
+                getButtonsBox().setDisable(false);
+                refreshPreferences();
+                showLibraryStatus(error == null ? "JMBE " +
+                    mUserPreferences.getJmbeLibraryPreference().getCurrentVersion() + " is selected and ready to use." : error);
+            });
+        });
+    }
+
     private Button getResetButton()
     {
         if(mResetButton == null)
         {
             mResetButton = new Button("Reset");
-            mResetButton.setOnAction(event -> mUserPreferences.getJmbeLibraryPreference().resetPathJmbeLibrary());
+            mResetButton.setOnAction(event -> {
+                mUserPreferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+                showLibraryStatus("JMBE selection cleared. Select or create a library to set up digital voice.");
+            });
         }
 
         return mResetButton;
@@ -356,6 +422,8 @@ public class JmbeLibraryPreferenceEditor extends VBox
         {
             Path path = mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary();
             mPathToJmbeLibraryLabel = new Label(path != null ? path.toString() : PATH_NOT_SET);
+            mPathToJmbeLibraryLabel.setWrapText(true);
+            mPathToJmbeLibraryLabel.setMaxWidth(Double.MAX_VALUE);
         }
 
         return mPathToJmbeLibraryLabel;
@@ -366,16 +434,27 @@ public class JmbeLibraryPreferenceEditor extends VBox
     {
         if(preferenceType != null && preferenceType == PreferenceType.JMBE_LIBRARY)
         {
-            Path path = mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-            getPathToJmbeLibraryLabel().setText(path != null ? path.toString() : PATH_NOT_SET);
-            Version version = mUserPreferences.getJmbeLibraryPreference().getCurrentVersion();
-            getJmbeVersionLabel().setText(version != null ? version.toString() : LIBRARY_NOT_SETUP);
-            getCreateButton().setText(mUserPreferences.getJmbeLibraryPreference()
-                .getPathJmbeLibrary() != null ? CHECK_FOR_UPDATE : CREATE_LIBRARY);
-            getAlertUserWhenMissingCheckBox().setSelected(mUserPreferences.getJmbeLibraryPreference()
-                .getAlertIfMissingLibraryRequired());
-            getMuteDecodedAmbeToneFramesCheckBox().setSelected(mUserPreferences.getJmbeLibraryPreference()
-                .getMuteDecodedAmbeToneFrames());
+            if(Platform.isFxApplicationThread()) refreshPreferences();
+            else Platform.runLater(this::refreshPreferences);
+        }
+    }
+
+    private void refreshPreferences()
+    {
+        if(mDisposed) return;
+        Path path = mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        getPathToJmbeLibraryLabel().setText(path != null ? path.toString() : PATH_NOT_SET);
+        Version version = mUserPreferences.getJmbeLibraryPreference().getCurrentVersion();
+        getJmbeVersionLabel().setText(version != null ? version.toString() : LIBRARY_NOT_SETUP);
+        getCreateButton().setText(path != null ? CHECK_FOR_UPDATE : CREATE_LIBRARY);
+        getAlertUserWhenMissingCheckBox().setSelected(mUserPreferences.getJmbeLibraryPreference()
+            .getAlertIfMissingLibraryRequired());
+        getMuteDecodedAmbeToneFramesCheckBox().setSelected(mUserPreferences.getJmbeLibraryPreference()
+            .getMuteDecodedAmbeToneFrames());
+        if(!mInstalling && getLibraryStatusLabel().isVisible())
+        {
+            showLibraryStatus(path == null ? "JMBE selection cleared. Select or create a library to set up digital voice." :
+                "JMBE " + version + " is selected and ready to use.");
         }
     }
 }

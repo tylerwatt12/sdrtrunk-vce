@@ -1,6 +1,8 @@
 package io.github.dsheirer.audio.codec.mbe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -50,6 +52,23 @@ class JmbeLibraryLoaderTest
         {
             assertNull(loader.getAudioCodec(oldLibrary, "TEST"));
         }
+    }
+
+    @Test
+    void compatibilityCheckRejectsMissingCapabilitiesWithoutReplacingTheActiveLibrary() throws Exception
+    {
+        Path working = createLibrary("1.0.14", 14.0f);
+        Path incompatible = createLibrary("1.0.15", 15.0f, false);
+        IAudioCodec codec = JmbeLibraryLoader.getInstance().getAudioCodec(working, "TEST");
+        try
+        {
+            JmbeLibraryLoader.validateLibrary(working);
+            assertThrows(java.io.IOException.class, () -> JmbeLibraryLoader.validateLibrary(incompatible));
+            IAudioCodec unchanged = JmbeLibraryLoader.getInstance().getAudioCodec(working, "TEST");
+            assertSame(codec.getClass().getClassLoader(), unchanged.getClass().getClassLoader());
+            assertEquals(14.0f, unchanged.getAudio(new byte[0])[0]);
+        }
+        finally { JmbeLibraryLoader.getInstance().close(); }
     }
 
     @Test

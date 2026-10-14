@@ -105,6 +105,51 @@ class SetupStartupBoundaryTest
         assertFalse(SetupReadiness.requiresJmbe("unsupported"));
     }
 
+    @Test void migratedCompatibleVoiceLibraryIsReviewedEvenWithoutDigitalAutoStart() throws Exception
+    {
+        SetupProgress progress = new SetupProgress(true, false);
+        SetupReadiness.prepareMigratedJmbe(progress, true, true);
+        progress.setComplete(false);
+        //Existing progress storage retains the pending review across an interrupted upgrade.
+        SetupProgress resumed = SetupProgress.decode(progress.encode());
+        assertEquals(SetupProgress.State.NEEDS_ATTENTION, resumed.get(SetupStep.JMBE));
+        assertEquals(SetupStep.JMBE,
+            SetupReadiness.nextStep(resumed, SetupStep.SOURCE, true, true, false, true));
+        assertEquals(SetupStep.JMBE, SetupReadiness.initialStep(resumed, false, true, true, false));
+        assertTrue(SetupReadiness.jmbeUpdateCheckPending(resumed, false));
+        resumed.set(SetupStep.JMBE, SetupProgress.State.RUNNING);
+        SetupProgress interrupted = SetupProgress.decode(resumed.encode());
+        assertTrue(SetupReadiness.jmbeUpdateCheckPending(interrupted, false));
+        assertFalse(SetupReadiness.jmbeUpdateCheckPending(interrupted, true));
+    }
+
+    @Test void copiedLibraryReviewResumesOnceAndHonorsKeepOrDefer() throws Exception
+    {
+        SetupProgress imported = SetupProgress.replacementReview();
+        SetupReadiness.prepareMigratedJmbe(imported, false, true);
+        assertEquals(SetupProgress.State.NEEDS_ATTENTION, imported.get(SetupStep.JMBE));
+        imported.set(SetupStep.JMBE, SetupProgress.State.CARRIED_OVER);
+        SetupReadiness.prepareMigratedJmbe(imported, false, true);
+        assertEquals(SetupProgress.State.NEEDS_ATTENTION, imported.get(SetupStep.JMBE));
+        for(SetupProgress.State choice : new SetupProgress.State[]{SetupProgress.State.COMPLETE, SetupProgress.State.DEFERRED})
+        {
+            imported.set(SetupStep.JMBE, choice);
+            SetupProgress resumed = SetupProgress.decode(imported.encode());
+            SetupReadiness.prepareMigratedJmbe(resumed, false, true);
+            assertEquals(choice, resumed.get(SetupStep.JMBE));
+        }
+    }
+
+    @Test void missingLibrariesAndOrdinaryLaunchesDoNotCreateAnUpdateReview()
+    {
+        SetupProgress missing = SetupProgress.replacementReview();
+        SetupReadiness.prepareMigratedJmbe(missing, true, false);
+        assertEquals(SetupProgress.State.PENDING, missing.get(SetupStep.JMBE));
+        SetupProgress current = new SetupProgress(true, false);
+        SetupReadiness.prepareMigratedJmbe(current, false, true);
+        assertEquals(SetupProgress.State.COMPLETE, current.get(SetupStep.JMBE));
+    }
+
     @Test void autoStartReviewAcceptsUnnamedChannels()
     {
         assertEquals("(Unnamed channel)", SetupWizard.autoStartLabel(null));

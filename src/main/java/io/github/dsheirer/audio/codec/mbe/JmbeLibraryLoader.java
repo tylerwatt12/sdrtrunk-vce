@@ -58,6 +58,21 @@ public final class JmbeLibraryLoader implements AutoCloseable
         return INSTANCE;
     }
 
+    /** Worker-only compatibility check that leaves the active library and its codecs unchanged. */
+    public static void validateLibrary(Path libraryPath) throws IOException
+    {
+        try(var loader = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader(), false))
+        {
+            for(String name: List.of("IMBE", "AMBE 3600 x 2450"))
+            {
+                if(loader.getAudioCodec(libraryPath, name) == null)
+                {
+                    throw new IOException("JMBE library cannot provide the required " + name + " codec");
+                }
+            }
+        }
+    }
+
     /**
      * Creates a codec from the currently selected library. A changed path, size, or modification time atomically loads
      * a new library while existing codec instances remain valid for channels still using them.

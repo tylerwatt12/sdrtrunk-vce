@@ -40,6 +40,8 @@ Statistics & history, Recordings, Your radios, Optimize decoding, and Review & f
   with the change shown in setup.
 - **Digital audio:** Set up JMBE to hear supported digital voice calls. Use an existing library or allow the wizard
   to download and build it. If that fails, retry or set it up later; digital voice needs a working library.
+  After migration, setup checks a carried-over library for updates. You can update it or keep the current version;
+  a failed update check does not prevent you from continuing with a working library.
 - **RadioReference:** Connect your account if you want directory lookups and imports. A saved password and a
   successfully tested connection are shown separately. You can set this up later.
 - **Statistics & history:** New profiles collect summary statistics. Saving individual activity events is optional.

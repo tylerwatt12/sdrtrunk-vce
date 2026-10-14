@@ -41,12 +41,12 @@ import org.slf4j.LoggerFactory;
 public class JmbeLibraryPreference extends Preference
 {
     private static final Logger mLog = LoggerFactory.getLogger(JmbeLibraryPreference.class);
-    private Preferences mPreferences = Preferences.userNodeForPackage(JmbeLibraryPreference.class);
+    private final Preferences mPreferences;
 
     private static final String PREFERENCE_KEY_PATH_JMBE_LIBRARY = "path.jmbe.library.1.0.0";
     private static final String PREFERENCE_KEY_PATH_ALERT_LIBRARY_REQUIRED = "alert.jmbe.required";
     private static final String PREFERENCE_KEY_MUTE_DECODED_AMBE_TONE_FRAMES = "jmbe.ambe.tone.audio.muted";
-    private Path mPathJmbeLibrary;
+    private volatile Path mPathJmbeLibrary;
     private Boolean mAlertIfMissingLibraryRequired;
     private Boolean mMuteDecodedAmbeToneFrames;
 
@@ -57,7 +57,13 @@ public class JmbeLibraryPreference extends Preference
      */
     public JmbeLibraryPreference(Listener<PreferenceType> updateListener)
     {
+        this(updateListener, Preferences.userNodeForPackage(JmbeLibraryPreference.class));
+    }
+
+    JmbeLibraryPreference(Listener<PreferenceType> updateListener, Preferences preferences)
+    {
         super(updateListener);
+        mPreferences = preferences;
     }
 
     @Override
@@ -110,7 +116,7 @@ public class JmbeLibraryPreference extends Preference
     }
 
     /** Validated, atomic setup installation. Failure leaves the selected library and its preference unchanged. */
-    public void installLibrary(Path source) throws java.io.IOException
+    public synchronized void installLibrary(Path source) throws java.io.IOException
     {
         if(!JmbeLibraryMetadata.isSupported(source)) throw new java.io.IOException("Unsupported JMBE library");
         Path directory = PortableApplicationPaths.getDataRoot().resolve("jmbe");
@@ -118,19 +124,45 @@ public class JmbeLibraryPreference extends Preference
         Path target = directory.resolve(source.getFileName()).toAbsolutePath().normalize();
         if(!source.toAbsolutePath().normalize().equals(target))
         {
-            Path temporary = Files.createTempFile(directory, ".jmbe-install-", ".jar");
-            try
+            //Keep a loaded JAR intact, including on Windows where an open class loader can lock it.
+            if(Files.exists(target) && Files.mismatch(source, target) != -1)
             {
-                Files.copy(source, temporary, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                JmbeLibraryMetadata.verify(temporary, JmbeLibraryMetadata.getVersion(source));
-                Files.move(temporary, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                target = directory.resolve("jmbe-" + JmbeLibraryMetadata.getVersion(source) + "-" +
+                    libraryDigest(source) + ".jar").toAbsolutePath().normalize();
             }
-            finally { Files.deleteIfExists(temporary); }
+            if(!Files.exists(target) || Files.mismatch(source, target) != -1)
+            {
+                Path temporary = Files.createTempFile(directory, ".jmbe-install-", ".jar");
+                try
+                {
+                    Files.copy(source, temporary, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    JmbeLibraryMetadata.verify(temporary, JmbeLibraryMetadata.getVersion(source));
+                    Files.move(temporary, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                finally { Files.deleteIfExists(temporary); }
+            }
         }
-        mPathJmbeLibrary = target;
         mPreferences.put(PREFERENCE_KEY_PATH_JMBE_LIBRARY, PortableApplicationPaths.toPortablePath(target));
+        mPathJmbeLibrary = target;
         notifyPreferenceUpdated();
+    }
+
+    private static String libraryDigest(Path library) throws java.io.IOException
+    {
+        try
+        {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            try(var input = new java.security.DigestInputStream(Files.newInputStream(library), digest))
+            {
+                input.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        }
+        catch(java.security.NoSuchAlgorithmException e)
+        {
+            throw new java.io.IOException("Unable to verify JMBE library contents", e);
+        }
     }
 
     /**

@@ -19,10 +19,13 @@
 
 package io.github.dsheirer.jmbe;
 
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.jmbe.github.Release;
 import io.github.dsheirer.jmbe.github.Version;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.PreferenceType;
+import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -32,19 +35,25 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextArea;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Editor pane for JMBE Library creator
  */
 public class JmbeEditor extends VBox
 {
+    private static final Logger mLog = LoggerFactory.getLogger(JmbeEditor.class);
     private UserPreferences mUserPreferences;
     private Release mCurrentRelease;
     private Label mCurrentVersionLabel;
@@ -54,9 +63,15 @@ public class JmbeEditor extends VBox
     private GridPane mLabelGridPane;
     private Path mLibraryDirectoryPath;
     private Button mCreateButton;
-    private JmbeCreator mActiveCreator;
+    private Button mUseLibraryButton;
+    private Label mLibraryStatusLabel;
+    private volatile JmbeCreator mActiveCreator;
     private javafx.animation.Timeline mProgressTimer;
-    private long mCreationGeneration;
+    private volatile long mCreationGeneration;
+    private Path mCreatedLibrary;
+    private Path mCreatedDirectory;
+    private boolean mBuildRunning;
+    private boolean mInstalling;
 
     /** Detach a closing view and request cancellation; the worker acknowledges after stopping its child work. */
     public void cancelCreation()
@@ -64,6 +79,11 @@ public class JmbeEditor extends VBox
         mCreationGeneration++;
         if(mProgressTimer != null) mProgressTimer.stop();
         if(mActiveCreator != null) mActiveCreator.cancel();
+        if(!mInstalling)
+        {
+            discardCreatedLibrary();
+            getLibraryStatusLabel().setText("");
+        }
     }
     private TextArea mConsoleTextArea;
 
@@ -74,12 +94,14 @@ public class JmbeEditor extends VBox
     public JmbeEditor(UserPreferences userPreferences)
     {
         mUserPreferences = userPreferences;
+        MyEventBus.getGlobalEventBus().register(this);
         setPadding(new Insets(10,10,10,10));
         setSpacing(10);
         Separator separator = new Separator();
         separator.setMaxWidth(Double.MAX_VALUE);
         VBox.setVgrow(getConsoleTextArea(), Priority.ALWAYS);
-        getChildren().addAll(getLabelGridPane(), separator, getCreateButton(), getConsoleTextArea());
+        getChildren().addAll(getLabelGridPane(), separator,
+            new HBox(10, getCreateButton(), getUseLibraryButton()), getLibraryStatusLabel(), getConsoleTextArea());
     }
 
     /**
@@ -91,6 +113,7 @@ public class JmbeEditor extends VBox
         if(request != null)
         {
             setCurrentRelease(request.getCurrentRelease());
+            refreshCurrentVersion();
         }
     }
 
@@ -132,9 +155,7 @@ public class JmbeEditor extends VBox
                 alert.showAndWait().ifPresent(buttonType -> {
                     if(buttonType == ButtonType.YES)
                     {
-                        Path library = getLibraryDirectoryPath().resolve(getJarName(mCurrentRelease.getVersion()));
-                        getCreateButton().setDisable(true);
-                        createJmbeLibrary(library);
+                        createJmbeLibrary();
                     }
                 });
             });
@@ -144,16 +165,18 @@ public class JmbeEditor extends VBox
     }
 
     /**
-     * Downloads the JMBE creator and creates the library using the specified path argument.
-     * @param library path
+     * Builds a candidate without changing the selected library. Activation is an explicit action after success.
      */
-    private void createJmbeLibrary(Path library)
+    private void createJmbeLibrary()
     {
-        if(mActiveCreator != null) return;
+        if(mBuildRunning || mInstalling || mCurrentRelease == null) return;
+        discardCreatedLibrary();
+        mBuildRunning = true;
+        updateActions();
         long generation = ++mCreationGeneration;
         Release release = mCurrentRelease;
-        JmbeCreator creator = new JmbeCreator(release, library);
-        mActiveCreator = creator;
+        Path directory = getLibraryDirectoryPath();
+        getLibraryStatusLabel().setText("Building JMBE " + release.getVersion() + "…");
         var output = new io.github.dsheirer.gui.setup.SetupJobOutput();
         var timer = new javafx.animation.Timeline(new javafx.animation.KeyFrame(
             javafx.util.Duration.millis(150), event -> getConsoleTextArea().setText(output.snapshot())));
@@ -162,23 +185,156 @@ public class JmbeEditor extends VBox
         timer.play();
         io.github.dsheirer.util.ThreadPool.CACHED.execute(() -> {
             String failure = null;
+            Path createdDirectory = null;
+            Path createdLibrary = null;
             try
             {
-                Path result = creator.run(output);
-                mUserPreferences.getJmbeLibraryPreference().installLibrary(result);
+                Files.createDirectories(directory);
+                createdDirectory = Files.createTempDirectory(directory, ".jmbe-created-");
+                JmbeCreator creator = createCreator(release, createdDirectory.resolve(getJarName(release.getVersion())));
+                mActiveCreator = creator;
+                if(generation != mCreationGeneration) creator.cancel();
+                createdLibrary = creator.run(output);
             }
-            catch(Exception e) { failure = "JMBE creation failed. Retry or choose an existing library."; }
+            catch(Exception e)
+            {
+                mLog.error("Unable to create JMBE library", e);
+                failure = "JMBE could not be built. Check your internet connection and available disk space, " +
+                    "then try again or select an existing library. Your current selection is unchanged.";
+            }
             final String error = failure;
+            final Path candidate = createdLibrary;
+            final Path candidateDirectory = createdDirectory;
             javafx.application.Platform.runLater(() -> {
                 timer.stop();
-                if(mActiveCreator == creator) { mActiveCreator = null; getCreateButton().setDisable(false); }
-                if(generation != mCreationGeneration) return;
-                getConsoleTextArea().setText(output.snapshot() + "\n" +
-                    (error == null ? "Library ready." : error));
-                getCreateButton().setDisable(false);
-                if(error == null) getCurrentVersionLabel().setText(release.getVersion().toString());
+                mActiveCreator = null;
+                mBuildRunning = false;
+                if(generation != mCreationGeneration || error != null)
+                {
+                    cleanCreatedLibrary(candidate, candidateDirectory);
+                    if(generation == mCreationGeneration)
+                    {
+                        getConsoleTextArea().setText(output.snapshot());
+                        getLibraryStatusLabel().setText(error);
+                    }
+                }
+                else
+                {
+                    mCreatedLibrary = candidate;
+                    mCreatedDirectory = candidateDirectory;
+                    getConsoleTextArea().setText(output.snapshot());
+                    getLibraryStatusLabel().setText("JMBE " + release.getVersion() +
+                        " was built successfully. Choose Use this library to select it.");
+                }
+                updateActions();
             });
         });
+    }
+
+    JmbeCreator createCreator(Release release, Path library)
+    {
+        return new JmbeCreator(release, library);
+    }
+
+    private Button getUseLibraryButton()
+    {
+        if(mUseLibraryButton == null)
+        {
+            mUseLibraryButton = new Button("Use this library");
+            mUseLibraryButton.setVisible(false);
+            mUseLibraryButton.setManaged(false);
+            mUseLibraryButton.setOnAction(event -> useCreatedLibrary());
+        }
+        return mUseLibraryButton;
+    }
+
+    private Label getLibraryStatusLabel()
+    {
+        if(mLibraryStatusLabel == null)
+        {
+            mLibraryStatusLabel = new Label();
+            mLibraryStatusLabel.setWrapText(true);
+        }
+        return mLibraryStatusLabel;
+    }
+
+    private void useCreatedLibrary()
+    {
+        if(mInstalling || mBuildRunning || mCreatedLibrary == null) return;
+        mInstalling = true;
+        updateActions();
+        Path candidate = mCreatedLibrary;
+        getLibraryStatusLabel().setText("Selecting your JMBE library…");
+        io.github.dsheirer.util.ThreadPool.CACHED.execute(() -> {
+            String failure = null;
+            try
+            {
+                io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.validateLibrary(candidate);
+                mUserPreferences.getJmbeLibraryPreference().installLibrary(candidate);
+            }
+            catch(Exception e)
+            {
+                mLog.error("Unable to select the created JMBE library", e);
+                failure = "JMBE could not be selected. Check that this installation’s data folder is writable, " +
+                    "then choose Use this library to try again. Your current selection is unchanged.";
+            }
+            String error = failure;
+            Platform.runLater(() -> {
+                mInstalling = false;
+                refreshCurrentVersion();
+                if(error == null)
+                {
+                    discardCreatedLibrary();
+                    getLibraryStatusLabel().setText("JMBE " +
+                        mUserPreferences.getJmbeLibraryPreference().getCurrentVersion() + " is selected and ready to use.");
+                }
+                else getLibraryStatusLabel().setText(error);
+                updateActions();
+            });
+        });
+    }
+
+    private void updateActions()
+    {
+        getCreateButton().setDisable(mBuildRunning || mInstalling || mCurrentRelease == null);
+        getChangeDirectoryButton().setDisable(mBuildRunning || mInstalling);
+        getUseLibraryButton().setDisable(mBuildRunning || mInstalling);
+        getUseLibraryButton().setVisible(mCreatedLibrary != null);
+        getUseLibraryButton().setManaged(mCreatedLibrary != null);
+    }
+
+    private void discardCreatedLibrary()
+    {
+        cleanCreatedLibrary(mCreatedLibrary, mCreatedDirectory);
+        mCreatedLibrary = null;
+        mCreatedDirectory = null;
+        updateActions();
+    }
+
+    private void cleanCreatedLibrary(Path library, Path directory)
+    {
+        try
+        {
+            if(library != null) Files.deleteIfExists(library);
+            if(directory != null) Files.deleteIfExists(directory);
+        }
+        catch(IOException e) { mLog.warn("Unable to clean temporary JMBE library", e); }
+    }
+
+    @Subscribe
+    public void preferenceUpdated(PreferenceType type)
+    {
+        if(type == PreferenceType.JMBE_LIBRARY)
+        {
+            if(Platform.isFxApplicationThread()) refreshCurrentVersion();
+            else Platform.runLater(this::refreshCurrentVersion);
+        }
+    }
+
+    private void refreshCurrentVersion()
+    {
+        Version version = mUserPreferences.getJmbeLibraryPreference().getCurrentVersion();
+        getCurrentVersionLabel().setText(version == null ? "(not set)" : version.toString());
     }
 
     /**
@@ -247,7 +403,7 @@ public class JmbeEditor extends VBox
                 chooser.setInitialDirectory(getLibraryDirectoryPath().toFile());
                 chooser.setTitle("JMBE Library Directory");
                 File newDirectory = chooser.showDialog(getChangeDirectoryButton().getScene().getWindow());
-                setLibraryDirectoryPath(newDirectory.toPath());
+                if(newDirectory != null) setLibraryDirectoryPath(newDirectory.toPath());
             });
         }
 
@@ -324,6 +480,13 @@ public class JmbeEditor extends VBox
     public void setCurrentRelease(Release release)
     {
         mCurrentRelease = release;
+        refreshCurrentVersion();
+        if(!mInstalling && !mBuildRunning && mCreatedLibrary != null &&
+            (release == null || !release.getVersion().equals(JmbeLibraryMetadata.getVersion(mCreatedLibrary))))
+        {
+            discardCreatedLibrary();
+            getLibraryStatusLabel().setText("");
+        }
 
         if(release != null)
         {
@@ -334,5 +497,6 @@ public class JmbeEditor extends VBox
                 getUpdatedVersionLabel().setText(updateVersion.toString());
             }
         }
+        updateActions();
     }
 }

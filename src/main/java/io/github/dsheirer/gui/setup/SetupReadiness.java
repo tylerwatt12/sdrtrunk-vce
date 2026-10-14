@@ -8,6 +8,23 @@ public final class SetupReadiness
 {
     private SetupReadiness() {}
 
+    /** A carried-over voice library still needs an update check in the destination's setup review. */
+    static void prepareMigratedJmbe(SetupProgress progress, boolean migrationCommitted, boolean compatible)
+    {
+        boolean importedPending = progress.isImported() && !progress.isComplete() &&
+            (progress.get(SetupStep.JMBE) == SetupProgress.State.PENDING ||
+                progress.get(SetupStep.JMBE) == SetupProgress.State.CARRIED_OVER);
+        if(compatible && (migrationCommitted || importedPending))
+            progress.set(SetupStep.JMBE, SetupProgress.State.NEEDS_ATTENTION);
+    }
+
+    static boolean jmbeUpdateCheckPending(SetupProgress progress, boolean checked)
+    {
+        //An interrupted lookup is saved as RUNNING and resumes as PENDING.
+        return !checked && (progress.get(SetupStep.JMBE) == SetupProgress.State.NEEDS_ATTENTION ||
+            progress.get(SetupStep.JMBE) == SetupProgress.State.PENDING);
+    }
+
     /** Older setup could defer the account before location was offered. Run once after a source migration commits. */
     static void prepareMigratedRadioReferenceLocation(SetupProgress progress, int countryId, int stateId)
     {

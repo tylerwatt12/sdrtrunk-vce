@@ -22,6 +22,7 @@ package io.github.dsheirer.jmbe.github;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,8 @@ public class GitHub
     private static final Logger mLog = LoggerFactory.getLogger(GitHub.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration RELEASE_CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration RELEASE_REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
     private GitHub()
     {
@@ -93,17 +96,22 @@ public class GitHub
     }
 
     /**
-     * Obtain the latest release object from the repository.
+     * Obtain the latest published, stable release object from the repository.
      * @param repositoryURL for the GitHub api
      * @return the latest release or null
      */
     public static Release getLatestRelease(String repositoryURL)
     {
-        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
-        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(repositoryURL)).timeout(REQUEST_TIMEOUT).build();
+        if(repositoryURL == null)
+        {
+            return null;
+        }
 
         try
         {
+            HttpClient httpClient = HttpClient.newBuilder().connectTimeout(RELEASE_CONNECT_TIMEOUT).build();
+            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(repositoryURL))
+                .timeout(RELEASE_REQUEST_TIMEOUT).build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if(response.statusCode() == 200)
@@ -120,7 +128,7 @@ public class GitHub
             Thread.currentThread().interrupt();
             mLog.error("Error while detecting the current release version of JMBE library", e);
         }
-        catch(IOException e)
+        catch(IOException | IllegalArgumentException e)
         {
             mLog.error("Error while detecting the current release version of JMBE library", e);
         }
@@ -129,39 +137,61 @@ public class GitHub
     }
 
     /**
-     * Parses a json string containing an array or GitHub release objects and returns the latest release.
+     * Parses a json string containing an array of GitHub release objects and returns the latest stable release.
      * @param json string returned from URL call
-     * @return latest release version
+     * @return latest stable release, or null when no usable release was returned
      */
-    private static Release parseResponse(String json)
+    static Release parseResponse(String json)
     {
         Release release = null;
 
         if(json != null)
         {
-            JsonElement element = JsonParser.parseString(json);
-
-            if(element.isJsonArray())
+            try
             {
-                JsonArray array = element.getAsJsonArray();
+                JsonElement element = JsonParser.parseString(json);
 
-                for(JsonElement child: array)
+                if(element.isJsonArray())
                 {
-                    if(child.isJsonObject())
-                    {
-                        JsonObject releaseObject = child.getAsJsonObject();
-                        Version version = getVersion(releaseObject);
+                    JsonArray array = element.getAsJsonArray();
 
-                        if(version != null && (release == null || release.getVersion().compareTo(version) < 0))
+                    for(JsonElement child: array)
+                    {
+                        if(child.isJsonObject())
                         {
-                            release = new Release(version, releaseObject);
+                            JsonObject releaseObject = child.getAsJsonObject();
+
+                            if(isFalseOrMissing(releaseObject, "draft") &&
+                                isFalseOrMissing(releaseObject, "prerelease"))
+                            {
+                                Version version = getVersion(releaseObject);
+
+                                if(version != null && (release == null || release.getVersion().compareTo(version) < 0))
+                                {
+                                    release = new Release(version, releaseObject);
+                                }
+                            }
                         }
                     }
                 }
             }
+            catch(JsonParseException e)
+            {
+                mLog.error("Invalid response while detecting the current release version of JMBE library", e);
+            }
         }
 
         return release;
+    }
+
+    /**
+     * Missing flags are accepted for older release metadata; malformed flags are not considered stable.
+     */
+    private static boolean isFalseOrMissing(JsonObject release, String name)
+    {
+        JsonElement value = release.get(name);
+        return value == null || (value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean() &&
+            !value.getAsBoolean());
     }
 
     /**
@@ -178,9 +208,9 @@ public class GitHub
     {
         JsonElement tagName = jsonObject.get("tag_name");
 
-        if(tagName != null)
+        if(tagName != null && tagName.isJsonPrimitive() && tagName.getAsJsonPrimitive().isString())
         {
-            return Version.fromString(tagName.toString());
+            return Version.fromString(tagName.getAsString());
         }
 
         return null;

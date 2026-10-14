@@ -2,6 +2,7 @@ package io.github.dsheirer.gui.setup;
 
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.FlatDarkLaf;
+import io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader;
 import io.github.dsheirer.gui.ApplicationIcon;
 import io.github.dsheirer.gui.ScrollMorePanel;
 import io.github.dsheirer.gui.theme.Theme;
@@ -18,6 +19,7 @@ import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.jmbe.*;
 import io.github.dsheirer.jmbe.github.GitHub;
+import io.github.dsheirer.jmbe.github.Release;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -104,6 +106,8 @@ public final class SetupWizard extends JDialog
     private boolean vaultDeferred;
     private boolean editJmbe;
     private boolean jmbeInstalled;
+    private boolean jmbeUpdateChecked;
+    private Release jmbeAvailableRelease;
     private boolean themeRefreshPending;
     private BooleanSupplier canContinue = () -> true;
     private Runnable accept = () -> {};
@@ -401,6 +405,8 @@ public final class SetupWizard extends JDialog
             webAdjusted = true;
             progress.set(SetupStep.WEB, NEEDS_ATTENTION);
         }
+        SetupReadiness.prepareMigratedJmbe(progress, sourceCommitted && !newPreferences,
+            JmbeLibraryMetadata.isSupported(preferences.getJmbeLibraryPreference().getPathJmbeLibrary()));
         revalidateSettings();
         if(limitedVisit)
         {
@@ -487,6 +493,8 @@ public final class SetupWizard extends JDialog
         if(busy) return;
         closeRadioReferenceSetup();
         if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
+        else if(id == SetupStep.REVIEW && progress != null && progress.get(SetupStep.JMBE) == NEEDS_ATTENTION)
+            id = SetupStep.JMBE;
         stopCountdown();
         certificateGuideVisible = false;
         back.setVisible(true);
@@ -848,7 +856,38 @@ public final class SetupWizard extends JDialog
         boolean compatible = JmbeLibraryMetadata.isSupported(library);
         if(compatible && !editJmbe)
         {
-            notice("Digital voice is ready", jmbeInstalled ? "JMBE was installed successfully. You can now listen to supported digital voice channels. Choose Continue to move on." : "A compatible JMBE library is already available. You’re ready to listen to supported digital voice channels.",true);
+            if(SetupReadiness.jmbeUpdateCheckPending(progress, jmbeUpdateChecked))
+            {
+                notice("Checking for JMBE updates", "Your current library is available while we check for a newer version.", false);
+                details("Installed library details", "Version: " + JmbeLibraryMetadata.getVersion(library) + "\nLocation: " + library);
+                canContinue = () -> false;
+                long pageGeneration = generation;
+                SwingUtilities.invokeLater(() -> {
+                    if(step == SetupStep.JMBE && generation == pageGeneration) checkJmbeUpdates();
+                });
+                return;
+            }
+            boolean updateAvailable = jmbeAvailableRelease != null &&
+                jmbeAvailableRelease.getVersion().compareTo(JmbeLibraryMetadata.getVersion(library)) > 0;
+            if(jmbeInstalled)
+                notice("Digital voice is ready", "JMBE was installed and selected successfully. Choose Continue to move on.", true);
+            else if(jmbeUpdateChecked && jmbeAvailableRelease == null)
+            {
+                notice("Couldn’t check for JMBE updates", "Check your internet connection and try again, or keep using your current library.", false);
+                button("Try update check again", this::checkJmbeUpdates);
+                next.setText("Keep current version");
+            }
+            else if(updateAvailable)
+            {
+                notice("JMBE " + jmbeAvailableRelease.getVersion() + " is available",
+                    "You’re using JMBE " + JmbeLibraryMetadata.getVersion(library) + ". Update now or keep your current version.", false);
+                button("Update JMBE", () -> { editJmbe = true; showPage(step); });
+                next.setText("Keep current version");
+            }
+            else
+                notice("Digital voice is ready", jmbeUpdateChecked ?
+                    "Your selected JMBE library is current. No newer release is available." :
+                    "A compatible JMBE library is already available. You’re ready to listen to supported digital voice channels.", true);
             details("Installed library details", "Version: " + JmbeLibraryMetadata.getVersion(library) + "\nLocation: " + library);
             button("Change digital voice setup…", () -> { editJmbe=true; showPage(step); });
             accept = () -> { progress.set(step,progress.get(step)==CARRIED_OVER ? CARRIED_OVER : COMPLETE); completeAndContinue(); };
@@ -883,6 +922,7 @@ public final class SetupWizard extends JDialog
             {
                 Path chosen=Path.of(selectedFile.getText().trim());
                 job("Checking your JMBE file…", null, () -> {
+                    JmbeLibraryLoader.validateLibrary(chosen);
                     preferences.getJmbeLibraryPreference().installLibrary(chosen); return true;
                 }, ignored -> digitalVoiceReady());
             }
@@ -890,23 +930,51 @@ public final class SetupWizard extends JDialog
         changed.run();
     }
 
+    private void checkJmbeUpdates()
+    {
+        job("Checking for JMBE updates…", null,
+            () -> GitHub.getLatestRelease(JmbeCreator.GITHUB_JMBE_RELEASES_URL), this::jmbeUpdateResult,
+            ignored -> jmbeUpdateResult(null));
+    }
+
+    private void jmbeUpdateResult(Release release)
+    {
+        jmbeAvailableRelease = release;
+        jmbeUpdateChecked = true;
+        showPage(SetupStep.JMBE);
+    }
+
     private void createDigitalVoice()
     {
         AtomicBoolean stopped=new AtomicBoolean();
         java.util.concurrent.atomic.AtomicReference<JmbeCreator> creator=new java.util.concurrent.atomic.AtomicReference<>();
         job("Finding the digital voice tools…", () -> { stopped.set(true); if(creator.get()!=null) creator.get().cancel(); }, () -> {
-            var release=GitHub.getLatestRelease(JmbeCreator.GITHUB_JMBE_RELEASES_URL);
+            var release=jmbeAvailableRelease != null ? jmbeAvailableRelease :
+                GitHub.getLatestRelease(JmbeCreator.GITHUB_JMBE_RELEASES_URL);
             if(stopped.get()) throw new InterruptedException();
             if(release==null) throw new IllegalStateException("Release lookup failed");
-            Path target=root.resolve("jmbe").resolve("jmbe-"+release.getVersion()+".jar");
-            JmbeCreator task=new JmbeCreator(release,target); creator.set(task);
-            if(stopped.get()) task.cancel();
-            Path installed=task.run(message -> {
-                String stage=JmbeSetupMessages.stage(message);
-                if(stage!=null) operation=stage;
-                output.accept(message);
-            });
-            preferences.getJmbeLibraryPreference().installLibrary(installed); return true;
+            Path directory = Files.createDirectories(root.resolve("jmbe"));
+            Path buildDirectory = Files.createTempDirectory(directory, ".jmbe-setup-");
+            Path target = buildDirectory.resolve("jmbe-" + release.getVersion() + ".jar");
+            try
+            {
+                JmbeCreator task=new JmbeCreator(release,target); creator.set(task);
+                if(stopped.get()) task.cancel();
+                Path installed=task.run(message -> {
+                    String stage=JmbeSetupMessages.stage(message);
+                    if(stage!=null) operation=stage;
+                    output.accept(message);
+                });
+                if(stopped.get()) throw new InterruptedException();
+                JmbeLibraryLoader.validateLibrary(installed);
+                if(stopped.get()) throw new InterruptedException();
+                preferences.getJmbeLibraryPreference().installLibrary(installed); return true;
+            }
+            finally
+            {
+                try { Files.deleteIfExists(target); Files.deleteIfExists(buildDirectory); }
+                catch(java.io.IOException ignored) { output.accept("Temporary JMBE files could not be removed."); }
+            }
         }, ignored -> digitalVoiceReady());
     }
     private void digitalVoiceReady()
@@ -1171,7 +1239,8 @@ public final class SetupWizard extends JDialog
 
     private boolean jmbeNeeded()
     {
-        return autoStartNeedsJmbe && !progress.isDone(SetupStep.JMBE) &&
+        return progress.get(SetupStep.JMBE) == NEEDS_ATTENTION ||
+            autoStartNeedsJmbe && !progress.isDone(SetupStep.JMBE) &&
             preferences.getJmbeLibraryPreference().getAlertIfMissingLibraryRequired();
     }
 

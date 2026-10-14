@@ -473,20 +473,12 @@ public final class SetupWizardSmoke
         });
     }
 
-    /** Exercises installation/UI validation with a metadata fixture; never downloads or executes a compiler. */
+    /** Exercises installation/UI validation with a local codec fixture; never downloads or starts a receiver. */
     private static void exerciseJmbe(SetupWizard target,Path root) throws Exception
     {
         Path inputs=Files.createDirectories(root.resolve("smoke-inputs"));
-        Path library=inputs.resolve("jmbe-smoke.jar");
+        Path library=io.github.dsheirer.jmbe.JmbeLibraryFixture.create(inputs,"1.0.14");
         Path invalid=inputs.resolve("not-a-library.jar");
-        java.util.jar.Manifest manifest=new java.util.jar.Manifest();
-        manifest.getMainAttributes().putValue("Manifest-Version","1.0");
-        manifest.getMainAttributes().putValue("Version","1.0.14");
-        try(var jar=new java.util.jar.JarOutputStream(Files.newOutputStream(library),manifest))
-        {
-            jar.putNextEntry(new java.util.jar.JarEntry("jmbe/JMBEAudioLibrary.class"));
-            jar.write(0); jar.closeEntry();
-        }
         Files.writeString(invalid,"invalid smoke fixture, not executable");
         javax.swing.SwingUtilities.invokeAndWait(()-> {
             select(target,"Set up digital voice");
