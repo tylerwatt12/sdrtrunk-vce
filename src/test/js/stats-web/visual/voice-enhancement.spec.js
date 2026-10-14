@@ -165,9 +165,9 @@ for (const source of ['encoded', 'decoded_audio']) {
     });
     let releaseDetails, requested = 0;
     let waiting = new Promise(resolve => { releaseDetails = resolve; });
-    const summary = { source, method: source === 'encoded' ? 'ambe_tone_v1' : 'p25_pcm_tone_v1',
+    const summary = { source, method: source === 'encoded' ? 'ambe_tone_v1' : 'p25_pcm_ambe_tone_v2',
       call_started_at_ms: recording.start_ms, completed_at_ms: recording.end_ms, tones: [
-        { frequencies_hz: source === 'encoded' ? [697, 1477] : [600.2],
+        { frequencies_hz: source === 'encoded' ? [697, 1477] : [593.75],
           ...(source === 'encoded' ? { code: 'DTMF_3' } : { confidence: .98 }),
           duration_milliseconds: 1020, offset_milliseconds: 80 }
       ] };
@@ -175,7 +175,7 @@ for (const source of ['encoded', 'decoded_audio']) {
       requested++; await waiting;
       return route.fulfill({ json: { data: { call: { ...savedCall, paging_tone_summary: summary } } } });
     });
-    const tone = source === 'encoded' ? 'DTMF 3 · 697 + 1477 Hz · 1020 ms · at 80 ms' : '600.2 Hz · 1020 ms · at 80 ms';
+    const tone = source === 'encoded' ? 'DTMF 3 · 697 + 1477 Hz · 1020 ms · at 80 ms' : '593.75 Hz · 1020 ms · at 80 ms';
     await page.getByRole('button', { name: /^Call details for/ }).first().click();
     const modal = page.getByRole('dialog', { name: 'Call details', exact: true });
     await expect(modal).toContainText('Loading call details');

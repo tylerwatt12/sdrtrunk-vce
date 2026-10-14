@@ -134,8 +134,8 @@ function toneActivityRow(id, summary, overrides = {}) {
 test('paging tones show inferred and encoded sequences with alias context and exact event filtering', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const requests = await openActivity(page, { rows: [
-    toneActivityRow(18, { source: 'decoded_audio', method: 'p25_pcm_tone_v1', phase: 1, call_started_at_ms: 1_790_720_000_000,
-      tones: [{ frequencies_hz: [600.2], duration_milliseconds: 1020, offset_milliseconds: 80, confidence: .99 }] }, { action: 'tone', event_type: 'tone' }),
+    toneActivityRow(18, { source: 'decoded_audio', method: 'p25_pcm_ambe_tone_v2', phase: 1, call_started_at_ms: 1_790_720_000_000,
+      tones: [{ frequencies_hz: [593.75], duration_milliseconds: 1020, offset_milliseconds: 80, confidence: .99 }] }, { action: 'tone', event_type: 'tone' }),
     toneActivityRow(19, { source: 'encoded', method: 'ambe_tone_v1', phase: 2, call_started_at_ms: 1_790_720_000_000,
       tones: [{ frequencies_hz: [600], code: 'TONE_600', duration_milliseconds: 120 },
         { frequencies_hz: [700], code: 'TONE_700', duration_milliseconds: 240 }] }),
@@ -145,7 +145,9 @@ test('paging tones show inferred and encoded sequences with alias context and ex
   await expect(row.locator('[data-column="event"]')).toContainText('Paging tones');
   await expect(row.locator('[data-column="action"]')).toHaveText('Paging tones');
   await expect(row.locator('[data-column="event"]')).toContainText('Audio detection');
-  await expect(row.locator('[data-column="event"]')).toContainText('600.2 Hz · 1020 ms · at 80 ms');
+  await expect(row.locator('[data-column="event"]')).toContainText('593.75 Hz · 1020 ms · at 80 ms');
+  await expect(row.locator('[data-column="event"]')).not.toContainText('measured');
+  await expect(row.locator('[data-column="event"]')).not.toContainText('mapped');
   await expect(row.locator('[data-column="event"]')).toContainText('Call started');
   await expect(row.locator('[data-column="event"] time')).toHaveText('2026-09-29 22:13:20');
   await expect(row.locator('[data-column="event"]')).not.toContainText('[object');
