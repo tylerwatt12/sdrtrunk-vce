@@ -395,11 +395,14 @@ assert.match(channels,
 assert.match(channels,
   /`Show live channels for \$\{label\}, \$\{operatingState\}, \$\{signalLabel\}, \$\{qualityLabel\}\$\{originSuffix\}`/,
   'Operational state, signal strength, and decode quality must remain in the accessible picker name');
-assert.match(channels,
-  /const remote = liveRemoteOriginBadge\(value\.remote_origin\);[\s\S]*if \(remote\) title\.append\(remote, document\.createTextNode\(' '\)\);[\s\S]*title\.append\(document\.createTextNode\(label\)\)/,
-  'A remote Live cloud must precede the title so long labels cannot clip it');
-assert.match(channels, /else if \(remoteLabel\) \{\s*const level = decodeQualityBarLevel\(decodeQuality\)/,
-  'Remote picker bars must reflect decode quality without an RF signal-strength reading');
+assert.doesNotMatch(channels, /(?:title|selectedViewTitle)\.append\(remote/,
+  'Remote Live names must not repeat the cloud shown in the picker quality indicator');
+assert.match(channels, /if \(remoteLabel && value\.table_id !== 'conventional'\) quality\.append\(iconGlyph\('icon-cloud'\)\)/,
+  'A remote Live system must replace the signal bars with its cloud quality indicator');
+assert.match(channels, /const available = !stopped && decodeQuality !== null/,
+  'Stopped remote sites must keep their cloud neutral even with a recent decode sample');
+assert.match(channels, /quality\.className = 'channels-tab-quality live-remote-origin'/,
+  'Remote quality must reuse the existing cloud geometry and semantic colors');
 assert.match(channels, /const originSuffix = remoteLabel \? ` · \$\{remoteLabel\}` : ''/,
   'A generic remote marker must remain available in pointer and accessible picker labels');
 assert.match(channels, /sortable: false/,

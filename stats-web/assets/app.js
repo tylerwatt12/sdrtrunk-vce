@@ -19071,8 +19071,6 @@ function liveChannelsSection(onSelectionChange) {
     if (signature === selectedViewSignature) return;
     selectedViewSignature = signature;
     selectedViewTitle.replaceChildren(document.createTextNode(label));
-    const remote = liveRemoteOriginBadge(value?.remote_origin, true);
-    if (remote) selectedViewTitle.append(remote);
     selectedViewMeta.textContent = meta;
     pickerToggleLabel.textContent = label;
     selectedViewActions.replaceChildren();
@@ -19206,8 +19204,8 @@ function liveChannelsSection(onSelectionChange) {
       const copy = node('span', 'channels-tab-copy');
       copy.append(node('strong', 'channels-tab-title'), node('span', 'channels-tab-meta'));
       const state = node('span', 'channels-tab-state');
-      const quality = node('span', 'channels-tab-quality ui-quality-bars');
-      for (let index = 0; index < 4; index += 1) quality.append(node('span'));
+      const quality = node('span', 'channels-tab-quality');
+      quality.setAttribute('aria-hidden', 'true');
       state.append(quality, node('span', 'channels-tab-state-label'));
       select.append(copy, state);
       select.addEventListener('click', () => showTable(value.table_id, true));
@@ -19235,10 +19233,7 @@ function liveChannelsSection(onSelectionChange) {
     const metadataSignature = JSON.stringify([label, meta, value.channel_running, value.remote_origin || null]);
     if (metadataSignature !== tab.liveMetadataSignature) {
       tab.liveMetadataSignature = metadataSignature;
-      title.replaceChildren();
-      const remote = liveRemoteOriginBadge(value.remote_origin);
-      if (remote) title.append(remote, document.createTextNode(' '));
-      title.append(document.createTextNode(label));
+      title.replaceChildren(document.createTextNode(label));
       tab.querySelector('.channels-tab-meta').textContent = meta;
       tab.dataset.search = `${label} ${meta}`.toLowerCase();
       pickerSummaryDirty = true;
@@ -19261,19 +19256,25 @@ function liveChannelsSection(onSelectionChange) {
     const qualitySignature = JSON.stringify([label, operatingState, signalStrength, decodeQuality, remoteLabel]);
     if (qualitySignature !== tab.liveQualitySignature) {
       tab.liveQualitySignature = qualitySignature;
+      quality.replaceChildren();
+      quality.removeAttribute('title');
+      if (remoteLabel && value.table_id !== 'conventional') quality.append(iconGlyph('icon-cloud'));
+      else for (let index = 0; index < 4; index += 1) quality.append(node('span'));
       if (value.table_id === 'conventional') {
         quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
         tab.title = `${label} · ${operatingState}${originSuffix}`;
         select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}${originSuffix}`);
         stateLabel.textContent = operatingState;
       } else if (remoteLabel) {
-        const level = decodeQualityBarLevel(decodeQuality);
-        const state = decodeQuality === null ? 'unavailable' :
-          (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
-            (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
-        quality.className = `channels-tab-quality ui-quality-bars ui-quality-${state} ui-quality-level-${level}`;
-        const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
+        const available = !stopped && decodeQuality !== null;
+        const tone = !available ? '' :
+          (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'success' :
+            (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'warning' : 'danger'));
+        quality.className = 'channels-tab-quality live-remote-origin' +
+          (tone ? ` live-remote-origin-${tone}` : '');
+        const qualityLabel = !available ? 'Decode quality unavailable' :
           `${decodeQuality.toFixed(1)}% decode quality`;
+        quality.title = `${qualityLabel}${originSuffix}`;
         tab.title = `${label} · ${operatingState} · ${qualityLabel}${originSuffix}`;
         select.setAttribute('aria-label',
           `Show live channels for ${label}, ${operatingState}, ${qualityLabel}${originSuffix}`);

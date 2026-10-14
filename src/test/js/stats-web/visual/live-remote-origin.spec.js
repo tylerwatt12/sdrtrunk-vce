@@ -135,7 +135,7 @@ test('new Live presentation preferences start with active trunked channels only'
 });
 
 for (const [width, dark] of [[1280, false], [320, true]]) {
-  test(`remote picker keeps its cloud and decode bars with long titles at ${width}px`, async ({ page }) => {
+  test(`remote picker cloud shows decode quality with long titles at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const liveSnapshot = structuredClone(snapshot);
     const remote = liveSnapshot.tables[0];
@@ -143,21 +143,58 @@ for (const [width, dark] of [[1280, false], [320, true]]) {
     remote.control_active = true;
     Object.assign(remote.rows[0], { role: 'CURRENT_CONTROL', quality_observed_at_ms: Date.now(), decode_health_pct: 98.7,
       signal_dbfs: null });
+    for (const [id, percent, observed, running] of [
+      ['healthy', 90, Date.now(), true], ['degraded', 75, Date.now(), true], ['poor', 74.9, Date.now(), true],
+      ['missing', null, Date.now(), true], ['stale', 99, Date.now() - 120_000, true],
+      ['stopped', 99, Date.now(), false]
+    ]) {
+      const table = structuredClone(remote);
+      Object.assign(table, { table_id: id, configuration_id: id, title: `Remote ${id}`, channel_running: running });
+      table.rows = [{ ...table.rows[0], key: `${id}-control`, configuration_id: id,
+        decode_health_pct: percent, quality_observed_at_ms: observed }];
+      liveSnapshot.tables.push(table);
+    }
+    liveSnapshot.tables.push({ ...remote, table_id: 'local-site', configuration_id: 'local-site',
+      title: 'Local control', remote_origin: undefined,
+      rows: [{ ...remote.rows[0], key: 'local-control', configuration_id: 'local-site',
+        remote_origin: undefined, signal_dbfs: -72, decode_health_pct: 96.4 }] });
     await openLive(page, false, liveSnapshot, dark ? 'dark' : 'light');
     if (dark) await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     if (width <= 900) await page.locator('.live-picker-toggle').click();
     const pickerRow = page.locator('.channels-live-tab[data-table-id="remote-site"]');
-    await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/ui-quality-healthy ui-quality-level-4/);
+    await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/live-remote-origin-success/);
+    await expect(pickerRow.locator('.channels-tab-quality')).not.toHaveClass(/ui-quality-bars/);
+    await expect(pickerRow.locator('.channels-tab-quality use')).toHaveAttribute('href', '#icon-cloud');
+    await expect(pickerRow.locator('.channels-tab-quality')).toHaveAttribute('title', /98\.7% decode quality.*Remote source/);
     await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /98\.7% decode quality.*Remote source/);
     await expect(pickerRow.getByRole('tab')).not.toHaveAttribute('aria-label', /signal strength/i);
-    await expect(pickerRow.locator('.live-remote-origin')).toBeVisible();
+    await expect(pickerRow.locator('.channels-tab-title .live-remote-origin')).toHaveCount(0);
+    await expect(page.locator('.live-selected-view-title .live-remote-origin')).toHaveCount(0);
+    await expect(pickerRow.locator('.channels-tab-quality')).toBeVisible();
     expect(await pickerRow.locator('.channels-tab-title').evaluate((title) => {
-      const cloud = title.querySelector('.live-remote-origin').getBoundingClientRect();
-      const bounds = title.getBoundingClientRect();
+      const icon = title.closest('.channels-tab-select').querySelector('.channels-tab-quality');
+      const cloud = icon.getBoundingClientRect();
+      const bounds = title.closest('.channels-tab-select').getBoundingClientRect();
       return title.scrollWidth > title.clientWidth && cloud.left >= bounds.left && cloud.right <= bounds.right &&
-        title.querySelector('.live-remote-origin').contains(
-          document.elementFromPoint((cloud.left + cloud.right) / 2, (cloud.top + cloud.bottom) / 2));
+        icon.contains(document.elementFromPoint((cloud.left + cloud.right) / 2, (cloud.top + cloud.bottom) / 2));
     })).toBe(true);
+    for (const [id, tone] of [['healthy', 'success'], ['degraded', 'warning'], ['poor', 'danger'],
+      ['missing', ''], ['stale', ''], ['stopped', '']]) {
+      const row = page.locator(`.channels-live-tab[data-table-id="${id}"]`);
+      const cloud = row.locator('.channels-tab-quality');
+      await expect(cloud.locator('use')).toHaveAttribute('href', '#icon-cloud');
+      if (tone) await expect(cloud).toHaveClass(new RegExp(`live-remote-origin-${tone}`));
+      else {
+        await expect(cloud).not.toHaveClass(/live-remote-origin-(success|warning|danger)/);
+        await expect(row.getByRole('tab')).toHaveAttribute('aria-label', /Decode quality unavailable/);
+      }
+    }
+    const local = page.locator('.channels-live-tab[data-table-id="local-site"]');
+    await expect(local.locator('.channels-tab-quality')).toHaveClass(/ui-quality-healthy ui-quality-level-3/);
+    await expect(local.locator('.channels-tab-quality > span')).toHaveCount(4);
+    await expect(local.locator('.channels-tab-quality use')).toHaveCount(0);
+    await expect(local.getByRole('tab')).toHaveAttribute('aria-label', /-72\.0 dBFS signal strength.*96\.4% decode quality/);
+    await pickerRow.screenshot({ path: testInfo.outputPath(`remote-picker-${dark ? 'dark' : 'light'}-${width}.png`) });
   });
 }
 
@@ -168,8 +205,22 @@ test('remote picker keeps stale decode samples unavailable', async ({ page }) =>
   Object.assign(remote.rows[0], { role: 'CURRENT_CONTROL', quality_observed_at_ms: Date.now() - 120_000, decode_health_pct: 99 });
   await openLive(page, false, liveSnapshot);
   const pickerRow = page.locator('.channels-live-tab[data-table-id="remote-site"]');
-  await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/ui-quality-unavailable ui-quality-level-0/);
+  await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass('channels-tab-quality live-remote-origin');
+  await expect(pickerRow.locator('.channels-tab-quality use')).toHaveAttribute('href', '#icon-cloud');
   await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /Decode quality unavailable.*Remote source/);
+});
+
+test('remote Live title omits the duplicate cloud and mixed rows retain their origin', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openLive(page);
+  const selected = page.locator('.live-channels-section');
+  await expect(selected.locator('.live-selected-view-title')).toHaveText('Metro North');
+  await expect(selected.locator('.live-selected-view-title .live-remote-origin')).toHaveCount(0);
+  await expect(selected.locator('td[data-column="channel"] .live-remote-origin')).toHaveCount(0);
+  await expect(selected).toHaveScreenshot('live-selected-remote-detail-light.png', { maxDiffPixelRatio: 0 });
+  await selected.screenshot({ path: testInfo.outputPath('live-selected-title-light.png') });
+  await page.getByRole('tab', { name: /Show live channels for Conventional/ }).click();
+  await expect(selected.locator('td[data-column="channel"] .live-remote-origin')).toHaveCount(1);
 });
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 1024, height: 550 }]) {
@@ -202,7 +253,7 @@ test('dedicated remote Live detail has one origin cue; mixed rows retain theirs'
   const link = await openLive(page);
   const selected = page.locator('.live-channels-section');
   await expect(selected.locator('.live-selected-view-title')).toContainText('Metro North');
-  await expect(selected.locator('.live-selected-view-title .live-remote-origin')).toHaveText('Remote');
+  await expect(selected.locator('.live-selected-view-title .live-remote-origin')).toHaveCount(0);
   await expect(selected.locator('.live-selected-view-meta')).not.toContainText('Remote source');
   await expect(selected.locator('td[data-column="channel"]')).toHaveCount(2);
   await expect(selected.locator('td[data-column="channel"] .live-remote-origin')).toHaveCount(0);
