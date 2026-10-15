@@ -25,6 +25,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -521,6 +523,10 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             case NBFM -> 5;
             case AM -> 6;
             case DCS -> 7;
+            case FLEETSYNC -> 8;
+            case MDC1200 -> 9;
+            case LOJACK -> 10;
+            case TAIT1200 -> 11;
             default -> 0;
         };
     }
@@ -536,8 +542,50 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             case 5 -> "NBFM";
             case 6 -> "AM";
             case 7 -> "DCS";
+            case 8 -> "FLEETSYNC";
+            case 9 -> "MDC1200";
+            case 10 -> "LOJACK";
+            case 11 -> "TAIT1200";
             default -> "UNKNOWN";
         };
+    }
+
+    /** Reject known-but-unsupported protocols instead of quietly searching unknown recordings. */
+    public static int protocolFilterCode(String value)
+    {
+        try
+        {
+            Protocol protocol = Protocol.valueOf(value.toUpperCase(Locale.ROOT));
+            int code = protocolCode(protocol);
+            if(code == 0 && protocol != Protocol.UNKNOWN) throw new IllegalArgumentException();
+            return code;
+        }
+        catch(IllegalArgumentException | NullPointerException exception)
+        {
+            throw new IllegalArgumentException("Unknown or unsupported recording protocol");
+        }
+    }
+
+    /** A captured signalling fact retains its own namespace and role independently of the audio decoder. */
+    public record AuxiliaryIdentifier(String protocol, String kind, String role, String value)
+    {
+        public AuxiliaryIdentifier
+        {
+            if(protocol == null || kind == null || role == null ||
+                !Set.of("DCS","FLEETSYNC","MDC1200","LOJACK","TAIT1200").contains(protocol) ||
+                !Set.of("radio","tone","function").contains(kind) ||
+                !Set.of("source","destination","other").contains(role) || value == null || value.isBlank() ||
+                value.length() > 128 || value.chars().anyMatch(Character::isISOControl) ||
+                !("DCS".equals(protocol) && "tone".equals(kind) ||
+                    Set.of("FLEETSYNC","MDC1200","TAIT1200").contains(protocol) && "radio".equals(kind) ||
+                    "LOJACK".equals(protocol) && Set.of("radio","function").contains(kind)))
+                throw new IllegalArgumentException("Invalid captured recording identifier");
+        }
+
+        public Map<String,Object> toMap()
+        {
+            return Map.of("protocol",protocol,"kind",kind,"role",role,"value",value);
+        }
     }
 
     public record Site(int wacn, int systemId, int rfss, int siteId)
@@ -578,7 +626,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                                 Integer targetHomeId, Long frequencyHz, Integer timeslot, Integer nac,
                                 Integer toneKind, String tone, Site winnerSite,
                                 List<Site> alsoReceivedOn, List<Member> patchMembers, String servingSystemKey,
-                                Map<String,Object> pagingToneSummary)
+                                Map<String,Object> pagingToneSummary, List<AuxiliaryIdentifier> auxiliaryIdentifiers)
     {
         public Map<String,Object> toMap()
         {
@@ -590,6 +638,8 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             value.put("size_bytes", sizeBytes);
             value.put("audio_url", "/api/v1/recordings/calls/" + id + "/audio");
             put(value, "paging_tone_summary", pagingToneSummary);
+            if(auxiliaryIdentifiers != null && !auxiliaryIdentifiers.isEmpty())
+                value.put("auxiliary_identifiers",auxiliaryIdentifiers.stream().map(AuxiliaryIdentifier::toMap).toList());
             put(value, "system_key", systemKey);
             //Legacy routing inference is independent of the captured audio winner's serving proof.
             value.put("serving_system_key", servingSystemKey);
@@ -736,12 +786,35 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     }
 
     /** A picker choice scopes a captured or canonical identity to exactly one receiving system. */
-    public record Selection(int id, String systemKey, String identityKey)
+    public record Selection(Integer id, String systemKey, String identityKey, String protocol, String value)
     {
+        public Selection(int id, String systemKey, String identityKey)
+        {
+            this(id,systemKey,identityKey,null,null);
+        }
+
         public Selection
         {
-            if(id < 0 || id > 0xFFFFFF || systemKey != null && (systemKey.isBlank() || systemKey.length() > 160))
+            if(systemKey != null && (systemKey.isBlank() || systemKey.length() > 160))
                 throw new IllegalArgumentException("Invalid recording identity selection");
+            if(value != null)
+            {
+                if(id != null || identityKey != null)
+                    throw new IllegalArgumentException("Typed recording selections require their exact namespace and value");
+                new AuxiliaryIdentifier(protocol,"radio","source",value);
+            }
+            else
+            {
+                if(id == null || id < 0 || id > 0xFFFFFF)
+                    throw new IllegalArgumentException("Invalid recording identity selection");
+                if(protocol != null)
+                {
+                    int code = protocolFilterCode(protocol);
+                    protocol = code == 1 || code == 2 ? "APCO25" : protocolName(code);
+                    if(identityKey != null && code != 1 && code != 2)
+                        throw new IllegalArgumentException("A qualified selection requires its P25 namespace");
+                }
+            }
             if(identityKey != null)
             {
                 RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(identityKey);
@@ -870,6 +943,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             }
             frequencyHz = builder.frequencyHz;
             protocol = builder.protocol;
+            if(protocol != null && !protocol.isBlank()) protocolFilterCode(protocol);
             callType = builder.callType;
             voiceType = builder.voiceType;
             transcript = builder.transcript != null && !builder.transcript.isBlank() ? builder.transcript.strip() : null;
@@ -894,6 +968,11 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                 throw new IllegalArgumentException("Too many or invalid recording selections");
             for(Selection value: values)
             {
+                if(value.value() != null && !radio)
+                    throw new IllegalArgumentException("Auxiliary radio selections cannot be used as talkgroups");
+                if(value.value() == null && value.protocol() != null && value.id() == 0 &&
+                    (radio || !"NXDN".equals(value.protocol())))
+                    throw new IllegalArgumentException("Invalid zero recording identity for its namespace");
                 if(value.identityKey() == null) continue;
                 int kind = RadioSystemIdentityKey.parse(value.identityKey()).kindCode();
                 if(radio ? kind != RadioSystemIdentityKey.KIND_RADIO :

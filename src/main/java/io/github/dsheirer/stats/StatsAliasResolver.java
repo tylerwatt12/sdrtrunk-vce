@@ -736,6 +736,49 @@ class StatsAliasResolver
         }
     }
 
+    /** Retains the existing FleetSync/MDC talkgroup and LoJack ESN Alias conventions for captured signaling. */
+    void enrichRecordingSignaling(Connection connection, List<Map<String,Object>> rows) throws SQLException
+    {
+        requireBoundedRows(rows);
+        for(String protocol: List.of("FLEETSYNC", "MDC1200"))
+        {
+            List<Map<String,Object>> numeric = rows.stream().filter(row -> protocol.equals(row.get("protocol")) &&
+                row.get("numeric_value") instanceof Number).toList();
+            enrichByAssignedAliasList(connection,numeric,RuleType.TALKGROUP,List.of(protocol),"numeric_value","alias_");
+        }
+        List<Map<String,Object>> esns = rows.stream().filter(row -> "LOJACK".equals(row.get("protocol")) &&
+            positiveLong(row.get("alias_list_id")) != null).toList();
+        if(esns.isEmpty()) return;
+        Set<Long> lists = new LinkedHashSet<>();
+        esns.forEach(row -> lists.add(positiveLong(row.get("alias_list_id"))));
+        String placeholders = String.join(",",java.util.Collections.nCopies(lists.size(),"?"));
+        Map<String,Map<String,Object>> aliases = new LinkedHashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement("SELECT alias_list_id,text_value,name,description," +
+            "group_name FROM alias WHERE matcher_type='ESN' AND alias_list_id IN("+placeholders+") ORDER BY id"))
+        {
+            int p=1; for(long id: lists) statement.setLong(p++,id);
+            try(ResultSet values = statement.executeQuery())
+            {
+                while(values.next())
+                {
+                    Map<String,Object> alias = new LinkedHashMap<>();
+                    alias.put("alias_name",values.getString("name"));
+                    alias.put("alias_description",values.getString("description"));
+                    alias.put("alias_group",values.getString("group_name"));
+                    // Runtime ESN lookup is case-insensitive and the last Alias in saved order wins.
+                    aliases.put(values.getLong("alias_list_id")+":"+
+                        values.getString("text_value").toLowerCase(Locale.ROOT),alias);
+                }
+            }
+        }
+        for(Map<String,Object> row: esns)
+        {
+            Map<String,Object> alias = aliases.get(positiveLong(row.get("alias_list_id"))+":"+
+                String.valueOf(row.get("value")).toLowerCase(Locale.ROOT));
+            if(alias != null) row.putAll(alias);
+        }
+    }
+
     /**
      * Resolves conventional DMR aliases only from the exact alias list assigned to each saved channel.
      */

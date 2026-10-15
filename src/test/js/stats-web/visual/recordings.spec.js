@@ -66,7 +66,8 @@ async function openRecordingFilters(page, { tab = 'Systems & sites' } = {}) {
   const dialog = page.getByRole('dialog', { name: 'Filters', exact: true });
   if (!await dialog.isVisible()) await page.locator('#recordings-filters-toggle').click();
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('tab', { name: tab, exact: true }).click();
+  const control = dialog.getByRole('tab', { name: tab, exact: true });
+  if (await control.getAttribute('aria-selected') !== 'true') await control.click();
   return dialog;
 }
 
@@ -256,10 +257,44 @@ async function openRecordings(page, options = {}) {
       const rows = items.filter(row => row.kind === url.searchParams.get('kind') &&
         (!url.searchParams.get('system_key') || row.system_key === url.searchParams.get('system_key')) &&
         (!q || [row.label, row.alias, row.ota_alias, row.description, row.group, row.id].join(' ').toLowerCase().includes(q)));
+      const sort = url.searchParams.get('sort') || 'calls';
+      rows.sort(sort === 'name' ? (a, b) => String(a.label).localeCompare(String(b.label)) :
+        sort === 'recent' ? (a, b) => Number(b.last_recorded_ms || 0) - Number(a.last_recorded_ms || 0) :
+          (a, b) => Number(b.call_count || 0) - Number(a.call_count || 0));
       const offset = Number(url.searchParams.get('offset') || 0);
       const limit = options.identityPageSize || Number(url.searchParams.get('limit') || 100);
       await route.fulfill({ json: { data: { rows: rows.slice(offset, offset + limit).map(row => ({ ...row,
-        selection: { id: row.id, system_key: row.system_key, ...(row.identity_key ? { identity_key: row.identity_key } : {}) } })),
+        selection: row.selection || { id: row.id, system_key: row.system_key, ...(row.identity_key ? { identity_key: row.identity_key } :
+          row.protocol ? { protocol: row.protocol === 'APCO25_PHASE2' ? 'APCO25' : row.protocol } : {}) } })),
+        has_more: offset + limit < rows.length, next_offset: offset + limit } } });
+    } else if (pathname === '/api/v1/recordings/entities') {
+      state.entityRequests ||= [];
+      state.entityRequests.push(Object.fromEntries(url.searchParams));
+      if (options.entityErrorOnce && state.entityRequests.length === 1) {
+        await route.fulfill({ status: 503, json: { error: { message: 'Browse unavailable' } } }); return;
+      }
+      const kind = url.searchParams.get('kind');
+      const suggested = Array.isArray(options.suggestions) ? options.suggestions.filter(row => row.kind === kind) : [];
+      const items = options.entities || (suggested.length ? suggested : [
+        { kind: 'system', id: systemKey, system_key: systemKey, label: 'Metro Public Safety', protocol: 'APCO25_PHASE2', call_count: 42, selection: { system_key: systemKey } },
+        { kind: 'system', id: 'nxdn-c:global:7', system_key: 'nxdn-c:global:7', label: 'NXDN Operations', protocol: 'NXDN', call_count: 11, selection: { system_key: 'nxdn-c:global:7' } },
+        { kind: 'site', id: '1.1.1.2', label: 'North Ridge Channel', system_name: 'Metro Public Safety', protocol: 'APCO25_PHASE2',
+          count_kind: 'heard_at', call_count: 21, wacn: 1, sysid: 1, rfss: 1, site_id: 2,
+          selection: { wacn: '1', sysid: '1', rfss: '1', site_id: '2' } },
+        { kind: 'channel', id: '00000000-0000-4000-8000-000000000018', label: 'Airfield AM', protocol: 'AM', call_count: 15, selection: { channel_id: '00000000-0000-4000-8000-000000000018' } },
+        { kind: 'channel', id: channelId, label: 'North Ridge Channel', system_key: systemKey, system_name: 'Metro Public Safety', protocol: 'APCO25_PHASE2', call_count: 42, selection: { channel_id: channelId } },
+        { kind: 'channel', id: '00000000-0000-4000-8000-000000000019', label: 'NXDN Conventional', system_key: 'nxdn-c:global:7', protocol: 'NXDN', call_count: 11, selection: { channel_id: '00000000-0000-4000-8000-000000000019' } }
+      ]);
+      const q = (url.searchParams.get('q') || '').toLowerCase();
+      const rows = items.filter(row => row.kind === kind && (!q || [row.label, row.id, row.detail].join(' ').toLowerCase().includes(q)) &&
+        (!url.searchParams.get('system_key') || !row.system_key || row.system_key === url.searchParams.get('system_key')));
+      const sort = url.searchParams.get('sort') || 'calls';
+      rows.sort(sort === 'name' ? (a, b) => String(a.label).localeCompare(String(b.label)) :
+        sort === 'recent' ? (a, b) => Number(b.last_recorded_ms || 0) - Number(a.last_recorded_ms || 0) :
+          (a, b) => Number(b.call_count || 0) - Number(a.call_count || 0));
+      const offset = Number(url.searchParams.get('offset') || 0);
+      const limit = options.entityPageSize || Number(url.searchParams.get('limit') || 100);
+      await route.fulfill({ json: { data: { rows: rows.slice(offset, offset + limit),
         has_more: offset + limit < rows.length, next_offset: offset + limit } } });
     } else if (pathname === '/api/v1/recordings/suggestions') {
       const q = url.searchParams.get('q') || '';
@@ -272,7 +307,7 @@ async function openRecordings(page, options = {}) {
           options.suggestions(q, Object.fromEntries(url.searchParams)) : options.suggestions ||
           (q.toLowerCase().includes('fire') ? [
           { kind: 'talkgroup', id: 1201, label: 'Fire Dispatch', detail: 'Metro Public Safety · TG 1201',
-            system_key: 'metro', system_name: 'Metro Public Safety' }
+            system_key: systemKey, system_name: 'Metro Public Safety' }
         ] : []);
         await route.fulfill({ json: { data: { suggestions } } });
       }
@@ -328,11 +363,11 @@ test('Managed empty page refreshes when the first call arrives', async ({ page }
 });
 
 for (const theme of ['light', 'dark']) {
-  test(`desktop ${theme} toolbar and focused filters expose structured autocomplete`, async ({ page }) => {
+  test(`desktop ${theme} sidebar and focused filters expose structured autocomplete`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
-    await expect(page.locator('.recordings-search-panel')).toHaveCount(0);
+    await expect(page.locator('.recordings-search-panel')).toBeVisible();
     const rowSelection = page.locator('.recordings-call-select');
     await expect(rowSelection).toHaveClass(/ui-selection-check/);
     await expect(rowSelection).toHaveCSS('appearance', 'none');
@@ -340,8 +375,8 @@ for (const theme of ['light', 'dark']) {
     const query = page.getByRole('combobox', { name: 'Find a call' });
     const timeBox = await time.boundingBox();
     const queryBox = await query.boundingBox();
-    expect(timeBox.x).toBeGreaterThanOrEqual(queryBox.x + queryBox.width);
-    expect(Math.abs(timeBox.y - queryBox.y)).toBeLessThan(2);
+    expect(Math.abs(timeBox.x - queryBox.x)).toBeLessThan(2);
+    expect(timeBox.y).toBeGreaterThanOrEqual(queryBox.y + queryBox.height);
     expect(Math.abs(timeBox.height - queryBox.height)).toBeLessThan(2);
     expect(queryBox.width).toBeGreaterThan(150);
     await expect(page.getByRole('button', { name: /^Filters/ })).toBeVisible();
@@ -367,9 +402,10 @@ for (const theme of ['light', 'dark']) {
     if (theme === 'light') await expect(page.locator('.recordings-library'))
       .toHaveScreenshot('recordings-filtered-context-light.png', componentScreenshot);
     await openRecordingFilters(page);
-    await expect(page.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Browse', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Clear filters' })).toBeVisible();
     const dialog = page.getByRole('dialog', { name: 'Filters', exact: true });
+    await expect(dialog.locator('.recordings-entity-choice').filter({ hasText: 'Metro Public Safety' }).getByRole('radio')).toBeChecked();
     const bounds = await dialog.boundingBox();
     expect(bounds.width).toBeLessThanOrEqual(900);
     expect(bounds.width).toBeGreaterThan(600);
@@ -579,15 +615,13 @@ test('named site suggestions use channel names and preserve their hidden site tu
     label: 'North Ridge Channel', detail: 'Metro Public Safety · North Ridge · RFSS 1 · Site 2',
     wacn: 1, sysid: 1, rfss: 1, site_id: 2 };
   const state = await openRecordings(page, { suggestions: [recordedSite] });
-  await openRecordingFilters(page);
-  const site = page.getByRole('combobox', { name: 'Site', exact: true });
+  const filters = await openRecordingFilters(page);
+  await filters.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('site');
+  const site = filters.getByLabel('Find sites', { exact: true });
   await site.fill('ridge');
-  await expect(page.locator('#recordings-options-site').getByRole('option'))
-    .toContainText('North Ridge Channel');
-  await site.press('ArrowDown');
-  await expect(site).toHaveAccessibleName('Site');
-  await expect(site).toHaveAccessibleDescription('Choose a site from the suggestions.');
-  await site.press('Enter');
+  const choice = filters.locator('.recordings-entity-choice').filter({ hasText: 'North Ridge Channel' });
+  await expect(choice).toHaveCount(1);
+  await choice.getByRole('radio').check();
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   expect(state.requestedFilters.at(-1)).toMatchObject({ wacn: '1', sysid: '1', rfss: '1', site_id: '2' });
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('channel_id');
@@ -669,13 +703,23 @@ test('search controls stay within the narrow desktop boundary', async ({ page })
   expect(Math.abs(time.height - query.height)).toBeLessThan(2);
 });
 
-for (const width of [1440, 1151, 1150, 768]) {
+for (const width of [1440, 1151, 1150, 960, 768]) {
   test(`recordings at ${width}px keep the entry point simple and filters bounded`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
     await expect(page.locator('.recordings-call')).toHaveCount(25);
     expect(state.requestedFilters.at(-1).limit).toBe('25');
-    await expect(page.locator('.recordings-search-panel')).toHaveCount(0);
+    const sidebar = await page.locator('.recordings-search-panel').boundingBox();
+    const results = await page.locator('.recordings-results-panel').boundingBox();
+    if (width > 900) {
+      expect(Math.abs(sidebar.y - results.y)).toBeLessThan(2);
+      expect(results.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+      expect(sidebar.width).toBeGreaterThanOrEqual(240);
+      expect(Math.abs(sidebar.width - Math.max(240, (results.width + sidebar.width) / 4))).toBeLessThan(1);
+    } else {
+      expect(results.y).toBeGreaterThanOrEqual(sidebar.y + sidebar.height);
+      expect(Math.abs(results.width - sidebar.width)).toBeLessThan(2);
+    }
     const dialog = await openRecordingFilters(page);
     const bounds = await dialog.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
@@ -688,18 +732,21 @@ test('desktop to phone resize retains draft filters in the shared sheet without 
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
   await expect(page.locator('.recordings-call')).toHaveCount(25);
-  await expect(page.locator('.recordings-search-panel')).toHaveCount(0);
+  await expect(page.locator('.recordings-search-panel')).toBeVisible();
   const query = page.getByRole('combobox', { name: 'Find a call' });
   await query.fill('unit arriving');
   await query.press('Escape');
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.recordings-search-panel')).toHaveCount(0);
+  await expect(page.locator('.recordings-search-panel')).toBeVisible();
   await expect(page.locator('.recordings-results-panel')).toBeVisible();
+  const stackedSearch = await page.locator('.recordings-search-panel').boundingBox();
+  const stackedResults = await page.locator('.recordings-results-panel').boundingBox();
+  expect(stackedResults.y).toBeGreaterThanOrEqual(stackedSearch.y + stackedSearch.height);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   expect(state.requestedFilters).toHaveLength(1);
   await openRecordingFilters(page);
   const sheet = page.getByRole('dialog', { name: 'Filters', exact: true });
-  await expect(sheet.getByRole('combobox', { name: 'Radio system', exact: true })).toBeVisible();
+  await expect(sheet.getByRole('combobox', { name: 'Browse', exact: true })).toBeVisible();
   await sheet.getByRole('tab', { name: 'Transcript', exact: true }).click();
   await sheet.getByLabel('Transcript text', { exact: true }).fill('staging');
   await sheet.getByRole('button', { name: 'Apply filters', exact: true }).click();
@@ -720,7 +767,7 @@ for (const theme of ['light', 'dark']) {
     const bounds = await sheet.boundingBox();
     expect(bounds.width).toBe(390);
     expect(bounds.height).toBe(844);
-    await expect(sheet.getByRole('combobox', { name: 'Radio system' })).toBeVisible();
+    await expect(sheet.getByRole('combobox', { name: 'Browse', exact: true })).toBeVisible();
     await expect(sheet).toHaveScreenshot(`recordings-mobile-filters-${theme}.png`, componentScreenshot);
     await sheet.getByText('Call properties', { exact: true }).click();
     const duration = sheet.locator('.ui-dual-range-field');
@@ -2018,4 +2065,198 @@ test('basic name suggestions use the pending relative or exact date range before
     to_ms: String(Date.parse('2026-09-30T23:59:59.999Z'))
   });
   expect(state.requestedFilters).toHaveLength(1);
+});
+
+test('systems, sites and protocol-neutral channels populate before typing and apply pending choices', async ({ page }) => {
+  const state = await openRecordings(page);
+  const dialog = await openRecordingFilters(page);
+  await expect(dialog.locator('.recordings-entity-choice')).toHaveCount(2);
+  expect(state.entityRequests.at(-1)).toMatchObject({ kind: 'system', sort: 'calls' });
+  expect(state.entityRequests.at(-1)).not.toHaveProperty('q');
+  expect(state.requestedFilters).toHaveLength(1);
+  await dialog.locator('.recordings-entity-choice').filter({ hasText: 'Metro Public Safety' }).getByRole('radio').check();
+  await dialog.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('site');
+  await expect(dialog.locator('.recordings-entity-choice')).toHaveCount(1);
+  await expect(dialog.locator('.recordings-entity-choice')).toContainText('21 calls heard');
+  expect(state.entityRequests.at(-1)).toMatchObject({ kind: 'site', sort: 'calls', system_key: systemKey });
+  await dialog.locator('.recordings-entity-choice').getByRole('radio').check();
+  await dialog.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect.poll(() => state.requestedFilters.at(-1)).toMatchObject({ system_key: systemKey,
+    wacn: '1', sysid: '1', rfss: '1', site_id: '2' });
+  await openRecordingFilters(page);
+  await dialog.getByRole('button', { name: /Remove selected system:/ }).click();
+  await dialog.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('channel');
+  await expect(dialog.locator('.recordings-entity-choice')).toHaveCount(3);
+  await expect(dialog.locator('.recordings-entity-choice')).toContainText(['P25 Phase 2', 'Analog AM', 'NXDN']);
+  await dialog.locator('.recordings-entity-choice').filter({ hasText: 'Airfield AM' }).getByRole('radio').check();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('channel_id');
+  await openRecordingFilters(page);
+  await expect(dialog.getByLabel('Selected systems, sites and channels', { exact: true })).toContainText('Metro Public Safety');
+});
+
+test('entity sort and search apply to the complete period before pagination while selection stays visible', async ({ page }) => {
+  const rows = [
+    { kind: 'system', id: 'dmr:tier3:small:1', system_key: 'dmr:tier3:small:1', label: 'Alpha', call_count: 1, last_recorded_ms: 2 },
+    { kind: 'system', id: systemKey, system_key: systemKey, label: 'Zulu', call_count: 99, last_recorded_ms: 3 },
+    { kind: 'system', id: 'nxdn-c:global:7', system_key: 'nxdn-c:global:7', label: 'Beta', call_count: 10, last_recorded_ms: 9 }
+  ];
+  const state = await openRecordings(page, { entities: rows, entityPageSize: 1 });
+  const dialog = await openRecordingFilters(page);
+  await expect(dialog.locator('.recordings-entity-choice strong')).toHaveText('Zulu');
+  const chosen = dialog.locator('.recordings-entity-choice').getByRole('radio');
+  await chosen.focus(); await chosen.press('Space');
+  await expect(chosen).toBeChecked(); await expect(chosen).toBeFocused();
+  await dialog.getByRole('combobox', { name: 'Sort systems', exact: true }).selectOption('name');
+  await expect(dialog.locator('.recordings-entity-choice strong')).toHaveText('Alpha');
+  await expect(dialog.getByLabel('Selected systems, sites and channels', { exact: true })).toContainText('Zulu');
+  await dialog.getByRole('button', { name: 'More systems', exact: true }).click();
+  await expect(dialog.locator('.recordings-entity-choice strong')).toHaveText(['Alpha', 'Beta']);
+  expect(state.entityRequests.at(-1)).toMatchObject({ sort: 'name', offset: '1' });
+  await dialog.getByRole('combobox', { name: 'Sort systems', exact: true }).selectOption('recent');
+  await expect(dialog.locator('.recordings-entity-choice strong')).toHaveText('Beta');
+  await dialog.getByLabel('Find systems', { exact: true }).fill('Alpha');
+  await expect(dialog.locator('.recordings-entity-choice strong')).toHaveText('Alpha');
+  expect(state.entityRequests.at(-1)).toMatchObject({ q: 'Alpha', sort: 'recent', offset: '0' });
+  expect(state.requestedFilters).toHaveLength(1);
+});
+
+test('identity browse sorting retains NXDN talkgroup zero and an exact string auxiliary radio', async ({ page }) => {
+  const typed = { id: null, system_key: null, protocol: 'TAIT1200', value: 'UNIT-007a' };
+  const identities = [
+    { kind: 'talkgroup', id: 1201, system_key: systemKey, system_name: 'Metro', label: 'Zulu Dispatch', call_count: 99, last_recorded_ms: 1 },
+    { kind: 'talkgroup', id: 0, system_key: 'nxdn-c:global:7', system_name: 'NXDN Operations', protocol: 'NXDN', label: 'All units', call_count: 4, last_recorded_ms: 5 },
+    { kind: 'talkgroup', id: 12, system_key: 'dmr:tier3:small:7', system_name: 'DMR Operations', protocol: 'DMR', label: 'Alpha Dispatch', call_count: 1, last_recorded_ms: 2 },
+    { kind: 'radio', id: null, protocol: 'TAIT1200', value: typed.value, system_key: null, label: 'Field Unit', call_count: 8, selection: typed },
+    { kind: 'radio', id: 91, system_key: systemKey, label: 'Radio 91', call_count: 1 }
+  ];
+  const state = await openRecordings(page, { identities, identityPageSize: 1 });
+  const dialog = await openRecordingFilters(page, { tab: 'Talkgroups' });
+  const choices = dialog.locator('.recordings-filter-panel:not([hidden]) .recordings-identity-choice');
+  await expect(choices.locator('strong')).toHaveText('Zulu Dispatch');
+  expect(state.identityRequests.at(-1)).toMatchObject({ sort: 'calls' });
+  await dialog.getByRole('combobox', { name: 'Sort talkgroups', exact: true }).selectOption('name');
+  await expect(choices.locator('strong')).toHaveText('All units');
+  await choices.getByRole('checkbox').check();
+  await expect(choices.getByRole('checkbox')).toBeChecked();
+  await dialog.getByRole('combobox', { name: 'Sort talkgroups', exact: true }).selectOption('recent');
+  await expect(choices.locator('strong')).toHaveText('All units');
+  await dialog.getByRole('tab', { name: 'Source radios', exact: true }).click();
+  await expect(choices.locator('strong')).toHaveText('Field Unit');
+  await expect(choices).toContainText('Tait1200 UNIT-007a');
+  await expect(choices).not.toContainText('Radio null');
+  await choices.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  expect(JSON.parse(state.requestedFilters.at(-1).talkgroups)).toEqual([{ id: 0, system_key: 'nxdn-c:global:7', protocol: 'NXDN' }]);
+  expect(JSON.parse(state.requestedFilters.at(-1).radios)).toEqual([typed]);
+});
+
+test('NXDN zero talkgroup and auxiliary namespaces drill down without changing primary source facts', async ({ page }) => {
+  const zero = { ...call, protocol: 'NXDN', system_key: 'nxdn-c:global:7', talkgroup_id: 0, talkgroup_alias: 'All units',
+    source_id: 123, source_ota_alias: null, source_alias: 'NXDN source',
+    target_entity_ref: { kind: 'talkgroup', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-g-x-x-0' },
+    source_entity_ref: { kind: 'radio', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-r-x-x-123' },
+    auxiliary_identifiers: [
+      { kind: 'radio', role: 'source', protocol: 'FLEETSYNC', value: '00123' },
+      { kind: 'radio', role: 'destination', protocol: 'TAIT1200', value: '00123' },
+      { kind: 'tone', role: 'other', protocol: 'DCS', value: '023' }
+    ] };
+  const state = await openRecordings(page, { call: zero });
+  await page.locator('.recordings-call-title').getByRole('link', { name: 'All units', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ talkgroup_id: '0', system_key: 'nxdn-c:global:7' });
+  await page.locator('.recordings-call-info').click();
+  const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+  await detail.getByRole('tab', { name: 'Technical', exact: true }).click();
+  const signaling = detail.locator('section').filter({ has: page.getByRole('heading', { name: 'Additional signaling', exact: true }) });
+  await expect(signaling.getByRole('link', { name: '00123', exact: true })).toHaveCount(2);
+  await expect(signaling.getByRole('link', { name: '023', exact: true })).toHaveCount(0);
+  await signaling.getByRole('link', { name: '00123', exact: true }).nth(1).click();
+  const selected = JSON.parse(state.requestedFilters.at(-1).radios);
+  expect(selected).toEqual([{ id: null, system_key: 'nxdn-c:global:7', protocol: 'TAIT1200', value: '00123' }]);
+  expect(state.requestedFilters.at(-1).radio_role).toBe('any');
+  await expect(page.locator('.recordings-call')).toContainText('NXDN source');
+});
+
+test('blank browse lists include every primary audio protocol with names, numbers and unmatched identities', async ({ page }) => {
+  const protocols = ['APCO25', 'APCO25_PHASE2', 'DMR', 'NXDN', 'NBFM', 'AM'];
+  const entities = protocols.map((protocol, index) => ({ kind: 'channel', id: `channel-${index}`,
+    label: `${protocol} saved channel`, protocol, call_count: index + 1,
+    selection: { channel_id: `channel-${index}` } }));
+  const identities = protocols.slice(0, 4).map((protocol, index) => ({ kind: 'radio', id: 100 + index,
+    system_key: index < 2 ? systemKey : protocol === 'DMR' ? 'dmr:tier3:small:7' : 'nxdn-c:global:7', protocol,
+    label: index === 3 ? `Radio ${100 + index}` : `${protocol} unit`, call_count: index + 1 }));
+  identities.push({ kind: 'radio', id: 900, system_key: null, protocol: 'DMR', label: 'Radio 900', call_count: 3 },
+    { kind: 'radio', id: 900, system_key: null, protocol: 'NXDN', label: 'Radio 900', call_count: 2 },
+    { kind: 'radio', id: null, system_key: null, protocol: 'FLEETSYNC', label: 'Dispatch unit',
+    call_count: 2, selection: { id: null, system_key: null, protocol: 'FLEETSYNC', value: '00123' } },
+  { kind: 'radio', id: null, system_key: null, protocol: 'MDC1200', label: 'Dispatch unit',
+    call_count: 1, selection: { id: null, system_key: null, protocol: 'MDC1200', value: '00123' } });
+  const state = await openRecordings(page, { entities, identities });
+  const dialog = await openRecordingFilters(page);
+  await dialog.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('channel');
+  await expect(dialog.locator('.recordings-entity-choice')).toHaveCount(protocols.length);
+  await expect(dialog.locator('.recordings-entity-choice')).toContainText([
+    'Analog AM', 'Analog FM', 'NXDN', 'DMR', 'P25 Phase 2', 'P25 Phase 1'
+  ]);
+  expect(state.entityRequests.at(-1)).not.toHaveProperty('q');
+  await dialog.getByRole('tab', { name: 'Source radios', exact: true }).click();
+  const choices = dialog.locator('.recordings-filter-panel:not([hidden]) .recordings-identity-choice');
+  await expect(choices).toHaveCount(8);
+  await expect(choices.filter({ hasText: 'Radio 103' })).toContainText('NXDN');
+  await choices.filter({ hasText: 'FleetSync 00123' }).getByRole('checkbox').check();
+  await choices.filter({ hasText: 'MDC1200 00123' }).getByRole('checkbox').check();
+  await choices.filter({ hasText: 'Radio 900' }).filter({ hasText: 'DMR' }).getByRole('checkbox').check();
+  await choices.filter({ hasText: 'Radio 900' }).filter({ hasText: 'NXDN' }).getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  expect(JSON.parse(state.requestedFilters.at(-1).radios)).toEqual([
+    { id: null, system_key: null, protocol: 'FLEETSYNC', value: '00123' },
+    { id: null, system_key: null, protocol: 'MDC1200', value: '00123' },
+    { id: 900, system_key: null, protocol: 'DMR' },
+    { id: 900, system_key: null, protocol: 'NXDN' }
+  ]);
+  await expect(page.locator('.recordings-selected-filters')).toContainText('DMR 900');
+  await expect(page.locator('.recordings-selected-filters')).toContainText('NXDN 900');
+});
+
+test('entity browse failure retries and empty periods give an actionable message', async ({ page }) => {
+  await openRecordings(page, { entityErrorOnce: true });
+  const dialog = await openRecordingFilters(page);
+  await expect(dialog).toContainText('Systems could not load. Try again.');
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(dialog.locator('.recordings-entity-choice')).toHaveCount(2);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await openRecordings(page, { entities: [] });
+  await openRecordingFilters(page);
+  await expect(dialog).toContainText('No systems recorded in this period. Try another name or a wider date range.');
+  await expect(dialog.getByRole('button', { name: 'More systems', exact: true })).toBeHidden();
+});
+
+test('switching between P25 and channel-backed sites replaces only the site-owned constraints', async ({ page }) => {
+  const state = await openRecordings(page, { entities: [
+    { kind: 'site', id: '1.1.1.2', label: 'P25 Ridge', wacn: 1, sysid: 1, rfss: 1, site_id: 2,
+      selection: { wacn: '1', sysid: '1', rfss: '1', site_id: '2' }, count_kind: 'heard_at', call_count: 10 },
+    { kind: 'site', id: '00000000-0000-4000-8000-000000000019', label: 'Digital West', channel_id: '00000000-0000-4000-8000-000000000019',
+      protocol: 'NXDN', selection: { channel_id: '00000000-0000-4000-8000-000000000019' }, call_count: 5 },
+    { kind: 'channel', id: '00000000-0000-4000-8000-000000000018', label: 'Airfield AM', protocol: 'AM', selection: { channel_id: '00000000-0000-4000-8000-000000000018' }, call_count: 3 }
+  ] });
+  const dialog = await openRecordingFilters(page);
+  await dialog.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('site');
+  await dialog.locator('.recordings-entity-choice').filter({ hasText: 'P25 Ridge' }).getByRole('radio').check();
+  await dialog.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toMatchObject({ wacn: '1', sysid: '1', rfss: '1', site_id: '2' });
+  await openRecordingFilters(page);
+  await dialog.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('site');
+  await dialog.locator('.recordings-entity-choice').filter({ hasText: 'Digital West' }).getByRole('radio').check();
+  await dialog.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toHaveProperty('channel_id', '00000000-0000-4000-8000-000000000019');
+  for (const key of ['wacn', 'sysid', 'rfss', 'site_id']) expect(state.requestedFilters.at(-1)).not.toHaveProperty(key);
+  await expect(page.locator('.recordings-selected-filters')).toContainText('Site: Digital West');
+  await expect(page.locator('.recordings-selected-filters')).not.toContainText('Channel:');
+  await openRecordingFilters(page);
+  await dialog.getByRole('combobox', { name: 'Browse', exact: true }).selectOption('channel');
+  await dialog.locator('.recordings-entity-choice').getByRole('radio').check();
+  await dialog.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  expect(state.requestedFilters.at(-1)).toHaveProperty('channel_id', '00000000-0000-4000-8000-000000000018');
+  await expect(page.locator('.recordings-selected-filters')).not.toContainText('Digital West');
+  await expect(page.locator('.recordings-selected-filters')).toContainText('Channel: Airfield AM');
 });

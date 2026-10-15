@@ -6,9 +6,23 @@
 .recordings-browser {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
   gap: var(--space-4);
   align-items: start;
+}
+
+.recordings-search-panel {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  position: relative;
+  z-index: 5;
+}
+
+.recordings-filter-chip {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .recordings-results-panel {
@@ -39,6 +53,13 @@
   overflow: auto;
 }
 
+.recordings-picker-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: var(--space-3);
+}
+
 .recordings-picker-selected {
   display: flex;
   flex-wrap: wrap;
@@ -50,7 +71,8 @@
 }
 
 .recordings-picker-group-label,
-.recordings-identity-choice {
+.recordings-identity-choice,
+.recordings-entity-choice {
   display: flex;
   align-items: start;
   gap: var(--space-3);
@@ -87,7 +109,7 @@
 
 .recordings-search-primary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 230px) max-content;
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
   gap: var(--space-3);
 }
@@ -114,7 +136,7 @@
 
 .recordings-custom-dates {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
 }
 
@@ -628,7 +650,11 @@
   }
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 900px) {
+  .recordings-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .recordings-search-primary {
     grid-template-columns: minmax(0, 1fr) minmax(160px, 200px);
   }

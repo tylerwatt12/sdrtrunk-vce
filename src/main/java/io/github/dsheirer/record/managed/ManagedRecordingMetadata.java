@@ -23,6 +23,12 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
+import io.github.dsheirer.identifier.esn.ESNIdentifier;
+import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncIdentifier;
+import io.github.dsheirer.module.decode.mdc1200.identifier.MDC1200Identifier;
+import io.github.dsheirer.module.decode.tait.identifier.TaitIdentifier;
+import io.github.dsheirer.module.decode.lj1200.FunctionAndReplyCodeIdentifier;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.AuxiliaryIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
@@ -42,8 +48,28 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
                                 ManagedRecordingCatalog.Site winnerSite,
                                 List<ManagedRecordingCatalog.Site> observedSites,
                                 List<ManagedRecordingCatalog.Member> patchMembers,
-                                CompletedToneSequence completedTones)
+                                CompletedToneSequence completedTones, List<AuxiliaryIdentifier> auxiliaryIdentifiers)
 {
+    ManagedRecordingMetadata
+    {
+        auxiliaryIdentifiers = auxiliaryIdentifiers != null ? List.copyOf(auxiliaryIdentifiers) : List.of();
+        if(auxiliaryIdentifiers.size() > 64) throw new IllegalArgumentException("Too many captured recording identifiers");
+    }
+
+    /** Compatibility constructor for callers that have no prospective auxiliary signalling facts. */
+    ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long sizeBytes, String relativePath,
+        String systemKey, String channelId, long aliasListId, int protocol, int callType, int voiceType,
+        Integer sourceId, Integer sourceHomeWacn, Integer sourceHomeSystem, Integer sourceHomeId,
+        Integer targetId, Integer targetHomeWacn, Integer targetHomeSystem, Integer targetHomeId,
+        Long frequencyHz, Integer timeslot, Integer nac, Integer toneKind, String tone,
+        ManagedRecordingCatalog.Site winnerSite, List<ManagedRecordingCatalog.Site> observedSites,
+        List<ManagedRecordingCatalog.Member> patchMembers, CompletedToneSequence completedTones)
+    {
+        this(startMs,endMs,durationMs,sizeBytes,relativePath,systemKey,channelId,aliasListId,protocol,callType,voiceType,
+            sourceId,sourceHomeWacn,sourceHomeSystem,sourceHomeId,targetId,targetHomeWacn,targetHomeSystem,targetHomeId,
+            frequencyHz,timeslot,nac,toneKind,tone,winnerSite,observedSites,patchMembers,completedTones,List.of());
+    }
+
     static ManagedRecordingMetadata from(CompletedAudioCall call, String relativePath, long sizeBytes)
     {
         AudioCallSnapshot snapshot = call.snapshot();
@@ -141,7 +167,45 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
                 snapshot.timeslot() : null,
             integer(identifiers, Form.NETWORK_ACCESS_CODE), tone != null ? tone.kind() : null,
             tone != null ? tone.value() : null, winningSite,
-            List.copyOf(sites), List.copyOf(members), call.completedToneSequence());
+            List.copyOf(sites), List.copyOf(members), call.completedToneSequence(),
+            auxiliaryIdentifiers(call.recordingIdentifierCollection()));
+    }
+
+    /** Runs on the recording-file worker after audio is saved, not on decoder callbacks. */
+    static List<AuxiliaryIdentifier> auxiliaryIdentifiers(IdentifierCollection identifiers)
+    {
+        if(identifiers == null) return List.of();
+        Set<AuxiliaryIdentifier> facts = new LinkedHashSet<>();
+        for(Identifier<?> identifier: identifiers.getIdentifiers())
+        {
+            String kind = null, value = null;
+            if(identifier instanceof DCSIdentifier dcs && dcs.getValue() != null)
+            {
+                kind = "tone"; value = dcs.getValue().name();
+            }
+            else if(identifier instanceof FleetsyncIdentifier || identifier instanceof MDC1200Identifier)
+            {
+                if(identifier.getValue() instanceof Integer number && number >= 0)
+                { kind = "radio"; value = Integer.toString(number); }
+            }
+            else if(identifier instanceof TaitIdentifier || identifier instanceof ESNIdentifier &&
+                identifier.getProtocol() == Protocol.LOJACK)
+            {
+                if(identifier.getValue() instanceof String text) { kind = "radio"; value = text; }
+            }
+            else if(identifier instanceof FunctionAndReplyCodeIdentifier function && function.getValue() != null)
+            {
+                kind = "function";
+                value = function.getValue().getFunction().name()+":"+function.getValue().getReplyCode();
+            }
+            if(kind == null || value == null || value.isBlank() || value.length() > 128 ||
+                value.chars().anyMatch(Character::isISOControl)) continue;
+            String role = identifier.getRole() == Role.FROM ? "source" :
+                identifier.getRole() == Role.TO ? "destination" : "other";
+            facts.add(new AuxiliaryIdentifier(identifier.getProtocol().name(),kind,role,value));
+            if(facts.size() == 64) break;
+        }
+        return List.copyOf(facts);
     }
 
     /** Catalog ownership follows the same native-home radio key as the directory, without changing decoder facts. */

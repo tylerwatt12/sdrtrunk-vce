@@ -686,6 +686,47 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void populatedBrowserEndpointsValidateSortScopeAndTypedSelectionBounds() throws Exception
+    {
+        String browse=ManagedRecordingsHttpController.BROWSE_PATH;
+        for(String kind: List.of("system","site","channel"))
+        {
+            HttpResponse<String> response=send(request(browse+"/entities?kind="+kind+"&from_ms=0&to_ms=5000&sort=calls").GET());
+            assertEquals(200,response.statusCode(),response.body());
+            assertTrue(json(response).at("/data/rows").isArray());
+            assertEquals(400,send(request(browse+"/entities?kind="+kind+"&sort=invalid").GET()).statusCode());
+        }
+        for(String order: List.of("calls","name","recent"))
+            assertEquals(200,send(request(browse+"/identities?kind=talkgroup&from_ms=0&to_ms=5000&sort="+order).GET()).statusCode());
+        assertEquals(400,send(request(browse+"/identities?kind=talkgroup&sort=invalid").GET()).statusCode());
+        assertEquals(400,send(request(browse+"/entities?kind=radio").GET()).statusCode());
+        assertEquals(400,send(request(browse+"/entities?kind=channel&system_key=invalid").GET()).statusCode());
+        assertEquals(400,send(request(browse+"/entities?kind=channel&from_ms=0&to_ms=9223372036854775807").GET()).statusCode());
+        List<Map<String,Object>> choices=new java.util.ArrayList<>();
+        String channelScope="nxdn-c:channel:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        for(int index=0;index<100;index++)
+        {
+            Map<String,Object> choice=new java.util.LinkedHashMap<>();
+            choice.put("id",null); choice.put("system_key",channelScope); choice.put("protocol","TAIT1200");
+            choice.put("value",String.format("%03d",index)+"漢\\\"".repeat(41)+"ab");
+            choices.add(choice);
+        }
+        String raw=MAPPER.writeValueAsString(choices);
+        assertTrue(raw.length()>16384);
+        String encoded=java.net.URLEncoder.encode(raw,java.nio.charset.StandardCharsets.UTF_8);
+        HttpResponse<String> valid=send(request(browse+"/calls?from_ms=0&to_ms=5000&radio_role=source&radios="+encoded).GET());
+        assertEquals(200,valid.statusCode(),valid.body());
+        assertEquals(0,json(valid).at("/data/calls").size());
+        String bad=java.net.URLEncoder.encode("[{\"id\":null,\"system_key\":null,\"protocol\":\"ARS\",\"value\":\"UNIT-A\"}]",
+            java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(400,send(request(browse+"/calls?radios="+bad).GET()).statusCode());
+        assertEquals(400,send(request(browse+"/calls?talkgroups="+encoded).GET()).statusCode());
+        choices.add(choices.getFirst());
+        String tooMany=java.net.URLEncoder.encode(MAPPER.writeValueAsString(choices),java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(400,send(request(browse+"/calls?radios="+tooMany).GET()).statusCode());
+    }
+
+    @Test
     void numericAutocompleteReturnsUnaliasedTalkgroupsInSpecificAndGeneralFinders() throws Exception
     {
         String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?from_ms=0&to_ms=5000&q=4001";

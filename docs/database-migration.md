@@ -764,7 +764,11 @@ format-4-to-5 step. The format-4 signature remains frozen and the upgrade neithe
 nor backfills tones. Catalog format 6 adds ordered lookup indexes for complete source and destination radio identities,
 patch-member identities, legacy system contexts, protocol, call type, and voice type. Its adjacent format-5-to-6 step preserves all recording
 rows, audio paths, transcripts, tone facts, relationships, counters, and allocator values. Format 5 retains its frozen
-signature. The main application database is independently at format 54; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+signature. Catalog format 7 stores captured auxiliary signaling identifiers with their explicit protocol, role and
+text value, separately from the primary audio protocol and numeric radio fields. The adjacent format-6-to-7 step
+adds an empty identifier table and its lookup index, preserving all existing recording data without inferring missing
+historical identifiers. Format 6 retains its frozen signature. The main application database is independently at
+format 54; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

@@ -123,6 +123,7 @@ class ManagedRecordingToneMigrationTest
             }
             Collections.sort(values); result.put(table,values);
         }
+        result.putIfAbsent("recording_identifier", List.of());
         return result;
     }
     private static long scalar(Connection c,String query) throws Exception

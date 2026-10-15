@@ -8,6 +8,7 @@ import { callAudioDetailGroups } from '../core/call-audio-details.js?v=3';
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
 const IDENTITIES = '/api/v1/recordings/identities';
+const ENTITIES = '/api/v1/recordings/entities';
 const STATUS = '/api/v1/recordings/status';
 const ADMIN = '/api/v1/admin/recordings';
 const PAGE_SIZE = 25;
@@ -18,7 +19,7 @@ const SEARCH_FIELDS = Object.freeze([
   ['site', 'Site', 'site', 'Channel name, site name, or ID'],
   ['talkgroup_id', 'Talkgroup', 'talkgroup', 'Talkgroup alias or ID'],
   ['radio_id', 'Radio ID', 'radio', 'Radio alias, ID, or OTA name'],
-  ['channel_id', 'Analog channel', 'channel', 'Channel name']
+  ['channel_id', 'Channel', 'channel', 'Saved channel name']
 ]);
 
 function queryPath(root, values = {}) {
@@ -46,19 +47,42 @@ export function recordingDiscoveryPeriod(filters, now = Date.now()) {
     { from_ms: filters.from_ms, to_ms: filters.to_ms };
 }
 
-export function recordingIdentitySelections(value) {
+export function recordingIdentitySelections(value, kind = 'radio') {
   let rows;
   try { rows = Array.isArray(value) ? value : JSON.parse(value || '[]'); } catch (_error) { return []; }
   if (!Array.isArray(rows)) return [];
-  return rows.filter(item => item && Number.isInteger(Number(item.id)) && Number(item.id) > 0 &&
-    (item.system_key === null || typeof item.system_key === 'string')).map(item => ({
-    id: Number(item.id), system_key: item.system_key,
-    ...(item.identity_key ? { identity_key: String(item.identity_key) } : {})
-  }));
+  const selections = [];
+  for (const item of rows) {
+    if (!item || !(item.system_key === null || typeof item.system_key === 'string')) continue;
+    const protocol = item.protocol === 'APCO25_PHASE2' ? 'APCO25' : item.protocol;
+    if (protocol && !['UNKNOWN', 'APCO25', 'DMR', 'NXDN', 'NBFM', 'AM', 'DCS', 'FLEETSYNC', 'MDC1200', 'LOJACK', 'TAIT1200'].includes(protocol)) continue;
+    if (kind === 'radio' && item.id === null && ['FLEETSYNC', 'MDC1200', 'LOJACK', 'TAIT1200'].includes(item.protocol) &&
+        typeof item.value === 'string' && item.value.length && !item.identity_key) {
+      selections.push({ id: null, system_key: item.system_key, protocol: item.protocol, value: item.value });
+    } else if ((typeof item.id === 'number' || typeof item.id === 'string' && item.id.trim() !== '') &&
+        Number.isInteger(Number(item.id)) &&
+        Number(item.id) >= (kind === 'talkgroup' ? 0 : 1) &&
+        (Number(item.id) !== 0 || (protocol ? protocol === 'NXDN' : /^nxdn(?:-|:)/i.test(item.system_key || '')))) selections.push({
+      id: Number(item.id), system_key: item.system_key,
+      ...(item.identity_key ? { identity_key: String(item.identity_key) } : {}),
+      ...(protocol ? { protocol } : {})
+    });
+  }
+  return selections;
 }
 
 export function recordingIdentitySelectionKey(item) {
-  return JSON.stringify([item.system_key ?? null, Number(item.id), item.identity_key || '']);
+  return item.id === null && item.protocol ? JSON.stringify([item.system_key ?? null, item.protocol, item.value]) :
+    JSON.stringify([item.system_key ?? null, Number(item.id), item.identity_key || '', item.protocol === 'APCO25_PHASE2' ? 'APCO25' : item.protocol || '']);
+}
+
+function recordingNamespaceLabel(protocol) {
+  return ['APCO25', 'APCO25_PHASE2'].includes(protocol) ? 'P25' : protocolLabel(protocol);
+}
+
+function recordingSelectionText(item, kind = 'radio') {
+  return item.id === null && item.protocol ? `${protocolLabel(item.protocol)} ${item.value}` :
+    `${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${item.id}`;
 }
 
 function value(row, ...names) {
@@ -74,6 +98,12 @@ export function recordingResultFilter(row, reference, field = '') {
   const system = value(row, 'system_key', 'radio_system_key') || row?.radio_system_entity_ref?.key;
   const channel = value(row, 'channel_id') || row?.channel_entity_ref?.key;
   const scope = system ? { system_key: String(system) } : channel ? { channel_id: String(channel) } : null;
+  if (reference?.auxiliary && reference.kind === 'radio') {
+    const item = recordingIdentitySelections([{ id: null, system_key: system ? String(system) : null,
+      protocol: reference.protocol, value: reference.value }], 'radio')[0];
+    return item ? { key: 'radios', filters: { radios: JSON.stringify([item]),
+      radio_role: reference.role === 'source' ? 'source' : 'any' } } : null;
+  }
   if (/home.system/i.test(field)) return null;
   if (field === 'site' || field === 'site_entity_ref') {
     const site = row?.audio_from || row;
@@ -101,8 +131,9 @@ export function recordingResultFilter(row, reference, field = '') {
     field === 'target' || field === 'target_entity_ref' ?
       (value(row, 'destination_radio_id') !== null ? 'radio' : 'talkgroup') : '');
   if (!scope || !['radio', 'talkgroup', 'patch_group'].includes(kind)) return null;
-  const tuple = /^v1-([rgp])-(x|[0-9a-f]{5})-(x|[0-9a-f]{3})-([1-9][0-9]*)$/.exec(reference?.identity_key || '');
+  const tuple = /^v1-([rgp])-(x|[0-9a-f]{5})-(x|[0-9a-f]{3})-(0|[1-9][0-9]*)$/.exec(reference?.identity_key || '');
   if (reference?.identity_key && (!tuple || (tuple[2] === 'x') !== (tuple[3] === 'x') ||
+      Number(tuple[4]) === 0 && !(kind !== 'radio' && /^NXDN/i.test(String(row?.protocol || ''))) ||
       Number(tuple[4]) > (tuple[2] === 'x' ? 0xFFFFFF : kind === 'radio' ? 0xFFFFFC : 0xFFFE) ||
       (kind === 'radio' ? tuple[1] !== 'r' : !['g', 'p'].includes(tuple[1])))) return null;
   if (reference?.radio_system_key && system && reference.radio_system_key !== system) return null;
@@ -122,7 +153,7 @@ export function recordingResultFilter(row, reference, field = '') {
       talkgroup_identity_key: exact, talkgroup_id: '', talkgroup_min: '', talkgroup_max: '' } };
     const id = target ? value(row, 'talkgroup_id', 'group_id') ?? tuple?.[4] :
       tuple?.[4] ?? value(row, 'talkgroup_id', 'group_id');
-    return id != null && Number(id) > 0 ? { key: 'talkgroup_id', filters: { ...scope,
+    return id != null && (Number(id) > 0 || Number(id) === 0 && /^NXDN/i.test(String(row?.protocol || ''))) ? { key: 'talkgroup_id', filters: { ...scope,
       talkgroup_id: String(id), talkgroup_identity_key: '', talkgroup_min: '', talkgroup_max: '' } } : null;
   }
   const target = field === 'target' || field === 'target_entity_ref';
@@ -285,7 +316,7 @@ function prettify(valueToFormat) {
 
 function protocolLabel(protocol) {
   return ({ APCO25: 'P25 Phase 1', APCO25_PHASE2: 'P25 Phase 2',
-    NBFM: 'Analog FM', AM: 'Analog AM' })[protocol] || prettify(protocol);
+    NBFM: 'Analog FM', AM: 'Analog AM', DMR: 'DMR', NXDN: 'NXDN', DCS: 'DCS', FLEETSYNC: 'FleetSync', MDC1200: 'MDC1200', LOJACK: 'LoJack', TAIT1200: 'Tait1200' })[protocol] || prettify(protocol);
 }
 
 function callKey(row) {
@@ -400,6 +431,8 @@ export function createRecordingsFeature(deps) {
           selectedSuggestions.clear();
           appliedSuggestions.forEach((suggestion, key) => selectedSuggestions.set(key, suggestion));
           Object.assign(search, match.filters);
+          if (match.key === 'radios') for (const item of recordingIdentitySelections(match.filters.radios, 'radio'))
+            identityLabels.set(`radio:${recordingIdentitySelectionKey(item)}`, `${text} · ${systemLabel(row)}`);
           selectedSuggestions.set(match.key, { label: String(text),
             appliedKeys: match.key === 'site' ? ['wacn', 'sysid', 'rfss', 'site_id'] :
               match.filters.radio_identity_key ? ['radio_identity_key'] :
@@ -449,10 +482,10 @@ export function createRecordingsFeature(deps) {
     if (suggestion.selection && ['radio_id', 'talkgroup_id'].includes(key)) {
       const kind = key === 'radio_id' ? 'radio' : 'talkgroup';
       const multiple = kind === 'radio' ? 'radios' : 'talkgroups';
-      const item = recordingIdentitySelections([suggestion.selection])[0];
+      const item = recordingIdentitySelections([suggestion.selection], kind)[0];
       if (!item) return;
       const id = recordingIdentitySelectionKey(item);
-      const items = new Map(recordingIdentitySelections(search[multiple]).map(row => [recordingIdentitySelectionKey(row), row]));
+      const items = new Map(recordingIdentitySelections(search[multiple], kind).map(row => [recordingIdentitySelectionKey(row), row]));
       if (!items.has(id) && items.size >= 100) return;
       items.set(id, item);
       search[multiple] = JSON.stringify([...items.values()]);
@@ -460,9 +493,16 @@ export function createRecordingsFeature(deps) {
         ['talkgroup_id', 'talkgroup_identity_key', 'talkgroup_min', 'talkgroup_max']) search[name] = '';
       if (kind === 'radio' && !search.radio_role) search.radio_role = 'source';
       selectedSuggestions.delete(key);
-      identityLabels.set(`${kind}:${id}`, `${suggestion.label || item.id} · ${suggestion.system_name || item.system_key || 'Unidentified system'}`);
+      identityLabels.set(`${kind}:${id}`, `${suggestion.label || recordingSelectionText(item, kind)}${item.protocol ? ` · ${recordingNamespaceLabel(item.protocol)}${item.id === null ? ` ${item.value}` : ` ${item.id}`}` : ''} · ${suggestion.system_name || item.system_key || 'Unidentified system'}`);
       return;
     }
+    if (key === 'channel_id' && selectedSuggestions.get('site')?.appliedKeys?.includes('channel_id')) {
+      selectedSuggestions.get('site').appliedKeys.forEach(name => { search[name] = ''; });
+      search.site = '';
+      selectedSuggestions.delete('site');
+    }
+    if (key === 'site' && value(suggestion, 'site_id') === null && suggestion.channel_id)
+      selectedSuggestions.delete('channel_id');
     selectedSuggestions.get(key)?.appliedKeys?.forEach((applied) => { search[applied] = ''; });
     if (suggestion.name_query) {
       const sameSystem = search.system_key === String(suggestion.system_key);
@@ -1042,6 +1082,14 @@ export function createRecordingsFeature(deps) {
         ['Target home identity', value(row, 'target_home_id'), 'target_entity_ref']
       ]]
     ];
+    if (Array.isArray(row.auxiliary_identifiers) && row.auxiliary_identifiers.length) {
+      groups.push(['Additional signaling', row.auxiliary_identifiers.filter(item => item && item.value != null).map(item => [
+        `${protocolLabel(item.protocol)} ${item.role && item.role !== 'other' ? `${item.role} ` : ''}${item.kind || 'identifier'}`,
+        item.label ? `${item.label} · ${item.value}` : String(item.value),
+        item.kind === 'radio' ? { kind: 'radio', auxiliary: true, protocol: item.protocol,
+          value: item.value, role: item.role } : null
+      ])]);
+    }
     const sites = [value(row, 'audio_from'), ...(Array.isArray(value(row, 'also_received_on', 'also_received_sites')) ?
       value(row, 'also_received_on', 'also_received_sites') : [])].filter((site) => site && typeof site === 'object');
     if (sites.length) groups.push(['Received site identities', sites.flatMap((site, index) => {
@@ -1204,7 +1252,7 @@ export function createRecordingsFeature(deps) {
         tabs.append(tab);
       }
       const locations = { 'Source & target identities': 'identities', 'Patch member identities': 'identities',
-        'Protocol & signaling': 'technical', 'Received site identities': 'technical',
+        'Protocol & signaling': 'technical', 'Additional signaling': 'technical', 'Received site identities': 'technical',
         'Audio': 'technical', 'Paging tones': 'technical',
         'Recording identifiers': 'recording' };
       for (const [title, facts] of [...factGroups(call), ...callAudioDetailGroups(call)]) {
@@ -1452,6 +1500,7 @@ export function createRecordingsFeature(deps) {
       ['channel_id', ['channel_id'], 'Channel'], ['alias_list_id', ['alias_list_id'], 'Alias List']
     ];
     for (const [key, keys, title] of groups) {
+      if (keys.every(name => represented.has(name))) continue;
       const suggestion = appliedSuggestions.get(key);
       const applied = [...new Set([...keys, ...(suggestion?.appliedKeys || [])])];
       if (!applied.some((name) => currentFilters[name])) continue;
@@ -1461,9 +1510,9 @@ export function createRecordingsFeature(deps) {
       applied.forEach((name) => represented.add(name));
     }
     for (const [key, kind, title] of [['talkgroups', 'talkgroup', 'Talkgroup'], ['radios', 'radio', 'Radio']]) {
-      for (const item of recordingIdentitySelections(currentFilters[key])) {
+      for (const item of recordingIdentitySelections(currentFilters[key], kind)) {
         const id = recordingIdentitySelectionKey(item);
-        const name = identityLabels.get(`${kind}:${id}`) || `${item.id} · ${item.system_key || 'Unidentified system'}`;
+        const name = identityLabels.get(`${kind}:${id}`) || `${recordingSelectionText(item, kind)} · ${item.system_key || 'Unidentified system'}`;
         chips.push({ key, keys: [key], selection: id, text: `${title}: ${name}` });
       }
     }
@@ -1502,7 +1551,7 @@ export function createRecordingsFeature(deps) {
     for (const chip of chips) {
       const remove = button(node, `${chip.text} ×`, () => {
         if (chip.selection) {
-          const remaining = recordingIdentitySelections(currentFilters[chip.key])
+          const remaining = recordingIdentitySelections(currentFilters[chip.key], chip.key === 'talkgroups' ? 'talkgroup' : 'radio')
             .filter(item => recordingIdentitySelectionKey(item) !== chip.selection);
           search[chip.key] = remaining.length ? JSON.stringify(remaining) : '';
           if (remaining.length) currentFilters[chip.key] = search[chip.key];
@@ -1882,17 +1931,152 @@ export function createRecordingsFeature(deps) {
       controls.set(id, tab);
       tabs.append(tab);
     }
-    const systemFields = node('div', 'recordings-search-fields');
-    SEARCH_FIELDS.filter(([key]) => !['talkgroup_id', 'radio_id'].includes(key))
-      .forEach(([key, title, kind, placeholder]) =>
-        systemFields.append(autocompleteFilter(key, title, kind, placeholder)));
-    panels.get('systems').append(systemFields);
+    const entityPanel = panels.get('systems');
+    const browseKind = select(node, [['system', 'Radio systems'], ['site', 'Sites'], ['channel', 'Channels']], 'Browse');
+    const entitySort = select(node, [['calls', 'Most calls'], ['name', 'Name'], ['recent', 'Last active']], 'Sort systems');
+    const entityQuery = textInput('System name or key');
+    const queryField = field('Find systems', entityQuery);
+    const tools = node('div', 'recordings-picker-tools');
+    tools.append(field('Browse', browseKind), field('Sort by', entitySort));
+    const entitySelected = node('div', 'recordings-picker-selected');
+    entitySelected.setAttribute('aria-label', 'Selected systems, sites and channels');
+    const entityFeedback = node('div', 'recordings-picker-feedback');
+    const entityResults = node('div', 'recordings-picker-results');
+    const moreEntities = button(node, 'More systems', () => void loadEntities(true));
+    moreEntities.hidden = true;
+    const entityKeys = { system: 'system_key', site: 'site', channel: 'channel_id' };
+    const entityTitles = { system: 'systems', site: 'sites', channel: 'channels' };
+    let entityRows = [];
+    let entityOffset = 0;
+    let entityGeneration = 0;
+    let entityTimer;
+    let entityAbort;
+    let entityScope = null;
+    let pendingEntityScope = null;
+    let entityBusy = false;
+    const drawEntitySelections = () => {
+      entitySelected.replaceChildren();
+      for (const [key, title] of [['system_key', 'System'], ['site', 'Site'], ['channel_id', 'Channel']]) {
+        if (key === 'channel_id' && selectedSuggestions.get('site')?.appliedKeys?.includes('channel_id')) continue;
+        const choice = selectedSuggestions.get(key);
+        const applied = choice?.appliedKeys || [];
+        if (!search[key] && !applied.some(name => search[name])) continue;
+        const text = choice?.label || search[key] || applied.map(name => search[name]).filter(Boolean).join(' · ');
+        const remove = button(node, `${title}: ${text} ×`, () => {
+          search[key] = '';
+          applied.forEach(name => { search[name] = ''; });
+          selectedSuggestions.delete(key);
+          drawEntitySelections();
+          void loadEntities();
+        }, 'ui-button ui-button-secondary ui-button-compact');
+        remove.setAttribute('aria-label', `Remove selected ${title.toLowerCase()}: ${text}`);
+        entitySelected.append(remove);
+      }
+      if (!entitySelected.childNodes.length) entitySelected.append(node('span', 'ui-field-detail', 'Any system, site or channel'));
+    };
+    const chooseEntity = (row) => {
+      applySuggestion(entityKeys[browseKind.value], row);
+      if (row.selection && typeof row.selection === 'object') Object.assign(search, row.selection);
+      drawEntitySelections();
+      drawEntityRows();
+    };
+    const drawEntityRows = () => {
+      const focused = globalThis.document?.activeElement?.dataset?.recordingEntity;
+      entityResults.replaceChildren();
+      const kind = browseKind.value;
+      for (const row of entityRows) {
+        const wrapper = node('label', 'ui-choice-card recordings-entity-choice');
+        const check = node('input', 'ui-choice-radio');
+        check.type = 'radio';
+        check.name = `recordings-${kind}`;
+        check.dataset.recordingEntity = JSON.stringify(row.selection || [row.id, row.system_key]);
+        const picked = selectedSuggestions.get(entityKeys[kind]);
+        check.checked = row.selection ? Object.entries(row.selection).every(([key, item]) => String(search[key] ?? '') === String(item ?? '')) :
+          picked ? String(picked.id) === String(row.id) && (!picked.system_key || picked.system_key === row.system_key) :
+            search[entityKeys[kind]] === String(row.id);
+        check.addEventListener('change', () => { if (check.checked) chooseEntity(row); });
+        const copy = node('span', 'recordings-identity-copy');
+        copy.append(node('strong', '', String(row.label || row.id || 'Unnamed')));
+        const context = [(row.protocols || (row.protocol ? [row.protocol] : [])).map(protocolLabel).join(', '), row.detail,
+          kind === 'system' ? row.system_key || row.id : row.system_name || row.system_key,
+          kind === 'channel' && row.id ? `Channel ${row.id}` : ''].filter(Boolean);
+        if (context.length) copy.append(node('span', 'ui-field-detail', [...new Set(context)].join(' · ')));
+        if (row.call_count != null) copy.append(node('span', 'ui-field-detail',
+          `${Number(row.call_count).toLocaleString()} ${Number(row.call_count) === 1 ? 'call' : 'calls'}${row.count_kind === 'heard_at' ? ' heard' : ''}` +
+          (row.last_recorded_ms ? ` · Last ${dateTime(Number(row.last_recorded_ms))}` : '')));
+        wrapper.append(check, copy);
+        entityResults.append(wrapper);
+      }
+      if (focused) {
+        const target = [...entityResults.querySelectorAll('input')].find(input => input.dataset.recordingEntity === focused);
+        if (target) modal?.focus(target);
+      }
+    };
+    const entityQueryScope = () => JSON.stringify([browseKind.value, entitySort.value, entityQuery.value.trim(),
+      browseKind.value === 'system' ? '' : search.system_key, search.from_ms, search.to_ms]);
+    async function loadEntities(append = false) {
+      if (append && entityBusy) return;
+      const request = ++entityGeneration;
+      const scope = entityQueryScope();
+      pendingEntityScope = scope;
+      if (!append) { entityOffset = 0; entityRows = []; entityResults.replaceChildren(); }
+      entityAbort?.abort(); entityAbort = new AbortController();
+      entityBusy = true; moreEntities.disabled = true;
+      const kind = browseKind.value;
+      const title = entityTitles[kind];
+      entityFeedback.replaceChildren(makeNotice(`Finding ${title}…`, 'loading'));
+      try {
+        const result = await requestJson(queryPath(ENTITIES, { kind, q: entityQuery.value.trim(), sort: entitySort.value,
+          from_ms: search.from_ms, to_ms: search.to_ms, system_key: kind === 'system' ? '' : search.system_key,
+          limit: 100, offset: entityOffset }), { page: false, signal: entityAbort.signal });
+        if (request !== entityGeneration || !entityPanel.isConnected || scope !== entityQueryScope()) return;
+        entityRows = append ? [...entityRows, ...(result?.rows || [])] : result?.rows || [];
+        entityOffset = result?.next_offset ?? entityRows.length;
+        entityScope = scope;
+        moreEntities.hidden = !result?.has_more;
+        entityFeedback.replaceChildren(...(entityRows.length ? [] : [makeNotice(`No ${title} recorded in this period. Try another name or a wider date range.`, 'empty')]));
+        drawEntityRows();
+      } catch (error) {
+        if (request === entityGeneration && error?.name !== 'AbortError' && entityPanel.isConnected)
+          entityFeedback.replaceChildren(makeNotice(`${title[0].toUpperCase() + title.slice(1)} could not load. Try again.`, 'error'),
+            button(node, 'Try again', () => void loadEntities()));
+      } finally {
+        if (request === entityGeneration) { entityBusy = false; pendingEntityScope = null; moreEntities.disabled = false; }
+      }
+    }
+    browseKind.addEventListener('change', () => {
+      const title = entityTitles[browseKind.value];
+      entityQuery.value = '';
+      entityQuery.placeholder = browseKind.value === 'channel' ? 'Saved channel name' :
+        browseKind.value === 'site' ? 'Site name, channel name, or ID' : 'System name or key';
+      entityQuery.setAttribute('aria-label', `Find ${title}`);
+      queryField.querySelector('.ui-field-label').textContent = `Find ${title}`;
+      entitySort.setAttribute('aria-label', `Sort ${title}`);
+      moreEntities.textContent = `More ${title}`;
+      void loadEntities();
+    });
+    entityQuery.setAttribute('aria-label', 'Find systems');
+    entityQuery.addEventListener('input', () => {
+      window.clearTimeout(entityTimer);
+      entityTimer = window.setTimeout(() => void loadEntities(), SUGGESTION_DELAY_MS);
+    });
+    entitySort.addEventListener('change', () => void loadEntities());
+    cleanups.push(() => { entityGeneration++; entityAbort?.abort(); window.clearTimeout(entityTimer); });
+    loaders.set('systems', () => {
+      const scope = entityQueryScope();
+      if (entityScope !== scope && pendingEntityScope !== scope) void loadEntities();
+    });
+    entityPanel.append(tools, queryField, entitySelected, entityFeedback, entityResults, moreEntities);
+    drawEntitySelections();
 
     const identityPicker = (kind, key, title) => {
       const panel = panels.get(key);
       const input = textInput(kind === 'radio' ? 'Talker alias, configured alias, or radio ID' :
         'Talkgroup name, category, description, or ID');
       input.setAttribute('aria-label', `Find ${title.toLowerCase()}`);
+      const sort = select(node, [['calls', 'Most calls'], ['name', 'Name'], ['recent', 'Last active']], `Sort ${title.toLowerCase()}`);
+      const pickerTools = node('div', 'recordings-picker-tools');
+      pickerTools.append(field(`Find ${title.toLowerCase()}`, input), field('Sort by', sort));
       const selected = node('div', 'recordings-picker-selected');
       selected.setAttribute('aria-label', `Selected ${title.toLowerCase()}`);
       const feedback = node('div', 'recordings-picker-feedback');
@@ -1905,9 +2089,10 @@ export function createRecordingsFeature(deps) {
       let generation = 0;
       let timer;
       let loadedScope = null;
+      let pendingScope = null;
       let abort;
       let busy = false;
-      const selections = new Map(recordingIdentitySelections(search[key])
+      const selections = new Map(recordingIdentitySelections(search[key], kind)
         .map(item => [recordingIdentitySelectionKey(item), item]));
       const updateSelection = () => {
         search[key] = selections.size ? JSON.stringify([...selections.values()]) : '';
@@ -1915,7 +2100,7 @@ export function createRecordingsFeature(deps) {
         selected.replaceChildren();
         if (!selections.size) selected.append(node('span', 'ui-field-detail', `Any ${kind === 'radio' ? 'source radio' : 'talkgroup'}`));
         for (const [id, item] of selections) {
-          const text = identityLabels.get(`${kind}:${id}`) || `${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${item.id}`;
+          const text = identityLabels.get(`${kind}:${id}`) || recordingSelectionText(item, kind);
           const remove = button(node, `${text} ×`, () => {
             selections.delete(id); updateSelection(); drawRows();
           }, 'ui-button ui-button-secondary ui-button-compact');
@@ -1930,7 +2115,7 @@ export function createRecordingsFeature(deps) {
           drawRows(); return;
         }
         for (const row of items) {
-          const item = recordingIdentitySelections([row.selection || row])[0];
+          const item = recordingIdentitySelections([row.selection || row], kind)[0];
           if (!item) continue;
           const id = recordingIdentitySelectionKey(item);
           if (checked) selections.set(id, item);
@@ -1950,9 +2135,11 @@ export function createRecordingsFeature(deps) {
         check.addEventListener('change', () => selectRows([row], check.checked));
         const copy = node('span', 'recordings-identity-copy');
         const preferred = kind === 'radio' ? row.ota_alias || row.alias || row.label : row.label;
-        copy.append(node('strong', '', String(preferred || `${kind === 'radio' ? 'Radio' : 'Talkgroup'} ${row.id}`)));
-        const context = [kind === 'radio' ? `Radio ${row.id}` : `TG ${row.id}`,
-          row.system_name || row.system_key || 'Unidentified system'];
+        copy.append(node('strong', '', String(preferred || recordingSelectionText(item, kind))));
+        const context = [row.selection?.id === null && row.selection.protocol ? recordingSelectionText(row.selection, kind) :
+          kind === 'radio' ? `Radio ${row.id}` : `TG ${row.id}`,
+          row.protocol && !(item.id === null && item.protocol) ? protocolLabel(row.protocol) : '',
+          row.system_name || row.system_key || 'Unidentified system'].filter(Boolean);
         copy.append(node('span', 'ui-field-detail', context.join(' · ')));
         if (row.description) copy.append(node('span', 'ui-field-detail', String(row.description)));
         if (row.call_count != null) copy.append(node('span', 'ui-field-detail',
@@ -2008,11 +2195,12 @@ export function createRecordingsFeature(deps) {
         }
         restoreFocus();
       };
-      const scope = () => JSON.stringify([input.value.trim(), search.system_key, search.from_ms, search.to_ms, kind === 'radio' ? search.radio_role : '']);
+      const scope = () => JSON.stringify([input.value.trim(), search.system_key, search.from_ms, search.to_ms, kind === 'radio' ? search.radio_role : '', sort.value]);
       async function load(append = false) {
         if (busy && append) return;
         const request = ++generation;
         const queryScope = scope();
+        pendingScope = queryScope;
         if (!append) { offset = 0; rows = []; results.replaceChildren(); }
         abort?.abort();
         abort = new AbortController();
@@ -2022,7 +2210,7 @@ export function createRecordingsFeature(deps) {
         try {
           const result = await requestJson(queryPath(IDENTITIES, { kind, q: input.value.trim(),
             from_ms: search.from_ms, to_ms: search.to_ms, system_key: search.system_key, limit: 100, offset,
-            radio_role: search.radio_role || 'source' }), { page: false, signal: abort.signal });
+            radio_role: search.radio_role || 'source', sort: sort.value }), { page: false, signal: abort.signal });
           if (request !== generation || !panel.isConnected || queryScope !== scope()) return;
           const found = result?.rows || result?.identities || [];
           rows = append ? [...rows, ...found] : found;
@@ -2032,7 +2220,7 @@ export function createRecordingsFeature(deps) {
           for (const row of rows) {
             const label = kind === 'radio' ? row.ota_alias || row.alias || row.label : row.label;
             identityLabels.set(`${kind}:${recordingIdentitySelectionKey(row.selection || row)}`,
-              `${label || row.id} · ${row.system_name || row.system_key || 'Unidentified system'}`);
+              `${label || recordingSelectionText(row.selection || row, kind)}${row.selection?.protocol ? ` · ${recordingNamespaceLabel(row.selection.protocol)} ${row.selection.id === null ? row.selection.value : row.selection.id}` : ''} · ${row.system_name || row.system_key || 'Unidentified system'}`);
           }
           feedback.replaceChildren(...(rows.length ? [] : [makeNotice(`No ${title.toLowerCase()} recorded in this period. Try another name or a wider date range.`, 'empty')]));
           updateSelection(); drawRows();
@@ -2041,16 +2229,20 @@ export function createRecordingsFeature(deps) {
             feedback.replaceChildren(makeNotice(`${title} could not load. Try again.`, 'error'),
               button(node, 'Try again', () => void load()));
         } finally {
-          if (request === generation) { busy = false; more.disabled = false; }
+          if (request === generation) { busy = false; pendingScope = null; more.disabled = false; }
         }
       }
       input.addEventListener('input', () => {
         window.clearTimeout(timer);
         timer = window.setTimeout(() => void load(), SUGGESTION_DELAY_MS);
       });
+      sort.addEventListener('change', () => void load());
       cleanups.push(() => { generation++; abort?.abort(); window.clearTimeout(timer); });
-      loaders.set(key, () => { if (loadedScope !== scope()) void load(); });
-      panel.append(field(`Find ${title.toLowerCase()}`, input), selected,
+      loaders.set(key, () => {
+        const current = scope();
+        if (loadedScope !== current && pendingScope !== current) void load();
+      });
+      panel.append(pickerTools, selected,
         ...(kind === 'talkgroup' ? [node('p', 'ui-field-detail',
           'Select one or more talkgroups. Group checkboxes select the talkgroups currently shown.')] :
           [node('p', 'ui-field-detail', 'Names use the latest talker alias, then the configured alias, then the radio ID.')]),
@@ -2122,7 +2314,8 @@ export function createRecordingsFeature(deps) {
     for (const [key, name, options] of [
       ['call_type', 'Call type', [['', 'Any call type'], ['CONVENTIONAL', 'Conventional'], ['GROUP', 'Group'], ['DIRECT', 'Direct'], ['PATCH', 'Patch']]],
       ['voice_type', 'Voice type', [['', 'Any voice type'], ['CLEAR', 'Clear'], ['ENCRYPTED', 'Encrypted'], ['UNKNOWN', 'Unknown']]],
-      ['protocol', 'Protocol', [['', 'Any protocol'], ['APCO25', 'P25 Phase 1'], ['APCO25_PHASE2', 'P25 Phase 2'], ['DMR', 'DMR'], ['NXDN', 'NXDN'], ['NBFM', 'Analog FM'], ['AM', 'Analog AM'], ['DCS', 'DCS']]]]) {
+      ['protocol', 'Protocol', [['', 'Any protocol'], ['APCO25', 'P25 Phase 1'], ['APCO25_PHASE2', 'P25 Phase 2'], ['DMR', 'DMR'], ['NXDN', 'NXDN'], ['NBFM', 'Analog FM'], ['AM', 'Analog AM'], ['DCS', 'DCS'], ['FLEETSYNC', 'FleetSync'],
+        ['MDC1200', 'MDC1200'], ['LOJACK', 'LoJack'], ['TAIT1200', 'Tait1200']]]]) {
       const control = select(node, options, name);
       control.value = search[key];
       control.addEventListener('change', () => { search[key] = control.value; });
@@ -2190,7 +2383,7 @@ export function createRecordingsFeature(deps) {
 
   function makeSearchForm() {
     const form = node('form', 'recordings-search');
-    const primary = node('div', 'ui-catalog-toolbar recordings-search-primary');
+    const primary = node('div', 'recordings-search-primary');
     searchInputs = new Map();
     const queryField = autocompleteFilter('q', 'Find a call', '', 'System, site, talkgroup, radio, or channel');
     queryField.classList.add('recordings-query-field');
@@ -2249,7 +2442,11 @@ export function createRecordingsFeature(deps) {
     primary.append(queryField, field('Date & time', range), actions);
     selectedFiltersHost = node('div', 'recordings-selected-filters');
     const browser = node('div', 'recordings-browser');
-    form.append(primary, selectedFiltersHost, customDates, browser);
+    const searchPanel = node('section', 'ui-catalog-toolbar recordings-search-panel');
+    searchPanel.setAttribute('aria-label', 'Search recordings');
+    searchPanel.append(primary, customDates, selectedFiltersHost);
+    browser.append(searchPanel);
+    form.append(browser);
     drawSelectedFilters();
     form.addEventListener('submit', (event) => { event.preventDefault(); applySearch(); });
     return form;

@@ -45,7 +45,7 @@ class ManagedRecordingSearchMigrationTest
         Map<String,String> signature;
         try(Connection connection = open(catalog))
         {
-            ManagedRecordingSchema.validate(connection, 6);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             signature = schema(connection);
             assertEquals(9000, scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='recording_call'"));
@@ -62,7 +62,7 @@ class ManagedRecordingSearchMigrationTest
         assertTrue(ManagedRecordingCatalogMigrator.migrate(retry, false).migrated());
         try(Connection connection = open(retry))
         {
-            ManagedRecordingSchema.validate(connection, 6);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             assertEquals(signature, schema(connection));
             integrity(connection);
@@ -70,11 +70,11 @@ class ManagedRecordingSearchMigrationTest
         Path fresh = directory.resolve("fresh.sqlite");
         try(Connection connection = open(fresh); var statement = connection.createStatement())
         {
-            for(String ddl: ManagedRecordingSchema.ddlForFormat(6).values()) statement.execute(ddl);
-            statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1,6,0,0)");
+            for(String ddl: ManagedRecordingSchema.ddlForFormat(ManagedRecordingSchema.CURRENT_FORMAT_VERSION).values()) statement.execute(ddl);
+            statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1," + ManagedRecordingSchema.CURRENT_FORMAT_VERSION + ",0,0)");
             statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
-            statement.execute("PRAGMA user_version=6");
-            ManagedRecordingSchema.validate(connection, 6);
+            statement.execute("PRAGMA user_version=" + ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(signature, schema(connection), "Fresh and migrated formats have one exact schema");
         }
         assertFalse(ManagedRecordingCatalogMigrator.migrate(catalog).migrated());
@@ -120,7 +120,7 @@ class ManagedRecordingSearchMigrationTest
             assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());
             try(Connection connection = open(catalog))
             {
-                ManagedRecordingSchema.validate(connection, 6);
+                ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
                 assertEquals(before, contents(connection));
                 integrity(connection);
             }
@@ -163,7 +163,7 @@ class ManagedRecordingSearchMigrationTest
             Path catalog = fixture(directory.resolve("refuse-" + newer + ".sqlite"));
             try(Connection connection = open(catalog); var statement = connection.createStatement())
             {
-                statement.execute(newer ? "PRAGMA user_version=7" :
+                statement.execute(newer ? "PRAGMA user_version=" + (ManagedRecordingSchema.CURRENT_FORMAT_VERSION + 1) :
                     "CREATE INDEX unexpected_source_index ON recording_call(source_id)");
             }
             byte[] before = Files.readAllBytes(catalog);
@@ -228,6 +228,8 @@ class ManagedRecordingSearchMigrationTest
             Collections.sort(values);
             result.put(table, values);
         }
+        // A forward update adds the empty child; every pre-existing fact still compares exactly.
+        result.putIfAbsent("recording_identifier", List.of());
         return result;
     }
 

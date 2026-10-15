@@ -206,6 +206,21 @@ final class ManagedRecordingLabels
             systemKey, fromMs, toMs, offset, limit, radioRole);
     }
 
+    Map<String,Object> identities(Path catalogDatabase, String kind, String query, String systemKey,
+                                  Long fromMs, Long toMs, int offset, int limit, String radioRole, String sort)
+        throws SQLException
+    {
+        return new ManagedRecordingIdentityDiscovery(mDatabasePath).search(catalogDatabase, kind, query,
+            systemKey, fromMs, toMs, offset, limit, radioRole, sort);
+    }
+
+    Map<String,Object> entities(Path catalogDatabase, String kind, String query, String systemKey,
+                                Long fromMs, Long toMs, int offset, int limit, String sort) throws SQLException
+    {
+        return new ManagedRecordingEntityDiscovery(mDatabasePath).search(catalogDatabase, kind, query,
+            systemKey, fromMs, toMs, offset, limit, sort);
+    }
+
     List<Map<String,Object>> enrichSystemNames(List<Map<String,Object>> values)
     {
         if(values.isEmpty() || !Files.isRegularFile(mDatabasePath)) return values;

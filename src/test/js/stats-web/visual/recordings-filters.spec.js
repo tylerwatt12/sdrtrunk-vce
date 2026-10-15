@@ -63,6 +63,11 @@ async function openRecordings(page, options = {}) {
     } else if (/^\/api\/v1\/recordings\/calls\/\d+$/.test(key)) {
       const selected = state.calls.find((row) => row.id === Number(key.split('/').at(-1)));
       await route.fulfill({ json: { data: { call: selected } } });
+    } else if (key === '/api/v1/recordings/entities') {
+      const kind = url.searchParams.get('kind');
+      const rows = kind === 'system' ? [{ kind, id: systemKey, label: 'Metro Public Safety', system_key: systemKey,
+        call_count: state.calls.length, selection: { system_key: systemKey } }] : [];
+      await route.fulfill({ json: { data: { rows, has_more: false } } });
     } else if (key === '/api/v1/recordings/identities') {
       const kind = url.searchParams.get('kind');
       const q = (url.searchParams.get('q') || '').toLowerCase();
@@ -97,7 +102,8 @@ async function openRecordingFilters(page, tab = 'Systems & sites') {
   const dialog = page.getByRole('dialog', { name: 'Filters', exact: true });
   if (!await dialog.isVisible()) await page.locator('#recordings-filters-toggle').click();
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('tab', { name: tab, exact: true }).click();
+  const control = dialog.getByRole('tab', { name: tab, exact: true });
+  if (await control.getAttribute('aria-selected') !== 'true') await control.click();
   return dialog;
 }
 

@@ -14,6 +14,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.MaintenanceResult;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Selection;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.AuxiliaryIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Member;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.RecordingCall;
@@ -240,6 +241,17 @@ final class ManagedRecordingStore implements AutoCloseable
                     statement.setInt(6, member.homeIdentityId() != null ? member.homeIdentityId() : -1);
                     statement.setLong(7, item.startMs());
                     statement.addBatch();
+                }
+                statement.executeBatch();
+            }
+            try(PreparedStatement statement = mWriterConnection.prepareStatement(
+                "INSERT OR IGNORE INTO recording_identifier(call_id,protocol,kind,role,value,start_ms) VALUES(?,?,?,?,?,?)"))
+            {
+                for(AuxiliaryIdentifier identifier: item.auxiliaryIdentifiers())
+                {
+                    statement.setLong(1,callId); statement.setString(2,identifier.protocol());
+                    statement.setString(3,identifier.kind()); statement.setString(4,identifier.role());
+                    statement.setString(5,identifier.value()); statement.setLong(6,item.startMs()); statement.addBatch();
                 }
                 statement.executeBatch();
             }
@@ -513,11 +525,16 @@ final class ManagedRecordingStore implements AutoCloseable
             List<CandidateQuery> queries = new ArrayList<>();
             boolean groups = !filter.talkgroupSelections.isEmpty();
             for(Selection selection: selections)
-                if(selection.identityKey() == null)
+                if(selection.value() == null && selection.identityKey() == null)
                     queries.addAll(numericIdentityCandidateQueries(filter,selection.id(),groups,!groups,
                         new SelectionDriver(selection,!groups)));
             for(Selection selection: selections)
             {
+                if(selection.value() != null)
+                {
+                    queries.add(auxiliaryCandidateQuery(filter,selection));
+                    continue;
+                }
                 if(selection.identityKey() == null) continue;
                 RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(selection.identityKey());
                 queries.addAll(homeIdentityCandidateQueries(filter,new HomeMatch(identity.identityId(),
@@ -582,7 +599,7 @@ final class ManagedRecordingStore implements AutoCloseable
         if(filter.pagingTones != null || filter.toneFrequencyHz != null)
             return List.of(candidateQuery(filter,"recording_tone_sequence tone_driver CROSS JOIN recording_call c " +
                 "ON c.id=tone_driver.call_id","1",List.of(),"c.start_ms","c.id"));
-        if(filter.protocol != null && !filter.protocol.isBlank())
+        if(filter.protocol != null && !filter.protocol.isBlank() && protocolFilter(filter.protocol) < 7)
             return List.of(candidateQuery(filter,"recording_call c INDEXED BY idx_recording_call_protocol_time",
                 "c.protocol=?",List.of(protocolFilter(filter.protocol)),"c.start_ms","c.id"));
         if(filter.callType != null && !filter.callType.isBlank())
@@ -622,6 +639,19 @@ final class ManagedRecordingStore implements AutoCloseable
             }
         }
         return List.copyOf(queries);
+    }
+
+    private CandidateQuery auxiliaryCandidateQuery(SearchFilter filter, Selection selection)
+    {
+        String predicate = "ri.protocol=? AND ri.kind='radio' AND ri.value=? AND ri.start_ms BETWEEN ? AND ?";
+        if("source".equals(filter.radioRole)) predicate += " AND ri.role='source'";
+        else predicate += " AND NOT EXISTS(SELECT 1 FROM recording_identifier earlier WHERE " +
+            "earlier.call_id=ri.call_id AND earlier.protocol=ri.protocol AND earlier.kind=ri.kind " +
+            "AND earlier.value=ri.value AND earlier.role<ri.role)";
+        return candidateQuery(filter,"recording_identifier ri INDEXED BY idx_recording_identifier_lookup " +
+            "JOIN recording_call c ON c.id=ri.call_id",predicate,
+            List.of(selection.protocol(),selection.value(),filter.fromMs,filter.toMs),"ri.start_ms","ri.call_id",
+            new SelectionDriver(selection,true));
     }
 
     /** The index stream proves this one picker choice; other choices of its kind need no repeated OR predicate. */
@@ -899,8 +929,15 @@ final class ManagedRecordingStore implements AutoCloseable
         }
         if(filter.protocol != null && !filter.protocol.isBlank())
         {
-            conditions.add("c.protocol=?");
-            parameters.add(protocolFilter(filter.protocol));
+            int code = protocolFilter(filter.protocol);
+            if(code >= 7)
+            {
+                conditions.add("(c.protocol=? OR EXISTS(SELECT 1 FROM recording_identifier protocol_identifier " +
+                    "WHERE protocol_identifier.call_id=c.id AND protocol_identifier.protocol=?)" +
+                    (code == 7 ? " OR (c.tone_kind=1 AND c.tone IS NOT NULL AND length(c.tone)>0)" : "") + ")");
+                parameters.add(code); parameters.add(ManagedRecordingCatalog.protocolName(code));
+            }
+            else { conditions.add("c.protocol=?"); parameters.add(code); }
         }
         if(filter.callType != null && !filter.callType.isBlank())
         {
@@ -984,31 +1021,42 @@ final class ManagedRecordingStore implements AutoCloseable
         return "(" + String.join(" OR ",choices) + ")";
     }
 
+    /** A receiving channel may retain identities from several primary protocol namespaces over time. */
+    private record SelectionScope(String systemKey, String protocol) {}
+
     private static void addSelectionPredicate(List<String> conditions, List<Object> parameters,
                                               List<Selection> selections, boolean radio, String role)
     {
         if(selections.isEmpty()) return;
-        Map<String,List<Selection>> bySystem = new LinkedHashMap<>();
+        Map<SelectionScope,List<Selection>> bySystem = new LinkedHashMap<>();
         for(Selection selection: selections)
-            bySystem.computeIfAbsent(selection.systemKey(),ignored -> new ArrayList<>()).add(selection);
+            bySystem.computeIfAbsent(new SelectionScope(selection.systemKey(),
+                selection.value() == null ? selection.protocol() : null),ignored -> new ArrayList<>()).add(selection);
         List<String> choices = new ArrayList<>();
         for(var entry: bySystem.entrySet())
         {
             List<String> scoped = new ArrayList<>();
-            if(entry.getKey() == null) scoped.add(unknownSystemPredicate());
-            else addSystemPredicate(scoped,parameters,entry.getKey(),
+            if(entry.getKey().systemKey() == null) scoped.add(unknownSystemPredicate());
+            else addSystemPredicate(scoped,parameters,entry.getKey().systemKey(),
                 "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+            if(entry.getKey().protocol() != null)
+            {
+                int code = protocolFilter(entry.getKey().protocol());
+                if(code == 1 || code == 2) scoped.add("c.protocol IN(1,2)");
+                else { scoped.add("c.protocol=?"); parameters.add(code); }
+            }
             if(!radio) scoped.add("c.protocol IN(1,2,3,4)");
             List<Integer> rawIds = new ArrayList<>();
             List<RadioSystemIdentityKey.Identity> homes = new ArrayList<>();
             for(Selection selection: entry.getValue())
-                if(selection.identityKey() == null) rawIds.add(selection.id());
+                if(selection.value() != null) continue;
+                else if(selection.identityKey() == null) rawIds.add(selection.id());
                 else homes.add(RadioSystemIdentityKey.parse(selection.identityKey()));
             List<String> roles = new ArrayList<>();
-            if(radio)
+            if(radio && (!rawIds.isEmpty() || !homes.isEmpty()))
                 roles.add(selectionValue(parameters,"c.source_id","c.source_home_wacn",
                     "c.source_home_system","c.source_home_id",rawIds,homes));
-            if(!radio || !"source".equals(role))
+            if((!rawIds.isEmpty() || !homes.isEmpty()) && (!radio || !"source".equals(role)))
             {
                 roles.add("(" + (radio ? "c.call_type=3" : "c.call_type IN(1,2)") + " AND " +
                     selectionValue(parameters,"c.target_id","c.target_home_wacn",
@@ -1018,6 +1066,18 @@ final class ManagedRecordingStore implements AutoCloseable
                     selectionValue(parameters,"selected_member.local_id","nullif(selected_member.home_wacn,-1)",
                         "nullif(selected_member.home_system,-1)","nullif(selected_member.home_id,-1)",rawIds,homes) + ")");
             }
+            List<String> auxiliary = new ArrayList<>();
+            for(Selection selection: entry.getValue())
+            {
+                if(selection.value() == null) continue;
+                auxiliary.add("(selected_identifier.protocol=? AND selected_identifier.value=?)");
+                parameters.add(selection.protocol()); parameters.add(selection.value());
+            }
+            if(!auxiliary.isEmpty())
+                roles.add("EXISTS(SELECT 1 FROM recording_identifier selected_identifier WHERE " +
+                    "selected_identifier.call_id=c.id AND selected_identifier.kind='radio'" +
+                    ("source".equals(role) ? " AND selected_identifier.role='source'" : "") +
+                    " AND (" + String.join(" OR ",auxiliary) + "))");
             scoped.add("(" + String.join(" OR ",roles) + ")");
             choices.add("(" + String.join(" AND ",scoped) + ")");
         }
@@ -1231,7 +1291,24 @@ final class ManagedRecordingStore implements AutoCloseable
             nullableInt(row, "target_home_system"), nullableInt(row, "target_home_id"),
             nullableLong(row, "frequency_hz"), nullableInt(row, "timeslot"), nullableInt(row, "nac"),
             nullableInt(row, "tone_kind"), row.getString("tone"), winner, List.copyOf(also),
-            List.copyOf(members), servingSystemKey, ManagedRecordingTones.read(connection, id));
+            List.copyOf(members), servingSystemKey, ManagedRecordingTones.read(connection, id),
+            readAuxiliaryIdentifiers(connection,id));
+    }
+
+    private static List<AuxiliaryIdentifier> readAuxiliaryIdentifiers(Connection connection, long callId) throws SQLException
+    {
+        List<AuxiliaryIdentifier> identifiers = new ArrayList<>();
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT protocol,kind,role,value FROM recording_identifier WHERE call_id=? ORDER BY protocol,kind,role,value"))
+        {
+            statement.setLong(1,callId);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                while(rows.next()) identifiers.add(new AuxiliaryIdentifier(rows.getString(1),rows.getString(2),
+                    rows.getString(3),rows.getString(4)));
+            }
+        }
+        return List.copyOf(identifiers);
     }
 
     private static Site site(ResultSet rows, String prefix) throws SQLException
@@ -1266,15 +1343,7 @@ final class ManagedRecordingStore implements AutoCloseable
 
     private static int protocolFilter(String protocol)
     {
-        try
-        {
-            return ManagedRecordingCatalog.protocolCode(
-                io.github.dsheirer.protocol.Protocol.valueOf(protocol.toUpperCase(java.util.Locale.ROOT)));
-        }
-        catch(IllegalArgumentException exception)
-        {
-            throw new IllegalArgumentException("Unknown recording protocol");
-        }
+        return ManagedRecordingCatalog.protocolFilterCode(protocol);
     }
 
     private static int callTypeFilter(String type)

@@ -97,6 +97,43 @@ async function main() {
   assert.deepEqual(recordingIdentitySelections('{"id":1201}'), []);
   assert.deepEqual(recordingIdentitySelections([{ id: -1, system_key: null }, { id: 1201 }]), [],
     'Invalid and unscoped identities cannot silently become broader filters');
+  const zeroGroup = { id: 0, system_key: 'nxdn:7' };
+  assert.deepEqual(recordingIdentitySelections([zeroGroup], 'talkgroup'), [zeroGroup],
+    'Talkgroup zero remains selectable for recorded NXDN groups');
+  assert.deepEqual(recordingIdentitySelections([zeroGroup], 'radio'), [],
+    'Radio zero remains invalid');
+  const typed = [
+    { id: null, system_key: null, protocol: 'TAIT1200', value: 'UNIT-007a' },
+    { id: null, system_key: null, protocol: 'MDC1200', value: 'UNIT-007a' },
+    { id: 7, system_key: null }
+  ];
+  assert.deepEqual(recordingIdentitySelections(typed), typed,
+    'Typed auxiliary identities preserve exact captured strings and namespaces');
+  const rawNamespaces = [
+    { id: 7, system_key: null, protocol: 'DMR' }, { id: 7, system_key: null, protocol: 'NXDN' }
+  ];
+  assert.deepEqual(recordingIdentitySelections(rawNamespaces), rawNamespaces);
+  assert.equal(new Set(rawNamespaces.map(recordingIdentitySelectionKey)).size, 2,
+    'Raw numeric IDs cannot merge across protocols when a system is unidentified');
+  assert.deepEqual(recordingIdentitySelections([{ id: 7, system_key: null, protocol: 'APCO25_PHASE2' }]),
+    [{ id: 7, system_key: null, protocol: 'APCO25' }], 'P25 raw namespaces cover both phases');
+  assert.deepEqual(recordingIdentitySelections([{ id: 0, system_key: null, protocol: 'DMR' }], 'talkgroup'), [],
+    'Talkgroup zero requires the NXDN namespace');
+  assert.deepEqual(recordingIdentitySelections([{ id: 0, system_key: 'nxdn:7', protocol: 'APCO25' }], 'talkgroup'), [],
+    'Explicit non-NXDN namespaces cannot borrow a system label to admit zero');
+  assert.equal(new Set(typed.map(recordingIdentitySelectionKey)).size, 3,
+    'Equal values in different signaling protocols remain separate from numeric radio identities');
+  assert.deepEqual(recordingIdentitySelections([{ id: null, system_key: null, protocol: 'DCS', value: '023' }]), [],
+    'DCS tone evidence must not become a fake radio choice');
+  const nxdnZeroCall = { protocol: 'NXDN', system_key: 'nxdn:7', talkgroup_id: 0 };
+  assert.equal(recordingResultFilter(nxdnZeroCall,
+    { kind: 'talkgroup', radio_system_key: 'nxdn:7', identity_key: 'v1-g-x-x-0' }, 'target').filters.talkgroup_id,
+    '0', 'NXDN zero drilldown keeps the recorded receiving system');
+  assert.equal(recordingResultFilter(nxdnZeroCall,
+    { kind: 'radio', radio_system_key: 'nxdn:7', identity_key: 'v1-r-x-x-0' }, 'source'), null);
+  assert.deepEqual(JSON.parse(recordingResultFilter(nxdnZeroCall,
+    { kind: 'radio', auxiliary: true, protocol: 'TAIT1200', value: 'UNIT-007a', role: 'source' }).filters.radios),
+    [{ ...typed[0], system_key: 'nxdn:7' }], 'Auxiliary drilldown submits its exact captured namespace and value');
   const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',
     radio_id: '401', radio_identity_key: 'v1-r-00002-002-777', talkgroup_id: '1201', radio_min: '400', radio_max: '500',
     talkgroup_min: '1200', talkgroup_max: '1300', alias_list_id: '7',

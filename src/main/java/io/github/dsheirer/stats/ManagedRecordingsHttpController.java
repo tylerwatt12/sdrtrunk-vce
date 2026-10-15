@@ -122,6 +122,12 @@ final class ManagedRecordingsHttpController
                 }
                 return;
             }
+            if((BROWSE_PATH + "/entities").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                entities(exchange, catalog);
+                return;
+            }
             if((BROWSE_PATH + "/identities").equals(path))
             {
                 requireMethod(exchange, "GET");
@@ -398,7 +404,7 @@ final class ManagedRecordingsHttpController
     private void search(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
         StatsRequest request = StatsRequest.from(exchange.getRequestURI(),
-            Map.of("talkgroups", 16384, "radios", 16384), 65536, 40);
+            Map.of("talkgroups", 16384, "radios", 49152), 262144, 40);
         List<ManagedRecordingCatalog.Selection> talkgroups = selections(request, "talkgroups", false);
         List<ManagedRecordingCatalog.Selection> radios = selections(request, "radios", true);
         Integer talkgroupId = request.optionalInt("talkgroup_id");
@@ -538,10 +544,10 @@ final class ManagedRecordingsHttpController
             Set<ManagedRecordingCatalog.Selection> selections = new LinkedHashSet<>();
             for(JsonNode entry: values)
             {
-                if(!entry.isObject() || !entry.has("id") || !entry.get("id").isIntegralNumber() ||
-                    !entry.get("id").canConvertToInt() || !entry.has("system_key"))
-                    throw new IllegalArgumentException();
-                rejectUnknownFields(entry, Set.of("id", "system_key", "identity_key"));
+                if(!entry.isObject() || !entry.has("id") ||
+                    !entry.get("id").isNull() && (!entry.get("id").isIntegralNumber() || !entry.get("id").canConvertToInt()) ||
+                    !entry.has("system_key")) throw new IllegalArgumentException();
+                rejectUnknownFields(entry, Set.of("id", "system_key", "identity_key", "protocol", "value"));
                 JsonNode system = entry.get("system_key");
                 JsonNode identity = entry.get("identity_key");
                 if(!system.isNull() && !system.isTextual() ||
@@ -555,8 +561,11 @@ final class ManagedRecordingsHttpController
                         kind != RadioSystemIdentityKey.KIND_TALKGROUP && kind != RadioSystemIdentityKey.KIND_PATCH_GROUP)
                         throw new IllegalArgumentException();
                 }
-                selections.add(new ManagedRecordingCatalog.Selection(entry.get("id").intValue(),
-                    system.isNull() ? null : system.textValue(), key));
+                String protocol = selectionText(entry,"protocol");
+                String typedValue = selectionText(entry,"value");
+                if(!radio && typedValue != null) throw new IllegalArgumentException();
+                selections.add(new ManagedRecordingCatalog.Selection(entry.get("id").isNull() ? null : entry.get("id").intValue(),
+                    system.isNull() ? null : system.textValue(), key, protocol, typedValue));
             }
             return List.copyOf(selections);
         }
@@ -565,6 +574,14 @@ final class ManagedRecordingsHttpController
             throw new StatsApiException(400, "invalid_selection", "Select up to 100 valid " +
                 (radio ? "radios" : "talkgroups") + " and their systems", field);
         }
+    }
+
+    private static String selectionText(JsonNode row, String field)
+    {
+        JsonNode value = row.get(field);
+        if(value == null || value.isNull()) return null;
+        if(!value.isTextual()) throw new IllegalArgumentException();
+        return value.textValue();
     }
 
     private static Double optionalDouble(StatsRequest request, String field)
@@ -607,18 +624,45 @@ final class ManagedRecordingsHttpController
         String role = radioRole(request);
         int limit = request.limit(100);
         int offset = request.offset();
+        String sort = ManagedRecordingBrowseOrder.sort(request.text("sort"));
         request.requireFullyConsumed();
         if(!LABEL_LOOKUPS.tryAcquire())
             throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
         try
         {
             ApiHttpResponse.sendData(exchange, 200, mLabels.identities(catalog.databaseFile(), kind, query,
-                system, period.fromMs, period.toMs, offset, limit, role));
+                system, period.fromMs, period.toMs, offset, limit, role, sort));
         }
         finally
         {
             LABEL_LOOKUPS.release();
         }
+    }
+
+    private void entities(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
+    {
+        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        String kind = request.requiredText("kind");
+        if(!Set.of("system", "site", "channel").contains(kind))
+            throw new StatsApiException(400, "invalid_kind", "Choose systems, sites, or channels", "kind");
+        String query = request.search();
+        String system = request.text("system_key");
+        if(system != null && !RadioSystemKey.isCanonical(system))
+            throw new StatsApiException(400, "invalid_parameter", "Select a valid system", "system_key");
+        ManagedRecordingCatalog.SearchFilter period = ManagedRecordingCatalog.SearchFilter.builder()
+            .fromMs(request.optionalLong("from_ms")).toMs(request.optionalLong("to_ms")).build();
+        String sort = ManagedRecordingBrowseOrder.sort(request.text("sort"));
+        int limit = request.limit(100);
+        int offset = request.offset();
+        request.requireFullyConsumed();
+        if(!LABEL_LOOKUPS.tryAcquire())
+            throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
+        try
+        {
+            ApiHttpResponse.sendData(exchange, 200, mLabels.entities(catalog.databaseFile(), kind, query,
+                system, period.fromMs, period.toMs, offset, limit, sort));
+        }
+        finally { LABEL_LOOKUPS.release(); }
     }
 
     private static boolean matchesCurrentLabel(Map<String,Object> row, String lowercaseQuery)
@@ -686,7 +730,7 @@ final class ManagedRecordingsHttpController
                             if(!(value instanceof Map<?,?> identity)) continue;
                             Map<String,Object> row = new LinkedHashMap<>();
                             identity.forEach((field, item) -> { if(field instanceof String key) row.put(key, item); });
-                            row.put("id", row.get("id").toString());
+                            row.put("id", String.valueOf(row.get("id") != null ? row.get("id") : row.get("value")));
                             if(!row.containsKey("alias") && !row.containsKey("ota_alias"))
                                 row.put("label", ("talkgroup".equals(identityKind) ? "Talkgroup " : "Radio ") + row.get("id"));
                             List<String> detail = new ArrayList<>();

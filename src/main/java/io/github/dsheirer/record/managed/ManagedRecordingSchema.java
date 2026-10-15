@@ -21,7 +21,7 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 6;
+    public static final int CURRENT_FORMAT_VERSION = 7;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
@@ -29,7 +29,8 @@ public final class ManagedRecordingSchema
     private static final Map<String,String> FORMAT_THREE_DDL = formatThreeSchema();
     private static final Map<String,String> FORMAT_FOUR_DDL = formatFourSchema();
     private static final Map<String,String> FORMAT_FIVE_DDL = formatFiveSchema();
-    static final Map<String,String> DDL = formatSixSchema();
+    private static final Map<String,String> FORMAT_SIX_DDL = formatSixSchema();
+    static final Map<String,String> DDL = formatSevenSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -43,7 +44,8 @@ public final class ManagedRecordingSchema
             case 3 -> FORMAT_THREE_DDL;
             case 4 -> FORMAT_FOUR_DDL;
             case 5 -> FORMAT_FIVE_DDL;
-            case 6 -> DDL;
+            case 6 -> FORMAT_SIX_DDL;
+            case 7 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -162,6 +164,26 @@ public final class ManagedRecordingSchema
             "ON recording_call(call_type,start_ms DESC,id DESC)");
         schema.put("idx_recording_call_voice_type_time", "CREATE INDEX idx_recording_call_voice_type_time " +
             "ON recording_call(voice_type,start_ms DESC,id DESC)");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    /** Captured auxiliary identifiers retain their own protocol and value independently of the audio decoder. */
+    private static Map<String,String> formatSevenSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_SIX_DDL);
+        schema.put("recording_identifier", "CREATE TABLE recording_identifier (" +
+            "call_id INTEGER NOT NULL REFERENCES recording_call(id) ON DELETE CASCADE," +
+            "protocol TEXT NOT NULL CHECK(protocol IN('DCS','FLEETSYNC','MDC1200','LOJACK','TAIT1200'))," +
+            "kind TEXT NOT NULL CHECK(kind IN('radio','tone','function'))," +
+            "role TEXT NOT NULL CHECK(role IN('source','destination','other'))," +
+            "value TEXT NOT NULL CHECK(length(value) BETWEEN 1 AND 128 AND length(trim(value))>0 AND instr(value,char(0))=0)," +
+            "start_ms INTEGER NOT NULL CHECK(start_ms>=0)," +
+            "PRIMARY KEY(call_id,protocol,kind,role,value)," +
+            "CHECK((protocol='DCS' AND kind='tone') OR " +
+                "(protocol IN('FLEETSYNC','MDC1200','TAIT1200') AND kind='radio') OR " +
+                "(protocol='LOJACK' AND kind IN('radio','function')))) WITHOUT ROWID, STRICT");
+        schema.put("idx_recording_identifier_lookup", "CREATE INDEX idx_recording_identifier_lookup " +
+            "ON recording_identifier(protocol,kind,value,start_ms DESC,call_id DESC,role)");
         return java.util.Collections.unmodifiableMap(schema);
     }
 

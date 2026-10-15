@@ -241,6 +241,7 @@ class ManagedRecordingToneFormatFiveMigrationTest
             Collections.sort(values);
             result.put(table, values);
         }
+        result.putIfAbsent("recording_identifier", List.of());
         return result;
     }
 

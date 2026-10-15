@@ -36,6 +36,20 @@ final class ManagedRecordingIdentityDiscovery
     Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
                               int offset, int limit, String radioRole) throws SQLException
     {
+        return search(catalog, kind, query, systemKey, fromMs, toMs, offset, limit, radioRole, "calls", true);
+    }
+
+    Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
+                              int offset, int limit, String radioRole, String sort) throws SQLException
+    {
+        return search(catalog, kind, query, systemKey, fromMs, toMs, offset, limit, radioRole, sort, false);
+    }
+
+    private Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
+                                      int offset, int limit, String radioRole, String sort, boolean prioritizeExact)
+        throws SQLException
+    {
+        ManagedRecordingBrowseOrder.sort(sort);
         boolean labelsAvailable = Files.isRegularFile(mMainDatabase);
         String url = labelsAvailable ? "jdbc:sqlite:" + mMainDatabase.toAbsolutePath().toUri() + "?mode=ro" :
             "jdbc:sqlite::memory:";
@@ -83,29 +97,18 @@ final class ManagedRecordingIdentityDiscovery
             {
                 checkDeadline(deadline);
                 SelectionKey key = new SelectionKey((String)candidate.get("system_key"),
-                    ((Number)candidate.get("id")).intValue(), (String)candidate.get("identity_key"));
+                    ((Number)candidate.get("id")).intValue(), (String)candidate.get("identity_key"),
+                    (String)candidate.get("namespace"));
                 combined.computeIfAbsent(key, ignored -> new Aggregate(candidate, kind)).add(candidate);
             }
             String match = query != null ? query.toLowerCase(Locale.ROOT) : null;
-            List<Map<String,Object>> matching = combined.values().stream()
-                .filter(value -> match == null || value.matches(match)).map(Aggregate::toMap)
-                .sorted(Comparator.comparingInt((Map<String,Object> row) ->
-                        query != null && query.equals(row.get("id").toString()) ? 0 : 1)
-                    .thenComparing(row -> text(row.get("system_name")), String.CASE_INSENSITIVE_ORDER)
-                    .thenComparing(row -> text(row.get("system_key")))
-                    .thenComparing(row -> text(row.get("group")), String.CASE_INSENSITIVE_ORDER)
-                    .thenComparing(row -> text(row.get("label")), String.CASE_INSENSITIVE_ORDER)
-                    .thenComparingInt(row -> ((Number)row.get("id")).intValue())
-                    .thenComparing(row -> text(row.get("identity_key"))))
-                .toList();
+            List<Map<String,Object>> matching = new ArrayList<>(combined.values().stream()
+                .filter(value -> match == null || value.matches(match)).map(Aggregate::toMap).toList());
+            if("radio".equals(kind)) matching.addAll(ManagedRecordingSignalingDiscovery.rows(connection,
+                labelsAvailable,systemKey,fromMs,toMs,radioRole,query,deadline));
+            matching.sort(ManagedRecordingBrowseOrder.comparator(sort,prioritizeExact ? query : null));
             checkDeadline(deadline);
-            int end = Math.min(matching.size(), offset + limit);
-            boolean more = end < matching.size();
-            Map<String,Object> result = new LinkedHashMap<>();
-            result.put("rows", offset < matching.size() ? matching.subList(offset, end) : List.of());
-            result.put("has_more", more);
-            if(more) result.put("next_offset", end);
-            return result;
+            return ManagedRecordingBrowseOrder.page(matching, offset, limit);
         }
     }
 
@@ -119,7 +122,9 @@ final class ManagedRecordingIdentityDiscovery
         String selected = radio ? """
             SELECT call_id,start_ms,system_key,protocol,alias_list_id,source_id AS local_id,
                 source_home_wacn AS home_wacn,source_home_system AS home_system,source_home_id AS home_id,
-                2 AS identity_kind FROM scoped WHERE source_id>0
+                2 AS identity_kind FROM scoped WHERE source_id>0 AND NOT (protocol NOT IN(1,2,3,4) AND EXISTS(
+                SELECT 1 FROM recordings.recording_identifier typed WHERE typed.call_id=scoped.call_id
+                    AND typed.kind='radio' AND typed.role='source'))
             """ : """
             SELECT call_id,start_ms,system_key,protocol,alias_list_id,target_id AS local_id,
                 target_home_wacn AS home_wacn,target_home_system AS home_system,target_home_id AS home_id,
@@ -166,18 +171,22 @@ final class ManagedRecordingIdentityDiscovery
                 FROM captured_identities
             ), normalized AS (
                 SELECT *,CASE WHEN protocol IN (1,2) AND home_wacn IS NOT NULL AND home_system IS NOT NULL
-                    AND home_id>0 THEN home_id ELSE local_id END AS canonical_id FROM identities
+                    AND home_id>0 THEN home_id ELSE local_id END AS canonical_id,
+                    CASE protocol WHEN 1 THEN 'APCO25' WHEN 2 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
+                        WHEN 5 THEN 'NBFM' WHEN 6 THEN 'AM' WHEN 7 THEN 'DCS' WHEN 8 THEN 'FLEETSYNC'
+                        WHEN 9 THEN 'MDC1200' WHEN 10 THEN 'LOJACK' WHEN 11 THEN 'TAIT1200' ELSE 'UNKNOWN' END AS namespace
+                    FROM identities
             ), totals AS (
-                SELECT system_key,canonical_id,home_wacn,home_system,home_id,identity_kind,
+                SELECT system_key,canonical_id,home_wacn,home_system,home_id,identity_kind,namespace,
                     count(DISTINCT call_id) AS call_count,max(start_ms) AS last_recorded_ms
-                FROM normalized GROUP BY system_key,canonical_id,home_wacn,home_system,home_id,identity_kind
+                FROM normalized GROUP BY system_key,canonical_id,home_wacn,home_system,home_id,identity_kind,namespace
             ), grouped AS (
                 SELECT DISTINCT system_key,protocol,alias_list_id,local_id,canonical_id,
-                    home_wacn,home_system,home_id,identity_kind FROM normalized
+                    home_wacn,home_system,home_id,identity_kind,namespace FROM normalized
             ) SELECT g.*,totals.call_count,totals.last_recorded_ms%s FROM grouped g
                 JOIN totals ON totals.system_key IS g.system_key AND totals.canonical_id=g.canonical_id
                     AND totals.home_wacn IS g.home_wacn AND totals.home_system IS g.home_system
-                    AND totals.home_id IS g.home_id AND totals.identity_kind=g.identity_kind %s
+                    AND totals.home_id IS g.home_id AND totals.identity_kind=g.identity_kind AND totals.namespace=g.namespace %s
             """.formatted(labelsAvailable ? "coalesce(config.alias_list_id,c.alias_list_id)" : "c.alias_list_id",
                 labelsAvailable ? "LEFT JOIN recordings.recording_channel ch ON ch.id=c.channel_id " +
                     "LEFT JOIN configuration_channel config ON config.configuration_id=ch.channel_uuid" : "",
@@ -223,9 +232,11 @@ final class ManagedRecordingIdentityDiscovery
                     int protocol = rows.getInt("protocol");
                     row.put("protocol", switch(protocol) {
                         case 1 -> "APCO25"; case 2 -> "APCO25_PHASE2"; case 3 -> "DMR";
-                        case 4 -> "NXDN"; default -> "UNKNOWN";
+                        case 4 -> "NXDN"; case 5 -> "NBFM"; case 6 -> "AM"; case 7 -> "DCS"; case 8 -> "FLEETSYNC"; case 9 -> "MDC1200";
+                        case 10 -> "LOJACK"; case 11 -> "TAIT1200"; default -> "UNKNOWN";
                     });
                     row.put("protocol_code", protocol);
+                    row.put("namespace",rows.getString("namespace"));
                     row.put("alias_list_id", rows.getObject("alias_list_id"));
                     Integer homeWacn = integer(rows.getObject("home_wacn"));
                     Integer homeSystem = integer(rows.getObject("home_system"));
@@ -270,21 +281,24 @@ final class ManagedRecordingIdentityDiscovery
 
     private static String text(Object value) { return value instanceof String string ? string : ""; }
     private static Integer integer(Object value) { return value instanceof Number number ? number.intValue() : null; }
-    private record SelectionKey(String systemKey, int id, String identityKey) {}
+    private record SelectionKey(String systemKey, int id, String identityKey, String namespace) {}
 
     private static final class Aggregate
     {
         private final Map<String,Object> mRow;
         private final String mPrefix;
+        private final String mNamespace;
         private final StringBuilder mSearch = new StringBuilder();
         private boolean mFirst = true;
         private String mAlias, mDescription, mGroup, mOta;
         private Object mAliasList;
         private long mCount, mLast;
         private final java.util.Set<Integer> mObservedIds = new java.util.TreeSet<>();
+        private final java.util.Set<String> mProtocols = new java.util.TreeSet<>();
 
         Aggregate(Map<String,Object> row, String kind)
         {
+            mNamespace=(String)row.get("namespace");
             mPrefix = "radio".equals(kind) ? "source_alias_" : "target_alias_";
             mRow = new LinkedHashMap<>();
             for(String field: List.of("id", "system_key", "identity_key", "system_name"))
@@ -317,6 +331,7 @@ final class ManagedRecordingIdentityDiscovery
                 text(row.get("identity_key")))) mSearch.append(value).append('\n');
             mCount = Math.max(mCount, ((Number)row.get("call_count")).longValue());
             mObservedIds.add(((Number)row.get("observed_id")).intValue());
+            mProtocols.add(text(row.get("protocol")));
             mLast = Math.max(mLast, ((Number)row.get("last_recorded_ms")).longValue());
         }
 
@@ -324,6 +339,9 @@ final class ManagedRecordingIdentityDiscovery
 
         Map<String,Object> toMap()
         {
+            mRow.put("protocols", List.copyOf(mProtocols));
+            mRow.put("primary_protocols", List.copyOf(mProtocols));
+            if(mProtocols.size() == 1) mRow.put("protocol", mProtocols.iterator().next());
             mRow.put("label", mOta != null ? mOta : mAlias != null ? mAlias : mRow.get("id").toString());
             if(mAlias != null)
             {
@@ -341,6 +359,7 @@ final class ManagedRecordingIdentityDiscovery
             selection.put("id", mRow.get("id"));
             selection.put("system_key", mRow.get("system_key"));
             if(mRow.containsKey("identity_key")) selection.put("identity_key", mRow.get("identity_key"));
+            else selection.put("protocol",mNamespace);
             mRow.put("selection", selection);
             return mRow;
         }

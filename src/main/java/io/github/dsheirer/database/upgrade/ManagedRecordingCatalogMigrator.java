@@ -241,6 +241,12 @@ public final class ManagedRecordingCatalogMigrator
                         }
                     }
                 }
+                case 6 ->
+                {
+                    // Only future captured facts establish auxiliary identities; never infer them from old IDs.
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("recording_identifier"));
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("idx_recording_identifier_lookup"));
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);
