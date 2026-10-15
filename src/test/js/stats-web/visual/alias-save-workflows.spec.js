@@ -45,13 +45,15 @@ async function openAliasForm(page, editing) {
 test('Unchanged Alias submission skips saving, and a changed save refreshes the table and editor', async ({ page }) => {
   const { dialog, writes, pending } = await openAliasForm(page, true);
   const name = dialog.getByRole('textbox', { name: /^Alias name/ });
-  const save = dialog.getByRole('button', { name: 'Save Changes', exact: true });
+  const save = dialog.getByRole('button', { name: 'Save Changes', exact: true, includeHidden: true });
   await expect(save).toBeDisabled();
+  await expect(save).toBeHidden();
   await dialog.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
   expect(writes).toHaveLength(0);
   await name.fill('Changed briefly');
   await name.fill('Dispatch');
   await expect(save).toBeDisabled();
+  await expect(save).toBeHidden();
   await name.fill('County Dispatch');
   await save.click();
   await expect.poll(() => pending.length).toBe(1);
@@ -62,7 +64,7 @@ test('Unchanged Alias submission skips saving, and a changed save refreshes the 
   await updatedAlias.click();
   const reopened = page.getByRole('dialog', { name: 'Edit County Dispatch', exact: true });
   await expect(reopened.getByRole('textbox', { name: /^Alias name/ })).toHaveValue('County Dispatch');
-  await expect(reopened.getByRole('button', { name: 'Save Changes', exact: true })).toBeDisabled();
+  await expect(reopened.getByRole('button', { name: 'Save Changes', exact: true, includeHidden: true })).toBeDisabled();
   expect(writes).toHaveLength(1);
 });
 

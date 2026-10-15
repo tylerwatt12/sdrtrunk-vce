@@ -3,6 +3,34 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets,
+  captureFormWorkflowEvidence } = require('./fixtures/form-workflow-geometry.cjs');
+
+async function expectRemoteWorkflowGeometry(dialog) {
+  const form = dialog.locator('.ui-form-workflow');
+  const geometry = await expectFormWorkflowGeometry(form);
+  const decorations = await form.evaluate(element => {
+    const body = element.querySelector(':scope > .ui-form-workflow-body');
+    const bounds = body.getBoundingClientRect();
+    return [...body.querySelectorAll('.ui-notice, .ui-feedback, .remote-links-credential-row .ui-button')]
+      .filter(node => node.getClientRects().length).map(node => {
+        const box = node.getBoundingClientRect();
+        return { left: box.left - bounds.left, right: bounds.right - box.right };
+      });
+  });
+  for (const decoration of decorations) {
+    expect(decoration.left, 'Warnings and copy controls have a left inset').toBeGreaterThanOrEqual(8);
+    expect(decoration.right, 'Warnings and copy controls have a right inset').toBeGreaterThanOrEqual(8);
+  }
+  await dialog.locator('.modal-content').evaluate(element => { element.scrollTop = element.scrollHeight; });
+  const bottom = await form.evaluate(element => {
+    const body = element.querySelector(':scope > .ui-form-workflow-body');
+    const footer = element.querySelector(':scope > .ui-modal-footer');
+    return { body: body.getBoundingClientRect().bottom, footer: footer.getBoundingClientRect().top };
+  });
+  expect(bottom.footer, 'The highlighted body ends above the sticky actions').toBeGreaterThanOrEqual(bottom.body - 1);
+  return geometry;
+}
 
 let defaultPreferences;
 
@@ -391,3 +419,75 @@ test('one-time credential transition cannot submit a second creation request', a
   await expect(dialog).toHaveCount(0);
   expect(creations).toBe(1);
 });
+
+const editorSpacingCases = [
+  { key: 'listener', open: 'Configure listener', title: 'Remote listener', field: 'Bind address',
+    value: '127.0.0.1', action: 'Save listener', endpoint: '/listener' },
+  { key: 'outbound', open: 'Configure sender', title: 'Outbound remote sender', field: 'Destination host',
+    value: 'remote.example.test', action: 'Save sender', endpoint: '/sender-connection' },
+  { key: 'create', open: 'Add trusted sender', title: 'Add trusted sender', field: 'Sender name',
+    value: 'Synthetic dispatch', action: 'Create credential', endpoint: '/senders' },
+  { key: 'sender', open: 'Manage sender', title: 'Trusted sender', field: 'Sender name',
+    value: 'Updated fixture sender', action: 'Save sender', endpoint: `/senders/${senderId}` },
+  { key: 'feed', open: 'Manage feed', title: 'Remote feed', field: 'Local channel name',
+    value: 'Updated fixture feed', action: 'Save feed', endpoint: `/senders/${senderId}/feeds/north-control` }
+];
+
+for (const [theme, viewport] of [
+  ['light', { width: 1280, height: 900 }],
+  ['dark', { width: 320, height: 700 }]
+]) {
+  for (const editor of editorSpacingCases) {
+    test(`workflow spacing remote ${editor.key} keeps dirty, saving, and error content inset in ${theme}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await openApp(page, theme);
+      let release;
+      await page.route(`**/api/v1/admin/remote-links${editor.endpoint}`, async route => {
+        await new Promise(resolve => { release = async () => {
+          await route.fulfill({ status: 503, json: { error: { message: 'Fixture settings could not be saved. Try again.' } } });
+          resolve();
+        }; });
+      });
+      await page.getByRole('button', { name: editor.open, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: editor.title, exact: true });
+      await dialog.getByRole('textbox', { name: new RegExp(`^${editor.field}`) }).fill(editor.value);
+      await expect(dialog.locator('form')).toHaveClass(/is-dirty/);
+      const before = await expectRemoteWorkflowGeometry(dialog);
+      await captureFormWorkflowEvidence(dialog.locator('form'), `remote-${editor.key}-${theme}-dirty`);
+      await dialog.getByRole('button', { name: editor.action, exact: true }).click();
+      await expect.poll(() => typeof release).toBe('function');
+      await expect(dialog).toHaveAttribute('aria-busy', 'true');
+      await expectRemoteWorkflowGeometry(dialog);
+      await expectStableFormWorkflowInsets(dialog.locator('form'), before);
+      await captureFormWorkflowEvidence(dialog.locator('form'), `remote-${editor.key}-${theme}-saving`);
+      await release();
+      await expect(dialog.getByRole('alert')).toHaveText('Fixture settings could not be saved. Try again.');
+      await expectRemoteWorkflowGeometry(dialog);
+      await expectStableFormWorkflowInsets(dialog.locator('form'), before);
+      await captureFormWorkflowEvidence(dialog.locator('form'), `remote-${editor.key}-${theme}-error`);
+    });
+  }
+
+  test(`workflow spacing remote one-time credential keeps warning, fields, copy controls, and footer separated in ${theme}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openApp(page, theme);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
+    });
+    await page.getByRole('button', { name: 'Add trusted sender', exact: true }).click();
+    await page.getByLabel('Sender name').fill('Synthetic credential fixture');
+    await page.getByRole('button', { name: 'Create credential', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Credential created', exact: true });
+    await expect(dialog.getByRole('alert')).toBeVisible();
+    await expectRemoteWorkflowGeometry(dialog);
+    await expect(dialog.getByRole('button', { name: 'Copy Sender ID', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Copy Shared secret', exact: true })).toBeVisible();
+    await captureFormWorkflowEvidence(dialog.locator('form'), `remote-credential-${theme}-created`);
+    await dialog.getByRole('button', { name: 'Copy Shared secret', exact: true }).click();
+    await expect(dialog.getByRole('status')).toHaveText('Shared secret copied.');
+    await expectRemoteWorkflowGeometry(dialog);
+    await captureFormWorkflowEvidence(dialog.locator('form'), `remote-credential-${theme}-copied`);
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+}

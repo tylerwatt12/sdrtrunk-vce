@@ -35,6 +35,7 @@ class Element {
     this.tagName = tag.toUpperCase();
     this.textContent = text;
     this.children = [];
+    this.ownerDocument = { createElement: (tag) => new Element(tag) };
     this.listeners = new Map();
     this.attributes = new Map();
     this.disabled = false;
@@ -48,6 +49,7 @@ class Element {
     };
   }
   append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
   addEventListener(name, listener) {
     if (!this.listeners.has(name)) this.listeners.set(name, []);
     this.listeners.get(name).push(listener);

@@ -1,6 +1,8 @@
 const { expect, test } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
+const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets,
+  captureFormWorkflowEvidence } = require('./fixtures/form-workflow-geometry.cjs');
 const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
 const helpersSource = app.slice(app.indexOf('function closeReadOnlyModal('), app.indexOf('function statsLoggingState(')) +
   app.slice(app.indexOf('function uiToggle('), app.indexOf('function uiPill(')) +
@@ -132,7 +134,7 @@ async function install(page, theme = 'light', empty = false) {
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
-    window.streamingTest={calls,status,fail:false,stale:false,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,feeds:[
+    window.streamingTest={calls,status,fail:false,stale:false,holdWrite:false,releaseWrite:null,holdOptions:false,releaseOptions:null,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,feeds:[
       {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
       {id:2087,name:'County Fire and EMS',configured:true},
       {id:3194,name:'Citywide Events',configured:false}
@@ -140,6 +142,8 @@ async function install(page, theme = 'light', empty = false) {
     const requestJson=async (path, options={}) => {
       calls.push([path, options]);
       const url=new URL(path,location.href); const suffix=url.pathname.replace('/api/v1/admin/streaming','');
+      if(options.method&&window.streamingTest.holdWrite) await new Promise(resolve=>{window.streamingTest.releaseWrite=resolve;});
+      if(suffix==='/options'&&window.streamingTest.holdOptions) await new Promise(resolve=>{window.streamingTest.releaseOptions=resolve;});
       if(window.streamingTest.fail) throw new Error('Connection unavailable');
       if(options.method && window.streamingTest.stale) throw Object.assign(new Error('Configuration changed. Reload this editor before saving'),{code:'stale_revision'});
       if(suffix==='/feeds/refresh'&&options.method==='POST') {
@@ -177,6 +181,88 @@ async function install(page, theme = 'light', empty = false) {
     shell.append(header,workspace.element);document.body.append(shell);
   }, {helpersSource,theme,empty});
   await expect(page.getByRole('button',{name:'Add destination',exact:true})).toBeVisible();
+}
+
+async function expectStreamingBodyInsets(modal) {
+  const insets = await modal.locator('.ui-form-workflow-body').evaluate(body => {
+    const bounds = body.getBoundingClientRect();
+    return [...body.querySelectorAll('.ui-feedback, .ui-notice, .ui-segmented')]
+      .filter(node => node.getClientRects().length).map(node => {
+        const box = node.getBoundingClientRect();
+        return { left: box.left - bounds.left, right: bounds.right - box.right,
+          top: box.top - bounds.top, bottom: bounds.bottom - box.bottom };
+      });
+  });
+  for (const inset of insets) {
+    expect(inset.left, 'Feedback and tabs have room inside the boundary').toBeGreaterThanOrEqual(8);
+    expect(inset.right, 'Feedback and tabs have room inside the boundary').toBeGreaterThanOrEqual(8);
+    expect(inset.top).toBeGreaterThanOrEqual(8);
+    expect(inset.bottom).toBeGreaterThanOrEqual(8);
+  }
+}
+
+async function expectStreamingWorkflowGeometry(modal) {
+  const editor = modal.locator('.streaming-editor');
+  const geometry = await expectFormWorkflowGeometry(editor);
+  await expectStreamingBodyInsets(modal);
+  await modal.locator('.modal-content').evaluate(element => { element.scrollTop = element.scrollHeight; });
+  const bottom = await editor.evaluate(element => ({
+    body: element.querySelector(':scope > .ui-form-workflow-body').getBoundingClientRect().bottom,
+    footer: element.querySelector(':scope > .ui-modal-footer').getBoundingClientRect().top
+  }));
+  expect(bottom.footer, 'The highlighted fields end above the sticky actions').toBeGreaterThanOrEqual(bottom.body - 1);
+  return geometry;
+}
+
+for (const [theme, viewport] of [
+  ['light', { width: 1440, height: 1000 }],
+  ['dark', { width: 320, height: 700 }]
+]) for (const creating of [false, true]) {
+  test(`workflow spacing streaming ${creating ? 'new' : 'existing'} fields, feedback, and actions remain separated in ${theme}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await install(page, theme, creating);
+    await page.evaluate(() => { window.streamingTest.holdOptions = true; });
+    await page.getByRole('button', { name: creating ? 'Add destination' : 'County Calls', exact: true }).click();
+    const modal = page.getByRole('dialog');
+    await expect(modal.getByText('Loading destination…', { exact: true })).toBeVisible();
+    await expectStreamingBodyInsets(modal);
+    await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-${creating ? 'new' : 'existing'}-${theme}-loading`);
+    await page.evaluate(() => { window.streamingTest.holdOptions = false; window.streamingTest.releaseOptions(); });
+    await modal.getByLabel('Name', { exact: true }).fill('Updated fixture destination');
+    await modal.getByText('Advanced settings', { exact: true }).click();
+    await expect(modal.locator('.streaming-editor')).toHaveClass(/is-dirty/);
+    const before = await expectStreamingWorkflowGeometry(modal);
+    await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-${creating ? 'new' : 'existing'}-${theme}-dirty`);
+    await page.evaluate(() => { window.streamingTest.holdWrite = true; });
+    await modal.getByRole('button', { name: creating ? 'Add destination' : 'Save and reconnect', exact: true }).click();
+    await expect(modal.getByLabel('Name', { exact: true })).toBeDisabled();
+    await expectStreamingWorkflowGeometry(modal);
+    await expectStableFormWorkflowInsets(modal.locator('.streaming-editor'), before);
+    await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-${creating ? 'new' : 'existing'}-${theme}-saving`);
+    await page.evaluate(() => { window.streamingTest.fail = true; window.streamingTest.holdWrite = false; window.streamingTest.releaseWrite(); });
+    await expect(modal.getByText('Connection unavailable', { exact: true })).toBeVisible();
+    await expectStreamingWorkflowGeometry(modal);
+    await expectStableFormWorkflowInsets(modal.locator('.streaming-editor'), before);
+    await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-${creating ? 'new' : 'existing'}-${theme}-error`);
+    if (!creating) {
+      await page.evaluate(() => { window.streamingTest.fail = false; });
+      await modal.getByRole('button', { name: 'Aliases', exact: true }).click();
+      await modal.getByRole('checkbox', { name: 'Send Dispatch 1 to this destination', exact: true }).uncheck();
+      const aliasesBefore = await expectStreamingWorkflowGeometry(modal);
+      await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-aliases-${theme}-dirty`);
+      await page.evaluate(() => { window.streamingTest.holdWrite = true; });
+      await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
+      await expect(modal.getByRole('checkbox', { name: 'Send Dispatch 1 to this destination', exact: true })).toBeDisabled();
+      await expectStreamingWorkflowGeometry(modal);
+      await expectStableFormWorkflowInsets(modal.locator('.streaming-editor'), aliasesBefore);
+      await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-aliases-${theme}-saving`);
+      await page.evaluate(() => { window.streamingTest.fail = true; window.streamingTest.holdWrite = false; window.streamingTest.releaseWrite(); });
+      await expect(modal.getByText('Connection unavailable', { exact: true })).toBeVisible();
+      await expectStreamingWorkflowGeometry(modal);
+      await expectStableFormWorkflowInsets(modal.locator('.streaming-editor'), aliasesBefore);
+      await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-aliases-${theme}-error`);
+    }
+  });
 }
 
 for(const theme of ['light','dark']) for(const mobile of [false,true]) {

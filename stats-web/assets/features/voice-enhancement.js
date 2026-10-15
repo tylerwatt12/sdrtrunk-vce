@@ -1,6 +1,6 @@
 // Reuse map: Administration sections, ui-toggle-field/ui-field/ui-admin-facts,
 // shared form busy/feedback guards and action rows cover both themes and sizes.
-import { createFormWorkflow } from '../core/form-workflows.js?v=3';
+import { createFormWorkflow } from '../core/form-workflows.js?v=4';
 
 const ROOT = '/api/v1/admin/voice-enhancement';
 const REVISION = /^[0-9a-f]{64}$/;
@@ -66,7 +66,7 @@ export async function requestVoiceEnhancement(fetchDocument, { action = 'status'
 export function createVoiceEnhancementSettings({ node, section, sectionActionHost, uiToggleField,
   setUiToggle, fetchDocument, signal = null, isCurrent = () => true }) {
   const body = node('div', 'admin-section-body');
-  const workspace = node('div', 'settings-page-form ui-settings-form voice-enhancement-settings');
+  const workspace = node('div', 'voice-enhancement-settings ui-settings-stack');
   const reload = node('button', 'ui-button ui-button-secondary', 'Reload status'); reload.type = 'button';
   const panel = section('Voice enhancement', body, sectionActionHost(reload));
   panel.classList.add('ui-settings-panel'); panel.dataset.voiceEnhancement = '';
@@ -78,7 +78,7 @@ export function createVoiceEnhancementSettings({ node, section, sectionActionHos
   const message = node('div', 'admin-form-message'); message.setAttribute('role', 'status');
   const footer = node('div', 'settings-form-footer'); const actions = node('div', 'admin-form-actions');
   actions.append(save); footer.append(message, actions); form.append(toggle, fallback, footer);
-  const facts = node('dl', 'ui-facts ui-admin-facts'); const fact = node('div', 'ui-fact');
+  const facts = node('dl', 'ui-facts'); const fact = node('div', 'ui-fact');
   const modelId = node('dd', '', 'Loading…'); fact.append(node('dt', '', 'JMBE model'), modelId); facts.append(fact);
   workspace.append(facts, form); body.append(workspace);
   let confirmed = null; let pending = false; let loadId = 0;

@@ -139,6 +139,11 @@ body.modal-open {
   margin: 0;
 }
 
+.ui-form-workflow-modal > :is(.ui-modal-footer, .settings-form-footer) {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
 .ui-modal-footer-spacer { flex: 1 1 auto; }
 
 .modal-content:has(.ui-modal-footer) {

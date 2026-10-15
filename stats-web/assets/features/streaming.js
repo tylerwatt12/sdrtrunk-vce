@@ -42,7 +42,10 @@ export function createStreamingWorkspace(deps) {
   const statusTone = (row) => row.attention ? 'danger' : row.state === 'CONNECTED' ? 'success' : 'neutral';
   const errorTone = (row) => Number(row.errors) > 0 ? (row.attention ? 'danger' : 'warning') : 'blue';
   const count = (value) => value == null ? '—' : formatNumber(value);
-  const showError = (target, error) => target.replaceChildren(feedback(error.message || 'The request failed', 'error'));
+  const showError = (target, error) => {
+    target.replaceChildren(feedback(error.message || 'The request failed', 'error'));
+    target.hidden = false;
+  };
 
   function draw(documentValue) {
     catalog = documentValue;
@@ -124,8 +127,10 @@ export function createStreamingWorkspace(deps) {
   }
 
   async function openEditor(id = null, initialTab = 'settings') {
-    const content = node('div', 'streaming-editor editor-workspace ui-form-workflow');
-    content.append(feedback('Loading destination…', 'loading'));
+    const content = node('div', 'streaming-editor editor-workspace ui-form-workflow ui-form-workflow-modal');
+    const workflowBody = node('div', 'ui-form-workflow-body');
+    workflowBody.append(feedback('Loading destination…', 'loading'));
+    content.append(workflowBody);
     const abort = new AbortController();
     let alive = true, busy = false, settingsDirty = false, assignmentDirty = false, revision, options, definition;
     let tabs = null, statusTimer = null;
@@ -140,9 +145,11 @@ export function createStreamingWorkspace(deps) {
     const requestOptions = { signal: abort.signal, page: false };
     const localMessage = node('div');
     localMessage.setAttribute('role', 'status');
+    localMessage.hidden = true;
     const dirty = () => {
       modal.setDirty(settingsDirty || assignmentDirty);
       localMessage.replaceChildren();
+      localMessage.hidden = true;
       reload.hidden = true;
     };
     const settingsPanel = node('section', 'streaming-panel');
@@ -157,7 +164,10 @@ export function createStreamingWorkspace(deps) {
     formState.hidden = true;
     const test = button('Test connection', () => void run(async () => {
       const result = await write('/test', 'POST', { configuration_id: id, provider: definition.provider, settings: readChanges() }, requestOptions);
-      if (alive) localMessage.replaceChildren(feedback(result.message, result.success ? 'success' : 'error'));
+      if (alive) {
+        localMessage.replaceChildren(feedback(result.message, result.success ? 'success' : 'error'));
+        localMessage.hidden = false;
+      }
     }));
     const cancel = button('Cancel', modal.close);
     const remove = button('Delete destination', () => void removeDestination());
@@ -248,7 +258,7 @@ export function createStreamingWorkspace(deps) {
     }
     async function run(operation) {
       if (busy || !alive) return;
-      setBusy(true); localMessage.replaceChildren(); reload.hidden = true;
+      setBusy(true); localMessage.replaceChildren(); localMessage.hidden = true; reload.hidden = true;
       try { await operation(); }
       catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
       finally { if (alive) setBusy(false); }
@@ -455,6 +465,7 @@ export function createStreamingWorkspace(deps) {
         const references = current.references;
         if (references.aliases || references.alias_lists.length) {
           localMessage.replaceChildren(feedback(`This destination is used by ${formatNumber(references.aliases)} aliases. Remove its assignments before deleting.`, 'warning'));
+          localMessage.hidden = false;
           references.alias_lists.forEach(list => {
             const link = node('a', '', `${list.name} · ${[list.unmatched ? 'unknown calls' : '', list.new_aliases ? 'new alias defaults' : ''].filter(Boolean).join(', ')}`);
             link.href = href('aliases', { list: list.id }); localMessage.append(link);
@@ -486,15 +497,18 @@ export function createStreamingWorkspace(deps) {
       tabs = uiSegmentedControl([{ value: 'settings', label: 'Settings' }, { value: 'aliases', label: 'Aliases' },
         { value: 'status', label: 'Status' }], initialTab, switchTab);
       tabs.setAttribute('aria-label', 'Streaming destination sections');
-      content.replaceChildren(tabs, settingsPanel, aliasesPanel, statusPanel, localMessage, reload, footer);
+      workflowBody.replaceChildren(tabs, settingsPanel, aliasesPanel, statusPanel, localMessage, reload);
+      content.replaceChildren(workflowBody, footer);
       renderFields();
       if (existing) drawStatus(existing.status);
       switchTab(initialTab);
-    } catch (error) { if (alive && error.name !== 'AbortError') content.replaceChildren(feedback(error.message, 'error'),
-      button('Retry', () => {
+    } catch (error) { if (alive && error.name !== 'AbortError') {
+      workflowBody.replaceChildren(feedback(error.message, 'error'), button('Retry', () => {
         const reopen = () => void openEditor(id, initialTab);
         if (modal.close(reopen)) reopen();
-      })); }
+      }));
+      content.replaceChildren(workflowBody);
+    } }
   }
 
   async function findFeeds() {

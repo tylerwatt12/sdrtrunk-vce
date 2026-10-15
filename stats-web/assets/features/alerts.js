@@ -705,7 +705,7 @@ export function createAlertsWorkspace(deps) {
     fields.append(enabled.element, formField('VCE name', senderName), modeHost, detail, footer);
     setup.append(section('Delivery', fields), section('Connection', connection));
     form.append(setup);
-    const workflow = createFormWorkflow({ form, submit: save, feedback: status, changed: () =>
+    const workflow = createFormWorkflow({ form, surface: fields, submit: save, feedback: status, changed: () =>
       (draft.mode === 'proxy' && needsApproval()) || draft.enabled !== saved.enabled || draft.mode !== saved.mode ||
       draft.sender_label !== (saved.sender_label || 'VCE installation') ||
       (draft.mode === 'direct' && draft.site_url !== (saved.site_url || '')) });

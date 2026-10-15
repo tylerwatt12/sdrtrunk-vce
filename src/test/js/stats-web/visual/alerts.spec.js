@@ -5,6 +5,8 @@ const { installSiteStyleApplication, systemKey, channelId } = require('./fixture
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 const path = require('node:path');
 const fs = require('node:fs');
+const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets, captureFormWorkflowEvidence,
+  holdFormWorkflowFailure } = require('./fixtures/form-workflow-geometry.cjs');
 
 async function auditScreenshot(page, name, fullPage = true) {
   if (!process.env.ALERTS_AUDIT_DIR) return;
@@ -108,6 +110,107 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     return route.fallback();
   });
   return { state, fixture };
+}
+
+async function inspectAlertSaveStates(page, form, held, before, label, modal = true) {
+  await expect(form).toHaveClass(/is-dirty/);
+  await expectFormWorkflowGeometry(form, { modal });
+  await expectStableFormWorkflowInsets(form, before);
+  await captureFormWorkflowEvidence(form, `${label}-dirty`);
+  await form.locator('.ui-form-submit').click();
+  await expect.poll(held.pending).toBe(true);
+  await expect(form).toHaveAttribute('aria-busy', 'true');
+  await expectStableFormWorkflowInsets(form, before);
+  await captureFormWorkflowEvidence(form, `${label}-saving`);
+  await held.fail();
+  await expect(form.getByRole('alert')).toContainText('could not be saved');
+  await expectFormWorkflowGeometry(form, { modal });
+  await expectStableFormWorkflowInsets(form, before);
+  await captureFormWorkflowEvidence(form, `${label}-error`);
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+  test(`alert editor form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await installAlerts(page, { theme });
+    const held = await holdFormWorkflowFailure(page, '**/api/v1/admin/alerts/**');
+    for (const kind of ['topic', 'rule']) {
+      await page.goto(`/app.html?view=admin&tab=alert-${kind === 'topic' ? 'topics' : 'rules'}`);
+      await page.getByRole('button', { name: kind === 'topic' ? 'Create topic' : 'Create alert rule', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: kind === 'topic' ? 'Create topic' : 'Create alert rule', exact: true });
+      const form = dialog.locator('form');
+      const before = await expectFormWorkflowGeometry(form);
+      await dialog.getByRole('textbox', { name: kind === 'topic' ? 'Topic name' : 'Rule name', exact: true })
+        .fill(`Regional ${kind}`);
+      await inspectAlertSaveStates(page, form, held, before, `alerts-${kind}-${theme}-${width}`);
+      if (kind === 'rule') {
+        for (const tab of ['Conditions', 'Timing', 'Notification', 'When']) {
+          await dialog.getByRole('button', { name: tab, exact: true }).click();
+          await expectFormWorkflowGeometry(form);
+        }
+      }
+    }
+  });
+
+  test(`push setup form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await installAlerts(page, { theme });
+    await page.goto('/app.html?view=admin&tab=push-setup');
+    const form = page.locator('.alerts-workspace form');
+    const before = await expectFormWorkflowGeometry(form, { modal: false });
+    const held = await holdFormWorkflowFailure(page, '**/api/v1/admin/alerts/config');
+    await page.getByRole('textbox', { name: 'VCE name', exact: true }).fill('Regional notification delivery');
+    await inspectAlertSaveStates(page, form, held, before, `alerts-push-${theme}-${width}`, false);
+  });
+
+  test(`subscription form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { state } = await installAlerts(page, { guest: true, theme });
+    state.deviceTopics = ['fire', 'paused'];
+    await page.addInitScript(() => localStorage.setItem('vce-alert-device-v1', JSON.stringify({
+      id: 'synthetic-device', manage_token: 'synthetic-manage-token', mode: 'proxy', status: 'connected' })));
+    await page.goto('/app.html?view=topics');
+    await page.getByRole('button', { name: 'Notification settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Alert subscription', exact: true });
+    const form = dialog.locator('form');
+    await expect(dialog.getByRole('checkbox', { name: 'Fire activity', exact: true })).toBeEnabled();
+    const before = await expectFormWorkflowGeometry(form);
+    const held = await holdFormWorkflowFailure(page, '**/api/v1/alerts/subscriptions/me');
+    await dialog.getByRole('checkbox', { name: 'Fire activity', exact: true }).uncheck();
+    await inspectAlertSaveStates(page, form, held, before, `alerts-subscription-${theme}-${width}`);
+  });
+
+  test(`alert alias search form spacing survives loading and error states in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await installAlerts(page, { theme });
+    let failSearch;
+    await page.route('**/api/v1/aliases?**', route => new Promise(resolve => {
+      failSearch = async () => {
+        await route.fulfill({ status: 503, json: { error: { message: 'Alias search unavailable.' } } });
+        resolve();
+      };
+    }));
+    await page.goto('/app.html?view=admin&tab=alert-rules');
+    await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+    const parent = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+    await parent.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Regional response');
+    await parent.getByRole('button', { name: 'Conditions', exact: true }).click();
+    await parent.getByRole('button', { name: 'Add condition', exact: true }).click();
+    await parent.getByRole('combobox', { name: 'Field', exact: true }).selectOption('alias_id');
+    await parent.getByRole('button', { name: 'Choose alias', exact: true }).click();
+    const child = page.getByRole('dialog', { name: 'Choose an alias', exact: true });
+    const form = child.locator('form');
+    await expect.poll(() => Boolean(failSearch)).toBe(true);
+    await expect(child).toContainText('Searching aliases…');
+    const before = await expectFormWorkflowGeometry(form, { modal: false });
+    await captureFormWorkflowEvidence(form, `alerts-alias-search-${theme}-${width}-loading`);
+    await failSearch();
+    await expect(child).toContainText('Aliases could not be searched. Try again.');
+    await expectFormWorkflowGeometry(form, { modal: false });
+    await expectStableFormWorkflowInsets(form, before);
+    await expectNoHorizontalOverflow(page);
+    await captureFormWorkflowEvidence(form, `alerts-alias-search-${theme}-${width}-error`);
+  });
 }
 
 test('guest topics hide private names and connect through RadioResolve without an account', async ({ page }) => {

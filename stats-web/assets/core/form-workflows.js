@@ -1,11 +1,36 @@
 // Reuse map: shared feedback, action rows, and modal busy/dirty guards serve
 // inline settings and dialog forms in both themes and viewport sizes.
 export function createFormWorkflow({ form, submit, feedback, modal = null,
-  ready = true, changed = null, renderFeedback = null }) {
+  ready = true, changed = null, renderFeedback = null, surface = null }) {
   let busy = false;
   let dirty = false;
   let saved = false;
   form.classList.add('ui-form-workflow');
+  if (surface && surface !== form) {
+    surface.classList.add('ui-form-workflow-surface');
+    form.classList.add('ui-form-workflow-contained');
+  }
+  // Keep a dialog's sticky actions outside its padded draft surface. Reparent
+  // existing controls so their listeners, form association and draft survive.
+  const setModalLayout = (enabled) => {
+    const children = Array.from(form.children || []);
+    const footer = children.find((child) => child.classList.contains('ui-modal-footer') ||
+      child.classList.contains('settings-form-footer'));
+    let body = children.find((child) => child.classList.contains('ui-form-workflow-body'));
+    if (!footer) return;
+    if (enabled && !body) {
+      body = form.ownerDocument.createElement('div');
+      body.className = 'ui-form-workflow-body';
+      children.filter((child) => child !== footer).forEach((child) => body.append(child));
+      form.replaceChildren(body, footer);
+    } else if (!enabled && body) {
+      form.replaceChildren(...body.children, footer);
+    }
+    form.classList[enabled ? 'add' : 'remove']('ui-form-workflow-modal');
+  };
+  const modalFooter = Array.from(form.children || []).some((child) =>
+    child.classList.contains('ui-modal-footer'));
+  if (modal) setModalLayout(modalFooter || Boolean(form.closest?.('.read-only-modal')));
   submit.classList.add('ui-form-submit');
   if (feedback && !feedback.textContent) feedback.hidden = true;
 
@@ -84,7 +109,7 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
     return true;
   };
 
-  return { refresh, showFeedback, save,
+  return { refresh, showFeedback, save, setModalLayout,
     setDirty: (value) => { dirty = Boolean(value); refresh(); },
     setReady: (value) => { ready = Boolean(value); refresh(); },
     isBusy: () => busy };

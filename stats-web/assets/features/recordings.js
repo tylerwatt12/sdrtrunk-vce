@@ -3,7 +3,7 @@ import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25Servi
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=3';
-import { createFormWorkflow } from '../core/form-workflows.js?v=3';
+import { createFormWorkflow } from '../core/form-workflows.js?v=4';
 
 const CALLS = '/api/v1/recordings/calls';
 const IDENTITIES = '/api/v1/recordings/identities';

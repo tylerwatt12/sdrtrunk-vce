@@ -1,6 +1,7 @@
 const { expect, test } = require('@playwright/test');
 const { expectMetricGridSpacing, expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 const { expectBoxedFacts, expectFlatFacts } = require('./fixtures/fact-geometry.cjs');
+const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets } = require('./fixtures/form-workflow-geometry.cjs');
 
 const galleryCases = [
   ['components-light-desktop', 'light', { width: 1280, height: 900 }],
@@ -1986,6 +1987,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     await expect(save).toBeDisabled();
     await expect(save).toBeHidden();
     await expect(form).not.toHaveClass(/is-dirty/);
+    const cleanGeometry = await expectFormWorkflowGeometry(form, { modal: false });
+    expect(cleanGeometry.wrapped).toBe(true);
     await input.fill('MetropolitanEmergencyCommunicationsCountyPublicSafety');
     await expect(form).toHaveClass(/ui-form-workflow/);
     await expect(form).toHaveClass(/is-dirty/);
@@ -1993,6 +1996,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     await expect(feedback).not.toHaveClass(/ui-feedback/);
     await expect(feedback).toHaveText('Unsaved changes');
     await expect(save).toBeVisible();
+    await expectFormWorkflowGeometry(form, { modal: false });
+    await expectStableFormWorkflowInsets(form, cleanGeometry);
     await expect(main).toHaveScreenshot(`workflow-recipes-${theme}-${width}-dirty.png`);
     await input.fill('County Dispatch');
     await expect(form).not.toHaveClass(/is-dirty/);
@@ -2010,6 +2015,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     await expect(input).toBeEnabled();
     await expect(form).toHaveClass(/is-dirty/);
     await expect(main.getByLabel('Locked default', { exact: true })).toBeDisabled();
+    await expectFormWorkflowGeometry(form, { modal: false });
+    await expectStableFormWorkflowInsets(form, cleanGeometry);
     await expect(main).toHaveScreenshot(`workflow-recipes-${theme}-${width}-error.png`);
     await save.click();
     await expect(feedback).toBeEmpty();

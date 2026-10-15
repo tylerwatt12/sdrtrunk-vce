@@ -12,7 +12,7 @@ import {
 } from './history.js?v=13';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=7';
-import { createFormWorkflow } from '../../core/form-workflows.js?v=3';
+import { createFormWorkflow } from '../../core/form-workflows.js?v=4';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,

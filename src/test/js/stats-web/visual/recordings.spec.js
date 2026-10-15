@@ -4,6 +4,8 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
+const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets, captureFormWorkflowEvidence,
+  holdFormWorkflowFailure } = require('./fixtures/form-workflow-geometry.cjs');
 
 // The global player is covered separately; these snapshots isolate recording components.
 const componentScreenshot = { stylePath: [path.resolve(__dirname, 'fixtures/hide-global-audio-dock.css'),
@@ -337,6 +339,62 @@ async function searchNow(page, state) {
   await expect.poll(() => state.requestedFilters.length).toBe(count + 1);
   await expect(page.locator('.recordings-result-status')).toBeEmpty();
 }
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+  test(`recording form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openRecordings(page, { view: 'admin', theme, settings: { retention_days: 90 } });
+    const held = await holdFormWorkflowFailure(page, '**/api/v1/admin/recordings/settings');
+    for (const [name, edit] of [
+      ['mode', () => page.getByRole('radio', { name: /Classic/ }).check()],
+      ['retention', () => page.getByLabel('Remove managed calls older than (days)').fill('30')]
+    ]) {
+      const form = page.locator('form.recordings-admin-body').nth(name === 'mode' ? 0 : 1);
+      const before = await expectFormWorkflowGeometry(form, { modal: false });
+      await edit();
+      await expect(form).toHaveClass(/is-dirty/);
+      await expectFormWorkflowGeometry(form, { modal: false });
+      await expectStableFormWorkflowInsets(form, before);
+      await captureFormWorkflowEvidence(form, `recordings-${name}-${theme}-${width}-dirty`);
+      await form.locator('.ui-form-submit').click();
+      await expect.poll(held.pending).toBe(true);
+      await expect(form).toHaveAttribute('aria-busy', 'true');
+      await expectStableFormWorkflowInsets(form, before);
+      await captureFormWorkflowEvidence(form, `recordings-${name}-${theme}-${width}-saving`);
+      await held.fail();
+      await expect(form.getByRole('alert')).toContainText('could not be saved');
+      await expectFormWorkflowGeometry(form, { modal: false });
+      await expectStableFormWorkflowInsets(form, before);
+      await captureFormWorkflowEvidence(form, `recordings-${name}-${theme}-${width}-error`);
+    }
+  });
+
+  test(`transcription form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openRecordings(page, { view: 'admin', tab: 'transcription', theme, keyConfigured: true,
+      settings: { transcription_enabled: true, transcription_url: 'https://transcription.example.net/v1/audio/transcriptions',
+        transcription_model: 'test-model' } });
+    const held = await holdFormWorkflowFailure(page, '**/api/v1/admin/recordings/settings');
+    const form = page.locator('form.recordings-admin-body');
+    const before = await expectFormWorkflowGeometry(form, { modal: false });
+    await page.getByLabel('Model ID').fill('Updated transcription model');
+    await expect(form).toHaveClass(/is-dirty/);
+    await expectFormWorkflowGeometry(form, { modal: false });
+    await expectStableFormWorkflowInsets(form, before);
+    await captureFormWorkflowEvidence(form, `transcription-${theme}-${width}-dirty`);
+    await form.locator('.ui-form-submit').click();
+    await expect.poll(held.pending).toBe(true);
+    await expect(form).toHaveAttribute('aria-busy', 'true');
+    await expectStableFormWorkflowInsets(form, before);
+    await captureFormWorkflowEvidence(form, `transcription-${theme}-${width}-saving`);
+    await held.fail();
+    await expect(form.getByRole('alert')).toContainText('could not be saved');
+    await expectFormWorkflowGeometry(form, { modal: false });
+    await expectStableFormWorkflowInsets(form, before);
+    await captureFormWorkflowEvidence(form, `transcription-${theme}-${width}-error`);
+  });
+}
+
 test('Classic empty page invites only the primary administrator', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openRecordings(page, { mode: 'CLASSIC', hasCalls: false });

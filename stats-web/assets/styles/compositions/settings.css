@@ -9,6 +9,21 @@
   border: 1px solid transparent;
 }
 
+.ui-form-workflow-body {
+  min-width: 0;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  gap: var(--ui-layout-gap, var(--space-3));
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+}
+
+.ui-form-workflow-body > :is(.admin-form-message, [role="status"], [role="alert"]):empty {
+  display: none;
+}
+
 .ui-form-state {
   color: var(--muted);
   font-size: var(--font-size-label);
@@ -222,11 +237,24 @@
   background: transparent;
 }
 
-.ui-form-workflow.is-dirty,
-.ui-settings-form.ui-form-workflow.is-dirty {
+.ui-form-workflow.is-dirty:not(.ui-form-workflow-modal, .ui-form-workflow-contained),
+.ui-form-workflow.is-dirty > .ui-form-workflow-body,
+.ui-form-workflow.is-dirty .ui-form-workflow-surface {
   background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface));
   outline: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
   outline-offset: -1px;
+}
+
+.ui-form-workflow.ui-form-workflow-modal {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0;
+  background: transparent;
+}
+
+.ui-settings-stack {
+  display: grid;
+  gap: var(--space-4);
 }
 
 .ui-settings-control {

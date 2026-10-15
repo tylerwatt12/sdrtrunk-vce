@@ -338,6 +338,7 @@ export function createRemoteLinksWorkspace(deps) {
     const form = node('form', 'remote-links-editor');
     const localMessage = node('div');
     localMessage.setAttribute('role', 'status');
+    localMessage.hidden = true;
     const body = node('div', `remote-links-fields${options.fieldLayout ? ` remote-links-fields-${options.fieldLayout}` : ''}`);
     body.append(...fields);
     const cancel = button('Cancel');
@@ -451,6 +452,7 @@ export function createRemoteLinksWorkspace(deps) {
       const copyStatus = node('small', 'ui-field-detail');
       copyStatus.setAttribute('role', 'status');
       copyStatus.setAttribute('aria-live', 'polite');
+      copyStatus.hidden = true;
       [['Sender ID', result.sender_id], ['Shared secret', result.secret]].forEach(([label, value]) => {
         const row = node('div', 'remote-links-credential-row');
         const text = input('text', value);
@@ -464,6 +466,7 @@ export function createRemoteLinksWorkspace(deps) {
             text.focus(); text.select();
             copyStatus.textContent = `Clipboard access failed. ${label} is selected; copy it manually.`;
           }
+          copyStatus.hidden = false;
         });
         copy.prepend(iconGlyph('icon-copy'));
         copy.setAttribute('aria-label', `Copy ${label}`);
@@ -472,7 +475,9 @@ export function createRemoteLinksWorkspace(deps) {
       });
       credential.append(copyStatus);
       const done = button('Done', () => { editor.modal.close(); }, true);
-      editor.form.replaceChildren(credential, modalFooter(done));
+      const workflowBody = editor.form.querySelector(':scope > .ui-form-workflow-body');
+      workflowBody.replaceChildren(credential);
+      editor.form.replaceChildren(workflowBody, modalFooter(done));
       editor.modal.setBusy(false);
       reminder.focus();
       return false;
