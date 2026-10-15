@@ -25374,17 +25374,12 @@ function channelEnrichmentSupported(channel, profile) {
 }
 
 function channelEnrichmentAvailability(channel, profile, account) {
-  if (!channelEnrichmentSupported(channel, profile)) return { available: false, reason: '' };
-  if (account?.state !== 'VALID_PREMIUM') return { available: false,
-    reason: account?.state === 'CHECKING' ? 'Checking RadioReference account…' :
-      account?.state === 'EXPIRED_PREMIUM' ? 'A RadioReference Premium subscription is required.' :
-      account?.state === 'UNAVAILABLE' ? 'RadioReference is unavailable. Try reopening this channel later.' :
-        'Sign in to RadioReference with a Premium account to update these names.' };
+  if (!channelEnrichmentSupported(channel, profile) || account?.state !== 'VALID_PREMIUM')
+    return { available: false };
   const identity = channel?.observed?.p25_site_identity;
   const complete = [['wacn', 0xFFFFF], ['system', 0xFFF], ['rfss', 0xFF], ['site', 0xFF]]
     .every(([key, maximum]) => Number.isInteger(identity?.[key]) && identity[key] >= 0 && identity[key] <= maximum);
-  return complete ? { available: true, reason: '' } : { available: false,
-    reason: 'Run this channel until it learns its WACN, System ID, RFSS, and Site ID, then reopen this editor.' };
+  return { available: complete };
 }
 
 function channelEnrichmentChanges(preview) {
@@ -25564,6 +25559,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       squelchTuner?.close();
       removeSectionLayout?.();
       squelchTuner = null;
+      refreshEnrichmentAvailability = null;
       const form = node('form', 'channel-editor-form editor-workspace');
       form.dataset.uiDensity = 'comfortable';
       const hero = node('div', 'channel-editor-hero');
@@ -25732,43 +25728,6 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           else grid.append(wrapper);
         });
         panel.append(grid);
-        if (editing && sectionDefinition.id === 'general' && channelEnrichmentSupported(channel, profile)) {
-          const enrichment = node('div', 'ui-field');
-          const update = uiActionButton('Update from RadioReference', 'icon-radioreference', async () => {
-            if (modal.isDirty()) {
-              workflow.showFeedback('warning', 'Save or reset your changes before updating from RadioReference.');
-              return;
-            }
-            await openChannelEnrichment({ channel, revision, parent: modal,
-              onSaved: async () => {
-                const refreshed = await requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`, {
-                  csrf: false, page: false
-                });
-                entry = refreshed;
-                revision = Number(refreshed.revision);
-                channel = refreshed.channel;
-                baselineChannel = structuredClone(channel);
-                draw();
-                await renderChannelSetup();
-              } });
-          }, 'ui-button ui-button-secondary');
-          update.dataset.channelEnrichmentTrigger = '';
-          const detail = node('small', 'ui-field-detail');
-          detail.id = 'channel-enrichment-availability';
-          const settingsLink = externalAnchor('Open RadioReference settings', href('radioreference'));
-          enrichment.append(update, detail, settingsLink);
-          refreshEnrichmentAvailability = () => {
-            const availability = channelEnrichmentAvailability(channel, profile, enrichmentAccount);
-            update.disabled = !availability.available || modal.state.isBusy();
-            detail.textContent = availability.reason;
-            detail.hidden = !availability.reason;
-            if (availability.reason) update.setAttribute('aria-describedby', detail.id);
-            else update.removeAttribute('aria-describedby');
-            settingsLink.hidden = ['CHECKING', 'VALID_PREMIUM'].includes(enrichmentAccount?.state);
-          };
-          refreshEnrichmentAvailability();
-          panel.append(enrichment);
-        }
         if (sectionDefinition.id === 'protocol' && squelchFields.length) {
           squelchTuner = channelSquelchTuner(profile, channel, entry, squelchFields);
           panel.append(squelchTuner.element);
@@ -25828,8 +25787,37 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             disabled.forEach(([control, wasDisabled]) => { control.disabled = wasDisabled; });
             modal.setBusy(false);
             form.removeAttribute('aria-busy');
+            refreshEnrichmentAvailability?.();
           }
         }, 'ui-button ui-button-secondary') : null;
+      let enrichment = null;
+      if (editing && channelEnrichmentSupported(channel, profile)) {
+        enrichment = uiActionButton('Update from RadioReference', 'icon-radioreference', async () => {
+          if (!channelEnrichmentAvailability(channel, profile, enrichmentAccount).available || modal.state.isBusy()) return;
+          if (modal.isDirty()) {
+            workflow.showFeedback('warning', 'Save or reset your changes before updating from RadioReference.');
+            return;
+          }
+          await openChannelEnrichment({ channel, revision, parent: modal,
+            onSaved: async () => {
+              const refreshed = await requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`, {
+                csrf: false, page: false
+              });
+              entry = refreshed;
+              revision = Number(refreshed.revision);
+              channel = refreshed.channel;
+              baselineChannel = structuredClone(channel);
+              draw();
+              await renderChannelSetup();
+            } });
+        }, 'ui-button ui-button-secondary channel-wide-field');
+        enrichment.dataset.channelEnrichmentTrigger = '';
+        refreshEnrichmentAvailability = () => {
+          enrichment.hidden = !channelEnrichmentAvailability(channel, profile, enrichmentAccount).available;
+          enrichment.disabled = modal.state.isBusy();
+        };
+        refreshEnrichmentAvailability();
+      }
       const sectionLayout = node('div', 'channel-editor-section-layout ui-editor-layout');
       const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
       sectionStack.append(...sectionNodes);
@@ -25837,7 +25825,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         `channel-editor-${mode}-${configurationId || 'new'}`);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
       const footer = node('footer', 'channel-editor-footer ui-modal-footer ui-modal-footer-flush ui-action-row');
-      footer.append(...[startStop, reset, node('span', 'channel-editor-footer-spacer ui-modal-footer-spacer'), cancel, save]
+      footer.append(...[startStop, reset, enrichment,
+        node('span', 'channel-editor-footer-spacer ui-modal-footer-spacer'), cancel, save]
         .filter(Boolean));
       form.append(sectionLayout, errors, footer);
       const workflow = createFormWorkflow({ form, submit: save, modal,

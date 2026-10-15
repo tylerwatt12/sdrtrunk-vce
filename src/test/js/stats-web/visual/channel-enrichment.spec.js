@@ -94,6 +94,8 @@ async function openEditor(page, options = {}) {
 test('remote P25 compares names, preserves cancelled choices and saves only reviewed names', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openEditor(page, { remote: true });
+  await expect(state.editor.locator('.channel-editor-footer').getByRole('button', {
+    name: 'Update from RadioReference', exact: true })).toBeVisible();
   let preview = await state.openPreview();
   await expect(preview.getByRole('checkbox', { name: 'Replace channel name' })).toHaveCount(0);
   await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toBeVisible();
@@ -148,6 +150,10 @@ test('name-only changes can be saved and saving locks duplicate submits and dism
   releaseRefresh();
   await expect(preview).toHaveCount(0);
   await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.changes[0].after);
+  await expect(state.editor.locator('.channel-editor-footer').getByRole('button', {
+    name: 'Update from RadioReference', exact: true })).toBeVisible();
+  expect(await state.editor.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await state.editor.screenshot({ path: test.info().outputPath('enrichment-editor-dark-phone.png') });
   expect(state.applies).toEqual([{ preview_id: 'preview-1', replace_name: true }]);
 });
 
@@ -169,10 +175,10 @@ for (const [label, options, message] of [
   ['signed out', { account: 'SIGNED_OUT' }, 'Sign in to RadioReference with a Premium account'],
   ['expired Premium', { account: 'EXPIRED_PREMIUM' }, 'A RadioReference Premium subscription is required.'],
   ['missing identity', { identity: false }, 'Run this channel until it learns its WACN']
-]) test(`enrichment explains unavailable ${label}`, async ({ page }) => {
+]) test(`enrichment hides the unavailable action for ${label}`, async ({ page }) => {
   const state = await openEditor(page, options);
-  await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toBeDisabled();
-  await expect(state.editor.getByText(message, { exact: false })).toBeVisible();
+  await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toHaveCount(0);
+  await expect(state.editor.getByText(message, { exact: false })).toHaveCount(0);
 });
 
 test('conventional P25 does not offer trunked enrichment', async ({ page }) => {
@@ -228,8 +234,8 @@ test('a slow account check leaves the editor usable and preserves an in-progress
   const waitAccount = new Promise((resolve) => { release = resolve; });
   const state = await openEditor(page, { waitAccount });
   const update = state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true });
-  await expect(update).toBeDisabled();
-  await expect(state.editor.getByText('Checking RadioReference account…')).toBeVisible();
+  await expect(update).toHaveCount(0);
+  await expect(state.editor.getByText('Checking RadioReference account…')).toHaveCount(0);
   await state.editor.getByLabel('Name', { exact: true }).fill('My draft while RadioReference loads');
   release();
   await expect(update).toBeEnabled();
