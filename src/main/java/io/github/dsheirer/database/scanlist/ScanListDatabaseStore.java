@@ -28,6 +28,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * SQLite persistence for scan-list definitions and normalized Alias and unmatched-talkgroup Alias List membership.
@@ -141,6 +142,124 @@ public final class ScanListDatabaseStore
             configuration.unmatchedAliasListMemberships());
         saveMemberships(connection, "alias_list_new_alias_scan_list_membership", "alias_list_id",
             configuration.newAliasListMemberships());
+    }
+
+    /** Synchronizes an authoritative snapshot without replacing unchanged definitions or membership edges. */
+    public void synchronizeConfiguration(Connection connection, ScanListConfiguration configuration) throws SQLException
+    {
+        if(connection == null || connection.getAutoCommit())
+        {
+            throw new IllegalArgumentException("Scan-list snapshot writes require a caller-owned transaction");
+        }
+        if(configuration == null)
+        {
+            throw new IllegalArgumentException("Scan-list configuration cannot be null");
+        }
+        requireKnownOwners(configuration.aliasMemberships().keySet(), loadIds(connection, "alias"), "Alias");
+        Set<Long> aliasListIds = loadIds(connection, "alias_list");
+        requireKnownOwners(configuration.unmatchedAliasListMemberships().keySet(), aliasListIds, "Alias List");
+        requireKnownOwners(configuration.newAliasListMemberships().keySet(), aliasListIds, "Alias List");
+        ScanListConfiguration existing = loadConfiguration(connection);
+        Map<Long,ScanList> existingById = new LinkedHashMap<>();
+        existing.scanLists().forEach(scanList -> existingById.put(scanList.getId(), scanList));
+        Map<Long,ScanList> desiredById = new LinkedHashMap<>();
+        configuration.scanLists().forEach(scanList -> desiredById.put(scanList.getId(), scanList));
+
+        try(PreparedStatement delete = connection.prepareStatement("DELETE FROM scan_list WHERE id=?");
+            PreparedStatement demote = connection.prepareStatement("UPDATE scan_list SET is_default=0 WHERE id=?");
+            PreparedStatement rename = connection.prepareStatement("UPDATE scan_list SET name=? WHERE id=?"))
+        {
+            for(ScanList scanList: existing.scanLists())
+            {
+                ScanList desired = desiredById.get(scanList.getId());
+                if(desired == null)
+                {
+                    delete.setLong(1, scanList.getId());
+                    delete.executeUpdate();
+                    existingById.remove(scanList.getId());
+                    continue;
+                }
+                if(scanList.isDefault() && !desired.isDefault())
+                {
+                    //The one-default partial unique index is immediate. Demote before promoting another row.
+                    demote.setLong(1, scanList.getId());
+                    demote.executeUpdate();
+                    scanList = scanList.withDefinition(scanList.getSortOrder(), scanList.getName(),
+                        scanList.getDescription(), scanList.isPublished(), false);
+                    existingById.put(scanList.getId(), scanList);
+                }
+                if(!scanList.getName().equals(desired.getName()))
+                {
+                    //A complete snapshot may swap names. Keep owner IDs/joins while freeing the unique names.
+                    rename.setString(1, "VCE pending " + UUID.randomUUID());
+                    rename.setLong(2, scanList.getId());
+                    rename.executeUpdate();
+                }
+            }
+        }
+        for(ScanList desired: configuration.scanLists())
+        {
+            ScanList previous = existingById.get(desired.getId());
+            if(previous == null)
+            {
+                saveScanLists(connection, List.of(desired));
+            }
+            else if(!previous.equals(desired))
+            {
+                try(PreparedStatement update = connection.prepareStatement("""
+                    UPDATE scan_list SET sort_order=?, name=?, description=?, published=?, is_default=? WHERE id=?
+                    """))
+                {
+                    bindScanList(update, desired, 1);
+                    update.setLong(6, desired.getId());
+                    update.executeUpdate();
+                }
+            }
+        }
+        synchronizeMemberships(connection, "alias_scan_list_membership", "alias_id",
+            configuration.aliasMemberships());
+        synchronizeMemberships(connection, "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id",
+            configuration.unmatchedAliasListMemberships());
+        synchronizeMemberships(connection, "alias_list_new_alias_scan_list_membership", "alias_list_id",
+            configuration.newAliasListMemberships());
+    }
+
+    private static void synchronizeMemberships(Connection connection, String table, String ownerColumn,
+                                                Map<Long,Set<Long>> desired) throws SQLException
+    {
+        Map<Long,Set<Long>> existing = loadMemberships(connection, table, ownerColumn);
+        try(PreparedStatement delete = connection.prepareStatement("DELETE FROM " + table + " WHERE " +
+                ownerColumn + "=? AND scan_list_id=?");
+            PreparedStatement insert = connection.prepareStatement("INSERT INTO " + table + "(" + ownerColumn +
+                ",scan_list_id) VALUES (?,?)"))
+        {
+            for(Map.Entry<Long,Set<Long>> entry: existing.entrySet())
+            {
+                for(long scanListId: entry.getValue())
+                {
+                    if(!desired.getOrDefault(entry.getKey(), Set.of()).contains(scanListId))
+                    {
+                        delete.setLong(1, entry.getKey());
+                        delete.setLong(2, scanListId);
+                        delete.addBatch();
+                    }
+                }
+            }
+            for(Map.Entry<Long,Set<Long>> entry: desired.entrySet())
+            {
+                for(long scanListId: entry.getValue())
+                {
+                    if(!existing.getOrDefault(entry.getKey(), Set.of()).contains(scanListId))
+                    {
+                        insert.setLong(1, entry.getKey());
+                        insert.setLong(2, scanListId);
+                        insert.addBatch();
+                    }
+                }
+            }
+            delete.executeBatch();
+            insert.executeBatch();
+        }
     }
 
     private static void clearConfiguration(Connection connection) throws SQLException

@@ -9,6 +9,7 @@ import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 import static io.github.dsheirer.test.BroadcastRouteTestSupport.routeNames;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -57,6 +58,49 @@ class AliasAdministrationPersistenceTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void unchangedAliasDefaultsAndScanListAvoidCommitPublicationAndRevisionChange() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("unchanged-configuration-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long listId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long aliasId = service.createAlias(alias("Dispatch", listId, 101)).aliasIds().getFirst();
+            long revision = service.currentRevision();
+            Alias liveAlias = manager.getAliasModel().getAlias(aliasId);
+            AliasListDefinition liveDefinition = liveAlias.getAliasListDefinition();
+            AtomicInteger notifications = new AtomicInteger();
+            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
+                notifications.incrementAndGet());
+            manager.failNextSave();
+
+            assertEquals(revision, service.replaceAlias(aliasId, service.getAlias(aliasId).alias(), revision).revision());
+            assertEquals(revision, service.updateAliasListDefaults(listId,
+                service.getAliasListDefaults(listId).defaults(), revision).revision());
+            ScanList scanList = manager.getScanListModel().configuration().defaultScanList();
+            assertEquals(revision, service.updateScanList(scanList.getId(), scanList, revision).revision());
+            assertSame(liveAlias, manager.getAliasModel().getAlias(aliasId));
+            assertSame(liveDefinition, liveAlias.getAliasListDefinition());
+            assertEquals(0, notifications.get());
+
+            Alias changed = service.getAlias(aliasId).alias();
+            changed.setName("Changed Dispatch");
+            assertThrows(AliasAdministrationService.PersistenceException.class,
+                () -> service.replaceAlias(aliasId, changed, revision),
+                "Unchanged commands must leave the injected next-commit failure unused");
+            assertEquals(revision, service.currentRevision());
+            assertEquals("Dispatch", liveAlias.getName());
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
 
     @Test
     void customAliasListStartsWithoutPersistedUnmatchedScanListRouting() throws Exception

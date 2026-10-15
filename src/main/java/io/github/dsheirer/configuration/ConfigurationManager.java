@@ -21,6 +21,7 @@ package io.github.dsheirer.configuration;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
+import io.github.dsheirer.alias.AliasConfigurationEquality;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
@@ -716,6 +717,17 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         AliasConfigurationPublication requested = Objects.requireNonNull(publication,
             "Alias publication cannot be null");
+        Objects.requireNonNull(proposed, "Proposed Alias configuration cannot be null");
+        if(mExternalConfigurationOperation)
+        {
+            throw new ConfigurationPublicationException("Configuration saves are suspended until VCE restarts");
+        }
+        AliasConfigurationSnapshot current = new AliasConfigurationSnapshot(mAliasModel.aliasListDefinitions(),
+            mAliasModel.getAliases(), mScanListModel.configuration());
+        if(AliasConfigurationEquality.sameConfiguration(current, proposed))
+        {
+            return current;
+        }
         AliasConfigurationSnapshot committed = commitAliasConfiguration(proposed, requested);
 
         try

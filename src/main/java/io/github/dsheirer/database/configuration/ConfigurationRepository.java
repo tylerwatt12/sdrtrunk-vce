@@ -139,8 +139,8 @@ public final class ConfigurationRepository
         AliasConfigurationSnapshot detached = AliasConfigurationSnapshot.detachedCopyOf(proposed);
         return inTransaction(connection ->
         {
-            mAliasStore.replaceAliases(connection, detached.aliases(), detached.definitions());
-            mScanListStore.replaceConfiguration(connection, detached.scanLists());
+            mAliasStore.synchronizeAliases(connection, detached.aliases(), detached.definitions());
+            mScanListStore.synchronizeConfiguration(connection, detached.scanLists());
             return loadAliasConfiguration(connection);
         });
     }
@@ -189,8 +189,8 @@ public final class ConfigurationRepository
                 .broadcastConfigurations();
             ConfigurationSnapshotValidator.validateForWrite(new ConfigurationSnapshot(detached.definitions(),
                 detached.aliases(), detached.scanLists(), channels.channels(), broadcasts));
-            mAliasStore.replaceAliases(connection, detached.aliases(), detached.definitions());
-            mScanListStore.replaceConfiguration(connection, detached.scanLists());
+            mAliasStore.synchronizeAliases(connection, detached.aliases(), detached.definitions());
+            mScanListStore.synchronizeConfiguration(connection, detached.scanLists());
             mChannelAndBroadcastStore.replaceChannels(connection, channels.channels());
             return load(connection);
         });

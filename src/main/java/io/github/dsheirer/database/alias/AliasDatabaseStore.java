@@ -51,11 +51,14 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.UUID;
 
 /**
  * SQLite persistence for alias-list definitions and their aliases.
@@ -126,6 +129,228 @@ public class AliasDatabaseStore
         saveAliases(connection, safeAliases);
         synchronizeAliasActivitySummaries(connection, previousMatchers);
     }
+
+    /**
+     * Persists an authoritative complete snapshot while retaining unchanged rows and dependent identities. Missing
+     * owners are deletions, just as in replaceAliases; this is not a partial-update API. The caller owns the atomic
+     * transaction and reads the canonical committed configuration back before publishing it.
+     */
+    public void synchronizeAliases(Connection connection, List<Alias> aliases,
+                                   List<AliasListDefinition> definitions) throws SQLException
+    {
+        if(connection == null || connection.getAutoCommit())
+        {
+            throw new IllegalArgumentException("Alias snapshot writes require a caller-owned transaction");
+        }
+
+        List<Alias> desiredAliases = aliases != null ? aliases : List.of();
+        List<AliasListDefinition> desiredDefinitions = definitions != null ? definitions : List.of();
+        validateSnapshot(desiredAliases, desiredDefinitions);
+        List<AliasListDefinition> existingDefinitions = loadAliasListDefinitions(connection);
+        Map<Long,AliasListDefinition> definitionsById = new HashMap<>();
+        existingDefinitions.forEach(definition -> definitionsById.put(definition.getId(), definition));
+        Map<Long,Alias> aliasesById = new HashMap<>();
+        loadAliases(connection, existingDefinitions).forEach(alias -> aliasesById.put(alias.getId(), alias));
+        Map<Long,MatcherSignature> previousMatchers = loadAliasMatcherSignatures(connection);
+
+        Set<Long> retainedAliasIds = new HashSet<>();
+        desiredAliases.forEach(alias -> retainedAliasIds.add(alias.getId()));
+        try(PreparedStatement summary = connection.prepareStatement(
+                "DELETE FROM alias_activity_summary WHERE alias_id=?");
+            PreparedStatement alias = connection.prepareStatement("DELETE FROM alias WHERE id=?"))
+        {
+            for(long id: aliasesById.keySet())
+            {
+                if(!retainedAliasIds.contains(id))
+                {
+                    //The summary's deferred NO ACTION reference is intentionally not an ON DELETE cascade.
+                    summary.setLong(1, id);
+                    summary.addBatch();
+                    alias.setLong(1, id);
+                    alias.addBatch();
+                }
+            }
+            summary.executeBatch();
+            alias.executeBatch();
+        }
+
+        Map<Long,AliasListDefinition> desiredDefinitionsById = new HashMap<>();
+        desiredDefinitions.forEach(definition -> desiredDefinitionsById.put(definition.getId(), definition));
+        try(PreparedStatement rename = connection.prepareStatement("UPDATE alias_list SET name=? WHERE id=?"))
+        {
+            for(AliasListDefinition existing: existingDefinitions)
+            {
+                AliasListDefinition desired = desiredDefinitionsById.get(existing.getId());
+                if(desired == null || !Objects.equals(existing.getName(), desired.getName()))
+                {
+                    //Free names before insertion/rename without deleting a still-referenced list parent.
+                    rename.setString(1, "VCE pending " + UUID.randomUUID());
+                    rename.setLong(2, existing.getId());
+                    rename.executeUpdate();
+                }
+            }
+        }
+        for(AliasListDefinition definition: desiredDefinitions)
+        {
+            AliasListDefinition existing = definitionsById.get(definition.getId());
+            if(existing == null || !sameDefinitionFields(existing, definition))
+            {
+                saveDefinition(connection, definition);
+            }
+        }
+        attachDefinitions(desiredAliases, desiredDefinitions);
+
+        for(Alias alias: desiredAliases)
+        {
+            Alias existing = aliasesById.get(alias.getId());
+            if(existing == null)
+            {
+                saveAliases(connection, List.of(alias));
+            }
+            else
+            {
+                if(!aliasFields(existing).equals(aliasFields(alias)))
+                {
+                    updateAlias(connection, alias);
+                }
+                if(!Objects.equals(subscriberIdentity(existing), subscriberIdentity(alias)))
+                {
+                    synchronizeSubscriberIdentity(connection, alias);
+                }
+            }
+        }
+
+        //Move summary ownership before an old list's cascading deletion can remove retained history.
+        synchronizeAliasActivitySummaries(connection, previousMatchers);
+        //An Alias may move out of a removed list. Apply that move before its old parent is deleted.
+        deleteMissingDefinitions(connection, desiredDefinitions);
+        Map<Long,Set<String>> aliasRoutes = new HashMap<>();
+        desiredAliases.forEach(alias -> aliasRoutes.put(alias.getId(), destinationIds(alias.getBroadcastChannels())));
+        synchronizeStreamRoutes(connection, "alias_broadcast_channel", "alias_id", aliasRoutes);
+        Map<Long,Set<String>> unmatchedRoutes = new HashMap<>();
+        Map<Long,Set<String>> newAliasRoutes = new HashMap<>();
+        desiredDefinitions.forEach(definition ->
+        {
+            unmatchedRoutes.put(definition.getId(),
+                destinationIds(definition.getUnmatchedTalkgroupPolicy().getStreamDestinations()));
+            newAliasRoutes.put(definition.getId(),
+                destinationIds(definition.getNewAliasBehavior().getStreamDestinations()));
+        });
+        synchronizeStreamRoutes(connection, "alias_list_unmatched_talkgroup_stream", "alias_list_id",
+            unmatchedRoutes);
+        synchronizeStreamRoutes(connection, "alias_list_new_alias_stream", "alias_list_id", newAliasRoutes);
+    }
+
+    private static boolean sameDefinitionFields(AliasListDefinition first, AliasListDefinition second)
+    {
+        return Objects.equals(first.getName(), second.getName()) && first.getFamily() == second.getFamily() &&
+            first.getUnmatchedTalkgroupPolicy().isRecordEnabled() ==
+                second.getUnmatchedTalkgroupPolicy().isRecordEnabled() &&
+            first.getNewAliasBehavior().isRecordEnabled() == second.getNewAliasBehavior().isRecordEnabled();
+    }
+
+    private AliasFields aliasFields(Alias alias) throws SQLException
+    {
+        StreamAsTalkgroup streamAsTalkgroup = alias.getStreamTalkgroupAlias();
+        return new AliasFields(alias.getAliasListId(), alias.getName(), alias.getDescription(), alias.getGroup(),
+            alias.getColor(), alias.getIconName(), streamAsTalkgroup != null ? streamAsTalkgroup.getValue() : null,
+            alias.isRecordable(), matcherData(alias));
+    }
+
+    private static SubscriberIdentity subscriberIdentity(Alias alias)
+    {
+        return alias.getMatchIdentifier() instanceof P25Subscriber subscriber ?
+            new SubscriberIdentity(subscriber.getHomeWacn(), subscriber.getHomeSystemId(),
+                subscriber.getSubscriberId()) : null;
+    }
+
+    private void updateAlias(Connection connection, Alias alias) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE alias SET alias_list_id=?, name=?, description=?, group_name=?, color=?, icon_name=?,
+                stream_as_talkgroup=?, record_enabled=?, matcher_type=?, protocol=?, value=?, min_value=?,
+                max_value=?, text_value=?, numeric_value=?, tone_sequence=?
+            WHERE id=?
+            """))
+        {
+            bindAlias(statement, alias, 1);
+            statement.setLong(17, alias.getId());
+            statement.executeUpdate();
+        }
+    }
+
+    private void synchronizeSubscriberIdentity(Connection connection, Alias alias) throws SQLException
+    {
+        try(PreparedStatement delete = connection.prepareStatement(
+            "DELETE FROM alias_p25_subscriber_identity WHERE alias_id=?"))
+        {
+            delete.setLong(1, alias.getId());
+            delete.executeUpdate();
+        }
+        if(alias.getMatchIdentifier() instanceof P25Subscriber subscriber)
+        {
+            insertSubscriberIdentity(connection, alias.getId(), subscriber);
+        }
+    }
+
+    private static Set<String> destinationIds(Iterable<BroadcastChannel> destinations)
+    {
+        Set<String> ids = new LinkedHashSet<>();
+        destinations.forEach(destination -> ids.add(destination.getConfigurationId()));
+        return ids;
+    }
+
+    /** Table/column names are internal constants; route identity belongs to each unchanged owner/destination edge. */
+    private static void synchronizeStreamRoutes(Connection connection, String table, String ownerColumn,
+                                                Map<Long,Set<String>> desired) throws SQLException
+    {
+        Map<Long,Set<String>> existing = new HashMap<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery(
+                "SELECT " + ownerColumn + ",broadcast_configuration_id FROM " + table))
+        {
+            while(rows.next())
+            {
+                existing.computeIfAbsent(rows.getLong(1), ignored -> new HashSet<>()).add(rows.getString(2));
+            }
+        }
+        try(PreparedStatement delete = connection.prepareStatement("DELETE FROM " + table + " WHERE " +
+                ownerColumn + "=? AND broadcast_configuration_id=?");
+            PreparedStatement insert = connection.prepareStatement("INSERT INTO " + table + "(" + ownerColumn +
+                ",broadcast_configuration_id) VALUES (?,?)"))
+        {
+            for(Map.Entry<Long,Set<String>> entry: existing.entrySet())
+            {
+                for(String destination: entry.getValue())
+                {
+                    if(!desired.getOrDefault(entry.getKey(), Set.of()).contains(destination))
+                    {
+                        delete.setLong(1, entry.getKey());
+                        delete.setString(2, destination);
+                        delete.addBatch();
+                    }
+                }
+            }
+            for(Map.Entry<Long,Set<String>> entry: desired.entrySet())
+            {
+                for(String destination: entry.getValue())
+                {
+                    if(!existing.getOrDefault(entry.getKey(), Set.of()).contains(destination))
+                    {
+                        insert.setLong(1, entry.getKey());
+                        insert.setString(2, destination);
+                        insert.addBatch();
+                    }
+                }
+            }
+            delete.executeBatch();
+            insert.executeBatch();
+        }
+    }
+
+    private record AliasFields(long aliasListId, String name, String description, String group, int color,
+                               String icon, Integer streamAsTalkgroup, boolean recordable, MatcherData matcher) {}
+    private record SubscriberIdentity(int homeWacn, int homeSystemId, int subscriberId) {}
 
     private void clearAliasesAndRoutes(Connection connection) throws SQLException
     {
@@ -693,47 +918,51 @@ public class AliasDatabaseStore
     {
         for(AliasListDefinition definition: definitions)
         {
-            if(definition.getId() == AliasListDefinition.UNASSIGNED_ID)
-            {
-                try(PreparedStatement statement = connection.prepareStatement("""
-                    INSERT INTO alias_list (
-                        name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
-                    ) VALUES (?, ?, ?, ?)
-                    """, Statement.RETURN_GENERATED_KEYS))
-                {
-                    bindDefinition(statement, definition, 1);
-                    statement.executeUpdate();
-                    try(ResultSet keys = statement.getGeneratedKeys())
-                    {
-                        if(!keys.next())
-                        {
-                            throw new SQLException("SQLite did not return an alias-list id");
-                        }
-                        definition.setId(keys.getLong(1));
-                    }
-                }
-            }
-            else
-            {
-                try(PreparedStatement statement = connection.prepareStatement("""
-                    INSERT INTO alias_list (
-                        id, name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
-                    ) VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        name=excluded.name,
-                        family=excluded.family,
-                        unmatched_talkgroup_record_enabled=excluded.unmatched_talkgroup_record_enabled,
-                        new_alias_record_enabled=excluded.new_alias_record_enabled
-                    """))
-                {
-                    statement.setLong(1, definition.getId());
-                    bindDefinition(statement, definition, 2);
-                    statement.executeUpdate();
-                }
-            }
-
+            saveDefinition(connection, definition);
             insertUnmatchedTalkgroupStreams(connection, definition);
             insertNewAliasStreams(connection, definition);
+        }
+    }
+
+    private void saveDefinition(Connection connection, AliasListDefinition definition) throws SQLException
+    {
+        if(definition.getId() == AliasListDefinition.UNASSIGNED_ID)
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list (
+                    name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
+                ) VALUES (?, ?, ?, ?)
+                """, Statement.RETURN_GENERATED_KEYS))
+            {
+                bindDefinition(statement, definition, 1);
+                statement.executeUpdate();
+                try(ResultSet keys = statement.getGeneratedKeys())
+                {
+                    if(!keys.next())
+                    {
+                        throw new SQLException("SQLite did not return an alias-list id");
+                    }
+                    definition.setId(keys.getLong(1));
+                }
+            }
+        }
+        else
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list (
+                    id, name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,
+                    family=excluded.family,
+                    unmatched_talkgroup_record_enabled=excluded.unmatched_talkgroup_record_enabled,
+                    new_alias_record_enabled=excluded.new_alias_record_enabled
+                """))
+            {
+                statement.setLong(1, definition.getId());
+                bindDefinition(statement, definition, 2);
+                statement.executeUpdate();
+            }
         }
     }
 
@@ -1111,16 +1340,7 @@ public class AliasDatabaseStore
     {
         if(alias.getMatchIdentifier() instanceof P25Subscriber subscriber)
         {
-            long subscriberIdentityId = requireP25SubscriberIdentityId(connection, subscriber);
-            try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO alias_p25_subscriber_identity(alias_id, p25_subscriber_identity_id)
-                VALUES (?, ?)
-                """))
-            {
-                statement.setLong(1, aliasId);
-                statement.setLong(2, subscriberIdentityId);
-                statement.executeUpdate();
-            }
+            insertSubscriberIdentity(connection, aliasId, subscriber);
         }
 
         for(BroadcastChannel broadcastChannel: alias.getBroadcastChannels())
@@ -1141,12 +1361,43 @@ public class AliasDatabaseStore
         }
     }
 
+    private static void insertSubscriberIdentity(Connection connection, long aliasId, P25Subscriber subscriber)
+        throws SQLException
+    {
+        long subscriberIdentityId = requireP25SubscriberIdentityId(connection, subscriber);
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO alias_p25_subscriber_identity(alias_id, p25_subscriber_identity_id) VALUES (?, ?)
+            """))
+        {
+            statement.setLong(1, aliasId);
+            statement.setLong(2, subscriberIdentityId);
+            statement.executeUpdate();
+        }
+    }
+
     private static long requireP25SubscriberIdentityId(Connection connection, P25Subscriber subscriber)
         throws SQLException
     {
         if(subscriber == null || !subscriber.isValid())
         {
             throw new SQLException("P25 subscriber alias requires a valid canonical identity");
+        }
+
+        //Existing canonical identities are shared with retained radio history. Reuse them without an INSERT attempt.
+        try(PreparedStatement select = connection.prepareStatement("""
+            SELECT id FROM p25_subscriber_identity WHERE home_wacn=? AND home_system_id=? AND subscriber_id=?
+            """))
+        {
+            select.setInt(1, subscriber.getHomeWacn());
+            select.setInt(2, subscriber.getHomeSystemId());
+            select.setInt(3, subscriber.getSubscriberId());
+            try(ResultSet rows = select.executeQuery())
+            {
+                if(rows.next())
+                {
+                    return rows.getLong(1);
+                }
+            }
         }
 
         try(PreparedStatement insert = connection.prepareStatement("""
