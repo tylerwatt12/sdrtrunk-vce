@@ -9,6 +9,7 @@ import io.github.dsheirer.gui.theme.Theme;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import io.github.dsheirer.database.*;
+import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService;
 import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
@@ -40,6 +41,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.*;
@@ -131,6 +134,8 @@ public final class SetupWizard extends JDialog
     private boolean managedRecordingCatalogNeedsUpgrade;
     private String managedRecordingCatalogReport = "";
     private boolean createUpgradeBackup = true;
+    private Set<String> availableLegacyRecovery = Set.of();
+    private boolean legacyRecoveryUnavailable;
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
     public static boolean ensureListener(UserPreferences preferences, StatsWebServerService server) throws Exception
@@ -187,6 +192,10 @@ public final class SetupWizard extends JDialog
                 {
                     wizard.startupMigrationPlan = ApplicationMigrationService.readStartupPlan(wizard.database);
                     current = !wizard.startupMigrationPlan.requiresMigration();
+                    var recovery = discoverLegacyRecovery(!current, wizard.forced,
+                        () -> ApplicationMigrationService.availableRecoveryKeys(wizard.root));
+                    wizard.availableLegacyRecovery = recovery.keys();
+                    wizard.legacyRecoveryUnavailable = recovery.unavailable();
                 }
                 catch(java.io.IOException | java.sql.SQLException e) { inspectionFailure = e; }
             }
@@ -540,6 +549,9 @@ public final class SetupWizard extends JDialog
         {
             notice("Managed recordings", managedRecordingCatalogReport, false);
         }
+        if(legacyRecoveryUnavailable && !sourceCommitted)
+            notice("Earlier saved settings could not be checked",
+                "Your database settings are kept. You can reopen Setup Wizard to try recovery later.", false);
         if(preferences != null)
         {
             if(forced && !sourceCommitted && liveServer == null)
@@ -563,7 +575,14 @@ public final class SetupWizard extends JDialog
                 paragraph("Check this installation’s saved settings before continuing.");
                 next.setText("Check my settings");
                 accept = () -> job("Checking your saved settings…", null,
-                    () -> ApplicationMigrationService.readStartupPlan(database), plan -> {
+                    () -> {
+                        var plan = ApplicationMigrationService.readStartupPlan(database);
+                        var recovery = discoverLegacyRecovery(plan.requiresMigration(), forced,
+                            () -> ApplicationMigrationService.availableRecoveryKeys(root));
+                        availableLegacyRecovery = recovery.keys();
+                        legacyRecoveryUnavailable = recovery.unavailable();
+                        return plan;
+                    }, plan -> {
                         startupMigrationPlan = plan;
                         showPage(SetupStep.SOURCE);
                     });
@@ -579,9 +598,13 @@ public final class SetupWizard extends JDialog
             }
             notice("Your settings need an update", "This build needs to update the database before receiving starts.", false);
             migrationDetails(startupMigrationPlan);
+            LegacyRecoveryChoices recovery = appendLegacyRecoveryChoices();
             upgradeBackupChoice();
             next.setText("Update");
-            accept = () -> confirmMigration(() -> migrate(null, false, false, null));
+            accept = () -> {
+                Map<String,String> selected = recovery.selectedDefaults();
+                confirmMigration(() -> migrate(null, false, false, null, selected));
+            };
             return;
         }
         paragraph("Welcome! Is this your first time using VCE, or are you bringing settings from an older installation?");
@@ -624,7 +647,7 @@ public final class SetupWizard extends JDialog
             var selection = PreviousBuildLocator.resolveSelection(input).orElseThrow(() -> new IllegalArgumentException("No supported portable database found at this location."));
             if(folder.isSelected() != selection.portableProfile()) throw new IllegalArgumentException("The selected path does not match the chosen folder/file import scope.");
             job("Inspecting source…", null, () -> ApplicationMigrationService.readMigrationApproval(
-                selection.database(), root.getParent()), approval -> {
+                selection, root.getParent()), approval -> {
                 DatabaseMigrationChain.PreflightReport plan = approval.plan();
                 page.removeAll();
                 notice("Ready to bring your settings over", "Your previous installation will stay unchanged. We’ll check the copied settings before using them.", false);
@@ -663,14 +686,97 @@ public final class SetupWizard extends JDialog
 
     private void upgradeBackupChoice()
     {
+        append(upgradeBackupCheckbox());
+        paragraph("A backup can take time for a large database. Without it, there is no recovery copy for the previous build.");
+    }
+
+    private JCheckBox upgradeBackupCheckbox()
+    {
         JCheckBox backup = new JCheckBox("Create a recovery backup first", createUpgradeBackup);
         backup.addActionListener(e -> createUpgradeBackup = backup.isSelected());
-        append(backup);
-        paragraph("A backup can take time for a large database. Without it, there is no recovery copy for the previous build.");
+        return backup;
+    }
+
+    record LegacyRecoveryDiscovery(Set<String> keys, boolean unavailable)
+    {
+        LegacyRecoveryDiscovery { keys = Set.copyOf(keys); }
+    }
+
+    /** A valid ordinary startup never inspects unused legacy files. Discovery cannot block usable SQLite settings. */
+    static LegacyRecoveryDiscovery discoverLegacyRecovery(boolean migrationRequired, boolean explicitVisit,
+                                                           Callable<Set<String>> inspection)
+    {
+        if(!migrationRequired && !explicitVisit) return new LegacyRecoveryDiscovery(Set.of(), false);
+        try { return new LegacyRecoveryDiscovery(inspection.call(), false); }
+        catch(Exception failure) { return new LegacyRecoveryDiscovery(Set.of(), true); }
+    }
+
+    /** Only safe labels and an unchecked selection are presented; legacy credentials never enter Swing text. */
+    static final class LegacyRecoveryChoices
+    {
+        private final JPanel panel = stack();
+        private final Map<String,JCheckBox> choices = new LinkedHashMap<>();
+
+        LegacyRecoveryChoices(Set<String> available)
+        {
+            for(String key: ReceiverSettingsSchema.KEYS)
+            {
+                if(!available.contains(key)) continue;
+                String label = switch(key)
+                {
+                    case ReceiverSettingsSchema.REMOTE_LINKS_KEY -> "Recover saved Remote Links";
+                    case ReceiverSettingsSchema.PAGING_TONES_KEY -> "Recover saved paging-tone detection";
+                    case ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY -> "Recover saved voice enhancement";
+                    default -> throw new IllegalArgumentException("Unsupported saved setting");
+                };
+                JCheckBox choice = new JCheckBox(label, false);
+                choices.put(key, choice);
+                addTo(panel, choice);
+            }
+        }
+
+        JPanel panel() { return panel; }
+        Map<String,JCheckBox> choices() { return Map.copyOf(choices); }
+        boolean anySelected() { return choices.values().stream().anyMatch(JCheckBox::isSelected); }
+        Map<String,String> selectedDefaults()
+        {
+            Map<String,String> selected = new LinkedHashMap<>();
+            try
+            {
+                for(var choice: choices.entrySet())
+                    if(choice.getValue().isSelected())
+                        selected.put(choice.getKey(), ReceiverSettingsSchema.defaultJson(choice.getKey()));
+            }
+            catch(java.sql.SQLException failure)
+            {
+                throw new IllegalStateException("Saved settings could not be prepared for recovery.");
+            }
+            return Map.copyOf(selected);
+        }
+    }
+
+    private LegacyRecoveryChoices appendLegacyRecoveryChoices()
+    {
+        LegacyRecoveryChoices choices = new LegacyRecoveryChoices(availableLegacyRecovery);
+        if(!choices.choices().isEmpty())
+        {
+            paragraph("Saved settings from an older build are available. Choose any you want to recover. " +
+                "Only matching default settings will be replaced; the original files will be kept.");
+            append(choices.panel());
+            append(Box.createVerticalStrut(14));
+        }
+        return choices;
     }
 
     private void migrate(Path source, boolean fresh, boolean xml,
                          ApplicationMigrationService.ApprovedMigrationPlan approved)
+    {
+        migrate(source, fresh, xml, approved, Map.of());
+    }
+
+    private void migrate(Path source, boolean fresh, boolean xml,
+                         ApplicationMigrationService.ApprovedMigrationPlan approved,
+                         Map<String,String> selectedRecovery)
     {
         job("Preparing your profile…", null, () -> {
             String report;
@@ -680,8 +786,9 @@ public final class SetupWizard extends JDialog
             {
                 ApplicationMigrationService service = new ApplicationMigrationService();
                 if(source == null)
-                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(
-                        service.migrateCurrent(root, createUpgradeBackup, this::migrationProgress));
+                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(selectedRecovery.isEmpty() ?
+                        service.migrateCurrent(root, createUpgradeBackup, this::migrationProgress) :
+                        service.migrateCurrent(root, createUpgradeBackup, selectedRecovery, this::migrationProgress));
                 else
                 {
                     var selected = PreviousBuildLocator.resolveSelection(source).orElseThrow();
@@ -692,6 +799,7 @@ public final class SetupWizard extends JDialog
             //The database/profile operation is already committed at this point. If the following readiness refresh
             //fails, recovery must not offer to import again into the now-occupied destination.
             sourceCommitted = true;
+            availableLegacyRecovery = Set.of();
             initialize(fresh || xml);
             return report;
         }, report -> {
@@ -738,11 +846,43 @@ public final class SetupWizard extends JDialog
             "Replace this installation’s database, including channels, aliases, accounts and preferences. We’ll show a warning and save a recovery copy first. Extra files are not copied, and saved output folders are not changed.", false);
         WizardChoiceCard xml = choice(group, "Import a legacy XML playlist",
             "Add supported channels, aliases and streaming settings to this profile. Existing configuration stays in place; conflicting imported names are renamed. This does not replace your database.", false);
+        WizardChoiceCard recover = availableLegacyRecovery.isEmpty() ? null : choice(group,
+            "Recover settings saved by an older VCE build",
+            "Review saved Remote Links and audio choices that can replace matching default settings.", false);
+        LegacyRecoveryChoices recovery = new LegacyRecoveryChoices(availableLegacyRecovery);
+        JPanel recoveryPanel = stack();
+        addTo(recoveryPanel, text("Choose which saved choices to recover. Only matching default settings will be " +
+            "replaced; the original files will be kept."));
+        addTo(recoveryPanel, recovery.panel());
+        addTo(recoveryPanel, upgradeBackupCheckbox());
+        recoveryPanel.setVisible(false);
+        if(recover != null) append(recoveryPanel);
         details("Where my settings are saved", database.toString());
-        Runnable selectionChanged = () -> next.setText(keep.isSelected() ? "Continue" : "Choose file & review");
+        Runnable selectionChanged = () -> {
+            boolean recovering = recover != null && recover.isSelected();
+            recoveryPanel.setVisible(recovering);
+            next.setText(recovering ? "Review recovery" : keep.isSelected() ? "Continue" : "Choose file & review");
+            updateNavigation();
+            page.revalidate();
+        };
+        canContinue = () -> recover == null || !recover.isSelected() || recovery.anySelected();
+        for(var choice: recovery.choices().values()) choice.addActionListener(e -> updateNavigation());
         for(var card : List.of(keep, sqlite, xml)) card.radio().addItemListener(e -> selectionChanged.run());
+        if(recover != null) recover.radio().addItemListener(e -> selectionChanged.run());
         accept = () -> {
             if(keep.isSelected()) { completeAndContinue(); return; }
+            if(recover != null && recover.isSelected()) {
+                Map<String,String> selected = recovery.selectedDefaults();
+                if(selected.isEmpty()) return;
+                int confirmation = JOptionPane.showOptionDialog(this,
+                    "Replace only the selected default settings with their saved values? The original files will be kept. " +
+                        (createUpgradeBackup ? "A recovery copy of the database will be kept first." :
+                            "No new recovery copy of the database will be kept."),
+                    "Recover saved settings?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+                    new Object[]{"Recover selected settings", "Cancel"}, "Cancel");
+                if(confirmation == 0) migrate(null, false, false, null, selected);
+                return;
+            }
             if(!persist()) return;
             if(sqlite.isSelected())
             {
