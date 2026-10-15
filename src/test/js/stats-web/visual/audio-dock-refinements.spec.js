@@ -61,7 +61,7 @@ async function openApp(page, options = {}) {
 
 async function chooseRecording(page, index = 0) {
   await size(page, 'minimal');
-  await page.locator('.recordings-play-glyph').nth(index).click();
+  await page.locator('.recordings-card-play').nth(index).click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
     .getByRole('button', { name: /^Play once/ }).click();
   await expect(player(page)).toHaveAttribute('data-source', 'recordings');

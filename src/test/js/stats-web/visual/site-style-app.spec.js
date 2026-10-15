@@ -132,6 +132,18 @@ for (const [name, query, selector, content] of cases) {
       await expectSuccessfulPage(page, fixture, name, selector, content);
       await expectSharedTypography(page);
       await expectNoHorizontalOverflow(page);
+      if (name === 'recordings') {
+        const actions = await page.locator('.recordings-card-action').evaluateAll(controls => controls.map(control => ({
+          width: control.getBoundingClientRect().width, height: control.getBoundingClientRect().height,
+          stroke: getComputedStyle(control.querySelector('svg')).stroke
+        })));
+        expect(actions).toHaveLength(2);
+        for (const action of actions) {
+          expect(action.width).toBeLessThanOrEqual(48);
+          expect(action.height).toBeLessThanOrEqual(48);
+          expect(action.stroke).not.toBe('none');
+        }
+      }
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
         await expect(page.locator('#content')).toHaveScreenshot(`${name}-${presentation.name}.png`);
       }

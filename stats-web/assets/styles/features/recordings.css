@@ -1,451 +1,136 @@
 .recordings-library,
-.recordings-admin {
-  min-width: 0;
-}
-
+.recordings-admin { min-width: 0; }
+.recordings-search { min-width: 0; }
 .recordings-browser {
-  min-width: 0;
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
-  gap: var(--space-4);
-  align-items: start;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  overflow: clip;
 }
-
 .recordings-search-panel {
   min-width: 0;
   display: grid;
-  gap: var(--space-3);
-  position: relative;
-  z-index: 5;
-}
-
-.recordings-filter-chip {
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-.recordings-results-panel {
-  min-width: 0;
-}
-
-.read-only-modal.recordings-filters-modal {
-  width: min(var(--modal-size-large), calc(100vw - var(--space-6)));
-}
-
-.recordings-filter-editor,
-.recordings-filter-panel:not([hidden]),
-.recordings-picker-results,
-.recordings-picker-system,
-.recordings-picker-group {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-3);
-}
-
-.recordings-filter-tabs {
-  display: flex;
-  flex-wrap: wrap;
-}
-
-.recordings-picker-results {
-  max-height: 45dvh;
-  overflow: auto;
-}
-
-.recordings-picker-tools {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: end;
-  gap: var(--space-3);
-}
-
-.recordings-picker-selected {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.recordings-picker-group {
-  padding-left: var(--space-3);
-}
-
-.recordings-picker-group-label,
-.recordings-identity-choice,
-.recordings-entity-choice {
-  display: flex;
-  align-items: start;
-  gap: var(--space-3);
-}
-
-.recordings-picker-group-label {
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.recordings-identity-copy {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-  overflow-wrap: anywhere;
-}
-
-.recordings-tone-fields,
-.recordings-filter-editor .recordings-search-property-fields {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.recordings-search {
-  display: grid;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.recordings-admin-body {
-  display: grid;
   gap: var(--space-4);
-  padding: var(--space-4);
-}
-
-.recordings-search-primary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: end;
-  gap: var(--space-3);
-}
-
-.recordings-search-primary > .recordings-field {
-  min-width: 0;
-}
-
-.recordings-filter-count {
-  margin-left: var(--space-1);
-}
-
-.recordings-field input,
-.recordings-field select {
-  width: 100%;
-  min-width: 0;
-}
-
-.recordings-field {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-}
-
-.recordings-custom-dates {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-3);
-}
-
-.recordings-search-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-3);
-}
-
-.recordings-search-property-fields {
-  padding-block: var(--space-3);
-}
-
-.recordings-autocomplete {
+  align-content: start;
   position: relative;
-  min-width: 0;
+  padding: var(--space-5) var(--space-4);
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-2));
 }
-
-.recordings-suggestions:not([hidden]) {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + var(--space-1));
-  left: 0;
-  right: 0;
-  display: block;
-  width: min(520px, calc(100vw - 2 * var(--space-4)));
-  max-height: min(340px, 50dvh);
-  overflow: auto;
-}
-
-.recordings-suggestion-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-}
-
-.recordings-suggestion-heading strong {
+.recordings-results-panel { min-width: 0; padding: var(--space-5); }
+.recordings-results-heading { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-3); }
+.recordings-results-title h2 { margin: 0; font-size: var(--font-size-subheading); font-weight: var(--font-weight-heading); }
+.recordings-results-title p { margin: var(--space-1) 0 0; font-size: var(--font-size-meta); color: var(--muted); }
+.recordings-results-body { display: grid; min-width: 0; gap: var(--space-3); }
+.recordings-field { min-width: 0; display: grid; gap: var(--space-2); }
+.recordings-field > span, .recordings-field > label { font-weight: var(--font-weight-medium); }
+.recordings-field input, .recordings-field select { width: 100%; min-width: 0; }
+.recordings-custom-dates, .recordings-search-actions { display: grid; gap: var(--space-2); }
+.recordings-custom-dates[hidden] { display: none; }
+.recordings-search-syntax { color: var(--muted); font-size: var(--font-size-meta); margin-top: calc(-1 * var(--space-3)); }
+.recordings-search-syntax p { margin: var(--space-2) 0 0; }
+.recordings-search-help, .recordings-dialog-help { margin: 0; color: var(--muted); font-size: var(--font-size-meta); }
+.recordings-search-help[hidden] { display: none; }
+.recordings-interest, .recordings-picker-button, .recordings-primary-action,
+.recordings-secondary-action, .recordings-text-action, .recordings-card-action,
+.recordings-selection-chip, .recordings-filter-chip, .recordings-tab, .recordings-load-more,
+.recordings-call-tone {
+  font: inherit;
   color: var(--ink);
-}
-
-.recordings-suggestion {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-2);
-}
-
-.recordings-suggestion + .recordings-suggestion {
-  margin-top: var(--space-1);
-}
-
-.recordings-suggestion-kind {
-  padding-top: 2px;
-  color: var(--accent);
-  font-size: var(--font-size-meta);
-  font-weight: var(--font-weight-heading);
-  text-transform: uppercase;
-}
-
-.recordings-suggestion-copy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-  overflow-wrap: anywhere;
-}
-
-.recordings-suggestion-copy small {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-}
-
-.recordings-suggestion-feedback {
-  padding: var(--space-2);
-}
-
-.recordings-search-actions {
-  display: flex;
-  align-self: end;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.recordings-mode-notice {
-  margin: 0 0 var(--space-3);
-}
-
-.recordings-library-empty {
-  min-height: 260px;
-}
-
-.recordings-empty-footnote {
-  font-size: var(--font-size-meta);
-}
-
-.recordings-selected-filters:not(:empty) {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.recordings-selected-filters button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-3);
   min-height: var(--control-height-compact);
+  background: var(--surface);
+  text-decoration: none;
+  cursor: pointer;
 }
-
-.recordings-results-body {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-3);
-}
-
-.recordings-shared:empty {
-  display: none;
-}
-.recordings-shared-heading {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: baseline;
-}
-.recordings-shared-info {
-  margin-left: auto;
-}
-
-.recordings-shared-overline {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-}
-.recordings-shared-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-5);
-  margin: var(--space-3) 0 0;
-}
-.recordings-shared-fact {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(90px, 130px) minmax(0, 1fr);
-  gap: var(--space-2);
-}
-.recordings-shared-fact dt {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-}
-.recordings-shared-fact dd {
-  margin: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.recordings-selected {
-  margin: 0;
-}
-
-.recordings-result-count {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-4);
-  color: var(--muted);
-}
-
-.recordings-result-count[hidden] {
-  display: none;
-}
-
-.recordings-page-selection {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-}
-
-.recordings-result-status:not(:empty) {
-  min-width: 0;
-}
-
-.recordings-result-status:empty {
-  display: none;
-}
-
-.recordings-call {
-  position: relative;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(84px, 96px) minmax(0, 1fr) max-content;
-  align-items: start;
-  gap: var(--space-3);
-  padding: var(--space-3);
-}
-
-.recordings-call:not(:has(.recordings-call-select)) {
-  grid-template-columns: minmax(84px, 96px) minmax(0, 1fr) max-content;
-}
-
-.recordings-call-time,
-.recordings-call-main {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-}
-
-.recordings-call-time > span,
-.recordings-call-id,
-.recordings-call-meta {
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-}
-
-.recordings-call-title {
-  width: fit-content;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  text-align: left;
-  font-size: var(--font-size-subheading);
-}
-
-.recordings-call-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.recordings-call-heading .recordings-call-id {
-  flex: 0 0 auto;
-}
-.recordings-call-context.recordings-context-system {
-  max-width: 28ch;
-}
-.recordings-call-context.recordings-context-source {
-  max-width: 24ch;
-}
-.recordings-call-context.recordings-context-site {
-  max-width: 22ch;
-}
-.recordings-call-context + .recordings-call-context::before {
-  content: '·';
-  margin-right: var(--space-2);
-}
-
-.recordings-call-id {
-  font-weight: var(--font-weight-medium);
-}
-
-.recordings-call-meta {
-  display: flex;
-  flex-wrap: wrap;
-  min-width: 0;
-  gap: var(--space-2);
-}
-
-.recordings-call-actions {
-  display: grid;
-  grid-template-columns: repeat(3, max-content);
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.recordings-call-select {
-  margin-top: var(--space-1);
-}
-
-.recordings-call-source {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.recordings-call-title {
-  font-weight: var(--font-weight-heading);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.recordings-call-context {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.recordings-transcript-preview {
-  margin: var(--space-1) 0 0;
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
-.recordings-choice-options {
-  display: grid;
-  gap: var(--space-2);
-}
-.recordings-choice-option {
-  display: grid;
-  text-align: left;
-  justify-items: start;
-  gap: var(--space-1);
-  white-space: normal;
-}
-.read-only-modal.recordings-playback-modal {
-  width: min(100%, 480px);
-}
+.recordings-primary-action { background: var(--primary-control); color: var(--primary-control-ink); border-color: var(--primary-control); }
+.recordings-primary-action:hover { background: var(--primary-control-hover); }
+.recordings-secondary-action { display: inline-flex; align-items: center; justify-content: center; }
+.recordings-interest { display: grid; text-align: left; gap: var(--space-1); padding: var(--space-3); }
+.recordings-interest span { color: var(--muted); font-size: var(--font-size-meta); }
+.recordings-interest[aria-pressed="true"], .recordings-tab[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.recordings-interest[aria-pressed="true"] strong::after { content: ' ✓'; }
+.recordings-picker-button { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border: 0; background: transparent; text-align: left; }
+.recordings-picker-button > span:first-child { display: grid; gap: var(--space-1); min-width: 0; }
+.recordings-picker-button small { color: var(--muted); overflow-wrap: anywhere; font-size: var(--font-size-meta); }
+.recordings-picker-chevron { color: var(--muted); font-size: var(--font-size-dialog-title); }
+.recordings-filter-count { font-size: var(--font-size-meta); color: var(--muted); }
+.recordings-text-action { min-height: 28px; padding: var(--space-1) var(--space-2); border-color: transparent; background: transparent; color: var(--muted); }
+.recordings-selection-paths:empty { display: none; }
+.recordings-selection-paths { display: grid; gap: var(--space-2); }
+.recordings-selection-paths p { margin: 0; border-left: 2px solid var(--line); padding-left: var(--space-2); color: var(--muted); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
+.recordings-draft-feedback { margin: 0; color: var(--accent); font-size: var(--font-size-meta); }
+.recordings-draft-feedback:empty, .recordings-search-error:empty, .recordings-result-status:empty, .recordings-shared:empty { display: none; }
+.recordings-selected-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.recordings-filter-chip, .recordings-selection-chip { font-size: var(--font-size-meta); min-height: 28px; max-width: 100%; text-align: left; overflow-wrap: anywhere; border-radius: var(--radius-segment); padding: var(--space-1) var(--space-2); }
+.recordings-selected-filters:empty { display: none; }
+.recordings-result-count { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--font-size-meta); }
+.recordings-result-count[hidden] { display: none; }
+.recordings-page-selection { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+.recordings-selected { margin: 0; }
+.recordings-call-list { display: grid; min-width: 0; gap: var(--space-3); }
+.recordings-result-date { font-size: var(--font-size-meta); color: var(--muted); margin: var(--space-2) 0 0; letter-spacing: .045em; text-transform: uppercase; font-weight: var(--font-weight-medium); }
+.recordings-call { position: relative; min-width: 0; display: grid; gap: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-control); padding: var(--space-4); background: var(--surface); }
+.recordings-call-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.recordings-call-time, .recordings-call-duration, .recordings-call-protocol { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
+.recordings-call-time strong { font-weight: var(--font-weight-normal); }
+.recordings-call-duration { border: 1px solid var(--line); border-radius: var(--radius-selection); padding: 2px var(--space-1); }
+.recordings-call-actions { display: flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+.recordings-card-action { display: inline-flex; align-items: center; justify-content: center; width: var(--control-height-compact); height: var(--control-height-compact); padding: var(--space-2); }
+.recordings-card-action svg { width: 16px; height: 16px; flex: none; }
+.recordings-call-main { min-width: 0; display: grid; gap: var(--space-1); }
+.recordings-call-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.recordings-call-title { max-width: 100%; font-size: var(--font-size-body); font-weight: var(--font-weight-heading); overflow-wrap: anywhere; }
+.recordings-call-meta { color: var(--muted); font-size: var(--font-size-meta); margin: 0; overflow-wrap: anywhere; }
+.recordings-call-source { margin-top: var(--space-2); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
+.recordings-call-source > span { color: var(--muted); }
+.recordings-call-status { font-size: var(--font-size-meta); color: var(--accent); }
+.recordings-call-status[hidden] { display: none; }
+.recordings-call-playing { border-color: var(--accent); box-shadow: var(--shadow-selection-inset); }
+.recordings-call-queued { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.recordings-transcript-preview { margin: var(--space-3) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
+.recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }
+.recordings-call-summary { font-size: var(--font-size-meta); color: var(--muted); margin-top: var(--space-2); }
+.recordings-call-summary p { margin: var(--space-2) 0 0; }
+.recordings-call-tone { width: fit-content; background: var(--accent-soft); color: var(--accent); font-size: var(--font-size-meta); }
+.recordings-choice-options { display: grid; gap: var(--space-2); }
+.recordings-choice-option { display: grid; text-align: left; justify-items: start; gap: var(--space-1); white-space: normal; }
+.read-only-modal.recordings-playback-modal { width: min(100%, 480px); }
+.read-only-modal.recordings-filters-modal { width: min(740px, calc(100vw - var(--space-5))); }
+.recordings-filter-editor, .recordings-dialog-content { display: grid; min-width: 0; gap: var(--space-4); }
+.recordings-picker-tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.recordings-picker-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); }
+.recordings-picker-tools > select { max-width: 160px; }
+.recordings-picker-list-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.recordings-picker-period, .recordings-picker-selection-summary { color: var(--muted); font-size: var(--font-size-meta); }
+.recordings-picker-selected { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.recordings-picker-results { min-width: 0; max-height: 48dvh; overflow: auto; }
+.recordings-picker-system { min-width: 0; margin-top: var(--space-4); }
+.recordings-picker-system:first-child { margin-top: 0; }
+.recordings-picker-system h3 { margin: 0 0 var(--space-2); font-size: var(--font-size-body); font-weight: var(--font-weight-heading); }
+.recordings-picker-group { border-top: 1px solid var(--line); padding-top: var(--space-2); margin-top: var(--space-2); }
+.recordings-picker-group-heading { color: var(--muted); font-size: var(--font-size-meta); padding: var(--space-1) 0; cursor: pointer; }
+.recordings-group-count, .recordings-group-alias-list { margin-left: var(--space-2); }
+.recordings-picker-choice { display: flex; align-items: start; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-5); cursor: pointer; }
+.recordings-picker-check { flex-shrink: 0; accent-color: var(--accent); margin-top: var(--space-1); }
+.recordings-identity-copy { display: grid; min-width: 0; flex: 1; gap: var(--space-1); overflow-wrap: anywhere; }
+.recordings-option-context { font-size: var(--font-size-meta); color: var(--muted); }
+.recordings-option-count { min-width: 48px; color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; text-align: right; }
+.recordings-option-count small { display: block; }
+.recordings-load-more { margin: var(--space-2) 0 var(--space-2) var(--space-5); }
+.recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+.recordings-call-menu { display: grid; gap: var(--space-4); }
+.recordings-call-menu-grid a { align-self: stretch; }
+.recordings-checkbox-label { display: flex; align-items: start; gap: var(--space-2); }
+.recordings-exact-filters > div { margin-top: var(--space-3); }
+.recordings-primary-action:disabled, .recordings-secondary-action:disabled, .recordings-load-more:disabled { opacity: .5; cursor: default; }
+.recordings-admin-body { display: grid; gap: var(--space-4); padding: var(--space-4); }
 
 .recordings-detail {
   display: grid;
@@ -639,138 +324,28 @@
   display: none;
 }
 
-@media (min-width: 701px) {
-  .recordings-suggestions:not([hidden]) {
-    width: 100%;
-  }
-
-  .recordings-suggestion {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-1);
-  }
-}
 
 @media (max-width: 900px) {
-  .recordings-browser {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .recordings-search-primary {
-    grid-template-columns: minmax(0, 1fr) minmax(160px, 200px);
-  }
-
-  .recordings-search-actions {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-  }
+  .recordings-browser { grid-template-columns: minmax(0, 1fr); }
+  .recordings-search-panel { border-right: 0; border-bottom: 1px solid var(--line); }
 }
-
 @media (max-width: 700px) {
-  .read-only-modal.recordings-filters-modal {
-    width: 100vw;
-  }
-
-  .recordings-filter-editor .recordings-search-property-fields,
-  .recordings-tone-fields {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .recordings-picker-results {
-    max-height: none;
-    overflow: visible;
-  }
-
-  .recordings-browser {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .recordings-shared-facts {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .recordings-search-fields,
-  .recordings-custom-dates,
-  .recordings-mode-choices,
-  .recordings-transcription-fields,
-  .recordings-catalog-summary,
-  .recordings-maintenance-row,
-  .recordings-maintenance {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .recordings-search-primary {
-    grid-template-columns: minmax(0, 1fr) max-content;
-  }
-
-  .recordings-query-field {
-    grid-column: 1 / -1;
-    grid-row: 1;
-  }
-
-  .recordings-search-primary > .recordings-field:not(.recordings-query-field) {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .recordings-search-actions {
-    grid-column: 2;
-    grid-row: 2;
-    justify-content: start;
-  }
-
-  .recordings-admin-body {
-    padding: var(--space-3);
-  }
-
-  .recordings-call,
-  .recordings-call:not(:has(.recordings-call-select)) {
-    grid-template-columns: auto minmax(0, 1fr) max-content;
-    align-items: start;
-    gap: var(--space-2);
-    padding: var(--space-3);
-  }
-
-  .recordings-call:not(:has(.recordings-call-select)) {
-    grid-template-columns: minmax(0, 1fr) max-content;
-  }
-
-  .recordings-call-time {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .recordings-call-main {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .recordings-call-actions {
-    grid-template-columns: max-content;
-    grid-column: 3;
-    grid-row: 1 / 3;
-  }
-
-  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-time,
-  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-main {
-    grid-column: 1;
-  }
-
-  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-actions {
-    grid-column: 2;
-  }
-
-
+  .read-only-modal.recordings-filters-modal { width: 100vw; }
+  .recordings-results-panel { padding: var(--space-4); }
+  .recordings-picker-results { max-height: none; overflow: visible; }
+  .recordings-picker-choice { padding-left: var(--space-2); }
+  .recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid,
+  .recordings-mode-choices, .recordings-transcription-fields, .recordings-catalog-summary,
+  .recordings-maintenance-row, .recordings-maintenance { grid-template-columns: minmax(0, 1fr); }
 }
-
-@media (max-width: 340px) {
-  .recordings-search-primary {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .recordings-search-actions {
-    grid-column: 1;
-    grid-row: 3;
-  }
+@media (max-width: 430px) {
+  .recordings-picker-tools { grid-template-columns: minmax(0, 1fr); }
+  .recordings-picker-tools > select { max-width: none; }
+  .recordings-call-protocol { flex-basis: 100%; order: 2; }
+}
+@media (pointer: coarse) {
+  .recordings-picker-button, .recordings-interest, .recordings-tab,
+  .recordings-load-more, .recordings-primary-action, .recordings-secondary-action,
+  .recordings-card-action { min-height: 44px; }
+  .recordings-field input { font-size: var(--font-size-subheading); }
 }

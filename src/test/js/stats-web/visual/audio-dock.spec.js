@@ -21,7 +21,7 @@ async function chooseRecording(page, index = 0, mode = 'Play once') {
   if (await dock(page).getAttribute('data-state') === 'full') {
     await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
   }
-  await page.locator('.recordings-play-glyph').nth(index).click();
+  await page.locator('.recordings-card-play').nth(index).click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
     .getByRole('button', { name: new RegExp(mode) }).click();
   await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
@@ -97,7 +97,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
   });
 }
 
-test('recording facts, transcript and scoped filters remain available in the full dock', async ({ page }) => {
+test('recording facts and transcript remain available and applying a dock filter resets playback', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await openAudioApp(page);
   await chooseRecording(page);
@@ -133,7 +133,7 @@ test('recording facts, transcript and scoped filters remain available in the ful
     ['Radio system', { system_key: recording.system_key }],
     ['Saved channel', { channel_id: recording.channel_id }],
     ['Source Radio ID', { system_key: recording.system_key, radio_identity_key: recording.source_entity_ref.identity_key }],
-    ['Talkgroup ID', { system_key: recording.system_key, talkgroup_id: String(recording.talkgroup_id) }]
+    ['Talkgroup ID', { system_key: recording.system_key, talkgroup_identity_key: recording.target_entity_ref.identity_key }]
   ]) {
     const link = factLink(field);
     await expect(link).toHaveCount(1);
@@ -146,10 +146,10 @@ test('recording facts, transcript and scoped filters remain available in the ful
   await expect(page).toHaveURL(/view=recordings/);
   await expect(player).toHaveAttribute('data-state', 'full');
   await expect(player).toHaveAttribute('data-source', 'recordings');
-  await expect(player).toContainText('Engine 4');
+  await expect(player).toContainText('Nothing queued');
+  await expect(player).not.toContainText('Engine 4');
   await selectPanel(page, 'Transcript');
-  await expect(player).toContainText(transcript.text);
-  await expect(player).toContainText('Transcribed');
+  await expect(player).not.toContainText(transcript.text);
 });
 
 for (const [name, changes, expected] of [
@@ -267,7 +267,7 @@ test('adding a recording to the queue preserves live playback and its selected s
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
   await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
-  await page.locator('.recordings-play-glyph').first().click();
+  await page.locator('.recordings-card-play').first().click();
   await page.getByRole('dialog', { name: 'Play recording', exact: true })
     .getByRole('button', { name: /Add to queue/ }).click();
   await expect(dock(page)).toHaveAttribute('data-source', 'live');

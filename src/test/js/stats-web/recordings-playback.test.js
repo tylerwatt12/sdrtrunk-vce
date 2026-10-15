@@ -126,14 +126,28 @@ async function main() {
   assert.deepEqual(recordingIdentitySelections([{ id: null, system_key: null, protocol: 'DCS', value: '023' }]), [],
     'DCS tone evidence must not become a fake radio choice');
   const nxdnZeroCall = { protocol: 'NXDN', system_key: 'nxdn:7', talkgroup_id: 0 };
-  assert.equal(recordingResultFilter(nxdnZeroCall,
-    { kind: 'talkgroup', radio_system_key: 'nxdn:7', identity_key: 'v1-g-x-x-0' }, 'target').filters.talkgroup_id,
-    '0', 'NXDN zero drilldown keeps the recorded receiving system');
+  assert.deepEqual(JSON.parse(recordingResultFilter(nxdnZeroCall,
+    { kind: 'talkgroup', radio_system_key: 'nxdn:7', identity_key: 'v1-g-x-x-0' }, 'target').filters.talkgroups),
+    [{ id: 0, system_key: 'nxdn:7', protocol: 'NXDN' }], 'NXDN zero drilldown keeps protocol and receiving system');
+  for (const protocol of ['DMR', 'NXDN']) {
+    const raw = recordingResultFilter({ protocol, channel_id: 'same-channel', source_id: 7 }, { kind: 'radio' }, 'source');
+    assert.deepEqual(JSON.parse(raw.filters.radios), [{ id: 7, system_key: null, protocol }]);
+    assert.equal(raw.filters.channel_id, 'same-channel');
+  }
+  const foreignUnknown = recordingResultFilter({ protocol: 'APCO25', source_id: 7, channel_id: 'channel',
+    source_home_wacn: 1, source_home_system_id: 2, source_home_id: 99 }, { kind: 'radio' }, 'source');
+  assert.deepEqual(JSON.parse(foreignUnknown.filters.radios), [{ id: 99, system_key: null, identity_key: 'v1-r-00001-002-99' }]);
+  const localUnknownHome = recordingResultFilter({ protocol: 'APCO25', system_key: 'p25:00001:001', source_id: 7 }, { kind: 'radio' }, 'source');
+  assert.deepEqual(JSON.parse(localUnknownHome.filters.radios), [{ id: 7, system_key: 'p25:00001:001', protocol: 'APCO25' }]);
   assert.equal(recordingResultFilter(nxdnZeroCall,
     { kind: 'radio', radio_system_key: 'nxdn:7', identity_key: 'v1-r-x-x-0' }, 'source'), null);
   assert.deepEqual(JSON.parse(recordingResultFilter(nxdnZeroCall,
     { kind: 'radio', auxiliary: true, protocol: 'TAIT1200', value: 'UNIT-007a', role: 'source' }).filters.radios),
     [{ ...typed[0], system_key: 'nxdn:7' }], 'Auxiliary drilldown submits its exact captured namespace and value');
+  const auxiliaryFilters = recordingResultFilter(nxdnZeroCall,
+    { kind: 'radio', auxiliary: true, protocol: 'TAIT1200', value: 'UNIT-007a', role: 'source' }).filters;
+  for (const key of ['radio_id', 'radio_identity_key', 'radio_min', 'radio_max']) assert.equal(auxiliaryFilters[key], '',
+    'Auxiliary drilldown replaces legacy radio constraints rather than combining them');
   const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',
     radio_id: '401', radio_identity_key: 'v1-r-00002-002-777', talkgroup_id: '1201', radio_min: '400', radio_max: '500',
     talkgroup_min: '1200', talkgroup_max: '1300', alias_list_id: '7',
@@ -197,7 +211,8 @@ async function main() {
     const system = `${protocol.toLowerCase()}:7`;
     assert.deepEqual(recordingResultFilter({ ...recordedIdentity, protocol, system_key: system },
       { kind: 'radio', radio_system_key: system, identity_key: 'v1-r-x-x-401' }, 'source').filters,
-    { system_key: system, radio_id: '401', radio_identity_key: '', radio_min: '', radio_max: '' },
+    { system_key: system, radio_id: '', radio_identity_key: '', radio_min: '', radio_max: '', radio_role: 'source',
+      radios: JSON.stringify([{ id: 401, system_key: system, protocol }]) },
     `${protocol} filters retain the recorded numeric radio ID in its receiving system`);
   }
   assert.deepEqual(recordingResultFilter({ ...recordedIdentity,

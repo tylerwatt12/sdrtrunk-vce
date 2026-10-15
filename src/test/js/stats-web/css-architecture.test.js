@@ -50,7 +50,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=4") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=8") layer(features);',
   '@import url("./styles/features/activity.css?v=5") layer(features);',
-  '@import url("./styles/features/recordings.css?v=14") layer(features);',
+  '@import url("./styles/features/recordings.css?v=15") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=14") layer(utilities);',
 ];
 
@@ -626,6 +626,15 @@ function validateModernControlStates(stylesheets, entry) {
     'Primary button hover must use the theme hover token');
 }
 
+function validateRecordingsTokens(stylesheets, entry) {
+  const defined = new Set(stylesheets.flatMap(stylesheet =>
+    [...stylesheet.source.matchAll(/(--[\w-]+)\s*:/g)].map(match => match[1])));
+  const source = stylesheetModule(stylesheets, entry, 'features/recordings.css').source;
+  for (const match of source.matchAll(/var\((--[\w-]+)/g)) {
+    assert.ok(defined.has(match[1]), `Recordings references undefined CSS token ${match[1]}`);
+  }
+}
+
 function validateThemeFoundation(stylesheets, entry) {
   const tokens = stylesheetModule(stylesheets, entry, 'tokens.css').source;
   const controls = stylesheetModule(stylesheets, entry, 'components/controls.css').source;
@@ -1065,6 +1074,7 @@ validateModernDesignSystemBoundaries(stylesheets, entryStylesheet);
 validateInlineStyleRatchets(entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
 validateThemeFoundation(stylesheets, entryStylesheet);
+validateRecordingsTokens(stylesheets, entryStylesheet);
 validateModalComposition(stylesheets, entryStylesheet);
 validateSettingsComposition(stylesheets, entryStylesheet);
 validateSettingsFeatures(stylesheets, entryStylesheet);
