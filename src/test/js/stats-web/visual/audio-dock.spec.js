@@ -21,8 +21,8 @@ async function chooseRecording(page, index = 0, mode = 'Play once') {
   if (await dock(page).getAttribute('data-state') === 'full') {
     await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
   }
-  await page.locator('.recordings-card-play').nth(index).click();
-  await page.getByRole('dialog', { name: 'Play recording', exact: true })
+  await page.locator('.recordings-call-info').nth(index).click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
     .getByRole('button', { name: new RegExp(mode) }).click();
   await expect(dock(page)).toHaveAttribute('data-source', 'recordings');
 }
@@ -267,8 +267,8 @@ test('adding a recording to the queue preserves live playback and its selected s
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
   await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
-  await page.locator('.recordings-card-play').first().click();
-  await page.getByRole('dialog', { name: 'Play recording', exact: true })
+  await page.locator('.recordings-call-info').first().click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
     .getByRole('button', { name: /Add to queue/ }).click();
   await expect(dock(page)).toHaveAttribute('data-source', 'live');
   await expect(dock(page).getByRole('button', { name: 'Pause live audio', exact: true })).toBeEnabled();

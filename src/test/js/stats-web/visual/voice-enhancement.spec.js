@@ -157,7 +157,7 @@ for (const source of ['encoded', 'decoded_audio']) {
       return route.fulfill({ json: { data: { call: { ...savedCall, paging_tone_summary: summary } } } });
     });
     const tone = source === 'encoded' ? 'DTMF 3 · 697 + 1477 Hz · 1020 ms · at 80 ms' : '593.75 Hz · 1020 ms · at 80 ms';
-    await page.getByRole('button', { name: /^Call details for/ }).first().click();
+    await page.locator('.recordings-call-details').first().click();
     const modal = page.getByRole('dialog', { name: 'Call details', exact: true });
     await expect(modal).toContainText('Loading call details');
     await expect.poll(() => requested).toBe(1); releaseDetails();
@@ -173,8 +173,8 @@ for (const source of ['encoded', 'decoded_audio']) {
     await screenshot(page, `recorded-tone-inspection-${phone ? 'dark-phone' : 'light-desktop'}`);
     await page.keyboard.press('Escape'); await expect(modal).toHaveCount(0);
     waiting = new Promise(resolve => { releaseDetails = resolve; });
-    await page.getByRole('button', { name: /^Choose playback for/ }).first().click();
-    await page.getByRole('dialog', { name: 'Play recording', exact: true })
+    await page.locator('.recordings-call-info').first().click();
+    await page.getByRole('dialog', { name: 'Call actions', exact: true })
       .getByRole('button', { name: /Play once/ }).click();
     const dock = page.locator('#audio-dock');
     await expect(dock).toHaveAttribute('data-source', 'recordings');

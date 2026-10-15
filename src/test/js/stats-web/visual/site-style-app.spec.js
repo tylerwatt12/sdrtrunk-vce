@@ -135,11 +135,11 @@ for (const [name, query, selector, content] of cases) {
       if (name === 'recordings') {
         const actions = await page.locator('.recordings-card-action').evaluateAll(controls => controls.map(control => ({
           width: control.getBoundingClientRect().width, height: control.getBoundingClientRect().height,
-          stroke: getComputedStyle(control.querySelector('svg')).stroke
+          stroke: getComputedStyle(control.querySelector('svg')).stroke, labelled: Boolean(control.textContent.trim())
         })));
-        expect(actions).toHaveLength(2);
+        expect(actions).toHaveLength(3);
         for (const action of actions) {
-          expect(action.width).toBeLessThanOrEqual(48);
+          if (!action.labelled) expect(action.width).toBeLessThanOrEqual(48);
           expect(action.height).toBeLessThanOrEqual(48);
           expect(action.stroke).not.toBe('none');
         }

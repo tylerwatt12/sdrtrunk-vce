@@ -140,8 +140,8 @@ test('native source dropdown keeps the centered grip clear at every width', asyn
 test('choosing current Recordings from the narrow picker navigates back and retains playback', async ({ page }) => {
   await openSourceApp(page);
   await selectDockSource(player(page), 'recordings');
-  await page.locator('.recordings-card-play').first().click();
-  await page.getByRole('dialog', { name: 'Play recording', exact: true })
+  await page.locator('.recordings-call-info').first().click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
     .getByRole('button', { name: /^Play once/ }).click();
   await expect(player(page).getByRole('button', { name: 'Pause recording', exact: true })).toBeVisible();
   const plays = () => page.evaluate(() => window.audioTest.recordings.filter((event) => event.action === 'play').length);

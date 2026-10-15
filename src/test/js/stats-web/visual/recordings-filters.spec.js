@@ -107,8 +107,7 @@ async function openRecordingFilters(page, topic = 'more') {
 }
 
 async function openCallDetails(page, card = page.locator('.recordings-call').first()) {
-  await card.locator('.recordings-call-info').click();
-  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Call details', exact: true }).click();
+  await card.locator('.recordings-call-details').click();
   await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toBeVisible();
 }
 

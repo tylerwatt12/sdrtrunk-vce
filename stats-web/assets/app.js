@@ -34,7 +34,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
 import { createAlertsWorkspace } from './features/alerts.js?v=8';
-import { createRecordingsFeature } from './features/recordings.js?v=37';
+import { createRecordingsFeature } from './features/recordings.js?v=38';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=3';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=28';
@@ -33930,7 +33930,7 @@ applicationRoutes = routeFoundation.createRegistry({
 }, routeDefinitionAllowed);
 
 const recordingsFeature = createRecordingsFeature({
-  node, iconButton, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
+  node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),

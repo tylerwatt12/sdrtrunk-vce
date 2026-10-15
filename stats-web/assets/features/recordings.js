@@ -412,7 +412,7 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor, iconButton, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
+    entityRefHref, stopLiveAudio, href, anchor, iconButton, iconGlyph, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
     getSourceNameDisplay = () => 'talker_alias' } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
@@ -462,6 +462,14 @@ export function createRecordingsFeature(deps) {
     return notice;
   };
 
+  function addGlyph(control, icon, className = 'recordings-action-icon') {
+    if (!iconGlyph) return control;
+    const glyph = node('span', className);
+    glyph.append(iconGlyph(icon));
+    control.prepend(glyph);
+    return control;
+  }
+
   function resultSearchFilters(match, field) {
     const filters = { ...match.filters };
     if (['talkgroup_id', 'talkgroups'].includes(match.key)) {
@@ -475,7 +483,7 @@ export function createRecordingsFeature(deps) {
     return filters;
   }
 
-  const entityLink = (text, reference, row, field) => {
+  const entityLink = (text, reference, row, field, filterLabel = text) => {
     if (pageHost?.isConnected && row) {
       const match = recordingResultFilter(row, reference, field);
       if (!match) return String(text);
@@ -483,7 +491,7 @@ export function createRecordingsFeature(deps) {
       const values = Object.fromEntries(Object.entries({ ...currentFilters, ...match.filters,
         sort: sortControl?.value || 'desc', recording_filters: '1' }).filter(([, item]) => item !== ''));
       const link = anchor(String(text), href('recordings', values));
-      link.title = `Filter recordings by ${text}`;
+      link.title = `Filter recordings by ${filterLabel}`;
       link.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
@@ -494,8 +502,8 @@ export function createRecordingsFeature(deps) {
           appliedSuggestions.forEach((suggestion, key) => selectedSuggestions.set(key, suggestion));
           Object.assign(search, match.filters);
           if (match.key === 'radios') for (const item of recordingIdentitySelections(match.filters.radios, 'radio'))
-            identityLabels.set(`radio:${recordingIdentitySelectionKey(item)}`, `${text} · ${systemLabel(row)}`);
-          selectedSuggestions.set(match.key, { label: String(text),
+            identityLabels.set(`radio:${recordingIdentitySelectionKey(item)}`, `${filterLabel} · ${systemLabel(row)}`);
+          selectedSuggestions.set(match.key, { label: String(filterLabel),
             appliedKeys: match.key === 'site' ? ['wacn', 'sysid', 'rfss', 'site_id'] :
               match.filters.radio_identity_key ? ['radio_identity_key'] :
                 match.filters.talkgroup_identity_key ? ['talkgroup_identity_key'] : [] });
@@ -540,6 +548,7 @@ export function createRecordingsFeature(deps) {
     const dirty = appliedSearch && JSON.stringify(search) !== JSON.stringify(appliedSearch);
     if (draftFeedback) draftFeedback.textContent = dirty ? 'Changes ready to search' : '';
     pageHost?.querySelector('#recordings-discard')?.toggleAttribute('hidden', !dirty);
+    drawSelectedFilters();
   }
 
   function searchPeriodLabel(filters = search) {
@@ -954,34 +963,6 @@ export function createRecordingsFeature(deps) {
     }
   };
 
-  function choosePlayback(row) {
-    const body = node('div', 'recordings-playback-choices');
-    body.append(node('p', '', `${dateTime(millis(row))} · ${label(row)}`));
-    const choices = node('div', 'recordings-choice-options');
-    let modal;
-    for (const [mode, title, description] of [
-      ['once', 'Play once', 'Play this call, then stop.'],
-      ['continue', 'Continue from here', 'Play this call, then newer matching calls in time order.'],
-      ['queue', 'Add to queue', 'Add this call to the recording queue without starting it.']
-    ]) {
-      const choice = button(node, '', () => {
-        modal.close();
-        playbackAction(row, mode);
-      }, 'ui-choice-card recordings-choice-option');
-      choice.append(node('strong', '', title), node('small', 'ui-field-detail', description));
-      choice.title = description;
-      choices.append(choice);
-    }
-    body.append(choices);
-    modal = openReadOnlyModal('Play recording', body, {
-      id: `play-recording-${row.id}`, className: 'recordings-playback-modal'
-    });
-    const preferredIndex = ['once', 'continue', 'queue'].indexOf(clickMode);
-    const focusPreferred = () => (choices.children?.[preferredIndex] || choices.firstElementChild)?.focus();
-    if (modal?.ready) void modal.ready.then((ready) => { if (ready) focusPreferred(); });
-    else if (modal) focusPreferred();
-  }
-
   function fileSize(bytes) {
     if (bytes === null || bytes === undefined || bytes === '') return '';
     const count = Number(bytes);
@@ -1276,7 +1257,7 @@ export function createRecordingsFeature(deps) {
         if (!panel.childNodes.length) panel.append(makeNotice(
           `No ${id === 'identities' ? 'identity' : id} details were recorded for this call.`));
       }
-      const download = anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary');
+      const download = addGlyph(anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary'), 'icon-download');
       download.setAttribute('download', '');
       const playAfterClose = (mode) => {
         let started = false;
@@ -1284,9 +1265,9 @@ export function createRecordingsFeature(deps) {
         if (modal.close(start)) start();
       };
       const footer = modalFooter(download,
-        button(node, 'Add to queue', () => playAfterClose('queue')),
-        button(node, 'Continue from here', () => playAfterClose('continue')),
-        button(node, 'Play once', () => playAfterClose('once'), 'ui-button ui-button-primary'));
+        addGlyph(button(node, 'Add to queue', () => playAfterClose('queue')), 'icon-plus'),
+        addGlyph(button(node, 'Continue from here', () => playAfterClose('continue')), 'icon-forward'),
+        addGlyph(button(node, 'Play once', () => playAfterClose('once'), 'ui-button ui-button-primary'), 'icon-play'));
       activate('overview');
       body.replaceChildren(heading, tabs, ...panels.values(), footer);
       modal.focus(controls.get('overview'));
@@ -1302,33 +1283,37 @@ export function createRecordingsFeature(deps) {
     let modal;
     const run = perform => { let done = false; const next = () => { if (!done) { done = true; perform(); } }; if (modal.close(next)) next(); };
     const actions = node('div', 'recordings-call-menu-grid');
-    for (const [mode, title] of [['once', 'Play once'], ['continue', 'Continue from here'], ['queue', 'Add to queue']])
-      actions.append(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'));
-    actions.append(button(node, 'Call details', () => run(() => void openDetails(row)), 'recordings-secondary-action'));
-    const use = (key, reference, field) => {
+    for (const [mode, title, icon] of [['once', 'Play once', 'icon-play'], ['continue', 'Continue from here', 'icon-forward'], ['queue', 'Add to queue', 'icon-plus']])
+      actions.append(addGlyph(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'), icon));
+    actions.append(addGlyph(button(node, 'Call details', () => run(() => void openDetails(row)), 'recordings-secondary-action'), 'icon-info-circle'));
+    const use = (key, reference, field, icon) => {
       const filter = recordingResultFilter(row, reference, field);
       if (!filter) return;
-      const link = entityLink(key, reference, row, field); if (typeof link !== 'string') actions.append(link);
+      const filterLabel = field === 'source' ? sourceLabel(row, getSourceNameDisplay()) : label(row);
+      const link = entityLink(key, reference, row, field, filterLabel);
+      if (typeof link !== 'string') {
+        link.classList.add('recordings-secondary-action');
+        actions.append(addGlyph(link, icon));
+      }
     };
-    const groupId = value(row, 'talkgroup_id', 'group_id');
     const hasGroup = recordingHasTalkgroup(row);
     use(hasGroup ? 'Search this talkgroup' : 'Search this channel', hasGroup ? row.target_entity_ref : row.channel_entity_ref,
-      hasGroup ? 'target' : 'channel');
+      hasGroup ? 'target' : 'channel', hasGroup ? 'icon-identities' : 'icon-channel');
     const sourceRef = recordingSourceReference(row);
-    use('Search this radio', sourceRef, 'source');
+    use('Search this radio', sourceRef, 'source', 'icon-scanner');
     const source = recordingResultFilter(row, sourceRef, 'source');
     const target = recordingResultFilter(row, hasGroup ? row.target_entity_ref : row.channel_entity_ref, hasGroup ? 'target' : 'channel');
-    if (source && target) actions.append(button(node, hasGroup ? 'Search talkgroup + radio' : 'Search channel + radio', () => run(() => {
+    if (source && target) actions.append(addGlyph(button(node, hasGroup ? 'Search talkgroup + radio' : 'Search channel + radio', () => run(() => {
       Object.assign(search, appliedSearch || search, resultSearchFilters(target, 'target'), resultSearchFilters(source, 'source')); replaceSearchForm(); submitSearch();
-    }), 'recordings-secondary-action'));
-    actions.append(button(node, 'Open context · ±30 min', () => run(() => {
+    }), 'recordings-secondary-action'), 'icon-search'));
+    actions.append(addGlyph(button(node, 'Open context · ±30 min', () => run(() => {
       Object.keys(search).forEach(key => { search[key] = ''; }); selectedSuggestions.clear();
       Object.assign(search, target?.filters || {}, { transcript: '', text_range: 'time', range: 'custom',
         from_ms: String(millis(row) - 1_800_000), to_ms: String(millis(row) + 1_800_000) });
       replaceSearchForm(); submitSearch();
-    }), 'recordings-secondary-action'));
+    }), 'recordings-secondary-action'), 'icon-replay'));
     const channel = row.channel_id || row.channel_entity_ref?.key;
-    actions.append(anchor('Go to Live', href('live', channel ? { channel } : {}), 'recordings-secondary-action'));
+    actions.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'recordings-secondary-action'), 'icon-live'));
     body.append(actions);
     modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'recordings-actions-modal' });
   }
@@ -1340,7 +1325,9 @@ export function createRecordingsFeature(deps) {
       control.setAttribute('aria-label', labelText); control.title = hint; control.addEventListener('click', perform); return control;
     };
     const description = `${label(row)} at ${dateTime(millis(row))}`;
-    const play = action('icon-play', '▶', `Choose playback for ${description}`, 'Playback options', () => choosePlayback(row), 'ui-button ui-icon-button recordings-card-play recordings-card-action');
+    card.setAttribute('aria-label', description);
+    const play = action('icon-play', '▶', `Play ${description}`, 'Play recording', () => playbackAction(row, clickMode), 'ui-button ui-icon-button recordings-card-play recordings-card-action');
+    const detail = addGlyph(button(node, 'Call details', () => void openDetails(row), 'recordings-card-action recordings-card-action-details recordings-call-details'), 'icon-info-circle');
     const info = action('icon-more', '…', `More actions for ${description}`, 'Call actions', () => openCallActions(row), 'ui-button ui-icon-button recordings-call-info recordings-card-action');
     const head = node('div', 'recordings-call-head');
     const time = node('div', 'recordings-call-time'); time.title = dateTime(millis(row)); time.append(node('strong', '', timeOnly(millis(row))));
@@ -1349,7 +1336,7 @@ export function createRecordingsFeature(deps) {
     const conventional = !hasGroup && value(row, 'destination_radio_id') === null;
     head.append(time, node('span', 'recordings-call-duration', duration(row)),
       node('span', 'recordings-call-protocol', `${protocolLabel(row.protocol)}${conventional ? ' · Conventional' : ''}`));
-    const actions = node('div', 'recordings-call-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${description}`); actions.append(play, info); head.append(actions);
+    const actions = node('div', 'recordings-call-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${description}`); actions.append(play, detail, info); head.append(actions);
     const main = node('div', 'recordings-call-main');
     const heading = node('div', 'recordings-call-heading'); const title = node('strong', 'recordings-call-title');
     title.append(entityLink(label(row), conventional ? row.channel_entity_ref : row.target_entity_ref, row, conventional ? 'channel' : 'target'));
@@ -1389,9 +1376,13 @@ export function createRecordingsFeature(deps) {
       const waiting = queued.has(card.dataset.recordingId);
       const status = card.querySelector('.recordings-call-status');
       const text = active ? snapshot.loading ? 'Loading' : snapshot.paused ? 'Paused' :
-        snapshot.playing ? 'Playing' : '' : waiting ? 'Queued' : '';
+        '' : waiting ? 'Queued' : '';
       card.classList.toggle('recordings-call-playing', Boolean(active));
       card.classList.toggle('recordings-call-queued', waiting);
+      if (active) card.setAttribute('aria-current', 'true'); else card.removeAttribute('aria-current');
+      card.setAttribute('aria-busy', String(Boolean(active && snapshot.loading)));
+      const play = card.querySelector('.recordings-card-play');
+      if (play) play.title = { once: 'Play once', continue: 'Continue from here', queue: 'Add to queue' }[clickMode];
       if (status) { status.textContent = text; status.hidden = !text; }
     });
   }
@@ -1456,29 +1447,67 @@ export function createRecordingsFeature(deps) {
     if (appliedRange !== '24h') {
       const label = { '7d': 'Past 7d', '30d': 'Past 30d', '10y': 'Past 10y' }[appliedRange] ||
         `${dateTime(Number(currentFilters.from_ms))} – ${dateTime(Number(currentFilters.to_ms))}`;
-      chips.push({ key: 'range', keys: ['from_ms', 'to_ms'], text: label });
+      chips.push({ key: 'range', keys: ['range', 'from_ms', 'to_ms'], text: label });
     }
     if (filterCountHost) {
       filterCountHost.textContent = String(chips.length);
       filterCountHost.hidden = chips.length === 0;
     }
     for (const chip of chips) {
-      const remove = button(node, `${chip.text} ×`, () => {
-        if (chip.selection) {
-          const remaining = recordingIdentitySelections(search[chip.key], chip.key === 'talkgroups' ? 'talkgroup' : 'radio')
-            .filter(item => recordingIdentitySelectionKey(item) !== chip.selection);
-          search[chip.key] = remaining.length ? JSON.stringify(remaining) : '';
-        } else if (chip.channel) {
-          const remaining = recordingChannelSelections(search.channel_ids).filter(id => id !== chip.channel);
-          search.channel_ids = remaining.length ? JSON.stringify(remaining) : '';
-        } else chip.keys.forEach(key => { search[key] = ''; });
-        for (const [key, suggestion] of selectedSuggestions) {
-          if (key === chip.key || suggestion.appliedKeys?.some(name => chip.keys.includes(name))) selectedSuggestions.delete(key);
+      const chipId = JSON.stringify([chip.key, chip.selection || '', chip.channel || '']);
+      const applied = appliedSearch || currentFilters;
+      const kind = chip.key === 'talkgroups' ? 'talkgroup' : 'radio';
+      const pending = chip.selection ? !recordingIdentitySelections(search[chip.key], kind)
+        .some(item => recordingIdentitySelectionKey(item) === chip.selection) : chip.channel ?
+        !recordingChannelSelections(search.channel_ids).includes(chip.channel) :
+          chip.keys.some(key => String(search[key] || '') !== String(applied[key] || ''));
+      const remove = button(node, '', () => {
+        if (pending) {
+          if (chip.selection) {
+            const choices = recordingIdentitySelections(search[chip.key], kind);
+            const originals = recordingIdentitySelections(applied[chip.key], kind);
+            const original = originals
+              .find(item => recordingIdentitySelectionKey(item) === chip.selection);
+            if (original) {
+              const selected = new Map([...choices, original].map(item => [recordingIdentitySelectionKey(item), item]));
+              const restored = originals.filter(item => selected.has(recordingIdentitySelectionKey(item)));
+              restored.forEach(item => selected.delete(recordingIdentitySelectionKey(item)));
+              search[chip.key] = JSON.stringify([...restored, ...selected.values()]);
+            }
+          } else if (chip.channel) {
+            const selected = new Set([...recordingChannelSelections(search.channel_ids), chip.channel]);
+            const restored = recordingChannelSelections(applied.channel_ids).filter(id => selected.has(id));
+            restored.forEach(id => selected.delete(id));
+            search.channel_ids = JSON.stringify([...restored, ...selected]);
+          }
+          else chip.keys.forEach(key => { search[key] = applied[key] || ''; });
+          for (const [key, suggestion] of appliedSuggestions) {
+            if (key === chip.key || suggestion.appliedKeys?.some(name => chip.keys.includes(name))) selectedSuggestions.set(key, suggestion);
+          }
+        } else {
+          if (chip.selection) {
+            const remaining = recordingIdentitySelections(search[chip.key], kind)
+              .filter(item => recordingIdentitySelectionKey(item) !== chip.selection);
+            search[chip.key] = remaining.length ? JSON.stringify(remaining) : '';
+          } else if (chip.channel) {
+            const remaining = recordingChannelSelections(search.channel_ids).filter(id => id !== chip.channel);
+            search.channel_ids = remaining.length ? JSON.stringify(remaining) : '';
+          } else chip.keys.forEach(key => { search[key] = ''; });
+          for (const [key, suggestion] of selectedSuggestions) {
+            if (key === chip.key || suggestion.appliedKeys?.some(name => chip.keys.includes(name))) selectedSuggestions.delete(key);
+          }
+          if (chip.key === 'range') search.range = '24h';
         }
-        if (chip.key === 'range') search.range = '24h';
         replaceSearchForm(); updateDraftFeedback();
-      }, 'recordings-filter-chip');
-      remove.setAttribute('aria-label', `Remove ${chip.text} filter`);
+        [...selectedFiltersHost.querySelectorAll('.recordings-filter-chip')]
+          .find(control => control.dataset.filterChip === chipId)?.focus();
+      }, `recordings-filter-chip${pending ? ' recordings-filter-chip-pending' : ''}`);
+      remove.dataset.filterChip = chipId;
+      remove.append(node('span', 'recordings-filter-chip-label', chip.text),
+        node('span', 'recordings-filter-chip-state', pending ? 'Remove on search · Undo' : '×'));
+      remove.setAttribute('aria-label', pending ? `Undo removal of ${chip.text} filter` : `Remove ${chip.text} filter`);
+      remove.setAttribute('aria-pressed', String(pending));
+      remove.title = pending ? 'Undo removal · applies on next search' : 'Remove on next search';
       selectedFiltersHost.append(remove);
     }
   }
@@ -2038,28 +2067,34 @@ export function createRecordingsFeature(deps) {
     from.addEventListener('input', () => { const value = new Date(from.value).getTime(); search.from_ms = Number.isFinite(value) ? String(value) : ''; updateDraftFeedback(); });
     to.addEventListener('input', () => { const value = new Date(to.value).getTime(); search.to_ms = Number.isFinite(value) ? String(value + 59_999) : ''; updateDraftFeedback(); });
     syncTime();
-    const high = button(node, '', () => { search.high_interest = search.high_interest ? '' : '1'; high.setAttribute('aria-pressed', String(Boolean(search.high_interest))); updateDraftFeedback(); }, 'recordings-interest');
-    high.setAttribute('aria-pressed', String(Boolean(search.high_interest))); high.append(node('strong', '', 'High Interest'), node('span', '', '10 seconds or longer'));
-    const pickerButton = (key, title, summary) => {
+    const highState = node('span', 'recordings-interest-state');
+    const syncInterest = () => {
+      high.setAttribute('aria-pressed', String(Boolean(search.high_interest)));
+      highState.textContent = search.high_interest ? 'On' : 'Off';
+    };
+    const high = addGlyph(button(node, '', () => { search.high_interest = search.high_interest ? '' : '1'; syncInterest(); updateDraftFeedback(); }, 'recordings-interest'), 'icon-filter', 'recordings-interest-icon');
+    const highCopy = node('span', 'recordings-interest-copy'); highCopy.append(node('strong', '', 'High Interest'), node('small', '', '10 seconds or longer'));
+    high.append(highCopy, highState); syncInterest();
+    const pickerButton = (key, title, summary, icon) => {
       const buttonNode = button(node, '', () => void openFilterDialog(key), 'recordings-picker-button');
       buttonNode.id = `recordings-open-${key}`; buttonNode.setAttribute('aria-haspopup', 'dialog');
-      const copy = node('span', ''); copy.append(node('strong', '', title), node('small', '', summary)); buttonNode.append(copy, node('span', 'recordings-picker-chevron', '›')); return buttonNode;
+      const copy = node('span', 'recordings-picker-copy'); copy.append(node('strong', '', title), node('small', '', summary)); buttonNode.append(copy, node('span', 'recordings-picker-chevron', '›')); return addGlyph(buttonNode, icon, 'recordings-control-icon');
     };
-    const system = pickerButton('systems', 'System', selectedSuggestions.get('system_key')?.label || search.system_key || 'All systems & channels');
+    const system = pickerButton('systems', 'System', selectedSuggestions.get('system_key')?.label || search.system_key || 'All systems & channels', 'icon-trunked');
     const count = recordingIdentitySelections(search.talkgroups, 'talkgroup').length + recordingChannelSelections(search.channel_ids).length;
-    const targets = pickerButton('targets', 'Talkgroups & channels', count ? `${count} selected · Browse hierarchy` : 'All talkgroups and channels');
+    const targets = pickerButton('targets', 'Talkgroups & channels', count ? `${count} selected · Browse hierarchy` : 'All talkgroups and channels', 'icon-identities');
     const paths = node('div', 'recordings-selection-paths');
     for (const item of recordingIdentitySelections(search.talkgroups, 'talkgroup').slice(0, 3)) paths.append(node('p', '', identityLabels.get(`talkgroup:${recordingIdentitySelectionKey(item)}`) || recordingSelectionText(item, 'talkgroup')));
     for (const id of recordingChannelSelections(search.channel_ids).slice(0, Math.max(0, 3 - paths.children.length))) paths.append(node('p', '', channelLabels.get(id) || `Channel ${id}`));
     const radioCount = recordingIdentitySelections(search.radios, 'radio').length;
-    const radios = pickerButton('radios', 'Radios', radioCount ? `${radioCount} selected` : 'Any source · name or radio ID');
-    const tones = pickerButton('tones', 'Tones & signaling', search.dcs_code ? `DCS ${search.dcs_code}` : search.tone_frequency_hz ? `${search.tone_frequency_hz}${search.tone_then_hz ? ` → ${search.tone_then_hz}` : ''} Hz` : search.paging_tones ? 'Has detected paging tones' : 'Paging tones or DCS');
-    const more = pickerButton('more', 'More filters', [search.protocol ? protocolLabel(search.protocol) : '', search.site ? 'Site' : '', search.min_duration_ms || search.max_duration_ms ? 'Duration' : ''].filter(Boolean).join(' · ') || 'Protocol, site, duration…');
+    const radios = pickerButton('radios', 'Radios', radioCount ? `${radioCount} selected` : 'Any source · name or radio ID', 'icon-scanner');
+    const tones = pickerButton('tones', 'Tones & signaling', search.dcs_code ? `DCS ${search.dcs_code}` : search.tone_frequency_hz ? `${search.tone_frequency_hz}${search.tone_then_hz ? ` → ${search.tone_then_hz}` : ''} Hz` : search.paging_tones ? 'Has detected paging tones' : 'Paging tones or DCS', 'icon-audio-quality');
+    const more = pickerButton('more', 'More filters', [search.protocol ? protocolLabel(search.protocol) : '', search.site ? 'Site' : '', search.min_duration_ms || search.max_duration_ms ? 'Duration' : ''].filter(Boolean).join(' · ') || 'Protocol, site, duration…', 'icon-filter');
     filterCountHost = node('span', 'recordings-filter-count'); filterCountHost.hidden = true; more.append(filterCountHost);
     const actions = node('div', 'recordings-search-actions');
     draftFeedback = node('p', 'recordings-draft-feedback'); draftFeedback.setAttribute('aria-live', 'polite');
     searchError = node('div', 'recordings-search-error'); searchError.setAttribute('role', 'alert');
-    const submit = button(node, 'Search recordings', null, 'recordings-primary-action'); submit.type = 'submit'; submit.disabled = searchLoading;
+    const submit = addGlyph(button(node, 'Search recordings', null, 'recordings-primary-action'), 'icon-search', 'recordings-control-icon'); submit.type = 'submit'; submit.disabled = searchLoading;
     const clear = button(node, 'Clear filters', () => { Object.keys(search).forEach(key => { search[key] = ''; }); search.range = '24h'; selectedSuggestions.clear(); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action');
     const discard = button(node, 'Discard changes', () => { if (appliedSearch) Object.assign(search, appliedSearch); selectedSuggestions.clear(); appliedSuggestions.forEach((value, key) => selectedSuggestions.set(key, value)); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action'); discard.id = 'recordings-discard'; discard.hidden = true;
     actions.append(draftFeedback, searchError, submit, clear, discard);

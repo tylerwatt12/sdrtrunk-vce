@@ -61,8 +61,8 @@ async function openApp(page, options = {}) {
 
 async function chooseRecording(page, index = 0) {
   await size(page, 'minimal');
-  await page.locator('.recordings-card-play').nth(index).click();
-  await page.getByRole('dialog', { name: 'Play recording', exact: true })
+  await page.locator('.recordings-call-info').nth(index).click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
     .getByRole('button', { name: /^Play once/ }).click();
   await expect(player(page)).toHaveAttribute('data-source', 'recordings');
   await size(page, 'full');
@@ -86,25 +86,28 @@ async function expectBlankFacts(page) {
   await expect(player(page).locator('#audio-dock-panel dd a')).toHaveCount(0);
 }
 
-test('desktop page geometry stays unchanged in every audio dock size', async ({ page }) => {
+test('desktop recordings keep their layout and reserve room for every audio dock size', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openApp(page);
   await expect(page.locator('.recordings-call')).toHaveCount(25);
   await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
-  const geometry = () => page.locator('.content').evaluate((content) => ({
-    height: content.getBoundingClientRect().height,
-    scrollHeight: content.scrollHeight,
-    paddingBottom: getComputedStyle(content).paddingBottom,
-    spacer: getComputedStyle(content, '::after').content,
-    documentHeight: document.documentElement.scrollHeight,
-    scrollPaddingBottom: getComputedStyle(document.documentElement).scrollPaddingBottom,
-  }));
+  const geometry = () => page.evaluate(() => {
+    const content = document.querySelector('.content');
+    const card = document.querySelector('.recordings-call').getBoundingClientRect();
+    const sidebar = document.querySelector('.recordings-search-panel').getBoundingClientRect();
+    return { layout: { cardX: card.x, cardY: card.y, cardWidth: card.width, cardHeight: card.height,
+      sidebarX: sidebar.x, sidebarWidth: sidebar.width },
+      reserve: parseFloat(getComputedStyle(content, '::after').height),
+      dockHeight: document.querySelector('#audio-dock').getBoundingClientRect().height,
+      scrollPadding: parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) };
+  });
   await size(page, 'collapsed');
-  const baseline = await geometry();
-  expect(baseline.spacer).toBe('none');
+  const baseline = (await geometry()).layout;
   for (const state of ['minimal', 'full', 'collapsed']) {
     await size(page, state);
-    await expect.poll(geometry).toEqual(baseline);
+    await expect.poll(async () => (await geometry()).layout).toEqual(baseline);
+    await expect.poll(async () => { const value = await geometry(); return value.reserve >= value.dockHeight; }).toBe(true);
+    await expect.poll(async () => { const value = await geometry(); return value.scrollPadding >= value.dockHeight; }).toBe(true);
   }
 });
 

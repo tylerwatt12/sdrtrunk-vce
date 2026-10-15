@@ -3,6 +3,7 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 // The global player is covered separately; these snapshots isolate recording components.
 const componentScreenshot = { stylePath: path.resolve(__dirname, 'fixtures/hide-global-audio-dock.css') };
@@ -126,6 +127,23 @@ function groupedChoices(rows, url) {
       next_offset: offset + limit, rows: group.rows.slice(offset, offset + limit) })) };
 }
 
+async function stubRecordingAudio(page) {
+  await page.addInitScript(() => {
+    window.recordingPlays = [];
+    class RecordingAudio extends EventTarget {
+      constructor() { super(); this.paused = true; this.currentTime = 0; this.volume = 1; this._src = ''; }
+      get duration() { return this._src ? 42 : Number.NaN; }
+      get src() { return this._src; }
+      set src(value) { this._src = new URL(value, location.href).href; }
+      play() { this.paused = false; window.recordingPlays.push(this.src); this.dispatchEvent(new Event('play')); return Promise.resolve(); }
+      pause() { this.paused = true; this.dispatchEvent(new Event('pause')); }
+      removeAttribute(name) { if (name === 'src') this._src = ''; }
+      load() {}
+    }
+    window.Audio = RecordingAudio;
+  });
+}
+
 async function openRecordings(page, options = {}) {
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
@@ -145,6 +163,7 @@ async function openRecordings(page, options = {}) {
   };
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
+  preferences.appearance.hue = options.hue ?? null;
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname;
@@ -305,8 +324,7 @@ async function openPicker(page, topic = 'targets', name = 'Talkgroups & channels
   const dialog = page.getByRole('dialog', { name, exact: true }); await expect(dialog).toBeVisible(); return dialog;
 }
 async function openCallDetails(page) {
-  await page.locator('.recordings-call-info').first().click();
-  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Call details', exact: true }).click();
+  await page.locator('.recordings-call-details').first().click();
 }
 async function searchNow(page, state) {
   const count = state.requestedFilters.length;
@@ -700,7 +718,7 @@ test('call detail tabs retain identities, protocol, recording metadata, download
   await expect(detail.getByRole('tabpanel').filter({ visible: true })).toContainText('Engine four arriving at staging.');
   await expect(detail.getByRole('button', { name: /Play once|Continue from here|Add to queue/ })).toHaveCount(3);
   await page.keyboard.press('Escape');
-  await expect(page.locator('.recordings-call-info').first()).toBeFocused();
+  await expect(page.locator('.recordings-call-details').first()).toBeFocused();
 });
 
 for (const theme of ['light', 'dark']) {
@@ -796,7 +814,7 @@ for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }],
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`approved cards and playback chooser ${theme}`, async ({ page }) => {
+  test(`approved cards and call actions ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     const first = { ...linkedCall, transcript_excerpt: 'Engine four arriving. Requesting another unit.' };
     const second = { ...first, id: 18, source_id: 30915, source_alias: 'Engine 5',
@@ -807,42 +825,85 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.recordings-call-summary').first()).toContainText('North Ridge');
     await expect(page.locator('.recordings-library')).not.toContainText('Audio from');
     await expect(page.locator('.recordings-call-actions')).toHaveCount(2);
-    await expect(page.locator('.recordings-call-actions > button')).toHaveCount(4);
+    await expect(page.locator('.recordings-call-actions > button')).toHaveCount(6);
     await expect(page.locator('.recordings-call .recordings-card-play')).toHaveCount(2);
+    await expect(page.locator('.recordings-call .recordings-call-details')).toHaveCount(2);
     await expect(page.locator('.recordings-results-panel')).not.toHaveClass(/(?:^|\s)ui-section(?:\s|$)/);
     await expect(page.locator('.recordings-transcript-preview')).toHaveCount(2);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-approved-${theme}.png`, componentScreenshot);
     const firstCard = page.locator('.recordings-call').first();
     await firstCard.locator('.recordings-card-play').click();
-    let chooser = page.getByRole('dialog', { name: 'Play recording', exact: true });
-    await expect(chooser).toBeVisible();
-    await expect(chooser.getByRole('button', { name: /Play once/ })).toContainText('then stop');
-    await expect(chooser.getByRole('button', { name: /Continue from here/ })).toContainText('newer matching calls');
-    await expect(chooser).toHaveScreenshot(`recordings-playback-${theme}.png`, componentScreenshot);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(firstCard).toHaveClass(/recordings-call-queued/);
+    await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
+    await firstCard.locator('.recordings-call-info').click();
+    let actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    const targetSearch = actions.getByRole('link', { name: 'Search this talkgroup', exact: true });
+    await expect(targetSearch).toBeVisible();
+    await expect(targetSearch).toHaveClass(/recordings-secondary-action/);
+    await expect(targetSearch).toHaveAttribute('href', /talkgroup_identity_key=v1-g-00001-001-1201/);
+    for (const control of await actions.locator('.recordings-secondary-action').all()) {
+      await expect(control.locator('svg')).toHaveCount(1);
+    }
+    await expect(actions).toHaveScreenshot(`recordings-actions-${theme}.png`, componentScreenshot);
     await page.keyboard.press('Escape');
-    await expect(firstCard.locator('.recordings-card-play')).toBeFocused();
+    await expect(firstCard.locator('.recordings-call-info')).toBeFocused();
     await firstCard.locator('.recordings-call-select').check();
-    await expect(chooser).toHaveCount(0);
     await expect(page.locator('.recordings-selected')).toContainText('1 selected');
     await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('arriving');
-    await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
-    await expect.poll(() => state.requestedFilters.at(-1).transcript).toBe('arriving');
+    await searchNow(page, state);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-approved-mobile-${theme}.png`, componentScreenshot);
     await firstCard.locator('.recordings-card-play').focus();
     await page.keyboard.press('Enter');
-    chooser = page.getByRole('dialog', { name: 'Play recording', exact: true });
-    await expect(chooser).toBeVisible();
-    await expect(chooser).toHaveScreenshot(`recordings-playback-mobile-${theme}.png`, componentScreenshot);
-    await chooser.getByRole('button', { name: /Add to queue/ }).click();
-    await expect(chooser).toBeHidden();
-    await expect(page.locator('#audio-dock')).toHaveAttribute('data-source', 'recordings');
-    const queue = page.locator('#audio-dock .audio-dock-queue-count');
-  await expect(queue).toHaveAccessibleName('Open queue');
-  await expect(queue).toBeVisible();
-  await expect(queue).toContainText('1 queued');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
+    await firstCard.locator('.recordings-call-info').click();
+    actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await expect(actions).toHaveScreenshot(`recordings-actions-mobile-${theme}.png`, componentScreenshot);
   });
 }
+
+test('card play immediately obeys the player preference for queue, once, and continue', async ({ page }) => {
+  await stubRecordingAudio(page);
+  const state = await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18, start_ms: call.start_ms + 60_000 }] });
+  const cards = page.locator('.recordings-call');
+  const dock = page.locator('#audio-dock');
+  await cards.first().locator('.recordings-card-play').click();
+  await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
+  expect(await page.evaluate(() => window.recordingPlays)).toEqual([]);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+
+  await selectAudioPanel(dock, 'Queue');
+  const preference = dock.locator('#audio-dock-panel').getByRole('combobox', { name: 'When a call is clicked', exact: true });
+  await preference.selectOption('once');
+  await dock.locator('#audio-dock-context-back').click();
+  await cards.first().locator('.recordings-card-play').click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await expect(cards.first().locator('.recordings-call-status')).not.toHaveText('Playing');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+
+  await selectAudioPanel(dock, 'Queue');
+  await preference.selectOption('continue');
+  await dock.locator('#audio-dock-context-back').click();
+  await cards.nth(1).locator('.recordings-card-play').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(2);
+  await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
+  await expect(cards.first()).not.toHaveClass(/recordings-call-playing/);
+  await expect.poll(() => state.requestedFilters.some(filter => filter.sort === 'asc' &&
+    filter.from_ms === String(call.start_ms + 60_000))).toBe(true);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+
+  await selectAudioPanel(dock, 'Queue');
+  await preference.selectOption('queue');
+  await dock.locator('#audio-dock-context-back').click();
+  await cards.first().locator('.recordings-card-play').click();
+  await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(2);
+  await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
+});
 
 test('page selection selects and deselects displayed calls and reflects partial selection', async ({ page }) => {
   await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
@@ -1096,6 +1157,18 @@ test('target picker keeps Cancel local and submits talkgroups plus channels as o
   expect(state.requestedFilters.at(-1).targets_any).toBe('true');
   expect(JSON.parse(state.requestedFilters.at(-1).talkgroups)).toEqual([{ id: 1201, system_key: systemKey }]);
   expect(JSON.parse(state.requestedFilters.at(-1).channel_ids)).toEqual(['00000000-0000-4000-8000-000000000018']);
+  const requests = state.requestedFilters.length;
+  const chips = page.locator('.recordings-selected-filters');
+  for (const name of ['Fire Dispatch', 'Airfield AM']) {
+    const chip = chips.locator('.recordings-filter-chip').filter({ hasText: name });
+    await chip.click();
+    await expect(chip).toHaveClass(/recordings-filter-chip-pending/);
+    await expect(page.locator('#recordings-open-targets')).toContainText('1 selected');
+    await chip.click();
+    await expect(chip).not.toHaveClass(/recordings-filter-chip-pending/);
+    await expect(page.locator('#recordings-open-targets')).toContainText('2 selected');
+  }
+  expect(state.requestedFilters).toHaveLength(requests);
   await page.locator('.recordings-call-title').getByRole('link', { name: 'Fire Dispatch', exact: true }).click();
   await expect.poll(() => state.requestedFilters.at(-1).talkgroup_identity_key).toBe('v1-g-00001-001-1201');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('channel_ids');
@@ -1189,17 +1262,52 @@ test('High Interest combines with explicit properties, blocks contradictory dura
   await searchNow(page, state); expect(state.requestedFilters.at(-1).protocol).toBe('DMR');
 });
 
-test('removable applied chips edit only the pending search and Discard restores all fields', async ({ page }) => {
+test('applied chips show pending removal, support undo and Discard, and survive failed searches', async ({ page }) => {
   const state = await openRecordings(page);
-  await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('arriving'); await searchNow(page, state);
+  const fullText = page.getByRole('searchbox', { name: 'Full text', exact: true });
+  const interest = page.locator('.recordings-interest');
+  const chips = page.locator('.recordings-selected-filters');
+  await fullText.fill('arriving');
+  await interest.click();
+  await searchNow(page, state);
   const requests = state.requestedFilters.length;
-  await page.locator('.recordings-selected-filters').getByRole('button', { name: 'Remove Full text: arriving filter', exact: true }).click();
-  await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toHaveValue('');
-  await expect(page.locator('.recordings-selected-filters')).toContainText('Full text: arriving'); expect(state.requestedFilters).toHaveLength(requests);
+  const removeText = () => chips.getByRole('button', { name: 'Remove Full text: arriving filter', exact: true });
+  const undoText = () => chips.getByRole('button', { name: 'Undo removal of Full text: arriving filter', exact: true });
+  await removeText().click();
+  await expect(fullText).toHaveValue('');
+  await expect(undoText()).toHaveClass(/recordings-filter-chip-pending/);
+  await expect(undoText()).toContainText('Remove on search · Undo');
+  await expect(chips).toHaveScreenshot('recordings-pending-removal.png', componentScreenshot);
+  expect(state.requestedFilters).toHaveLength(requests);
+
+  await interest.click();
+  await undoText().click();
+  await expect(fullText).toHaveValue('arriving');
+  await expect(removeText()).not.toHaveClass(/recordings-filter-chip-pending/);
+  await expect(interest).toHaveAttribute('aria-pressed', 'false');
+  await expect(chips.getByRole('button', { name: /Undo removal of High Interest/ })).toBeVisible();
   await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
-  await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toHaveValue('arriving');
-  await page.getByRole('button', { name: 'Clear filters', exact: true }).click(); expect(state.requestedFilters).toHaveLength(requests);
-  await searchNow(page, state); expect(state.requestedFilters.at(-1)).not.toHaveProperty('transcript');
+  await expect(interest).toHaveAttribute('aria-pressed', 'true');
+  await expect(chips.locator('.recordings-filter-chip-pending')).toHaveCount(0);
+
+  await removeText().click();
+  state.errorNext = true;
+  await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
+  await expect(page.locator('.recordings-result-status')).toContainText('Previous results');
+  await expect(undoText()).toContainText('Remove on search · Undo');
+  await expect(fullText).toHaveValue('');
+  await undoText().click();
+  await expect(fullText).toHaveValue('arriving');
+  await removeText().click();
+  await searchNow(page, state);
+  await expect(chips).not.toContainText('Full text: arriving');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('transcript');
+  expect(state.requestedFilters.at(-1).high_interest).toBe('1');
+
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await expect(chips.getByRole('button', { name: /Undo removal of High Interest/ })).toBeVisible();
+  await searchNow(page, state);
+  await expect(chips).not.toContainText('High Interest');
 });
 
 test('call actions reuse VCE playback choices and route Live to the saved channel', async ({ page }) => {
@@ -1267,4 +1375,85 @@ test('false URL flags keep High Interest off and show the correct missing-transc
   await expect(page.locator('.recordings-selected-filters')).toContainText('No saved transcript');
   const more = await openPicker(page, 'more', 'More filters');
   await expect(more.getByRole('combobox', { name: 'Transcript availability', exact: true })).toHaveValue('false');
+});
+
+
+test('High Interest is an explicit toggle and result controls have recognizable glyphs', async ({ page }) => {
+  const state = await openRecordings(page);
+  const interest = page.locator('.recordings-interest');
+  await expect(interest).toHaveAttribute('aria-pressed', 'false');
+  await expect(interest).toContainText('Off');
+  await expect(interest.locator('svg')).toHaveCount(1);
+  await interest.click();
+  await expect(interest).toHaveAttribute('aria-pressed', 'true');
+  await expect(interest).toContainText('On');
+  expect(state.requestedFilters).toHaveLength(1);
+  for (const selector of ['#recordings-open-systems', '#recordings-open-targets', '#recordings-open-radios',
+    '#recordings-open-tones', '#recordings-open-more']) {
+    await expect(page.locator(selector).locator('svg')).toHaveCount(1);
+  }
+  await expect(page.getByRole('button', { name: 'Search recordings', exact: true }).locator('svg')).toHaveCount(1);
+  await expect(page.locator('.recordings-search-panel .ui-field-label svg')).toHaveCount(0);
+  await page.locator('.recordings-call-details').click();
+  await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Call actions', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.recordings-call-details')).toBeFocused();
+});
+
+test('recordings accents follow every color scheme in day and night themes', async ({ page }) => {
+  await stubRecordingAudio(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openRecordings(page, { call: linkedCall });
+  await page.getByRole('button', { name: /High Interest/ }).click();
+  await page.locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Play once', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveClass(/recordings-call-playing/);
+  await page.mouse.move(0, 0);
+  const palettes = await page.evaluate(async () => {
+    const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
+    const root = document.documentElement;
+    const color = (token) => {
+      const probe = document.createElement('span');
+      probe.style.color = `var(${token})`; root.append(probe);
+      const value = getComputedStyle(probe).color; probe.remove(); return value;
+    };
+    const colors = [];
+    for (const theme of ['light', 'dark']) for (const scheme of APPEARANCE_SCHEMES) {
+      if (theme === 'dark') root.dataset.theme = 'dark'; else delete root.dataset.theme;
+      applyThemeHue(scheme.hue, root);
+      const primary = getComputedStyle(document.querySelector('.recordings-primary-action'));
+      const interest = getComputedStyle(document.querySelector('.recordings-interest'));
+      const card = getComputedStyle(document.querySelector('.recordings-call-playing'));
+      const duration = getComputedStyle(document.querySelector('.recordings-call-duration'));
+      colors.push({ theme, scheme: scheme.name, accent: color('--accent'), primary: color('--primary-control'),
+        primaryInk: color('--primary-control-ink'), buttonBackground: primary.backgroundColor, buttonInk: primary.color,
+        interestBorder: interest.borderTopColor, cardBorder: card.borderTopColor, cardShadow: card.boxShadow,
+        durationWeight: Number(duration.fontWeight) });
+    }
+    return colors;
+  });
+  expect(palettes).toHaveLength(16);
+  for (const palette of palettes) {
+    expect(palette.buttonBackground, `${palette.theme} ${palette.scheme} Search`).toBe(palette.primary);
+    expect(palette.buttonInk, `${palette.theme} ${palette.scheme} Search label`).toBe(palette.primaryInk);
+    expect(palette.interestBorder, `${palette.theme} ${palette.scheme} High Interest`).toBe(palette.accent);
+    expect(palette.cardBorder, `${palette.theme} ${palette.scheme} playing card`).toBe(palette.accent);
+    expect(palette.cardShadow).not.toBe('none');
+    expect(palette.durationWeight).toBeGreaterThanOrEqual(600);
+  }
+  for (const theme of ['light', 'dark']) {
+    expect(new Set(palettes.filter(palette => palette.theme === theme).map(palette => palette.accent)).size).toBe(8);
+  }
+  for (const [scheme, theme, viewport] of [['Ocean', 'light', { width: 1280, height: 900 }],
+    ['Amber', 'dark', { width: 390, height: 844 }], ['Forest', 'light', { width: 390, height: 844 }]]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(async ({ scheme, theme }) => {
+      const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
+      if (theme === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+      applyThemeHue(APPEARANCE_SCHEMES.find(item => item.name === scheme).hue);
+    }, { scheme, theme });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+    await expect(page.locator('.recordings-browser')).toHaveScreenshot(`recordings-scheme-${scheme.toLowerCase()}-${theme}.png`, componentScreenshot);
+  }
 });
