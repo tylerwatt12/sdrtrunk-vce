@@ -1504,7 +1504,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
         await expect(details.getByRole('group', { name: label, exact: true })).toBeVisible();
       await expect(details).toContainText(ohioSystem);
       await expect(details).toContainText(ohioSite);
-      const wacn = details.locator('dd').filter({ hasText: /^BEE00$/ });
+      const wacn = details.locator('dd').filter({ hasText: /^0xBEE00 \(781824\)$/ });
       await expect(wacn).toHaveCount(1);
       expect(await wacn.evaluate(element => {
         const range = document.createRange();

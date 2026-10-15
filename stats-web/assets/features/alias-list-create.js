@@ -1,4 +1,4 @@
-import { ALIAS_LIST_NAME_MAX_LENGTH } from './discovery-radioreference.js?v=8';
+import { ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName } from './discovery-radioreference.js?v=8';
 
 let creatorSequence = 0;
 
@@ -30,7 +30,7 @@ export async function createAliasList(requestJson, { name, family, revision }) {
 export function createAliasListPopupTrigger(dependencies, options) {
   const { node, iconGlyph, uiPill, requestJson, openReadOnlyModal } = dependencies;
   const {
-    select, family, getRevision, onCreated, triggerLabel = 'New list', submitLabel = 'Create and use',
+    select, family, getRevision, onCreated, getInitialName, triggerLabel = 'New list', submitLabel = 'Create and use',
     helperText = 'The list is created immediately and selected for this workflow.'
   } = options;
   const normalized = normalizedFamily(family);
@@ -49,6 +49,7 @@ export function createAliasListPopupTrigger(dependencies, options) {
     name.type = 'text';
     name.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
     name.autocomplete = 'off';
+    name.value = discoveryAliasListName(getInitialName?.());
     const nameField = node('label', 'ui-field');
     nameField.append(node('span', 'ui-field-label', 'Name'), name);
     const context = node('div', 'ui-field-detail');

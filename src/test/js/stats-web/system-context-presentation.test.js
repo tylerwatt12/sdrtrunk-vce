@@ -35,6 +35,8 @@ vm.runInContext(labels.replace(/export\s*\{[^}]+\};?\s*$/, '') +
 context.radioSystemLabel = context.systemLabels.systemIdentity;
 const identityLabels = fs.readFileSync(path.join(assets, 'core/radio-labels.js'), 'utf8');
 vm.runInContext(identityLabels.replace(/^export .*;$/m, ''), context);
+const callFormats = fs.readFileSync(path.join(assets, 'core/call-value-format.js'), 'utf8');
+vm.runInContext(callFormats.replace(/export /g, ''), context);
 const functions = [
   'function protocol(value)', 'function protocolFamily(row)', 'function isP25(row)',
   'function identityNumber(row, value)', 'function radioIdentityPrefix(row, value)',
@@ -79,7 +81,8 @@ assert.equal(context.spectrumDiscoverySystemName(session, { system: '' }), '',
 assert.equal(context.spectrumDiscoverySystemName(session, { system: ' New name ' }), 'New name');
 assert.deepEqual(JSON.parse(JSON.stringify(context.spectrumSearchIdentityFacts(
   { identity: { wacn: 0xbee00, system: 0x49f, rfss: 1, site: 2 } }, context.hex))),
-[['WACN', 'BEE00'], ['System ID', '49F'], ['RFSS', 1], ['Site ID', 2]],
+[['WACN', '0xBEE00 (781824)'], ['System ID', '0x49F (1183)'],
+  ['RFSS', '0x01 (1)'], ['Site ID', '0x02 (2)']],
 'Discovery detail facts retain all four native identity fields.');
 
 const foreignRadio = { source_value: 'v1-r-abcde-123-456', source_alias: 'Medic 4',

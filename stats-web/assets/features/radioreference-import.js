@@ -1,4 +1,5 @@
 import { radioReferenceLocalityCache } from './radioreference-locality-cache.js?v=1';
+import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 
 const API_ROOT = '/api/v1/admin/radioreference';
 
@@ -168,6 +169,10 @@ function frequencyHz(value) {
 function siteChannels(site, detail = null) {
   const candidates = [site?.channels, site?.frequencies, detail?.channels, detail?.frequencies];
   return candidates.find(Array.isArray) || [];
+}
+
+function siteNumberLabel(site) {
+  return formatHexDecimal(firstValue(site, ['number', 'site_number']), 2);
 }
 
 function siteModulation(site) {
@@ -414,7 +419,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     state.aliasListRevision = revision;
     return revision;
   };
-  const aliasListField = (label, control, family, helperText) => {
+  const aliasListField = (label, control, family, helperText, getInitialName) => {
     control.setAttribute('aria-label', label);
     const field = node('div', 'admin-form-field ui-field');
     field.append(node('span', 'admin-form-label ui-field-label', label), selectFrame(control),
@@ -422,6 +427,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         select: control,
         family: normalizedAliasFamily(family),
         getRevision: currentAliasListRevision,
+        getInitialName,
         triggerLabel: 'New list',
         submitLabel: 'Create and use',
         helperText,
@@ -749,7 +755,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const siteName = input();
     const channelName = input();
     systemName.value = textValue(detail, ['system_name'], textValue(system, ['name'], ''));
-    siteName.value = textValue(site, ['name', 'description'], `Site ${textValue(site, ['number', 'site_number'])}`);
+    siteName.value = textValue(site, ['name', 'description'], `Site ${siteNumberLabel(site)}`.trim());
     channelName.value = textValue(detail, ['channel_name'], `${systemName.value} · ${siteName.value}`);
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
     const wasCleared = state.clearedSystemPreferences.has(systemIdValue);
@@ -846,7 +852,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const nameGrid = node('div', 'radioreference-form-grid');
     nameGrid.append(formField('System name', systemName), formField('Site name', siteName),
       formField('Channel name', channelName), aliasListField('Alias List', aliases, family,
-        'Creates a compatible Alias List immediately and selects it for this channel import.'));
+        'Creates a compatible Alias List immediately and selects it for this channel import.', () => systemName.value));
     form.append(node('div', 'radioreference-modal-intro',
       `Create one combined channel for ${siteName.value || 'this site'}.`), nameGrid, preferenceMessage, detection,
       formField('Frequencies', modeGrid), frequencyPanel, message, footer);
@@ -934,7 +940,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         state.siteCatalogs.set(id, rows(response).map((site) => ({
           site,
           searchText: [
-            textValue(site, ['name', 'description']), textValue(site, ['number', 'site_number']),
+            textValue(site, ['name', 'description']), siteNumberLabel(site),
             textValue(site, ['county_name', 'county']),
             ...siteChannels(site).flatMap((channel) => [
               textValue(channel, ['channel_id', 'channelId']),
@@ -973,13 +979,14 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const rendered = table(values, [
         { id: 'site', label: 'Site', render: (site) => {
           const identity = node('span', 'radioreference-row-identity');
+          const numberLabel = siteNumberLabel(site);
           const open = button(textValue(site, ['name', 'description'],
-            `Site ${textValue(site, ['number', 'site_number'], '')}`), 'link-button radioreference-site-import');
+            numberLabel ? `Site ${numberLabel}` : 'Site'), 'link-button radioreference-site-import');
           open.title = 'Review this site for import';
           open.addEventListener('click', () => openSiteImport(systemDetails, site, site));
           identity.append(open);
           const context = [textValue(site, ['county_name', 'county']),
-            textValue(site, ['number', 'site_number']) ? `Site ${textValue(site, ['number', 'site_number'])}` : '']
+            numberLabel ? `Site ${numberLabel}` : '']
             .filter(Boolean).join(' · ');
           if (context) identity.append(node('small', 'muted', context));
           if (matchingCounty({ site })) identity.append(uiPill('Your county', 'neutral'));

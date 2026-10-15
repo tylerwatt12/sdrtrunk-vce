@@ -29,7 +29,8 @@ async function main() {
   assert.equal(spectrumSearchGroupKey({ ...dmr, alias_group_id: 'matched-dmr' }), 'matched-dmr');
   const hex = (value, width) => Number(value).toString(16).toUpperCase().padStart(width, '0');
   assert.deepEqual(spectrumSearchIdentityFacts(p25, hex), [
-    ['WACN', 'BEE00'], ['System ID', '012'], ['RFSS', 1], ['Site ID', 3] ]);
+    ['WACN', '0xBEE00 (781824)'], ['System ID', '0x012 (18)'],
+    ['RFSS', '0x01 (1)'], ['Site ID', '0x03 (3)'] ]);
   assert.ok(spectrumSearchIdentityFacts(dmr, hex).some(([name, value]) => name === 'Color code' && value === 4));
   assert.ok(spectrumSearchIdentityFacts(nxdn, hex).some(([name, value]) => name === 'RAN' && value === 9));
   assert.equal(spectrumSearchSystemName({ ...dmr, system_name: 'Transit' }), 'Transit');

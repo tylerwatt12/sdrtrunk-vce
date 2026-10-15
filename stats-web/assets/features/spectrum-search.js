@@ -1,4 +1,5 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
+import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './discovery-radioreference.js?v=8';
 
@@ -35,8 +36,9 @@ export function spectrumSearchSystemName(candidate) {
 export function spectrumSearchIdentityFacts(candidate, hex) {
   const identity = candidate?.identity || candidate?.trunked_evidence?.identity;
   if (!identity) return [];
-  if (identity.wacn != null) return [['WACN', hex(identity.wacn, 5)], ['System ID', hex(identity.system, 3)],
-    ['RFSS', identity.rfss], ['Site ID', identity.site]];
+  if (identity.wacn != null) return [['WACN', formatHexDecimal(identity.wacn, 5)],
+    ['System ID', formatHexDecimal(identity.system, 3)],
+    ['RFSS', formatHexDecimal(identity.rfss, 2)], ['Site ID', formatHexDecimal(identity.site, 2)]];
   return [['Protocol', spectrumSearchProtocolLabel(candidate)],
     ['Network', identity.network], ['System ID', identity.system], ['Site ID', identity.site],
     ['Model', identity.model], ['Location category', identity.category], ['Integrator', identity.integrator],
@@ -370,13 +372,17 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const identityText = (candidate) => identityFacts(candidate).map(([label, value]) => `${label} ${value}`).join(' · ') ||
     'Identity unavailable';
   const candidateName = (candidate) => candidate.name || candidate.site_name || `${channelMHz(candidate.frequency_hz)} MHz`;
-  const systemLabel = (candidate) => (candidate.radio_reference?.state === 'matched' &&
-    candidate.radio_reference.match?.system_name) || spectrumSearchSystemName(candidate) || systemIdentity({ ...candidate,
-    radio_system_key: candidate.radio_system_key || candidate.trunked_evidence?.identity?.radio_system_key }) ||
-    (candidate.identity ? `P25 ${hex(candidate.identity.wacn, 5)}-${hex(candidate.identity.system, 3)}` :
-      `${String(candidate.protocol_id || 'Digital').toUpperCase()} system`);
+  const systemLabel = (candidate) => {
+    const identity = candidate.identity || candidate.trunked_evidence?.identity;
+    return (candidate.radio_reference?.state === 'matched' && candidate.radio_reference.match?.system_name) ||
+      spectrumSearchSystemName(candidate) || (identity?.wacn != null ?
+        `WACN ${formatHexDecimal(identity.wacn, 5)} · SysID ${formatHexDecimal(identity.system, 3)}` :
+        systemIdentity({ ...candidate, radio_system_key: candidate.radio_system_key || identity?.radio_system_key }) ||
+          `${String(candidate.protocol_id || 'Digital').toUpperCase()} system`);
+  };
   const aliasIdentityLabel = (candidate) => candidate?.identity?.wacn != null ?
-    `${hex(candidate.identity.wacn, 5)}-${hex(candidate.identity.system, 3)}` : systemLabel(candidate);
+    `WACN ${formatHexDecimal(candidate.identity.wacn, 5)} · SysID ${formatHexDecimal(candidate.identity.system, 3)}` :
+    systemLabel(candidate);
   const factList = (entries) => {
     const list = node('dl', 'ui-fact-list');
     entries.forEach(([label, value]) => list.append(node('dt', '', label), node('dd', '', String(value ?? '—'))));
@@ -1008,15 +1014,19 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     });
     return ordered;
   };
-  const siteLabel = (candidate) => candidate.site_name || (candidate.identity ?
-    `RFSS ${hex(candidate.identity.rfss, 2)} · Site ${hex(candidate.identity.site, 2)}` :
-      candidate.trunked_evidence?.identity?.site != null ? `Site ${candidate.trunked_evidence.identity.site}` : 'Site unavailable');
+  const siteLabel = (candidate) => {
+    if (candidate.site_name) return candidate.site_name;
+    const identity = candidate.identity || candidate.trunked_evidence?.identity;
+    return identity?.wacn != null ?
+      `RFSS ${formatHexDecimal(identity.rfss, 2)} · Site ${formatHexDecimal(identity.site, 2)}` :
+      identity?.site != null ? `Site ${identity.site}` : 'Site unavailable';
+  };
   const systemIdentityLabel = (entry) => {
     const candidate = entry.candidates[0];
     const identity = candidate?.identity || candidate?.trunked_evidence?.identity || entry.aliasGroup;
     const count = entry.candidates.length;
     const label = identity?.wacn != null && identity?.system != null ?
-      `WACN ${hex(identity.wacn, 5)} · SysID ${hex(identity.system, 3)}` :
+      `WACN ${formatHexDecimal(identity.wacn, 5)} · SysID ${formatHexDecimal(identity.system, 3)}` :
       systemIdentity({ ...candidate, radio_system_key: candidate?.radio_system_key || identity?.radio_system_key }) ||
       identityText(candidate);
     return `${label} · ${count} ${count === 1 ? 'site' : 'sites'}`;

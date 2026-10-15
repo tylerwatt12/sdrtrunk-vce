@@ -553,7 +553,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await complete(page);
     await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
     await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
-    await expect(dialog(page).getByLabel('New Alias List name for 00001-047', { exact: true }))
+    await expect(dialog(page).getByLabel('New Alias List name for WACN 0x00001 (1) · SysID 0x047 (71)', { exact: true }))
       .toHaveValue(realDirectory.system_name);
     const capture = async (stage) => {
       const fits = await dialog(page).evaluate((element) => {
@@ -885,7 +885,7 @@ test('uses one widest idle receiver and acquires its own browse session when sea
     .toHaveText(['', 'Channel', 'Site', 'Signal', 'Quality', 'Details']);
   await expect(dialog(page).locator('.spectrum-search-group-table').first().locator('tbody tr').first().locator('td'))
     .toHaveCount(6);
-  await expect(dialog(page)).toContainText('WACN BEE00 · SysID 348 · 3 sites');
+  await expect(dialog(page)).toContainText('WACN 0xBEE00 (781824) · SysID 0x348 (840) · 3 sites');
   await expect(dialog(page).getByRole('button', { name: /^Details for / })).toHaveCount(4);
   await expect(dialog(page).getByRole('searchbox')).toHaveCount(0);
   await expect(dialog(page).getByText('Search results', { exact: true })).toHaveCount(0);
@@ -1419,7 +1419,7 @@ test('groups exact identities, saves channels stopped, and retries only failed a
   await dialog(page).getByRole('button', { name: 'Select all available' }).click();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await expect(dialog(page).getByText('Alias List: County Dispatch · Existing', { exact: true })).toHaveCount(1);
-  await expect(dialog(page).getByLabel('New Alias List name for ABC00-234')).toHaveValue('Regional Services');
+  await expect(dialog(page).getByLabel('New Alias List name for WACN 0xABC00 (703488) · SysID 0x234 (564)')).toHaveValue('Regional Services');
   await expect(dialog(page).getByRole('checkbox', { name: /Listen now|Auto-start channels/ })).toHaveCount(0);
   await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
   await addChannels(page);
@@ -1505,7 +1505,7 @@ test('failed-row review edits only unsaved channels', async ({ page }) => {
     .getByRole('button', { name: 'Done' })).toBeVisible();
   await expect(dialog(page).getByRole('textbox', { name: /Channel name for/ })).toHaveCount(1);
   await dialog(page).getByLabel('Channel name for 860.0125 MHz').fill('My South Control');
-  await dialog(page).getByLabel('New Alias List name for ABC00-234').fill('Regional listening');
+  await dialog(page).getByLabel('New Alias List name for WACN 0xABC00 (703488) · SysID 0x234 (564)').fill('Regional listening');
   await addChannels(page);
   await expect(dialog(page)).toContainText('3 channels added.');
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
@@ -1538,7 +1538,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     const existing = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'County Public Safety' });
     await expect(existing).toContainText('Alias List: County Dispatch · Existing');
     const regional = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' });
-    const name = regional.getByLabel('New Alias List name for ABC00-234');
+    const name = regional.getByLabel('New Alias List name for WACN 0xABC00 (703488) · SysID 0x234 (564)');
     await expect(name).toBeVisible();
     await expect(regional).toContainText('An existing compatible Alias List with this name will be used.');
     await name.fill('Regional existing');
@@ -1562,9 +1562,9 @@ test('search review reveals an invalid Alias List choice when its panel was clos
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
-  await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toBeHidden();
+  await expect(dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)')).toBeHidden();
   await addChannels(page, 1);
-  await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toBeVisible();
+  await expect(dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)')).toBeVisible();
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
 });
 
@@ -1712,12 +1712,12 @@ test('requires a choice for ambiguous alias groups and preserves drafts after st
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await addChannels(page);
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
-  await dialog(page).getByLabel('Alias List for BEE00-348').selectOption('22');
+  await dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)').selectOption('22');
   await dialog(page).getByLabel('Channel name for 773.08125 MHz').fill('My North Control');
   await addChannels(page);
   await expect(dialog(page)).toContainText('Saved choices changed');
   await expect(dialog(page).getByLabel('Channel name for 773.08125 MHz')).toHaveValue('My North Control');
-  await expect(dialog(page).getByLabel('Alias List for BEE00-348')).toHaveValue('22');
+  await expect(dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)')).toHaveValue('22');
   await addChannels(page);
   await expect(dialog(page)).toContainText('1 channel added.');
   expect(state.requests.filter((request) => request.path.endsWith('/save')).at(-1).body.revision).toBe(8);
@@ -2284,7 +2284,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       await expect(signal).toContainText('Cuyahoga County');
       await expect(signal).toContainText('BEE00');
       expect(await signal.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-      const wacnLines = await signal.getByText('BEE00', { exact: true }).evaluate((element) => {
+      const wacnLines = await signal.getByText('0xBEE00 (781824)', { exact: true }).evaluate((element) => {
         const range = document.createRange(); range.selectNodeContents(element);
         return range.getClientRects().length;
       });
@@ -2613,7 +2613,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await complete(page);
     await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
     await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
-    const alias = dialog(page).getByLabel('Alias List for BEE00-348');
+    const alias = dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)');
     await expect(alias.locator('option')).toHaveText(['Choose an Alias List', 'County Dispatch', 'County Operations']);
     await alias.click();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-alias-control-${theme}-${width}.png`);

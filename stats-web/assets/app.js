@@ -23,11 +23,12 @@ import {
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import { createListenMap } from './features/listen-map.js?v=10';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
+import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=5';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=28';
+} from './features/alias-list-create.js?v=6';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=29';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=8';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
@@ -36,7 +37,7 @@ import { createAlertsWorkspace } from './features/alerts.js?v=8';
 import { createRecordingsFeature } from './features/recordings.js?v=34';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=3';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=27';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=28';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
@@ -14225,8 +14226,8 @@ async function loadRadioReferenceDetails(row, frequencyHz, signal = null) {
 function radioReferenceResultView(matches, frequencyHz, signal = null) {
   const rows = Array.isArray(matches) ? matches : [];
   const channelLabel = (value) => {
-    const number = Number(value?.site_number);
-    const numbered = Number.isInteger(number) && number > 0 ? `Site ${String(number).padStart(3, '0')}` : '';
+    const number = formatHexDecimal(value?.site_number, 2);
+    const numbered = number ? `Site ${number}` : '';
     return [numbered, String(value?.site_name || '').trim()].filter(Boolean).join(' ');
   };
   const conventional = rows.filter((row) => row.match_type !== 'TRUNKED');
