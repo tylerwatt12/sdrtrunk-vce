@@ -145,7 +145,8 @@ for (const [name, query, selector, content] of cases) {
         }
       }
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
-        await expect(page.locator('#content')).toHaveScreenshot(`${name}-${presentation.name}.png`);
+        await expect(page.locator('#content')).toHaveScreenshot(`${name}-${presentation.name}.png`,
+          name === 'recordings' ? { stylePath: path.resolve(__dirname, 'fixtures/recordings-screenshot-timing.css') } : {});
       }
     });
   }

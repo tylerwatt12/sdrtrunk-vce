@@ -300,6 +300,72 @@ function millis(row) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function recordingTimestamp(row, ...keys) {
+  const raw = value(row, ...keys);
+  const timestamp = raw === null || raw === '' ? NaN : Number(raw);
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
+}
+
+function recordingEndMilliseconds(row, start) {
+  const end = recordingTimestamp(row, 'end_ms', 'ended_at_ms', 'call_end_ms');
+  if (end !== null && end >= start) return end;
+  const length = recordingTimestamp(row, 'duration_ms', 'call_duration_ms');
+  return length !== null && Number.isFinite(start + length) ? start + length : null;
+}
+
+export function recordingGapMilliseconds(first, second) {
+  const firstStart = recordingTimestamp(first, 'start_ms', 'started_at_ms', 'call_start_ms');
+  const secondStart = recordingTimestamp(second, 'start_ms', 'started_at_ms', 'call_start_ms');
+  if (firstStart === null || secondStart === null || firstStart === secondStart) return null;
+  const earlier = firstStart < secondStart ? first : second;
+  const earlierStart = Math.min(firstStart, secondStart);
+  const end = recordingEndMilliseconds(earlier, earlierStart);
+  if (end === null) return null;
+  const gap = Math.max(firstStart, secondStart) - end;
+  return Number.isFinite(gap) && gap >= 30_000 ? gap : null;
+}
+
+export function recordingPageGaps(rows) {
+  const gaps = new Map();
+  const ordered = rows.map((row, index) => ({ row, index,
+    start: recordingTimestamp(row, 'start_ms', 'started_at_ms', 'call_start_ms') }));
+  // An unpositioned call could cover any apparent gap in this page.
+  if (ordered.some(item => item.start === null)) return gaps;
+  const descending = ordered.length > 1 && ordered[0].start > ordered[ordered.length - 1].start;
+  ordered.sort((a, b) => a.start - b.start || (descending ? b.index - a.index : a.index - b.index));
+  let coveredThrough = null;
+  let endsKnown = true;
+  let previous = null;
+  for (const item of ordered) {
+    const date = dateTime(item.start, true);
+    if (previous && endsKnown && date && date === previous.date &&
+        Math.abs(item.index - previous.index) === 1) {
+      const gap = item.start - coveredThrough;
+      if (gap >= 30_000) gaps.set(Math.max(item.index, previous.index), gap);
+    }
+    const end = recordingEndMilliseconds(item.row, item.start);
+    if (end === null) endsKnown = false;
+    else coveredThrough = coveredThrough === null ? end : Math.max(coveredThrough, end);
+    previous = { ...item, date };
+  }
+  return gaps;
+}
+
+export function recordingGapLabel(milliseconds) {
+  let seconds = Math.floor(milliseconds / 1000);
+  const parts = [];
+  for (const [unit, span] of [['d', 86_400], ['h', 3600], ['m', 60]]) {
+    if (seconds >= span) { parts.push(`${Math.floor(seconds / span)}${unit}`); seconds %= span; }
+  }
+  if (seconds || !parts.length) parts.push(`${seconds}s`);
+  return parts.join(' ');
+}
+
+export function recordingSearchTiming(milliseconds) {
+  const elapsed = Math.max(0, milliseconds);
+  return elapsed < 1000 ? `Loaded in ${Math.round(elapsed)} ms` : `Loaded in ${(elapsed / 1000).toFixed(1)} s`;
+}
+
 function duration(row) {
   const number = Number(value(row, 'duration_ms', 'call_duration_ms'));
   if (!Number.isFinite(number) || number < 0) return '';
@@ -446,11 +512,15 @@ export function createRecordingsFeature(deps) {
   let countHost = null;
   let countText = null;
   let pageSelect = null;
-  let pagerHost = null;
+  let pagerHosts = [];
   let selectedFiltersHost = null;
   let filterCountHost = null;
   let selectedHost = null;
   let sortControl = null;
+  let pageSizeControl = null;
+  let pageSize = PAGE_SIZE;
+  let appliedSort = 'desc';
+  let searchTiming = null;
   let searchRequest = 0;
   let searchLoading = false;
   let searchSignal = null;
@@ -523,7 +593,7 @@ export function createRecordingsFeature(deps) {
   };
 
   function query(filters, extra = {}) {
-    return queryPath(CALLS, { ...filters, ...extra, limit: PAGE_SIZE });
+    return queryPath(CALLS, { ...filters, limit: PAGE_SIZE, ...extra });
   }
 
   function replaceSearchForm() {
@@ -1571,6 +1641,30 @@ export function createRecordingsFeature(deps) {
       className: 'recordings-detail-modal' });
   }
 
+  function updatePagers() {
+    const showPager = currentPage > 0 || Boolean(nextCursor);
+    for (const pager of pagerHosts) {
+      pager.hidden = !showPager;
+      pager.update({ countText: `Page ${currentPage + 1}`,
+        previous: { enabled: !searchLoading && currentPage > 0, onClick: () => void loadPage(currentPage - 1) },
+        next: { enabled: !searchLoading && Boolean(nextCursor), onClick: () => void loadPage(currentPage + 1) } });
+      const first = pager.querySelector('[data-page-action="first"]');
+      first.disabled = searchLoading || currentPage === 0;
+      first.setAttribute('aria-disabled', String(first.disabled));
+    }
+  }
+
+  function makePager(position) {
+    const pager = browsingWorkflows.createBrowsingPager({ node,
+      className: `recordings-pager recordings-pager-${position}${position === 'top' ? ' pager-top' : ''}`,
+      ariaLabel: position === 'top' ? 'Call result pages above calls' : 'Call result pages below calls' });
+    const first = button(node, 'First', () => void loadPage(0), 'ui-button ui-button-secondary');
+    first.dataset.pageAction = 'first';
+    pager.querySelector('.ui-browse-pager-actions').prepend(first);
+    pagerHosts.push(pager);
+    return pager;
+  }
+
   function drawResults() {
     if (!resultHost) return;
     if (resultHeading) resultHeading.textContent = currentFilters.high_interest ? 'High Interest' : 'All recordings';
@@ -1582,9 +1676,22 @@ export function createRecordingsFeature(deps) {
         'No matching calls. Try a wider time range or fewer filters.', 'empty'));
     } else {
       let lastDate = '';
-      for (const row of currentResults) {
+      const gaps = recordingPageGaps(currentResults);
+      for (const [index, row] of currentResults.entries()) {
         const date = dateTime(millis(row), true);
         if (date !== lastDate) { resultHost.append(node('h3', 'recordings-result-date', date)); lastDate = date; }
+        else {
+          const gap = gaps.get(index);
+          if (gap !== undefined) {
+            const label = recordingGapLabel(gap);
+            const divider = node('div', 'recordings-call-gap');
+            divider.setAttribute('role', 'separator');
+            divider.title = `Gap between matching calls: ${label}`;
+            divider.setAttribute('aria-label', divider.title);
+            divider.append(node('span', 'recordings-call-gap-label', `Gap ${label}`));
+            resultHost.append(divider);
+          }
+        }
         resultHost.append(callCard(row));
       }
     }
@@ -1592,40 +1699,46 @@ export function createRecordingsFeature(deps) {
     const showCount = Boolean(currentResults.length || nextCursor);
     const showPager = currentPage > 0 || Boolean(nextCursor);
     if (countHost) {
-      countHost.hidden = !showCount;
+      countHost.hidden = false;
+      countText.hidden = !showCount;
+      if (pageSelect) pageSelect.closest('label').hidden = !showCount;
       const count = resultTotal === null ? currentResults.length : Number(resultTotal);
       countText.textContent = `${count.toLocaleString()} ${count === 1 ? 'call' : 'calls'}` +
         (resultTotal === null ? ' shown' : '') +
 
         (showPager && nextCursor ? ' · more available' : '');
     }
-    if (pagerHost) {
-      pagerHost.hidden = !showPager;
-      pagerHost.update({ countText: `Page ${currentPage + 1}`,
-        previous: { enabled: currentPage > 0, onClick: () => void loadPage(currentPage - 1) },
-        next: { enabled: Boolean(nextCursor), onClick: () => void loadPage(currentPage + 1) } });
-    }
+    updatePagers();
     drawSelection();
     drawSelectedFilters();
   }
 
-  async function loadPage(page = 0, submission = null) {
+  async function loadPage(page = 0, submission = null, browsing = {}) {
     if (!pageHost) return;
-    if (submission) page = 0;
-    if (!submission && page > currentPage && !cursors[page]) cursors[page] = nextCursor;
-    if (page < 0 || (page > 0 && !cursors[page])) return;
+    const reset = Boolean(submission || browsing.reset);
+    if (reset) page = 0;
+    const cursor = reset || page === 0 ? null : cursors[page] || (page === currentPage + 1 ? nextCursor : null);
+    if (page < 0 || (page > 0 && !cursor)) return;
+    const requestedSize = browsing.pageSize || pageSize;
+    const requestedSort = browsing.sort || appliedSort;
+    const activeControl = pageHost.ownerDocument.activeElement;
+    const activePager = activeControl?.closest('.recordings-pager');
+    const requestedCursors = reset ? [null] : cursors.slice(0, page + 1);
+    requestedCursors[page] = cursor;
     const request = ++searchRequest;
+    const startedAt = performance.now();
     searchLoading = true;
     if (sortControl) sortControl.disabled = true;
+    if (pageSizeControl) pageSizeControl.disabled = true;
     pageHost.querySelector('button[type="submit"]')?.setAttribute('disabled', '');
-    pagerHost?.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    updatePagers();
     resultHost?.setAttribute('aria-busy', 'true');
     searchSignal?.abort();
     searchSignal = new AbortController();
     resultStatus.replaceChildren(makeNotice('Finding calls…', 'loading'));
     try {
       const result = await requestJson(query(submission?.filters || currentFilters, {
-        cursor: submission ? null : cursors[page], sort: sortControl.value
+        cursor, sort: requestedSort, limit: requestedSize
       }), { page: false, signal: searchSignal.signal });
       if (request !== searchRequest || !pageHost.isConnected) return;
       if (submission) {
@@ -1633,26 +1746,36 @@ export function createRecordingsFeature(deps) {
         for (const key of ['from_ms', 'to_ms']) if (Number.isFinite(Number(result?.[key])) && result?.[key] != null) anchors[key] = String(result[key]);
         if (JSON.stringify(search) === JSON.stringify(submission.search)) Object.assign(search, anchors);
         currentFilters = { ...submission.filters, ...anchors }; appliedSearch = { ...submission.search, ...anchors }; appliedRange = submission.search.transcript && submission.search.text_range !== 'time' ? '24h' : submission.search.range || '24h';
-        appliedSuggestions = submission.suggestions; cursors = [null]; selection.clear(); resetAudio();
+        appliedSuggestions = submission.suggestions; selection.clear(); resetAudio();
         updateDraftFeedback();
       }
       currentResults = Array.isArray(result?.calls) ? result.calls : [];
       currentPage = page;
+      pageSize = requestedSize;
+      appliedSort = requestedSort;
+      cursors = requestedCursors;
       nextCursor = result?.next_cursor || null;
       resultTotal = result?.total !== null && result?.total !== undefined &&
         Number.isFinite(Number(result.total)) ? Number(result.total) : null;
       resultStatus.replaceChildren();
       drawResults();
+      searchTiming.textContent = recordingSearchTiming(performance.now() - startedAt);
     } catch (error) {
       if (request !== searchRequest || error?.name === 'AbortError') return;
       resultStatus.replaceChildren(makeNotice(`${error.message || 'Calls could not be loaded. Try again.'}${currentResults.length ? ' Previous results are still shown.' : ''}`, 'error'));
     } finally {
       if (request === searchRequest) {
-        searchLoading = false; if (sortControl) sortControl.disabled = false;
+        searchLoading = false;
+        if (sortControl) { sortControl.disabled = false; sortControl.value = appliedSort; }
+        if (pageSizeControl) { pageSizeControl.disabled = false; pageSizeControl.value = String(pageSize); }
         pageHost?.querySelector('button[type="submit"]')?.removeAttribute('disabled'); resultHost?.setAttribute('aria-busy', 'false');
-        pagerHost?.update({ countText: `Page ${currentPage + 1}`,
-          previous: { enabled: currentPage > 0, onClick: () => void loadPage(currentPage - 1) },
-          next: { enabled: Boolean(nextCursor), onClick: () => void loadPage(currentPage + 1) } });
+        updatePagers();
+        if (activePager && (pageHost.ownerDocument.activeElement === activeControl ||
+            pageHost.ownerDocument.activeElement === pageHost.ownerDocument.body)) {
+          const target = !activePager.hidden && !activeControl.disabled ? activeControl :
+            !activePager.hidden && activePager.querySelector('button:not(:disabled)') || sortControl;
+          target?.focus();
+        }
       }
     }
   }
@@ -2180,15 +2303,22 @@ export function createRecordingsFeature(deps) {
     const headingCopy = node('div', 'recordings-results-title');
     resultHeading = node('h2', '', 'All recordings'); resultScope = node('p', '', '');
     headingCopy.append(resultHeading, resultScope); titleBar.append(headingCopy);
-    const titleActions = node('div', 'ui-action-row');
+    const titleActions = node('div', 'ui-action-row recordings-results-actions');
     sortControl = select(node, [['desc', 'Newest first'], ['asc', 'Oldest first']], 'Sort calls');
     sortControl.value = parameters.get('recording_filters') === '1' && parameters.get('sort') === 'asc' ? 'asc' : 'desc';
+    appliedSort = sortControl.value;
     sortControl.addEventListener('change', () => {
-      cursors = [null];
-      currentPage = 0;
-      void loadPage(0);
+      void loadPage(0, null, { reset: true, sort: sortControl.value });
     });
-    titleActions.append(sortControl);
+    const pageSizeField = node('label', 'recordings-page-size-field');
+    pageSizeControl = select(node, [['25', '25'], ['50', '50']], 'Calls per page');
+    pageSizeControl.classList.add('recordings-page-size');
+    pageSizeControl.value = String(pageSize);
+    pageSizeControl.addEventListener('change', () => {
+      void loadPage(0, null, { reset: true, pageSize: Number(pageSizeControl.value) });
+    });
+    pageSizeField.append(node('span', '', 'Calls per page'), pageSizeControl);
+    titleActions.append(sortControl, pageSizeField);
     titleBar.append(titleActions);
     const body = node('div', 'recordings-results-body');
     selectedFiltersHost = node('div', 'recordings-selected-filters'); selectedFiltersHost.setAttribute('aria-label', 'Applied filters');
@@ -2196,7 +2326,8 @@ export function createRecordingsFeature(deps) {
     selectedHost.hidden = true;
     countHost = node('div', 'recordings-result-count');
     countText = node('span');
-    countHost.append(countText);
+    searchTiming = node('span', 'recordings-search-timing');
+    countHost.append(countText, searchTiming);
     pageSelect = null;
     if (isPrimaryAdmin()) {
       const pageSelection = node('label', 'recordings-page-selection');
@@ -2217,9 +2348,10 @@ export function createRecordingsFeature(deps) {
     resultStatus = node('div', 'recordings-result-status');
     resultStatus.setAttribute('role', 'status');
     resultHost = node('div', 'ui-record-grid recordings-results recordings-call-list');
-    pagerHost = browsingWorkflows.createBrowsingPager({ node, className: 'recordings-pager',
-      ariaLabel: 'Call result pages' });
-    body.append(selectedFiltersHost, selectedHost, countHost, resultStatus, resultHost, pagerHost);
+    pagerHosts = [];
+    const topPager = makePager('top');
+    const bottomPager = makePager('bottom');
+    body.append(selectedFiltersHost, selectedHost, countHost, resultStatus, topPager, resultHost, bottomPager);
     resultSection.append(titleBar, body);
     browser.append(resultSection);
     host.append(form);

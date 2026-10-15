@@ -152,7 +152,7 @@ test('talkgroup clicks preserve applied dates, full text, duration, source and s
   await page.getByRole('combobox', { name: 'Sort calls' }).selectOption('asc');
   await expect.poll(() => state.requests.at(-1).sort).toBe('asc');
   const applied = { ...state.requests.at(-1) };
-  const next = page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true });
+  const next = page.locator('.recordings-pager').last().getByRole('button', { name: 'Next', exact: true });
   await next.click();
   await expect(page.locator('.recordings-call')).toHaveCount(5);
   await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
@@ -163,7 +163,7 @@ test('talkgroup clicks preserve applied dates, full text, duration, source and s
   expect(state.requests.at(-1)).not.toHaveProperty('cursor');
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
   await expect(page.locator('.recordings-selected')).toBeHidden();
-  await expect(page.locator('.recordings-pager').getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
+  await expect(page.locator('.recordings-pager').last().getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
   await expect(page.getByLabel('From', { exact: true })).toHaveValue('2026-09-28T00:00');
   await expect(page.getByLabel('To', { exact: true })).toHaveValue('2026-09-29T00:00');
   await expect(page.getByLabel('Full text', { exact: true })).toHaveValue('arriving');

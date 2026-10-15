@@ -25,6 +25,9 @@
 .recordings-results-heading { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-3); }
 .recordings-results-title h2 { margin: 0; font-size: var(--font-size-subheading); font-weight: var(--font-weight-heading); }
 .recordings-results-title p { margin: var(--space-1) 0 0; font-size: var(--font-size-meta); color: var(--muted); }
+.recordings-results-actions { min-width: 0; }
+.recordings-page-size-field { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; font-size: var(--font-size-meta); color: var(--muted); }
+.recordings-page-size { min-width: 0; }
 .recordings-results-body { display: grid; min-width: 0; gap: var(--space-3); }
 .recordings-field { min-width: 0; display: grid; gap: var(--space-2); }
 .recordings-field > span, .recordings-field > label { font-weight: var(--font-weight-medium); }
@@ -96,10 +99,15 @@
 .recordings-selected-filters:empty { display: none; }
 .recordings-result-count { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--font-size-meta); }
 .recordings-result-count[hidden] { display: none; }
+.recordings-search-timing { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .recordings-page-selection { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
 .recordings-selected { margin: 0; }
+.recordings-pager { min-width: 0; }
 .recordings-call-list { display: grid; min-width: 0; gap: var(--space-3); }
 .recordings-result-date { font-size: var(--font-size-meta); color: var(--muted); margin: var(--space-2) 0 0; letter-spacing: .045em; text-transform: uppercase; font-weight: var(--font-weight-medium); }
+.recordings-call-gap { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; }
+.recordings-call-gap::before, .recordings-call-gap::after { content: ''; height: 1px; background: var(--line); }
+.recordings-call-gap-label { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
 .recordings-call { position: relative; min-width: 0; display: grid; gap: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-control); padding: var(--space-4); background: var(--surface); }
 .recordings-call-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .recordings-call-time, .recordings-call-duration, .recordings-call-protocol { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
@@ -362,6 +370,7 @@
   .recordings-maintenance-row, .recordings-maintenance { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 430px) {
+  .recordings-results-actions { width: 100%; justify-content: space-between; }
   .recordings-picker-tools { grid-template-columns: minmax(0, 1fr); }
   .recordings-picker-tools > select { max-width: none; }
   .recordings-call-protocol { flex-basis: 100%; order: 2; }

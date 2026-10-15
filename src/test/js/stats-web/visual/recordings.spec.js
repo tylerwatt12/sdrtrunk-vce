@@ -6,7 +6,8 @@ const { pathToFileURL } = require('node:url');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 // The global player is covered separately; these snapshots isolate recording components.
-const componentScreenshot = { stylePath: path.resolve(__dirname, 'fixtures/hide-global-audio-dock.css') };
+const componentScreenshot = { stylePath: [path.resolve(__dirname, 'fixtures/hide-global-audio-dock.css'),
+  path.resolve(__dirname, 'fixtures/recordings-screenshot-timing.css')] };
 
 let defaultPreferences;
 
@@ -188,7 +189,7 @@ async function openRecordings(page, options = {}) {
       const limit = state.paginate ? Number(url.searchParams.get('limit')) : calls.length;
       await route.fulfill({ json: { data: { calls: options.emptyFirstBatch && offset === 0 ? [] :
         calls.slice(offset, offset + limit),
-        next_cursor: state.paginate && offset + limit < calls.length ? `fixture:${offset + limit}` : null,
+        next_cursor: options.nextCursor || (state.paginate && offset + limit < calls.length ? `fixture:${offset + limit}` : null),
         total: null } } });
     } else if (pathname === '/api/v1/admin/recordings/calls' && route.request().method() === 'DELETE') {
       const update = route.request().postDataJSON();
@@ -796,7 +797,7 @@ for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }],
       expect(await page.evaluate(() => window.playedRecordingSources)).toEqual([]);
       if (size !== 'minimal') await dock.locator('#audio-dock-size-handle').press(size === 'collapsed' ? 'Home' : 'End');
       await expect(dock).toHaveAttribute('data-state', size);
-      const next = page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true });
+      const next = page.locator('.recordings-pager').last().getByRole('button', { name: 'Next', exact: true });
       // Scroll to the page end as a user would; the measured player reserve must provide space.
       await next.evaluate((element) => element.scrollIntoView({ block: 'end', behavior: 'instant' }));
       await expect.poll(async () => {
@@ -936,7 +937,7 @@ test('page selection preserves other pages and Clear selection resets every page
   await page.setViewportSize({ width: 390, height: 844 });
   await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
   const pageCheck = page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true });
-  const pager = page.locator('.recordings-pager');
+  const pager = page.locator('.recordings-pager').last();
   await expect(page.locator('.recordings-call')).toHaveCount(25);
   await pageCheck.check();
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
@@ -992,7 +993,7 @@ test('page selection cannot select an empty cursor batch or a zero-match search'
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true,
     emptyFirstBatch: true });
   const pageCheck = page.locator('.recordings-page-select');
-  const pager = page.locator('.recordings-pager');
+  const pager = page.locator('.recordings-pager').last();
   await expect(page.locator('.recordings-call')).toHaveCount(0);
   await expect(pageCheck).toBeDisabled();
   await expect(pageCheck).not.toBeChecked();
@@ -1016,7 +1017,7 @@ test('page selection deletes only the selected page calls after confirmation', a
   const calls = mixedRecordingCalls();
   const state = await openRecordings(page, { calls, paginate: true });
   await expect(page.locator('.recordings-call')).toHaveCount(25);
-  await page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true }).click();
+  await page.locator('.recordings-pager').last().getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.locator('.recordings-call')).toHaveCount(5);
   await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
   await page.getByRole('button', { name: 'Review delete', exact: true }).click();
@@ -1036,7 +1037,7 @@ test('page selection deletes only the selected page calls after confirmation', a
 test('cursor paging keeps selection across pages and Clear selection leaves results intact', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
-  const pager = page.locator('.recordings-pager');
+  const pager = page.locator('.recordings-pager').last();
   await expect(page.locator('.recordings-call')).toHaveCount(25);
   await expect(pager.locator('.ui-browse-pager-count')).toHaveText('Page 1');
   await expect(page.locator('.recordings-result-count')).not.toContainText(/Page \d+/i);
@@ -1335,7 +1336,7 @@ test('successful searches reset playback and queue while failed searches and cur
   await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
   const queue = page.locator('#audio-dock .audio-dock-queue-count');
   await expect(queue).toContainText('1 queued');
-  await page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true }).click();
+  await page.locator('.recordings-pager').last().getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.locator('.recordings-call')).toHaveCount(5); await expect(queue).toContainText('1 queued');
   await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('new query'); state.errorNext = true;
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
@@ -1360,7 +1361,7 @@ test('pending searches lock sort and pager and group Load more retains its exact
   await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('dispatch');
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Sort calls', exact: true })).toBeDisabled();
-  await expect(page.locator('.recordings-pager').getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.locator('.recordings-pager').last().getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Search recordings', exact: true })).toBeDisabled();
   await expect(page.locator('.recordings-selected-filters')).toContainText('Full text: dispatch');
   await expect(page.getByRole('combobox', { name: 'Sort calls', exact: true })).toBeEnabled();
@@ -1456,4 +1457,196 @@ test('recordings accents follow every color scheme in day and night themes', asy
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
     await expect(page.locator('.recordings-browser')).toHaveScreenshot(`recordings-scheme-${scheme.toLowerCase()}-${theme}.png`, componentScreenshot);
   }
+});
+
+function browsingCalls(count = 61) {
+  return Array.from({ length: count }, (_, index) => ({ ...linkedCall, id: 17 + index,
+    start_ms: call.start_ms - index * 90_000, end_ms: call.start_ms - index * 90_000 + 20_000,
+    duration_ms: 20_000, transcript_excerpt: index === 0 ? 'Engine four arriving at staging.' : null }));
+}
+
+test('top and bottom pagination stay synchronized and First returns to the applied first page', async ({ page }) => {
+  const state = await openRecordings(page, { calls: browsingCalls(), paginate: true });
+  const top = page.locator('.recordings-pager-top'), bottom = page.locator('.recordings-pager-bottom');
+  await expect(page.locator('.recordings-pager')).toHaveCount(2);
+  const counts = page.locator('.recordings-pager .ui-browse-pager-count');
+  await expect(counts).toHaveText(['Page 1', 'Page 1']);
+  await expect(page.locator('.recordings-call-gap')).toHaveCount(24);
+  for (const pager of [top, bottom]) {
+    await expect(pager.getByRole('button', { name: 'First', exact: true })).toBeDisabled();
+    await expect(pager.getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
+    await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+    await expect(pager.locator('svg')).toHaveCount(0);
+  }
+  await top.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(counts).toHaveText(['Page 2', 'Page 2']);
+  expect(state.requestedFilters.at(-1)).toMatchObject({ cursor: 'fixture:25', limit: '25' });
+  await bottom.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(counts).toHaveText(['Page 3', 'Page 3']);
+  await expect(page.locator('.recordings-call')).toHaveCount(11);
+  await expect(page.locator('.recordings-call-gap')).toHaveCount(10);
+  for (const pager of [top, bottom]) await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await top.getByRole('button', { name: 'First', exact: true }).click();
+  await expect(counts).toHaveText(['Page 1', 'Page 1']);
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('cursor');
+});
+
+test('Calls per page uses applied filters, resets pagination, and preserves playback and queue', async ({ page }) => {
+  await stubRecordingAudio(page);
+  const state = await openRecordings(page, { calls: browsingCalls(), paginate: true,
+    query: { transcript: 'arriving', text_range: 'time', high_interest: 'true' } });
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  const size = page.getByRole('combobox', { name: 'Calls per page', exact: true });
+  await expect(size).toHaveValue('25');
+  await expect(size.locator('option')).toHaveText(['25', '50']);
+  await page.locator('.recordings-call-info').first().click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Play once', exact: true }).click();
+  await page.locator('.recordings-call-info').nth(1).click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
+  const queue = page.locator('#audio-dock .audio-dock-queue-count');
+  await expect(queue).toContainText('1 queued');
+  await page.locator('.recordings-pager-top').getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-pager-top .ui-browse-pager-count')).toHaveText('Page 2');
+  const applied = { ...state.requestedFilters.at(-1) }; delete applied.cursor;
+  await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('unsubmitted draft');
+  await size.selectOption('50');
+  await expect(page.locator('.recordings-call')).toHaveCount(50);
+  await expect(page.locator('.recordings-pager .ui-browse-pager-count')).toHaveText(['Page 1', 'Page 1']);
+  expect(state.requestedFilters.at(-1)).toEqual({ ...applied, limit: '50' });
+  await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toHaveValue('unsubmitted draft');
+  await expect(queue).toContainText('1 queued');
+  await expect(page.locator('.recordings-call').first()).toHaveClass(/recordings-call-playing/);
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await page.locator('.recordings-pager-bottom').getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(11);
+  expect(state.requestedFilters.at(-1)).toMatchObject({ cursor: 'fixture:50', limit: '50' });
+  await expect(queue).toContainText('1 queued');
+});
+
+test('failed pagination, page size and sort preserve committed results, controls and timing', async ({ page }) => {
+  const state = await openRecordings(page, { calls: browsingCalls(), paginate: true });
+  const size = page.getByRole('combobox', { name: 'Calls per page', exact: true });
+  const sort = page.getByRole('combobox', { name: 'Sort calls', exact: true });
+  const top = page.locator('.recordings-pager-top');
+  const timing = page.locator('.recordings-search-timing');
+  await expect(timing).toHaveText(/^Loaded in \d+(?:\.\d+)? (?:ms|s)$/);
+  await top.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(top.locator('.ui-browse-pager-count')).toHaveText('Page 2');
+  const successfulTiming = await timing.textContent();
+  const previousIds = await page.locator('.recordings-call').evaluateAll(cards => cards.map(card => card.dataset.recordingId));
+  const expectPrevious = async () => {
+    await expect(page.locator('.recordings-result-status')).toContainText('Previous results');
+    await expect(page.locator('.recordings-pager .ui-browse-pager-count')).toHaveText(['Page 2', 'Page 2']);
+    await expect(size).toHaveValue('25'); await expect(sort).toHaveValue('desc');
+    await expect(timing).toHaveText(successfulTiming);
+    expect(await page.locator('.recordings-call').evaluateAll(cards => cards.map(card => card.dataset.recordingId))).toEqual(previousIds);
+  };
+  state.errorNext = true; await size.selectOption('50'); await expectPrevious();
+  state.errorNext = true; await sort.selectOption('asc'); await expectPrevious();
+  state.errorNext = true; await top.getByRole('button', { name: 'First', exact: true }).click(); await expectPrevious();
+  state.errorNext = true; await top.getByRole('button', { name: 'Next', exact: true }).click(); await expectPrevious();
+  await top.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(11);
+  expect(state.requestedFilters.at(-1)).toMatchObject({ cursor: 'fixture:50', limit: '25' });
+});
+
+test('loading locks both pagers and page size and timing updates only after successful rendering', async ({ page }) => {
+  const state = await openRecordings(page, { calls: browsingCalls(), paginate: true });
+  const timing = page.locator('.recordings-search-timing');
+  await expect(timing).toHaveText(/^Loaded in \d+(?:\.\d+)? (?:ms|s)$/);
+  const before = await timing.textContent();
+  state.delayCalls = 180;
+  await page.locator('.recordings-pager-top').getByRole('button', { name: 'Next', exact: true }).click();
+  for (const control of await page.locator('.recordings-pager button').all()) await expect(control).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Calls per page', exact: true })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: 'Sort calls', exact: true })).toBeDisabled();
+  await expect(timing).toHaveText(before);
+  await expect(page.locator('.recordings-pager-top .ui-browse-pager-count')).toHaveText('Page 2');
+  await expect(page.getByRole('combobox', { name: 'Calls per page', exact: true })).toBeEnabled();
+  const after = await timing.textContent();
+  const elapsed = Number(after.match(/[\d.]+/)[0]) * (after.endsWith(' s') ? 1000 : 1);
+  expect(elapsed).toBeGreaterThanOrEqual(170);
+  state.matchCalls = false;
+  await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
+  await expect(page.locator('.recordings-call')).toHaveCount(0);
+  await expect(page.locator('.recordings-results')).toContainText('No matching calls');
+  await expect(timing).toBeVisible();
+  await expect(timing).toHaveText(/^Loaded in \d+(?:\.\d+)? (?:ms|s)$/);
+});
+
+test('gap dividers use the earlier end, work in both orders, and exclude short, invalid, overlap and date gaps', async ({ page }) => {
+  const t = Date.parse('2026-09-28T10:00:00Z');
+  const make = (id, seconds, extra = {}) => ({ ...linkedCall, id, start_ms: t + seconds * 1000,
+    duration_ms: 10_000, ...extra });
+  const calls = [make(17, 0), make(18, 40), make(19, 75), make(20, 105),
+    make(21, 150, { end_ms: t + 175_000 }), make(22, 205),
+    make(23, 250, { end_ms: t + 300_000 }), make(24, 270),
+    make(25, 330, { duration_ms: null, end_ms: null }), make(26, 450),
+    make(27, 24 * 3600)];
+  const state = await openRecordings(page, { calls, paginate: true });
+  const gaps = page.locator('.recordings-call-gap');
+  await expect(gaps.locator('.recordings-call-gap-label')).toHaveText(['Gap 30s', 'Gap 35s', 'Gap 30s', 'Gap 35s', 'Gap 30s']);
+  await expect(gaps.first()).toHaveAttribute('aria-label', 'Gap between matching calls: 30s');
+  await expect(gaps.locator('svg')).toHaveCount(0);
+  const ascending = await gaps.locator('.recordings-call-gap-label').allTextContents();
+  state.calls = [...calls].reverse();
+  await page.getByRole('combobox', { name: 'Sort calls', exact: true }).selectOption('asc');
+  await expect(gaps.locator('.recordings-call-gap-label')).toHaveText([...ascending].reverse());
+  const coveredCalls = [make(101, 0, { end_ms: t + 400_000 }), make(102, 100), make(103, 300)];
+  state.calls = coveredCalls;
+  await page.getByRole('combobox', { name: 'Sort calls', exact: true }).selectOption('desc');
+  await expect(page.locator('.recordings-call').first()).toHaveAttribute('data-recording-id', '101');
+  await expect(gaps).toHaveCount(0);
+  state.calls = [...coveredCalls].reverse();
+  await page.getByRole('combobox', { name: 'Sort calls', exact: true }).selectOption('asc');
+  await expect(page.locator('.recordings-call').first()).toHaveAttribute('data-recording-id', '103');
+  await expect(gaps).toHaveCount(0);
+});
+
+for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']) {
+  test(`browsing controls and matching-call gaps ${theme} ${device}`, async ({ page }) => {
+    await page.setViewportSize(device === 'phone' ? { width: 320, height: 844 } : { width: 1280, height: 900 });
+    await openRecordings(page, { calls: browsingCalls(3), paginate: true, nextCursor: 'fixture:3', theme });
+    await expect(page.locator('.recordings-call-gap')).toHaveCount(2);
+    await expect(page.getByRole('combobox', { name: 'Calls per page', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    for (const pager of await page.locator('.recordings-pager').all()) {
+      const bounds = await pager.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(device === 'phone' ? 320 : 1280);
+    }
+    await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-browsing-${theme}-${device}.png`, componentScreenshot);
+  });
+}
+
+test('an aborted search cannot replace the new recordings page results or search timing', async ({ page }) => {
+  const state = await openRecordings(page, { calls: [linkedCall], paginate: true });
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  let heldRoute, release, finish;
+  const released = new Promise(resolve => { release = resolve; });
+  const finished = new Promise(resolve => { finish = resolve; });
+  let holdNext = true;
+  await page.route('**/api/v1/recordings/calls?**', async route => {
+    if (!holdNext) { await route.fallback(); return; }
+    holdNext = false; heldRoute = route;
+    await released;
+    // Navigating aborts the old browser request; resolving it must not alter the new page.
+    await route.fulfill({ json: { data: { calls: [{ ...linkedCall, id: 999,
+      talkgroup_alias: 'Obsolete search result' }], next_cursor: null, total: null } } }).catch(() => {});
+    finish();
+  });
+  await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('obsolete search');
+  await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
+  await expect.poll(() => Boolean(heldRoute)).toBe(true);
+  state.calls = [{ ...linkedCall, id: 101, talkgroup_alias: 'Current search result' }];
+  await page.goto('/app.html?view=recordings');
+  await expect(page.locator('.recordings-call')).toHaveAttribute('data-recording-id', '101');
+  const timing = await page.locator('.recordings-search-timing').textContent();
+  release();
+  await finished;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  await expect(page.locator('.recordings-call')).toHaveAttribute('data-recording-id', '101');
+  await expect(page.locator('.recordings-search-timing')).toHaveText(timing);
+  await expect(page.locator('.recordings-results')).not.toContainText('Obsolete search result');
 });

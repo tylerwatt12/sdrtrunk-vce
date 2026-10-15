@@ -72,8 +72,54 @@ async function main() {
     .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`)
     .replace(/from '\.\.\/core\/call-audio-details\.js\?v=\d+'/, `from '${callAudioDetailsUrl}'`);
   const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter,
-    recordingIdentitySelections, recordingIdentitySelectionKey, recordingDiscoveryPeriod } = await import(
+    recordingIdentitySelections, recordingIdentitySelectionKey, recordingDiscoveryPeriod,
+    recordingGapMilliseconds, recordingPageGaps, recordingGapLabel, recordingSearchTiming } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  const earlier = { start_ms: 10_000, end_ms: 40_000, duration_ms: 999_000 };
+  const later = { start_ms: 70_000, duration_ms: 5_000 };
+  assert.equal(recordingGapMilliseconds(earlier, later), 30_000,
+    'The inclusive thirty-second threshold uses the earlier explicit end, not start-to-start');
+  assert.equal(recordingGapMilliseconds(later, earlier), 30_000,
+    'The same adjacent calls have the same gap in ascending and descending results');
+  assert.equal(recordingGapMilliseconds(earlier, { ...later, start_ms: 69_999 }), null);
+  assert.equal(recordingGapMilliseconds({ ...earlier, end_ms: 90_000 }, later), null,
+    'Overlapping calls cannot imply a transmission gap');
+  assert.equal(recordingGapMilliseconds({ start_ms: 10_000, duration_ms: 30_000 }, later), 30_000,
+    'Duration supplies a missing end timestamp');
+  assert.equal(recordingGapMilliseconds({ start_ms: 10_000, end_ms: 9_000, duration_ms: 30_000 }, later), 30_000,
+    'An end before the start falls back to a valid duration');
+  assert.equal(recordingGapMilliseconds({ start_ms: '0', duration_ms: '0' }, { start_ms: '30000' }), 30_000,
+    'Finite zero timestamps and numeric strings are valid captured values');
+  for (const invalid of [null, '', 'unknown', -1, Number.NaN, Infinity]) {
+    assert.equal(recordingGapMilliseconds({ start_ms: invalid, duration_ms: 10_000 }, later), null);
+    assert.equal(recordingGapMilliseconds({ start_ms: 10_000, duration_ms: invalid }, later), null,
+      'Missing or invalid duration cannot invent an end timestamp');
+  }
+  assert.equal(recordingGapMilliseconds({ start_ms: 10_000 }, later), null);
+  assert.equal(recordingGapMilliseconds(earlier, { start_ms: 10_000 }), null,
+    'Identical starts do not imply a gap');
+  const nested = [{ start_ms: 0, end_ms: 200_000 }, { start_ms: 50_000, end_ms: 60_000 },
+    { start_ms: 230_000, end_ms: 240_000 }];
+  assert.deepEqual([...recordingPageGaps(nested)], [[2, 30_000]],
+    'A nested short call cannot inflate the gap after a longer concurrent call');
+  assert.deepEqual([...recordingPageGaps([...nested].reverse())], [[1, 30_000]],
+    'Descending display attaches the same interval before the preceding visible row');
+  assert.deepEqual([...recordingPageGaps([{ ...nested[0], end_ms: 400_000 }, ...nested.slice(1)])], [],
+    'A long ongoing call suppresses apparent gaps between shorter covered calls');
+  assert.deepEqual([...recordingPageGaps([{ start_ms: 0 }, ...nested.slice(1)])], [],
+    'Unknown call length cannot establish silence later in the page');
+  assert.deepEqual([...recordingPageGaps([{ start_ms: 'invalid' }, ...nested.slice(1)])], [],
+    'An invalid timestamp cannot establish a page-wide chronological interval');
+  assert.deepEqual([...recordingPageGaps([{ start_ms: 1_100_000, end_ms: 1_120_000 },
+    { start_ms: 1_100_000, end_ms: 1_110_000 }, { start_ms: 1_000_000, end_ms: 1_010_000 }])], [[2, 90_000]],
+    'Descending equal-start rows keep the chronological boundary beside the earliest displayed tie');
+  assert.equal(recordingGapLabel(30_000), '30s');
+  assert.equal(recordingGapLabel(135_999), '2m 15s');
+  assert.equal(recordingGapLabel(60_000), '1m');
+  assert.equal(recordingGapLabel(90_061_000), '1d 1h 1m 1s');
+  assert.equal(recordingSearchTiming(123.4), 'Loaded in 123 ms');
+  assert.equal(recordingSearchTiming(1_234), 'Loaded in 1.2 s');
+  assert.equal(recordingSearchTiming(-1), 'Loaded in 0 ms');
   const pendingDates = Object.freeze({ range: '30d', from_ms: '1000', to_ms: '9000' });
   assert.deepEqual(recordingDiscoveryPeriod(pendingDates, 4_000_000_000),
     { from_ms: '1408000000', to_ms: '4000000000' },
