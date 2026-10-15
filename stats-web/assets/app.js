@@ -25368,17 +25368,180 @@ async function openChannelCreationChoice(prefetched = null) {
   modal.focus(body.querySelector('button:not([disabled])'));
 }
 
+function channelEnrichmentSupported(channel, profile) {
+  return ['p25-phase1', 'p25-phase2'].includes(channel?.protocol_id) &&
+    String(channel?.channel_kind || profile?.channel_kind || '').toUpperCase() === 'TRUNKED';
+}
+
+function channelEnrichmentAvailability(channel, profile, account) {
+  if (!channelEnrichmentSupported(channel, profile)) return { available: false, reason: '' };
+  if (account?.state !== 'VALID_PREMIUM') return { available: false,
+    reason: account?.state === 'CHECKING' ? 'Checking RadioReference account…' :
+      account?.state === 'EXPIRED_PREMIUM' ? 'A RadioReference Premium subscription is required.' :
+      account?.state === 'UNAVAILABLE' ? 'RadioReference is unavailable. Try reopening this channel later.' :
+        'Sign in to RadioReference with a Premium account to update these names.' };
+  const identity = channel?.observed?.p25_site_identity;
+  const complete = [['wacn', 0xFFFFF], ['system', 0xFFF], ['rfss', 0xFF], ['site', 0xFF]]
+    .every(([key, maximum]) => Number.isInteger(identity?.[key]) && identity[key] >= 0 && identity[key] <= maximum);
+  return complete ? { available: true, reason: '' } : { available: false,
+    reason: 'Run this channel until it learns its WACN, System ID, RFSS, and Site ID, then reopen this editor.' };
+}
+
+function channelEnrichmentChanges(preview, replaceName = false) {
+  return (Array.isArray(preview?.changes) ? preview.changes : []).filter((change) =>
+    ['system', 'site', ...(replaceName ? ['name'] : [])].includes(change?.field) &&
+    String(change.before || '') !== String(change.after || ''));
+}
+
+async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
+  if (parent.isDirty() || parent.state.isBusy()) return;
+  if (!await confirmAction('Look up this channel in RadioReference and review replacement names?', {
+    title: 'Update from RadioReference', confirmLabel: 'Look up channel', cancelLabel: 'Cancel', tone: 'primary'
+  })) return;
+  if (!parent.dialog.isConnected || parent.isDirty() || parent.state.isBusy()) return;
+  const lookupController = new AbortController();
+  const form = node('form', 'editor-workspace');
+  const details = node('div', 'ui-section-body');
+  const message = node('div');
+  const cancel = uiActionButton('Cancel', null, () => modal.close(), 'ui-button ui-button-secondary');
+  const retry = uiActionButton('Look up again', 'icon-refresh', () => void lookup(), 'ui-button ui-button-secondary');
+  retry.hidden = true;
+  const save = uiActionButton('Save', 'icon-edit', () => {}, 'ui-button ui-button-primary');
+  save.type = 'submit';
+  form.append(details, message, aliasModalFooter(cancel, retry, save));
+  const modal = openReadOnlyModal('Review RadioReference names', form, {
+    id: 'channel-radioreference-enrichment', stack: 'child',
+    returnFocusSelector: '[data-channel-enrichment-trigger]', cleanup: () => lookupController.abort()
+  });
+  if (!modal || (modal.ready && !await modal.ready)) return;
+  let preview = null;
+  let replaceName = null;
+  let lookupSequence = 0;
+  // Choosing an optional replacement is part of this review; Cancel discards it directly.
+  const workflow = createFormWorkflow({ form, submit: save, feedback: message, ready: false,
+    modal: { setBusy: modal.setBusy, setDirty: () => {} } });
+  const comparisons = node('div', 'ui-editor-sections');
+  const refreshChanges = () => {
+    comparisons.replaceChildren();
+    const changes = channelEnrichmentChanges(preview, replaceName?.checked === true);
+    for (const change of changes) {
+      const label = { system: 'System', site: 'Site', name: 'Name' }[change.field];
+      const section = node('section', 'ui-form-section');
+      section.append(node('h3', 'ui-section-title', label));
+      const facts = node('dl', 'ui-fact-list');
+      facts.append(node('dt', '', 'Current'), node('dd', '', change.before || 'Empty'),
+        node('dt', '', change.field === 'name' ? 'Suggested' : 'RadioReference'),
+        node('dd', '', change.after || 'Empty'));
+      section.append(facts);
+      comparisons.append(section);
+    }
+    if (!changes.length) comparisons.append(node('p', 'ui-feedback ui-feedback-empty',
+      'System and site names are already up to date.'));
+    workflow.setReady(Boolean(preview?.preview_id) && changes.length > 0);
+  };
+  const lookup = async () => {
+    const sequence = ++lookupSequence;
+    preview = null;
+    replaceName = null;
+    workflow.setReady(false);
+    retry.hidden = true;
+    details.replaceChildren(node('p', 'ui-feedback ui-feedback-loading', 'Looking up this channel in RadioReference…'));
+    workflow.showFeedback('status', '');
+    try {
+      if (sequence > 1) {
+        const current = await requestJson(`/api/v1/admin/channels/${encodeURIComponent(channel.configuration_id)}`, {
+          csrf: false, page: false, signal: lookupController.signal
+        });
+        revision = Number(current.revision);
+      }
+      const loaded = await requestJson('/api/v1/admin/radioreference/channels/enrichment/preview', {
+        method: 'POST', body: { configuration_id: channel.configuration_id, revision },
+        signal: lookupController.signal, page: false, timeoutMs: 30_000
+      });
+      if (!modal.dialog.isConnected || sequence !== lookupSequence) return;
+      preview = loaded;
+      if (loaded.state !== 'matched' || !loaded.preview_id) {
+        details.replaceChildren(node('p', 'ui-feedback ui-feedback-empty', loaded.state === 'no_changes' ?
+          'This channel is already up to date.' : loaded.reason || 'No matching RadioReference site was found.'));
+        if (['login_required', 'premium_required', 'location_required'].includes(loaded.state)) details.append(
+          externalAnchor('Open RadioReference settings', href('radioreference'), 'ui-button ui-button-secondary'));
+        retry.hidden = loaded.state === 'no_changes';
+        modal.focus(cancel);
+        return;
+      }
+      details.replaceChildren();
+      const links = node('div', 'ui-action-row');
+      if (loaded.system_url) links.append(externalAnchor('RadioReference system', loaded.system_url));
+      if (loaded.site_url) links.append(externalAnchor('RadioReference site', loaded.site_url));
+      if (links.childNodes.length) details.append(links);
+      const nameChange = (loaded.changes || []).find((change) => change.field === 'name' &&
+        String(change.before || '') !== String(change.after || ''));
+      if (nameChange) {
+        const choice = uiToggleField('Replace channel name', false, 'Replace channel name',
+          `Uses the RadioReference system and site names: ${nameChange.after}`);
+        replaceName = choice.querySelector('input');
+        replaceName.addEventListener('change', refreshChanges);
+        details.append(choice);
+      }
+      details.append(comparisons);
+      if (loaded.running) details.append(node('p', 'ui-notice ui-notice-warning',
+        'Saving briefly stops this channel and restores its running state.'));
+      refreshChanges();
+      modal.focus(cancel);
+    } catch (error) {
+      if (!modal.dialog.isConnected || sequence !== lookupSequence) return;
+      details.replaceChildren();
+      workflow.showFeedback('error', error.message || 'The RadioReference lookup failed. Try again.');
+      details.append(externalAnchor('Open RadioReference settings', href('radioreference'),
+        'ui-button ui-button-secondary'));
+      retry.hidden = false;
+      modal.focus(retry);
+    }
+  };
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!preview?.preview_id || workflow.isBusy()) return;
+    let applied = false;
+    await workflow.save(async () => {
+      const result = await requestJson('/api/v1/admin/radioreference/channels/enrichment/apply', {
+        method: 'POST', body: { preview_id: preview.preview_id, replace_name: replaceName?.checked === true },
+        page: false, timeoutMs: 30_000
+      });
+      applied = true;
+      await onSaved(result);
+    }, {
+      saving: 'Saving RadioReference names…', success: 'Names saved.',
+      onError: (error) => {
+        preview = null;
+        workflow.setReady(false);
+        retry.hidden = applied;
+        if (applied) {
+          cancel.replaceChildren('Close');
+          return { state: 'warning',
+            message: 'The names were saved. Close this dialog and reopen the channel to refresh its settings.' };
+        }
+        return { state: 'error', message: `${error.message || 'The names could not be saved.'} Look up this channel again to review a fresh comparison.` };
+      },
+      onSuccess: () => { workflow.setReady(false); modal.close(); }
+    });
+  });
+  await lookup();
+}
+
 async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null) {
   const editing = mode === 'edit';
   const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
   let squelchTuner = null;
   let removeSectionLayout = null;
+  const enrichmentAccountController = new AbortController();
   const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
     returnFocusSelector: editing ?
       `tr[data-id="${CSS.escape(configurationId)}"] .channel-edit-button` :
       '.channel-admin-toolbar .ui-button-primary',
-    cleanup: () => { squelchTuner?.close(); removeSectionLayout?.(); }
+    cleanup: () => {
+      squelchTuner?.close(); removeSectionLayout?.(); enrichmentAccountController.abort();
+    }
   });
   if (!modal || (modal.ready && !await modal.ready)) return;
   try {
@@ -25400,6 +25563,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
     if (!editing) channel = channelCreationDefaults(channel, profile, options);
     if (!editing) channel = channelCreationPrefill(channel, profile, initialChannel);
+    let enrichmentAccount = { state: 'CHECKING' };
+    let refreshEnrichmentAvailability = null;
     let baselineChannel = structuredClone(channel);
     let templateGeneration = 0;
     const host = node('div');
@@ -25576,6 +25741,43 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           else grid.append(wrapper);
         });
         panel.append(grid);
+        if (editing && sectionDefinition.id === 'general' && channelEnrichmentSupported(channel, profile)) {
+          const enrichment = node('div', 'ui-field');
+          const update = uiActionButton('Update from RadioReference', 'icon-radioreference', async () => {
+            if (modal.isDirty()) {
+              workflow.showFeedback('warning', 'Save or reset your changes before updating from RadioReference.');
+              return;
+            }
+            await openChannelEnrichment({ channel, revision, parent: modal,
+              onSaved: async () => {
+                const refreshed = await requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`, {
+                  csrf: false, page: false
+                });
+                entry = refreshed;
+                revision = Number(refreshed.revision);
+                channel = refreshed.channel;
+                baselineChannel = structuredClone(channel);
+                draw();
+                await renderChannelSetup();
+              } });
+          }, 'ui-button ui-button-secondary');
+          update.dataset.channelEnrichmentTrigger = '';
+          const detail = node('small', 'ui-field-detail');
+          detail.id = 'channel-enrichment-availability';
+          const settingsLink = externalAnchor('Open RadioReference settings', href('radioreference'));
+          enrichment.append(update, detail, settingsLink);
+          refreshEnrichmentAvailability = () => {
+            const availability = channelEnrichmentAvailability(channel, profile, enrichmentAccount);
+            update.disabled = !availability.available || modal.state.isBusy();
+            detail.textContent = availability.reason;
+            detail.hidden = !availability.reason;
+            if (availability.reason) update.setAttribute('aria-describedby', detail.id);
+            else update.removeAttribute('aria-describedby');
+            settingsLink.hidden = ['CHECKING', 'VALID_PREMIUM'].includes(enrichmentAccount?.state);
+          };
+          refreshEnrichmentAvailability();
+          panel.append(enrichment);
+        }
         if (sectionDefinition.id === 'protocol' && squelchFields.length) {
           squelchTuner = channelSquelchTuner(profile, channel, entry, squelchFields);
           panel.append(squelchTuner.element);
@@ -25725,6 +25927,14 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       squelchTuner?.start();
     };
     draw();
+    if (editing && channelEnrichmentSupported(channel, profile)) {
+      void requestJson('/api/v1/admin/radioreference', {
+        csrf: false, page: false, signal: enrichmentAccountController.signal, timeoutMs: 10_000
+      }).then((configuration) => { enrichmentAccount = configuration?.account || { state: 'UNAVAILABLE' }; },
+      () => { enrichmentAccount = { state: 'UNAVAILABLE' }; }).then(() => {
+        if (modal.dialog.isConnected) refreshEnrichmentAvailability?.();
+      });
+    }
   } catch (error) {
     modal.content.replaceChildren(node('div', 'error', error.message));
   }

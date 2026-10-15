@@ -50,6 +50,9 @@ vm.runInContext(`
   ${functionSource('function channelEncryptedCallSkipLocked(field, protocolCatalog)')}
   ${functionSource('function channelEditorFieldValue(control, field)')}
   ${functionSource('function channelIsRemote(channel)')}
+  ${functionSource('function channelEnrichmentSupported(channel, profile)')}
+  ${functionSource('function channelEnrichmentAvailability(channel, profile, account)')}
+  ${functionSource('function channelEnrichmentChanges(preview, replaceName = false)')}
   ${functionSource('function channelEditorSections(profile, channel)')}
   ${functionSource('function channelEditorPayload(form, profile, channel = null)')}
   ${functionSource('function channelEditorSectionId(value)')}
@@ -434,3 +437,31 @@ assert.match(application, /panel\.setAttribute\('aria-labelledby', labelId\)/,
 assert.doesNotMatch(application,
   /panel\.append\(node\('legend', 'visually-hidden', sectionDefinition\.label\)\)/,
   'Editor sections must not announce duplicate hidden and visible labels');
+
+
+const enrichmentProfile = { channel_kind: 'TRUNKED' };
+context.enrichmentProfile = enrichmentProfile;
+context.enrichmentChannel = { protocol_id: 'p25-phase1', source: remoteChannel.source,
+  observed: { p25_site_identity: { wacn: 0xBEE00, system: 0x348, rfss: 1, site: 2 } } };
+assert.equal(vm.runInContext('channelEnrichmentSupported(enrichmentChannel, enrichmentProfile)', context), true,
+  'Remote P25 trunked channels are eligible for name enrichment');
+assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'p25-conventional' }, enrichmentProfile)", context), false);
+assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'p25-phase1', channel_kind: 'CONVENTIONAL' }, enrichmentProfile)", context), false);
+assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'dmr', channel_kind: 'TRUNKED' }, enrichmentProfile)", context), false);
+assert.equal(vm.runInContext("channelEnrichmentAvailability(enrichmentChannel, enrichmentProfile, { state: 'SIGNED_OUT' }).available", context), false);
+assert.equal(vm.runInContext("channelEnrichmentAvailability(enrichmentChannel, enrichmentProfile, { state: 'EXPIRED_PREMIUM' }).available", context), false);
+assert.equal(vm.runInContext("channelEnrichmentAvailability(enrichmentChannel, enrichmentProfile, { state: 'VALID_PREMIUM' }).available", context), true);
+assert.equal(vm.runInContext("channelEnrichmentAvailability({ protocol_id: 'p25-phase1', observed: { p25_site_identity: { wacn: 1, system: 2, site: 3 } } }, enrichmentProfile, { state: 'VALID_PREMIUM' }).available", context), false,
+  'A matching site number without RFSS is not sufficient');
+context.enrichmentPreview = { changes: [
+  { field: 'system', before: 'Unknown', after: 'County Radio' },
+  { field: 'site', before: 'North', after: 'North' },
+  { field: 'name', before: 'My control', after: 'County Radio · North' },
+  { field: 'radio_resolve_id', before: 'local', after: 'other' },
+  { field: 'source', before: 'remote', after: 'tuner' }
+] };
+assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(channelEnrichmentChanges(enrichmentPreview))', context)),
+  [{ field: 'system', before: 'Unknown', after: 'County Radio' }],
+  'Only changed System/Site names are selected by default');
+assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(channelEnrichmentChanges(enrichmentPreview, true).map((change) => change.field))', context)),
+  ['system', 'name'], 'Opting into Name must not allow source, RadioResolve, or other fields into the reviewed change set');
