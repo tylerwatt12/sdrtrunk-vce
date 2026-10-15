@@ -300,6 +300,65 @@ class ManagedRecordingSearchFiltersTest
     }
 
     private static SearchFilter.Builder base() { return SearchFilter.builder().fromMs(0L).toMs(10000L); }
+
+    @Test
+    void mixedTargetsUnionTalkgroupsAndMultipleChannelsBeforeEveryBranchLimitAndKeepOtherFiltersAnd() throws Exception
+    {
+        Path db=temporary.resolve("mixed.sqlite");
+        try(ManagedRecordingStore store=new ManagedRecordingStore(db,temporary.resolve("audio")))
+        {
+            for(int i=1;i<=7;i++) store.insert(call(i*1000L,i==6?B:A,i==3?20:10,
+                i==1||i==3||i==6?101:999,1,List.of(),List.of()));
+            try(var c=DriverManager.getConnection("jdbc:sqlite:"+db);var s=c.createStatement())
+            {
+                s.executeUpdate("INSERT INTO recording_channel(channel_uuid) VALUES('channel-b'),('channel-c')");
+                s.executeUpdate("UPDATE recording_call SET channel_id=(SELECT id FROM recording_channel WHERE channel_uuid='channel-b') WHERE start_ms IN(2000,3000)");
+                s.executeUpdate("UPDATE recording_call SET channel_id=(SELECT id FROM recording_channel WHERE channel_uuid='channel-c') WHERE start_ms IN(4000,5000)");
+                s.executeUpdate("UPDATE recording_call SET protocol=5 WHERE start_ms IN(2000,4000)");
+            }
+            List<Selection> groups=List.of(new Selection(101,A,null));
+            List<String> channels=List.of("channel-b","channel-c");
+            assertEquals(List.of(5000L,4000L,3000L,2000L,1000L),starts(store,base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).build()));
+            assertEquals(List.of(3000L),starts(store,base().talkgroupSelections(groups).channelIds(channels).build()));
+            assertEquals(List.of(5000L,4000L,2000L,1000L),starts(store,base().talkgroupSelections(groups).channelIds(channels).targetsAny(true)
+                .radioSelections(List.of(new Selection(10,A,null,"NBFM",null),new Selection(10,A,null,"APCO25",null))).radioRole("source").build()));
+            assertEquals(List.of(1000L),starts(store,base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).channelId("channel-a").build()));
+            var first=store.search(base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).limit(2).build());
+            assertEquals(List.of(5000L,4000L),first.calls().stream().map(call->call.startMs()).toList());
+            var second=store.search(base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).limit(2).cursor(first.nextCursor()).build());
+            assertEquals(List.of(3000L,2000L),second.calls().stream().map(call->call.startMs()).toList());
+            assertEquals(List.of(1000L),starts(store,base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).cursor(second.nextCursor()).build()));
+            var queries=store.singleIdentityCandidateQueries(base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).build());
+            assertEquals(2,queries.stream().filter(query->query.sql().contains("INDEXED BY idx_recording_call_channel_time")).count());
+            assertTrue(queries.stream().allMatch(query->query.sql().endsWith("LIMIT ?")));
+            store.storeTranscript(1,"dispatch fire",10000); store.storeTranscript(3,"dispatch fire",10000);
+            assertEquals(List.of(3000L,1000L),starts(store,base().talkgroupSelections(groups).channelIds(channels).targetsAny(true).transcript("dispatch AND fire").build()));
+        }
+        assertThrows(IllegalArgumentException.class,()->base().channelIds(java.util.Collections.nCopies(101,"x")).build());
+        assertThrows(IllegalArgumentException.class,()->base().channelIds(List.of(" ")).build());
+    }
+
+    @Test
+    void exactDcsPreservesNormalInvertedAndUnknownEvidenceAcrossLegacyAndTypedFacts() throws Exception
+    {
+        Path db=temporary.resolve("dcs.sqlite");
+        try(ManagedRecordingStore store=new ManagedRecordingStore(db,temporary.resolve("audio")))
+        {
+            for(int i=1;i<=4;i++) store.insert(call(i*1000L,A,10,101,1,List.of(),List.of()));
+            try(var c=DriverManager.getConnection("jdbc:sqlite:"+db);var s=c.createStatement())
+            {
+                s.executeUpdate("UPDATE recording_call SET tone_kind=1,tone='DCS-023' WHERE start_ms=1000");
+                s.executeUpdate("UPDATE recording_call SET tone_kind=1,tone='DCS-023 Inverted' WHERE start_ms=2000");
+                s.executeUpdate("INSERT INTO recording_identifier VALUES(3,'DCS','tone','other','N023',3000)");
+                s.executeUpdate("UPDATE recording_call SET tone_kind=1,tone='023' WHERE start_ms=4000");
+            }
+            assertEquals(List.of(4000L,3000L,1000L),starts(store,base().dcsCode("023").build()));
+            assertEquals(List.of(2000L),starts(store,base().dcsCode("i023").build()));
+            assertEquals(List.of(1000L),starts(store,base().dcsCode("N023").toMs(2000L).build()));
+            assertThrows(IllegalArgumentException.class,()->base().dcsCode("N000").build());
+            assertThrows(IllegalArgumentException.class,()->base().dcsCode("UNKNOWN").build());
+        }
+    }
     private static List<Long> starts(ManagedRecordingStore store, SearchFilter filter) throws SQLException
     { return store.search(filter).calls().stream().map(call -> call.startMs()).toList(); }
     private static ManagedRecordingMetadata call(long start,String system,int source,int target,int type,List<Site> sites,List<Member> members)

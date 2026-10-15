@@ -72,6 +72,7 @@ final class ManagedRecordingSignalingDiscovery
             }
         }
         StatsAliasResolver aliases = new StatsAliasResolver();
+        if(labels) ManagedRecordingLabels.enrichAliasListNames(connection,contexts,deadline);
         if(labels)
             for(int start=0;start<contexts.size();start+=200)
             {
@@ -112,7 +113,8 @@ final class ManagedRecordingSignalingDiscovery
         private final Key key;
         private final StringBuilder terms = new StringBuilder();
         private final Set<String> primary = new java.util.TreeSet<>();
-        private String alias,description,group,systemName;
+        private String alias,description,group,systemName,aliasListName;
+        private Object aliasList;
         private boolean first = true;
         private long count,last;
         Aggregate(Key key) { this.key=key; }
@@ -121,19 +123,21 @@ final class ManagedRecordingSignalingDiscovery
             if(first)
             {
                 alias=text(row.get("alias_name")); description=text(row.get("alias_description"));
-                group=text(row.get("alias_group")); first=false;
+                group=text(row.get("alias_group")); aliasList=row.get("alias_list_id");
+                aliasListName=text(row.get("alias_list_name")); first=false;
             }
             else
             {
                 if(!java.util.Objects.equals(alias,text(row.get("alias_name")))) alias=null;
                 if(!java.util.Objects.equals(description,text(row.get("alias_description")))) description=null;
                 if(!java.util.Objects.equals(group,text(row.get("alias_group")))) group=null;
+                if(!java.util.Objects.equals(aliasList,row.get("alias_list_id"))) { aliasList=null; aliasListName=null; }
             }
             systemName=text(row.get("system_name"));
             count+=((Number)row.get("call_count")).longValue();
             last=Math.max(last,((Number)row.get("last_recorded_ms")).longValue());
             primary.add(String.valueOf(row.get("primary_protocol")));
-            for(String field: List.of("alias_name","alias_description","alias_group","value","protocol","system_key","system_name"))
+            for(String field: List.of("alias_name","alias_description","alias_group","alias_list_name","value","protocol","system_key","system_name"))
                 if(row.get(field) != null) terms.append(row.get(field)).append('\n');
             terms.append(displayValue()).append('\n');
         }
@@ -157,6 +161,8 @@ final class ManagedRecordingSignalingDiscovery
             if(alias!=null) row.put("alias",alias);
             if(description!=null) row.put("description",description);
             if(group!=null) row.put("group",group);
+            if(aliasList!=null) row.put("alias_list_id",aliasList);
+            if(aliasListName!=null) row.put("alias_list_name",aliasListName);
             row.put("call_count",count); row.put("last_recorded_ms",last);
             Map<String,Object> selection=new LinkedHashMap<>();
             selection.put("id",null); selection.put("system_key",key.system());

@@ -247,6 +247,15 @@ public final class ManagedRecordingCatalogMigrator
                     statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("recording_identifier"));
                     statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("idx_recording_identifier_lookup"));
                 }
+                case 7 ->
+                {
+                    //The plain transcript table remains authoritative. Its disk search index is backfilled once.
+                    var definitions = ManagedRecordingSchema.ddlForFormat(8);
+                    statement.execute(definitions.get("recording_transcript_fts"));
+                    for(String trigger: List.of("insert", "delete", "update"))
+                        statement.execute(definitions.get("recording_transcript_fts_" + trigger));
+                    statement.execute("INSERT INTO recording_transcript_fts(recording_transcript_fts) VALUES('rebuild')");
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

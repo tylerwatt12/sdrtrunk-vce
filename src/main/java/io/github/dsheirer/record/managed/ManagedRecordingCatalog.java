@@ -833,6 +833,10 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final long toMs;
         public final String systemKey;
         public final String channelId;
+        public final List<String> channelIds;
+        public final boolean targetsAny;
+        public final Boolean hasTranscript;
+        public final String dcsCode;
         public final Long aliasListId;
         public final Integer wacn;
         public final Integer systemId;
@@ -863,6 +867,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final String callType;
         public final String voiceType;
         public final String transcript;
+        final String transcriptMatch;
         public final boolean sortAscending;
         public final String cursor;
         public final int limit;
@@ -878,6 +883,25 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             }
             systemKey = builder.systemKey;
             channelId = builder.channelId;
+            if(builder.channelIds != null && (builder.channelIds.size() > 100 || builder.channelIds.stream()
+                .anyMatch(value -> value == null || value.isBlank() || value.length() > 128)))
+                throw new IllegalArgumentException("Too many or invalid recording channel IDs");
+            channelIds = builder.channelIds != null ? List.copyOf(new java.util.LinkedHashSet<>(builder.channelIds)) : List.of();
+            targetsAny = builder.targetsAny;
+            hasTranscript = builder.hasTranscript;
+            String code = builder.dcsCode != null && !builder.dcsCode.isBlank() ?
+                builder.dcsCode.strip().toUpperCase(java.util.Locale.ROOT) : null;
+            if(code != null)
+            {
+                if(code.matches("[0-7]{3}")) code = "N" + code;
+                try
+                {
+                    if(io.github.dsheirer.module.decode.dcs.DCSCode.valueOf(code) ==
+                        io.github.dsheirer.module.decode.dcs.DCSCode.UNKNOWN) throw new IllegalArgumentException();
+                }
+                catch(IllegalArgumentException exception) { throw new IllegalArgumentException("Invalid DCS code"); }
+            }
+            dcsCode = code;
             aliasListId = builder.aliasListId;
             wacn = builder.wacn;
             systemId = builder.systemId;
@@ -947,10 +971,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             callType = builder.callType;
             voiceType = builder.voiceType;
             transcript = builder.transcript != null && !builder.transcript.isBlank() ? builder.transcript.strip() : null;
-            if(transcript != null && transcript.length() > 240)
-            {
-                throw new IllegalArgumentException("Transcript search must be at most 240 characters");
-            }
+            transcriptMatch = ManagedRecordingTranscriptQuery.compile(transcript);
             sortAscending = builder.sortAscending;
             cursor = builder.cursor;
             limit = Math.max(1, Math.min(MAX_PAGE_SIZE, builder.limit));
@@ -991,6 +1012,10 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         {
             private Long fromMs, toMs, minDurationMs, maxDurationMs, frequencyHz, aliasListId;
             private String systemKey, channelId, protocol, callType, voiceType, cursor, transcript;
+            private List<String> channelIds;
+            private boolean targetsAny;
+            private Boolean hasTranscript;
+            private String dcsCode;
             private Integer wacn, systemId, rfss, siteId, talkgroupId, talkgroupMin, talkgroupMax,
                 sourceId, sourceMin, sourceMax, anyIdentityId;
             private List<Integer> anyIdentityIds;
@@ -1006,6 +1031,10 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder toMs(Long value) { toMs = value; return this; }
             public Builder systemKey(String value) { systemKey = value; return this; }
             public Builder channelId(String value) { channelId = value; return this; }
+            public Builder channelIds(List<String> value) { channelIds = value; return this; }
+            public Builder targetsAny(boolean value) { targetsAny = value; return this; }
+            public Builder hasTranscript(Boolean value) { hasTranscript = value; return this; }
+            public Builder dcsCode(String value) { dcsCode = value; return this; }
             public Builder aliasListId(Long value) { aliasListId = value; return this; }
             public Builder wacn(Integer value) { wacn = value; return this; }
             public Builder systemId(Integer value) { systemId = value; return this; }

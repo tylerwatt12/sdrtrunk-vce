@@ -21,7 +21,7 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 7;
+    public static final int CURRENT_FORMAT_VERSION = 8;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
@@ -30,7 +30,8 @@ public final class ManagedRecordingSchema
     private static final Map<String,String> FORMAT_FOUR_DDL = formatFourSchema();
     private static final Map<String,String> FORMAT_FIVE_DDL = formatFiveSchema();
     private static final Map<String,String> FORMAT_SIX_DDL = formatSixSchema();
-    static final Map<String,String> DDL = formatSevenSchema();
+    private static final Map<String,String> FORMAT_SEVEN_DDL = formatSevenSchema();
+    static final Map<String,String> DDL = formatEightSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -45,9 +46,42 @@ public final class ManagedRecordingSchema
             case 4 -> FORMAT_FOUR_DDL;
             case 5 -> FORMAT_FIVE_DDL;
             case 6 -> FORMAT_SIX_DDL;
-            case 7 -> DDL;
+            case 7 -> FORMAT_SEVEN_DDL;
+            case 8 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
+    }
+
+    /** FTS5 creates its registered shadow tables itself; they remain part of exact read-only admission. */
+    public static java.util.List<String> creationStatements()
+    {
+        return DDL.entrySet().stream().filter(entry -> !isTranscriptIndexShadow(entry.getKey()))
+            .map(Map.Entry::getValue).toList();
+    }
+
+    private static boolean isTranscriptIndexShadow(String name)
+    {
+        return java.util.Set.of("recording_transcript_fts_config", "recording_transcript_fts_data",
+            "recording_transcript_fts_docsize", "recording_transcript_fts_idx").contains(name);
+    }
+
+    private static Map<String,String> formatEightSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_SEVEN_DDL);
+        schema.put("recording_transcript_fts", "CREATE VIRTUAL TABLE recording_transcript_fts USING " +
+            "fts5(text,content='recording_transcript',content_rowid='call_id',tokenize='unicode61')");
+        schema.put("recording_transcript_fts_config", "CREATE TABLE 'recording_transcript_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID");
+        schema.put("recording_transcript_fts_data", "CREATE TABLE 'recording_transcript_fts_data'(id INTEGER PRIMARY KEY, block BLOB)");
+        schema.put("recording_transcript_fts_docsize", "CREATE TABLE 'recording_transcript_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)");
+        schema.put("recording_transcript_fts_idx", "CREATE TABLE 'recording_transcript_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID");
+        schema.put("recording_transcript_fts_insert", "CREATE TRIGGER recording_transcript_fts_insert AFTER INSERT ON recording_transcript BEGIN " +
+            "INSERT INTO recording_transcript_fts(rowid,text) VALUES(new.call_id,new.text); END");
+        schema.put("recording_transcript_fts_delete", "CREATE TRIGGER recording_transcript_fts_delete AFTER DELETE ON recording_transcript BEGIN " +
+            "INSERT INTO recording_transcript_fts(recording_transcript_fts,rowid,text) VALUES('delete',old.call_id,old.text); END");
+        schema.put("recording_transcript_fts_update", "CREATE TRIGGER recording_transcript_fts_update AFTER UPDATE ON recording_transcript BEGIN " +
+            "INSERT INTO recording_transcript_fts(recording_transcript_fts,rowid,text) VALUES('delete',old.call_id,old.text); " +
+            "INSERT INTO recording_transcript_fts(rowid,text) VALUES(new.call_id,new.text); END");
+        return java.util.Collections.unmodifiableMap(schema);
     }
 
     /** Exact, read-only admission shared by normal startup and the bundled catalog migrator. */

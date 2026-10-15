@@ -24,6 +24,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -404,9 +405,29 @@ final class ManagedRecordingsHttpController
     private void search(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
         StatsRequest request = StatsRequest.from(exchange.getRequestURI(),
-            Map.of("talkgroups", 16384, "radios", 49152), 262144, 40);
+            Map.of("talkgroups", 16384, "radios", 49152, "channel_ids", 32768), 262144, 48);
         List<ManagedRecordingCatalog.Selection> talkgroups = selections(request, "talkgroups", false);
         List<ManagedRecordingCatalog.Selection> radios = selections(request, "radios", true);
+        List<String> channels = channelSelections(request);
+        boolean targetsAny = Boolean.TRUE.equals(optionalFlag(request, "targets_any"));
+        Boolean hasTranscript = optionalFlag(request, "has_transcript");
+        boolean highInterest = Boolean.TRUE.equals(optionalFlag(request, "high_interest"));
+        String transcript = request.text("transcript");
+        String textRange = request.text("text_range");
+        if(textRange != null && !Set.of("recent", "time").contains(textRange))
+            throw new StatsApiException(400, "invalid_parameter", "Choose Past 24 hours or Use Time filter", "text_range");
+        Long from = request.optionalLong("from_ms"), to = request.optionalLong("to_ms");
+        if(transcript != null && !"time".equals(textRange))
+        {
+            long now = System.currentTimeMillis(), day = Duration.ofDays(1).toMillis();
+            // Retain a recent submitted anchor across pages; an old saved custom period needs Use Time filter.
+            to = to != null && to >= Math.max(0, now - day) && to <= now ? to : now;
+            from = Math.max(0, to - day);
+        }
+        ManagedRecordingCatalog.SearchFilter period = ManagedRecordingCatalog.SearchFilter.builder()
+            .fromMs(from).toMs(to).build();
+        Long minimumDuration = request.optionalLong("min_duration_ms");
+        if(highInterest) minimumDuration = Math.max(10_000, minimumDuration != null ? minimumDuration : 0);
         Integer talkgroupId = request.optionalInt("talkgroup_id");
         Integer radioId = request.optionalInt("radio_id");
         String systemKey = request.text("system_key");
@@ -421,16 +442,18 @@ final class ManagedRecordingsHttpController
         boolean identityConstrained = talkgroupId != null || radioId != null || radioIdentity != null || groupIdentity != null ||
             talkgroupMin != null || radioMin != null || !talkgroups.isEmpty() || !radios.isEmpty();
         ManagedRecordingCatalog.SearchFilter.Builder filter = ManagedRecordingCatalog.SearchFilter.builder()
-            .fromMs(request.optionalLong("from_ms"))
-            .toMs(request.optionalLong("to_ms"))
+            .fromMs(period.fromMs)
+            .toMs(period.toMs)
             .systemKey(systemKey)
             .channelId(request.text("channel_id"))
+            .channelIds(channels)
+            .targetsAny(targetsAny)
             .aliasListId(request.optionalLong("alias_list_id"))
             .wacn(request.optionalInt("wacn"))
             .systemId(request.optionalInt("sysid"))
             .rfss(request.optionalInt("rfss"))
             .siteId(request.optionalInt("site_id"))
-            .minDurationMs(request.optionalLong("min_duration_ms"))
+            .minDurationMs(minimumDuration)
             .maxDurationMs(request.optionalLong("max_duration_ms"))
             .talkgroupId(talkgroupId)
             .sourceId(radioId)
@@ -441,6 +464,7 @@ final class ManagedRecordingsHttpController
             .toneFrequencyHz(optionalDouble(request, "tone_frequency_hz"))
             .toneThenHz(optionalDouble(request, "tone_then_hz"))
             .toneToleranceHz(optionalDouble(request, "tone_tolerance_hz"))
+            .dcsCode(request.text("dcs_code"))
             .radioIdentityMatch(radioIdentity)
             .talkgroupIdentityMatch(groupIdentity)
             .talkgroupMin(talkgroupMin)
@@ -451,7 +475,8 @@ final class ManagedRecordingsHttpController
             .protocol(request.text("protocol"))
             .callType(request.text("call_type"))
             .voiceType(request.text("voice_type"))
-            .transcript(request.text("transcript"))
+            .transcript(transcript)
+            .hasTranscript(hasTranscript)
             .cursor(request.text("cursor"))
             .limit(request.limit(100));
         String sort = request.sort("desc");
@@ -487,7 +512,8 @@ final class ManagedRecordingsHttpController
                 if(identities.isEmpty())
                 {
                     request.requireFullyConsumed();
-                    ApiHttpResponse.sendData(exchange, 200, Map.of("calls", List.of()));
+                    ApiHttpResponse.sendData(exchange, 200, Map.of("calls", List.of(),
+                        "from_ms", period.fromMs, "to_ms", period.toMs));
                     return;
                 }
                 filter.identityNameMatches(identities);
@@ -524,6 +550,8 @@ final class ManagedRecordingsHttpController
         }).toList();
         Map<String,Object> payload = new LinkedHashMap<>();
         payload.put("calls", rows);
+        payload.put("from_ms", period.fromMs);
+        payload.put("to_ms", period.toMs);
         if(page.nextCursor() != null)
         {
             payload.put("next_cursor", page.nextCursor());
@@ -584,6 +612,38 @@ final class ManagedRecordingsHttpController
         return value.textValue();
     }
 
+    private static List<String> channelSelections(StatsRequest request)
+    {
+        String value = request.text("channel_ids");
+        if(value == null) return List.of();
+        try
+        {
+            JsonNode entries = new com.fasterxml.jackson.databind.ObjectMapper().readTree(value);
+            if(entries == null || !entries.isArray() || entries.size() > 100) throw new IllegalArgumentException();
+            Set<String> channels = new LinkedHashSet<>();
+            for(JsonNode entry: entries)
+            {
+                if(!entry.isTextual() || entry.textValue().isBlank() || entry.textValue().length() > 128 ||
+                    entry.textValue().chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException();
+                channels.add(entry.textValue());
+            }
+            return List.copyOf(channels);
+        }
+        catch(IOException | IllegalArgumentException exception)
+        {
+            throw new StatsApiException(400, "invalid_selection", "Select up to 100 valid channels", "channel_ids");
+        }
+    }
+
+    private static Boolean optionalFlag(StatsRequest request, String field)
+    {
+        String value = request.text(field);
+        if(value == null) return null;
+        if("true".equalsIgnoreCase(value) || "1".equals(value)) return true;
+        if("false".equalsIgnoreCase(value) || "0".equals(value)) return false;
+        throw new StatsApiException(400, "invalid_parameter", "Choose true or false", field);
+    }
+
     private static Double optionalDouble(StatsRequest request, String field)
     {
         String value = request.text(field);
@@ -625,13 +685,17 @@ final class ManagedRecordingsHttpController
         int limit = request.limit(100);
         int offset = request.offset();
         String sort = ManagedRecordingBrowseOrder.sort(request.text("sort"));
+        boolean grouped = request.booleanValue("grouped", false);
+        String groupKey = pickerGroup(request, grouped, offset);
         request.requireFullyConsumed();
         if(!LABEL_LOOKUPS.tryAcquire())
             throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
         try
         {
-            ApiHttpResponse.sendData(exchange, 200, mLabels.identities(catalog.databaseFile(), kind, query,
-                system, period.fromMs, period.toMs, offset, limit, role, sort));
+            ApiHttpResponse.sendData(exchange, 200, grouped ? mLabels.identityGroups(catalog.databaseFile(), kind,
+                query, system, period.fromMs, period.toMs, offset, limit, role, sort, groupKey) :
+                mLabels.identities(catalog.databaseFile(), kind, query,
+                    system, period.fromMs, period.toMs, offset, limit, role, sort));
         }
         finally
         {
@@ -643,8 +707,8 @@ final class ManagedRecordingsHttpController
     {
         StatsRequest request = StatsRequest.from(exchange.getRequestURI());
         String kind = request.requiredText("kind");
-        if(!Set.of("system", "site", "channel").contains(kind))
-            throw new StatsApiException(400, "invalid_kind", "Choose systems, sites, or channels", "kind");
+        if(!Set.of("system", "site", "channel", "dcs").contains(kind))
+            throw new StatsApiException(400, "invalid_kind", "Choose systems, sites, channels, or DCS codes", "kind");
         String query = request.search();
         String system = request.text("system_key");
         if(system != null && !RadioSystemKey.isCanonical(system))
@@ -654,15 +718,27 @@ final class ManagedRecordingsHttpController
         String sort = ManagedRecordingBrowseOrder.sort(request.text("sort"));
         int limit = request.limit(100);
         int offset = request.offset();
+        boolean grouped = request.booleanValue("grouped", false);
+        String groupKey = pickerGroup(request, grouped, offset);
         request.requireFullyConsumed();
         if(!LABEL_LOOKUPS.tryAcquire())
             throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
         try
         {
-            ApiHttpResponse.sendData(exchange, 200, mLabels.entities(catalog.databaseFile(), kind, query,
-                system, period.fromMs, period.toMs, offset, limit, sort));
+            ApiHttpResponse.sendData(exchange, 200, grouped ? mLabels.entityGroups(catalog.databaseFile(), kind,
+                query, system, period.fromMs, period.toMs, offset, limit, sort, groupKey) :
+                mLabels.entities(catalog.databaseFile(), kind, query,
+                    system, period.fromMs, period.toMs, offset, limit, sort));
         }
         finally { LABEL_LOOKUPS.release(); }
+    }
+
+    private static String pickerGroup(StatsRequest request, boolean grouped, int offset)
+    {
+        String key = ManagedRecordingPickerGroups.validateKey(request.text("group_key"));
+        if(key != null && !grouped || grouped && offset > 0 && key == null)
+            throw new StatsApiException(400, "invalid_parameter", "Choose a group to load more choices", "group_key");
+        return key;
     }
 
     private static boolean matchesCurrentLabel(Map<String,Object> row, String lowercaseQuery)
@@ -714,11 +790,10 @@ final class ManagedRecordingsHttpController
         try
         {
             List<Map<String,Object>> suggestions = new ArrayList<>(
-                mLabels.suggestions(query, kind, systemKey, limit, catalog.databaseFile()));
+                mLabels.facetSuggestions(query, kind, systemKey, limit, catalog.databaseFile()));
             if(kind == null || "talkgroup".equals(kind) || "radio".equals(kind))
             {
                 //Identity suggestions use the same stable selections as the focused picker, including latest TA.
-                suggestions.removeIf(row -> "talkgroup".equals(row.get("kind")) || "radio".equals(row.get("kind")));
                 for(String identityKind: kind == null ? List.of("talkgroup", "radio") : List.of(kind))
                 {
                     Map<String,Object> discovered = mLabels.identities(catalog.databaseFile(), identityKind,

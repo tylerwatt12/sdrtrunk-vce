@@ -565,7 +565,7 @@ class ManagedRecordingCatalogMigratorTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            for(String ddl: ManagedRecordingSchema.ddlForFormat(ManagedRecordingSchema.CURRENT_FORMAT_VERSION).values())
+            for(String ddl: ManagedRecordingSchema.creationStatements())
             {
                 statement.execute(ddl);
             }

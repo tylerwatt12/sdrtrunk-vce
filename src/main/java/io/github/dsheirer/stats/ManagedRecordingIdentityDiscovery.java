@@ -49,6 +49,21 @@ final class ManagedRecordingIdentityDiscovery
                                       int offset, int limit, String radioRole, String sort, boolean prioritizeExact)
         throws SQLException
     {
+        return search(catalog, kind, query, systemKey, fromMs, toMs, offset, limit, radioRole, sort,
+            prioritizeExact, false, null);
+    }
+
+    Map<String,Object> groups(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
+                              int offset, int limit, String radioRole, String sort, String groupKey) throws SQLException
+    {
+        return search(catalog, kind, query, systemKey, fromMs, toMs, offset, limit, radioRole, sort,
+            false, true, groupKey);
+    }
+
+    private Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
+                                      int offset, int limit, String radioRole, String sort, boolean prioritizeExact,
+                                      boolean grouped, String groupKey) throws SQLException
+    {
         ManagedRecordingBrowseOrder.sort(sort);
         boolean labelsAvailable = Files.isRegularFile(mMainDatabase);
         String url = labelsAvailable ? "jdbc:sqlite:" + mMainDatabase.toAbsolutePath().toUri() + "?mode=ro" :
@@ -74,6 +89,7 @@ final class ManagedRecordingIdentityDiscovery
                 fromMs, toMs, radioRole, deadline);
             if(labelsAvailable)
             {
+                ManagedRecordingLabels.enrichAliasListNames(connection, candidates, deadline);
                 StatsAliasResolver aliases = new StatsAliasResolver();
                 for(int start = 0; start < candidates.size(); start += 500)
                 {
@@ -108,7 +124,8 @@ final class ManagedRecordingIdentityDiscovery
                 labelsAvailable,systemKey,fromMs,toMs,radioRole,query,deadline));
             matching.sort(ManagedRecordingBrowseOrder.comparator(sort,prioritizeExact ? query : null));
             checkDeadline(deadline);
-            return ManagedRecordingBrowseOrder.page(matching, offset, limit);
+            return grouped ? ManagedRecordingPickerGroups.page(matching, kind, groupKey, offset, limit, deadline) :
+                ManagedRecordingBrowseOrder.page(matching, offset, limit);
         }
     }
 
@@ -290,7 +307,7 @@ final class ManagedRecordingIdentityDiscovery
         private final String mNamespace;
         private final StringBuilder mSearch = new StringBuilder();
         private boolean mFirst = true;
-        private String mAlias, mDescription, mGroup, mOta;
+        private String mAlias, mDescription, mGroup, mOta, mAliasListName;
         private Object mAliasList;
         private long mCount, mLast;
         private final java.util.Set<Integer> mObservedIds = new java.util.TreeSet<>();
@@ -315,7 +332,8 @@ final class ManagedRecordingIdentityDiscovery
             if(mFirst)
             {
                 mAlias = alias; mDescription = description; mGroup = group; mOta = ota;
-                mAliasList = row.get("alias_list_id"); mFirst = false;
+                mAliasList = row.get("alias_list_id"); mAliasListName = nullableText(row.get("alias_list_name"));
+                mFirst = false;
             }
             else
             {
@@ -323,11 +341,12 @@ final class ManagedRecordingIdentityDiscovery
                 if(!Objects.equals(mDescription, description)) mDescription = null;
                 if(!Objects.equals(mGroup, group)) mGroup = null;
                 if(!Objects.equals(mOta, ota)) mOta = null;
-                if(!Objects.equals(mAliasList, row.get("alias_list_id"))) mAliasList = null;
+                if(!Objects.equals(mAliasList, row.get("alias_list_id"))) { mAliasList = null; mAliasListName = null; }
             }
             for(Object value: List.of(text(alias), text(description), text(group), text(ota),
                 String.valueOf(row.get("id")), String.valueOf(row.get("observed_id")),
                 text(row.get("system_name")), text(row.get("system_key")),
+                text(row.get("alias_list_name")),
                 text(row.get("identity_key")))) mSearch.append(value).append('\n');
             mCount = Math.max(mCount, ((Number)row.get("call_count")).longValue());
             mObservedIds.add(((Number)row.get("observed_id")).intValue());
@@ -346,8 +365,9 @@ final class ManagedRecordingIdentityDiscovery
             if(mAlias != null)
             {
                 mRow.put("alias", mAlias);
-                if(mAliasList != null) mRow.put("alias_list_id", mAliasList);
             }
+            if(mAliasList != null) mRow.put("alias_list_id", mAliasList);
+            if(mAliasListName != null) mRow.put("alias_list_name", mAliasListName);
             if(mDescription != null) mRow.put("description", mDescription);
             if(mGroup != null) mRow.put("group", mGroup);
             if(mOta != null) mRow.put("ota_alias", mOta);

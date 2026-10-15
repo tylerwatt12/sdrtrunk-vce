@@ -70,7 +70,7 @@ class ManagedRecordingSearchMigrationTest
         Path fresh = directory.resolve("fresh.sqlite");
         try(Connection connection = open(fresh); var statement = connection.createStatement())
         {
-            for(String ddl: ManagedRecordingSchema.ddlForFormat(ManagedRecordingSchema.CURRENT_FORMAT_VERSION).values()) statement.execute(ddl);
+            for(String ddl: ManagedRecordingSchema.creationStatements()) statement.execute(ddl);
             statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1," + ManagedRecordingSchema.CURRENT_FORMAT_VERSION + ",0,0)");
             statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
             statement.execute("PRAGMA user_version=" + ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
@@ -210,7 +210,7 @@ class ManagedRecordingSearchMigrationTest
         var result = new LinkedHashMap<String,List<String>>();
         var tables = new ArrayList<String>();
         try(var statement = connection.createStatement(); var rows = statement.executeQuery(
-            "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
+            "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'recording_transcript_fts*' ORDER BY name"))
         { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table: tables)
         {

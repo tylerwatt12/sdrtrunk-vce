@@ -767,7 +767,11 @@ rows, audio paths, transcripts, tone facts, relationships, counters, and allocat
 signature. Catalog format 7 stores captured auxiliary signaling identifiers with their explicit protocol, role and
 text value, separately from the primary audio protocol and numeric radio fields. The adjacent format-6-to-7 step
 adds an empty identifier table and its lookup index, preserving all existing recording data without inferring missing
-historical identifiers. Format 6 retains its frozen signature. The main application database is independently at
+historical identifiers. Format 6 retains its frozen signature. Catalog format 8 adds a disk-based full-text index
+over stored transcripts, with insert, update and delete maintenance. The adjacent format-7-to-8 step indexes existing
+transcript text while preserving every recording, audio path, transcript, tone, identifier, counter and allocator.
+Format 7 retains its frozen populated fixture and exact signature. The index follows transcript retention and deletion;
+it adds no activity summary or memory cache. The main application database is independently at
 format 54; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with

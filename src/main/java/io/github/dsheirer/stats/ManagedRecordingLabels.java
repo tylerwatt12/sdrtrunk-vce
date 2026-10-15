@@ -221,6 +221,47 @@ final class ManagedRecordingLabels
             systemKey, fromMs, toMs, offset, limit, sort);
     }
 
+    Map<String,Object> identityGroups(Path catalogDatabase, String kind, String query, String systemKey,
+                                     Long fromMs, Long toMs, int offset, int limit, String radioRole, String sort,
+                                     String groupKey) throws SQLException
+    {
+        return new ManagedRecordingIdentityDiscovery(mDatabasePath).groups(catalogDatabase, kind, query,
+            systemKey, fromMs, toMs, offset, limit, radioRole, sort, groupKey);
+    }
+
+    static void enrichAliasListNames(Connection connection, List<Map<String,Object>> rows, long deadline)
+        throws SQLException
+    {
+        Set<Long> ids = new LinkedHashSet<>();
+        for(Map<String,Object> row: rows)
+            if(row.get("alias_list_id") instanceof Number id && id.longValue() > 0) ids.add(id.longValue());
+        List<Long> keys = List.copyOf(ids);
+        Map<Long,String> names = new HashMap<>();
+        for(int start=0; start<keys.size(); start+=500)
+        {
+            if(System.nanoTime() >= deadline) throw new SQLException("Recording browser exceeded its time limit","",9);
+            List<Long> batch = keys.subList(start,Math.min(start+500,keys.size()));
+            try(PreparedStatement statement = connection.prepareStatement("SELECT id,name FROM alias_list WHERE id IN (" +
+                String.join(",",java.util.Collections.nCopies(batch.size(),"?")) + ")"))
+            {
+                for(int index=0; index<batch.size(); index++) statement.setLong(index+1,batch.get(index));
+                try(ResultSet values=statement.executeQuery())
+                { while(values.next()) names.put(values.getLong(1),values.getString(2)); }
+            }
+        }
+        for(Map<String,Object> row: rows)
+            if(row.get("alias_list_id") instanceof Number id && names.get(id.longValue()) != null)
+                row.put("alias_list_name",names.get(id.longValue()));
+    }
+
+    Map<String,Object> entityGroups(Path catalogDatabase, String kind, String query, String systemKey,
+                                   Long fromMs, Long toMs, int offset, int limit, String sort, String groupKey)
+        throws SQLException
+    {
+        return new ManagedRecordingEntityDiscovery(mDatabasePath).groups(catalogDatabase, kind, query,
+            systemKey, fromMs, toMs, offset, limit, sort, groupKey);
+    }
+
     List<Map<String,Object>> enrichSystemNames(List<Map<String,Object>> values)
     {
         if(values.isEmpty() || !Files.isRegularFile(mDatabasePath)) return values;
@@ -464,6 +505,19 @@ final class ManagedRecordingLabels
     List<Map<String,Object>> suggestions(String query, String kind, String systemKey, int requestedLimit,
                                          Path catalogDatabase)
     {
+        return suggestions(query,kind,systemKey,requestedLimit,catalogDatabase,false);
+    }
+
+    /** Exact recorded identities come from discovery; retain the remaining legacy facet and range suggestions. */
+    List<Map<String,Object>> facetSuggestions(String query, String kind, String systemKey, int requestedLimit,
+                                              Path catalogDatabase)
+    {
+        return suggestions(query,kind,systemKey,requestedLimit,catalogDatabase,true);
+    }
+
+    private List<Map<String,Object>> suggestions(String query, String kind, String systemKey, int requestedLimit,
+                                                 Path catalogDatabase, boolean rangesOnly)
+    {
         boolean recordedOnly = catalogDatabase != null;
         if(query == null || query.isBlank() || !Files.isRegularFile(mDatabasePath) ||
             (recordedOnly && !Files.isRegularFile(catalogDatabase)))
@@ -602,6 +656,7 @@ final class ManagedRecordingLabels
                         "radio".equals(kind) ? List.of("RADIO_ID", "RADIO_ID_RANGE") :
                             List.of("TALKGROUP", "TALKGROUP_RANGE"))
                     {
+                        if(rangesOnly && !matcher.endsWith("_RANGE")) continue;
                         int offset = bindRecordingScope(statement, recordedOnly, systemKey);
                         statement.setString(offset + 1, matcher);
                         statement.setString(offset + 2, pattern);
@@ -637,7 +692,7 @@ final class ManagedRecordingLabels
                     }
                 }
             }
-            if(result.size() < limit && systemKey != null && query.length() >= 3 &&
+            if(!rangesOnly && result.size() < limit && systemKey != null && query.length() >= 3 &&
                 (kind == null || "radio".equals(kind)))
             {
                 String recordedRadio = recordedOnly ? recordedOtaIdentityQuery() : "recent.identity_id";

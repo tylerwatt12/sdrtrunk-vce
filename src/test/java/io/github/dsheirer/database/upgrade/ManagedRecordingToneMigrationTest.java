@@ -106,7 +106,7 @@ class ManagedRecordingToneMigrationTest
     private static Map<String,List<String>> contents(Connection connection) throws Exception
     {
         var result = new LinkedHashMap<String,List<String>>(); var tables = new ArrayList<String>();
-        try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT IN ('recording_tone','recording_tone_sequence') ORDER BY name"))
+        try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'recording_transcript_fts*' AND name NOT IN ('recording_tone','recording_tone_sequence') ORDER BY name"))
         { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table: tables)
         {

@@ -394,7 +394,7 @@ class ManagedRecordingsHttpControllerTest
         assertEquals("complete", completed.get("status").textValue());
         assertEquals("Dispatch test", completed.get("text").textValue());
         assertEquals(3000, completed.get("stored_at_ms").longValue());
-        String search = browse + "/calls?from_ms=0&to_ms=5000&transcript=dispatch";
+        String search = browse + "/calls?from_ms=0&to_ms=5000&transcript=dispatch&text_range=time";
         JsonNode matches = json(send(request(search).GET())).at("/data/calls");
         assertEquals(1, matches.size());
         assertEquals("Dispatch test", matches.get(0).get("transcript_excerpt").textValue());
@@ -922,6 +922,83 @@ class ManagedRecordingsHttpControllerTest
             statement.executeUpdate("DELETE FROM recording_call WHERE id=1");
         }
         assertEquals(0, json(send(request(path).GET())).at("/data").size());
+    }
+
+    @Test
+    void groupedDiscoveryUsesIndependentTenChoicePagesAndRecordedDcsSelections() throws Exception
+    {
+        try(var connection=DriverManager.getConnection("jdbc:sqlite:"+mDirectory.resolve("managed-recordings.sqlite"));
+            var statement=connection.createStatement())
+        {
+            statement.execute("UPDATE recording_call SET tone_kind=1,tone='023' WHERE id=1");
+            for(int id=4100;id<4125;id++)
+                statement.execute("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path,size_bytes,"+
+                    "protocol,call_type,voice_type,target_id) VALUES(1000,2000,1000,'"+id+".mp3',5,1,1,1,"+id+")");
+        }
+        String base=ManagedRecordingsHttpController.BROWSE_PATH;
+        String discovery=base+"/identities?kind=talkgroup&grouped=true&from_ms=0&to_ms=5000&limit=100";
+        var first=send(request(discovery).GET());
+        assertEquals(200,first.statusCode(),first.body());
+        JsonNode group=json(first).at("/data/groups/0");
+        assertEquals(10,group.path("rows").size());
+        assertEquals(26,group.path("match_count").intValue());
+        assertTrue(group.path("has_more").booleanValue());
+        String key=group.path("group_key").textValue();
+        var second=send(request(discovery+"&group_key="+key+"&offset=10").GET());
+        assertEquals(200,second.statusCode(),second.body());
+        JsonNode next=json(second).at("/data/groups/0");
+        assertEquals(key,next.path("group_key").textValue());
+        assertEquals(10,next.path("rows").size());
+        assertFalse(group.path("rows").get(0).path("id").equals(next.path("rows").get(0).path("id")));
+        assertEquals(400,send(request(discovery+"&offset=10").GET()).statusCode());
+        assertEquals(400,send(request(discovery+"&group_key=invalid").GET()).statusCode());
+        var dcs=send(request(base+"/entities?kind=dcs&grouped=true&from_ms=0&to_ms=5000").GET());
+        assertEquals(200,dcs.statusCode(),dcs.body());
+        assertEquals("N023",json(dcs).at("/data/groups/0/rows/0/selection/dcs_code").textValue());
+        assertEquals(1,json(send(request(base+"/calls?from_ms=0&to_ms=5000&dcs_code=N023").GET()))
+            .at("/data/calls").size());
+    }
+
+    @Test
+    void mixedTargetAndTextModesValidateBoundsAndRetainAnEffectivePeriod() throws Exception
+    {
+        long now=System.currentTimeMillis(), recent=now-3_600_000;
+        try(var connection=DriverManager.getConnection("jdbc:sqlite:"+mDirectory.resolve("managed-recordings.sqlite"));
+            var statement=connection.createStatement())
+        {
+            statement.execute("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path,size_bytes,"+
+                "protocol,call_type,voice_type,target_id) VALUES(2,"+recent+","+(recent+12000)+
+                ",12000,'recent.mp3',5,1,1,1,4001),(3,"+(recent+20000)+","+(recent+21000)+
+                ",1000,'short.mp3',5,1,1,1,4001)");
+            statement.execute("INSERT INTO recording_transcript(call_id,text,stored_at_ms) VALUES"+
+                "(1,'fire dispatch',1000),(2,'fire dispatch',"+now+")");
+        }
+        String base=ManagedRecordingsHttpController.BROWSE_PATH+"/calls";
+        var recentText=send(request(base+"?from_ms=0&to_ms=5000&transcript=fire").GET());
+        assertEquals(200,recentText.statusCode(),recentText.body());
+        assertEquals(2,json(recentText).at("/data/calls/0/id").intValue());
+        long anchor=json(recentText).at("/data/to_ms").longValue();
+        assertEquals(86_400_000L,anchor-json(recentText).at("/data/from_ms").longValue());
+        var anchored=send(request(base+"?transcript=fire&to_ms="+anchor).GET());
+        assertEquals(anchor,json(anchored).at("/data/to_ms").longValue(),"Paging retains its submitted recent anchor");
+        assertEquals(1,json(send(request(base+"?from_ms=0&to_ms=5000&transcript=fire&text_range=time").GET()))
+            .at("/data/calls/0/id").intValue());
+        assertEquals(1,json(send(request(base+"?from_ms=0&to_ms=5000&has_transcript=1").GET()))
+            .at("/data/calls/0/id").intValue(),"Presence alone does not override the selected period");
+        assertEquals(1,json(send(request(base+"?from_ms="+(recent-1)+"&to_ms="+now+"&high_interest=1").GET()))
+            .at("/data/calls").size());
+        String targets=java.net.URLEncoder.encode("[{\"id\":4001,\"system_key\":null,\"protocol\":\"APCO25\"}]",
+            java.nio.charset.StandardCharsets.UTF_8);
+        String channels=java.net.URLEncoder.encode("[\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"]",
+            java.nio.charset.StandardCharsets.UTF_8);
+        String mixed=base+"?from_ms=0&to_ms=5000&talkgroups="+targets+"&channel_ids="+channels;
+        assertEquals(0,json(send(request(mixed).GET())).at("/data/calls").size());
+        assertEquals(1,json(send(request(mixed+"&targets_any=true").GET())).at("/data/calls").size());
+        assertEquals(0,json(send(request(mixed+"&targets_any=true&channel_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+            .GET())).at("/data/calls").size(),"The legacy scalar channel remains an independent constraint");
+        for(String invalid:List.of("channel_ids=%5B1%5D","targets_any=maybe","has_transcript=maybe",
+            "text_range=all","dcs_code=N999","transcript=%22unterminated"))
+            assertEquals(400,send(request(base+"?"+invalid).GET()).statusCode(),invalid);
     }
 
     private Session login() throws Exception

@@ -30,6 +30,18 @@ final class ManagedRecordingEntityDiscovery
     Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
                               int offset, int limit, String sort) throws SQLException
     {
+        return search(catalog, kind, query, systemKey, fromMs, toMs, offset, limit, sort, false, null);
+    }
+
+    Map<String,Object> groups(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
+                              int offset, int limit, String sort, String groupKey) throws SQLException
+    {
+        return search(catalog, kind, query, systemKey, fromMs, toMs, offset, limit, sort, true, groupKey);
+    }
+
+    private Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
+                                      int offset, int limit, String sort, boolean grouped, String groupKey) throws SQLException
+    {
         ManagedRecordingBrowseOrder.sort(sort);
         boolean labels = Files.isRegularFile(mMainDatabase);
         try(Connection connection = DriverManager.getConnection(labels ?
@@ -50,6 +62,15 @@ final class ManagedRecordingEntityDiscovery
             {
                 @Override protected int progress() { return System.nanoTime() >= deadline ? 1 : 0; }
             });
+            if("dcs".equals(kind))
+            {
+                List<Map<String,Object>> rows = ManagedRecordingDcsDiscovery.rows(connection,systemKey,fromMs,toMs,
+                    query,deadline);
+                rows.sort(ManagedRecordingBrowseOrder.comparator(sort,null));
+                checkDeadline(deadline);
+                return grouped ? ManagedRecordingPickerGroups.page(rows,kind,groupKey,offset,limit,deadline) :
+                    ManagedRecordingBrowseOrder.page(rows,offset,limit);
+            }
             Map<String,Entity> entities = aggregate(connection, kind, systemKey, fromMs, toMs);
             Map<String,Channel> channels = labels ? channels(connection) : Map.of();
             Map<String,String> sites = labels && "site".equals(kind) ? siteNames(connection) : Map.of();
@@ -109,7 +130,8 @@ final class ManagedRecordingEntityDiscovery
             }
             rows.sort(ManagedRecordingBrowseOrder.comparator(sort,null));
             checkDeadline(deadline);
-            return ManagedRecordingBrowseOrder.page(rows,offset,limit);
+            return grouped ? ManagedRecordingPickerGroups.page(rows,kind,groupKey,offset,limit,deadline) :
+                ManagedRecordingBrowseOrder.page(rows,offset,limit);
         }
     }
 
@@ -133,23 +155,7 @@ final class ManagedRecordingEntityDiscovery
                 "SELECT channel_uuid FROM scoped WHERE protocol NOT IN(1,2)) GROUP BY channel_uuid,system_key,protocol";
             default -> throw new IllegalArgumentException("Unknown recording entity kind");
         };
-        String sql = """
-            WITH recorded AS (
-                SELECT c.id AS call_id,c.start_ms,c.protocol,ch.channel_uuid,
-                    coalesce(sys.system_key,CASE WHEN c.protocol IN(1,2) THEN
-                        CASE WHEN winner.wacn IS NOT NULL THEN printf('p25:%%05x:%%03x',winner.wacn,winner.system_id)
-                        WHEN c.winner_site_id IS NULL THEN (SELECT
-                            CASE WHEN count(DISTINCT printf('p25:%%05x:%%03x',s.wacn,s.system_id))=1
-                                THEN printf('p25:%%05x:%%03x',s.wacn,s.system_id) END
-                            FROM recordings.recording_call_site observed JOIN recordings.recording_site s ON s.id=observed.site_id
-                            WHERE observed.call_id=c.id) END END) AS system_key
-                FROM recordings.recording_call c
-                LEFT JOIN recordings.recording_system sys ON sys.id=c.system_id
-                LEFT JOIN recordings.recording_channel ch ON ch.id=c.channel_id
-                LEFT JOIN recordings.recording_site winner ON winner.id=c.winner_site_id
-                WHERE c.start_ms BETWEEN ? AND ?
-            ), scoped AS (SELECT * FROM recorded WHERE (? IS NULL OR system_key=?)) %s
-            """.formatted(select);
+        String sql = scopedCallsSql(select);
         Map<String,Entity> result = new LinkedHashMap<>();
         try(PreparedStatement statement = connection.prepareStatement(sql))
         {
@@ -180,6 +186,28 @@ final class ManagedRecordingEntityDiscovery
             }
         }
         return result;
+    }
+
+    /** Shared captured-call scope keeps DCS and entity browsing aligned with recorded P25 ownership. */
+    static String scopedCallsSql(String select)
+    {
+        return """
+            WITH recorded AS (
+                SELECT c.id AS call_id,c.start_ms,c.protocol,ch.channel_uuid,c.tone_kind,c.tone,
+                    coalesce(sys.system_key,CASE WHEN c.protocol IN(1,2) THEN
+                        CASE WHEN winner.wacn IS NOT NULL THEN printf('p25:%%05x:%%03x',winner.wacn,winner.system_id)
+                        WHEN c.winner_site_id IS NULL THEN (SELECT
+                            CASE WHEN count(DISTINCT printf('p25:%%05x:%%03x',s.wacn,s.system_id))=1
+                                THEN printf('p25:%%05x:%%03x',s.wacn,s.system_id) END
+                            FROM recordings.recording_call_site observed JOIN recordings.recording_site s ON s.id=observed.site_id
+                            WHERE observed.call_id=c.id) END END) AS system_key
+                FROM recordings.recording_call c
+                LEFT JOIN recordings.recording_system sys ON sys.id=c.system_id
+                LEFT JOIN recordings.recording_channel ch ON ch.id=c.channel_id
+                LEFT JOIN recordings.recording_site winner ON winner.id=c.winner_site_id
+                WHERE c.start_ms BETWEEN ? AND ?
+            ), scoped AS (SELECT * FROM recorded WHERE (? IS NULL OR system_key=?)) %s
+            """.formatted(select);
     }
 
     private static Map<String,Channel> channels(Connection connection) throws SQLException

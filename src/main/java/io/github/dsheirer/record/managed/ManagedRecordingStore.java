@@ -50,7 +50,9 @@ final class ManagedRecordingStore implements AutoCloseable
     private static final int FORMAT_VERSION = ManagedRecordingSchema.CURRENT_FORMAT_VERSION;
     private static final int APPLICATION_ID = ManagedRecordingSchema.APPLICATION_ID;
     private static final int MAINTENANCE_BATCH = 256;
-    private static final Map<String,String> SCHEMA = ManagedRecordingSchema.DDL;
+    // String.isBlank whitespace, so stored no-speech responses agree with the excerpt shown by the web API.
+    private static final String TRANSCRIPT_WHITESPACE = "\t\n\u000B\f\r\u001C\u001D\u001E\u001F " +
+        "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2008\u2009\u200A\u2028\u2029\u205F\u3000";
     private final Path mDatabaseFile;
     private final Path mRoot;
     private final Connection mWriterConnection;
@@ -127,7 +129,7 @@ final class ManagedRecordingStore implements AutoCloseable
         mWriterConnection.setAutoCommit(false);
         try(Statement statement = mWriterConnection.createStatement())
         {
-            for(String ddl : SCHEMA.values())
+            for(String ddl : ManagedRecordingSchema.creationStatements())
             {
                 statement.execute(ddl);
             }
@@ -518,12 +520,33 @@ final class ManagedRecordingStore implements AutoCloseable
     private List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter, List<Integer> anyIds,
                                                                Connection connection) throws SQLException
     {
+        if(filter.transcriptMatch != null)
+            return List.of(candidateQuery(filter,"recording_transcript_fts CROSS JOIN recording_call c " +
+                "ON c.id=recording_transcript_fts.rowid", "recording_transcript_fts MATCH ?",
+                List.of(filter.transcriptMatch),"c.start_ms","c.id",new SelectionDriver(null,false,null,true)));
+        if(!filter.channelIds.isEmpty() && (filter.targetsAny || filter.talkgroupSelections.isEmpty()))
+        {
+            List<CandidateQuery> queries = new ArrayList<>();
+            if(filter.targetsAny && !filter.talkgroupSelections.isEmpty())
+                queries.addAll(selectionCandidateQueries(filter,filter.talkgroupSelections,true));
+            for(String channel: filter.channelIds)
+                queries.add(candidateQuery(filter,"recording_call c INDEXED BY idx_recording_call_channel_time",
+                    "c.channel_id=(SELECT id FROM recording_channel WHERE channel_uuid=?)",List.of(channel),
+                    "c.start_ms","c.id",new SelectionDriver(null,false,channel,false)));
+            return List.copyOf(queries);
+        }
         if(!filter.talkgroupSelections.isEmpty() || !filter.radioSelections.isEmpty())
         {
             List<Selection> selections = !filter.talkgroupSelections.isEmpty() ?
                 filter.talkgroupSelections : filter.radioSelections;
+            return selectionCandidateQueries(filter,selections,!filter.talkgroupSelections.isEmpty());
+        }
+        return otherCandidateQueries(filter,anyIds,connection);
+    }
+
+    private List<CandidateQuery> selectionCandidateQueries(SearchFilter filter, List<Selection> selections, boolean groups)
+    {
             List<CandidateQuery> queries = new ArrayList<>();
-            boolean groups = !filter.talkgroupSelections.isEmpty();
             for(Selection selection: selections)
                 if(selection.value() == null && selection.identityKey() == null)
                     queries.addAll(numericIdentityCandidateQueries(filter,selection.id(),groups,!groups,
@@ -542,7 +565,11 @@ final class ManagedRecordingStore implements AutoCloseable
                     new SelectionDriver(selection,!groups)));
             }
             return List.copyOf(queries);
-        }
+    }
+
+    private List<CandidateQuery> otherCandidateQueries(SearchFilter filter, List<Integer> anyIds, Connection connection)
+        throws SQLException
+    {
         if(!filter.identityNameMatches.isEmpty())
         {
             List<CandidateQuery> queries = new ArrayList<>();
@@ -655,7 +682,10 @@ final class ManagedRecordingStore implements AutoCloseable
     }
 
     /** The index stream proves this one picker choice; other choices of its kind need no repeated OR predicate. */
-    private record SelectionDriver(Selection selection, boolean radio) {}
+    private record SelectionDriver(Selection selection, boolean radio, String channelId, boolean transcript)
+    {
+        SelectionDriver(Selection selection, boolean radio) { this(selection,radio,null,false); }
+    }
 
     private List<CandidateQuery> numericIdentityCandidateQueries(SearchFilter filter, int id,
                                                                  boolean talkgroup, boolean radio)
@@ -950,12 +980,28 @@ final class ManagedRecordingStore implements AutoCloseable
             parameters.add(voiceTypeFilter(filter.voiceType));
         }
         addNumericIdentityPredicates(conditions, parameters, filter);
-        addSelectionPredicate(conditions, parameters, driver != null && !driver.radio() ?
-            List.of(driver.selection()) : filter.talkgroupSelections, false, filter.radioRole);
-        addSelectionPredicate(conditions, parameters, driver != null && driver.radio() ?
+        addTargetPredicate(conditions,parameters,filter,driver);
+        addSelectionPredicate(conditions, parameters, driver != null && driver.selection() != null && driver.radio() ?
             List.of(driver.selection()) : filter.radioSelections, true, filter.radioRole);
         addTonePredicate(conditions, parameters, filter);
-        addTranscriptPredicate(conditions, parameters, filter.transcript);
+        if(driver == null || !driver.transcript()) addTranscriptPredicate(conditions, parameters, filter.transcriptMatch);
+        if(filter.hasTranscript != null)
+        {
+            conditions.add((filter.hasTranscript ? "" : "NOT ") +
+                "EXISTS(SELECT 1 FROM recording_transcript transcript_present WHERE transcript_present.call_id=c.id " +
+                "AND length(trim(transcript_present.text,?))>0)");
+            parameters.add(TRANSCRIPT_WHITESPACE);
+        }
+        if(filter.dcsCode != null)
+        {
+            conditions.add("(EXISTS(SELECT 1 FROM recording_identifier dcs WHERE dcs.call_id=c.id " +
+                "AND dcs.protocol='DCS' AND dcs.kind='tone' AND dcs.value=?) OR " +
+                "(c.tone_kind=1 AND c.tone IN(?,?,?)))");
+            parameters.add(filter.dcsCode);
+            parameters.add(filter.dcsCode.startsWith("N") ? filter.dcsCode.substring(1) : filter.dcsCode);
+            parameters.add(io.github.dsheirer.module.decode.dcs.DCSCode.valueOf(filter.dcsCode).toString());
+            parameters.add(filter.dcsCode);
+        }
         if(filter.cursor != null && !filter.cursor.isBlank())
         {
             long[] cursor = decodeCursor(filter.cursor);
@@ -972,6 +1018,30 @@ final class ManagedRecordingStore implements AutoCloseable
             orderId + " " + order + " LIMIT ?";
         parameters.add(filter.limit + 1);
         return new CandidateQuery(sql, List.copyOf(parameters));
+    }
+
+    private static void addTargetPredicate(List<String> conditions, List<Object> parameters, SearchFilter filter,
+                                           SelectionDriver driver)
+    {
+        boolean channelDriven = driver != null && driver.channelId() != null;
+        boolean groupDriven = driver != null && driver.selection() != null && !driver.radio();
+        List<String> group = new ArrayList<>();
+        List<Object> groupParameters = new ArrayList<>();
+        if(!(channelDriven && filter.targetsAny))
+            addSelectionPredicate(group,groupParameters,groupDriven ? List.of(driver.selection()) :
+                filter.talkgroupSelections,false,filter.radioRole);
+        List<String> channels = new ArrayList<>();
+        List<Object> channelParameters = new ArrayList<>();
+        if(!channelDriven && !(groupDriven && filter.targetsAny) && !filter.channelIds.isEmpty())
+        {
+            channels.add("c.channel_id IN(SELECT id FROM recording_channel WHERE channel_uuid IN(" +
+                String.join(",",java.util.Collections.nCopies(filter.channelIds.size(),"?")) + "))");
+            channelParameters.addAll(filter.channelIds);
+        }
+        if(filter.targetsAny && !group.isEmpty() && !channels.isEmpty())
+            conditions.add("(" + String.join(" AND ",group) + " OR " + String.join(" AND ",channels) + ")");
+        else { conditions.addAll(group); conditions.addAll(channels); }
+        parameters.addAll(groupParameters); parameters.addAll(channelParameters);
     }
 
     private static void addNumericIdentityPredicates(List<String> conditions, List<Object> parameters,
@@ -1150,10 +1220,7 @@ final class ManagedRecordingStore implements AutoCloseable
     {
         if(text != null)
         {
-            // Probe only transcripts belonging to calls in the existing indexed search scope.
-            // instr treats percent and underscore as literal text, rather than SQL wildcards.
-            conditions.add("EXISTS(SELECT 1 FROM recording_transcript t WHERE t.call_id=c.id " +
-                "AND instr(lower(t.text),lower(?))>0)");
+            conditions.add("c.id IN(SELECT rowid FROM recording_transcript_fts WHERE recording_transcript_fts MATCH ?)");
             parameters.add(text);
         }
     }

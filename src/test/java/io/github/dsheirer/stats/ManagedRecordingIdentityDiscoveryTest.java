@@ -64,6 +64,18 @@ class ManagedRecordingIdentityDiscoveryTest
             assertEquals(1, rows(first).size());
             assertEquals(true, first.get("has_more"));
             assertEquals(1, first.get("next_offset"));
+            @SuppressWarnings("unchecked")
+            List<Map<String,Object>> groups=(List<Map<String,Object>>)discovery.groups(catalogPath,"talkgroup",
+                null,"p25:00001:001",0L,10000L,0,100,"any","name",null).get("groups");
+            Map<String,Object> ungrouped=groups.stream().filter(row->"Ungrouped".equals(row.get("label")))
+                .findFirst().orElseThrow();
+            assertEquals(10,rows(ungrouped).size());
+            assertTrue(rows(ungrouped).stream().noneMatch(row->Integer.valueOf(119).equals(row.get("id"))));
+            @SuppressWarnings("unchecked")
+            var foundGroups=(List<Map<String,Object>>)discovery.groups(catalogPath,"talkgroup","119",
+                "p25:00001:001",0L,10000L,0,10,"any","name",null).get("groups");
+            assertEquals(119,rows(foundGroups.getFirst()).getFirst().get("id"),
+                "Server matching reaches identities outside the first ten choices");
             List<Map<String,Object>> group = rows(discovery.search(catalogPath, "talkgroup", "county operations",
                 "p25:00001:001", 0L, 10000L, 0, 100, "any"));
             assertEquals(1, group.size());
