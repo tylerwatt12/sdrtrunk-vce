@@ -13,6 +13,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.channel.ChannelDefinition;
+import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
@@ -24,6 +28,7 @@ import io.github.dsheirer.preference.radioreference.RadioReferencePreference.Pre
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway;
 import io.github.dsheirer.service.radioreference.RadioReferenceGatewayException;
 import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
+import io.github.dsheirer.service.radioreference.RadioReferenceImportServiceTestSupport;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Account;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Agency;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Country;
@@ -65,6 +70,75 @@ class RadioReferenceHttpControllerTest
 
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void previewsAndAppliesOnlyVerifiedP25NamesThroughStrictEnrichmentRoutes() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("enrichment-http-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        manager.init();
+        var channels = ChannelAdministrationServiceTestSupport.create(manager);
+        long aliasListId = manager.getAliasModel().aliasListDefinitions().stream()
+            .filter(list -> list.getFamily() == AliasListFamily.P25).findFirst().orElseThrow().getId();
+        ChannelDefinition template = channels.template("p25-phase1");
+        String id = channels.create(new ChannelDefinition(null, "p25-phase1", "Old system", "Old site", "My channel",
+            null, aliasListId, new ChannelDefinition.Source(List.of(853_162_500L), null, null, null, null, null),
+            template.settings(), template.frequencyMap(), template.eventLogs(), template.recorders(),
+            template.auxiliaryDecoders(), template.observed()), channels.currentRevision()).configurationIds().getFirst();
+        manager.getChannelModel().getChannels().stream().filter(channel -> channel.getConfigurationId().equals(id))
+            .findFirst().orElseThrow().setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 12, 12));
+        FakeSettings settings = new FakeSettings();
+        settings.storeLocation(1, 10, 100);
+        FakeGateway gateway = new FakeGateway();
+        try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService((user, password) -> gateway))
+        {
+            RadioReferenceHttpController controller = new RadioReferenceHttpController(service, settings,
+                RadioReferenceImportServiceTestSupport.create(service, manager, channels));
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            server.createContext(RadioReferenceHttpController.PATH, controller::handle);
+            server.start();
+            try
+            {
+                URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+                String previewBody = OBJECT_MAPPER.writeValueAsString(Map.of("configuration_id", id,
+                    "revision", channels.currentRevision()));
+                assertEquals(401, send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(previewBody))).statusCode());
+                data(send(client, jsonRequest(origin, "/session").PUT(HttpRequest.BodyPublishers.ofString(
+                    "{\"user_name\":\"test-user\",\"password\":\"test-password\",\"remember\":false}"))));
+                assertEquals(400, send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"configuration_id\":\"" + id +
+                        "\",\"revision\":" + channels.currentRevision() + ",\"system\":\"Forged\"}"))).statusCode());
+                JsonNode preview = data(send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(previewBody))));
+                assertEquals("matched", preview.at("/state").textValue());
+                assertEquals("Old system", preview.at("/changes/0/before").textValue());
+                assertEquals("State P25", preview.at("/changes/0/after").textValue());
+                assertEquals("https://www.radioreference.com/db/sid/2001", preview.at("/system_url").textValue());
+                String applyBody = OBJECT_MAPPER.writeValueAsString(Map.of("preview_id",
+                    preview.at("/preview_id").textValue(), "replace_name", false));
+                assertEquals(400, send(client, jsonRequest(origin, "/channels/enrichment/apply")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"preview_id\":\"" +
+                        preview.at("/preview_id").textValue() + "\"}"))).statusCode());
+                JsonNode saved = data(send(client, jsonRequest(origin, "/channels/enrichment/apply")
+                    .POST(HttpRequest.BodyPublishers.ofString(applyBody))));
+                assertEquals(id, saved.at("/configuration_id").textValue());
+                assertEquals("State P25", channels.get(id).channel().system());
+                assertEquals("My channel", channels.get(id).channel().name());
+                assertEquals(409, send(client, jsonRequest(origin, "/channels/enrichment/apply")
+                    .POST(HttpRequest.BodyPublishers.ofString(applyBody))).statusCode());
+            }
+            finally { server.stop(0); }
+        }
+        finally
+        {
+            manager.flushConfiguration();
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
 
     @Test
     void catalogRoutesReuseSourcePerSystemRefreshExplicitlyAndDiscardFailedReplacementSessions() throws Exception

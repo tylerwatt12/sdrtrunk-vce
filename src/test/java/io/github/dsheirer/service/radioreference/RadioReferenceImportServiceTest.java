@@ -7,6 +7,7 @@ package io.github.dsheirer.service.radioreference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +23,17 @@ import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.Module;
+import io.github.dsheirer.module.ProcessingChain;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.sample.SampleType;
+import io.github.dsheirer.source.Source;
+import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -37,6 +49,7 @@ import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSi
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSiteDetails;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystemDetails;
 import java.nio.file.Path;
+import java.lang.reflect.Field;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -853,6 +866,228 @@ class RadioReferenceImportServiceTest
         }
     }
 
+    @Test
+    void enrichesP25NamesFromSavedIdentityAndPreservesEveryOtherSetting() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            for(String protocol: List.of("p25-phase1", "p25-phase2"))
+            {
+                String id = enrichmentChannel(fixture, protocol, false);
+                ChannelAdministrationService.Entry before = fixture.channels.get(id);
+                RadioReferenceImportService.EnrichmentPreview preview = fixture.importer.previewChannelEnrichment(
+                    id, before.revision(), null);
+                assertEquals("matched", preview.state());
+                assertEquals(List.of("system", "site", "name"), preview.changes().stream()
+                    .map(RadioReferenceImportService.EnrichmentChange::field).toList());
+                assertEquals(851_100_000L, fixture.directory.enrichmentIdentity.frequencyHz());
+                assertEquals(0xBEE00, fixture.directory.enrichmentIdentity.wacn());
+                int lookups = fixture.directory.enrichmentReads;
+                fixture.importer.applyChannelEnrichment(preview.previewId(), protocol.equals("p25-phase2"));
+                ChannelDefinition after = fixture.channels.get(id).channel();
+                assertEquals("County P25", after.system());
+                assertEquals("Central Simulcast", after.site());
+                assertEquals(protocol.equals("p25-phase2") ? "County P25 · Central Simulcast" : "My channel", after.name());
+                assertEquals(before.channel().source(), after.source());
+                assertEquals(before.channel().settings(), after.settings());
+                assertEquals(before.channel().radioResolveId(), after.radioResolveId());
+                assertEquals(before.channel().aliasListId(), after.aliasListId());
+                assertEquals(before.channel().frequencyMap(), after.frequencyMap());
+                assertEquals(before.channel().eventLogs(), after.eventLogs());
+                assertEquals(before.channel().recorders(), after.recorders());
+                assertEquals(before.channel().auxiliaryDecoders(), after.auxiliaryDecoders());
+                assertEquals(before.channel().observed(), after.observed());
+                assertEquals(lookups, fixture.directory.enrichmentReads);
+                assertThrows(RadioReferenceImportService.PreviewNotFoundException.class,
+                    () -> fixture.importer.applyChannelEnrichment(preview.previewId(), true));
+            }
+        }
+    }
+
+    @Test
+    void enrichmentRejectsOtherProtocolsMissingIdentityWrongFrequencyAndAmbiguousSites() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            for(String protocol: List.of("p25-conventional", "dmr", "nxdn"))
+            {
+                String id = enrichmentChannel(fixture, protocol, false);
+                assertEquals("unsupported_protocol", fixture.importer.previewChannelEnrichment(id,
+                    fixture.channels.currentRevision(), null).state());
+            }
+            String id = enrichmentChannel(fixture, "p25-phase1", false);
+            Channel channel = savedChannel(fixture, id);
+            channel.setP25SiteIdentity(null);
+            assertEquals("identity_required", fixture.importer.previewChannelEnrichment(id,
+                fixture.channels.currentRevision(), null).state());
+            assertEquals(0, fixture.directory.enrichmentReads);
+            channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
+            fixture.directory.site = site("Wrong frequency", "", List.of(channel(852_000_000L, "d", true, false)));
+            assertEquals("no_match", fixture.importer.previewChannelEnrichment(id,
+                fixture.channels.currentRevision(), null).state());
+            TrunkedSiteDetails one = site("One", "", List.of(channel(851_100_000L, "d", true, false)));
+            fixture.directory.sites = List.of(one, new TrunkedSiteDetails(21, 10, 1, "Two", 1, 0, 1, "321", 0,
+                "C4FM", false, one.channels()));
+            RadioReferenceImportService.EnrichmentPreview ambiguous = fixture.importer.previewChannelEnrichment(id,
+                fixture.channels.currentRevision(), null);
+            assertEquals("ambiguous", ambiguous.state());
+            assertNull(ambiguous.previewId());
+            assertEquals("My system", fixture.channels.get(id).channel().system());
+        }
+    }
+
+    @Test
+    void enrichmentCannotEraseNamesAndPreservesRemoteSource() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            String id = enrichmentChannel(fixture, "p25-phase1", true);
+            fixture.directory.system = new TrunkedSystemDetails(10, "", "", "Project 25", "Phase I", "Digital",
+                "BEE00", "123");
+            fixture.directory.site = site("", "", List.of(channel(851_100_000L, "d", true, false)));
+            assertEquals("no_changes", fixture.importer.previewChannelEnrichment(id,
+                fixture.channels.currentRevision(), null).state());
+            fixture.directory.system = p25System();
+            fixture.directory.site = site("Central", "", List.of(channel(851_100_000L, "d", true, false)));
+            ChannelDefinition before = fixture.channels.get(id).channel();
+            var preview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            fixture.importer.applyChannelEnrichment(preview.previewId(), true);
+            assertEquals(before.source(), fixture.channels.get(id).channel().source());
+            assertEquals(before.radioResolveId(), fixture.channels.get(id).channel().radioResolveId());
+        }
+    }
+
+    @Test
+    void enrichmentRejectsRevisionIdentityAndSessionChanges() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            String id = enrichmentChannel(fixture, "p25-phase1", false);
+            assertThrows(ChannelAdministrationService.StaleRevisionException.class,
+                () -> fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision() - 1, null));
+            var preview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            enrichmentChannel(fixture, "p25-phase1", false);
+            assertThrows(ChannelAdministrationService.StaleRevisionException.class,
+                () -> fixture.importer.applyChannelEnrichment(preview.previewId(), true));
+            var identityPreview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            savedChannel(fixture, id).setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x124, 1, 1));
+            assertThrows(ChannelAdministrationService.StaleRevisionException.class,
+                () -> fixture.importer.applyChannelEnrichment(identityPreview.previewId(), true));
+            savedChannel(fixture, id).setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
+            var sessionPreview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            fixture.importer.clearSessionData();
+            assertThrows(RadioReferenceImportService.PreviewNotFoundException.class,
+                () -> fixture.importer.applyChannelEnrichment(sessionPreview.previewId(), true));
+            fixture.directory.duringEnrichment = fixture.importer::clearSessionData;
+            assertThrows(RadioReferenceImportService.PreviewNotFoundException.class,
+                () -> fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null));
+            fixture.directory.duringEnrichment = null;
+            var accountPreview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            fixture.directory.sessionGeneration++;
+            assertThrows(RadioReferenceImportService.PreviewNotFoundException.class,
+                () -> fixture.importer.applyChannelEnrichment(accountPreview.previewId(), true));
+            fixture.directory.duringEnrichment = () -> fixture.directory.sessionGeneration++;
+            assertThrows(RadioReferenceImportService.PreviewNotFoundException.class,
+                () -> fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void enrichmentUsesLiveRemoteParentFrequencyAndRejectsConflictingDecodedIdentity() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            String id = enrichmentChannel(fixture, "p25-phase1", true);
+            var pending = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            Channel channel = savedChannel(fixture, id);
+            TestP25Provider provider = new TestP25Provider();
+            ProcessingChain parent = new ProcessingChain(channel, fixture.manager.getAliasModel())
+            {
+                private final Source source = new FixedFrequencySource(851_200_000L);
+                @Override public boolean isProcessing() { return true; }
+                @Override public Source getSource() { return source; }
+                @Override public List<Module> getModules() { return List.of(provider); }
+            };
+            Field field = ChannelProcessingManager.class.getDeclaredField("mProcessingChainsMap");
+            field.setAccessible(true);
+            Map<Channel,ProcessingChain> chains = (Map<Channel,ProcessingChain>)field.get(
+                fixture.manager.getChannelProcessingManager());
+            chains.put(channel, parent);
+            try
+            {
+                assertEquals("matched", fixture.importer.previewChannelEnrichment(id,
+                    fixture.channels.currentRevision(), null).state());
+                assertEquals(851_200_000L, fixture.directory.enrichmentIdentity.frequencyHz());
+                provider.system = 0x124;
+                assertThrows(IllegalStateException.class, () -> fixture.importer.previewChannelEnrichment(id,
+                    fixture.channels.currentRevision(), null));
+                assertThrows(IllegalStateException.class,
+                    () -> fixture.importer.applyChannelEnrichment(pending.previewId(), true));
+                assertEquals(0x123, channel.getP25SiteIdentity().system());
+                assertEquals("My system", channel.getSystem());
+            }
+            finally
+            {
+                chains.remove(channel);
+                parent.dispose();
+            }
+        }
+    }
+
+    private static final class TestP25Provider extends Module implements P25NetworkConfigurationSnapshotProvider
+    {
+        private int system = 0x123;
+        @Override public P25NetworkConfigurationSnapshot getP25NetworkConfigurationSnapshot()
+        {
+            return new P25NetworkConfigurationSnapshot("P25_PHASE1",
+                new P25NetworkConfigurationSnapshot.Network(0xBEE00, system, 0x321, null),
+                new P25NetworkConfigurationSnapshot.CurrentSite(system, 0x321, 1, 1, null, null),
+                List.of(), List.of(), List.of(), List.of(), List.of());
+        }
+        @Override public void reset() {}
+        @Override public void start() {}
+        @Override public void stop() {}
+    }
+
+    private static final class FixedFrequencySource extends Source
+    {
+        private final long mFrequency;
+        private FixedFrequencySource(long frequency) { mFrequency = frequency; }
+        @Override public SampleType getSampleType() { return SampleType.COMPLEX; }
+        @Override public double getSampleRate() { return 2_400_000; }
+        @Override public long getFrequency() { return mFrequency; }
+        @Override public void reset() {}
+        @Override public void start() {}
+        @Override public void stop() {}
+        @Override public Listener<SourceEvent> getSourceEventListener() { return ignored -> {}; }
+        @Override public void setSourceEventListener(Listener<SourceEvent> listener) {}
+        @Override public void removeSourceEventListener() {}
+    }
+
+    private static String enrichmentChannel(Fixture fixture, String protocol, boolean remote)
+    {
+        long list = aliasList(fixture, protocol.equals("dmr") ? AliasListFamily.DMR :
+            protocol.equals("nxdn") ? AliasListFamily.NXDN : AliasListFamily.P25);
+        ChannelDefinition template = fixture.channels.template(protocol);
+        ChannelDefinition.Source source = remote ? new ChannelDefinition.Source(List.of(851_100_000L), null,
+            null, null, null, null, "REMOTE", java.util.UUID.randomUUID().toString(), java.util.UUID.randomUUID().toString()) :
+            new ChannelDefinition.Source(List.of(851_100_000L), null, null, null, null, null);
+        ChannelDefinition definition = new ChannelDefinition(null, protocol, "My system", "My site", "My channel",
+            java.util.UUID.randomUUID().toString(), list, source, template.settings(), template.frequencyMap(),
+            template.eventLogs(), template.recorders(), template.auxiliaryDecoders(), template.observed());
+        String id = fixture.channels.create(definition, fixture.channels.currentRevision()).configurationIds().getFirst();
+        if(protocol.startsWith("p25-phase"))
+            savedChannel(fixture, id).setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
+        return id;
+    }
+
+    private static Channel savedChannel(Fixture fixture, String id)
+    {
+        return fixture.manager.getChannelModel().getChannels().stream()
+            .filter(channel -> channel.getConfigurationId().equals(id)).findFirst().orElseThrow();
+    }
+
     private static ChannelDefinition copy(ChannelDefinition source, ChannelDefinition.Source sourceConfiguration,
                                           Map<String,Object> settings, List<String> recorders)
     {
@@ -986,6 +1221,22 @@ class RadioReferenceImportServiceTest
         private volatile CatalogGate catalogGate;
         private volatile RadioReferenceDirectoryException.Code catalogFailure;
         private volatile RadioReferenceDirectoryException.Code catalogSessionFailure;
+        private int enrichmentReads;
+        private RadioReferenceDiscoveryResolver.Identity enrichmentIdentity;
+        private Runnable duringEnrichment;
+        private long sessionGeneration;
+
+        @Override public long sessionGeneration() { return sessionGeneration; }
+
+        @Override public RadioReferenceDiscoveryResolver.Result resolveP25Identity(Integer stateId,
+            RadioReferenceDiscoveryResolver.Identity identity)
+        {
+            enrichmentReads++;
+            enrichmentIdentity = identity;
+            if(duringEnrichment != null) duringEnrichment.run();
+            return RadioReferenceDiscoveryResolver.match(identity, List.of(new RadioReferenceDirectoryService.DiscoverySystem(
+                system, sites == null ? List.of(site) : sites)));
+        }
 
         @Override public void requireCatalogSession() throws RadioReferenceDirectoryException
         {

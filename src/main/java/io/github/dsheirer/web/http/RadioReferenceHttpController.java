@@ -302,6 +302,28 @@ public final class RadioReferenceHttpController
                     query.getOrDefault("search", ""), optionalInt(query.get("offset"), 0),
                     optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
             }
+            else if((PATH + "/channels/enrichment/preview").equals(path))
+            {
+                requireMethod(exchange, "POST");
+                requireNoQuery(exchange);
+                ensureStoredSession();
+                EnrichmentPreviewRequest request = read(exchange, EnrichmentPreviewRequest.class);
+                if(request.revision() == null || request.revision() < 0)
+                    throw new RequestException(400, "invalid_request", "revision is required");
+                ApiHttpResponse.sendData(exchange, 200, requireImport().previewChannelEnrichment(
+                    request.configurationId(), request.revision(), mSettings.stateId() > 0 ? mSettings.stateId() : null));
+            }
+            else if((PATH + "/channels/enrichment/apply").equals(path))
+            {
+                requireMethod(exchange, "POST");
+                requireNoQuery(exchange);
+                ensureStoredSession();
+                EnrichmentApplyRequest request = read(exchange, EnrichmentApplyRequest.class);
+                if(request.replaceName() == null)
+                    throw new RequestException(400, "invalid_request", "replace_name is required");
+                ApiHttpResponse.sendData(exchange, 200, requireImport().applyChannelEnrichment(
+                    request.previewId(), request.replaceName()));
+            }
             else if((PATH + "/imports/site/preview").equals(path))
             {
                 requireMethod(exchange, "POST");
@@ -484,11 +506,11 @@ public final class RadioReferenceHttpController
         else if("DELETE".equals(exchange.getRequestMethod()))
         {
             requireEmptyBody(exchange, "DELETE");
-            mService.logout();
             if(mImportService != null)
             {
                 mImportService.clearSessionData();
             }
+            mService.logout();
             mSettings.clearCredentials();
 
             synchronized(mStoredLoginLock)
@@ -1158,6 +1180,9 @@ public final class RadioReferenceHttpController
     private record ApplyRequest()
     {
     }
+
+    private record EnrichmentPreviewRequest(String configurationId, Long revision) {}
+    private record EnrichmentApplyRequest(String previewId, Boolean replaceName) {}
 
     private record RawTalkgroupPage(List<RemoteTalkgroup> items, int offset, Integer nextOffset,
                                     int totalItems, List<RemoteTalkgroupCategory> categories)

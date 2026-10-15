@@ -20,6 +20,7 @@ import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.channel.ChannelProtocolRegistry;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.BoundedPage;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.ConventionalFrequency;
@@ -74,6 +75,7 @@ public final class RadioReferenceImportService
     private final long mPreviewLifetimeMillis;
     private final Map<String,PendingChannel> mPendingChannels = new HashMap<>();
     private final Map<String,PendingTalkgroups> mPendingTalkgroups = new HashMap<>();
+    private final Map<String,PendingEnrichment> mPendingEnrichments = new HashMap<>();
     private final Map<String,RemoteCatalog> mTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,RemoteCatalog> mSystemTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,TrunkedSystemDetails> mSystemDetails = new LinkedHashMap<>();
@@ -222,6 +224,150 @@ public final class RadioReferenceImportService
             result.configurationIds().getFirst());
     }
 
+    /** Looks up names for one existing P25 trunked channel; the browser supplies no identity or proposed values. */
+    public EnrichmentPreview previewChannelEnrichment(String configurationId, long expectedRevision, Integer stateId)
+        throws RadioReferenceDirectoryException
+    {
+        ChannelAdministrationService.P25EnrichmentSnapshot snapshot = mChannels.p25EnrichmentSnapshot(configurationId);
+        ChannelAdministrationService.Entry entry = snapshot.entry();
+        requireSameRevision(expectedRevision, entry.revision());
+        ChannelDefinition channel = entry.channel();
+        P25SiteIdentity identity = enrichmentIdentity(channel);
+        if(!p25Trunked(channel))
+            return enrichmentResult(entry, null, "unsupported_protocol",
+                "RadioReference name lookup is available for P25 trunked channels.", List.of(), null, null, null);
+        if(identity == null)
+            return enrichmentResult(entry, null, "identity_required",
+                "Run this channel until its WACN, system, RFSS, and site have been learned, then try again.",
+                List.of(), null, null, null);
+        Long frequency = snapshot.servingFrequencyHz();
+        if(frequency == null)
+        {
+            frequency = channel.source().preferredFrequencyHz();
+            if(frequency == null && !channel.source().frequenciesHz().isEmpty())
+                frequency = channel.source().frequenciesHz().getFirst();
+        }
+        if(frequency == null || frequency <= 0)
+            return enrichmentResult(entry, null, "identity_required",
+                "This channel needs a control frequency before RadioReference can verify its site.",
+                List.of(), null, null, identity);
+
+        requireCatalogSession();
+        long generation;
+        synchronized(this) { generation = mSessionGeneration; }
+        long directoryGeneration = mDirectory.sessionGeneration();
+        RadioReferenceDiscoveryResolver.Result result = mDirectory.resolveP25Identity(stateId,
+            new RadioReferenceDiscoveryResolver.Identity(channel.protocolId(), "", frequency, identity.wacn(),
+                identity.system(), identity.rfss(), identity.site(), null, null));
+        synchronized(this)
+        {
+            requireCatalogSession();
+            if(generation != mSessionGeneration || directoryGeneration != mDirectory.sessionGeneration())
+                throw new PreviewNotFoundException();
+            ChannelAdministrationService.Entry current = mChannels.p25EnrichmentSnapshot(configurationId).entry();
+            requireSameRevision(entry.revision(), current.revision());
+            if(!Objects.equals(identity, enrichmentIdentity(current.channel())))
+                throw new IllegalStateException("The channel identity changed; look up RadioReference names again");
+            if(!result.matched())
+                return enrichmentResult(entry, null, result.state(), result.message(), List.of(), null, null, identity);
+
+            RadioReferenceDiscoveryResolver.Match match = result.match();
+            String system = enrichmentName(match.systemName(), channel.system());
+            String site = enrichmentName(match.siteName(), channel.site());
+            String name = channel.name();
+            if(!text(match.systemName()).isEmpty() && !text(match.siteName()).isEmpty())
+            {
+                String proposed = text(match.systemName()) + " · " + text(match.siteName());
+                if(proposed.length() <= 256) name = proposed;
+            }
+            List<EnrichmentChange> changes = new ArrayList<>();
+            addEnrichmentChange(changes, "system", channel.system(), system);
+            addEnrichmentChange(changes, "site", channel.site(), site);
+            addEnrichmentChange(changes, "name", channel.name(), name);
+            if(changes.isEmpty())
+                return enrichmentResult(entry, null, "no_changes", "This channel already has the available RadioReference names.",
+                    changes, match.url(), match.siteUrl(), identity);
+            long now = mClock.millis();
+            cleanupExpired(now);
+            requirePreviewCapacity();
+            String previewId = UUID.randomUUID().toString();
+            mPendingEnrichments.put(previewId, new PendingEnrichment(entry.revision(), configurationId, identity,
+                system, site, name, generation, directoryGeneration, now + mPreviewLifetimeMillis));
+            return enrichmentResult(entry, previewId, "matched", "Review the names before saving.", changes,
+                match.url(), match.siteUrl(), identity);
+        }
+    }
+
+    /** Consumes the exact reviewed names without another RadioReference lookup. */
+    public synchronized EnrichmentResult applyChannelEnrichment(String previewId, boolean replaceName)
+        throws RadioReferenceDirectoryException
+    {
+        requireCatalogSession();
+        cleanupExpired(mClock.millis());
+        PendingEnrichment pending = mPendingEnrichments.remove(requirePreviewId(previewId));
+        if(pending == null || pending.generation() != mSessionGeneration ||
+            pending.directoryGeneration() != mDirectory.sessionGeneration()) throw new PreviewNotFoundException();
+        ChannelAdministrationService.Entry entry = mChannels.p25EnrichmentSnapshot(pending.configurationId()).entry();
+        requireSameRevision(pending.revision(), entry.revision());
+        ChannelDefinition current = entry.channel();
+        if(!p25Trunked(current) || !pending.identity().equals(enrichmentIdentity(current)))
+            throw new IllegalStateException("The channel identity changed; look up RadioReference names again");
+        String name = replaceName ? pending.name() : current.name();
+        if(Objects.equals(current.system(), pending.system()) && Objects.equals(current.site(), pending.site()) &&
+            Objects.equals(current.name(), name)) return new EnrichmentResult(pending.configurationId(), entry.revision());
+        ChannelDefinition replacement = new ChannelDefinition(current.configurationId(), current.protocolId(),
+            pending.system(), pending.site(), name, current.radioResolveId(), current.aliasListId(), current.source(),
+            current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
+            current.auxiliaryDecoders(), current.observed());
+        ChannelAdministrationService.MutationResult mutation = mChannels.updateP25Names(pending.configurationId(),
+            replacement, entry.revision(), pending.identity());
+        return new EnrichmentResult(pending.configurationId(), mutation.revision());
+    }
+
+    private static boolean p25Trunked(ChannelDefinition channel)
+    {
+        return "p25-phase1".equals(channel.protocolId()) || "p25-phase2".equals(channel.protocolId());
+    }
+
+    private static P25SiteIdentity enrichmentIdentity(ChannelDefinition channel)
+    {
+        if(!p25Trunked(channel)) return null;
+        Map<String,Object> identity = channel.observed().p25SiteIdentity();
+        try
+        {
+            return new P25SiteIdentity(identityInteger(identity, "wacn"), identityInteger(identity, "system"),
+                identityInteger(identity, "rfss"), identityInteger(identity, "site"));
+        }
+        catch(IllegalArgumentException exception) { return null; }
+    }
+
+    private static int identityInteger(Map<String,Object> identity, String field)
+    {
+        Object value = identity.get(field);
+        if(value instanceof Integer number) return number;
+        throw new IllegalArgumentException("Incomplete learned P25 identity");
+    }
+
+    private static String enrichmentName(String proposed, String existing)
+    {
+        String name = text(proposed);
+        return name.isEmpty() || name.length() > 256 ? existing : name;
+    }
+
+    private static void addEnrichmentChange(List<EnrichmentChange> changes, String field, String before, String after)
+    {
+        if(!Objects.equals(before, after)) changes.add(new EnrichmentChange(field, before, after));
+    }
+
+    private static EnrichmentPreview enrichmentResult(ChannelAdministrationService.Entry entry, String previewId,
+        String state, String reason, List<EnrichmentChange> changes, String systemUrl, String siteUrl,
+        P25SiteIdentity identity)
+    {
+        return new EnrichmentPreview(previewId, state, reason, entry.channel().configurationId(), entry.revision(),
+            changes, systemUrl, siteUrl, entry.processingState() == ChannelAdministrationService.ProcessingState.RUNNING,
+            identity);
+    }
+
     /** Returns one RadioReference talkgroup page annotated against one exact destination Alias List. */
     public TalkgroupPage talkgroups(int systemId, long aliasListId, Integer categoryId, String search, int offset,
                                     int limit) throws RadioReferenceDirectoryException
@@ -312,6 +458,7 @@ public final class RadioReferenceImportService
         cancelCatalogLoads(mSiteLoads);
         mPendingTalkgroups.clear();
         mPendingChannels.clear();
+        mPendingEnrichments.clear();
     }
 
     /** Builds one revision-bound Alias import plan for selected talkgroups or the whole system. */
@@ -1064,11 +1211,12 @@ public final class RadioReferenceImportService
     {
         mPendingChannels.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
         mPendingTalkgroups.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
+        mPendingEnrichments.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
     }
 
     private void requirePreviewCapacity()
     {
-        if(mPendingChannels.size() + mPendingTalkgroups.size() >= MAXIMUM_PENDING_PREVIEWS)
+        if(mPendingChannels.size() + mPendingTalkgroups.size() + mPendingEnrichments.size() >= MAXIMUM_PENDING_PREVIEWS)
         {
             throw new IllegalStateException("Too many RadioReference previews are awaiting confirmation");
         }
@@ -1239,6 +1387,15 @@ public final class RadioReferenceImportService
     {
     }
 
+    public record EnrichmentChange(String field, String before, String after) {}
+    public record EnrichmentPreview(String previewId, String state, String reason, String configurationId, long revision,
+                                    List<EnrichmentChange> changes, String systemUrl, String siteUrl, boolean running,
+                                    P25SiteIdentity identity)
+    {
+        public EnrichmentPreview { changes = List.copyOf(changes); }
+    }
+    public record EnrichmentResult(String configurationId, long revision) {}
+
     public record TalkgroupImportRequest(int systemId, long aliasListId, boolean all, List<Integer> talkgroupIds,
                                          String catalogId)
     {
@@ -1323,6 +1480,12 @@ public final class RadioReferenceImportService
     interface DirectoryAccess
     {
         default void requireCatalogSession() throws RadioReferenceDirectoryException {}
+        default long sessionGeneration() { return 0; }
+        default RadioReferenceDiscoveryResolver.Result resolveP25Identity(Integer stateId,
+            RadioReferenceDiscoveryResolver.Identity identity)
+        {
+            return RadioReferenceDiscoveryResolver.Result.manual("unavailable", "RadioReference lookup is unavailable.");
+        }
         TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceDirectoryException;
         List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             throws RadioReferenceDirectoryException;
@@ -1337,12 +1500,14 @@ public final class RadioReferenceImportService
             throws RadioReferenceDirectoryException;
     }
 
-    private record DirectoryAdapter(RadioReferenceDirectoryService service) implements DirectoryAccess
+    record DirectoryAdapter(RadioReferenceDirectoryService service) implements DirectoryAccess
     {
-        private DirectoryAdapter
+        DirectoryAdapter
         {
             Objects.requireNonNull(service);
         }
+
+        @Override public long sessionGeneration() { return service.sessionGeneration(); }
 
         @Override public void requireCatalogSession() throws RadioReferenceDirectoryException
         {
@@ -1356,6 +1521,11 @@ public final class RadioReferenceImportService
 
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId)
             throws RadioReferenceDirectoryException { return service.trunkedSystemDetails(systemId); }
+        @Override public RadioReferenceDiscoveryResolver.Result resolveP25Identity(Integer stateId,
+            RadioReferenceDiscoveryResolver.Identity identity)
+        {
+            return new RadioReferenceDiscoveryResolver(service).resolve(stateId, identity);
+        }
         @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             throws RadioReferenceDirectoryException { return service.allTrunkedSites(systemId); }
         @Override public BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search,
@@ -1384,6 +1554,9 @@ public final class RadioReferenceImportService
     private record AliasRows(long revision, List<TalkgroupRow> items) {}
     private record PendingChannel(long revision, ChannelAction action, String existingConfigurationId,
                                   ChannelDefinition channel, long expiresAtEpochMs) {}
+    private record PendingEnrichment(long revision, String configurationId, P25SiteIdentity identity, String system,
+                                      String site, String name, long generation, long directoryGeneration,
+                                      long expiresAtEpochMs) {}
     private record PendingTalkgroups(AliasImportService.Plan plan, AliasImportService.Preview preview,
                                      long expiresAtEpochMs) {}
 }

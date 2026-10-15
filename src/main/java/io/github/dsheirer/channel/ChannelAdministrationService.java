@@ -15,6 +15,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
@@ -54,6 +55,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.function.Consumer;
 import javafx.application.Platform;
 
 /**
@@ -119,6 +121,42 @@ public final class ChannelAdministrationService
             Integer order = effectiveAutoStartOrder(mConfigurationManager.getChannelModel().getChannels()).get(id);
             return new Entry(revision(), mCodec.fromChannel(channel), processingState(channel), order);
         });
+    }
+
+    /** Captures the saved channel and its parent control source without consulting temporary traffic channels. */
+    public P25EnrichmentSnapshot p25EnrichmentSnapshot(String configurationId)
+    {
+        String id = requireConfigurationId(configurationId);
+        return onConfigurationThread(() ->
+        {
+            Channel channel = requireChannel(id);
+            ChannelDefinition definition = mCodec.fromChannel(channel);
+            requireCurrentP25Identity(channel, channel.getP25SiteIdentity());
+            var chain = mConfigurationManager.getChannelProcessingManager().getProcessingChain(channel);
+            var source = chain != null && chain.isProcessing() ? chain.getSource() : null;
+            long currentFrequency = source != null ? source.getFrequency() : 0;
+            Long frequency = currentFrequency > 0 ? currentFrequency : null;
+            Integer order = effectiveAutoStartOrder(mConfigurationManager.getChannelModel().getChannels()).get(id);
+            return new P25EnrichmentSnapshot(new Entry(revision(), definition, processingState(channel), order),
+                frequency);
+        });
+    }
+
+    /** Reads bounded immutable telemetry from the request side; no decoder callback waits for this check. */
+    private void requireCurrentP25Identity(Channel channel, P25SiteIdentity expected)
+    {
+        if(expected == null) return;
+        var chain = mConfigurationManager.getChannelProcessingManager().getProcessingChain(channel);
+        if(chain == null || !chain.isProcessing()) return;
+        for(var module: chain.getModules())
+        {
+            if(module instanceof P25NetworkConfigurationSnapshotProvider provider)
+            {
+                P25SiteIdentity current = P25SiteIdentity.from(provider.getP25NetworkConfigurationSnapshot());
+                if(current != null && !expected.equals(current))
+                    throw new IllegalStateException("The decoded site does not match this channel's saved identity; check the channel configuration before looking up names");
+            }
+        }
     }
 
     public Options options()
@@ -656,6 +694,28 @@ public final class ChannelAdministrationService
 
     public MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision)
     {
+        return update(configurationId, definition, expectedRevision, channel -> {});
+    }
+
+    /** Keeps a verified RadioReference rename bound to the same learned P25 serving site through restart. */
+    public MutationResult updateP25Names(String configurationId, ChannelDefinition definition, long expectedRevision,
+                                         P25SiteIdentity expectedIdentity)
+    {
+        Objects.requireNonNull(expectedIdentity);
+        return update(configurationId, definition, expectedRevision, channel ->
+        {
+            String protocol = mCodec.fromChannel(channel).protocolId();
+            if((!"p25-phase1".equals(protocol) && !"p25-phase2".equals(protocol)) ||
+                ChannelConfigurationPolicy.requireChannelKind(channel) != ChannelConfigurationPolicy.ChannelKind.TRUNKED ||
+                !expectedIdentity.equals(channel.getP25SiteIdentity()))
+                throw new IllegalStateException("The channel identity changed; look up RadioReference names again");
+            requireCurrentP25Identity(channel, expectedIdentity);
+        });
+    }
+
+    private MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision,
+                                   Consumer<Channel> validation)
+    {
         String id = requireConfigurationId(configurationId);
         return admitted(() ->
         {
@@ -663,6 +723,7 @@ public final class ChannelAdministrationService
             {
                 requireRevision(expectedRevision);
                 Channel existing = requireChannel(id);
+                validation.accept(existing);
                 // Reject invalid edits and duplicate remote routes before interrupting a running channel.
                 Channel candidate = mCodec.toChannel(definition, requireAliasList(definition.aliasListId()), existing);
                 requireUniqueRemoteSource(candidate, mConfigurationManager.getChannelModel().getChannels());
@@ -677,7 +738,7 @@ public final class ChannelAdministrationService
                     mConfigurationManager.getChannelProcessingManager().stop(original);
                     stopped = true;
                 }
-                MutationResult result = updateStopped(id, definition, expectedRevision);
+                MutationResult result = updateStopped(id, definition, expectedRevision, validation);
                 if(stopped)
                 {
                     Channel replacement = onConfigurationThread(() -> requireChannel(id));
@@ -707,12 +768,14 @@ public final class ChannelAdministrationService
         });
     }
 
-    private MutationResult updateStopped(String id, ChannelDefinition definition, long expectedRevision)
+    private MutationResult updateStopped(String id, ChannelDefinition definition, long expectedRevision,
+                                          Consumer<Channel> validation)
     {
         return mutate(expectedRevision, false, channels ->
         {
             int index = requireChannelIndex(channels, id);
             Channel existing = channels.get(index);
+            validation.accept(existing);
             if(isProcessing(id)) throw new ChannelRunningException(id);
             ChannelDefinition normalized = new ChannelDefinition(id, definition.protocolId(), definition.system(),
                 definition.site(), definition.name(), definition.radioResolveId(), definition.aliasListId(),
@@ -1289,6 +1352,7 @@ public final class ChannelAdministrationService
 
     public record Entry(long revision, ChannelDefinition channel, ProcessingState processingState,
                         Integer autoStartOrder) {}
+    public record P25EnrichmentSnapshot(Entry entry, Long servingFrequencyHz) {}
     public record AliasListOption(long id, String name, String family) {}
     public record Options(long revision, List<AliasListOption> aliasLists, List<String> tuners)
     {

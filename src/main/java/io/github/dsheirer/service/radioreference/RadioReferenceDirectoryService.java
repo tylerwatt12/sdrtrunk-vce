@@ -138,6 +138,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             new ThreadPoolExecutor.AbortPolicy());
     }
 
+    /** Local identity for account-scoped previews; changes even when the same account signs in again. */
+    long sessionGeneration()
+    {
+        synchronized(mSessionLock) { return mSessionGeneration; }
+    }
+
     /**
      * Replaces any existing session and verifies the supplied account.  Both the caller's password array and the
      * service's private working copy are cleared before this method returns.
