@@ -4,26 +4,33 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
   ready = true, changed = null, renderFeedback = null }) {
   let busy = false;
   let dirty = false;
+  let saved = false;
+  form.classList.add('ui-form-workflow');
+  submit.classList.add('ui-form-submit');
+  if (feedback && !feedback.textContent) feedback.hidden = true;
 
   const showFeedback = (state, message = '', error = null) => {
     if (renderFeedback) { renderFeedback(state, message, error); return; }
     if (!feedback) return;
     feedback.classList.remove('ui-feedback', 'ui-feedback-loading', 'ui-feedback-error',
-      'ui-notice', 'ui-notice-warning');
+      'ui-notice', 'ui-notice-warning', 'ui-form-state');
     feedback.textContent = message;
     feedback.hidden = !message;
     feedback.setAttribute('role', state === 'error' ? 'alert' : 'status');
     if (!message) return;
     if (state === 'warning') feedback.classList.add('ui-notice', 'ui-notice-warning');
-    else {
+    else if (state === 'loading' || state === 'error') {
       feedback.classList.add('ui-feedback');
-      if (state === 'loading' || state === 'error') feedback.classList.add(`ui-feedback-${state}`);
-    }
+      feedback.classList.add(`ui-feedback-${state}`);
+    } else feedback.classList.add('ui-form-state');
   };
 
   const refresh = () => {
     if (typeof changed === 'function') dirty = Boolean(changed());
-    submit.disabled = busy || !ready || (typeof changed === 'function' && !dirty);
+    const clean = !dirty && (typeof changed === 'function' || saved);
+    submit.disabled = busy || !ready || clean;
+    submit.hidden = clean && !busy;
+    form.classList[dirty ? 'add' : 'remove']('is-dirty');
     modal?.setDirty(dirty);
   };
   const edited = () => {
@@ -36,7 +43,7 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
   form.addEventListener('change', edited);
   refresh();
 
-  const save = async (operation, { saving = 'Saving…', success = 'Saved.',
+  const save = async (operation, { saving = 'Saving…',
     onSuccess = null, onError = null } = {}) => {
     if (busy || !ready || submit.disabled || !form.reportValidity()) return false;
     busy = true;
@@ -51,7 +58,8 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
     try {
       result = await operation();
       dirty = false;
-      showFeedback('status', success);
+      saved = true;
+      showFeedback('status', '');
     } catch (error) {
       failure = error;
       let notice = null;
@@ -67,7 +75,7 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
     }
     if (failure) return false;
     if (onSuccess) {
-      try { await onSuccess(result); }
+      try { await onSuccess(result); refresh(); }
       catch (error) {
         showFeedback('error', error?.message || 'The saved changes could not be refreshed. Try again.');
         return false;

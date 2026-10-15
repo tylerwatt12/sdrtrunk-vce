@@ -743,6 +743,7 @@ async function verifyAsyncSelectionLifecycle() {
 
 async function verifyAdditionalAliasLifecycles() {
   await verifyAsyncSelectionLifecycle();
+  await verifySharedFormWorkflowLifecycle();
   await verifyAliasSaveLifecycle();
   const result = await context.runMutationRefreshProbe(selectionScope);
   assert.deepEqual(Array.from(result.refreshedSelection), [],
@@ -762,6 +763,92 @@ async function verifyAdditionalAliasLifecycles() {
   assert.match(messages.at(-1)[0], /Selected all 2 matching aliases/);
 }
 
+function workflowClassList() {
+  const values = new Set();
+  return {
+    add: (...tokens) => tokens.forEach((token) => values.add(token)),
+    remove: (...tokens) => tokens.forEach((token) => values.delete(token)),
+    contains: (token) => values.has(token)
+  };
+}
+
+async function verifySharedFormWorkflowLifecycle() {
+  const workflowSource = fs.readFileSync(path.resolve(path.dirname(applicationPath), 'core/form-workflows.js'),
+    'utf8').replace('export function createFormWorkflow', 'function createFormWorkflow');
+  const createFormWorkflow = vm.runInNewContext(`${workflowSource}; createFormWorkflow;`);
+  const input = { value: 'Original', disabled: false };
+  const locked = { disabled: true };
+  const submit = { classList: workflowClassList(), disabled: false, hidden: false };
+  const feedback = { classList: workflowClassList(), textContent: '', hidden: true,
+    setAttribute(name, value) { this[name] = value; } };
+  const listeners = new Map();
+  const attributes = new Map();
+  const form = { classList: workflowClassList(), elements: [input, locked, submit],
+    addEventListener: (name, listener) => listeners.set(name, listener), reportValidity: () => true,
+    setAttribute: (name, value) => attributes.set(name, value),
+    removeAttribute: (name) => attributes.delete(name) };
+  const modal = { dirty: false, busy: false,
+    setDirty(value) { this.dirty = value; }, setBusy(value) { this.busy = value; } };
+  let confirmed = input.value;
+  const workflow = createFormWorkflow({ form, submit, feedback, modal,
+    changed: () => input.value !== confirmed });
+  const edit = (value) => { input.value = value; listeners.get('input')(); };
+
+  assert.equal(submit.hidden, true, 'A clean form has no Save action');
+  assert.equal(submit.disabled, true);
+  edit('Draft');
+  assert.equal(form.classList.contains('is-dirty'), true);
+  assert.equal(feedback.textContent, 'Unsaved changes');
+  assert.equal(feedback.classList.contains('ui-form-state'), true);
+  assert.equal(feedback.classList.contains('ui-feedback'), false, 'Dirty feedback stays compact');
+  assert.equal(submit.hidden, false);
+  edit('Original');
+  assert.equal(form.classList.contains('is-dirty'), false);
+  assert.equal(feedback.textContent, '', 'Reverting to the confirmed value clears draft feedback');
+  assert.equal(feedback.hidden, true);
+  assert.equal(submit.hidden, true);
+
+  edit('Draft');
+  let release;
+  let writes = 0;
+  const pending = workflow.save(async () => {
+    writes += 1;
+    await new Promise((resolve) => { release = resolve; });
+    return input.value;
+  }, { success: 'Legacy saved message.', onSuccess: (value) => { confirmed = value; } });
+  assert.equal(modal.busy, true);
+  assert.equal(input.disabled, true);
+  assert.equal(submit.disabled, true);
+  assert.equal(attributes.get('aria-busy'), 'true');
+  assert.equal(await workflow.save(() => { writes += 1; }), false);
+  assert.equal(writes, 1, 'Duplicate submission cannot repeat a pending save');
+  release();
+  assert.equal(await pending, true);
+  assert.equal(feedback.textContent, '', 'Success clears even a legacy caller-provided saved message');
+  assert.equal(feedback.hidden, true);
+  assert.equal(form.classList.contains('is-dirty'), false, 'The comparator sees the onSuccess confirmed value');
+  assert.equal(submit.hidden, true);
+  assert.equal(submit.disabled, true);
+  assert.equal(modal.dirty, false);
+  assert.equal(modal.busy, false);
+  assert.equal(input.disabled, false);
+  assert.equal(locked.disabled, true, 'A permanently disabled control stays disabled');
+  assert.equal(attributes.has('aria-busy'), false);
+
+  edit('Retry draft');
+  assert.equal(await workflow.save(async () => { throw new Error('Unavailable. Try again.'); }), false);
+  assert.equal(input.value, 'Retry draft', 'Failure preserves the draft');
+  assert.equal(form.classList.contains('is-dirty'), true);
+  assert.equal(submit.disabled, false);
+  assert.equal(submit.hidden, false);
+  assert.equal(feedback.role, 'alert');
+  assert.equal(feedback.classList.contains('ui-feedback-error'), true);
+  edit('Draft');
+  assert.equal(feedback.textContent, '', 'Reverting the failed draft clears its error');
+  assert.equal(feedback.hidden, true);
+  assert.equal(submit.hidden, true);
+}
+
 async function verifyAliasSaveLifecycle() {
   const editor = functionSource("async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
   const setup = editor.slice(editor.indexOf('    let savedPayloadKey'),
@@ -779,7 +866,7 @@ async function verifyAliasSaveLifecycle() {
   const controls = Object.assign(Object.values(fields), fields);
   controls.forEach((control) => { control.disabled = false; });
   const handlers = new Map();
-  const form = { elements: controls, addEventListener: (type, handler) => {
+  const form = { classList: workflowClassList(), elements: controls, addEventListener: (type, handler) => {
     handlers.set(type, [...handlers.get(type) || [], handler]);
   }, setAttribute() {}, removeAttribute() {}, reportValidity: () => Boolean(fields.name.value.trim()),
   querySelectorAll: () => [{ value: 'stream-a' }, { value: 'stream-b' }] };
@@ -788,7 +875,7 @@ async function verifyAliasSaveLifecycle() {
   };
   const feedback = { children: [], replaceChildren(...children) { this.children = children; },
     append(...children) { this.children.push(...children); } };
-  const save = { disabled: false };
+  const save = { classList: workflowClassList(), disabled: false, hidden: false };
   const modal = { dirty: false, busy: false, setDirty(value) { this.dirty = value; },
     setBusy(value) { this.busy = value; } };
   const writes = [];
@@ -799,7 +886,7 @@ async function verifyAliasSaveLifecycle() {
   const saveContext = {
     form, save, errorHost: feedback, modal, source, editing: true, mode: 'edit', id: 101, prefill: null,
     options: {}, document: { createTextNode: (text) => ({ textContent: text }) },
-    node: (_tag, _className, text) => ({ textContent: text, append() {} }),
+    node: (_tag, _className, text) => ({ textContent: text, append() {}, setAttribute() {} }),
     aliasEditorPayload: () => ({ ...source, name: fields.name.value, recordable: fields.recordable.checked,
       broadcast_configuration_ids: ['stream-a', 'stream-b'], scan_list_ids: [1, 3] }),
     aliasEditorPageController: { isCurrent: () => true, canRefreshMutation: () => true,

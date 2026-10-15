@@ -6,7 +6,7 @@ const { openVoiceEnhancementApp } = require('./fixtures/voice-enhancement-app.cj
 
 const panel = page => page.locator('[data-paging-tone-detection]');
 const toggle = page => panel(page).getByRole('checkbox', { name: 'Paging-tone detection', exact: true });
-const save = page => panel(page).getByRole('button', { name: 'Save', exact: true });
+const save = page => panel(page).getByRole('button', { name: 'Save', exact: true, includeHidden: true });
 const reload = page => panel(page).getByRole('button', { name: 'Reload status', exact: true });
 async function screenshot(page, name) {
   if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`), fullPage: true, animations: 'disabled' });
@@ -23,6 +23,7 @@ test('default On paging-tone control saves independently, guards revisions, and 
   state.releaseStatus();
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).toBeChecked();
   await expect(save(page)).toBeDisabled();
+  await expect(save(page)).toBeHidden();
   await expect(page.locator('[data-voice-enhancement] input[type=checkbox]')).toBeDisabled();
   await expect(panel(page)).toContainText('Off skips detection; tones remain audible.');
   await toggle(page).focus(); await screenshot(page, 'paging-tones-light-desktop');
@@ -36,6 +37,7 @@ test('default On paging-tone control saves independently, guards revisions, and 
   release();
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).not.toBeChecked();
   await expect(save(page)).toBeDisabled();
+  await expect(save(page)).toBeHidden();
   expect(state.writes[0].headers['if-match']).toBe(`"${'1'.repeat(64)}"`);
   expect(state.writes[0].headers['x-csrf-token']).toBe('test-only-csrf');
   expect(state.writes[0].method).toBe('PUT');
@@ -49,7 +51,9 @@ test('default On paging-tone control saves independently, guards revisions, and 
   await toggle(page).press('Space'); await save(page).click();
   await expect(panel(page).getByRole('alert')).toContainText('could not be saved');
   await expect(toggle(page)).toBeChecked(); await expect(save(page)).toBeEnabled();
-  await save(page).click(); await expect(panel(page)).toContainText('Paging-tone detection saved.');
+  await save(page).click();
+  await expect(save(page)).toBeHidden();
+  await expect(panel(page)).not.toContainText('Paging-tone detection saved.');
   await expect(toggle(page)).toBeChecked();
   state.nextFailure = 'network';
   await toggle(page).press('Space'); await save(page).click();
@@ -68,7 +72,8 @@ test('unavailable safe Off setting remains editable and can be repaired without 
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).not.toBeChecked();
   await expect(save(page)).toBeEnabled(); await screenshot(page, 'paging-tones-dark-phone');
   await save(page).click();
-  await expect(panel(page)).toContainText('Paging-tone detection saved.');
+  await expect(save(page)).toBeHidden();
+  await expect(panel(page)).not.toContainText('Paging-tone detection saved.');
   await expect(panel(page).locator('.ui-notice-warning')).toBeHidden();
   await expect(save(page)).toBeDisabled();
   expect(JSON.parse(state.writes[0].body)).toEqual({ value: false });

@@ -43,7 +43,7 @@ const administration = [
   ['transcription', '.recordings-admin', 'Transcription'],
   ['alert-topics', '.alerts-workspace', 'Administrator alerts'],
   ['alert-rules', '.alerts-workspace', 'Fire call activity'],
-  ['push-setup', '.alerts-workspace', 'RadioResolve'],
+  ['push-setup', '.alerts-workspace', 'Awaiting approval'],
   ['activity', '.operational-preferences', 'Saved activity'],
   ['retained-statistics', '.retained-statistics-page', 'Saved data'],
   ['remote-links', '.remote-links-page', 'Regional receiver'],
@@ -236,8 +236,9 @@ for (const [theme, viewport, signedOut] of [
       await expect(state).toBeEnabled();
       await expect(state).toHaveValue('');
       await expect(region.locator('.ui-select-frame')).toHaveCount(2);
-      const save = region.getByRole('button', { name: 'Save lookup region', exact: true });
+      const save = region.getByRole('button', { name: 'Save lookup region', exact: true, includeHidden: true });
       await expect(save).toBeDisabled();
+      await expect(save).toBeHidden();
       await state.selectOption('42');
       await expect(save).toBeEnabled();
       await expectSharedTypography(page);
@@ -246,7 +247,7 @@ for (const [theme, viewport, signedOut] of [
       await save.click();
       await expect(region).toHaveCount(0);
       await expect(page.getByRole('button', { name: 'RadioReference settings', exact: true })).toBeFocused();
-      await expect(page.locator('.radioreference-connected-page')).toContainText('Lookup region saved.');
+      await expect(page.locator('.radioreference-connected-page')).not.toContainText('Lookup region saved.');
       expect(requests.filter(({ endpoint }) => endpoint.endsWith('/location'))).toEqual([
         { endpoint: '/api/v1/admin/radioreference/location', method: 'PUT', body: { country_id: 1, state_id: 42 } }
       ]);
@@ -254,7 +255,7 @@ for (const [theme, viewport, signedOut] of [
       const modal = page.getByRole('dialog', { name: 'RadioReference settings', exact: true });
       await expect(modal.getByLabel('State or region', { exact: true })).toHaveValue('42');
       await expect(modal.locator('.ui-modal-footer')).toBeVisible();
-      await expect(modal.getByRole('button', { name: 'Save lookup region', exact: true })).toBeDisabled();
+      await expect(modal.getByRole('button', { name: 'Save lookup region', exact: true })).toBeHidden();
       await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
       await expect(modal).toHaveCount(0);
       expect(fixture.unexpected).toEqual([]);
@@ -345,5 +346,5 @@ test('RadioReference lookup region saved state stays in settings and invalid sta
   const inlineRegion = page.locator('.radioreference-connected-page > .radioreference-region-form');
   await expect(inlineRegion).toBeVisible();
   await expect(inlineRegion.getByLabel('State or region', { exact: true })).toHaveValue('');
-  await expect(inlineRegion.getByRole('button', { name: 'Save lookup region', exact: true })).toBeDisabled();
+  await expect(inlineRegion.getByRole('button', { name: 'Save lookup region', exact: true })).toBeHidden();
 });

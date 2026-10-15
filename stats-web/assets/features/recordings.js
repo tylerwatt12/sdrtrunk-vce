@@ -3,6 +3,7 @@ import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25Servi
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=3';
+import { createFormWorkflow } from '../core/form-workflows.js?v=3';
 
 const CALLS = '/api/v1/recordings/calls';
 const IDENTITIES = '/api/v1/recordings/identities';
@@ -2414,7 +2415,7 @@ export function createRecordingsFeature(deps) {
         requestJson(`${ADMIN}/settings`), requestJson(`${ADMIN}/status`)
       ]);
       if (!wrapper.isConnected) return;
-      const modeBody = node('div', 'recordings-admin-body');
+      const modeBody = node('form', 'recordings-admin-body');
       const modes = node('div', 'recordings-mode-choices');
       const radios = {};
       for (const [mode, title, detail] of [
@@ -2436,47 +2437,55 @@ export function createRecordingsFeature(deps) {
       appendFact(node, folder, 'Managed folder', settings?.managed_directory);
       const modeStatus = node('div', 'recordings-form-status');
       modeStatus.setAttribute('role', 'status');
-      const saveMode = button(node, 'Save mode', async () => {
-        const mode = radios.MANAGED.checked ? 'MANAGED' : 'CLASSIC';
-        saveMode.disabled = true;
-        try {
+      const saveMode = button(node, 'Save mode', null, 'ui-button ui-button-primary');
+      saveMode.type = 'submit';
+      const selectedMode = () => radios.MANAGED.checked ? 'MANAGED' : 'CLASSIC';
+      const modeWorkflow = createFormWorkflow({ form: modeBody, submit: saveMode, feedback: modeStatus,
+        changed: () => selectedMode() !== settings.mode });
+      modeBody.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const mode = selectedMode();
+        await modeWorkflow.save(async () => {
           await requestJson(`${ADMIN}/settings`, { method: 'PUT', body: { mode }, page: false });
           settings.mode = mode;
-          modeStatus.replaceChildren(makeNotice('Recording mode saved.'));
-        } catch (error) {
-          modeStatus.replaceChildren(makeNotice(error.message || 'Mode could not be saved.', 'error'));
-        } finally { saveMode.disabled = false; }
-      }, 'ui-button ui-button-primary');
+        }, { onError: (error) => ({ state: 'error', message: error.message || 'Mode could not be saved.' }) });
+      });
+      const modeFooter = node('div', 'settings-form-footer');
+      modeFooter.append(modeStatus, adminActions(saveMode, adminLink('Audio quality settings', 'audio-quality')));
       modeBody.append(modes, folder, node('p', 'recordings-admin-note',
         'Managed calls are saved as MP3 for browser playback. The recording format setting applies to Classic mode. ' +
         'Existing managed calls stay searchable when you switch to Classic, and their age limit still applies.'),
-      adminActions(saveMode, adminLink('Audio quality settings', 'audio-quality')), modeStatus);
-      const ageBody = node('div', 'recordings-admin-body');
+      modeFooter);
+      const ageBody = node('form', 'recordings-admin-body');
+      ageBody.noValidate = true;
       const age = textInput('No age limit', 'number');
       age.min = '1';
       age.step = '1';
       age.value = settings?.retention_days == null ? '' : String(settings.retention_days);
       const ageStatus = node('div', 'recordings-form-status');
       ageStatus.setAttribute('role', 'status');
-      const saveAge = button(node, 'Save age limit', async () => {
+      const saveAge = button(node, 'Save age limit', null, 'ui-button ui-button-primary');
+      saveAge.type = 'submit';
+      const ageWorkflow = createFormWorkflow({ form: ageBody, submit: saveAge, feedback: ageStatus,
+        changed: () => numberOrNull(age.value) !== (settings.retention_days ?? null) });
+      ageBody.addEventListener('submit', async (event) => {
+        event.preventDefault();
         const days = numberOrNull(age.value);
         if (age.value && (!Number.isInteger(days) || days < 1)) {
-          ageStatus.replaceChildren(makeNotice('Enter a whole number of days, or leave the field blank.', 'error'));
+          ageWorkflow.showFeedback('error', 'Enter a whole number of days, or leave the field blank.');
           return;
         }
-        saveAge.disabled = true;
-        try {
+        await ageWorkflow.save(async () => {
           await requestJson(`${ADMIN}/settings`, { method: 'PUT', body: { retention_days: days }, page: false });
-          ageStatus.replaceChildren(makeNotice('Age limit saved.'));
-        } catch (error) {
-          ageStatus.replaceChildren(makeNotice(error.message || 'Age limit could not be saved.', 'error'));
-        } finally { saveAge.disabled = false; }
-      }, 'ui-button ui-button-primary');
+          settings.retention_days = days;
+        }, { onError: (error) => ({ state: 'error', message: error.message || 'Age limit could not be saved.' }) });
+      });
       const ageField = field('Remove managed calls older than (days)', age);
       ageField.append(node('small', 'ui-field-detail', 'Leave blank for no age limit. The age limit continues to ' +
         'apply to existing managed calls in Classic mode.'));
-      ageBody.append(ageField, adminActions(saveAge, adminLink('Transcription settings', 'transcription')),
-        ageStatus);
+      const ageFooter = node('div', 'settings-form-footer');
+      ageFooter.append(ageStatus, adminActions(saveAge, adminLink('Transcription settings', 'transcription')));
+      ageBody.append(ageField, ageFooter);
       const catalogBody = node('div', 'recordings-admin-body recordings-catalog-body');
       const catalogSummary = node('div', 'recordings-catalog-summary');
       const catalogCount = node('div', 'recordings-catalog-count');
@@ -2642,7 +2651,8 @@ export function createRecordingsFeature(deps) {
         requestJson(`${ADMIN}/settings`), requestJson(`${ADMIN}/status`)
       ]);
       if (!wrapper.isConnected) return;
-      const transcriptionBody = node('div', 'recordings-admin-body');
+      const transcriptionBody = node('form', 'recordings-admin-body');
+      transcriptionBody.noValidate = true;
       const enabledField = uiToggleField('Transcribe managed calls',
         settings?.transcription_enabled === true, 'Transcribe managed calls',
         'Includes retained calls that have not been transcribed.');
@@ -2679,11 +2689,12 @@ export function createRecordingsFeature(deps) {
               keyState.textContent = 'No API key is saved.';
               key.placeholder = 'Optional API key';
               clearKey.hidden = true;
-              transcriptionStatus.replaceChildren(makeNotice('Saved API key cleared.'));
+              transcriptionWorkflow.showFeedback('status', '');
+              transcriptionWorkflow.refresh();
             } finally { clearKey.disabled = false; }
           },
-          onError: (error) => transcriptionStatus.replaceChildren(makeNotice(error.message ||
-            'API key could not be cleared.', 'error'))
+          onError: (error) => transcriptionWorkflow.showFeedback('error', error.message ||
+            'API key could not be cleared.')
         });
       });
       clearKey.hidden = settings?.transcription_key_configured !== true;
@@ -2696,23 +2707,34 @@ export function createRecordingsFeature(deps) {
       transcriptionFields.append(endpointField, field('Model ID', model), minimumField, keyField);
       const transcriptionStatus = node('div', 'recordings-form-status');
       transcriptionStatus.setAttribute('role', 'status');
-      const saveTranscription = button(node, 'Save transcription settings', async () => {
+      const saveTranscription = button(node, 'Save transcription settings', null, 'ui-button ui-button-primary');
+      saveTranscription.type = 'submit';
+      const transcriptionValues = () => ({ transcription_enabled: enabled.checked,
+        transcription_url: endpoint.value.trim(), transcription_model: model.value.trim(),
+        transcription_min_duration_ms: numberOrNull(minimum.value) });
+      let confirmedTranscription = transcriptionValues();
+      const transcriptionChanged = () => {
+        const draft = transcriptionValues();
+        return Boolean(key.value) || Object.entries(draft).some(([name, value]) => value !== confirmedTranscription[name]);
+      };
+      const transcriptionWorkflow = createFormWorkflow({ form: transcriptionBody, submit: saveTranscription,
+        feedback: transcriptionStatus, changed: transcriptionChanged });
+      transcriptionBody.addEventListener('submit', async (event) => {
+        event.preventDefault();
         const milliseconds = numberOrNull(minimum.value);
         if (!Number.isInteger(milliseconds) || milliseconds < 500 || milliseconds > 600_000) {
-          transcriptionStatus.replaceChildren(makeNotice('Enter a whole number from 500 to 600,000 milliseconds.',
-            'error'));
+          transcriptionWorkflow.showFeedback('error', 'Enter a whole number from 500 to 600,000 milliseconds.');
           return;
         }
         if (enabled.checked && (!endpoint.value.trim() || !model.value.trim())) {
-          transcriptionStatus.replaceChildren(makeNotice('Enter a transcription endpoint URL and model ID.', 'error'));
+          transcriptionWorkflow.showFeedback('error', 'Enter a transcription endpoint URL and model ID.');
           return;
         }
-        const body = { transcription_enabled: enabled.checked, transcription_url: endpoint.value.trim(),
-          transcription_model: model.value.trim(), transcription_min_duration_ms: milliseconds };
+        const body = transcriptionValues();
         if (key.value) body.transcription_api_key = key.value;
-        saveTranscription.disabled = true;
-        try {
+        await transcriptionWorkflow.save(async () => {
           await requestJson(`${ADMIN}/settings`, { method: 'PUT', body, page: false });
+          confirmedTranscription = transcriptionValues();
           if (key.value) {
             settings.transcription_key_configured = true;
             key.value = '';
@@ -2720,12 +2742,9 @@ export function createRecordingsFeature(deps) {
             keyState.textContent = 'An API key is saved on this receiver.';
             clearKey.hidden = false;
           }
-          transcriptionStatus.replaceChildren(makeNotice('Transcription settings saved.'));
-        } catch (error) {
-          transcriptionStatus.replaceChildren(makeNotice(error.message ||
-            'Transcription settings could not be saved.', 'error'));
-        } finally { saveTranscription.disabled = false; }
-      }, 'ui-button ui-button-primary');
+        }, { onError: (error) => ({ state: 'error', message: error.message ||
+          'Transcription settings could not be saved.' }) });
+      });
       const transcriptionProgress = node('div', 'recordings-transcription-progress');
       const drawTranscription = (snapshot) => {
         transcriptionProgress.replaceChildren();
@@ -2754,10 +2773,11 @@ export function createRecordingsFeature(deps) {
         }
       };
       drawTranscription(catalog);
-      const keyActions = node('div', 'ui-toolbar');
+      const keyActions = node('div', 'ui-action-row');
       keyActions.append(saveTranscription, clearKey);
-      transcriptionBody.append(enabledField, transcriptionFields,
-        keyActions, transcriptionStatus);
+      const transcriptionFooter = node('div', 'settings-form-footer');
+      transcriptionFooter.append(transcriptionStatus, keyActions);
+      transcriptionBody.append(enabledField, transcriptionFields, transcriptionFooter);
       const progressBody = node('div', 'recordings-admin-body');
       const progressStatus = node('div', 'recordings-form-status');
       progressStatus.setAttribute('role', 'status');

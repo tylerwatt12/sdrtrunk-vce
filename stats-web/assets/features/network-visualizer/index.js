@@ -12,6 +12,7 @@ import {
 } from './history.js?v=13';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=7';
+import { createFormWorkflow } from '../../core/form-workflows.js?v=3';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
@@ -251,7 +252,7 @@ function createP25Visualizer(dependencies = {}) {
   const eventsResizeObserver = new ResizeObserver(ensureEventsSpace);
   eventsResizeObserver.observe(stage);
 
-  function openSettings() {
+  async function openSettings() {
     const form = node('form', 'admin-form network-visualizer-settings-form');
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'status');
@@ -277,35 +278,26 @@ function createP25Visualizer(dependencies = {}) {
     const modal = openReadOnlyModal('P25 Visualizer settings', form, {
       id: 'p25-visualizer-settings', className: 'network-visualizer-settings-modal'
     });
-    if (!modal) return;
+    if (!modal || (modal.ready && !await modal.ready)) return;
     cancel.addEventListener('click', modal.close);
-    form.addEventListener('input', () => modal.setDirty(true));
+    const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal,
+      changed: () => P25_EVENT_SETTINGS.some((entry) => ['highlight', 'autoZoom'].some((property) =>
+        controls.get(`${property}:${entry.id}`).checked !== eventSettings[entry.id][property])) });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (save.disabled) return;
       const next = Object.fromEntries(P25_EVENT_SETTINGS.map((entry) => [entry.id, {
         highlight: controls.get(`highlight:${entry.id}`).checked,
         autoZoom: controls.get(`autoZoom:${entry.id}`).checked
       }]));
-      save.disabled = true;
-      cancel.disabled = true;
-      modal.setBusy(true);
-      message.textContent = 'Saving visualizer choices…';
-      try {
+      await workflow.save(async () => {
         await saveEventSettings(next);
         eventSettings = normalizeP25EventSettings(next);
         highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
         autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
-        modal.setDirty(false);
-        modal.setBusy(false);
-        if (modal.close()) void loadSeed();
-      } catch (error) {
-        message.textContent = error?.message || 'Visualizer choices could not be saved in this browser.';
-      } finally {
-        modal.setBusy(false);
-        if (save.isConnected) save.disabled = false;
-        if (cancel.isConnected) cancel.disabled = false;
-      }
+      }, { saving: 'Saving visualizer choices…',
+        onSuccess: () => { if (modal.close()) void loadSeed(); },
+        onError: (error) => ({ state: 'error', message: error?.message ||
+          'Visualizer choices could not be saved in this browser.' }) });
     });
   }
 

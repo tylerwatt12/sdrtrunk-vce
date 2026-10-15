@@ -8,7 +8,7 @@ const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 const panel = page => page.locator('[data-voice-enhancement]');
 const toggle = page => panel(page).getByRole('checkbox', { name: '16 kHz voice enhancement', exact: true });
-const save = page => panel(page).getByRole('button', { name: 'Save', exact: true });
+const save = page => panel(page).getByRole('button', { name: 'Save', exact: true, includeHidden: true });
 
 async function screenshot(page, name) {
   if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`), fullPage: true });
@@ -25,6 +25,7 @@ test('embedded JMBE enhancement saves revisions and blocks duplicate writes with
   state.releaseStatus();
   await expect(toggle(page)).toBeEnabled();
   await expect(save(page)).toBeDisabled();
+  await expect(save(page)).toBeHidden();
   await expect(panel(page)).toContainText('Enhances new browser calls');
   await expect(panel(page)).toContainText('JMBE model');
   await toggle(page).focus();
@@ -39,6 +40,8 @@ test('embedded JMBE enhancement saves revisions and blocks duplicate writes with
   await expect.poll(() => state.writes.length).toBe(1);
   release();
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).toBeChecked();
+  await expect(save(page)).toBeHidden();
+  await expect(panel(page)).not.toContainText('Voice enhancement saved.');
   expect(state.writes[0].headers['if-match']).toBe(`"${'a'.repeat(64)}"`);
   expect(state.writes[0].headers['x-csrf-token']).toBe('test-only-csrf');
   expect(JSON.parse(state.writes[0].body)).toEqual({ value: true });
@@ -96,7 +99,8 @@ test('completed call Details shows audio enhancement and measured tones without 
   await expect(dock.locator('#audio-dock-panel')).toContainText('16 kHz');
   await expect(dock.locator('#audio-dock-panel')).toContainText('voice-model-1');
   await expect(dock.locator('#audio-dock-panel')).toContainText('Audio detection');
-  await expect(dock.locator('#audio-dock-panel')).toContainText('600 Hz · 1000 ms · at 80 ms');
+  // Retained decoded pitches are shown at nominal 31.25 Hz steps.
+  await expect(dock.locator('#audio-dock-panel')).toContainText('593.75 Hz · 1000 ms · at 80 ms');
   await screenshot(page, 'playback-audio-details-dark-phone');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

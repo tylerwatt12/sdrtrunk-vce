@@ -359,6 +359,12 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/admin/aliases/options') return respond({ revision: 1, alias_list: list,
       streams: [{ configuration_id: stream.configuration_id, name: stream.name }] });
     if (p === '/api/v1/admin/operational-preferences') return route.fulfill({ json: operational });
+    if (p === '/api/v1/admin/voice-enhancement') return route.fulfill({ json: {
+      revision: 'a'.repeat(64), enabled: false, status: 'ready', model: {
+        id: 'voice-model-1', input_sample_rate: 8000, output_sample_rate: 16000,
+        codecs: ['IMBE', 'AMBE_PLUS_2'], sha256: 'd'.repeat(64) } } });
+    if (p === '/api/v1/admin/paging-tone-detection') return route.fulfill({ json: {
+      revision: '1'.repeat(64), enabled: true, status: 'ready' } });
     if (p === '/api/v1/admin/streaming') return respond({ revision: '1:1:1', destinations: [stream] });
     if (p === '/api/v1/admin/receiver-settings') return route.fulfill({ json: {
       revision: 1, settings: { traffic_grant_age_out_milliseconds: 2000 } } });

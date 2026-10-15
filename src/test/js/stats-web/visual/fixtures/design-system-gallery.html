@@ -202,7 +202,7 @@
       <section class="visual-section visual-section-wide">
         <h2>Cards and workflows</h2>
         <p class="visual-section-copy">Numeric counters and boxed metadata share tile padding and grid spacing. Use readable text for status and metadata, flat rows for compact details, and integrated readouts for instruments.</p>
-        <p class="visual-section-copy">Editor actions share save feedback and busy controls. Use themed confirmations, phone Filters sheets, one result range with Previous/Next, and neutral availability labels.</p>
+        <p class="visual-section-copy">Changed forms show a highlight, an unsaved label, and Save. Saving clears those cues. Use themed confirmations, phone Filters sheets, one result range with Previous/Next, and neutral availability labels.</p>
         <a class="ui-button ui-button-secondary" href="/design-system.html?view=workflows">Try the workflow examples</a>
       </section>
 
@@ -382,7 +382,6 @@
 
       <section class="visual-section">
         <h2>Messages</h2>
-        <div class="ui-notice">Settings were saved successfully.</div>
         <div class="ui-notice ui-notice-warning">This change restarts the affected channel.</div>
         <div class="ui-notice ui-notice-danger">The receiver could not apply this setting.</div>
         <section class="section ui-section">
@@ -820,7 +819,7 @@
         <header class="ui-section-title"><h2>Managed call retention</h2></header>
         <form class="admin-form ui-settings-form">
           <label class="ui-field"><span class="ui-field-label">Remove managed calls older than (days)</span><input class="ui-input" type="number" min="1" max="3650" value="90"><small class="ui-field-detail">Leave blank for no age limit. The age limit continues to apply to existing managed calls in Classic mode.</small></label>
-          <div class="ui-action-row"><button type="button" class="ui-button ui-button-primary" disabled>Save age limit</button><a class="link-button" href="#transcription">Transcription settings</a></div>
+          <div class="ui-action-row"><button type="button" class="ui-button ui-button-primary ui-form-submit" disabled hidden>Save age limit</button><a class="link-button" href="#transcription">Transcription settings</a></div>
         </form>
       </section>
       <section class="ui-section ui-settings-panel">
@@ -1732,7 +1731,7 @@
       <label class="ui-field"><span class="ui-field-label">Display name</span><input class="ui-input" name="display_name" value="County Dispatch" required maxlength="200"></label>
       <label class="ui-field"><span class="ui-field-label">Locked default</span><select class="ui-select" aria-label="Locked default" disabled><option>Default receiver</option></select></label>
       <p class="ui-field-detail">The example fails once. Retry keeps your draft and saves it.</p>
-      <div class="ui-feedback" data-workflow-feedback hidden></div>
+      <div class="ui-form-state" data-workflow-feedback hidden></div>
       <footer class="ui-modal-footer ui-action-row"><button type="button" class="ui-button ui-button-secondary" data-workflow-cancel>Cancel</button><span class="ui-modal-footer-spacer"></span><button type="submit" class="ui-button ui-button-primary">Save Changes</button></footer>
     </form></div></section>
     <section class="ui-section"><div class="ui-section-title">Filters, result pages, and availability</div><div class="modal-content"><p class="ui-field-detail">Catalogs use Clear filters, an active filter count, and a phone Filters sheet. Selection has its own Clear selection action. Availability is a neutral category.</p><div class="ui-badge-group" data-workflow-availability></div></div><div data-workflow-pager></div></section>

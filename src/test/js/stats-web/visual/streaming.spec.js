@@ -209,10 +209,20 @@ test('partial settings preserve saved credentials and stale edits remain reviewa
   await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('Renamed calls');
   await page.evaluate(()=>{window.streamingTest.stale=false;});
   await modal.getByRole('button',{name:'Save and reconnect'}).click();
-  await expect(modal.getByText('Changes saved.',{exact:true})).toBeVisible();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(modal.locator('.streaming-editor')).not.toHaveClass(/is-dirty/);
+  await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([,options])=>options.method==='PUT'));
   expect(writes.at(-1)[1].body.settings).toEqual({name:'Renamed calls'});
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
+  await modal.getByLabel('Name',{exact:true}).fill('Edited again');
+  await expect(modal.locator('.streaming-editor')).toHaveClass(/is-dirty/);
+  await expect(modal.locator('.ui-form-state')).toHaveText('Unsaved changes');
+  await expect(modal.getByRole('button',{name:'Save and reconnect'})).toBeVisible();
+  await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
+  await modal.getByLabel('Name',{exact:true}).fill('Renamed calls');
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(modal.locator('.ui-form-state')).toBeHidden();
 });
 
 test('streaming deletion keeps its editor and sends no write until themed confirmation is accepted', async ({page}) => {
@@ -289,7 +299,11 @@ test('destination status keeps shared delivery cards and metadata through severi
 
 test('alias changes survive paging and save only explicit selections',async({page})=>{
   await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
-  const modal=page.getByRole('dialog');await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByLabel('Name',{exact:true}).fill('Unsaved destination name');
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(modal.locator('.ui-form-state')).toBeHidden();
   await expect(modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true})).toBeVisible();
   await expect(modal.getByRole('button',{name:'Choose table columns',exact:true})).toBeVisible();
   await expect(modal.locator('.table-layout-menu')).toHaveCount(1);
@@ -305,9 +319,17 @@ test('alias changes survive paging and save only explicit selections',async({pag
   await expect(modal.locator('.table-layout-menu')).toHaveCount(1);
   await expect(modal.getByRole('link',{name:'Dispatch 1',exact:true})).toHaveAttribute('href','/?view=aliases&list=7&alias=1');
   await modal.getByRole('button',{name:'Save assignments'}).click();
-  await expect(modal.getByText('Changes saved.',{exact:true})).toBeVisible();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
   expect(writes[0][1].body).toEqual({revision:'1:1:1',add:[52],remove:[1]});
+  await modal.getByRole('button',{name:'Settings',exact:true}).click();
+  await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('Unsaved destination name');
+  await expect(modal.getByRole('button',{name:'Save and reconnect'})).toBeVisible();
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  await modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true}).check();
+  await expect(modal.locator('.ui-form-state')).toHaveText('Unsaved changes');
+  await expect(modal.getByRole('button',{name:'Save assignments'})).toBeVisible();
 });
 
 test('alias column header toggles only the visible page and tracks partial assignments',async({page})=>{
@@ -364,7 +386,8 @@ test('new destinations enable assignment tabs only after saving',async({page})=>
   const modal=page.getByRole('dialog');await expect(modal.getByRole('button',{name:'Aliases',exact:true})).toBeDisabled();
   await modal.getByLabel('Name',{exact:true}).fill('New destination');
   await modal.getByRole('button',{name:'Add destination',exact:true}).click();
-  await expect(modal.getByText('Changes saved.',{exact:true})).toBeVisible();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
   await expect(modal.getByRole('button',{name:'Aliases',exact:true})).toBeEnabled();
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
 });

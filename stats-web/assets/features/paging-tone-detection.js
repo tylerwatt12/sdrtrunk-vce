@@ -1,6 +1,6 @@
 // Reuse map: Administration sections, shared toggles/page form actions,
 // form busy/dirty feedback, and warning notices cover both themes and sizes.
-import { createFormWorkflow } from '../core/form-workflows.js?v=2';
+import { createFormWorkflow } from '../core/form-workflows.js?v=3';
 
 const ROOT = '/api/v1/admin/paging-tone-detection';
 const REVISION = /^[0-9a-f]{64}$/;
@@ -116,7 +116,7 @@ export function createPagingToneDetectionSettings({ node, section, sectionAction
       pending = true; sync();
       const snapshot = await requestPagingToneDetection(fetchDocument, { action: 'enabled', revision: confirmed.revision, value, signal });
       if (current()) apply(snapshot);
-    }, { saving: 'Saving paging-tone detection…', success: 'Paging-tone detection saved.',
+    }, { saving: 'Saving paging-tone detection…',
       onError: error => current() ? failure(error) : null });
     if (current()) { pending = false; sync(); }
   });

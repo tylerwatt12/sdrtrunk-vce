@@ -1451,7 +1451,7 @@ if (view === 'workflows') {
   });
   cancel.addEventListener('click', () => {
     input.value = saved;
-    workflow.refresh();
+    workflow.setDirty(false);
     workflow.showFeedback('status', '');
   });
   form.addEventListener('submit', (event) => {

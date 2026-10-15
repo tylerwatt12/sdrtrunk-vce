@@ -148,8 +148,8 @@ async function main() {
   assert.match(page, /remove older saved activity/);
   assert.match(page, /const drafts = new Map\(\)/);
   assert.match(page, /drafts\.delete\(field\.id\)/);
-  assert.match(page, /state\.textContent = changed \? 'Unsaved change' : ''/);
-  assert.match(page, /actions\.hidden = !changed/);
+  assert.match(page, /createFormWorkflow\(\{ form, submit: save, feedback: state/);
+  assert.match(page, /actions\.hidden = save\.hidden/);
   assert.match(page, /drafts\.clear\(\)/);
 }
 

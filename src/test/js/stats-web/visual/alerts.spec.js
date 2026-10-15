@@ -170,10 +170,17 @@ test('Direct save waits for the exact URL proof and invalidates it on edit', asy
   await save.click();
   const confirmation = page.getByRole('alertdialog', { name: 'Change delivery', exact: true });
   await confirmation.getByRole('button', { name: 'Switch delivery', exact: true }).click();
-  await expect(page.locator('.alerts-workspace')).toContainText('Settings saved.');
+  await expect(page.locator('.alerts-workspace .ui-form-submit')).toBeHidden();
+  await expect(page.locator('.alerts-workspace')).not.toContainText('Settings saved.');
+  await expect(page.locator('.alerts-workspace form')).not.toHaveClass(/is-dirty/);
   expect(state.writes.at(-1).value.test_token).toBe('synthetic-proof');
   expect(state.writes.at(-1).value.site_url).toBe('https://other.example.net');
   expect(state.writes.at(-1).value.sender_label).toBe('Regional dispatch');
+  await name.fill('Edited again');
+  await expect(page.locator('.alerts-workspace form')).toHaveClass(/is-dirty/);
+  await expect(page.locator('.alerts-workspace .ui-form-state')).toHaveText('Unsaved changes');
+  await expect(save).toBeVisible();
+  await expect(page.locator('.alerts-workspace')).not.toContainText('Settings saved.');
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -193,6 +200,9 @@ test('cloud approval saves the installation name and requests approval in one ac
   expect(state.writes[1].value.sender_label).toBe('Regional dispatch');
   await page.getByRole('button', { name: 'Check status', exact: true }).click();
   expect(state.writes).toHaveLength(2);
+  await page.getByRole('textbox', { name: 'VCE name', exact: true }).fill('Updated dispatch');
+  await expect(page.locator('.alerts-workspace')).not.toContainText('Approval requested.');
+  await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeVisible();
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -432,6 +442,7 @@ test('the Follow alert topics Subscribe button starts a fresh cloud connection a
   const introduction = page.locator('.alerts-public-sidebar > header');
   await introduction.getByRole('button', { name: 'Notification settings', exact: true }).click();
   let dialog = page.getByRole('dialog', { name: 'Alert subscription' });
+  await expect(dialog.locator('.ui-form-submit')).toBeHidden();
   await dialog.getByRole('button', { name: 'Unsubscribe this device', exact: true }).click();
   await page.getByRole('alertdialog', { name: 'Unsubscribe device', exact: true })
     .getByRole('button', { name: 'Unsubscribe', exact: true }).click();
@@ -645,16 +656,18 @@ test('an expired cloud subscription keeps topic saving and phone reconnect guida
   await page.goto('/app.html?view=topics');
   await page.getByRole('button', { name: 'Notification settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Alert subscription' });
-  await expect(dialog.getByRole('button', { name: 'Save topics', exact: true })).toBeEnabled();
+  await expect(dialog.locator('.ui-form-submit')).toBeHidden();
   await expect(dialog.getByRole('button', { name: 'Disconnect & reconnect', exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('link', { name: 'RadioResolve notification settings', exact: true })).toHaveAttribute('href',
     'https://radioresolve.com/vce-push/settings.php');
   await expect(dialog.getByRole('img', { name: 'Scan to open RadioResolve notification settings', exact: true })).toBeVisible();
+  await dialog.getByRole('checkbox', { name: 'Fire activity', exact: true }).uncheck();
+  await expect(dialog.getByRole('button', { name: 'Save topics', exact: true })).toBeEnabled();
   await dialog.getByRole('button', { name: 'Save topics', exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(state.writes).toHaveLength(1);
   expect(state.writes[0].method).toBe('PUT');
-  expect(state.deviceTopics).toEqual(['fire', 'paused', 'administrator-alerts']);
+  expect(state.deviceTopics).toEqual(['paused', 'administrator-alerts']);
   expect(state.writes[0].value).not.toHaveProperty('prefs');
   expect(fixture.pageErrors).toEqual([]);
 });

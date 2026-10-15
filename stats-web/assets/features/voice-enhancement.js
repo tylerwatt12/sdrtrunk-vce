@@ -1,6 +1,6 @@
 // Reuse map: Administration sections, ui-toggle-field/ui-field/ui-admin-facts,
 // shared form busy/feedback guards and action rows cover both themes and sizes.
-import { createFormWorkflow } from '../core/form-workflows.js?v=2';
+import { createFormWorkflow } from '../core/form-workflows.js?v=3';
 
 const ROOT = '/api/v1/admin/voice-enhancement';
 const REVISION = /^[0-9a-f]{64}$/;
@@ -132,7 +132,7 @@ export function createVoiceEnhancementSettings({ node, section, sectionActionHos
       pending = true; sync();
       const snapshot = await requestVoiceEnhancement(fetchDocument, { action: 'enabled', revision: confirmed.revision, value, signal });
       if (current()) apply(snapshot);
-    }, { saving: 'Saving voice enhancement…', success: 'Voice enhancement saved.', onError: (error) => current() ? failure(error) : null });
+    }, { saving: 'Saving voice enhancement…', onError: (error) => current() ? failure(error) : null });
     if (current()) { pending = false; sync(); }
   });
   reload.addEventListener('click', () => { void load(); });

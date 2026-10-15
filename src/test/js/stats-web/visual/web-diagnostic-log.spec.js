@@ -62,8 +62,9 @@ test('saving logging preserves a failed draft, locks duplicate submits, and uses
   const state = await openWebLog(page);
   await expect(workspace(page).locator('.application-log-entry')).toHaveCount(3);
   await expect(toggle(page)).not.toBeChecked();
-  const save = workspace(page).getByRole('button', { name: 'Save', exact: true });
+  const save = workspace(page).getByRole('button', { name: 'Save', exact: true, includeHidden: true });
   await expect(save).toBeDisabled();
+  await expect(save).toBeHidden();
   await toggle(page).focus();
   await page.keyboard.press('Space');
   state.putFailure = true;
@@ -83,7 +84,8 @@ test('saving logging preserves a failed draft, locks duplicate submits, and uses
   await expect(page.getByRole('button', { name: 'Download saved logs', exact: true })).toBeDisabled();
   expect(state.writes).toHaveLength(2);
   release();
-  await expect(workspace(page)).toContainText('Diagnostic logging saved.');
+  await expect(save).toBeHidden();
+  await expect(workspace(page)).not.toContainText('Diagnostic logging saved.');
   await expect(workspace(page).locator('.ui-fact-row').first()).toContainText('Active');
   await expect(toggle(page)).toBeEnabled();
   await expect(save).toBeDisabled();

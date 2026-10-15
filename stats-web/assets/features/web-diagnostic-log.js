@@ -1,5 +1,5 @@
 import { createApplicationLogWorkspace } from '../core/application-log.js?v=5';
-import { createFormWorkflow } from '../core/form-workflows.js?v=2';
+import { createFormWorkflow } from '../core/form-workflows.js?v=3';
 
 const ROOT = '/api/v1/admin/web-diagnostic-log';
 const STATUS_INTERVAL = 5_000;
@@ -176,7 +176,7 @@ export function createWebDiagnosticLogWorkspace(deps) {
       sync();
       const snapshot = await requestWebDiagnosticLog(requestJson, { enabled: value, signal });
       if (current()) apply(snapshot, false);
-    }, { saving: 'Saving diagnostic logging…', success: 'Diagnostic logging saved.',
+    }, { saving: 'Saving diagnostic logging…',
       onError: (error) => {
         if (error?.status === 401 || error?.status === 403) { denied = true; confirmed = null; }
         return { state: 'error', message: denied ?

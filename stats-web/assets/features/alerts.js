@@ -697,7 +697,7 @@ export function createAlertsWorkspace(deps) {
       senderName.setCustomValidity(draft.sender_label ? '' : 'Enter a VCE name.');
     });
     const mode = uiSegmentedControl([{ value: 'proxy', label: 'Cloud · Recommended' }, { value: 'direct', label: 'Direct' }],
-      draft.mode, value => { draft.mode = value; renderMode(); workflow.setDirty(true); });
+      draft.mode, value => { draft.mode = value; renderMode(); workflow.setDirty(true); feedback.replaceChildren(); });
     mode.setAttribute('aria-label', 'Notification delivery');
     const modeHost = node('div', 'alerts-delivery-choice'); modeHost.append(mode);
     const detail = node('div', 'alerts-form');
@@ -705,7 +705,12 @@ export function createAlertsWorkspace(deps) {
     fields.append(enabled.element, formField('VCE name', senderName), modeHost, detail, footer);
     setup.append(section('Delivery', fields), section('Connection', connection));
     form.append(setup);
-    const workflow = createFormWorkflow({ form, submit: save, feedback: status });
+    const workflow = createFormWorkflow({ form, submit: save, feedback: status, changed: () =>
+      (draft.mode === 'proxy' && needsApproval()) || draft.enabled !== saved.enabled || draft.mode !== saved.mode ||
+      draft.sender_label !== (saved.sender_label || 'VCE installation') ||
+      (draft.mode === 'direct' && draft.site_url !== (saved.site_url || '')) });
+    form.addEventListener('input', () => feedback.replaceChildren());
+    form.addEventListener('change', () => feedback.replaceChildren());
     function needsApproval() {
       if (snapshot.registration?.status === 'banned') return false;
       return !snapshot.registration?.sender_id || ['unregistered', 'deregistered'].includes(snapshot.registration?.status);
@@ -820,7 +825,11 @@ export function createAlertsWorkspace(deps) {
         }
         return value;
       }, { saving: requestApproval ? 'Requesting approval…' : 'Saving…',
-        onSuccess: value => { snapshot = value; renderSetup(); feedback.replaceChildren(node('div', 'ui-feedback', requestApproval ? 'Approval requested.' : 'Settings saved.')); },
+        onSuccess: value => {
+          snapshot = value;
+          renderSetup();
+          feedback.replaceChildren(...(requestApproval ? [node('div', 'ui-feedback', 'Approval requested.')] : []));
+        },
         onError: error => ({ state: 'error', message: error.message || (requestApproval ? 'Couldn’t request approval. Try again.' : 'Couldn’t save settings. Try again.') }) });
     });
     body.replaceChildren(form);
@@ -938,13 +947,23 @@ export function createAlertsWorkspace(deps) {
     let localPollController = null;
     let pollFailures = 0;
     let shownEnrollmentUrl = '';
+    let subscriptionLoaded = false;
+    let connectionAction = false;
     let workflow;
     const localModal = openReadOnlyModal('Alert subscription', form, { id: 'public-alert-subscription', className: 'modal-size-small',
       cleanup: () => { clearTimeout(pollTimer); localPollController?.abort(); } });
     modal = localModal;
     form.append(connection, fields, status, modalFooter(cancel, save));
     await localModal.ready;
-    workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal, ready: false });
+    workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal, ready: false,
+      changed: () => {
+        if (connectionAction) return true;
+        if (!subscriptionLoaded || device?.status === 'pending') return false;
+        if (!currentDevice || currentDevice.mode !== snapshot.mode || (snapshot.mode === 'direct' &&
+          (directConnection.state === 'reconnect' || currentDevice.status === 'reconnect_required'))) return true;
+        return JSON.stringify([...new Set(topicIds)].sort()) !==
+          JSON.stringify([...new Set(currentDevice.topic_ids || [])].sort());
+      } });
     try {
       if (device?.status === 'pending') {
         const pending = await requestJson(PUBLIC + '/enrollments/' + encodeURIComponent(device.id),
@@ -967,6 +986,7 @@ export function createAlertsWorkspace(deps) {
       }
       else { workflow.showFeedback('error', 'Couldn’t load subscriptions. Close and try again.'); return; }
     }
+    subscriptionLoaded = true;
     function renderFields() {
       fields.replaceChildren();
       const pending = device?.status === 'pending';
@@ -1020,8 +1040,9 @@ export function createAlertsWorkspace(deps) {
       if (needsReconnect && currentDevice && !directRenewal && !proxyRenewal) fields.append(button('Disconnect & reconnect', async () => {
         if (!await confirmAction('Disconnect the previous connection, then reconnect with your selected topics?',
           { title: 'Reconnect notifications', confirmLabel: 'Disconnect previous connection', tone: 'danger' })) return;
+        connectionAction = true;
         workflow.setReady(true);
-        await workflow.save(async () => {
+        try { await workflow.save(async () => {
           await write(PUBLIC + '/subscriptions/me', 'DELETE', undefined, { headers: authorize(), csrf: false });
           if (currentDevice?.mode === 'direct') {
             try { await (await navigator.serviceWorker.getRegistration('/'))?.pushManager.getSubscription().then(subscription => subscription?.unsubscribe()); }
@@ -1031,9 +1052,14 @@ export function createAlertsWorkspace(deps) {
           forgetAlertDevice(window.localStorage);
           device = null; currentDevice = null; directConnection = { state: 'none' };
           topicIds = topicIds.filter(id => available.has(id));
-        }, { saving: 'Disconnecting…', success: 'Disconnected. Choose Connect notifications to finish.',
-          onSuccess: () => { localModal.setDirty(false); renderFields(); },
+        }, { saving: 'Disconnecting…',
+          onSuccess: () => {
+            localModal.setDirty(false);
+            renderFields();
+            workflow.showFeedback('status', 'Disconnected. Choose Connect notifications to finish.');
+          },
           onError: error => { workflow.setReady(false); return { state: 'error', message: error.message || 'The previous connection could not be disconnected. Try again.' }; } });
+        } finally { connectionAction = false; workflow.refresh(); }
       }));
       if (proxyRenewal) {
         save.textContent = 'Save topics';
@@ -1060,15 +1086,17 @@ export function createAlertsWorkspace(deps) {
       }
       if (currentDevice && !deliveryChanged) fields.append(button('Unsubscribe this device', async () => {
           if (!await confirmAction('Stop all alert notifications on this device?', { title: 'Unsubscribe device', confirmLabel: 'Unsubscribe', tone: 'danger' })) return;
+          connectionAction = true;
           workflow.setReady(true);
-          await workflow.save(async () => {
+          try { await workflow.save(async () => {
             await write(PUBLIC + '/subscriptions/me', 'DELETE', undefined, { headers: authorize(), csrf: false });
             try { await syncDirectWorkerDevice(navigator, null); } catch { /* The server has revoked this credential. */ }
             if (snapshot.mode === 'direct') {
               try { await (await navigator.serviceWorker.getRegistration('/'))?.pushManager.getSubscription().then(subscription => subscription?.unsubscribe()); } catch { /* The revoked device no longer receives sends. */ }
             }
             forgetAlertDevice(window.localStorage); device = null; currentDevice = null; directConnection = { state: 'none' };
-          }, { success: 'This device is unsubscribed.', onSuccess: () => { localModal.setDirty(false); localModal.close(); void renderPublic(); } });
+          }, { onSuccess: () => { localModal.setDirty(false); localModal.close(); void renderPublic(); } });
+          } finally { connectionAction = false; workflow.refresh(); }
         }));
       if (pending) {
         if (needsReconnect) fields.append(paragraph('Finish the previous RadioResolve connection, then disconnect it here before reconnecting.'));
@@ -1200,7 +1228,7 @@ export function createAlertsWorkspace(deps) {
           status: result.status === 'pending' ? 'pending' : 'connected', expires_at_ms: result.expires_at_ms });
         if (device.mode === 'direct') await syncDirectWorkerDevice(navigator, device);
         return result;
-      }, { saving: currentDevice ? 'Saving topics…' : 'Connecting notifications…', success: 'Topics saved.',
+      }, { saving: currentDevice ? 'Saving topics…' : 'Connecting notifications…',
         onSuccess: async result => {
           if (result.managed) { localModal.setDirty(false); localModal.close(); await renderPublic(); return; }
           if (result.status === 'pending') {

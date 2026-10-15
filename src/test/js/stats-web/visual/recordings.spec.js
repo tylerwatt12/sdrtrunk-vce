@@ -209,6 +209,10 @@ async function openRecordings(page, options = {}) {
       if (route.request().method() === 'PUT') {
         const update = route.request().postDataJSON();
         state.settingsWrites.push(update);
+        if (state.settingsWriteError) {
+          await route.fulfill({ status: 503, json: { error: { message: state.settingsWriteError } } });
+          return;
+        }
         Object.assign(state.settings, update);
         if (update.transcription_api_key) state.settings.transcription_key_configured = true;
         if (update.transcription_clear_api_key) state.settings.transcription_key_configured = false;
@@ -395,18 +399,42 @@ test('recording settings retain mode, retention, catalog facts, and both mainten
     .toHaveAttribute('href', '/?view=admin&tab=audio-quality');
   await expect(workspace.getByRole('link', { name: 'Transcription settings' }))
     .toHaveAttribute('href', '/?view=admin&tab=transcription');
+  const saveMode = workspace.getByRole('button', { name: 'Save mode', exact: true });
+  const saveAge = workspace.getByRole('button', { name: 'Save age limit' });
+  await expect(saveMode).toBeHidden();
+  await expect(saveAge).toBeHidden();
 
   await workspace.getByRole('radio', { name: /Managed/ }).check();
-  await workspace.getByRole('button', { name: 'Save mode', exact: true }).click();
-  await expect(workspace).toContainText('Recording mode saved.');
+  await expect(saveMode).toBeVisible();
+  await saveMode.click();
+  await expect(saveMode).toBeHidden();
+  await expect(workspace).not.toContainText('Recording mode saved.');
   expect(state.settingsWrites.at(-1)).toEqual({ mode: 'MANAGED' });
+  await workspace.getByRole('radio', { name: /Classic/ }).check();
+  await expect(saveMode).toBeVisible();
+  await workspace.getByRole('radio', { name: /Managed/ }).check();
+  await expect(saveMode).toBeHidden();
   await workspace.getByLabel('Remove managed calls older than (days)').fill('2.5');
-  await workspace.getByRole('button', { name: 'Save age limit' }).click();
+  await saveAge.click();
   await expect(workspace).toContainText('Enter a whole number of days, or leave the field blank.');
   await workspace.getByLabel('Remove managed calls older than (days)').fill('');
-  await workspace.getByRole('button', { name: 'Save age limit' }).click();
-  await expect(workspace).toContainText('Age limit saved.');
+  await expect(workspace).not.toContainText('Enter a whole number of days, or leave the field blank.');
+  state.settingsWriteError = 'Age limit could not be saved. Try again.';
+  await saveAge.click();
+  await expect(workspace).toContainText(state.settingsWriteError);
+  await expect(saveAge).toBeVisible();
+  await expect(workspace.getByLabel('Remove managed calls older than (days)')).toHaveValue('');
+  state.settingsWriteError = null;
+  await saveAge.click();
+  await expect(saveAge).toBeHidden();
+  await expect(workspace).not.toContainText('Age limit saved.');
   expect(state.settingsWrites.at(-1)).toEqual({ retention_days: null });
+  await workspace.getByLabel('Remove managed calls older than (days)').fill('30');
+  await expect(saveAge).toBeVisible();
+  await workspace.getByLabel('Remove managed calls older than (days)').fill('');
+  await expect(saveAge).toBeHidden();
+  await expect(workspace.getByRole('link', { name: 'Audio quality settings' })).toBeVisible();
+  await expect(workspace.getByRole('link', { name: 'Transcription settings' })).toBeVisible();
 
   const maintenance = workspace.locator('details.ui-section-disclosure');
   await expect(maintenance).not.toHaveAttribute('open', '');
@@ -451,6 +479,7 @@ test('transcription page keeps every provider field and progress status through 
   await expect(workspace.getByLabel('Model ID')).toHaveValue('speech-model');
   await expect(workspace.getByLabel('Minimum call length (ms)')).toHaveValue('750');
   await expect(workspace.getByLabel('API key')).toHaveValue('');
+  await expect(workspace.getByRole('button', { name: 'Save transcription settings' })).toBeHidden();
   for (const invalid of ['499', '600001', '500.5']) {
     await workspace.getByLabel('Minimum call length (ms)').fill(invalid);
     await workspace.getByRole('button', { name: 'Save transcription settings' }).click();
@@ -458,6 +487,7 @@ test('transcription page keeps every provider field and progress status through 
     expect(state.settingsWrites).toEqual([]);
   }
   await workspace.getByLabel('Minimum call length (ms)').fill('750');
+  await expect(workspace.getByRole('button', { name: 'Save transcription settings' })).toBeHidden();
   const progress = workspace.locator('section').filter({ hasText: 'Transcription progress' });
   for (const text of ['Pending', '36', 'Completed', '12,408', 'Failed', '2', 'Worker',
     'Transcribing a call', 'Last error', 'Transcription service was temporarily unavailable.']) {
@@ -495,21 +525,37 @@ test('transcription settings save a write-only key and show catalog progress', a
   await expect(page.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeVisible();
   await expect(page.locator('.recordings-admin')).toContainText('3');
   await expect(page.getByRole('button', { name: 'Clear saved key' })).toBeVisible();
+  const save = page.getByRole('button', { name: 'Save transcription settings' });
+  await expect(save).toBeHidden();
   await page.locator('.recordings-admin .ui-toggle').click();
   await expect(page.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeChecked();
   await page.getByLabel('Transcription endpoint URL').fill('http://127.0.0.1:8000/v1/audio/transcriptions');
   await page.getByLabel('Model ID').fill('test-model');
   await page.getByLabel('Minimum call length (ms)').fill('750');
   await page.getByLabel('API key').fill('replacement-key');
-  await page.getByRole('button', { name: 'Save transcription settings' }).click();
-  await expect(page.locator('.recordings-admin')).toContainText('Transcription settings saved.');
+  state.settingsWriteError = 'Transcription settings could not be saved. Try again.';
+  await save.click();
+  await expect(page.locator('.recordings-admin')).toContainText(state.settingsWriteError);
+  await expect(page.getByLabel('API key')).toHaveValue('replacement-key');
+  await expect(page.getByLabel('Model ID')).toHaveValue('test-model');
+  await expect(save).toBeEnabled();
+  state.settingsWriteError = null;
+  await save.click();
+  await expect(save).toBeHidden();
+  await expect(page.locator('.recordings-admin')).not.toContainText('Transcription settings saved.');
   expect(state.settingsWrites.at(-1)).toMatchObject({ transcription_enabled: true,
     transcription_url: 'http://127.0.0.1:8000/v1/audio/transcriptions',
     transcription_model: 'test-model', transcription_min_duration_ms: 750,
     transcription_api_key: 'replacement-key' });
   await expect(page.getByLabel('API key')).toHaveValue('');
   await expect(page.locator('.recordings-admin')).not.toContainText('replacement-key');
-  await page.getByRole('button', { name: 'Save transcription settings' }).click();
+  await page.getByLabel('Model ID').fill('next-model');
+  await expect(save).toBeVisible();
+  await page.getByLabel('Model ID').fill('test-model');
+  await expect(save).toBeHidden();
+  await page.getByLabel('Model ID').fill('next-model');
+  await save.click();
+  await expect(save).toBeHidden();
   expect(state.settingsWrites.at(-1)).not.toHaveProperty('transcription_api_key');
   await page.getByRole('button', { name: 'Clear saved key' }).click();
   const clearDialog = page.getByRole('dialog', { name: 'Clear saved transcription key' });
@@ -519,6 +565,8 @@ test('transcription settings save a write-only key and show catalog progress', a
   await expect(clearDialog).toBeHidden();
   expect(state.settingsWrites.at(-1)).toMatchObject({ transcription_clear_api_key: true });
   await expect(page.getByRole('button', { name: 'Clear saved key' })).toBeHidden();
+  await expect(save).toBeHidden();
+  await expect(page.locator('.recordings-admin')).not.toContainText('Saved API key cleared.');
 });
 
 test('transcription settings fit a narrow dark viewport', async ({ page }) => {

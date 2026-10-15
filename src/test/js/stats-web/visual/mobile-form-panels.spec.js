@@ -121,7 +121,7 @@ async function savedActivityReady(page) {
 }
 
 async function dockSize(page, state) {
-  const handle = page.getByRole('button', { name: 'Change audio player size', exact: true });
+  const handle = page.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
   await handle.focus();
   await handle.press(state === 'full' ? 'End' : 'Home');
   if (state === 'minimal') await handle.press('ArrowUp');
@@ -298,10 +298,15 @@ test('resizing open P25 Events never replaces a different modal with unsaved cho
   await page.getByRole('button', { name: 'Events', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'P25 Visualizer settings', exact: true });
+  const save = settings.locator('.ui-form-submit');
+  await expect(save).toBeHidden();
   const choice = settings.getByRole('checkbox').first();
   const initial = await choice.isChecked();
   await choice.focus();
   await choice.press('Space');
+  await expect(save).toBeVisible();
+  await expect(settings.locator('form')).toHaveClass(/is-dirty/);
+  await expect(settings.locator('.ui-form-state')).toHaveText('Unsaved changes');
   const confirmations = [];
   page.on('dialog', dialog => { confirmations.push(dialog.message()); void dialog.dismiss(); });
   await page.setViewportSize({ width: 844, height: 390 });
@@ -310,6 +315,10 @@ test('resizing open P25 Events never replaces a different modal with unsaved cho
   expect(confirmations).toEqual([]);
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true })).toHaveCount(0);
+  await choice.press('Space');
+  expect(await choice.isChecked()).toBe(initial);
+  await expect(save).toBeHidden();
+  await expect(settings.locator('.ui-form-state')).toBeHidden();
 });
 
 test('short-screen P25 Events uses the shared modal inside the browser fullscreen layout', async ({ page }) => {

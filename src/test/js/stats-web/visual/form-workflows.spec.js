@@ -68,16 +68,18 @@ async function openForms(page, view, theme = 'light', scanList = {}) {
 test('scan-list save blocks dismissal and duplicate submissions, keeps draft after failure, and returns focus', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   const app = await openForms(page, 'view=scan-lists');
-  await page.getByRole('button', { name: 'Hide audio player', exact: true }).click();
+  await page.getByRole('button', { name: 'Minimize player to header', exact: true }).click();
   await expect(page.locator('#audio-dock')).toHaveAttribute('data-super-collapsed', 'true');
   const edit = page.getByRole('button', { name: 'Edit Public Safety details', exact: true });
   await edit.click();
   const dialog = page.getByRole('dialog', { name: 'Edit scan list · Public Safety' });
   const name = dialog.getByRole('textbox', { name: /^Name\b/ });
-  const save = dialog.getByRole('button', { name: 'Save Scan List', exact: true });
+  const save = dialog.getByRole('button', { name: 'Save Scan List', exact: true, includeHidden: true });
   await expect(name).toBeFocused();
   await expect(save).toBeDisabled();
+  await expect(save).toBeHidden();
   await name.fill('County Dispatch');
+  await expect(dialog.locator('form')).toHaveClass(/is-dirty/);
   await expect(dialog.getByRole('status')).toHaveText('Unsaved changes');
   await save.click();
   await expect.poll(() => app.state.pending.length).toBe(1);
@@ -108,10 +110,11 @@ test('scan-list save blocks dismissal and duplicate submissions, keeps draft aft
 test('Live timing validates, retains failed edits for retry, and saves with the original revision', async ({ page }) => {
   const app = await openForms(page, 'view=admin&tab=display');
   const timing = page.getByRole('spinbutton', { name: /^Mark a traffic row idle/ });
-  const save = page.getByRole('button', { name: 'Save Live timing', exact: true });
+  const save = page.getByRole('button', { name: 'Save Live timing', exact: true, includeHidden: true });
   const form = page.locator('.receiver-settings-form');
   await expect(timing).toHaveValue('2000');
   await expect(save).toBeDisabled();
+  await expect(save).toBeHidden();
   await timing.fill('99');
   await save.click();
   expect(app.state.writes).toHaveLength(0);
@@ -123,18 +126,30 @@ test('Live timing validates, retains failed edits for retry, and saves with the 
   app.finish(503);
   await expect(form.getByRole('alert')).toHaveText('The receiver is busy. Try again.');
   await expect(timing).toHaveValue('3750');
+  await expect(form).toHaveClass(/is-dirty/);
   await expect(save).toBeEnabled();
   await save.click();
   await expect.poll(() => app.state.pending.length).toBe(1);
   app.finish();
-  await expect(form.getByRole('status')).toHaveText('Live timing saved.');
+  await expect(form.locator('.admin-form-message')).toBeEmpty();
+  await expect(form.locator('.admin-form-message')).toBeHidden();
+  await expect(form).not.toHaveClass(/is-dirty/);
   await expect(save).toBeDisabled();
+  await expect(save).toBeHidden();
+  await timing.fill('3900');
+  await expect(form).toHaveClass(/is-dirty/);
+  await expect(form.getByRole('status')).toHaveText('Unsaved changes');
+  await expect(save).toBeVisible();
+  await timing.fill('3750');
+  await expect(form).not.toHaveClass(/is-dirty/);
+  await expect(form.locator('.admin-form-message')).toBeEmpty();
+  await expect(save).toBeHidden();
   expect(app.state.writes.map((write) => write.revision)).toEqual(['"4"', '"4"']);
 });
 
 test('scan-list availability saves use the same neutral labels in the selector and detail', async ({ page }) => {
   const app = await openForms(page, 'view=scan-lists', 'light', { default: false });
-  await page.getByRole('button', { name: 'Hide audio player', exact: true }).click();
+  await page.getByRole('button', { name: 'Minimize player to header', exact: true }).click();
   await expect(page.locator('#audio-dock')).toHaveAttribute('data-super-collapsed', 'true');
   const pill = page.locator('.scan-list-detail-badges .ui-pill');
   await expect(pill).toHaveText('Available to listeners');
@@ -207,12 +222,12 @@ for (const [view, trigger, title, setting, saveLabel] of [
     await page.setViewportSize({ width, height: 740 });
     const app = await openForms(page, `view=${view}`, theme);
     if (view === 'settings' && width === 1280)
-      await page.getByRole('button', { name: 'Hide audio player', exact: true }).click();
+      await page.getByRole('button', { name: 'Minimize player to header', exact: true }).click();
     if (view === 'live') await page.getByRole('button', { name: 'Live presentation settings', exact: true }).click();
     else await page.locator(trigger).click();
     const dialog = page.getByRole('dialog', { name: title, exact: true });
     if (view === 'settings' && width === 1280) {
-      await page.getByRole('button', { name: 'Show audio player', exact: true }).evaluate(button => button.click());
+      await page.getByRole('button', { name: 'Restore player', exact: true }).evaluate(button => button.click());
       await expect(page.locator('#audio-dock')).toHaveAttribute('data-super-collapsed', 'false');
     }
     const control = setting ? dialog.getByRole('spinbutton', { name: new RegExp(`^${setting}`) }) :

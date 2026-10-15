@@ -235,7 +235,8 @@ test('policy updates roll back failures and preserve dynamically supplied capabi
   await expect(select).toHaveValue('USER');
   await expect(select).toBeEnabled();
   await select.selectOption('PUBLIC');
-  await expect(page.locator('.admin-operation-status')).toHaveText(`${dynamic.display_name} now requires Public access.`);
+  await expect(page.locator('.admin-operation-status')).toHaveText('');
+  await expect(page.locator('.admin-operation-status')).toBeHidden();
   await expect(select).toHaveValue('PUBLIC');
   expect(app.writes.map(write => write.body)).toEqual([
     { capability: 'future-feature', tier: 'admin' }, { capability: 'future-feature', tier: 'public' }

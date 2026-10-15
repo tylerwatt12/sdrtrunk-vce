@@ -236,10 +236,13 @@ async function main() {
   await saved.open();
   assert.equal(saved.modal.focused, saved.select, 'The shared modal focuses its name choice once ready');
   assert.equal(saved.save.disabled, true, 'Saving is disabled before a choice changes');
+  assert.equal(saved.save.hidden, true, 'An unchanged choice has no Save action');
   assert.deepEqual(JSON.parse(JSON.stringify(saved.select.choices.map((choice) => choice[0]))),
     ['talker_alias', 'source_alias', 'both']);
   await saved.choose('both');
   assert.equal(saved.modal.dirty, true);
+  assert.equal(saved.form.classList.contains('is-dirty'), true);
+  assert.equal(saved.feedback.classList.contains('ui-form-state'), true);
   await saved.submit();
   assert.equal(saved.preferences.presentation.source_name_display, 'both');
   assert.equal(saved.preferences.presentation.show_encryption_details, true,
@@ -247,6 +250,9 @@ async function main() {
   assert.equal(saved.preferences.playback.volume, 0.35);
   assert.equal(saved.allowRetry, false, 'The modal owns its explicit retry and conflict workflow');
   assert.equal(saved.modal.dirty, false);
+  assert.equal(saved.feedback.textContent, '', 'A successful save leaves no saved message');
+  assert.equal(saved.feedback.hidden, true);
+  assert.equal(saved.save.hidden, true);
   assert.equal(saved.modal.closeCount, 1);
   assert.equal(saved.renderCount, 1, 'Successful save refreshes My Settings once');
   assert.equal(saved.focusCount, 1, 'The settings action receives focus after refresh');
@@ -361,7 +367,12 @@ async function main() {
     assert.equal(renders, closed && outcome !== 'density-only' ? 1 : 0, outcome);
     assert.equal(input.value, outcome === 'conflict' ? 'saved' : 'draft', outcome);
     assert.equal(modal.dirty, ['failed', 'reload-failed'].includes(outcome), outcome);
-    assert.equal(submit.disabled, ['new-account', 'session-changed'].includes(outcome), outcome);
+    assert.equal(submit.disabled, ['saved', 'density-only', 'new-account', 'session-changed'].includes(outcome), outcome);
+    if (['saved', 'density-only'].includes(outcome)) {
+      assert.equal(submit.hidden, true, outcome);
+      assert.equal(feedback.textContent, '', outcome);
+      assert.equal(feedback.hidden, true, outcome);
+    }
   }
 }
 

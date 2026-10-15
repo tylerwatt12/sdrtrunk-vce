@@ -192,18 +192,6 @@
   align-content: start;
 }
 
-.operational-preference-form {
-  min-width: 0;
-  padding: var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-}
-
-.operational-preference-form.is-dirty {
-  background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface));
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
-}
-
 .operational-preference-form + .operational-preference-form {
   padding-top: var(--space-3);
 }
@@ -211,16 +199,6 @@
 .operational-preference-actions {
   justify-content: space-between;
   flex-wrap: wrap;
-}
-
-.operational-preference-state {
-  color: var(--muted);
-  font-size: var(--font-size-label);
-}
-
-.operational-preference-form.is-dirty .operational-preference-state {
-  color: var(--accent);
-  font-weight: var(--font-weight-medium);
 }
 
 @media (max-width: 820px) {

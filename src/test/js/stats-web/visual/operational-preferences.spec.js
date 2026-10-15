@@ -83,8 +83,7 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
 
 test('saved statistics notice explains Off and clears after saving On', async ({ page }) => {
   const app = await openApp(page, 'admin', false);
-  await page.locator('.primary-nav [data-nav-group="listen"] summary').click();
-  await page.locator('.primary-nav a[data-view="dashboard"]').click();
+  await page.getByRole('link', { name: 'VCE home', exact: true }).click();
   const notice = page.locator('main .ui-notice').filter({ hasText: 'Saved activity summaries are off.' });
   await expect(notice).toBeVisible();
   await expect(notice).toHaveClass(/ui-notice-warning/);
@@ -95,9 +94,9 @@ test('saved statistics notice explains Off and clears after saving On', async ({
   const previousStatusRequests = app.statusRequests();
   await summary.getByRole('button', { name: 'Save' }).click();
   await expect.poll(() => app.statusRequests()).toBeGreaterThan(previousStatusRequests);
-  await expect(page.locator('.operational-preferences .admin-form-message')).toHaveText('Saved.');
-  await page.locator('.primary-nav [data-nav-group="listen"] summary').click();
-  await page.locator('.primary-nav a[data-view="dashboard"]').click();
+  await expect(summary.getByRole('button', { name: 'Save' })).toBeHidden();
+  await expect(page.locator('.operational-preferences .admin-form-message')).toHaveText('');
+  await page.getByRole('link', { name: 'VCE home', exact: true }).click();
   await expect(page.locator('main .ui-notice').filter({ hasText: 'Saved activity summaries are off.' }))
     .toHaveCount(0);
 });
@@ -141,9 +140,9 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   await expect(workspace.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
   const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
   await patch.locator('select').selectOption('TALKGROUPS');
-  await expect(patch.getByText('Unsaved change')).toBeVisible();
+  await expect(patch.getByText('Unsaved changes', { exact: true })).toBeVisible();
   await patch.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace.locator('.admin-form-message')).toHaveText('Saved.');
+  await expect(workspace.locator('.admin-form-message')).toHaveText('');
   await expect(patch.getByRole('button', { name: 'Save' })).toHaveCount(0);
   expect(app.writes).toEqual([{ field: 'patch_group_streaming_option', value: 'TALKGROUPS',
     revision: `"${'a'.repeat(64)}"` }]);
@@ -151,7 +150,8 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   await detailed.locator('.ui-toggle').click();
   await expect(detailed.locator('input')).toBeChecked();
   await detailed.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace.locator('.admin-form-message')).toHaveText('Saved.');
+  await expect(detailed.getByRole('button', { name: 'Save' })).toBeHidden();
+  await expect(workspace.locator('.admin-form-message')).toHaveText('');
   expect(app.current().settings.stats_detailed_history_enabled).toBe(true);
   expect(app.writes.at(-1).revision).toBe(`"${'b'.repeat(64)}"`);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -177,7 +177,7 @@ test('receiver settings read as separate output and activity workflows', async (
   await expect(mp3Setting.locator('option')).toHaveCount(2);
   await expect(mp3Format).toHaveValue('SR_16000');
   await expect(mp3Format.locator('option')).toHaveCount(2);
-  await expect(workspace.getByText('Unsaved change')).toHaveCount(0);
+  await expect(workspace.getByText('Unsaved changes', { exact: true })).toHaveCount(0);
   await page.waitForLoadState('networkidle');
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.locator('main')).toHaveScreenshot('admin-operations-light-desktop.png');
@@ -252,7 +252,7 @@ test('saving one preference keeps another unsaved field', async ({ page }) => {
   await recording.locator('select').selectOption('WAVE');
   await patch.getByRole('button', { name: 'Save' }).click();
   await expect(recording.locator('select')).toHaveValue('WAVE');
-  await expect(recording.getByText('Unsaved change')).toBeVisible();
+  await expect(recording.getByText('Unsaved changes', { exact: true })).toBeVisible();
   await recording.getByRole('button', { name: 'Save' }).click();
   expect(app.writes.map((write) => write.field)).toEqual([
     'patch_group_streaming_option', 'audio_record_format'

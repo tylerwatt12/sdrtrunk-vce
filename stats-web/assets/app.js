@@ -11,7 +11,7 @@ import * as systemLabels from './core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=5';
-import { createFormWorkflow } from './core/form-workflows.js?v=2';
+import { createFormWorkflow } from './core/form-workflows.js?v=3';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
@@ -30,13 +30,13 @@ import {
 } from './features/alias-list-create.js?v=6';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=29';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
-import { createStreamingWorkspace } from './features/streaming.js?v=8';
+import { createStreamingWorkspace } from './features/streaming.js?v=9';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=13';
-import { createAlertsWorkspace } from './features/alerts.js?v=8';
-import { createRecordingsFeature } from './features/recordings.js?v=39';
-import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=3';
-import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=1';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=14';
+import { createAlertsWorkspace } from './features/alerts.js?v=9';
+import { createRecordingsFeature } from './features/recordings.js?v=40';
+import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=4';
+import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=2';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=28';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
@@ -45,7 +45,7 @@ import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum
 import { createAudioDock } from './core/audio-dock.js?v=23';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=3';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
-import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=1';
+import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=2';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=18';
 
@@ -4926,7 +4926,12 @@ function aliasFormWorkflow(form, submit, feedback, modal, reload = null, changed
     if (error) aliasMutationError(feedback, error, reload);
     else {
       feedback.replaceChildren();
-      if (message) feedback.append(node('div', 'ui-feedback', message));
+      if (message) {
+        const stateMessage = node('div', state === 'status' ? 'ui-form-state' :
+          `ui-feedback ui-feedback-${state}`, message);
+        stateMessage.setAttribute('role', 'status');
+        feedback.append(stateMessage);
+      }
     }
   } });
 }
@@ -19528,7 +19533,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=42');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=43');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -25538,7 +25543,7 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
       applied = true;
       await onSaved(result);
     }, {
-      saving: 'Saving RadioReference names…', success: 'Names saved.',
+      saving: 'Saving RadioReference names…',
       onError: (error) => {
         preview = null;
         workflow.setReady(false);
@@ -25877,7 +25882,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           errors.setAttribute('aria-live', state === 'error' ? 'assertive' : 'polite');
           if (state === 'error') return;
           errors.replaceChildren(...(message ? [node('div',
-            `ui-feedback${state === 'loading' ? ' ui-feedback-loading' : ''}`, message)] : []));
+            state === 'loading' ? 'ui-feedback ui-feedback-loading' : 'ui-form-state', message)] : []));
         } });
       form.addEventListener('input', () => {
         if (modal.state.isBusy()) return;
@@ -26908,8 +26913,7 @@ function accessPolicyTierControl(policy, statusHost) {
         method: 'PUT', body: { capability: policy.id, tier: accessTierToWire(requested) }
       });
       policy.requiredTier = requested;
-      adminStatusMessage(statusHost,
-        `${policy.displayName || policy.id} now requires ${accessTierLabel(requested)} access.`);
+      adminStatusMessage(statusHost, '');
       await refreshAccessSession(false);
     } catch (error) {
       select.value = previous;
@@ -27537,10 +27541,6 @@ async function renderAdminRadioReferenceSettings() {
   regionFooter.append(regionMessage, regionActions);
   const cancelRegion = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancelRegion.type = 'button';
-  const regionSaved = node('div', 'admin-form-message');
-  regionSaved.setAttribute('role', 'status');
-  regionSaved.hidden = true;
-  workspace.append(regionSaved);
   regionForm.append(node('h3', 'admin-settings-form-title', 'Lookup region'),
     node('p', 'settings-card-description',
       'Choose a state or province for frequency lookups.'),
@@ -27795,7 +27795,6 @@ async function renderAdminRadioReferenceSettings() {
       updateAccount(next);
       replaceRadioReferenceOptions(country, [], null, 'Connect an account first');
       replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
-      regionSaved.hidden = true;
       regionWorkflow.showFeedback('status', '');
     } catch (error) {
       setAccountMessage(error.message, true);
@@ -27806,7 +27805,6 @@ async function renderAdminRadioReferenceSettings() {
   });
 
   country.addEventListener('change', async () => {
-    regionSaved.hidden = true;
     regionWorkflow.showFeedback('loading', 'Loading states or regions…');
     const loading = loadStates(country.value);
     const sequence = regionLoadSequence;
@@ -27821,7 +27819,6 @@ async function renderAdminRadioReferenceSettings() {
     }
   });
   state.addEventListener('change', () => {
-    regionSaved.hidden = true;
     regionWorkflow.setReady(canSaveRegion());
   });
 
@@ -27836,12 +27833,10 @@ async function renderAdminRadioReferenceSettings() {
       savedRegionValid = Number(configuration?.country_id) > 0 && Number(configuration?.state_id) > 0;
       importWorkspace.setConfiguration(configuration);
     }, {
-      saving: 'Saving lookup region…', success: 'Lookup region saved.',
+      saving: 'Saving lookup region…',
       onSuccess: () => {
         placeRegionForm();
         if (savedInline) {
-          regionSaved.textContent = 'Lookup region saved.';
-          regionSaved.hidden = false;
           settingsButton.focus({ preventScroll: true });
         }
       }
@@ -27908,7 +27903,7 @@ async function renderAdminSpectrumSnapSettings(target = content) {
     await workflow.save(async () => {
       apply(await requestSpectrumSnapPresetDocument('/api/v1/admin/spectrum-snap-presets', 'PUT',
         country.value, confirmed.revision));
-    }, { saving: 'Saving country…', success: 'Country saved.', onError: (error) => {
+    }, { saving: 'Saving country…', onError: (error) => {
       if (!error.current) return { state: 'error', message: error.message };
       apply(error.current);
       return { state: 'warning', message: 'The spectrum country changed elsewhere. The saved value was loaded.' };
@@ -28011,7 +28006,7 @@ async function renderAdminReceiverBehaviorSettings(target = content) {
         traffic_grant_age_out_milliseconds: Number(grantAge.value)
       }, confirmed?.revision);
       apply(next);
-    }, { saving: 'Saving Live timing…', success: 'Live timing saved.', onError: (error) => {
+    }, { saving: 'Saving Live timing…', onError: (error) => {
       if (error?.code === 'receiver_settings_conflict' && error.current) {
         apply(error.current);
         return { state: 'warning', message: 'Live timing changed elsewhere. The latest saved value was loaded.' };
@@ -28158,7 +28153,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
     const rendered = groups.filter((group) => !options.fields ||
       group.fields.some((field) => options.fields.includes(field.id))).map((group) => {
       const forms = group.fields.filter((field) => !options.fields || options.fields.includes(field.id)).map((field) => {
-        const form = node('form', 'admin-form operational-preference-form');
+        const form = node('form', 'admin-form operational-preference-form ui-form-workflow-inset');
         form.dataset.preference = field.id;
         const current = confirmed.settings[field.id];
         const handledByContinuousAgc = field.id === 'mp3_normalize_audio' && confirmed.settings.audio_continuous_agc;
@@ -28194,49 +28189,54 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         }
         const save = node('button', 'ui-button ui-button-primary', 'Save');
         save.type = 'submit';
-        const state = node('span', 'operational-preference-state');
+        const state = node('span', 'ui-form-state');
         const actions = node('div', 'ui-action-row operational-preference-actions');
         actions.append(state, save);
         const readValue = () => field.kind === 'boolean' ? input.checked :
           field.kind === 'number' ? Number(input.value) : input.value;
-        const updateSave = () => {
+        const updateDraft = () => {
           const changed = readValue() !== current;
           if (changed) drafts.set(field.id, readValue());
           else drafts.delete(field.id);
-          save.disabled = saving || !changed || handledByContinuousAgc;
-          form.classList.toggle('is-dirty', changed);
-          state.textContent = changed ? 'Unsaved change' : '';
-          actions.hidden = !changed;
+          status.textContent = '';
+          status.setAttribute('role', 'status');
         };
-        updateSave();
-        input.addEventListener(field.kind === 'number' ? 'input' : 'change', updateSave);
+        input.addEventListener(field.kind === 'number' ? 'input' : 'change', updateDraft);
         form.append(actions);
+        const workflow = createFormWorkflow({ form, submit: save, feedback: state,
+          ready: !handledByContinuousAgc, changed: () => readValue() !== current });
+        workflow.showFeedback('status', readValue() !== current ? 'Unsaved changes' : '');
+        actions.hidden = save.hidden;
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
           if (saving || save.disabled || !form.reportValidity()) return;
           saving = true;
-          save.disabled = true;
-          status.textContent = 'Saving…';
+          reload.disabled = true;
           try {
-            confirmed = await requestOperationalPreference('PUT', field.id, readValue(), confirmed.revision);
-            drafts.delete(field.id);
-            status.textContent = 'Saved.';
-            if (field.id === 'stats_logging_enabled' || field.id === 'stats_detailed_history_enabled') {
-              await loadStatus(true);
-            }
-          } catch (error) {
-            if (error.current) {
-              confirmed = error.current;
-              drafts.clear();
-              status.textContent = 'These settings changed elsewhere. The saved settings were reloaded.';
-            } else {
-              status.textContent = error.message || 'The setting could not be saved. Reload the page and try again.';
-            }
+            await workflow.save(async () => {
+              confirmed = await requestOperationalPreference('PUT', field.id, readValue(), confirmed.revision);
+              drafts.delete(field.id);
+              if (field.id === 'stats_logging_enabled' || field.id === 'stats_detailed_history_enabled') {
+                await loadStatus(true);
+              }
+            }, { onError: (error) => {
+              status.setAttribute('role', error.current ? 'status' : 'alert');
+              if (error.current) {
+                confirmed = error.current;
+                drafts.clear();
+                status.textContent = 'These settings changed elsewhere. The saved settings were reloaded.';
+              } else {
+                status.textContent = error.message || 'The setting could not be saved. Reload the page and try again.';
+              }
+            } });
           } finally {
             saving = false;
+            reload.disabled = false;
             renderFields();
           }
         });
+        form.addEventListener('input', () => { actions.hidden = save.hidden; });
+        form.addEventListener('change', () => { actions.hidden = save.hidden; });
         return form;
       });
       const card = options.fields ? section(options.title || group.title,
@@ -28473,7 +28473,7 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
 
 async function renderAdminP25BandplanOverrides() {
   const renderContext = captureRenderContext();
-  const body = node('div', 'admin-section-body p25-overrides-workspace');
+  const body = node('form', 'admin-section-body p25-overrides-workspace');
   const intro = node('p', 'p25-overrides-intro muted',
     'Site overrides take priority over system overrides.');
   const list = node('div', 'p25-override-profile-list');
@@ -28485,11 +28485,11 @@ async function renderAdminP25BandplanOverrides() {
   add.type = 'button';
   add.disabled = true;
   const save = node('button', 'ui-button ui-button-primary', 'Save overrides');
-  save.type = 'button';
+  save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'ui-action-row');
   actions.append(save);
-  const footer = node('div', 'ui-record-card-footer p25-override-footer');
+  const footer = node('div', 'settings-form-footer p25-override-footer');
   footer.append(actions, message);
   body.append(intro, list, footer);
   const titleActions = sectionActionHost(add);
@@ -28497,9 +28497,15 @@ async function renderAdminP25BandplanOverrides() {
   let profiles = [];
   let knownSystems = [];
   let saving = false;
+  let confirmedProfiles = '[]';
+  const workflow = createFormWorkflow({ form: body, submit: save, feedback: message, ready: false,
+    changed: () => JSON.stringify(profiles) !== confirmedProfiles });
   const hex = (value, width) => Number.isInteger(value) ? value.toString(16).toUpperCase().padStart(width, '0') : '—';
   const displayName = (profile) => p25OverrideDisplayName(profile, knownSystems);
-  const draftChanged = () => { message.textContent = 'Unsaved changes'; };
+  const draftChanged = () => {
+    workflow.refresh();
+    workflow.showFeedback('status', save.hidden ? '' : 'Unsaved changes');
+  };
 
   const editProfile = (index = null) => {
     const existing = index === null ? null : profiles[index];
@@ -28632,24 +28638,22 @@ async function renderAdminP25BandplanOverrides() {
     }));
   }
   add.addEventListener('click', () => editProfile());
-  save.addEventListener('click', async () => {
+  body.addEventListener('submit', async (event) => {
+    event.preventDefault();
     if (saving || save.disabled) return;
     saving = true;
     add.disabled = true;
-    save.disabled = true;
     draw();
-    message.textContent = 'Saving overrides…';
     try {
-      const documentValue = await requestP25BandplanOverrides('PUT', profiles);
-      profiles = documentValue.profiles;
-      knownSystems = documentValue.known_systems || knownSystems;
-      message.textContent = 'Overrides saved.';
-    } catch (error) {
-      message.textContent = error.message;
+      await workflow.save(async () => {
+        const documentValue = await requestP25BandplanOverrides('PUT', profiles);
+        profiles = documentValue.profiles;
+        confirmedProfiles = JSON.stringify(profiles);
+        knownSystems = documentValue.known_systems || knownSystems;
+      }, { saving: 'Saving overrides…' });
     } finally {
       saving = false;
       add.disabled = false;
-      save.disabled = false;
       draw();
     }
   });
@@ -28657,13 +28661,14 @@ async function renderAdminP25BandplanOverrides() {
     const documentValue = await requestP25BandplanOverrides();
     if (!renderIsCurrent(renderContext)) return;
     profiles = documentValue.profiles;
+    confirmedProfiles = JSON.stringify(profiles);
     knownSystems = documentValue.known_systems || [];
     draw();
-    message.textContent = '';
+    workflow.showFeedback('status', '');
     add.disabled = false;
-    save.disabled = false;
+    workflow.setReady(true);
   } catch (error) {
-    message.textContent = error.message;
+    workflow.showFeedback('error', error.message);
   }
 }
 

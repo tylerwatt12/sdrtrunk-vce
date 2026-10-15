@@ -353,7 +353,8 @@ export function createRemoteLinksWorkspace(deps) {
         localMessage.setAttribute('role', state === 'error' ? 'alert' : 'status');
         localMessage.hidden = !text;
         if (state === 'error') showError(localMessage, { message: text });
-        else localMessage.replaceChildren(...(text ? [notice(text)] : []));
+        else localMessage.replaceChildren(...(text ? [state === 'status' ?
+          node('div', 'ui-form-state', text) : notice(text)] : []));
       } });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -361,7 +362,7 @@ export function createRemoteLinksWorkspace(deps) {
       await workflow.save(() => operation(form, modal), { onSuccess: async (result) => {
         if (result === false) {
           workflow.setReady(false);
-          modal.setDirty(true);
+          workflow.setDirty(true);
           return;
         }
         if (modal.close()) { if (result?.revision) present(result, true); else await refresh(true); }

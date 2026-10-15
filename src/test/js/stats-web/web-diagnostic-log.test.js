@@ -99,12 +99,17 @@ async function workflowContract(modulePath, off) {
   const form = workspace.element.querySelector('form'); const input = form.querySelector('input');
   const save = form.querySelector('button'); const feedback = form.querySelector('.admin-form-message');
   assert.equal(save.disabled, true);
+  assert.equal(save.hidden, true);
   assert.equal(viewerDeps.logPath, '/api/v1/admin/web-diagnostic-log/entries');
   assert.equal(viewerDeps.logName, 'Web server log');
   assert.equal(viewerDeps.downloadPrefix, 'web-server-log');
   assert.equal(timers.size, 1);
   input.checked = true; form.dispatchEvent(new Event('change'));
   assert.equal(save.disabled, false);
+  assert.equal(save.hidden, false);
+  assert.equal(form.classList.contains('is-dirty'), true);
+  assert.equal(feedback.classList.contains('ui-form-state'), true);
+  assert.equal(feedback.textContent, 'Unsaved changes');
   reply = (_url, options) => {
     if (options.method === 'PUT') throw Object.assign(new Error('No disk space'), { status: 503 });
     return { data: off };
@@ -130,6 +135,10 @@ async function workflowContract(modulePath, off) {
   release({ data: { ...off, enabled: true, active: true } });
   await flush();
   assert.equal(input.checked, true); assert.equal(input.disabled, false); assert.equal(save.disabled, true);
+  assert.equal(save.hidden, true);
+  assert.equal(form.classList.contains('is-dirty'), false);
+  assert.equal(feedback.textContent, '', 'A completed save does not add a success message');
+  assert.equal(feedback.hidden, true);
   reply = () => ({ data: { ...off, enabled: true, active: true, can_download: true } });
   [...timers.values()][0].callback();
   await flush();

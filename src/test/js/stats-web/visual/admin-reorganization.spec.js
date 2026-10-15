@@ -176,14 +176,14 @@ test('audio quality retains server choices, dependent options, draft fields, and
   await gain.locator('.ui-toggle').click();
   await gain.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(gain.locator('input')).toBeChecked();
-  await expect(normalize.getByText('Unsaved change')).toBeVisible();
+  await expect(normalize.getByText('Unsaved changes', { exact: true })).toBeVisible();
   await expect(normalize.locator('input')).toBeDisabled();
   await expect(normalize.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await expect(normalize).toContainText('Continuous automatic gain replaces MP3 volume normalization');
   await quality.locator('select').selectOption('VBR_5');
   await quality.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(sampleRate.locator('option')).toHaveText(['16 kHz', '44.1 kHz']);
-  await expect(normalize.getByText('Unsaved change')).toBeVisible();
+  await expect(normalize.getByText('Unsaved changes', { exact: true })).toBeVisible();
   await gain.locator('.ui-toggle').click();
   await gain.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(normalize.locator('input')).toBeEnabled();
@@ -194,7 +194,8 @@ test('audio quality retains server choices, dependent options, draft fields, and
     { field: 'audio_continuous_agc', value: false, revision: `"${'b'.repeat(64)}"` },
     { field: 'mp3_normalize_audio', value: true, revision: `"${'b'.repeat(64)}"` }
   ]);
-  await expect(page.locator('.operational-preferences .admin-form-message')).toHaveText('Saved.');
+  await expect(normalize.getByRole('button', { name: 'Save', exact: true })).toBeHidden();
+  await expect(page.locator('.operational-preferences .admin-form-message')).toHaveText('');
 });
 
 test('activity settings keep collection switches and server retention limits together', async ({ page }) => {
@@ -223,7 +224,7 @@ test('activity settings keep collection switches and server retention limits tog
     .filter({ hasText: 'Activity summaries' })).toContainText('Off');
   await expect(retention).toHaveValue('60');
   await expect(page.locator('form[data-preference="stats_logging_retention_days"]'))
-    .toContainText('Unsaved change');
+    .toContainText('Unsaved changes');
 });
 
 test('a focused settings page can retry its initial failed load', async ({ page }) => {
@@ -255,14 +256,16 @@ test('display combines the original timing and spectrum settings and preserves t
   await expect(country.locator('option')).toHaveText(['United States', 'Canada']);
   await timing.fill('3750');
   await page.getByRole('button', { name: 'Save Live timing', exact: true }).click();
-  await expect(page.getByText('Live timing saved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save Live timing', exact: true })).toBeHidden();
+  await expect(page.getByText('Live timing saved.', { exact: true })).toHaveCount(0);
   expect(app.writes).toEqual([{ field: 'receiver-settings',
     settings: { traffic_grant_age_out_milliseconds: 3750 }, revision: '"4"' }]);
   await expect(country).toHaveValue('US');
   await country.selectOption('CA');
   await page.getByRole('button', { name: 'Change audio player size', exact: true }).press('Home');
   await page.getByRole('button', { name: 'Save country', exact: true }).click();
-  await expect(page.getByText('Country saved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save country', exact: true })).toBeHidden();
+  await expect(page.getByText('Country saved.', { exact: true })).toHaveCount(0);
   expect(app.writes[1]).toEqual({ field: 'spectrum-country',
     settings: { country_code: 'CA' }, revision: '"9"' });
   await expect(timing).toHaveValue('3750');
@@ -532,7 +535,8 @@ test('P25 inventory retains every original identity and band field in the focuse
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
   expect(app.writes).toEqual([]);
   await page.getByRole('button', { name: 'Save overrides', exact: true }).click();
-  await expect(page.getByText('Overrides saved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save overrides', exact: true })).toBeHidden();
+  await expect(page.getByText('Overrides saved.', { exact: true })).toHaveCount(0);
   await expect(page.locator('.admin-settings-content').getByRole('button', { name: 'Choose table columns' }))
     .toHaveCount(0);
   expect(app.writes).toHaveLength(1);
@@ -557,7 +561,8 @@ test('P25 removal confirms the selected profile and remains a draft until Save o
   await expect(page.getByRole('button', { name: 'Add P25 override', exact: true })).toBeFocused();
   expect(app.writes).toEqual([]);
   await page.getByRole('button', { name: 'Save overrides', exact: true }).click();
-  await expect(page.getByText('Overrides saved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save overrides', exact: true })).toBeHidden();
+  await expect(page.getByText('Overrides saved.', { exact: true })).toHaveCount(0);
   expect(app.writes).toEqual([{ field: 'p25-bandplan-overrides', profiles: [] }]);
 });
 
@@ -585,7 +590,8 @@ test('P25 system-wide records retain zero values and the maximum Band ID', async
     .toHaveText(['0.000000 MHz', '6.250 kHz', '6.250 kHz', '0.000000 MHz']);
   expect(app.writes).toEqual([]);
   await page.getByRole('button', { name: 'Save overrides', exact: true }).click();
-  await expect(page.getByText('Overrides saved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save overrides', exact: true })).toBeHidden();
+  await expect(page.getByText('Overrides saved.', { exact: true })).toHaveCount(0);
   expect(app.writes[0].profiles[1]).toEqual({ wacn: 0xABCDE, system: 0x012, rfss: null, site: null,
     bands: [{ identifier: 15, type: 'TDMA', base_frequency: 0, bandwidth: 6250,
       channel_spacing: 6250, transmit_offset: 0 }] });

@@ -124,7 +124,7 @@ export function createStreamingWorkspace(deps) {
   }
 
   async function openEditor(id = null, initialTab = 'settings') {
-    const content = node('div', 'streaming-editor editor-workspace');
+    const content = node('div', 'streaming-editor editor-workspace ui-form-workflow');
     content.append(feedback('Loading destination…', 'loading'));
     const abort = new AbortController();
     let alive = true, busy = false, settingsDirty = false, assignmentDirty = false, revision, options, definition;
@@ -140,12 +140,21 @@ export function createStreamingWorkspace(deps) {
     const requestOptions = { signal: abort.signal, page: false };
     const localMessage = node('div');
     localMessage.setAttribute('role', 'status');
-    const dirty = () => modal.setDirty(settingsDirty || assignmentDirty);
+    const dirty = () => {
+      modal.setDirty(settingsDirty || assignmentDirty);
+      localMessage.replaceChildren();
+      reload.hidden = true;
+    };
     const settingsPanel = node('section', 'streaming-panel');
     const aliasesPanel = node('section', 'streaming-panel');
     const statusPanel = node('section', 'streaming-panel');
     const panels = { settings: settingsPanel, aliases: aliasesPanel, status: statusPanel };
     const save = button('Save settings', () => void saveActive(), true);
+    save.classList.add('ui-form-submit');
+    const formState = node('span', 'ui-form-state');
+    formState.setAttribute('role', 'status');
+    formState.setAttribute('aria-live', 'polite');
+    formState.hidden = true;
     const test = button('Test connection', () => void run(async () => {
       const result = await write('/test', 'POST', { configuration_id: id, provider: definition.provider, settings: readChanges() }, requestOptions);
       if (alive) localMessage.replaceChildren(feedback(result.message, result.success ? 'success' : 'error'));
@@ -159,7 +168,7 @@ export function createStreamingWorkspace(deps) {
       if (modal.close(reopen)) reopen();
     });
     reload.hidden = true;
-    const footer = modalFooter(test, remove, cancel, save);
+    const footer = modalFooter(formState, test, remove, cancel, save);
     const providerControl = select([], '');
     providerControl.setAttribute('aria-label', 'Provider');
     const fields = node('div', 'streaming-fields');
@@ -246,7 +255,11 @@ export function createStreamingWorkspace(deps) {
     }
     function syncButtons() {
       if (!definition) return;
-      save.hidden = activeTab === 'status';
+      const activeDirty = activeTab === 'aliases' ? assignmentDirty : activeTab === 'settings' && settingsDirty;
+      content.classList.toggle('is-dirty', activeDirty);
+      formState.textContent = activeDirty ? 'Unsaved changes' : '';
+      formState.hidden = !activeDirty;
+      save.hidden = activeTab === 'status' || (Boolean(id) && !activeDirty);
       save.textContent = activeTab === 'aliases' ? 'Save assignments' : !id ? 'Add destination' :
         controls.get('enabled')?.checked ? 'Save and reconnect' : 'Save settings';
       save.disabled = busy || (activeTab === 'aliases' ? !assignmentDirty : id && !settingsDirty);
@@ -254,6 +267,17 @@ export function createStreamingWorkspace(deps) {
       remove.hidden = !id;
       providerControl.disabled = busy || Boolean(id);
       tabs?.querySelectorAll('button').forEach(control => { control.disabled = busy || (!id && control.dataset.value !== 'settings'); });
+    }
+    function settingsEdited() {
+      settingsDirty = options.providers.find(item => item.id === definition.provider).fields.some(field => {
+        const control = controls.get(field.key);
+        const value = field.type === 'boolean' ? control.checked : control.value;
+        if (field.type === 'boolean') return value !== (definition.settings[field.key] === true);
+        if (field.type === 'password') return Boolean(value);
+        return String(value ?? '') !== String(definition.settings[field.key] ?? '');
+      });
+      dirty();
+      syncButtons();
     }
     function switchTab(value) {
       activeTab = value;
@@ -298,9 +322,8 @@ export function createStreamingWorkspace(deps) {
       control.name = field.key;
       control.setAttribute('aria-label', field.label);
       controls.set(field.key, control);
-      control.addEventListener('input', () => { settingsDirty = true; dirty(); syncButtons(); });
+      control.addEventListener('input', settingsEdited);
       control.addEventListener('change', () => {
-        settingsDirty = true; dirty(); syncButtons();
         if (field.key === 'alias_list_id') {
           const site = controls.get('channel_configuration_id');
           const choices = (options.sites || []).filter(row => String(row.alias_list_id) === control.value);
@@ -308,6 +331,7 @@ export function createStreamingWorkspace(deps) {
           const empty = node('option', '', 'Choose…'); empty.value = ''; site.append(empty);
           choices.forEach(row => { const option = node('option', '', row.name); option.value = row.configuration_id; site.append(option); });
         }
+        settingsEdited();
       });
     }
     function renderFields() {
@@ -420,7 +444,7 @@ export function createStreamingWorkspace(deps) {
           if (tabs) tabs.querySelectorAll('button').forEach(control => { control.disabled = false; });
         }
         if (!alive) return;
-        dirty(); localMessage.replaceChildren(feedback('Changes saved.', 'success'));
+        dirty();
       });
       if (alive && activeTab === 'aliases' && !aliasLoaded) void loadAliases();
     }
