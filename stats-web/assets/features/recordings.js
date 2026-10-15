@@ -666,6 +666,7 @@ export function createRecordingsFeature(deps) {
   let sharedQueueRequest = 0;
   let clickMode = 'queue';
   let queueEntrySequence = 0;
+  let queueResume = null;
 
   function queueEntry(row) {
     return { ...row, _queueEntryKey: `recording-entry-${++queueEntrySequence}` };
@@ -732,8 +733,9 @@ export function createRecordingsFeature(deps) {
       if (state.audio.paused || state.stopped) {
         const token = state.token;
         const current = state.current;
+        const currentKey = current._queueEntryKey || String(current.id);
         await stopLiveAudio();
-        if (token !== state.token || String(current.id) !== String(state.current?.id)) return;
+        if (token !== state.token || currentKey !== (state.current?._queueEntryKey || String(state.current?.id))) return;
         if (state.stopped) {
           state.audio.src = audioUrl(current);
           state.audio.currentTime = 0;
@@ -918,6 +920,32 @@ export function createRecordingsFeature(deps) {
     void advance();
   }
 
+  function playClicked(row) {
+    if (!row || row.id === null || row.id === undefined) return;
+    if (clickMode !== 'queue') return playbackAction(row, clickMode);
+    playbackAction(row, 'queue');
+    const state = recordedPlayer();
+    if (state.loading) return;
+    if (!state.current || state.stopped) {
+      void advance();
+      return;
+    }
+    if (!state.audio.paused) return;
+    const token = state.token;
+    const currentKey = state.current._queueEntryKey || String(state.current.id);
+    if (queueResume?.token === token && queueResume.currentKey === currentKey) return;
+    const resume = { token, currentKey };
+    queueResume = resume;
+    void toggleAudio().catch(() => {
+      if (state.token === token && (state.current?._queueEntryKey || String(state.current?.id)) === currentKey) {
+        state.status = 'Playback could not start. Press Play to retry.';
+        drawQueue();
+      }
+    }).finally(() => {
+      if (queueResume === resume) queueResume = null;
+    });
+  }
+
   function seekAudio(seconds) {
     const state = recordedPlayer();
     const target = Number(seconds);
@@ -1004,7 +1032,7 @@ export function createRecordingsFeature(deps) {
     setClickMode: (mode) => {
       if (['queue', 'once', 'continue'].includes(mode)) { clickMode = mode; drawQueue(); }
     },
-    queueHref, loadSharedQueue, renderDetails, renderTranscript, play: playbackAction,
+    queueHref, loadSharedQueue, renderDetails, renderTranscript, play: playbackAction, playClicked,
     removeQueued: (reference) => {
       const state = recordedPlayer();
       const index = queuedIndex(state, reference);
@@ -1397,7 +1425,7 @@ export function createRecordingsFeature(deps) {
     };
     const description = `${label(row)} at ${dateTime(millis(row))}`;
     card.setAttribute('aria-label', description);
-    const play = action('icon-play', '▶', `Play ${description}`, 'Play recording', () => playbackAction(row, clickMode), 'ui-button ui-icon-button recordings-card-play recordings-card-action');
+    const play = action('icon-play', '▶', `Play ${description}`, 'Play recording', () => playClicked(row), 'ui-button ui-icon-button recordings-card-play recordings-card-action');
     const detail = addGlyph(button(node, 'Call details', () => void openDetails(row), 'recordings-card-action recordings-card-action-details recordings-call-details'), 'icon-info-circle');
     const info = action('icon-more', '…', `More actions for ${description}`, 'Call actions', () => openCallActions(row), 'ui-button ui-icon-button recordings-call-info recordings-card-action');
     const head = node('div', 'recordings-call-head');
@@ -1453,7 +1481,7 @@ export function createRecordingsFeature(deps) {
       if (active) card.setAttribute('aria-current', 'true'); else card.removeAttribute('aria-current');
       card.setAttribute('aria-busy', String(Boolean(active && snapshot.loading)));
       const play = card.querySelector('.recordings-card-play');
-      if (play) play.title = { once: 'Play once', continue: 'Continue from here', queue: 'Add to queue' }[clickMode];
+      if (play) play.title = { once: 'Play once', continue: 'Continue from here', queue: 'Queue and play' }[clickMode];
       if (status) { status.textContent = text; status.hidden = !text; }
     });
   }

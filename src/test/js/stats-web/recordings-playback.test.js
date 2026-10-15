@@ -13,6 +13,7 @@ class AudioFixture {
     this.duration = NaN;
     this.volume = 1;
     this.src = '';
+    this.playCount = 0;
   }
   addEventListener(name, callback) {
     const callbacks = this.events.get(name) || [];
@@ -20,7 +21,7 @@ class AudioFixture {
     this.events.set(name, callbacks);
   }
   emit(name) { (this.events.get(name) || []).forEach((callback) => callback()); }
-  async play() { this.paused = false; this.emit('play'); }
+  async play() { this.playCount++; this.paused = false; this.emit('play'); }
   pause() { this.paused = true; this.emit('pause'); }
   removeAttribute(name) { if (name === 'src') this.src = ''; }
   load() { this.currentTime = 0; this.duration = NaN; }
@@ -365,6 +366,162 @@ async function main() {
     assert.equal(queue.viewState().current.id, 2, 'Clear queue must preserve current playback');
     assert.equal(queue.viewState().playing, true);
     assert.equal(queue.viewState().canNext, false);
+
+    let clickStops = 0;
+    const clicking = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { stopLiveAudio: async () => { clickStops++; } }).playback;
+    clicking.playClicked(call(1));
+    await settle();
+    const clickAudio = audios.at(-1);
+    assert.equal(clicking.viewState().current.id, 1, 'A card Play click must start an empty queue');
+    assert.equal(clicking.viewState().playing, true);
+    assert.deepEqual(clicking.viewState().queue, []);
+    clicking.seek(12);
+    clicking.playClicked(call(2));
+    await settle();
+    assert.equal(clicking.viewState().current.id, 1, 'Adding to a playing queue must preserve the current call');
+    assert.equal(clickAudio.currentTime, 12, 'Adding another call must not restart the current audio');
+    assert.equal(clickAudio.playCount, 1);
+    assert.equal(clickStops, 1, 'Appending to an active queue must not stop live audio again');
+    assert.deepEqual(clicking.viewState().queue.map((row) => row.id), [2]);
+    await clicking.toggle();
+    assert.equal(clicking.viewState().paused, true);
+    clicking.playClicked(call(3));
+    await settle();
+    assert.equal(clicking.viewState().current.id, 1, 'A card Play click resumes the paused current call');
+    assert.equal(clicking.viewState().playing, true);
+    assert.equal(clickAudio.currentTime, 12, 'Resuming a paused queue must retain its position');
+    assert.equal(clickAudio.playCount, 2);
+    assert.deepEqual(clicking.viewState().queue.map((row) => row.id), [2, 3]);
+    clicking.stop();
+    clicking.playClicked(call(4));
+    await settle();
+    assert.equal(clicking.viewState().current.id, 2, 'A stopped queue restarts from its waiting head, not its retained old call');
+    assert.deepEqual(clicking.viewState().queue.map((row) => row.id), [3, 4]);
+
+    let passiveStops = 0;
+    const passive = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { stopLiveAudio: async () => { passiveStops++; } }).playback;
+    passive.play(call(1), 'queue');
+    passive.play(call(2), 'queue');
+    await settle();
+    const passiveAudio = audios.at(-1);
+    assert.equal(passive.viewState().current, null, 'Explicit Add to queue must remain passive');
+    assert.equal(passiveAudio.playCount, 0);
+    assert.equal(passiveStops, 0, 'Explicit Add to queue must not interrupt live audio');
+    passive.playClicked(call(3));
+    await settle();
+    assert.equal(passive.viewState().current.id, 1, 'Card Play starts the oldest waiting call');
+    assert.deepEqual(passive.viewState().queue.map((row) => row.id), [2, 3]);
+    assert.equal(passiveAudio.playCount, 1);
+
+    const finished = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) })).playback;
+    finished.playClicked(call(1));
+    await settle();
+    audios.at(-1).emit('ended');
+    await settle();
+    assert.equal(finished.viewState().stopped, true);
+    assert.equal(finished.viewState().current.id, 1);
+    finished.playClicked(call(2));
+    await settle();
+    assert.equal(finished.viewState().current.id, 2, 'A finished queue must start the clicked call instead of replaying retained metadata');
+    assert.deepEqual(finished.viewState().queue, []);
+
+    let startStops = 0;
+    const pendingClickStart = deferred();
+    const startingClicks = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { stopLiveAudio: () => { startStops++; return pendingClickStart.promise; } }).playback;
+    startingClicks.playClicked(call(1));
+    await settle();
+    startingClicks.playClicked(call(2));
+    startingClicks.playClicked(call(3));
+    await settle();
+    assert.equal(startingClicks.viewState().loading, true);
+    assert.equal(startStops, 1, 'Clicks during a pending start must append without starting competing audio');
+    pendingClickStart.resolve();
+    await settle();
+    assert.equal(startingClicks.viewState().current.id, 1);
+    assert.deepEqual(startingClicks.viewState().queue.map((row) => row.id), [2, 3]);
+    assert.equal(audios.at(-1).playCount, 1, 'A pending queue head starts exactly once');
+
+    let resumeStops = 0;
+    const pendingClickResume = deferred();
+    const resumingClicks = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { stopLiveAudio: () => ++resumeStops === 1 ? Promise.resolve() : pendingClickResume.promise }).playback;
+    resumingClicks.playClicked(call(1));
+    await settle();
+    const resumeAudio = audios.at(-1);
+    await resumingClicks.toggle();
+    resumingClicks.playClicked(call(2));
+    resumingClicks.playClicked(call(3));
+    await settle();
+    assert.equal(resumeStops, 2, 'Clicks during a paused resume must share one live-audio stop');
+    pendingClickResume.resolve();
+    await settle();
+    assert.equal(resumingClicks.viewState().current.id, 1);
+    assert.equal(resumingClicks.viewState().playing, true);
+    assert.deepEqual(resumingClicks.viewState().queue.map((row) => row.id), [2, 3]);
+    assert.equal(resumeAudio.playCount, 2, 'Paused audio resumes exactly once');
+
+    let occurrenceStops = 0;
+    const staleOccurrenceResume = deferred();
+    const occurrences = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { stopLiveAudio: () => ++occurrenceStops === 2 ? staleOccurrenceResume.promise : Promise.resolve() }).playback;
+    occurrences.playClicked(call(1));
+    await settle();
+    const firstOccurrenceKey = occurrences.viewState().current._queueEntryKey;
+    const occurrenceAudio = audios.at(-1);
+    await occurrences.toggle();
+    occurrences.playClicked(call(1));
+    await settle();
+    await occurrences.next();
+    assert.notEqual(occurrences.viewState().current._queueEntryKey, firstOccurrenceKey);
+    await occurrences.toggle();
+    assert.equal(occurrences.viewState().paused, true);
+    staleOccurrenceResume.resolve();
+    await settle();
+    assert.equal(occurrences.viewState().paused, true,
+      'A late resume for an earlier occurrence must not resume a newer paused occurrence of the same recording');
+    assert.equal(occurrenceAudio.playCount, 2);
+
+    for (const cancel of ['stop', 'reset', 'clearQueue']) {
+      let cancellationStops = 0;
+      const cancelledResume = deferred();
+      const cancelled = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+        { stopLiveAudio: () => ++cancellationStops === 1 ? Promise.resolve() : cancelledResume.promise }).playback;
+      cancelled.playClicked(call(1));
+      await settle();
+      const cancelledAudio = audios.at(-1);
+      await cancelled.toggle();
+      cancelled.playClicked(call(2));
+      await settle();
+      cancelled[cancel]();
+      cancelledResume.resolve();
+      await settle();
+      assert.equal(cancelledAudio.playCount, 1, `${cancel} must invalidate a pending card-click resume`);
+      assert.equal(cancelled.viewState().playing, false);
+      if (cancel === 'reset') assert.equal(cancelled.viewState().current, null);
+      if (cancel === 'clearQueue') assert.deepEqual(cancelled.viewState().queue, []);
+    }
+
+    const retryClicked = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) })).playback;
+    retryClicked.viewState();
+    const retryAudio = audios.at(-1);
+    let retryAttempts = 0;
+    retryAudio.play = async function() {
+      if (++retryAttempts === 1) throw new Error('Playback was blocked');
+      await AudioFixture.prototype.play.call(this);
+    };
+    retryClicked.playClicked(call(1));
+    await settle();
+    assert.equal(retryClicked.viewState().playing, false);
+    assert.match(retryClicked.viewState().status, /Press Play to retry/);
+    retryClicked.playClicked(call(2));
+    await settle();
+    assert.equal(retryClicked.viewState().current.id, 1, 'Retry must resume the blocked queue head');
+    assert.equal(retryClicked.viewState().playing, true);
+    assert.deepEqual(retryClicked.viewState().queue.map((row) => row.id), [2]);
+    assert.equal(retryAttempts, 2);
 
     const reorderStop = deferred();
     const reordering = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),

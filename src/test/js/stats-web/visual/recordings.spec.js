@@ -134,7 +134,7 @@ async function stubRecordingAudio(page) {
   await page.addInitScript(() => {
     window.recordingPlays = [];
     class RecordingAudio extends EventTarget {
-      constructor() { super(); this.paused = true; this.currentTime = 0; this.volume = 1; this._src = ''; }
+      constructor() { super(); this.paused = true; this.currentTime = 0; this.volume = 1; this._src = ''; window.recordingAudio = this; }
       get duration() { return this._src ? 42 : Number.NaN; }
       get src() { return this._src; }
       set src(value) { this._src = new URL(value, location.href).href; }
@@ -939,7 +939,8 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.recordings-transcript-preview')).toHaveCount(2);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-approved-${theme}.png`, componentScreenshot);
     const firstCard = page.locator('.recordings-call').first();
-    await firstCard.locator('.recordings-card-play').click();
+    await firstCard.locator('.recordings-call-info').click();
+    await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(firstCard).toHaveClass(/recordings-call-queued/);
     await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
@@ -961,8 +962,8 @@ for (const theme of ['light', 'dark']) {
     await searchNow(page, state);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-approved-mobile-${theme}.png`, componentScreenshot);
-    await firstCard.locator('.recordings-card-play').focus();
-    await page.keyboard.press('Enter');
+    await firstCard.locator('.recordings-call-info').click();
+    await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
     await firstCard.locator('.recordings-call-info').click();
@@ -976,9 +977,11 @@ test('card play immediately obeys the player preference for queue, once, and con
   const state = await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18, start_ms: call.start_ms + 60_000 }] });
   const cards = page.locator('.recordings-call');
   const dock = page.locator('#audio-dock');
+  await expect(cards.first().locator('.recordings-card-play')).toHaveAttribute('title', 'Queue and play');
   await cards.first().locator('.recordings-card-play').click();
-  await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
-  expect(await page.evaluate(() => window.recordingPlays)).toEqual([]);
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await expect(cards.first()).not.toHaveClass(/recordings-call-queued/);
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   await selectAudioPanel(dock, 'Queue');
@@ -986,7 +989,7 @@ test('card play immediately obeys the player preference for queue, once, and con
   await preference.selectOption('once');
   await dock.locator('#audio-dock-context-back').click();
   await cards.first().locator('.recordings-card-play').click();
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(2);
   await expect(cards.first()).toHaveClass(/recordings-call-playing/);
   await expect(cards.first().locator('.recordings-call-status')).not.toHaveText('Playing');
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -996,7 +999,7 @@ test('card play immediately obeys the player preference for queue, once, and con
   await dock.locator('#audio-dock-context-back').click();
   await cards.nth(1).locator('.recordings-card-play').focus();
   await page.keyboard.press('Enter');
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(3);
   await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
   await expect(cards.first()).not.toHaveClass(/recordings-call-playing/);
   await expect.poll(() => state.requestedFilters.some(filter => filter.sort === 'asc' &&
@@ -1008,8 +1011,53 @@ test('card play immediately obeys the player preference for queue, once, and con
   await dock.locator('#audio-dock-context-back').click();
   await cards.first().locator('.recordings-card-play').click();
   await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
-  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(2);
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(3);
   await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
+});
+
+test('card Play starts the queue, appends without interrupting, and resumes a paused call', async ({ page }) => {
+  await stubRecordingAudio(page);
+  await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18 }, { ...linkedCall, id: 19 }] });
+  const cards = page.locator('.recordings-call');
+  const dock = page.locator('#audio-dock');
+  await cards.first().locator('.recordings-card-play').click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([expect.stringMatching(/calls\/17\/audio$/)]);
+  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await page.evaluate(() => { window.recordingAudio.currentTime = 12; });
+  await cards.nth(1).locator('.recordings-card-play').click();
+  await expect(cards.nth(1)).toHaveClass(/recordings-call-queued/);
+  await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  expect(await page.evaluate(() => window.recordingAudio.currentTime)).toBe(12);
+  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await dock.getByRole('button', { name: 'Pause recording', exact: true }).filter({ visible: true }).click();
+  await expect(cards.first().locator('.recordings-call-status')).toHaveText('Paused');
+  await cards.nth(2).locator('.recordings-card-play').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(2);
+  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await expect(dock.locator('.audio-dock-queue-count')).toContainText('2 queued');
+  expect(await page.evaluate(() => window.recordingAudio.currentTime)).toBe(12);
+  await page.evaluate(() => window.recordingAudio.dispatchEvent(new Event('ended')));
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toMatch(/calls\/18\/audio$/);
+  await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
+  await expect(cards.nth(2)).toHaveClass(/recordings-call-queued/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('card Play starts the oldest idle queued call while explicit Add to queue stays passive', async ({ page }) => {
+  await stubRecordingAudio(page);
+  await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18 }] });
+  const cards = page.locator('.recordings-call');
+  await cards.first().locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
+  await expect(cards.first()).toHaveClass(/recordings-call-queued/);
+  expect(await page.evaluate(() => window.recordingPlays)).toEqual([]);
+  await cards.nth(1).locator('.recordings-card-play').click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([expect.stringMatching(/calls\/17\/audio$/)]);
+  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await expect(cards.nth(1)).toHaveClass(/recordings-call-queued/);
+  await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
 });
 
 test('page selection selects and deselects displayed calls and reflects partial selection', async ({ page }) => {
