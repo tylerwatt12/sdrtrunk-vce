@@ -68,6 +68,7 @@ public final class ApplicationDatabaseMigrator
         "directory.event.logs",
         "directory.jmbe",
         "directory.recording",
+        "directory.recording.managed",
         "directory.screen.capture",
         "directory.streaming",
         "directory.last.recording.browse"
@@ -91,7 +92,7 @@ public final class ApplicationDatabaseMigrator
     private static final Pattern STAGED_DATA_ROOT =
         Pattern.compile("^\\..+\\.migration-" + UUID_PATTERN + "$");
     private static final String USAGE = "Usage: ApplicationDatabaseMigrator <staged-database-path> " +
-        "[<source-data-root> <target-data-root>]";
+        "[<source-data-root> <target-data-root> [--complete-profile-copy]]";
 
     private ApplicationDatabaseMigrator()
     {
@@ -121,7 +122,8 @@ public final class ApplicationDatabaseMigrator
             return EXIT_SUCCESS;
         }
 
-        if(args == null || (args.length != 1 && args.length != 3))
+        if(args == null || (args.length != 1 && args.length != 3 &&
+            !(args.length == 4 && "--complete-profile-copy".equals(args[3]))))
         {
             error.println("ERROR: A staged database path and, optionally, source and target data roots are required.");
             error.println(USAGE);
@@ -134,8 +136,9 @@ public final class ApplicationDatabaseMigrator
         try
         {
             database = Path.of(args[0]).toAbsolutePath().normalize();
-            relocation = args.length == 3 ? new DataRootRelocation(
-                Path.of(args[1]).toAbsolutePath().normalize(), Path.of(args[2]).toAbsolutePath().normalize()) : null;
+            relocation = args.length >= 3 ? new DataRootRelocation(
+                Path.of(args[1]).toAbsolutePath().normalize(), Path.of(args[2]).toAbsolutePath().normalize(),
+                args.length == 4) : null;
         }
         catch(InvalidPathException | NullPointerException e)
         {
@@ -501,6 +504,7 @@ public final class ApplicationDatabaseMigrator
                 {
                     portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
                 }
+                int rebasedRecordingTunerPaths = rebaseRecordingTunerPaths(connection, relocation);
 
                 progress.accept("Validating the updated schema and configuration");
                 if(inPlace)
@@ -522,7 +526,8 @@ public final class ApplicationDatabaseMigrator
                     (expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION ||
                         portablePreferences.rebasedDirectories() > 0 || portablePreferences.resetEntries() > 0),
                     portablePreferences.rebasedDirectories(),
-                    portablePreferences.resetEntries(), administrativeRepair, currentRepair, derivedStateRepair,
+                    portablePreferences.resetEntries(), rebasedRecordingTunerPaths,
+                    administrativeRepair, currentRepair, derivedStateRepair,
                     identityRepair, chainReport, importedLegacySettings[0], recoveredLegacySettings);
                 statement.execute("COMMIT");
                 transactionOpen = false;
@@ -780,6 +785,11 @@ public final class ApplicationDatabaseMigrator
                     {
                         continue;
                     }
+                    //Ordinary setup imports copy optional modules and vault, but do not copy recording audio/catalogs.
+                    if("directory.recording.managed".equals(key) && !relocation.completeProfileCopy())
+                    {
+                        continue;
+                    }
 
                     String value = entry.getValue();
                     if(value == null || value.isBlank())
@@ -858,6 +868,66 @@ public final class ApplicationDatabaseMigrator
         }
 
         return new PortablePreferenceResult(rebased, reset);
+    }
+
+    /** Relocates only application-owned recording tuner files; preserve independent tuner fields and external paths. */
+    private static int rebaseRecordingTunerPaths(Connection connection, DataRootRelocation relocation)
+        throws IOException, SQLException
+    {
+        if(relocation == null || !relocation.completeProfileCopy() || relocation.source().equals(relocation.target()))
+        {
+            return 0;
+        }
+        JsonNode settings;
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT settings_json FROM application_settings WHERE key='tuner.settings'");
+            ResultSet rows = statement.executeQuery())
+        {
+            if(!rows.next())
+            {
+                return 0;
+            }
+            settings = OBJECT_MAPPER.readTree(rows.getString(1));
+        }
+        if(settings == null || !settings.path("tunerConfigurations").isArray())
+        {
+            return 0;
+        }
+        int rebased = 0;
+        for(JsonNode configuration: settings.path("tunerConfigurations"))
+        {
+            if(!(configuration instanceof ObjectNode tuner) ||
+                !"recordingTunerConfiguration".equals(tuner.path("type").asText()) ||
+                !tuner.path("path").isTextual())
+            {
+                continue;
+            }
+            try
+            {
+                Path stored = Path.of(tuner.path("path").textValue());
+                if(stored.isAbsolute() && stored.normalize().startsWith(relocation.source()))
+                {
+                    tuner.put("path", relocation.target().resolve(
+                        relocation.source().relativize(stored.normalize())).normalize().toString());
+                    rebased++;
+                }
+            }
+            catch(InvalidPathException ignored)
+            {
+                //Preserve a platform-specific or unusable path without changing other tuner configuration.
+            }
+        }
+        if(rebased > 0)
+        {
+            try(PreparedStatement statement = connection.prepareStatement(
+                "UPDATE application_settings SET settings_json=?, updated_at_ms=? WHERE key='tuner.settings'"))
+            {
+                statement.setString(1, OBJECT_MAPPER.writeValueAsString(settings));
+                statement.setLong(2, System.currentTimeMillis());
+                statement.executeUpdate();
+            }
+        }
+        return rebased;
     }
 
     /** Preserves independent receiver preferences and defaults only malformed keys in that small component. */
@@ -945,6 +1015,11 @@ public final class ApplicationDatabaseMigrator
             scope = "existing portable-profile database; neighboring artifacts remain in place and stored paths " +
                 "will not be remapped.";
         }
+        else if(relocation.completeProfileCopy())
+        {
+            scope = "complete portable profile already copied by the caller; supported stored paths, including " +
+                "Managed Recordings and recording tuner files, may be remapped within that copy.";
+        }
         else
         {
             scope = "portable-profile import; supported stored paths may be remapped within the copied profile.";
@@ -991,15 +1066,23 @@ public final class ApplicationDatabaseMigrator
             printAdministrativeCompletion(output, migration.administrativeRepair());
             printCurrentConfigurationCompletion(output, migration.currentRepair());
         }
+        if(migration.rebasedRecordingTunerPaths() > 0)
+        {
+            output.println("COMPLETED STEP: " + report.target().version() + " -> " + report.target().version() +
+                " [rebase-recording-tuner-paths] Relocate recording tuner files inside the copied portable profile");
+            output.println("  TRANSFORM recording tuner paths: " + migration.rebasedRecordingTunerPaths() +
+                " path(s) - Preserved external files, tuner identities, and other saved tuner settings");
+        }
         boolean sameFormatWork = report.steps().isEmpty() && (migration.currentRepair().requiresRepair() ||
             migration.administrativeRepair().requiresRepair() || migration.derivedStateRepair().requiresRepair() ||
             migration.identityRepair().requiresRepair() ||
-            migration.rebasedDirectories() > 0 ||
+            migration.rebasedDirectories() > 0 || migration.rebasedRecordingTunerPaths() > 0 ||
             migration.resetPortablePreferenceEntries() > 0 || migration.recoveredLegacySettings() > 0);
         int supplementalSteps = (migration.currentRepair().requiresRepair() ? 1 : 0) +
             (migration.administrativeRepair().requiresRepair() ? 1 : 0) +
             (migration.derivedStateRepair().requiresRepair() ? 1 : 0) +
-            (migration.identityRepair().requiresRepair() ? 1 : 0) + (portableRepairRan ? 1 : 0);
+            (migration.identityRepair().requiresRepair() ? 1 : 0) + (portableRepairRan ? 1 : 0) +
+            (migration.rebasedRecordingTunerPaths() > 0 ? 1 : 0);
         if(sameFormatWork)
         {
             output.println("Database format was already current at " + report.target().version() +
@@ -1298,7 +1381,7 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    private record DataRootRelocation(Path source, Path target)
+    private record DataRootRelocation(Path source, Path target, boolean completeProfileCopy)
     {
     }
 
@@ -1307,7 +1390,7 @@ public final class ApplicationDatabaseMigrator
     }
 
     private record MigrationSummary(boolean portableRepairRan, int rebasedDirectories,
-                                    int resetPortablePreferenceEntries,
+                                    int resetPortablePreferenceEntries, int rebasedRecordingTunerPaths,
                                     CurrentDatabaseAdministrativeRepair.Inspection administrativeRepair,
                                     CurrentDatabaseBestEffortRepair.Inspection currentRepair,
                                     CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair,

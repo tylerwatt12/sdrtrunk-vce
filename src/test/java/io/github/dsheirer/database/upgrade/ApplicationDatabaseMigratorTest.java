@@ -1446,20 +1446,24 @@ class ApplicationDatabaseMigratorTest
             Path unrecognizedInsideSource = source.resolve("private/leave-alone.txt");
             statement.setString(1, OBJECT_MAPPER.writeValueAsString(java.util.Map.of("directories",
                 java.util.Map.of("directory.recording", source.resolve("recordings").toString(),
+                    "directory.recording.managed", source.resolve("recordings-managed").toString(),
                     "directory.application.logs", source.resolve("logs").toString(),
                     "path.jmbe.library.primary", source.resolve("jmbe/jmbe.jar").toString(),
                     "path.voice.decryption.module.primary", source.resolve("modules/voice.jar").toString(),
                     "path.jmbe.library.external", external.toString(),
                     "path.voice.decryption.module.relative", "modules/relative.jar",
                     "directory.streaming", similarlyNamedSibling.toString(),
-                    "unrecognized.absolute.path", unrecognizedInsideSource.toString()))));
+                    "unrecognized.absolute.path", unrecognizedInsideSource.toString()),
+                "external", java.util.Map.of("directory.recording.managed",
+                    mTemporaryFolder.resolve("external-recordings-managed").toAbsolutePath().toString()))));
             statement.executeUpdate();
         }
 
-        CommandResult result = run(database, source, target);
+        CommandResult result = runArguments(database.toString(), source.toString(), target.toString(),
+            "--complete-profile-copy");
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("TRANSFORM portable directory preferences: 4 preference component(s)"));
+        assertTrue(result.output().contains("TRANSFORM portable directory preferences: 5 preference component(s)"));
 
         try(Connection connection = open(database))
         {
@@ -1468,6 +1472,10 @@ class ApplicationDatabaseMigratorTest
                 """));
             assertEquals(target.resolve("recordings").toString(),
                 settings.path("directories").path("directory.recording").asText());
+            assertEquals(target.resolve("recordings-managed").toString(),
+                settings.path("directories").path("directory.recording.managed").asText());
+            assertEquals(mTemporaryFolder.resolve("external-recordings-managed").toAbsolutePath().toString(),
+                settings.path("external").path("directory.recording.managed").asText());
             assertEquals(target.resolve("logs").toString(),
                 settings.path("directories").path("directory.application.logs").asText());
             assertEquals(target.resolve("jmbe/jmbe.jar").toString(),
@@ -1484,6 +1492,70 @@ class ApplicationDatabaseMigratorTest
                 settings.path("directories").path("unrecognized.absolute.path").asText());
             assertNull(metadata(connection, "dmr_activity_schema_version"));
         }
+    }
+
+    @Test
+    void rebasesOnlyRecordingTunerFilesInsideCopiedProfile() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkTestDatabase.create(database);
+        Path source = mTemporaryFolder.resolve("source-data").toAbsolutePath();
+        Path target = mTemporaryFolder.resolve("target-data").toAbsolutePath();
+        ObjectNode settings = OBJECT_MAPPER.createObjectNode();
+        settings.putArray("disabledTuners").addObject().put("id", "preserved-disabled-tuner");
+        var configurations = settings.putArray("tunerConfigurations");
+        configurations.addObject().put("type", "recordingTunerConfiguration").put("uniqueID", "owned")
+            .put("frequency", 851_000_000).put("path", source.resolve("recording_tuners/../recording_tuners/owned.wav").toString())
+            .put("customSetting", "preserved");
+        configurations.addObject().put("type", "recordingTunerConfiguration").put("uniqueID", "external")
+            .put("path", mTemporaryFolder.resolve("source-data-other/external.wav").toAbsolutePath().toString());
+        configurations.addObject().put("type", "recordingTunerConfiguration").put("uniqueID", "relative")
+            .put("path", "recording_tuners/relative.wav");
+        configurations.addObject().put("type", "unrelatedTunerConfiguration").put("uniqueID", "other")
+            .put("path", source.resolve("leave-alone.wav").toString());
+        try(Connection connection = open(database); var statement = connection.prepareStatement("""
+            INSERT INTO application_settings(key, settings_json, updated_at_ms) VALUES ('tuner.settings', ?, 1)
+            """))
+        {
+            statement.setString(1, OBJECT_MAPPER.writeValueAsString(settings));
+            statement.executeUpdate();
+        }
+        try(Connection connection = open(database); var statement = connection.prepareStatement("""
+            INSERT INTO application_settings(key, settings_json, updated_at_ms)
+            VALUES ('portable_java_preferences_v1', ?, 1)
+            """))
+        {
+            statement.setString(1, OBJECT_MAPPER.writeValueAsString(java.util.Map.of("directories",
+                java.util.Map.of("directory.recording.managed", source.resolve("recordings-managed").toString()))));
+            statement.executeUpdate();
+        }
+
+        CommandResult ordinaryImport = run(database, source, target);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, ordinaryImport.exitCode(), ordinaryImport.error());
+        assertEquals(settings, OBJECT_MAPPER.readTree(scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='tuner.settings'")));
+        assertEquals(source.resolve("recordings-managed").toString(), OBJECT_MAPPER.readTree(scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'"))
+            .path("directories").path("directory.recording.managed").asText());
+
+        CommandResult result = runArguments(database.toString(), source.toString(), target.toString(),
+            "--complete-profile-copy");
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("TRANSFORM recording tuner paths: 1 path(s)"), result::output);
+        assertEquals(target.resolve("recordings-managed").toString(), OBJECT_MAPPER.readTree(scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'"))
+            .path("directories").path("directory.recording.managed").asText());
+        ((ObjectNode)configurations.get(0)).put("path", target.resolve("recording_tuners/owned.wav").toString());
+        assertEquals(settings, OBJECT_MAPPER.readTree(scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='tuner.settings'")));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), scalar(database,
+            "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        CommandResult unchanged = run(database, target, target);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, unchanged.exitCode(), unchanged.error());
+        assertFalse(unchanged.output().contains("TRANSFORM recording tuner paths"));
+        assertEquals(settings, OBJECT_MAPPER.readTree(scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='tuner.settings'")));
     }
 
     @Test

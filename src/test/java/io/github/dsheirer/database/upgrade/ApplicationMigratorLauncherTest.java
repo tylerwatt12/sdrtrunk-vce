@@ -48,6 +48,19 @@ class ApplicationMigratorLauncherTest
     }
 
     @Test
+    void requestsRecordingArtifactRelocationOnlyForCompleteProfileCopy() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("stage.sqlite");
+        Path source = mTemporaryFolder.resolve("old");
+        Path target = mTemporaryFolder.resolve("new");
+        var expected = new java.util.ArrayList<>(ApplicationMigratorLauncher.command(database, source, target));
+        expected.add("--complete-profile-copy");
+        assertEquals(expected, ApplicationMigratorLauncher.command(database, source, target, true));
+        assertThrows(IOException.class, () -> ApplicationMigratorLauncher.command(database, null, null, true));
+        assertThrows(IOException.class, () -> ApplicationMigratorLauncher.runCompleteProfileCopy(database, null, target));
+    }
+
+    @Test
     void rejectsMissingClasspath() throws Exception
     {
         String originalClassPath = System.getProperty("java.class.path");

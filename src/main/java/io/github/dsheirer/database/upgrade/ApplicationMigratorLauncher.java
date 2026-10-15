@@ -59,6 +59,26 @@ public final class ApplicationMigratorLauncher
     public static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
         throws IOException, InterruptedException
     {
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, false);
+    }
+
+    /**
+     * Relocates a profile whose complete files, recording catalog and audio have already been copied by the caller.
+     * Ordinary setup imports must use {@link #run(Path, Path, Path)} because they do not copy recording artifacts.
+     */
+    public static String runCompleteProfileCopy(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
+        throws IOException, InterruptedException
+    {
+        if(sourceDataRoot == null || targetDataRoot == null)
+        {
+            throw new IOException("Complete-profile relocation requires both data roots.");
+        }
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, true);
+    }
+
+    private static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot, boolean completeProfileCopy)
+        throws IOException, InterruptedException
+    {
         Path normalized = stagedDatabase.toAbsolutePath().normalize();
 
         if(!Files.isRegularFile(normalized))
@@ -66,7 +86,7 @@ public final class ApplicationMigratorLauncher
             throw new IOException("Staged SQLite database does not exist: " + normalized);
         }
 
-        return runMigrator(command(normalized, sourceDataRoot, targetDataRoot));
+        return runMigrator(command(normalized, sourceDataRoot, targetDataRoot, completeProfileCopy));
     }
 
     private static String runMigrator(List<String> command) throws IOException, InterruptedException
@@ -233,6 +253,12 @@ public final class ApplicationMigratorLauncher
 
     static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot) throws IOException
     {
+        return command(stagedDatabase, sourceDataRoot, targetDataRoot, false);
+    }
+
+    static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                                boolean completeProfileCopy) throws IOException
+    {
         if((sourceDataRoot == null) != (targetDataRoot == null))
         {
             throw new IOException("Both source and target data roots are required for portable path relocation.");
@@ -267,6 +293,14 @@ public final class ApplicationMigratorLauncher
         {
             command.add(sourceDataRoot.toAbsolutePath().normalize().toString());
             command.add(targetDataRoot.toAbsolutePath().normalize().toString());
+        }
+        if(completeProfileCopy)
+        {
+            if(sourceDataRoot == null)
+            {
+                throw new IOException("Complete-profile relocation requires both data roots.");
+            }
+            command.add("--complete-profile-copy");
         }
 
         return List.copyOf(command);
