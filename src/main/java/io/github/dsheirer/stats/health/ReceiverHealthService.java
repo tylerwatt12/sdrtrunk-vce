@@ -77,6 +77,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final ScheduledExecutorService mExecutor;
     private final Path mLegacySnapshotPath;
     private final ReceiverHealthIncidentTracker mIncidents = new ReceiverHealthIncidentTracker();
+    private final ReceiverHealthDiagnosticCore mDiagnosticCore = new ReceiverHealthDiagnosticCore();
     private final Map<String,CounterBaseline> mCounterBaselines = new HashMap<>();
     private final Map<String,Long> mConditionStartTimes = new HashMap<>();
     private final Set<String> mConditionsEvaluatedThisSample = new HashSet<>();
@@ -204,6 +205,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
         catch(Throwable throwable)
         {
+            mDiagnosticCore.disabled();
             long now = System.currentTimeMillis();
 
             if(mLastFailureLogMs == 0 || now - mLastFailureLogMs >= FAILURE_LOG_INTERVAL_MILLISECONDS)
@@ -224,20 +226,26 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         long now = mClock.getAsLong();
+        WebDiagnosticLogService diagnostics = mWebDiagnosticLogService;
+        long capture = diagnostics != null ? diagnostics.captureGeneration() : 0;
+        ReceiverHealthDiagnosticCore.Sample core = capture != 0 ?
+            mDiagnosticCore.begin(capture, mStartedAtMs, now, System.nanoTime()) : null;
+        if(core == null) mDiagnosticCore.disabled();
         mIncidents.beginSample();
         mConditionsEvaluatedThisSample.clear();
         List<Map<String,Object>> measurements = new ArrayList<>();
-        collectTuners(now, measurements);
+        collectTuners(now, measurements, core);
         collectControlChannels(now, measurements);
-        collectHost(now, measurements);
+        collectHost(now, measurements, core);
         collectOutputs(now, measurements);
-        collectSupportingServices(now, measurements);
+        collectSupportingServices(now, measurements, core);
         mCounterBaselines.entrySet().removeIf(entry ->
             now - entry.getValue().lastSeenMs > COUNTER_BASELINE_RETENTION_MILLISECONDS);
         mConditionStartTimes.keySet().retainAll(mConditionsEvaluatedThisSample);
         mIncidents.endSample(now);
         publishIncidentChanges(mIncidents.lifecycleChanges(), now);
         List<Map<String,Object>> active = mIncidents.active();
+        if(core != null) core.activeAlerts(active);
         LinkedHashMap<String,Object> response = new LinkedHashMap<>();
         response.put("started_at_ms", mStartedAtMs);
         response.put("generated_at_ms", now);
@@ -248,8 +256,7 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("computer", ComputerInformation.current().snapshot());
         response.put("radioresolve_accepted_calls", mRadioResolveAcceptedCalls.getAsLong());
         mSnapshot = Map.copyOf(response);
-        WebDiagnosticLogService diagnostics = mWebDiagnosticLogService;
-        if(diagnostics != null) diagnostics.recordHealth(mSnapshot);
+        if(core != null) diagnostics.recordHealth(mSnapshot, core.finish(System.nanoTime()));
     }
 
     private void publishIncidentChanges(List<Map<String,Object>> incidents, long now)
@@ -300,7 +307,8 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    private void collectTuners(long now, List<Map<String,Object>> measurements)
+    private void collectTuners(long now, List<Map<String,Object>> measurements,
+                               ReceiverHealthDiagnosticCore.Sample core)
     {
         List<Map<String,Object>> tunerRows = new ArrayList<>();
         List<Map<String,Object>> usbRows = new ArrayList<>();
@@ -310,6 +318,7 @@ public final class ReceiverHealthService implements AutoCloseable
         Set<String> activeUsbScopes = new HashSet<>();
         List<DiscoveredTuner> tuners = mTunerManager != null ?
             mTunerManager.getDiscoveredTunerRegistry().snapshot() : List.of();
+        if(core != null) core.tunersObserved(tuners.size());
 
         for(DiscoveredTuner discovered: tuners)
         {
@@ -328,6 +337,9 @@ public final class ReceiverHealthService implements AutoCloseable
             TunerController controller = tuner != null ? tuner.getTunerController() : null;
             ChannelSourceManager sourceManager = tuner != null ? tuner.getChannelSourceManager() : null;
             int channels = sourceManager != null ? sourceManager.getTunerChannelCount() : 0;
+            ReceiverHealthDiagnosticCore.Tuner compact = core != null ?
+                core.tuner(scope, display, controller, sourceManager, discovered.isEnabled(), tunerStatus == TunerStatus.ERROR,
+                    channels) : null;
             tunerRows.add(row(scope, display, tunerStatus.toString(), "",
                 tunerStatus == TunerStatus.ERROR ? "critical" : "healthy",
                 (serial.isBlank() ? "" : "Serial " + serial + " · ") + channels + " channel" +
@@ -352,13 +364,14 @@ public final class ReceiverHealthService implements AutoCloseable
             if(controller instanceof USBTunerController usbController)
             {
                 activeUsbScopes.add(scope);
-                collectUsb(now, scope, display, tuner, usbController.getUsbTransferHealthSnapshot(), usbRows);
+                collectUsb(now, scope, display, tuner, usbController.getUsbTransferHealthSnapshot(), usbRows, compact);
             }
 
             if(sourceManager instanceof PolyphaseChannelSourceManager polyphase)
             {
                 PolyphaseChannelManager.NativeBufferQueueStatus nativeStatus =
                     polyphase.getNativeBufferQueueStatus();
+                if(compact != null) compact.nativeQueue(nativeStatus);
                 receiverRows.add(row(scope, display + " incoming radio data waiting", nativeStatus.queuedMilliseconds(), "ms",
                     queueSeverity(nativeStatus.queuedMilliseconds(), nativeStatus.appliedDurationMilliseconds()),
                     "Peak " + nativeStatus.highWaterMilliseconds() + " ms · Limit " +
@@ -417,9 +430,20 @@ public final class ReceiverHealthService implements AutoCloseable
                 }
 
                 long aggregateChannelDrops = pipeline.channelDroppedBatches();
+                long queued = 0;
+                long peak = 0;
+                long capacity = 0;
+                long maximumCapacity = 0;
 
                 for(PolyphaseChannelManager.ChannelQueueStatus channel: pipeline.channels())
                 {
+                    if(compact != null)
+                    {
+                        queued += channel.queuedBatches();
+                        peak += channel.highWaterBatches();
+                        capacity += channel.capacityBatches();
+                        maximumCapacity = Math.max(maximumCapacity, channel.capacityBatches());
+                    }
                     String channelScope = scope + ":" + channel.frequencyHz();
 
                     if(sustained(channelScope + ":pressure", channel.capacityBatches() > 0 &&
@@ -435,6 +459,7 @@ public final class ReceiverHealthService implements AutoCloseable
                             "Check computer load and the work associated with this channel");
                     }
                 }
+                if(compact != null) compact.pipeline(pipeline, queued, peak, capacity, maximumCapacity);
 
                 List<PolyphaseChannelManager.ChannelQueueStatus> affected = pipeline.channels().stream()
                     .sorted(Comparator.comparingLong(PolyphaseChannelManager.ChannelQueueStatus::droppedBatches)
@@ -465,6 +490,7 @@ public final class ReceiverHealthService implements AutoCloseable
             }
             catch(RuntimeException exception)
             {
+                if(core != null) core.tunerUnavailable();
                 tunerRows.add(row(fallbackScope, "Tuner status is temporarily unavailable", "Unavailable", "", "warning",
                     "The tuner changed state while its status was checked."));
             }
@@ -502,6 +528,13 @@ public final class ReceiverHealthService implements AutoCloseable
                             USBTunerController.UsbTransferHealthSnapshot usb,
                             List<Map<String,Object>> rows)
     {
+        collectUsb(now, scope, display, tuner, usb, rows, null);
+    }
+
+    private void collectUsb(long now, String scope, String display, Tuner tuner,
+                            USBTunerController.UsbTransferHealthSnapshot usb,
+                            List<Map<String,Object>> rows, ReceiverHealthDiagnosticCore.Tuner compact)
+    {
         TunerController controller = tuner.getTunerController();
         double requiredBytesPerSecond = usb.streaming() && controller != null ?
             controller.getSampleRate() * usb.sampleFrameSizeBytes() : 0;
@@ -527,6 +560,8 @@ public final class ReceiverHealthService implements AutoCloseable
         double seconds = assessment.windowMilliseconds() / 1_000.0;
         double usableBytesPerSecond = assessment.rateAvailable() && seconds > 0 ?
             assessment.usableBytesDelta() / seconds : 0;
+        if(compact != null) compact.usb(usb, now, assessment.rateAvailable(), assessment.rawDeliveryPercent(),
+            usableBytesPerSecond, requiredBytesPerSecond);
         double displayDeliveryPercent = assessment.rateAvailable() ?
             Math.min(100.0, assessment.rawDeliveryPercent()) : 100.0;
         String rateSeverity = assessment.rateCritical() ? "critical" :
@@ -731,7 +766,8 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("decoders", "Control channel", rows));
     }
 
-    private void collectHost(long now, List<Map<String,Object>> measurements)
+    private void collectHost(long now, List<Map<String,Object>> measurements,
+                             ReceiverHealthDiagnosticCore.Sample core)
     {
         List<Map<String,Object>> rows = new ArrayList<>();
         Runtime runtime = Runtime.getRuntime();
@@ -740,11 +776,19 @@ public final class ReceiverHealthService implements AutoCloseable
         double heapPercent = heapMaximum > 0 ? 100.0 * heapUsed / heapMaximum : 0;
         double cpuPercent = processCpuPercent();
         long gcTimeMs = 0;
+        long gcCount = 0;
+        boolean gcAvailable = true;
 
         for(GarbageCollectorMXBean bean: ManagementFactory.getGarbageCollectorMXBeans())
         {
-            gcTimeMs += Math.max(0, bean.getCollectionTime());
+            long time = bean.getCollectionTime();
+            long count = core != null ? bean.getCollectionCount() : 0;
+            gcTimeMs += Math.max(0, time);
+            gcCount += Math.max(0, count);
+            gcAvailable &= time >= 0 && count >= 0;
         }
+        if(core != null) core.host(cpuPercent, heapUsed, heapMaximum, heapPercent,
+            gcAvailable ? gcCount : -1, gcAvailable ? gcTimeMs : -1);
 
         long gcIntervalMs = mLastGcCollectionTimeMs >= 0 ? Math.max(0, gcTimeMs - mLastGcCollectionTimeMs) : 0;
         mLastGcCollectionTimeMs = gcTimeMs;
@@ -897,7 +941,8 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("outputs", "Recordings, streams, and browser audio", rows));
     }
 
-    private void collectSupportingServices(long now, List<Map<String,Object>> measurements)
+    private void collectSupportingServices(long now, List<Map<String,Object>> measurements,
+                                           ReceiverHealthDiagnosticCore.Sample core)
     {
         List<Map<String,Object>> rows = new ArrayList<>();
 
@@ -967,6 +1012,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         Map<String,Object> diagnostics = map(webStatus.get("diagnostics"));
+        if(core != null) core.web(transport, webPlayer, diagnostics);
         long channelSessions = number(diagnostics.get("channel_sessions"));
         long tunerSessions = number(diagnostics.get("tuner_sessions"));
         rows.add(row("Diagnostics", "Open diagnostic views", channelSessions + tunerSessions, "views",

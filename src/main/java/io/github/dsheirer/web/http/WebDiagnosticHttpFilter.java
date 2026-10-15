@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.support.WebDiagnosticLogService;
+import io.github.dsheirer.support.WebDiagnosticRequestMetrics;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Objects;
@@ -36,18 +37,33 @@ public final class WebDiagnosticHttpFilter extends Filter
     @Override
     public void doFilter(HttpExchange exchange, Chain chain) throws IOException
     {
-        if(!mService.isEnabled())
+        long generation = mService.captureGeneration();
+        if(generation == 0)
         {
             chain.doFilter(exchange);
             return;
         }
-        // Reading a log must not generate another log record on every polling request. Mutations are retained.
+        // Viewer traffic is summarized periodically, so reading a log cannot recursively log every poll.
         String method = METHODS.contains(exchange.getRequestMethod()) ? exchange.getRequestMethod() : "OTHER";
         String context = exchange.getHttpContext().getPath();
         if(("GET".equals(method) || "HEAD".equals(method)) &&
             (WebDiagnosticLogHttpController.PATH.equals(context) || ApplicationLogHttpController.PATH.equals(context)))
         {
-            chain.doFilter(exchange);
+            WebDiagnosticRequestMetrics metrics = mService.viewerMetrics();
+            WebDiagnosticRequestMetrics.Ticket ticket = metrics.begin(viewerOperation(context,
+                exchange.getRequestURI().getRawPath()), generation);
+            long startedAt = System.nanoTime();
+            boolean failed = true;
+            try
+            {
+                chain.doFilter(exchange);
+                failed = false;
+            }
+            finally
+            {
+                metrics.finish(ticket, System.nanoTime() - startedAt, exchange.getResponseCode(), failed,
+                    declaredResponseBytes(exchange));
+            }
             return;
         }
         String route = normalizedRoute(context, exchange.getRequestURI().getRawPath());
@@ -64,6 +80,31 @@ public final class WebDiagnosticHttpFilter extends Filter
             mService.requestFinished(requestId, method, route, System.nanoTime() - startedAt,
                 exchange.getResponseCode(), failed);
         }
+    }
+
+    static String viewerOperation(String context, String rawPath)
+    {
+        if(ApplicationLogHttpController.PATH.equals(context) && context.equals(rawPath))
+            return "application_log_read";
+        if(WebDiagnosticLogHttpController.PATH.equals(context))
+        {
+            if(context.equals(rawPath)) return "web_log_status";
+            if((context + "/entries").equals(rawPath)) return "web_log_read";
+            if((context + "/download").equals(rawPath)) return "web_log_download";
+        }
+        return "unknown_log_request";
+    }
+
+    private static long declaredResponseBytes(HttpExchange exchange)
+    {
+        String value = exchange.getResponseHeaders().getFirst("Content-Length");
+        if(value == null || value.length() > 20) return -1;
+        try
+        {
+            long bytes = Long.parseLong(value);
+            return bytes >= 0 ? bytes : -1;
+        }
+        catch(NumberFormatException exception) { return -1; }
     }
 
     static String normalizedRoute(String context, String rawPath)

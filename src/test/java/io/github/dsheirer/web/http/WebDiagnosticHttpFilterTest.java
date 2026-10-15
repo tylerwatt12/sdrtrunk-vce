@@ -3,6 +3,7 @@ package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,9 +13,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpContext;
-import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpPrincipal;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsExchange;
+import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.support.WebDiagnosticLogService;
 import java.io.ByteArrayOutputStream;
@@ -29,8 +31,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.prefs.Preferences;
+import javax.net.ssl.SSLSession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -43,7 +50,7 @@ class WebDiagnosticHttpFilterTest
     void contextDecorationPreservesTheActualServerForLongLivedHandlers() throws Exception
     {
         Preferences node = isolatedNode();
-        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        HttpServer server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         try(WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, preferences(node)))
         {
             TestExchange disabled = new TestExchange(null, "/unused", "GET");
@@ -60,6 +67,15 @@ class WebDiagnosticHttpFilterTest
                 assertEquals(1, context.getFilters().size());
                 assertTrue(context.getFilters().getFirst() instanceof WebDiagnosticHttpFilter);
             }
+            service.setEnabled(true);
+            HttpContext logs = registration.createContext(WebDiagnosticLogHttpController.PATH);
+            TestExchange https = new TestExchange(logs, WebDiagnosticLogHttpController.PATH, "GET");
+            new WebDiagnosticHttpFilter(service).doFilter(https, new Filter.Chain(List.of(), exchange -> {
+                assertSame(https, exchange);
+                assertTrue(exchange instanceof HttpsExchange);
+                assertSame(server, exchange.getHttpContext().getServer());
+                exchange.sendResponseHeaders(200, -1);
+            }));
             registration.removeContext(withoutHandler);
         }
         finally
@@ -128,6 +144,7 @@ class WebDiagnosticHttpFilterTest
         try(WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, preferences(node)))
         {
             service.setEnabled(true);
+            long generation = service.captureGeneration();
             WebDiagnosticHttpFilter filter = new WebDiagnosticHttpFilter(service);
             HttpContext loggingContext = null;
             for(String path: List.of(WebDiagnosticLogHttpController.PATH, ApplicationLogHttpController.PATH))
@@ -139,6 +156,15 @@ class WebDiagnosticHttpFilterTest
                         filter.doFilter(new TestExchange(context, path + suffix, method),
                             new Filter.Chain(List.of(), exchange -> exchange.sendResponseHeaders(200, -1)));
             }
+            Map<String,Object> viewer = service.viewerMetrics().snapshotAndReset(generation, 1);
+            assertEquals(12L, viewer.get("started"));
+            assertEquals(12L, viewer.get("completed"));
+            assertEquals(0L, viewer.get("active"));
+            Map<?,?> operations = (Map<?,?>)viewer.get("operations");
+            assertEquals(5, operations.size());
+            assertEquals(2L, ((Map<?,?>)operations.get("application_log_read")).get("started"));
+            assertEquals(4L, ((Map<?,?>)operations.get("unknown_log_request")).get("started"));
+            assertFalse(viewer.toString().contains("private-cursor"));
             filter.doFilter(new TestExchange(loggingContext, WebDiagnosticLogHttpController.PATH, "PUT"),
                 new Filter.Chain(List.of(), exchange -> exchange.sendResponseHeaders(200, -1)));
             String disk = awaitLog("request_finished");
@@ -152,6 +178,73 @@ class WebDiagnosticHttpFilterTest
         }
         finally
         {
+            server.stop(0);
+            node.removeNode();
+        }
+    }
+
+    @Test
+    void blockedDownloadsRemainVisibleAndFailuresAndDeclaredBytesAreAggregated() throws Exception
+    {
+        Preferences node = isolatedNode();
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        CountDownLatch entered = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        try(WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, preferences(node)))
+        {
+            service.setEnabled(true);
+            long generation = service.captureGeneration();
+            HttpContext context = server.createContext(WebDiagnosticLogHttpController.PATH);
+            WebDiagnosticHttpFilter filter = new WebDiagnosticHttpFilter(service);
+            List<Thread> clients = java.util.stream.IntStream.range(0, 2).mapToObj(index ->
+                Thread.ofPlatform().start(() -> {
+                    try
+                    {
+                        TestExchange exchange = new TestExchange(context,
+                            WebDiagnosticLogHttpController.PATH + "/download?token=private-query", "GET");
+                        filter.doFilter(exchange, new Filter.Chain(List.of(), request -> {
+                            request.getResponseHeaders().set("Content-Length", "128");
+                            request.sendResponseHeaders(index == 0 ? 502 : 200, 128);
+                            entered.countDown();
+                            try { release.await(); }
+                            catch(InterruptedException exception) { throw new IOException(exception); }
+                            if(index == 0) throw new IOException("private-handler-message");
+                        }));
+                    }
+                    catch(IOException exception) { if(index != 0) failure.compareAndSet(null, exception); }
+                    catch(Throwable exception) { failure.compareAndSet(null, exception); }
+                })).toList();
+            try
+            {
+                assertTrue(entered.await(2, TimeUnit.SECONDS));
+                Map<String,Object> active = service.viewerMetrics().snapshotAndReset(generation, 1);
+                assertEquals(2L, active.get("active"));
+                assertEquals(2L, ((Map<?,?>)((Map<?,?>)active.get("operations")).get("web_log_download")).get("peak_active"));
+            }
+            finally
+            {
+                release.countDown();
+                for(Thread client: clients) client.join(2000);
+            }
+            assertNull(failure.get());
+            filter.doFilter(new TestExchange(context, WebDiagnosticLogHttpController.PATH + "/entries", "HEAD"),
+                new Filter.Chain(List.of(), request -> {
+                    request.getResponseHeaders().set("Content-Length", "invalid-private-value");
+                    request.sendResponseHeaders(405, -1);
+                }));
+            Map<String,Object> completed = service.viewerMetrics().snapshotAndReset(generation, 2);
+            assertEquals(3L, completed.get("completed"));
+            assertEquals(2L, completed.get("errors"));
+            assertEquals(0L, completed.get("active"));
+            Map<?,?> operations = (Map<?,?>)completed.get("operations");
+            assertEquals(256L, ((Map<?,?>)operations.get("web_log_download")).get("declared_response_bytes"));
+            assertEquals(1L, ((Map<?,?>)operations.get("web_log_read")).get("unknown_response_bytes_count"));
+            assertFalse(completed.toString().contains("private"));
+        }
+        finally
+        {
+            release.countDown();
             server.stop(0);
             node.removeNode();
         }
@@ -205,7 +298,7 @@ class WebDiagnosticHttpFilterTest
     }
 
     /** Any read of headers, body, principal or peer information would fail this privacy contract. */
-    private static final class TestExchange extends HttpExchange
+    private static final class TestExchange extends HttpsExchange
     {
         private final HttpContext mContext;
         private final URI mUri;
@@ -231,5 +324,6 @@ class WebDiagnosticHttpFilterTest
         @Override public void setAttribute(String name, Object value) { }
         @Override public void setStreams(InputStream input, OutputStream output) { }
         @Override public HttpPrincipal getPrincipal() { throw new AssertionError("Principal must not be read"); }
+        @Override public SSLSession getSSLSession() { return null; }
     }
 }

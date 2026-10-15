@@ -18,6 +18,8 @@ import io.github.dsheirer.source.tuner.LoggingTunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.test.TestTuner;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
+import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.support.WebDiagnosticLogService;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -37,6 +39,40 @@ class ReceiverHealthServiceTest
 {
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void compactEvidenceIsOnlyBuiltWhileLoggingIsEnabledAndDoesNotChangeTheHealthApi() throws Exception
+    {
+        ApplicationPreference preferences = new ApplicationPreference(ignored -> {})
+        {
+            private boolean enabled;
+            @Override public boolean isWebDiagnosticLoggingEnabled() { return enabled; }
+            @Override public void setWebDiagnosticLoggingEnabled(boolean value) { enabled = value; }
+        };
+        AtomicLong webReads = new AtomicLong();
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L);
+            WebDiagnosticLogService logging = new WebDiagnosticLogService(() -> mTemporaryDirectory, preferences))
+        {
+            service.setWebDiagnosticLogService(logging);
+            service.setWebStatusSupplier(() -> { webReads.incrementAndGet(); return Map.of(); });
+            Field builderField = ReceiverHealthService.class.getDeclaredField("mDiagnosticCore");
+            builderField.setAccessible(true);
+            Object builder = builderField.get(service);
+            Field sequence = ReceiverHealthDiagnosticCore.class.getDeclaredField("mSequence");
+            sequence.setAccessible(true);
+            service.sampleNow();
+            assertEquals(0L, sequence.getLong(builder));
+            logging.setEnabled(true);
+            service.sampleNow();
+            assertEquals(1L, sequence.getLong(builder));
+            logging.setEnabled(false);
+            service.sampleNow();
+            assertEquals(1L, sequence.getLong(builder));
+            assertEquals(3L, webReads.get(), "Logging must reuse the existing web snapshot read");
+            assertEquals(Set.of("started_at_ms", "generated_at_ms", "summary", "active", "resolved",
+                "measurements", "computer", "radioresolve_accepted_calls"), service.snapshot().keySet());
+        }
+    }
 
     @Test
     void includesCachedSafeComputerFactsOnlyAfterObserverSampling()

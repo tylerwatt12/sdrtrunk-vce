@@ -31,6 +31,7 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.LongSupplier;
@@ -54,6 +55,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private static final int MAXIMUM_RECORD_BYTES = 64 * 1024;
     private static final int MAXIMUM_FILES = 128;
     private static final long AFTER_ALERT_MS = 30_000;
+    private static final long SUMMARY_INTERVAL_MS = 5_000;
     private static final Pattern ARCHIVE = Pattern.compile("([0-9]{8})_[0-9]{6}_[0-9]{3}_[0-9]{1,10}_sdrtrunk_web\\.log");
     private static final DateTimeFormatter LOG_TIME = DateTimeFormatter.ofPattern("uuuuMMdd HHmmss.SSS");
     private static final DateTimeFormatter ARCHIVE_TIME = DateTimeFormatter.ofPattern("uuuuMMdd_HHmmss_SSS");
@@ -68,6 +70,9 @@ public final class WebDiagnosticLogService implements AutoCloseable
         "title", "scope", "opened_at_ms", "last_seen_ms", "resolved_at_ms", "count", "observed", "likely_cause",
         "impact", "check_next", "id", "rows", "label", "value", "unit", "detail", "system_name", "channel_name",
         "configuration_id", "frequency_hz", "wacn", "system_id", "rfss", "site_id");
+    private static final Set<String> COMPACT_HEALTH_FIELDS = Set.of("generated_at_ms", "started_at_ms", "summary", "active",
+        "severity", "active_count", "warning_count", "critical_count", "occurrence_id", "code", "title", "scope",
+        "opened_at_ms", "last_seen_ms", "count", "observed", "likely_cause", "impact", "check_next");
     private final Supplier<Path> mDirectory;
     private final ApplicationPreference mPreferences;
     private final LongSupplier mClock;
@@ -83,6 +88,14 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private final AtomicLong mGeneration = new AtomicLong(1);
     private final AtomicLong mRequestSequence = new AtomicLong();
     private final AtomicLong mDropped = new AtomicLong();
+    private final AtomicLong mDroppedRequests = new AtomicLong();
+    private final AtomicLong mDroppedEvents = new AtomicLong();
+    private final AtomicLong mCoalescedHealth = new AtomicLong();
+    private final AtomicLong mDroppedHealth = new AtomicLong();
+    private long mDuplicateHealth;
+    private final AtomicLong mProcessedHealth = new AtomicLong();
+    private final AtomicReference<Pending> mLatestHealth = new AtomicReference<>();
+    private final WebDiagnosticRequestMetrics mViewerMetrics = new WebDiagnosticRequestMetrics();
     private final AtomicLong mWritten = new AtomicLong();
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final ArrayDeque<HealthSample> mContext = new ArrayDeque<>(CONTEXT_SAMPLES);
@@ -94,6 +107,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     // The following fields are worker-owned.
     private FileChannel mOutput;
     private Path mOutputDirectory;
+    private Object mOutputFileKey;
     private LocalDate mOutputDay;
     private long mWorkerGeneration;
     private long mReportedDropped;
@@ -102,6 +116,25 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private long mLastHealthSecond = Long.MIN_VALUE;
     private long mLastBaseline;
     private long mArchiveSequence;
+    private Path mConfiguredDirectory;
+    private long mRetainedBytes;
+    private long mCurrentBytes;
+    private long mSummaryAt;
+    private long mSummaryWritten;
+    private long mQueueDelayNanos;
+    private long mMaximumQueueDelayNanos;
+    private long mProjectedRecords;
+    private long mProjectionNanos;
+    private long mMaximumProjectionNanos;
+    private long mWriteNanos;
+    private long mMaximumWriteNanos;
+    private long mBytesWritten;
+    private long mMaintenanceNanos;
+    private long mMaintenanceScans;
+    private long mRotations;
+    private long mRotationNanos;
+    private long mContextFlushNanos;
+    private long mMaximumContextFlushNanos;
     private Map<String,Map<String,Object>> mAlerts = Map.of();
     private long mLiveClients;
     private final Map<String,Long> mStreamTopics = new LinkedHashMap<>();
@@ -131,11 +164,16 @@ public final class WebDiagnosticLogService implements AutoCloseable
     public Status status()
     {
         return new Status(mEnabled, mEnabled && mActive, FILE_NAME, RETENTION_DAYS, mMaximumBytes,
-            (int)Math.min(QUEUE_CAPACITY, Math.max(0, mTail.get() - mHead.get())), mDropped.get(), mWritten.get(),
+            (int)Math.min(QUEUE_CAPACITY + 1, Math.max(0, mTail.get() - mHead.get()) + (mLatestHealth.get() != null ? 1 : 0)), mDropped.get(), mWritten.get(),
             mLastError, mCanDownload);
     }
 
     public boolean isEnabled() { return mEnabled && !mClosed.get(); }
+
+    /** Capture identity for bounded aggregate observers; zero avoids any collection while logging is off. */
+    public long captureGeneration() { return isEnabled() ? mGeneration.get() : 0; }
+    public WebDiagnosticRequestMetrics viewerMetrics() { return mViewerMetrics; }
+    long processedHealthSamples() { return mProcessedHealth.get(); }
 
     /** Only settings request threads use this short control lock; no producer acquires it. */
     public synchronized Status setEnabled(boolean enabled)
@@ -181,9 +219,43 @@ public final class WebDiagnosticLogService implements AutoCloseable
     /** Called by the existing receiver-health observer, never by a hardware/decoder callback. */
     public void recordHealth(Map<String,Object> immutableSnapshot)
     {
+        recordHealth(immutableSnapshot, null);
+    }
+
+    /** Numeric core is built with fixed field/device limits by the observer and never shares the text budget. */
+    public void recordHealth(Map<String,Object> immutableSnapshot, Map<String,Object> immutableCore)
+    {
         if(mEnabled && !mClosed.get())
-            submit(new Pending(mGeneration.get(), mClock.getAsLong(), "receiver_health", immutableSnapshot,
-                null, null, 0, 0, 0, false));
+        {
+            long generation = mGeneration.get();
+            if(immutableCore != null && immutableCore.get("capture_generation") instanceof Number capture &&
+                capture.longValue() != generation) return;
+            Pending pending = new Pending(generation, mClock.getAsLong(), "receiver_health", immutableSnapshot,
+                null, null, 0, 0, 0, false, immutableCore, System.nanoTime());
+            Pending previous = mLatestHealth.get();
+            if(generation != mGeneration.get() || !mEnabled || previous != null && previous.generation() > generation) return;
+            // A paused producer from an earlier capture cannot overwrite a newly admitted sample. One attempt
+            // also bounds contention with the consumer: lose the observation rather than retrying or waiting.
+            if(!mLatestHealth.compareAndSet(previous, pending))
+            {
+                dropped(pending);
+                return;
+            }
+            if(previous != null)
+            {
+                mCoalescedHealth.incrementAndGet();
+                mDropped.incrementAndGet();
+            }
+            LockSupport.unpark(mWorker);
+        }
+    }
+
+    private void dropped(Pending pending)
+    {
+        mDropped.incrementAndGet();
+        if(pending.requestId() != 0) mDroppedRequests.incrementAndGet();
+        else if("receiver_health".equals(pending.kind())) mDroppedHealth.incrementAndGet();
+        else mDroppedEvents.incrementAndGet();
     }
 
     private void submit(Pending pending)
@@ -192,7 +264,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
         // One CAS attempt, no spinning and no blocking admission. Contention itself is safe diagnostic loss.
         if(tail - mHead.get() >= QUEUE_CAPACITY || !mTail.compareAndSet(tail, tail + 1))
         {
-            mDropped.incrementAndGet();
+            dropped(pending);
             return;
         }
         mQueue.set((int)(tail % QUEUE_CAPACITY), pending);
@@ -238,6 +310,8 @@ public final class WebDiagnosticLogService implements AutoCloseable
                         mLiveClients = 0;
                         mStreamTopics.clear();
                         mWorkerGeneration = generation;
+                        mSummaryAt = now + SUMMARY_INTERVAL_MS;
+                        mSummaryWritten = mWritten.get();
                         retryAt = 0;
                     }
                     if(now >= maintenanceAt)
@@ -245,7 +319,8 @@ public final class WebDiagnosticLogService implements AutoCloseable
                         maintain(now, 0, false);
                         maintenanceAt = now + 60_000;
                     }
-                    Pending pending = carried != null ? carried : poll();
+                    Pending pending = carried != null ? carried : mLatestHealth.getAndSet(null);
+                    if(pending == null) pending = poll();
                     carried = null;
                     long currentGeneration = mGeneration.get();
                     if(currentGeneration != generation)
@@ -263,7 +338,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
                     if(pending != null && pending.generation() != generation) continue;
                     if(now < retryAt)
                     {
-                        if(pending != null) mDropped.incrementAndGet();
+                        if(pending != null) dropped(pending);
                         LockSupport.parkNanos(100_000_000L);
                         continue;
                     }
@@ -283,18 +358,28 @@ public final class WebDiagnosticLogService implements AutoCloseable
                             "newly_dropped_records", dropped - mReportedDropped));
                         mReportedDropped = dropped;
                     }
+                    summaries(now, generation);
                     if(pending == null)
                     {
                         LockSupport.parkNanos(100_000_000L);
                         continue;
                     }
+                    long queued = Math.max(0, System.nanoTime() - pending.queuedNanos());
+                    mQueueDelayNanos += queued;
+                    mMaximumQueueDelayNanos = Math.max(mMaximumQueueDelayNanos, queued);
                     mBeforeProjection.run();
                     if(!mEnabled || pending.generation() != mGeneration.get()) continue;
-                    if("receiver_health".equals(pending.kind())) health(pending);
+                    long projectionStarted = System.nanoTime();
+                    if("receiver_health".equals(pending.kind()))
+                    {
+                        health(pending);
+                        mProcessedHealth.incrementAndGet();
+                    }
                     else
                     {
                         Map<String,Object> fields = project(pending);
                         activity(pending.kind(), fields);
+                        projected(System.nanoTime() - projectionStarted);
                         write(pending.time(), safeKind(pending.kind()), fields);
                     }
                 }
@@ -319,6 +404,47 @@ public final class WebDiagnosticLogService implements AutoCloseable
             }
             closeOutput();
         }
+    }
+
+    private void projected(long nanos)
+    {
+        mProjectedRecords++;
+        mProjectionNanos += nanos;
+        mMaximumProjectionNanos = Math.max(mMaximumProjectionNanos, nanos);
+    }
+
+    private void summaries(long now, long generation) throws IOException
+    {
+        if(now < mSummaryAt) return;
+        mSummaryAt = now + SUMMARY_INTERVAL_MS;
+        Map<String,Object> viewer = mViewerMetrics.snapshotAndReset(generation, now);
+        if(!viewer.isEmpty()) write(now, "viewer_activity", viewer);
+        if(mWritten.get() == mSummaryWritten) return;
+        Map<String,Object> fields = new LinkedHashMap<>();
+        fields.put("capture_generation", generation);
+        fields.put("counter_scope", "process");
+        fields.put("projected_records", mProjectedRecords);
+        fields.put("health_samples_processed", mProcessedHealth.get());
+        fields.put("queue_delay_ms", mQueueDelayNanos / 1_000_000.0);
+        fields.put("maximum_queue_delay_ms", mMaximumQueueDelayNanos / 1_000_000.0);
+        fields.put("projection_ms", mProjectionNanos / 1_000_000.0);
+        fields.put("maximum_projection_ms", mMaximumProjectionNanos / 1_000_000.0);
+        fields.put("writer_ms", mWriteNanos / 1_000_000.0);
+        fields.put("maximum_writer_ms", mMaximumWriteNanos / 1_000_000.0);
+        fields.put("bytes_written", mBytesWritten);
+        fields.put("maintenance_ms", mMaintenanceNanos / 1_000_000.0);
+        fields.put("maintenance_scans", mMaintenanceScans);
+        fields.put("rotations", mRotations);
+        fields.put("rotation_ms", mRotationNanos / 1_000_000.0);
+        fields.put("context_flush_ms", mContextFlushNanos / 1_000_000.0);
+        fields.put("maximum_context_flush_ms", mMaximumContextFlushNanos / 1_000_000.0);
+        fields.put("dropped_requests", mDroppedRequests.get());
+        fields.put("dropped_events", mDroppedEvents.get());
+        fields.put("coalesced_health_samples", mCoalescedHealth.get());
+        fields.put("dropped_health_samples", mDroppedHealth.get());
+        fields.put("duplicate_health_samples", mDuplicateHealth);
+        write(now, "logging_overhead", fields);
+        mSummaryWritten = mWritten.get();
     }
 
     private Map<String,Object> project(Pending pending)
@@ -355,10 +481,14 @@ public final class WebDiagnosticLogService implements AutoCloseable
 
     private void health(Pending pending) throws IOException
     {
-        Map<String,Object> safe = projection(pending.fields(), HEALTH_FIELDS);
+        long projectionStarted = System.nanoTime();
+        Map<String,Object> safe = pending.core() == null ? projection(pending.fields(), HEALTH_FIELDS) :
+            projection(pending.fields(), COMPACT_HEALTH_FIELDS, new ProjectionBudget(256, 2_048));
+        if(pending.core() != null) safe.put("core", pending.core());
+        safe.put("writer_queue_delay_ms", Math.max(0, System.nanoTime() - pending.queuedNanos()) / 1_000_000.0);
         safe.put("web_activity", Map.of("recorded_live_clients", mLiveClients, "recorded_stream_topics", Map.copyOf(mStreamTopics)));
         long time = safe.get("generated_at_ms") instanceof Number number ? number.longValue() : pending.time();
-        if(time / 1_000 == mLastHealthSecond) return;
+        if(time / 1_000 == mLastHealthSecond) { mDuplicateHealth++; return; }
         mLastHealthSecond = time / 1_000;
         Map<String,Map<String,Object>> alerts = new LinkedHashMap<>();
         Object originalActive = pending.fields() != null ? pending.fields().get("active") : null;
@@ -398,10 +528,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
             alerts.forEach((key, alert) -> { if(merged.size() < 256 || merged.containsKey(key)) merged.put(key, alert); });
             mAlerts = merged;
         }
+        projected(System.nanoTime() - projectionStarted);
         if(mContext.size() == CONTEXT_SAMPLES) mContext.removeFirst();
         mContext.addLast(new HealthSample(time, safe));
         if(!changes.isEmpty())
         {
+            long flushStarted = System.nanoTime();
             for(HealthSample sample: mContext)
             {
                 if(sample.time() > mLastContextWritten)
@@ -413,6 +545,9 @@ public final class WebDiagnosticLogService implements AutoCloseable
             for(int index = 0; index < changes.size(); index++)
                 write(time, "receiver_alert", Map.of("changes", List.of(changes.get(index)),
                     "change_index", index + 1, "change_count", changes.size()));
+            long flushNanos = System.nanoTime() - flushStarted;
+            mContextFlushNanos += flushNanos;
+            mMaximumContextFlushNanos = Math.max(mMaximumContextFlushNanos, flushNanos);
             mAfterUntil = time + AFTER_ALERT_MS;
         }
         else
@@ -432,7 +567,11 @@ public final class WebDiagnosticLogService implements AutoCloseable
 
     private static Map<String,Object> projection(Map<?,?> input, Set<String> allowed)
     {
-        ProjectionBudget budget = new ProjectionBudget();
+        return projection(input, allowed, new ProjectionBudget(1_000, 12_000));
+    }
+
+    private static Map<String,Object> projection(Map<?,?> input, Set<String> allowed, ProjectionBudget budget)
+    {
         Map<String,Object> result = projectMap(input, allowed, 0, budget);
         if(budget.truncated) result.put("projection_truncated", true);
         return result;
@@ -511,8 +650,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private void write(long time, String kind, Map<String,Object> fields, boolean finalRecord) throws IOException
     {
         if(!finalRecord && (!mEnabled || mWorkerGeneration != mGeneration.get() || mClosed.get())) return;
+        long writeStarted = System.nanoTime();
+        Map<String,Object> timed = new LinkedHashMap<>(fields);
+        timed.put("observed_at_ms", time);
+        timed.put("recorded_at_ms", mClock.getAsLong());
         String line = LOG_TIME.format(Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())) +
-            " [web diagnostic writer] " + level(kind, fields) + " web.diagnostic - " + kind + " " + MAPPER.writeValueAsString(fields) + "\n";
+            " [web diagnostic writer] " + level(kind, fields) + " web.diagnostic - " + kind + " " + MAPPER.writeValueAsString(timed) + "\n";
         byte[] bytes = ApplicationLogService.redact(line).getBytes(StandardCharsets.UTF_8);
         if(bytes.length > MAXIMUM_RECORD_BYTES || bytes.length > mMaximumBytes)
         {
@@ -523,6 +666,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
         if(!finalRecord && (!mEnabled || mWorkerGeneration != mGeneration.get() || mClosed.get())) return;
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         while(buffer.hasRemaining()) mOutput.write(buffer);
+        mCurrentBytes += bytes.length;
+        mRetainedBytes += bytes.length;
+        mBytesWritten += bytes.length;
+        long writeNanos = System.nanoTime() - writeStarted;
+        mWriteNanos += writeNanos;
+        mMaximumWriteNanos = Math.max(mMaximumWriteNanos, writeNanos);
         mWritten.incrementAndGet();
         mCanDownload = true;
         mActive = mEnabled;
@@ -556,54 +705,76 @@ public final class WebDiagnosticLogService implements AutoCloseable
         return "INFO";
     }
 
-    /** Reserve space before writing so this writer never exceeds the retention byte limit. */
+    /** Reserve space before writing; the opened writer alone owns the cached byte counts between scans. */
     private void maintain(long now, int incomingBytes, boolean writing) throws IOException
     {
         Path configured = Objects.requireNonNull(mDirectory.get()).toAbsolutePath().normalize();
-        if(writing) Files.createDirectories(configured);
-        if(!Files.isDirectory(configured)) { mCanDownload = false; return; }
-        Path directory = configured.toRealPath();
-        if(mOutputDirectory != null && !mOutputDirectory.equals(directory)) closeOutput();
-        Path current = directory.resolve(FILE_NAME);
         LocalDate day = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate();
-        if(Files.exists(current, LinkOption.NOFOLLOW_LINKS))
+        // The common write path makes no directory scan or metadata query. A periodic scan reconciles external
+        // changes; the existing NOFOLLOW channel cannot follow a replacement symlink between those scans.
+        if(writing && mOutput != null && configured.equals(mConfiguredDirectory) && day.equals(mOutputDay) &&
+            mCurrentBytes + incomingBytes <= mRotationBytes && mRetainedBytes + incomingBytes <= mMaximumBytes) return;
+        long maintenanceStarted = System.nanoTime();
+        try
         {
-            if(!Files.isRegularFile(current, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Unsafe log file");
-            LocalDate fileDay = mOutputDay != null ? mOutputDay : Files.getLastModifiedTime(current,
-                LinkOption.NOFOLLOW_LINKS).toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-            if(!day.equals(fileDay) || incomingBytes > 0 && Files.size(current) + incomingBytes > mRotationBytes)
+            if(writing) Files.createDirectories(configured);
+            if(!Files.isDirectory(configured)) { closeOutput(); mCanDownload = false; return; }
+            Path directory = configured.toRealPath();
+            if(mOutputDirectory != null && !mOutputDirectory.equals(directory)) closeOutput();
+            Path current = directory.resolve(FILE_NAME);
+            if(!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) closeOutput();
+            else
             {
-                closeOutput();
-                Path archive;
-                do
+                BasicFileAttributes currentAttributes = Files.readAttributes(current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if(!currentAttributes.isRegularFile()) throw new IOException("Unsafe log file");
+                if(mOutput != null && !Objects.equals(mOutputFileKey, currentAttributes.fileKey())) closeOutput();
+                LocalDate fileDay = mOutputDay != null ? mOutputDay : Files.getLastModifiedTime(current,
+                    LinkOption.NOFOLLOW_LINKS).toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+                if(!day.equals(fileDay) || incomingBytes > 0 && Files.size(current) + incomingBytes > mRotationBytes)
                 {
-                    archive = directory.resolve(ARCHIVE_TIME.format(Instant.ofEpochMilli(now)
-                        .atZone(ZoneId.systemDefault())) + "_" + String.format(java.util.Locale.ROOT, "%010d", ++mArchiveSequence) + "_" + FILE_NAME);
+                    long rotationStarted = System.nanoTime();
+                    closeOutput();
+                    Path archive;
+                    do
+                    {
+                        archive = directory.resolve(ARCHIVE_TIME.format(Instant.ofEpochMilli(now)
+                            .atZone(ZoneId.systemDefault())) + "_" + String.format(java.util.Locale.ROOT, "%010d", ++mArchiveSequence) + "_" + FILE_NAME);
+                    }
+                    while(Files.exists(archive, LinkOption.NOFOLLOW_LINKS));
+                    Files.move(current, archive);
+                    mRotations++;
+                    mRotationNanos += System.nanoTime() - rotationStarted;
                 }
-                while(Files.exists(archive, LinkOption.NOFOLLOW_LINKS));
-                Files.move(current, archive);
             }
-        }
-        List<RetainedFile> files = retained(directory);
-        long total = files.stream().mapToLong(RetainedFile::size).sum();
-        long cutoff = now - RETENTION_DAYS * 86_400_000L;
-        for(RetainedFile file: files)
-        {
-            if(file.retainedSince() < cutoff || total + incomingBytes > mMaximumBytes)
+            List<RetainedFile> files = retained(directory);
+            mMaintenanceScans++;
+            long total = files.stream().mapToLong(RetainedFile::size).sum();
+            long currentBytes = 0;
+            long cutoff = now - RETENTION_DAYS * 86_400_000L;
+            for(RetainedFile file: files)
             {
-                if(file.path().equals(current)) closeOutput();
-                Files.delete(file.path());
-                total -= file.size();
+                if(file.retainedSince() < cutoff || total + incomingBytes > mMaximumBytes)
+                {
+                    if(file.path().equals(current)) closeOutput();
+                    Files.delete(file.path());
+                    total -= file.size();
+                }
+                else if(file.path().equals(current)) currentBytes = file.size();
+            }
+            mCanDownload = total > 0;
+            mRetainedBytes = total;
+            mCurrentBytes = currentBytes;
+            mConfiguredDirectory = configured;
+            if(writing && mOutput == null)
+            {
+                mOutput = FileChannel.open(current, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                    StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS);
+                mOutputDirectory = directory;
+                mOutputFileKey = Files.readAttributes(current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+                mOutputDay = day;
             }
         }
-        mCanDownload = total > 0;
-        if(writing && mOutput == null)
-        {
-            mOutput = FileChannel.open(current, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS);
-            mOutputDirectory = directory;
-            mOutputDay = day;
-        }
+        finally { mMaintenanceNanos += System.nanoTime() - maintenanceStarted; }
     }
 
     private static List<RetainedFile> retained(Path directory) throws IOException
@@ -720,6 +891,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
             mOutput = null;
         }
         mOutputDirectory = null;
+        mOutputFileKey = null;
         mOutputDay = null;
         mActive = false;
     }
@@ -756,13 +928,23 @@ public final class WebDiagnosticLogService implements AutoCloseable
         }
     }
     private record Pending(long generation, long time, String kind, Map<String,Object> fields, String method,
-                           String route, long requestId, long durationNanos, int responseCode, boolean failed) { }
+                           String route, long requestId, long durationNanos, int responseCode, boolean failed,
+                           Map<String,Object> core, long queuedNanos)
+    {
+        Pending(long generation, long time, String kind, Map<String,Object> fields, String method, String route,
+                long requestId, long durationNanos, int responseCode, boolean failed)
+        {
+            this(generation, time, kind, fields, method, route, requestId, durationNanos, responseCode, failed,
+                null, System.nanoTime());
+        }
+    }
     private record HealthSample(long time, Map<String,Object> fields) { }
     private record RetainedFile(Path path, long size, long modifiedAt, long retainedSince, Object fileKey) { }
     private static final class ProjectionBudget
     {
-        private int nodes = 1_000;
-        private int characters = 12_000;
+        private int nodes;
+        private int characters;
+        private ProjectionBudget(int nodeLimit, int characterLimit) { nodes = nodeLimit; characters = characterLimit; }
         private boolean truncated;
     }
 

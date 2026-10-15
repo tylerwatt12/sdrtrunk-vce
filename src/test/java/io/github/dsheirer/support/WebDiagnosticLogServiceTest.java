@@ -116,6 +116,150 @@ class WebDiagnosticLogServiceTest
     }
 
     @Test
+    void saturatedRequestQueueRetainsLatestCompactHealthWithoutSharingItsTextBudget() throws Exception
+    {
+        CountDownLatch projecting = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {
+                    projecting.countDown();
+                    try { release.await(3, TimeUnit.SECONDS); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                }))
+        {
+            service.setEnabled(true);
+            service.event("listener_started", Map.of());
+            assertTrue(projecting.await(2, TimeUnit.SECONDS));
+            for(int index = 0; index < WebDiagnosticLogService.QUEUE_CAPACITY; index++)
+                service.requestStarted("GET", "/api/v1/channels");
+            for(int sample = 1; sample <= 3; sample++)
+            {
+                clock.addAndGet(1_000);
+                service.recordHealth(Map.of("generated_at_ms", clock.get(), "active", List.of(Map.of(
+                        "occurrence_id", 71, "severity", "warning", "code", "usb",
+                        "title", "long alert ".repeat(400), "observed", "long observation ".repeat(400))),
+                    "measurements", List.of(Map.of("detail", "large measurement ".repeat(4_000)))),
+                    Map.of("capture_generation", service.captureGeneration(), "sample_sequence", sample,
+                        "host", Map.of("cpu_percent", 13.5, "heap_used_bytes", 123456789L,
+                            "gc_collection_time_ms", 7)));
+            }
+            assertEquals(WebDiagnosticLogService.QUEUE_CAPACITY + 1, service.status().queueDepth());
+            assertEquals(2, service.status().droppedRecords());
+            release.countDown();
+            await(() -> service.processedHealthSamples() == 1);
+            await(() -> read().contains("\"sample_sequence\":3"));
+            assertTrue(read().contains("\"cpu_percent\":13.5"));
+            assertTrue(read().contains("\"heap_used_bytes\":123456789"));
+            assertTrue(read().contains("\"gc_collection_time_ms\":7"));
+            assertFalse(read().contains("large measurement"));
+            assertTrue(read().contains("projection_truncated"));
+            assertFalse(read().contains("\"sample_sequence\":1"));
+            clock.addAndGet(5_000);
+            service.event("listener_started", Map.of());
+            await(() -> read().contains("\"coalesced_health_samples\":2"));
+        }
+        finally { release.countDown(); }
+    }
+
+    @Test
+    void oldSamplerCaptureCannotEnterNewHealthSlot() throws Exception
+    {
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value))
+        {
+            service.setEnabled(true);
+            long previous = service.captureGeneration();
+            service.setEnabled(false);
+            service.setEnabled(true);
+            assertNotEquals(previous, service.captureGeneration());
+            service.recordHealth(Map.of("active", List.of()), Map.of("capture_generation", previous, "old_sample", 1));
+            service.recordHealth(Map.of("active", List.of()),
+                Map.of("capture_generation", service.captureGeneration(), "fresh_sample", 1));
+            await(() -> read().contains("fresh_sample"));
+            assertFalse(read().contains("old_sample"));
+        }
+    }
+
+    @Test
+    void pausedOldHealthProducerCannotReplaceAnAdmittedNewCapture() throws Exception
+    {
+        CountDownLatch readingCapture = new CountDownLatch(1);
+        CountDownLatch releaseCapture = new CountDownLatch(1);
+        CountDownLatch projecting = new CountDownLatch(1);
+        CountDownLatch releaseWriter = new CountDownLatch(1);
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value,
+                System::currentTimeMillis, WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {
+                    projecting.countDown();
+                    try { releaseWriter.await(3, TimeUnit.SECONDS); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                }))
+        {
+            service.setEnabled(true);
+            service.event("listener_started", Map.of());
+            assertTrue(projecting.await(2, TimeUnit.SECONDS));
+            long previous = service.captureGeneration();
+            Map<String,Object> oldCore = new java.util.AbstractMap<>()
+            {
+                @Override public Object get(Object key)
+                {
+                    readingCapture.countDown();
+                    try { releaseCapture.await(3, TimeUnit.SECONDS); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                    return previous;
+                }
+                @Override public java.util.Set<Entry<String,Object>> entrySet() { return Map.<String,Object>of().entrySet(); }
+            };
+            Thread oldProducer = new Thread(() -> service.recordHealth(Map.of("active", List.of()), oldCore));
+            oldProducer.start();
+            assertTrue(readingCapture.await(2, TimeUnit.SECONDS));
+            service.setEnabled(false);
+            service.setEnabled(true);
+            service.recordHealth(Map.of("active", List.of()),
+                Map.of("capture_generation", service.captureGeneration(), "fresh_sample", 1));
+            releaseCapture.countDown();
+            oldProducer.join(1_000);
+            assertFalse(oldProducer.isAlive());
+            releaseWriter.countDown();
+            await(() -> read().contains("fresh_sample"));
+        }
+        finally { releaseCapture.countDown(); releaseWriter.countDown(); }
+    }
+
+    @Test
+    void ordinaryWritesUseCachedSizesAndPeriodicSummariesMeasureMaintenance() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        AtomicLong directoryReads = new AtomicLong();
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> {
+                directoryReads.incrementAndGet();
+                return mDirectory;
+            }, prefs.value, clock::get, WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            await(() -> service.status().active());
+            for(int index = 0; index < 100; index++) service.event("live_connected", Map.of("client_id", index));
+            await(() -> service.status().writtenRecords() >= 101);
+            clock.addAndGet(5_000);
+            service.event("listener_started", Map.of());
+            await(() -> read().contains("logging_overhead"));
+            var json = new com.fasterxml.jackson.databind.ObjectMapper();
+            String line = read().lines().filter(value -> value.contains(" - logging_overhead ")).findFirst().orElseThrow();
+            var fields = json.readTree(line.substring(line.indexOf("{", line.indexOf(" - logging_overhead "))));
+            assertTrue(fields.get("maintenance_scans").asLong() <= 3, line);
+            assertTrue(fields.get("bytes_written").asLong() > 0);
+            assertTrue(fields.get("projected_records").asLong() >= 100);
+            assertTrue(fields.has("recorded_at_ms"));
+            assertTrue(fields.has("observed_at_ms"));
+            assertTrue(fields.get("writer_ms").asDouble() >= 0);
+            assertTrue(directoryReads.get() >= 100, "Configured directory changes must still be checked on writes");
+        }
+    }
+
+    @Test
     void captureChangesDiscardStaleProjectionAndLateRequestCompletions() throws Exception
     {
         CountDownLatch projecting = new CountDownLatch(1);
@@ -281,6 +425,52 @@ class WebDiagnosticLogServiceTest
     }
 
     @Test
+    void periodicMaintenanceReopensDeletedAndReplacedCurrentFiles() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        Path current = mDirectory.resolve(WebDiagnosticLogService.FILE_NAME);
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            service.event("listener_started", Map.of("operation", "before_delete"));
+            await(() -> read().contains("before_delete"));
+            Files.delete(current);
+            clock.addAndGet(61_000);
+            service.event("listener_started", Map.of("operation", "after_delete"));
+            await(() -> read().contains("after_delete"));
+            Files.move(current, mDirectory.resolve("retired-current"));
+            Files.writeString(current, "Replacement\n");
+            clock.addAndGet(61_000);
+            service.event("listener_started", Map.of("operation", "after_replace"));
+            await(() -> read().contains("after_replace"));
+            assertFalse(Files.readString(mDirectory.resolve("retired-current")).contains("after_replace"));
+        }
+    }
+
+    @Test
+    void changingTheConfiguredDirectoryBypassesCachedWriterState() throws Exception
+    {
+        Path second = mDirectory.resolve("second");
+        AtomicReference<Path> directory = new AtomicReference<>(mDirectory);
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(directory::get, prefs.value))
+        {
+            service.setEnabled(true);
+            service.event("listener_started", Map.of("operation", "first_folder"));
+            await(() -> read().contains("first_folder"));
+            directory.set(second);
+            service.event("listener_started", Map.of("operation", "second_folder"));
+            await(() -> {
+                try { return Files.readString(second.resolve(WebDiagnosticLogService.FILE_NAME)).contains("second_folder"); }
+                catch(Exception exception) { return false; }
+            });
+            assertFalse(read().contains("second_folder"));
+        }
+    }
+
+    @Test
     void downloadBoundsSanitizedExpansionAndKeepsTemporaryFilesPrivateWithoutLeakingLeases() throws Exception
     {
         Path current = mDirectory.resolve(WebDiagnosticLogService.FILE_NAME);
@@ -361,11 +551,13 @@ class WebDiagnosticLogServiceTest
         }
     }
 
-    private static void sample(WebDiagnosticLogService service, AtomicLong clock, long time, List<Map<String,Object>> alerts)
+    private static void sample(WebDiagnosticLogService service, AtomicLong clock, long time, List<Map<String,Object>> alerts) throws Exception
     {
+        long before = service.processedHealthSamples();
         clock.set(time);
         service.recordHealth(Map.of("generated_at_ms", time, "active", alerts,
             "measurements", List.of(Map.of("id", "computer", "rows", List.of(Map.of("label", "VCE processor use", "value", 20))))));
+        await(() -> service.processedHealthSamples() > before);
     }
 
     private String read()

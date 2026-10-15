@@ -16,6 +16,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -223,32 +224,48 @@ public final class ApplicationLogService implements AutoCloseable
             return unavailable(log, directory, previous, now);
         }
         FileIdentity identity = new FileIdentity(file, attributes.fileKey(), attributes.creationTime().toMillis());
+        boolean sameDirectory = previous != null && directory.equals(previous.directory());
         byte[] anchor;
         byte[] bytes;
         boolean previousEndMatches;
         long size;
         long start;
+        FileTime modifiedAt;
         try(FileChannel channel = FileChannel.open(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))
         {
             // The final component cannot become a symbolic link between the check and open. Verify the named file
             // remains the inspected regular file before using it, rather than following a replacement's attributes.
             BasicFileAttributes opened = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if(!opened.isRegularFile() || !Objects.equals(attributes.fileKey(), opened.fileKey()))
+            if(!opened.isRegularFile() || !Objects.equals(attributes.fileKey(), opened.fileKey()) ||
+                !attributes.creationTime().equals(opened.creationTime()))
             {
                 throw new IOException("Application log changed while opening");
             }
             size = channel.size();
+            modifiedAt = opened.lastModifiedTime();
             anchor = readBytes(channel, 0, (int)Math.min(ANCHOR_BYTES, size));
             previousEndMatches = previous != null && size >= previous.size() &&
                 Arrays.equals(previous.endAnchor(), readBytes(channel,
                     previous.size() - previous.endAnchor().length, previous.endAnchor().length));
+            if(sameDirectory && identity.equals(previous.identity()) && size == previous.size() &&
+                modifiedAt.equals(previous.modifiedAt()) && prefixMatches(previous.anchor(), anchor) && previousEndMatches)
+            {
+                // Unchanged append-only logs need only bounded metadata and boundary checks. Keep the immutable
+                // redacted entries rather than rereading, decoding and projecting another megabyte for each poll.
+                Snapshot old = previous.snapshot();
+                Snapshot refreshed = new Snapshot(old.log(), old.fileName(), old.available(), old.entries(),
+                    mWallClock.getAsLong(), old.maxEntries(), old.truncated(), old.latestId(), false, "",
+                    null, false, null);
+                return new Cached(refreshed, now, directory, identity, size, anchor, previous.endAnchor(),
+                    previous.generation(), previous.changeReason(), modifiedAt);
+            }
             start = Math.max(0, size - MAXIMUM_READ_BYTES);
             bytes = readBytes(channel, start, (int)Math.min(MAXIMUM_READ_BYTES, size));
         }
 
-        boolean sameDirectory = previous != null && directory.equals(previous.directory());
         boolean sameFile = sameDirectory && identity.equals(previous.identity()) && size >= previous.size() &&
-            prefixMatches(previous.anchor(), anchor) && previousEndMatches;
+            prefixMatches(previous.anchor(), anchor) && previousEndMatches &&
+            (size > previous.size() || modifiedAt.equals(previous.modifiedAt()));
         String generation = sameFile ? previous.generation() : UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         String changeReason = sameFile ? previous.changeReason() :
             previous != null && !sameDirectory ? "source_changed" : "rotation";
@@ -258,7 +275,7 @@ public final class ApplicationLogService implements AutoCloseable
             MAXIMUM_ENTRIES, start > 0 || parsed.truncated(), entries.isEmpty() ? null : entries.getLast().id(), false, "",
             null, false, null);
         byte[] endAnchor = Arrays.copyOfRange(bytes, Math.max(0, bytes.length - ANCHOR_BYTES), bytes.length);
-        return new Cached(snapshot, now, directory, identity, size, anchor, endAnchor, generation, changeReason);
+        return new Cached(snapshot, now, directory, identity, size, anchor, endAnchor, generation, changeReason, modifiedAt);
     }
 
     private Cached unavailable(String log, Path directory, Cached previous, long now)
@@ -267,7 +284,7 @@ public final class ApplicationLogService implements AutoCloseable
         Snapshot snapshot = new Snapshot(log, "current".equals(log) ? mCurrentFile : null, false, List.of(),
             mWallClock.getAsLong(), MAXIMUM_ENTRIES, false, null, false, "", null, false, null);
         return new Cached(snapshot, now, directory, null, 0, new byte[0], new byte[0], generation,
-            previous != null && !directory.equals(previous.directory()) ? "source_changed" : "rotation");
+            previous != null && !directory.equals(previous.directory()) ? "source_changed" : "rotation", null);
     }
 
     private static boolean prefixMatches(byte[] previous, byte[] current)
@@ -463,5 +480,5 @@ public final class ApplicationLogService implements AutoCloseable
     private record Parsed(List<Entry> entries, boolean truncated) { }
     private record FileIdentity(Path path, Object fileKey, long createdAt) { }
     private record Cached(Snapshot snapshot, long generatedAtNanos, Path directory, FileIdentity identity, long size,
-                          byte[] anchor, byte[] endAnchor, String generation, String changeReason) { }
+                          byte[] anchor, byte[] endAnchor, String generation, String changeReason, FileTime modifiedAt) { }
 }

@@ -8,6 +8,7 @@ package io.github.dsheirer.support;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileTime;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -228,6 +230,32 @@ class ApplicationLogServiceTest
             assertTrue(replaced.gap());
             assertEquals("rotation", replaced.changeReason());
             assertNotEquals(old.latestId(), replaced.latestId());
+        }
+    }
+
+    @Test
+    void unchangedPollsReuseParsedTailAfterCacheExpiresAndMiddleRewritesInvalidateIt() throws Exception
+    {
+        String prefix = header("INFO", "p".repeat(2_000));
+        String suffix = header("INFO", "s".repeat(2_000));
+        Files.writeString(current(), prefix + header("WARN", "old middle") + suffix);
+        try(ApplicationLogService service = service())
+        {
+            ApplicationLogService.Snapshot first = service.snapshot("current", null);
+            advance();
+            ApplicationLogService.Snapshot unchanged = service.snapshot("current", null);
+            assertSame(first.entries(), unchanged.entries(), "An unchanged tail should not be reparsed on each poll");
+            assertEquals(first.revision(), unchanged.revision());
+
+            FileTime previousTime = Files.getLastModifiedTime(current());
+            Files.writeString(current(), prefix + header("WARN", "new middle") + suffix);
+            Files.setLastModifiedTime(current(), FileTime.fromMillis(previousTime.toMillis() + 1_000));
+            advance();
+            ApplicationLogService.Snapshot changed = service.snapshot("current", first.latestId(), first.revision());
+            assertTrue(changed.gap(), "A rewrite must invalidate cursors even with unchanged size and boundary bytes");
+            assertFalse(changed.incremental());
+            assertEquals("new middle", changed.entries().get(1).message());
+            assertNotEquals(first.revision(), changed.revision());
         }
     }
 
