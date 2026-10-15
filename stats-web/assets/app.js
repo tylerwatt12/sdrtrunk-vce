@@ -4921,8 +4921,8 @@ function aliasMutationError(host, error, retry = null) {
   }
 }
 
-function aliasFormWorkflow(form, submit, feedback, modal, reload = null) {
-  return createFormWorkflow({ form, submit, modal, renderFeedback: (state, message, error) => {
+function aliasFormWorkflow(form, submit, feedback, modal, reload = null, changed = null) {
+  return createFormWorkflow({ form, submit, modal, changed, renderFeedback: (state, message, error) => {
     if (error) aliasMutationError(feedback, error, reload);
     else {
       feedback.replaceChildren();
@@ -5039,9 +5039,19 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
   window.history.replaceState({}, '', currentHref());
   if (result?.revision !== undefined && aliasEditorContext) aliasEditorContext.revision = result.revision;
   if (!refreshed) {
-    if (aliasEditorWorkspaceController?.isCurrent?.()) {
-      await aliasEditorWorkspaceController.navigate(currentHref(), { replace: true, refreshCatalog: true });
-    } else await render();
+    const refreshError = () => {
+      const host = aliasEditorWorkspaceController?.isCurrent?.() ? aliasEditorWorkspaceController.feedback : content;
+      host.replaceChildren(node('div', 'error',
+        'Changes saved, but updated information could not be loaded. Refresh the page.'));
+    };
+    try {
+      if (aliasEditorWorkspaceController?.isCurrent?.()) {
+        refreshed = await aliasEditorWorkspaceController.navigate(currentHref(), { replace: true, refreshCatalog: true });
+        if (!refreshed && aliasEditorWorkspaceController?.isCurrent?.()) refreshError();
+      } else await render();
+    } catch (_) {
+      refreshError();
+    }
   }
   if (aliasEditorWorkspaceController?.isCurrent?.()) {
     aliasEditorWorkspaceController.committedQuery = new URLSearchParams(route);
@@ -5483,6 +5493,35 @@ function aliasEditorPayload(form, options) {
   };
 }
 
+function aliasCallHandlingValue(value = {}) {
+  return {
+    recordable: Boolean(value.recordable),
+    scan_list_ids: [...new Set((value.scan_list_ids || []).map(Number))].sort((a, b) => a - b),
+    broadcast_configuration_ids: [...new Set(value.broadcast_configuration_ids || [])].sort()
+  };
+}
+
+function aliasEditorPayloadKey(value) {
+  const matcher = value.matcher || {};
+  const normalizedMatcher = Object.fromEntries(Object.keys(matcher).sort()
+    .filter((key) => matcher[key] !== null && matcher[key] !== undefined)
+    .map((key) => [key, key === 'tones' ? matcher.tones.map((tone) => ({
+      tone: tone.tone, duration: Number(tone.duration)
+    })) : key === 'esn' ? String(matcher.esn).trim() : matcher[key]]));
+  return JSON.stringify({
+    alias_list_id: Number(value.alias_list_id),
+    name: String(value.name || '').trim(),
+    description: String(value.description || '').trim(),
+    group: String(value.group || '').trim(),
+    color: Number(value.color || 0),
+    icon_name: value.icon_name || null,
+    ...aliasCallHandlingValue(value),
+    stream_as_talkgroup: value.stream_as_talkgroup === null || value.stream_as_talkgroup === undefined ||
+      value.stream_as_talkgroup === '' ? null : Number(value.stream_as_talkgroup),
+    matcher: normalizedMatcher
+  });
+}
+
 async function openAliasEditorModal(mode = 'create', id = null, prefill = null) {
   const editing = mode === 'edit';
   const cloning = mode === 'clone';
@@ -5709,11 +5748,15 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     }
     form.append(tabBar, basics, identifier, audio, usage, errorHost,
       aliasModalFooter(remove, clone, node('span', 'alias-modal-footer-spacer'), cancel, save));
+    let savedPayloadKey = editing ? aliasEditorPayloadKey(source) : null;
     const workflow = aliasFormWorkflow(form, save, errorHost, modal, () => {
       modal.setDirty(false);
       closeReadOnlyModal(true);
       openAliasEditorModal(mode, id, prefill);
-    });
+    }, editing ? () => {
+      try { return aliasEditorPayloadKey(aliasEditorPayload(form, options)) !== savedPayloadKey; }
+      catch (_) { return true; }
+    } : null);
     form.addEventListener('click', (event) => {
       if (event.target.closest('.alias-tone-add, .alias-tone-remove, .alias-tone-move')) workflow.setDirty(true);
     });
@@ -5724,6 +5767,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
         const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
           method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }
         });
+        savedPayloadKey = aliasEditorPayloadKey(payload);
         await finishAliasMutation(modal, result, { list: payload.alias_list_id });
       });
     });
@@ -6979,37 +7023,35 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
-  form.addEventListener('input', () => modal.setDirty(true));
-  form.addEventListener('change', () => modal.setDirty(true));
+  const readPayload = () => {
+    const behavior = (controls, prefix) => aliasCallHandlingValue({
+      recordable: controls.record.checked,
+      broadcast_configuration_ids: [...controls.streams
+        .querySelectorAll(`[name="${prefix}BroadcastChannel"]:checked`)].map((checkbox) => checkbox.value),
+      scan_list_ids: selectedAliasScanListIds(controls.panel)
+    });
+    return { unknown_alias_behavior: behavior(unknown, 'unknown'),
+      new_alias_behavior: behavior(newAliases, 'newAlias') };
+  };
+  let savedPayloadKey = JSON.stringify(readPayload());
+  const workflow = aliasFormWorkflow(form, save, errorHost, modal, () => {
+    modal.setDirty(false);
+    closeReadOnlyModal(true);
+    render();
+  }, () => JSON.stringify(readPayload()) !== savedPayloadKey);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    errorHost.replaceChildren();
-    save.disabled = true;
-    modal.setBusy(true);
-    try {
-      const payload = (behavior, prefix) => ({
-        recordable: behavior.record.checked,
-        broadcast_configuration_ids: [...behavior.streams
-          .querySelectorAll(`[name="${prefix}BroadcastChannel"]:checked`)].map((checkbox) => checkbox.value),
-        scan_list_ids: selectedAliasScanListIds(behavior.panel)
-      });
+    await workflow.save(async () => {
+      const payload = readPayload();
       const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/defaults`, {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
-          unknown_alias_behavior: payload(unknown, 'unknown'),
-          new_alias_behavior: payload(newAliases, 'newAlias')
+          ...payload
         }
       });
+      savedPayloadKey = JSON.stringify(payload);
       await finishAliasMutation(modal, result);
-    } catch (error) {
-      aliasMutationError(errorHost, error, () => {
-        modal.setDirty(false);
-  closeReadOnlyModal(true);
-        render();
-      });
-      save.disabled = false;
-      modal.setBusy(false);
-    }
+    });
   });
 }
 

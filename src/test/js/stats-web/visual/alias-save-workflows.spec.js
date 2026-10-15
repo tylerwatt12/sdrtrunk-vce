@@ -6,12 +6,17 @@ async function openAliasForm(page, editing) {
   const alias = { alias_id: 101, alias_list_id: 1, name: 'Dispatch', description: '', group: 'Fire',
     color: 0, recordable: true, matcher: { type: 'talkgroup', protocol: 'APCO25', value: 1201 } };
   const writes = [], pending = [];
+  let revision = 1;
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname;
     const data = value => route.fulfill({ json: { data: value } });
     if (request.method() !== 'GET') {
       writes.push({ pathname, body: request.postDataJSON() });
       await new Promise(resolve => pending.push(async status => {
+        if (status === 200) {
+          revision = 2;
+          if (request.postDataJSON().alias) Object.assign(alias, request.postDataJSON().alias);
+        }
         await route.fulfill({ status, json: status === 200 ? { data: { revision: 2, alias_list_id: 1 } } :
           { error: { code: status === 409 ? 'stale_revision' : 'unavailable', message: 'Could not save. Try again.' } } });
         resolve();
@@ -21,13 +26,13 @@ async function openAliasForm(page, editing) {
     if (pathname === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
       username: 'alias-admin', tier: 'admin', primary: true, csrf_token: 'fixture',
       capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true } });
-    if (pathname === '/api/v1/admin/alias-lists') return data({ revision: 1, alias_lists: [list] });
+    if (pathname === '/api/v1/admin/alias-lists') return data({ revision, alias_lists: [list] });
     if (pathname === '/api/v1/alias-lists') return data({ rows: [list], limit: 500, offset: 0, has_more: false });
     if (pathname === '/api/v1/admin/channels') return data({ revision: 1, channels: [] });
-    if (pathname === '/api/v1/aliases') return data({ rows: [], total_count: 0, limit: 50, offset: 0, has_more: false });
-    if (pathname === '/api/v1/admin/aliases/options') return data({ revision: 1, alias_list: list,
+    if (pathname === '/api/v1/aliases') return data({ rows: [alias], total_count: 1, limit: 50, offset: 0, has_more: false });
+    if (pathname === '/api/v1/admin/aliases/options') return data({ revision, alias_list: list,
       matchers: [{ type: 'talkgroup', protocol: 'APCO25', label: 'Talkgroup', fields: ['value'], minimum: 1, maximum: 65535 }] });
-    if (pathname === '/api/v1/admin/aliases/101') return data({ revision: 1, alias });
+    if (pathname === '/api/v1/admin/aliases/101') return data({ revision, alias });
     return route.fulfill({ status: 404, json: { error: { message: 'Unavailable in this fixture' } } });
   });
   await page.goto(`/app.html?view=aliases&list=1${editing ? '&alias=101' : ''}`);
@@ -36,6 +41,30 @@ async function openAliasForm(page, editing) {
   await expect(dialog).toBeVisible();
   return { dialog, writes, pending };
 }
+
+test('Unchanged Alias submission skips saving, and a changed save refreshes the table and editor', async ({ page }) => {
+  const { dialog, writes, pending } = await openAliasForm(page, true);
+  const name = dialog.getByRole('textbox', { name: /^Alias name/ });
+  const save = dialog.getByRole('button', { name: 'Save Changes', exact: true });
+  await expect(save).toBeDisabled();
+  await dialog.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
+  expect(writes).toHaveLength(0);
+  await name.fill('Changed briefly');
+  await name.fill('Dispatch');
+  await expect(save).toBeDisabled();
+  await name.fill('County Dispatch');
+  await save.click();
+  await expect.poll(() => pending.length).toBe(1);
+  await pending.shift()(200);
+  await expect(dialog).toHaveCount(0);
+  const updatedAlias = page.locator('.alias-detail-link[data-alias-id="101"]:visible').first();
+  await expect(updatedAlias).toHaveText('County Dispatch');
+  await updatedAlias.click();
+  const reopened = page.getByRole('dialog', { name: 'Edit County Dispatch', exact: true });
+  await expect(reopened.getByRole('textbox', { name: /^Alias name/ })).toHaveValue('County Dispatch');
+  await expect(reopened.getByRole('button', { name: 'Save Changes', exact: true })).toBeDisabled();
+  expect(writes).toHaveLength(1);
+});
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
 for (const editing of [false, true]) {

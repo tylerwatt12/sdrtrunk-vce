@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
 const applicationPath = process.argv[2];
@@ -742,6 +743,7 @@ async function verifyAsyncSelectionLifecycle() {
 
 async function verifyAdditionalAliasLifecycles() {
   await verifyAsyncSelectionLifecycle();
+  await verifyAliasSaveLifecycle();
   const result = await context.runMutationRefreshProbe(selectionScope);
   assert.deepEqual(Array.from(result.refreshedSelection), [],
     'An in-place mutation refresh must see a cleared selection before it redraws the toolbar.');
@@ -758,6 +760,138 @@ async function verifyAdditionalAliasLifecycles() {
   assert.deepEqual(Array.from(context.selectionState().ids), [51, 52],
     'Select All Matching must select the returned aliases after saving and refreshing in place.');
   assert.match(messages.at(-1)[0], /Selected all 2 matching aliases/);
+}
+
+async function verifyAliasSaveLifecycle() {
+  const editor = functionSource("async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+  const setup = editor.slice(editor.indexOf('    let savedPayloadKey'),
+    editor.indexOf("    modal.dialog.querySelector('.modal-header h2')"));
+  const workflowSource = fs.readFileSync(path.resolve(path.dirname(applicationPath), 'core/form-workflows.js'),
+    'utf8').replace('export function createFormWorkflow', 'function createFormWorkflow');
+  const source = { alias_id: 101, alias_list_id: 7, name: 'Dispatch', description: null, group: 'Fire',
+    color: 0, icon_name: null, recordable: true, broadcast_configuration_ids: ['stream-b', 'stream-a'],
+    scan_list_ids: [3, 1], matcher: { type: 'talkgroup', protocol: 'APCO25', value: 1201 } };
+  const fields = { aliasListId: { value: '7' }, name: { value: source.name }, description: { value: '' },
+    group: { value: 'Fire' }, color: { value: '0' }, iconName: { value: '' },
+    recordable: { checked: true }, streamAsTalkgroup: { value: '' },
+    matcherType: { value: 'talkgroup:APCO25', dataset: { originalSelection: 'talkgroup:APCO25',
+      originalType: 'talkgroup', originalProtocol: 'APCO25' } }, 'matcher-value': { value: '1201' } };
+  const controls = Object.assign(Object.values(fields), fields);
+  controls.forEach((control) => { control.disabled = false; });
+  const handlers = new Map();
+  const form = { elements: controls, addEventListener: (type, handler) => {
+    handlers.set(type, [...handlers.get(type) || [], handler]);
+  }, setAttribute() {}, removeAttribute() {}, reportValidity: () => Boolean(fields.name.value.trim()),
+  querySelectorAll: () => [{ value: 'stream-a' }, { value: 'stream-b' }] };
+  const dispatch = async (type) => {
+    for (const handler of handlers.get(type) || []) await handler({ preventDefault() {} });
+  };
+  const feedback = { children: [], replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); } };
+  const save = { disabled: false };
+  const modal = { dirty: false, busy: false, setDirty(value) { this.dirty = value; },
+    setBusy(value) { this.busy = value; } };
+  const writes = [];
+  let resolveWrite;
+  let committed = source;
+  let rendered = source;
+  let refreshes = 0;
+  const saveContext = {
+    form, save, errorHost: feedback, modal, source, editing: true, mode: 'edit', id: 101, prefill: null,
+    options: {}, document: { createTextNode: (text) => ({ textContent: text }) },
+    node: (_tag, _className, text) => ({ textContent: text, append() {} }),
+    aliasEditorPayload: () => ({ ...source, name: fields.name.value, recordable: fields.recordable.checked,
+      broadcast_configuration_ids: ['stream-a', 'stream-b'], scan_list_ids: [1, 3] }),
+    aliasEditorPageController: { isCurrent: () => true, canRefreshMutation: () => true,
+      refresh: async () => { refreshes += 1; rendered = { ...committed }; return true; } },
+    aliasEditorWorkspaceController: null,
+    aliasEditorContext: { selectedList: { alias_list_id: 7 }, revision: 1 },
+    aliasEditorSelectionScope: 'test', resetAliasEditorSelection() {},
+    route: new URLSearchParams('view=aliases&list=7&alias=101'), ALIAS_CREATE_ROUTE_KEYS: [],
+    aliasListId: (row) => row?.alias_list_id,
+    revision: 1, currentHref: () => '/?view=aliases&list=7',
+    closeReadOnlyModal: () => { saveContext.closed = true; },
+    window: { history: { replaceState() {} } },
+    requestJson: (url, options) => {
+      writes.push({ url, options });
+      return new Promise((resolve, reject) => { resolveWrite = (failure = null) => {
+        if (failure) reject(failure);
+        else { committed = { ...options.body.alias }; resolve({ revision: 2 }); }
+      }; });
+    }
+  };
+  vm.createContext(saveContext);
+  vm.runInContext(`${workflowSource}
+    ${functionSource('function aliasMutationError(host, error, retry = null)')}
+    ${functionSource('function aliasFormWorkflow(form, submit, feedback, modal, reload = null, changed = null)')}
+    ${functionSource('function aliasCallHandlingValue(value = {})')}
+    ${functionSource('function aliasEditorPayloadKey(value)')}
+    ${aliasMutationFinisher}
+    ${setup}
+    globalThis.payloadKey = aliasEditorPayloadKey;`, saveContext);
+
+  const key = saveContext.payloadKey;
+  assert.equal(key(source), key({ ...source, description: '', scan_list_ids: [1, 3],
+    broadcast_configuration_ids: ['stream-a', 'stream-b'] }), 'Membership/stream order and empty optional text are not edits.');
+  for (const [field, value] of Object.entries({ alias_list_id: 8, name: 'Other', description: 'Details',
+    group: 'Other', color: 1, icon_name: 'Car', recordable: false, scan_list_ids: [],
+    broadcast_configuration_ids: [], stream_as_talkgroup: 9,
+    matcher: { type: 'talkgroup', protocol: 'APCO25', value: 1202 } })) {
+    assert.notEqual(key(source), key({ ...source, [field]: value }), `${field} must participate in edit detection.`);
+  }
+  const tones = { ...source, matcher: { type: 'tones', tones: [
+    { tone: 'a', duration: 1 }, { tone: 'b', duration: 2 }] } };
+  assert.notEqual(key(tones), key({ ...tones, matcher: { ...tones.matcher,
+    tones: [...tones.matcher.tones].reverse() } }), 'Tone order must remain meaningful.');
+  assert.equal(save.disabled, true);
+  await dispatch('submit');
+  assert.equal(writes.length, 0, 'Submitting an unchanged edit must not write.');
+  fields.name.value = 'Dispatch changed';
+  await dispatch('input');
+  fields.name.value = 'Dispatch';
+  await dispatch('input');
+  await dispatch('submit');
+  assert.equal(writes.length, 0, 'Undoing an edit must restore the no-save state.');
+
+  fields.name.value = 'Dispatch changed';
+  await dispatch('input');
+  const pending = dispatch('submit');
+  assert.equal(writes.length, 1);
+  assert.equal(modal.busy, true);
+  assert.ok(controls.every((control) => control.disabled));
+  await dispatch('submit');
+  assert.equal(writes.length, 1, 'A pending save must not submit twice.');
+  resolveWrite();
+  await pending;
+  assert.equal(refreshes, 1);
+  assert.equal(rendered.name, 'Dispatch changed', 'Save completion must refresh committed values.');
+  assert.equal(saveContext.aliasEditorContext.revision, 2);
+  assert.equal(modal.dirty, false);
+  assert.equal(saveContext.closed, true);
+
+  saveContext.closed = false;
+  fields.name.value = 'Unsaved draft';
+  await dispatch('input');
+  const timeoutPending = dispatch('submit');
+  resolveWrite(Object.assign(new Error('The receiver did not respond in time.'), { code: 'request_timeout' }));
+  await timeoutPending;
+  assert.equal(fields.name.value, 'Unsaved draft');
+  assert.equal(modal.dirty, true);
+  assert.equal(modal.busy, false);
+  assert.equal(saveContext.closed, false);
+  assert.equal(writes.length, 2, 'Timeout feedback must not replay the save.');
+  assert.equal(refreshes, 1, 'Timeout feedback must not poll for the result.');
+  assert.equal(feedback.children[0].textContent, 'The receiver did not respond in time.');
+
+  saveContext.aliasEditorPageController.refresh = async () => { throw new Error('Refresh unavailable'); };
+  saveContext.aliasEditorWorkspaceController = { isCurrent: () => true, navigate: async () => false,
+    feedback: { replaceChildren(...children) { this.children = children; } } };
+  const refreshPending = dispatch('submit');
+  resolveWrite();
+  await refreshPending;
+  assert.equal(modal.dirty, false);
+  assert.match(saveContext.aliasEditorWorkspaceController.feedback.children[0].textContent,
+    /^Changes saved, but updated information could not be loaded\. Refresh the page\.$/);
 }
 
 verifyAdditionalAliasLifecycles().catch((error) => {
