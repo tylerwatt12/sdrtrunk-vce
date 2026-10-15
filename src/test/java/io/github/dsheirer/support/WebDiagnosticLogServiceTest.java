@@ -229,6 +229,43 @@ class WebDiagnosticLogServiceTest
     }
 
     @Test
+    void viewerTrafficReachesPeriodicLogSummariesWithoutIndividualRequestRecords() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            await(() -> service.status().active());
+            var metrics = service.viewerMetrics();
+            var download = metrics.begin("web_log_download", service.captureGeneration());
+            clock.addAndGet(5_000);
+            service.event("listener_started", Map.of("operation", "first_summary"));
+            await(() -> read().contains(" - viewer_activity "));
+            metrics.finish(download, 6_000_000, 503, true, 1_000);
+            clock.addAndGet(5_000);
+            service.event("listener_started", Map.of("operation", "second_summary"));
+            await(() -> read().lines().filter(line -> line.contains(" - viewer_activity ")).count() == 2);
+            var json = new com.fasterxml.jackson.databind.ObjectMapper();
+            var lines = read().lines().filter(line -> line.contains(" - viewer_activity ")).toList();
+            var active = json.readTree(lines.getFirst().substring(lines.getFirst().indexOf('{')));
+            var completed = json.readTree(lines.getLast().substring(lines.getLast().indexOf('{')));
+            assertEquals(1, active.get("active").asInt());
+            assertEquals(0, completed.get("active").asInt());
+            assertEquals(1, completed.get("completed").asInt());
+            assertEquals(1, completed.get("errors").asInt());
+            assertEquals(1_000, completed.at("/operations/web_log_download/declared_response_bytes").asInt());
+            clock.addAndGet(5_000);
+            service.event("listener_started", Map.of("operation", "idle_summary"));
+            await(() -> read().contains("idle_summary"));
+            assertEquals(2, read().lines().filter(line -> line.contains(" - viewer_activity ")).count());
+            assertFalse(read().contains(" - request_started "));
+            assertFalse(read().contains(" - request_finished "));
+        }
+    }
+
+    @Test
     void ordinaryWritesUseCachedSizesAndPeriodicSummariesMeasureMaintenance() throws Exception
     {
         AtomicLong clock = new AtomicLong(System.currentTimeMillis());
