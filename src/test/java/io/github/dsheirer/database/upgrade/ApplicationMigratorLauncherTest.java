@@ -61,6 +61,20 @@ class ApplicationMigratorLauncherTest
     }
 
     @Test
+    void requestsBoundedOwnedRelocationOnlyWithItsExplicitFlag() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("stage.sqlite");
+        Path source = mTemporaryFolder.resolve("old");
+        Path target = mTemporaryFolder.resolve("new");
+        var expected = new java.util.ArrayList<>(ApplicationMigratorLauncher.command(database, source, target));
+        expected.add("--owned-complete-profile-copy");
+        assertEquals(expected, ApplicationMigratorLauncher.command(database, source, target, true, true));
+        assertThrows(IOException.class, () -> ApplicationMigratorLauncher.command(database, source, target, false, true));
+        assertThrows(IOException.class, () -> ApplicationMigratorLauncher.command(database, null, null, true, true));
+        assertThrows(IOException.class, () -> ApplicationMigratorLauncher.runOwnedCompleteProfileCopy(database, null, target));
+    }
+
+    @Test
     void rejectsMissingClasspath() throws Exception
     {
         String originalClassPath = System.getProperty("java.class.path");

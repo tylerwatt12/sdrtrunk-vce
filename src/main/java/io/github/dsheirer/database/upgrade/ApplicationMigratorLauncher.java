@@ -76,7 +76,29 @@ public final class ApplicationMigratorLauncher
         return run(stagedDatabase, sourceDataRoot, targetDataRoot, true);
     }
 
+    /**
+     * Relocates a complete private copy of an inactive owned profile using bounded schema/configuration checks.
+     * The caller must hold both profile locks and retain the unchanged source installation as its recovery copy.
+     * Explicit external imports must use the ordinary methods, which retain full integrity and history checks.
+     */
+    public static String runOwnedCompleteProfileCopy(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
+        throws IOException, InterruptedException
+    {
+        if(sourceDataRoot == null || targetDataRoot == null)
+        {
+            throw new IOException("Owned complete-profile relocation requires both data roots.");
+        }
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, true, true);
+    }
+
     private static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot, boolean completeProfileCopy)
+        throws IOException, InterruptedException
+    {
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, completeProfileCopy, false);
+    }
+
+    private static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                              boolean completeProfileCopy, boolean ownedCompleteProfileCopy)
         throws IOException, InterruptedException
     {
         Path normalized = stagedDatabase.toAbsolutePath().normalize();
@@ -86,7 +108,8 @@ public final class ApplicationMigratorLauncher
             throw new IOException("Staged SQLite database does not exist: " + normalized);
         }
 
-        return runMigrator(command(normalized, sourceDataRoot, targetDataRoot, completeProfileCopy));
+        return runMigrator(command(normalized, sourceDataRoot, targetDataRoot, completeProfileCopy,
+            ownedCompleteProfileCopy));
     }
 
     private static String runMigrator(List<String> command) throws IOException, InterruptedException
@@ -259,6 +282,12 @@ public final class ApplicationMigratorLauncher
     static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
                                 boolean completeProfileCopy) throws IOException
     {
+        return command(stagedDatabase, sourceDataRoot, targetDataRoot, completeProfileCopy, false);
+    }
+
+    static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                                boolean completeProfileCopy, boolean ownedCompleteProfileCopy) throws IOException
+    {
         if((sourceDataRoot == null) != (targetDataRoot == null))
         {
             throw new IOException("Both source and target data roots are required for portable path relocation.");
@@ -294,13 +323,17 @@ public final class ApplicationMigratorLauncher
             command.add(sourceDataRoot.toAbsolutePath().normalize().toString());
             command.add(targetDataRoot.toAbsolutePath().normalize().toString());
         }
+        if(ownedCompleteProfileCopy && !completeProfileCopy)
+        {
+            throw new IOException("Owned relocation requires a complete profile copy.");
+        }
         if(completeProfileCopy)
         {
             if(sourceDataRoot == null)
             {
                 throw new IOException("Complete-profile relocation requires both data roots.");
             }
-            command.add("--complete-profile-copy");
+            command.add(ownedCompleteProfileCopy ? "--owned-complete-profile-copy" : "--complete-profile-copy");
         }
 
         return List.copyOf(command);

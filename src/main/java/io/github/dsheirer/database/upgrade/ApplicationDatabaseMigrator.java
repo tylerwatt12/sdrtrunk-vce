@@ -92,7 +92,7 @@ public final class ApplicationDatabaseMigrator
     private static final Pattern STAGED_DATA_ROOT =
         Pattern.compile("^\\..+\\.migration-" + UUID_PATTERN + "$");
     private static final String USAGE = "Usage: ApplicationDatabaseMigrator <staged-database-path> " +
-        "[<source-data-root> <target-data-root> [--complete-profile-copy]]";
+        "[<source-data-root> <target-data-root> [--complete-profile-copy|--owned-complete-profile-copy]]";
 
     private ApplicationDatabaseMigrator()
     {
@@ -123,7 +123,8 @@ public final class ApplicationDatabaseMigrator
         }
 
         if(args == null || (args.length != 1 && args.length != 3 &&
-            !(args.length == 4 && "--complete-profile-copy".equals(args[3]))))
+            !(args.length == 4 && ("--complete-profile-copy".equals(args[3]) ||
+                "--owned-complete-profile-copy".equals(args[3])))))
         {
             error.println("ERROR: A staged database path and, optionally, source and target data roots are required.");
             error.println(USAGE);
@@ -148,7 +149,14 @@ public final class ApplicationDatabaseMigrator
 
         try
         {
-            migrate(database, relocation, output);
+            if(args.length == 4 && "--owned-complete-profile-copy".equals(args[3]))
+            {
+                migrateOwnedCompleteProfileCopy(database, relocation, output);
+            }
+            else
+            {
+                migrate(database, relocation, output);
+            }
             return EXIT_SUCCESS;
         }
         catch(UnsupportedDatabaseFormatException e)
@@ -264,6 +272,71 @@ public final class ApplicationDatabaseMigrator
                     reportCleanupWarning(listener, "Database update committed; connection cleanup reported a warning");
                 }
             }
+        }
+    }
+
+    /**
+     * Relocates an inactive, complete copy of an owned profile under the caller's source and target profile locks.
+     * The caller retains the complete original installation. External imports retain the strict staged path below.
+     */
+    private static void migrateOwnedCompleteProfileCopy(Path database, DataRootRelocation relocation,
+                                                        PrintStream output)
+        throws IOException, SQLException, UnsupportedDatabaseFormatException
+    {
+        if(Files.isSymbolicLink(database) || !Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS))
+        {
+            throw new IOException("The owned profile stage must be an ordinary database file.");
+        }
+        requireSingleFilesystemLinkWhenSupported(database);
+        requireApplicationStage(database);
+        requireOwnedCompleteProfileStage(database, relocation);
+        output.println("Checking the owned complete-profile copy's schema and configuration.");
+        output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
+            "for this owned copy; use explicit maintenance for those checks.");
+
+        try(Connection connection = open(database))
+        {
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source);
+            printPreflight(output, plan, relocation);
+            Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
+                Set.of();
+            LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
+                database.getParent().getParent(), legacyKeys);
+            MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, true,
+                ignored -> { }, null, legacy, Map.of());
+            //The transaction has checked the exact final schema, required settings and configuration before COMMIT.
+            //Finalize this private stage for atomic promotion without scanning retained history again.
+            finalizeStagedDatabase(connection);
+            printCompletion(output, migration);
+            output.println("RESULT: Owned complete-profile relocation and bounded validation complete.");
+        }
+    }
+
+    private static void requireOwnedCompleteProfileStage(Path database, DataRootRelocation relocation)
+        throws IOException
+    {
+        if(relocation == null || !relocation.completeProfileCopy())
+        {
+            throw new IOException("Owned complete-profile relocation requires both data roots.");
+        }
+        Path source = relocation.source(), target = relocation.target();
+        if(Files.isSymbolicLink(source) || !Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS) ||
+            Files.isSymbolicLink(target) || !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS))
+        {
+            throw new IOException("Owned complete-profile relocation requires ordinary source and target directories.");
+        }
+        Path physicalSource = source.toRealPath(), physicalTarget = target.toRealPath();
+        Path targetDatabaseDirectory = target.resolve("database");
+        if(physicalSource.startsWith(physicalTarget) || physicalTarget.startsWith(physicalSource))
+        {
+            throw new IOException("Owned complete-profile relocation requires distinct, non-nested data roots.");
+        }
+        if(Files.isSymbolicLink(targetDatabaseDirectory) || !database.getParent().equals(targetDatabaseDirectory) ||
+            !database.toRealPath().getParent().equals(physicalTarget.resolve("database")))
+        {
+            throw new IOException("The owned profile stage must be inside the target data root's database directory.");
         }
     }
 
@@ -483,7 +556,7 @@ public final class ApplicationDatabaseMigrator
                 {
                     //All historical layouts have now reached current configuration semantics. Repair this bounded
                     //component once; omit full derived-history, physical-integrity and foreign-key sweeps.
-                    portablePreferences = updatePortableDirectoryPreferences(connection, null);
+                    portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
                     administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection, false);
                     currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
                 }
