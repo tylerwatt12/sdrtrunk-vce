@@ -6,7 +6,7 @@
 .recordings-browser {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
 }
@@ -15,18 +15,62 @@
   min-width: 0;
 }
 
-.recordings-search-panel {
-  position: relative;
-  z-index: 5;
-  overflow: visible;
+.read-only-modal.recordings-filters-modal {
+  width: min(var(--modal-size-large), calc(100vw - var(--space-6)));
 }
 
-.recordings-search-panel:not(:has(.recordings-search-advanced:not([hidden]))) {
-  display: none;
+.recordings-filter-editor,
+.recordings-filter-panel:not([hidden]),
+.recordings-picker-results,
+.recordings-picker-system,
+.recordings-picker-group {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
 }
 
-.recordings-browser:not(:has(.recordings-search-advanced:not([hidden]))) {
-  grid-template-columns: minmax(0, 1fr);
+.recordings-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.recordings-picker-results {
+  max-height: 45dvh;
+  overflow: auto;
+}
+
+.recordings-picker-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.recordings-picker-group {
+  padding-left: var(--space-3);
+}
+
+.recordings-picker-group-label,
+.recordings-identity-choice {
+  display: flex;
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.recordings-picker-group-label {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.recordings-identity-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.recordings-tone-fields,
+.recordings-filter-editor .recordings-search-property-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .recordings-search {
@@ -72,17 +116,6 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
-}
-
-.recordings-search-advanced,
-.recordings-search-common {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-3);
-}
-
-.recordings-clear-filters {
-  margin-top: var(--space-3);
 }
 
 .recordings-search-fields {
@@ -596,10 +629,6 @@
 }
 
 @media (max-width: 1000px) {
-  .recordings-browser {
-    grid-template-columns: minmax(220px, 250px) minmax(0, 1fr);
-  }
-
   .recordings-search-primary {
     grid-template-columns: minmax(0, 1fr) minmax(160px, 200px);
   }
@@ -611,12 +640,22 @@
 }
 
 @media (max-width: 700px) {
-  .recordings-browser {
+  .read-only-modal.recordings-filters-modal {
+    width: 100vw;
+  }
+
+  .recordings-filter-editor .recordings-search-property-fields,
+  .recordings-tone-fields {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .recordings-search-panel {
-    display: none;
+  .recordings-picker-results {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .recordings-browser {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .recordings-shared-facts {

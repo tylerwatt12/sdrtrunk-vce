@@ -122,6 +122,12 @@ final class ManagedRecordingsHttpController
                 }
                 return;
             }
+            if((BROWSE_PATH + "/identities").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                identities(exchange, catalog);
+                return;
+            }
             if((BROWSE_PATH + "/suggestions").equals(path))
             {
                 requireMethod(exchange, "GET");
@@ -391,7 +397,10 @@ final class ManagedRecordingsHttpController
 
     private void search(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
-        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        StatsRequest request = StatsRequest.from(exchange.getRequestURI(),
+            Map.of("talkgroups", 16384, "radios", 16384), 65536, 40);
+        List<ManagedRecordingCatalog.Selection> talkgroups = selections(request, "talkgroups", false);
+        List<ManagedRecordingCatalog.Selection> radios = selections(request, "radios", true);
         Integer talkgroupId = request.optionalInt("talkgroup_id");
         Integer radioId = request.optionalInt("radio_id");
         String systemKey = request.text("system_key");
@@ -404,7 +413,7 @@ final class ManagedRecordingsHttpController
         Integer radioMin = request.optionalInt("radio_min");
         Integer radioMax = request.optionalInt("radio_max");
         boolean identityConstrained = talkgroupId != null || radioId != null || radioIdentity != null || groupIdentity != null ||
-            talkgroupMin != null || radioMin != null;
+            talkgroupMin != null || radioMin != null || !talkgroups.isEmpty() || !radios.isEmpty();
         ManagedRecordingCatalog.SearchFilter.Builder filter = ManagedRecordingCatalog.SearchFilter.builder()
             .fromMs(request.optionalLong("from_ms"))
             .toMs(request.optionalLong("to_ms"))
@@ -419,6 +428,13 @@ final class ManagedRecordingsHttpController
             .maxDurationMs(request.optionalLong("max_duration_ms"))
             .talkgroupId(talkgroupId)
             .sourceId(radioId)
+            .talkgroupSelections(talkgroups)
+            .radioSelections(radios)
+            .radioRole(radioRole(request))
+            .pagingTones(request.text("paging_tones"))
+            .toneFrequencyHz(optionalDouble(request, "tone_frequency_hz"))
+            .toneThenHz(optionalDouble(request, "tone_then_hz"))
+            .toneToleranceHz(optionalDouble(request, "tone_tolerance_hz"))
             .radioIdentityMatch(radioIdentity)
             .talkgroupIdentityMatch(groupIdentity)
             .talkgroupMin(talkgroupMin)
@@ -509,6 +525,102 @@ final class ManagedRecordingsHttpController
         ApiHttpResponse.sendData(exchange, 200, payload);
     }
 
+    private static List<ManagedRecordingCatalog.Selection> selections(StatsRequest request, String field,
+                                                                        boolean radio)
+    {
+        String value = request.text(field);
+        if(value == null) return List.of();
+        try
+        {
+            JsonNode values = new com.fasterxml.jackson.databind.ObjectMapper().readTree(value);
+            if(values == null || !values.isArray() || values.size() > 100)
+                throw new IllegalArgumentException();
+            Set<ManagedRecordingCatalog.Selection> selections = new LinkedHashSet<>();
+            for(JsonNode entry: values)
+            {
+                if(!entry.isObject() || !entry.has("id") || !entry.get("id").isIntegralNumber() ||
+                    !entry.get("id").canConvertToInt() || !entry.has("system_key"))
+                    throw new IllegalArgumentException();
+                rejectUnknownFields(entry, Set.of("id", "system_key", "identity_key"));
+                JsonNode system = entry.get("system_key");
+                JsonNode identity = entry.get("identity_key");
+                if(!system.isNull() && !system.isTextual() ||
+                    identity != null && !identity.isNull() && !identity.isTextual())
+                    throw new IllegalArgumentException();
+                String key = identity != null && identity.isTextual() ? identity.textValue() : null;
+                if(key != null)
+                {
+                    int kind = RadioSystemIdentityKey.parse(key).kindCode();
+                    if(radio ? kind != RadioSystemIdentityKey.KIND_RADIO :
+                        kind != RadioSystemIdentityKey.KIND_TALKGROUP && kind != RadioSystemIdentityKey.KIND_PATCH_GROUP)
+                        throw new IllegalArgumentException();
+                }
+                selections.add(new ManagedRecordingCatalog.Selection(entry.get("id").intValue(),
+                    system.isNull() ? null : system.textValue(), key));
+            }
+            return List.copyOf(selections);
+        }
+        catch(com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException exception)
+        {
+            throw new StatsApiException(400, "invalid_selection", "Select up to 100 valid " +
+                (radio ? "radios" : "talkgroups") + " and their systems", field);
+        }
+    }
+
+    private static Double optionalDouble(StatsRequest request, String field)
+    {
+        String value = request.text(field);
+        if(value == null) return null;
+        try
+        {
+            double parsed = Double.parseDouble(value);
+            if(!Double.isFinite(parsed)) throw new NumberFormatException();
+            return parsed;
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new StatsApiException(400, "invalid_parameter", field + " must be a finite number", field);
+        }
+    }
+
+    private static String radioRole(StatsRequest request)
+    {
+        String role = request.text("radio_role");
+        if(role == null) return "any";
+        if(!Set.of("source", "any").contains(role))
+            throw new StatsApiException(400, "invalid_parameter", "Choose Source radio or Any participant", "radio_role");
+        return role;
+    }
+
+    private void identities(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
+    {
+        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        String kind = request.requiredText("kind");
+        if(!Set.of("talkgroup", "radio").contains(kind))
+            throw new StatsApiException(400, "invalid_kind", "Choose talkgroups or radios", "kind");
+        String query = request.search();
+        String system = request.text("system_key");
+        if(system != null && !RadioSystemKey.isCanonical(system))
+            throw new StatsApiException(400, "invalid_parameter", "Select a valid system", "system_key");
+        ManagedRecordingCatalog.SearchFilter period = ManagedRecordingCatalog.SearchFilter.builder()
+            .fromMs(request.optionalLong("from_ms")).toMs(request.optionalLong("to_ms")).build();
+        String role = radioRole(request);
+        int limit = request.limit(100);
+        int offset = request.offset();
+        request.requireFullyConsumed();
+        if(!LABEL_LOOKUPS.tryAcquire())
+            throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
+        try
+        {
+            ApiHttpResponse.sendData(exchange, 200, mLabels.identities(catalog.databaseFile(), kind, query,
+                system, period.fromMs, period.toMs, offset, limit, role));
+        }
+        finally
+        {
+            LABEL_LOOKUPS.release();
+        }
+    }
+
     private static boolean matchesCurrentLabel(Map<String,Object> row, String lowercaseQuery)
     {
         for(String field: List.of("group_alias", "group_description", "group_group", "source_alias",
@@ -538,6 +650,8 @@ final class ManagedRecordingsHttpController
         String query = request.search();
         String kind = request.text("kind");
         String systemKey = request.text("system_key");
+        ManagedRecordingCatalog.SearchFilter period = ManagedRecordingCatalog.SearchFilter.builder()
+            .fromMs(request.optionalLong("from_ms")).toMs(request.optionalLong("to_ms")).build();
         int limit = request.limit(20);
         request.requireFullyConsumed();
         if(query == null || (query.length() < 2 && !query.matches("[0-9]")))
@@ -557,6 +671,34 @@ final class ManagedRecordingsHttpController
         {
             List<Map<String,Object>> suggestions = new ArrayList<>(
                 mLabels.suggestions(query, kind, systemKey, limit, catalog.databaseFile()));
+            if(kind == null || "talkgroup".equals(kind) || "radio".equals(kind))
+            {
+                //Identity suggestions use the same stable selections as the focused picker, including latest TA.
+                suggestions.removeIf(row -> "talkgroup".equals(row.get("kind")) || "radio".equals(row.get("kind")));
+                for(String identityKind: kind == null ? List.of("talkgroup", "radio") : List.of(kind))
+                {
+                    Map<String,Object> discovered = mLabels.identities(catalog.databaseFile(), identityKind,
+                        query, systemKey, period.fromMs, period.toMs, 0, limit, "any");
+                    if(discovered.get("rows") instanceof List<?> identities)
+                    {
+                        for(Object value: identities)
+                        {
+                            if(!(value instanceof Map<?,?> identity)) continue;
+                            Map<String,Object> row = new LinkedHashMap<>();
+                            identity.forEach((field, item) -> { if(field instanceof String key) row.put(key, item); });
+                            row.put("id", row.get("id").toString());
+                            if(!row.containsKey("alias") && !row.containsKey("ota_alias"))
+                                row.put("label", ("talkgroup".equals(identityKind) ? "Talkgroup " : "Radio ") + row.get("id"));
+                            List<String> detail = new ArrayList<>();
+                            if(row.get("group") instanceof String group) detail.add(group);
+                            if(row.get("system_name") instanceof String name) detail.add(name);
+                            else if(row.get("system_key") instanceof String key) detail.add(key);
+                            if(!detail.isEmpty()) row.put("detail", String.join(" · ", detail));
+                            suggestions.add(row);
+                        }
+                    }
+                }
+            }
             Set<String> seen = new LinkedHashSet<>();
             Set<String> seenSites = new LinkedHashSet<>();
             for(Map<String,Object> row: suggestions)
@@ -571,45 +713,11 @@ final class ManagedRecordingsHttpController
             }
             if(query.matches("[0-9]{1,10}"))
             {
-                List<String> identityKinds = kind == null ? List.of("talkgroup", "radio") :
-                    Set.of("talkgroup", "radio").contains(kind) ? List.of(kind) : List.of();
-                List<Map<String,Object>> exact = new ArrayList<>();
-                // Verify exact numeric matches even when substring labels have filled the requested limit.
-                for(String identityKind: identityKinds)
-                {
-                    List<Integer> identities = catalog.identitySuggestions(systemKey, query,
-                        "radio".equals(identityKind), 1);
-                    if(identities.isEmpty() || !identities.getFirst().toString().equals(query)) continue;
-                    Map<String,Object> row = suggestions.stream().filter(candidate ->
-                        identityKind.equals(candidate.get("kind")) && query.equals(candidate.get("id")))
-                        .findFirst().orElse(null);
-                    if(row == null)
-                    {
-                        // A general finder can fill its first page with systems or channels before reaching aliases.
-                        row = mLabels.suggestions(query, identityKind, systemKey, 1, catalog.databaseFile())
-                            .stream().filter(candidate -> identityKind.equals(candidate.get("kind")) &&
-                                query.equals(candidate.get("id"))).findFirst().orElse(null);
-                    }
-                    if(row == null) row = numericSuggestion(identityKind, identities.getFirst(), systemKey);
-                    suggestions.removeIf(candidate -> identityKind.equals(candidate.get("kind")) &&
-                        query.equals(candidate.get("id")));
-                    exact.add(row);
-                    seen.add(identityKind + ":" + query);
-                }
+                List<Map<String,Object>> exact = suggestions.stream().filter(row ->
+                    ("talkgroup".equals(row.get("kind")) || "radio".equals(row.get("kind"))) &&
+                        query.equals(row.get("id"))).toList();
+                suggestions.removeAll(exact);
                 suggestions.addAll(0, exact);
-                for(String identityKind: identityKinds)
-                {
-                    if(suggestions.size() >= limit) break;
-                    for(Integer identity: catalog.identitySuggestions(systemKey, query,
-                        "radio".equals(identityKind), limit))
-                    {
-                        if(seen.add(identityKind + ":" + identity))
-                        {
-                            suggestions.add(numericSuggestion(identityKind, identity, systemKey));
-                            if(suggestions.size() >= limit) break;
-                        }
-                    }
-                }
             }
             if((kind == null || "system".equals(kind)) && suggestions.size() < limit)
             {

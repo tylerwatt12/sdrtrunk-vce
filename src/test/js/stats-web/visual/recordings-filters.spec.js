@@ -63,6 +63,18 @@ async function openRecordings(page, options = {}) {
     } else if (/^\/api\/v1\/recordings\/calls\/\d+$/.test(key)) {
       const selected = state.calls.find((row) => row.id === Number(key.split('/').at(-1)));
       await route.fulfill({ json: { data: { call: selected } } });
+    } else if (key === '/api/v1/recordings/identities') {
+      const kind = url.searchParams.get('kind');
+      const q = (url.searchParams.get('q') || '').toLowerCase();
+      const rows = state.calls.map(row => {
+        const id = kind === 'radio' ? row.source_id : row.talkgroup_id;
+        const identity_key = (kind === 'radio' ? row.source_entity_ref : row.target_entity_ref)?.identity_key;
+        const label = kind === 'radio' ? row.source_ota_alias || row.source_alias || `Radio ${id}` : row.talkgroup_alias || `Talkgroup ${id}`;
+        return { kind, id, label, system_key: row.system_key, system_name: row.system_name,
+          ...(identity_key ? { identity_key } : {}), call_count: 1,
+          selection: { id, system_key: row.system_key, ...(identity_key ? { identity_key } : {}) } };
+      }).filter(row => row.id && (!q || [row.label, row.id].join(' ').toLowerCase().includes(q)));
+      await route.fulfill({ json: { data: { rows, has_more: false } } });
     } else if (key === '/api/v1/recordings/suggestions') {
       await route.fulfill({ json: { data: { suggestions: options.suggestions || [] } } });
     } else if (key === '/api/v1/status') {
@@ -81,17 +93,12 @@ function filterLink(host, name) {
   return host.getByRole('link', { name, exact: false }).first();
 }
 
-async function openRecordingFilters(page) {
-  await expect(page.locator('#recordings-filters-toggle')).toBeVisible();
-  if (!await page.getByRole('combobox', { name: 'Radio system', exact: true }).isVisible()) {
-    await page.getByRole('button', { name: /^Filters/ }).click();
-  }
-  const properties = page.locator('details.recordings-search-properties').filter({
-    has: page.locator('summary', { hasText: /^Call properties$/ })
-  });
-  if (await properties.count() && !await properties.evaluate((element) => element.open)) {
-    await properties.locator('summary').click();
-  }
+async function openRecordingFilters(page, tab = 'Systems & sites') {
+  const dialog = page.getByRole('dialog', { name: 'Filters', exact: true });
+  if (!await dialog.isVisible()) await page.locator('#recordings-filters-toggle').click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('tab', { name: tab, exact: true }).click();
+  return dialog;
 }
 
 async function expectRecordingQuery(page, state, filters) {
@@ -119,14 +126,17 @@ test('talkgroup clicks preserve applied search, dates, transcript, duration, sou
   await page.getByLabel('To', { exact: true }).fill('2026-09-29T00:00');
   await page.getByRole('combobox', { name: 'Find a call' }).fill('dispatch');
   await page.getByRole('combobox', { name: 'Find a call' }).press('Escape');
-  await openRecordingFilters(page);
-  await page.getByRole('combobox', { name: 'Radio ID', exact: true }).fill('30914');
-  await page.getByRole('combobox', { name: 'Radio ID', exact: true }).press('Escape');
-  await page.getByLabel('Transcript text', { exact: true }).fill('arriving');
+  const filters = await openRecordingFilters(page, 'Source radios');
+  await filters.getByLabel('Find radios', { exact: true }).fill('30914');
+  await expect(filters.locator('.recordings-identity-choice')).toHaveCount(1);
+  await filters.locator('.recordings-identity-choice').getByRole('checkbox').check();
+  await filters.getByRole('tab', { name: 'Transcript', exact: true }).click();
+  await filters.getByLabel('Transcript text', { exact: true }).fill('arriving');
+  await filters.getByRole('tab', { name: 'Call properties', exact: true }).click();
   await page.getByRole('slider', { name: 'Call length: Minimum', exact: true }).press('ArrowRight');
   await page.getByRole('combobox', { name: 'Voice type' }).selectOption('CLEAR');
   await page.getByRole('combobox', { name: 'Protocol' }).selectOption('APCO25_PHASE2');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect.poll(() => state.requests.at(-1).transcript).toBe('arriving');
   await page.getByRole('combobox', { name: 'Sort calls' }).selectOption('asc');
   await expect.poll(() => state.requests.at(-1).sort).toBe('asc');
@@ -142,10 +152,12 @@ test('talkgroup clicks preserve applied search, dates, transcript, duration, sou
   // Clicking a result refines the applied query, not unsubmitted edits in the form.
   await page.getByRole('combobox', { name: 'Find a call' }).fill('unsubmitted edit');
   await page.getByRole('combobox', { name: 'Find a call' }).press('Escape');
-  await page.getByLabel('Transcript text', { exact: true }).fill('unsubmitted transcript');
+  await openRecordingFilters(page, 'Transcript');
+  await filters.getByLabel('Transcript text', { exact: true }).fill('unsubmitted transcript');
+  await filters.getByRole('button', { name: 'Cancel', exact: true }).click();
   const target = calls[25];
   await filterLink(page.locator('.recordings-call').first(), target.talkgroup_alias).click();
-  await expectRecordingQuery(page, state, { ...applied, talkgroup_id: String(target.talkgroup_id), system_key: systemKey });
+  await expectRecordingQuery(page, state, { ...applied, talkgroup_identity_key: `v1-g-00001-001-${target.talkgroup_id}`, system_key: systemKey });
   expect(state.requests.at(-1)).not.toHaveProperty('cursor');
   await expect(page.locator('.recordings-call')).toHaveCount(25);
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
@@ -154,7 +166,9 @@ test('talkgroup clicks preserve applied search, dates, transcript, duration, sou
   await expect(page.getByLabel('From', { exact: true })).toHaveValue('2026-09-28T00:00');
   await expect(page.getByLabel('To', { exact: true })).toHaveValue('2026-09-29T00:00');
   await expect(page.getByRole('combobox', { name: 'Find a call' })).toHaveValue('dispatch');
-  await expect(page.getByLabel('Transcript text', { exact: true })).toHaveValue('arriving');
+  await openRecordingFilters(page, 'Transcript');
+  await expect(filters.getByLabel('Transcript text', { exact: true })).toHaveValue('arriving');
+  await filters.getByRole('button', { name: 'Cancel', exact: true }).click();
   await captureEvidence(page, 'query-preserved-desktop-light.png');
 });
 
@@ -209,7 +223,7 @@ test('same numeric IDs in different systems remain correctly scoped', async ({ p
       identity_key: 'v1-g-00002-002-1201' } };
   const state = await openRecordings(page, { calls: [call, other] });
   await filterLink(page.locator('.recordings-call').last(), 'County Fire Dispatch').click();
-  await expectRecordingQuery(page, state, { talkgroup_id: '1201', system_key: otherSystem });
+  await expectRecordingQuery(page, state, { talkgroup_identity_key: 'v1-g-00002-002-1201', system_key: otherSystem });
   await expect(page.locator('.recordings-call')).toHaveCount(1);
   await expect(page.locator('.recordings-call')).toContainText('County Fire Dispatch');
   await expect(page.locator('.recordings-call')).not.toContainText('Metro Public Safety');
@@ -220,7 +234,7 @@ test('failed clicked filters remain available for Search retry without leaving R
   state.errorNext = true;
   await filterLink(page.locator('.recordings-call'), 'Fire Dispatch').click();
   await expect(page.locator('.recordings-result-status')).toContainText('Calls could not be loaded. Try again.');
-  await expectRecordingQuery(page, state, { talkgroup_id: '1201', system_key: systemKey });
+  await expectRecordingQuery(page, state, { talkgroup_identity_key: 'v1-g-00001-001-1201', system_key: systemKey });
   const query = { ...state.requests.at(-1) };
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect.poll(() => state.requests.length).toBe(3);
@@ -235,7 +249,7 @@ test('a Recordings-only account can filter safely without radio-page access', as
   const target = filterLink(page.locator('.recordings-call'), 'Fire Dispatch');
   await expect(target).toBeVisible();
   await target.click();
-  await expectRecordingQuery(page, state, { talkgroup_id: '1201', system_key: systemKey });
+  await expectRecordingQuery(page, state, { talkgroup_identity_key: 'v1-g-00001-001-1201', system_key: systemKey });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   await captureEvidence(page, 'talkgroup-filter-phone-dark.png');
 });
@@ -289,7 +303,7 @@ test('opening a result filter URL retains the scoped query and sort on a fresh p
   expect(link.searchParams.get('recording_filters')).toBe('1');
   link.pathname = '/app.html';
   await page.goto(link.href);
-  await expectRecordingQuery(page, state, { ...applied, system_key: systemKey, talkgroup_id: '1201' });
+  await expectRecordingQuery(page, state, { ...applied, system_key: systemKey, talkgroup_identity_key: 'v1-g-00001-001-1201' });
   await expect(page.getByRole('combobox', { name: 'Sort calls' })).toHaveValue('asc');
   await expect(page.getByRole('combobox', { name: 'Find a call' })).toHaveValue('dispatch');
   await expect(page.getByLabel('From', { exact: true })).toHaveValue(new Date(Number(applied.from_ms)).toISOString().slice(0, 16));
@@ -311,7 +325,7 @@ test('patch member detail links use the member identity, not the parent patch or
     has: page.getByRole('heading', { name: 'Patch member identities', exact: true }) });
   await filterLink(members, 'Fireground').click();
   await expect(detail).toBeHidden();
-  await expectRecordingQuery(page, state, { talkgroup_id: '1202', system_key: systemKey });
+  await expectRecordingQuery(page, state, { talkgroup_identity_key: 'v1-g-00001-001-1202', system_key: systemKey });
 
   const radioPatch = { ...patch, protocol: 'DMR', system_key: 'dmr:7',
     radio_system_entity_ref: { kind: 'radio_system', key: 'dmr:7' },
@@ -355,19 +369,20 @@ test('unknown references and home-system names stay readable without incorrect n
   expect(state.unexpected).toEqual([]);
 });
 
-test('foreign talkgroup labels remain readable when a local numeric filter cannot represent them', async ({ page }) => {
+test('foreign talkgroup labels filter the permanent identity within the receiving system', async ({ page }) => {
   const foreign = { ...call, target_home_wacn: 2, target_home_system_id: 2, target_home_id: 777,
     target_entity_ref: { kind: 'talkgroup', radio_system_key: systemKey,
       identity_key: 'v1-g-00002-002-777' } };
   const state = await openRecordings(page, { call: foreign });
   const card = page.locator('.recordings-call');
   await expect(card).toContainText('Fire Dispatch');
-  await expect(card.getByRole('link', { name: 'Fire Dispatch', exact: true })).toHaveCount(0);
-  await expect(card.getByRole('link', { name: 'TG 1201', exact: true })).toHaveCount(0);
-  await card.locator('.recordings-call-info').click();
-  const detail = page.getByRole('dialog', { name: 'Call details' });
-  await expect(detail).toContainText('Fire Dispatch');
-  await expect(detail.getByRole('link', { name: 'Fire Dispatch', exact: true })).toHaveCount(0);
-  expect(state.requests).toHaveLength(1);
-  expect(state.unexpected).toEqual([]);
+  const target = card.getByRole('link', { name: 'Fire Dispatch', exact: true });
+  await expect(target).toBeVisible();
+  const destination = new URL(await target.getAttribute('href'), page.url());
+  expect(destination.searchParams.get('talkgroup_identity_key')).toBe('v1-g-00002-002-777');
+  expect(destination.searchParams.has('talkgroup_id')).toBe(false);
+  await target.click();
+  await expectRecordingQuery(page, state, { system_key: systemKey,
+    talkgroup_identity_key: 'v1-g-00002-002-777' });
+  await expect(card).toContainText('Fire Dispatch');
 });

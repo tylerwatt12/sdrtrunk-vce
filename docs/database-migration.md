@@ -761,7 +761,10 @@ allocator, adding no historical tone rows. The exact format-3 signature remains 
 creator; fresh and migrated format-4 catalogs share the same authoritative definitions. Catalog format 5 admits the
 same new nominal-frequency PCM method, preserving every existing recording and tone fact through its adjacent
 format-4-to-5 step. The format-4 signature remains frozen and the upgrade neither converts old measured frequencies
-nor backfills tones. The main application database is independently at format 54; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+nor backfills tones. Catalog format 6 adds ordered lookup indexes for complete source and destination radio identities,
+patch-member identities, legacy system contexts, protocol, call type, and voice type. Its adjacent format-5-to-6 step preserves all recording
+rows, audio paths, transcripts, tone facts, relationships, counters, and allocator values. Format 5 retains its frozen
+signature. The main application database is independently at format 54; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

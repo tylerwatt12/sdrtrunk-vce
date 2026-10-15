@@ -145,6 +145,21 @@ class StatsRequestTest
         assertInvalidParameter("path", () -> StatsRequest.decodePathSegment("line%0Abreak"));
     }
 
+    @Test
+    void structuredFilterLimitsAreExplicitAndDoNotRelaxOtherEndpoints()
+    {
+        String longSelections = "x".repeat(1200);
+        URI uri = URI.create("/?talkgroups=" + longSelections);
+        assertInvalidParameter("talkgroups", () -> StatsRequest.from(uri));
+        StatsRequest accepted = StatsRequest.from(uri, java.util.Map.of("talkgroups", 16384), 65536);
+        assertEquals(longSelections, accepted.text("talkgroups"));
+        accepted.requireFullyConsumed();
+        assertInvalidParameter("q", () -> StatsRequest.from(URI.create("/?q=" + longSelections),
+            java.util.Map.of("talkgroups", 16384), 65536));
+        assertInvalidParameter("talkgroups", () -> StatsRequest.from(URI.create("/?talkgroups=" + "x".repeat(16385)),
+            java.util.Map.of("talkgroups", 16384), 65536));
+    }
+
     private static void assertInvalidParameter(String field, org.junit.jupiter.api.function.Executable executable)
     {
         StatsApiException exception = assertThrows(StatsApiException.class, executable);

@@ -51,6 +51,18 @@ final class StatsRequest
 
     static StatsRequest from(URI uri)
     {
+        return from(uri, Map.of(), MAX_QUERY_LENGTH);
+    }
+
+    /** Endpoint-specific bounded structured filters retain the default limits for all other parameters. */
+    static StatsRequest from(URI uri, Map<String,Integer> parameterLimits, int maximumQueryLength)
+    {
+        return from(uri, parameterLimits, maximumQueryLength, MAX_PARAMETER_COUNT);
+    }
+
+    static StatsRequest from(URI uri, Map<String,Integer> parameterLimits, int maximumQueryLength,
+                             int maximumParameterCount)
+    {
         Map<String,String> parameters = new LinkedHashMap<>();
         String query = uri != null ? uri.getRawQuery() : null;
 
@@ -59,14 +71,14 @@ final class StatsRequest
             return new StatsRequest(parameters);
         }
 
-        if(query.length() > MAX_QUERY_LENGTH)
+        if(query.length() > maximumQueryLength)
         {
             throw invalid("query", "query is too long");
         }
 
         for(String parameter: query.split("&", -1))
         {
-            if(parameters.size() >= MAX_PARAMETER_COUNT)
+            if(parameters.size() >= maximumParameterCount)
             {
                 throw invalid("query", "query contains too many parameters");
             }
@@ -83,7 +95,7 @@ final class StatsRequest
             {
                 throw invalid("query", "query parameter name is too long");
             }
-            else if(value.length() > MAX_PARAMETER_VALUE_LENGTH)
+            else if(value.length() > parameterLimits.getOrDefault(key, MAX_PARAMETER_VALUE_LENGTH))
             {
                 throw invalid(key, key + " is too long");
             }

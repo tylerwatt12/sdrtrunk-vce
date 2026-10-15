@@ -71,8 +71,32 @@ async function main() {
     .replace(/from '\.\.\/core\/source-names\.js\?v=\d+'/, `from '${sourceNamesUrl}'`)
     .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`)
     .replace(/from '\.\.\/core\/call-audio-details\.js\?v=\d+'/, `from '${callAudioDetailsUrl}'`);
-  const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter } = await import(
+  const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter,
+    recordingIdentitySelections, recordingIdentitySelectionKey, recordingDiscoveryPeriod } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  const pendingDates = Object.freeze({ range: '30d', from_ms: '1000', to_ms: '9000' });
+  assert.deepEqual(recordingDiscoveryPeriod(pendingDates, 4_000_000_000),
+    { from_ms: '1408000000', to_ms: '4000000000' },
+    'Pending relative dates scope name discovery without waiting for Search');
+  assert.deepEqual(recordingDiscoveryPeriod({ ...pendingDates, range: 'custom' }, 4_000_000_000),
+    { from_ms: '1000', to_ms: '9000' }, 'Custom discovery preserves the exact selected interval');
+  assert.equal(pendingDates.from_ms, '1000', 'Suggestion lookup cannot mutate the applied date interval');
+  const sameNumber = [
+    { id: 1201, system_key: 'p25:00001:001', label: 'Fire Dispatch' },
+    { id: 1201, system_key: 'p25:00002:002', label: 'County Dispatch' },
+    { id: 1201, system_key: null, label: 'Unidentified' },
+    { id: 1201, system_key: 'p25:00001:001', identity_key: 'v1-g-00002-002-1201' }
+  ];
+  const selections = recordingIdentitySelections(JSON.stringify(sameNumber));
+  assert.equal(selections.length, 4);
+  assert.equal(new Set(selections.map(recordingIdentitySelectionKey)).size, 4,
+    'Repeated numeric IDs keep receiving systems and permanent identities separate');
+  assert.ok(selections.every(row => !Object.hasOwn(row, 'label')),
+    'Display names cannot become submitted recording identities');
+  assert.deepEqual(recordingIdentitySelections('broken JSON'), []);
+  assert.deepEqual(recordingIdentitySelections('{"id":1201}'), []);
+  assert.deepEqual(recordingIdentitySelections([{ id: -1, system_key: null }, { id: 1201 }]), [],
+    'Invalid and unscoped identities cannot silently become broader filters');
   const previousFilters = Object.freeze({ q: 'Previous name', system_key: 'p25:00002:002',
     radio_id: '401', radio_identity_key: 'v1-r-00002-002-777', talkgroup_id: '1201', radio_min: '400', radio_max: '500',
     talkgroup_min: '1200', talkgroup_max: '1300', alias_list_id: '7',

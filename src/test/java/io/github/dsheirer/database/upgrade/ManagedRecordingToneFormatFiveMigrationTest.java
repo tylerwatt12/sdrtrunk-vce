@@ -25,7 +25,7 @@ class ManagedRecordingToneFormatFiveMigrationTest
     @TempDir Path directory;
 
     @Test
-    void frozenPopulatedFourPreservesAllFactsRelationshipsAndAllocatorsThroughFive() throws Exception
+    void frozenPopulatedFourPreservesAllFactsRelationshipsAndAllocatorsThroughCurrent() throws Exception
     {
         Path catalog = fixture(directory.resolve("prior.sqlite"));
         Map<String,List<String>> before;
@@ -49,7 +49,7 @@ class ManagedRecordingToneFormatFiveMigrationTest
         Map<String,String> migratedSignature;
         try(Connection connection = open(catalog))
         {
-            ManagedRecordingSchema.validate(connection, 5);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection), "Only the catalog format marker changes");
             assertEquals(2, scalar(connection, "SELECT count(*) FROM recording_tone_sequence"));
             assertEquals(3, scalar(connection, "SELECT count(*) FROM recording_tone"));
@@ -68,18 +68,18 @@ class ManagedRecordingToneFormatFiveMigrationTest
         assertTrue(ManagedRecordingCatalogMigrator.migrate(retry, false).migrated());
         try(Connection connection = open(retry))
         {
-            ManagedRecordingSchema.validate(connection, 5);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             assertEquals(migratedSignature, schema(connection));
         }
         Path fresh = directory.resolve("fresh.sqlite");
         try(Connection connection = open(fresh); var statement = connection.createStatement())
         {
-            for(String ddl: ManagedRecordingSchema.ddlForFormat(5).values()) statement.execute(ddl);
-            statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1,5,0,0)");
+            for(String ddl: ManagedRecordingSchema.ddlForFormat(ManagedRecordingSchema.CURRENT_FORMAT_VERSION).values()) statement.execute(ddl);
+            statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1," + ManagedRecordingSchema.CURRENT_FORMAT_VERSION + ",0,0)");
             statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
-            statement.execute("PRAGMA user_version=5");
-            ManagedRecordingSchema.validate(connection, 5);
+            statement.execute("PRAGMA user_version=" + ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(migratedSignature, schema(connection), "Fresh and migrated catalogs have one exact schema");
         }
         assertFalse(ManagedRecordingCatalogMigrator.migrate(catalog).migrated(), "A current catalog is a no-op");
@@ -119,7 +119,7 @@ class ManagedRecordingToneFormatFiveMigrationTest
             assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());
             try(Connection connection = open(catalog))
             {
-                ManagedRecordingSchema.validate(connection, 5);
+                ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
                 assertEquals(before, contents(connection));
                 integrity(connection);
             }

@@ -773,9 +773,7 @@ class ManagedRecordingStoreTest
             for(ManagedRecordingStore.CandidateQuery branch: store.singleIdentityCandidateQueries(firstFilter))
             {
                 String details = plan(db, branch);
-                assertTrue(details.contains(branch.sql().contains("c.system_id IS NULL") ?
-                    "SEARCH c USING INDEX idx_recording_call_time" :
-                    "SEARCH c USING INDEX idx_recording_call_system_time"), details);
+                assertTrue(details.contains(branch.sql().split("INDEXED BY ",2)[1].split(" ")[0]),details);
                 assertFalse(details.contains("USE TEMP B-TREE"), details);
             }
             assertThrows(IllegalArgumentException.class,
@@ -850,9 +848,7 @@ class ManagedRecordingStoreTest
             for(ManagedRecordingStore.CandidateQuery branch: store.singleIdentityCandidateQueries(firstFilter))
             {
                 String details = plan(db, branch);
-                assertTrue(details.contains(branch.sql().contains("c INDEXED BY idx_recording_call_time") ?
-                    "SEARCH c USING INDEX idx_recording_call_time" :
-                    "SEARCH c USING INDEX idx_recording_call_system_time"), details);
+                assertTrue(details.contains(branch.sql().split("INDEXED BY ",2)[1].split(" ")[0]),details);
                 assertFalse(details.contains("USE TEMP B-TREE"), details);
             }
         }
@@ -907,9 +903,7 @@ class ManagedRecordingStoreTest
             for(var query: store.singleIdentityCandidateQueries(filter))
             {
                 String details = plan(db, query);
-                assertTrue(details.contains(query.sql().contains("c INDEXED BY idx_recording_call_time") ?
-                    "SEARCH c USING INDEX idx_recording_call_time" :
-                    "SEARCH c USING INDEX idx_recording_call_system_time"), details);
+                assertTrue(details.contains(query.sql().split("INDEXED BY ",2)[1].split(" ")[0]),details);
                 assertFalse(details.contains("USE TEMP B-TREE"), details);
                 assertFalse(query.sql().contains("p25_subscriber_identity"));
             }

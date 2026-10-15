@@ -230,6 +230,17 @@ public final class ManagedRecordingCatalogMigrator
                     statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format5");
                     statement.execute("DROP TABLE temp.recording_tone_before_format5");
                 }
+                case 5 ->
+                {
+                    // Only new lookup indexes are added; all recording values and relationships remain intact.
+                    for(var definition: ManagedRecordingSchema.ddlForFormat(6).entrySet())
+                    {
+                        if(!ManagedRecordingSchema.ddlForFormat(5).containsKey(definition.getKey()))
+                        {
+                            statement.execute(definition.getValue());
+                        }
+                    }
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

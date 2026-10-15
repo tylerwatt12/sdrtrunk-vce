@@ -280,12 +280,12 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(systemKey, unfiltered.path("system_key").textValue());
 
         HttpResponse<String> suggestions = send(request(browse +
-            "/suggestions?q=Fixture%20Radio%20System&kind=system").GET());
+            "/suggestions?from_ms=0&to_ms=5000&q=Fixture%20Radio%20System&kind=system").GET());
         assertEquals(200, suggestions.statusCode(), suggestions.body());
         JsonNode selected = json(suggestions).at("/data/0");
         assertEquals("Fixture Radio System", selected.path("label").textValue());
         JsonNode numeric = json(send(request(browse +
-            "/suggestions?q=4001&kind=talkgroup&system_key=" + systemKey).GET())).at("/data");
+            "/suggestions?from_ms=0&to_ms=5000&q=4001&kind=talkgroup&system_key=" + systemKey).GET())).at("/data");
         assertEquals(1, numeric.size());
         assertEquals("4001", numeric.get(0).path("id").textValue());
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
@@ -294,7 +294,7 @@ class ManagedRecordingsHttpControllerTest
             statement.executeUpdate("INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms," +
                 "protocol,rfss,site) VALUES(91,1000,2000,'APCO25',1,1)");
         }
-        JsonNode siteRows = json(send(request(browse + "/suggestions?q=1&kind=site&system_key=" +
+        JsonNode siteRows = json(send(request(browse + "/suggestions?from_ms=0&to_ms=5000&q=1&kind=site&system_key=" +
             systemKey).GET())).at("/data");
         assertEquals(1, siteRows.size());
         assertEquals("Fixture Control", siteRows.get(0).path("label").textValue());
@@ -624,9 +624,71 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void focusedDiscoveryAndStructuredFiltersKeepStableSelectionsAndRejectInvalidValues() throws Exception
+    {
+        String browse = ManagedRecordingsHttpController.BROWSE_PATH;
+        HttpResponse<String> discovered = send(request(browse + "/identities?kind=talkgroup&from_ms=0&to_ms=5000").GET());
+        assertEquals(200, discovered.statusCode(), discovered.body());
+        JsonNode row = json(discovered).at("/data/rows/0");
+        assertEquals(4001, row.path("id").intValue());
+        assertEquals("4001", row.path("label").textValue());
+        assertTrue(row.path("selection").has("system_key"));
+        assertTrue(row.at("/selection/system_key").isNull());
+        assertEquals(1, row.path("call_count").intValue());
+        assertFalse(json(discovered).at("/data/has_more").booleanValue());
+        String selected = java.net.URLEncoder.encode(row.path("selection").toString(), java.nio.charset.StandardCharsets.UTF_8);
+        String array = java.net.URLEncoder.encode("[" + row.path("selection") + "]", java.nio.charset.StandardCharsets.UTF_8);
+        HttpResponse<String> calls = send(request(browse + "/calls?from_ms=0&to_ms=5000&talkgroups=" + array).GET());
+        assertEquals(200, calls.statusCode(), calls.body());
+        assertEquals(1, json(calls).at("/data/calls").size());
+        assertEquals(400, send(request(browse + "/calls?talkgroups=" + selected).GET()).statusCode());
+        String missingSystem = java.net.URLEncoder.encode("[{\"id\":4001}]", java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(400, send(request(browse + "/calls?talkgroups=" + missingSystem).GET()).statusCode());
+        assertEquals(400, send(request(browse + "/calls?radios=%5B%5D&radio_role=recipient").GET()).statusCode());
+        assertEquals(400, send(request(browse + "/calls?tone_frequency_hz=NaN").GET()).statusCode());
+        assertEquals(400, send(request(browse + "/calls?tone_then_hz=600").GET()).statusCode());
+        assertEquals(400, send(request(browse + "/calls?paging_tones=none").GET()).statusCode());
+        assertEquals(400, send(request(browse + "/identities?kind=site").GET()).statusCode());
+        assertEquals(400, send(request(browse + "/identities?kind=radio&limit=101").GET()).statusCode());
+        assertEquals(400, send(request(browse + "/identities?kind=radio&from_ms=5000&to_ms=0").GET()).statusCode());
+        assertEquals(0, json(send(request(browse + "/identities?kind=talkgroup&from_ms=3000&to_ms=5000").GET()))
+            .at("/data/rows").size());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET source_home_wacn=1,source_home_system=1," +
+                "source_home_id=101 WHERE id=1");
+        }
+        JsonNode qualifiedUnknown = json(send(request(browse + "/identities?kind=radio&radio_role=source&from_ms=0&to_ms=5000").GET()))
+            .at("/data/rows/0/selection");
+        assertTrue(qualifiedUnknown.path("system_key").isNull());
+        assertEquals("v1-r-00001-001-101", qualifiedUnknown.path("identity_key").textValue());
+        String qualified = java.net.URLEncoder.encode("[" + qualifiedUnknown + "]", java.nio.charset.StandardCharsets.UTF_8);
+        HttpResponse<String> unknownCalls = send(request(browse +
+            "/calls?from_ms=0&to_ms=5000&radio_role=source&radios=" + qualified).GET());
+        assertEquals(200, unknownCalls.statusCode(), unknownCalls.body());
+        assertEquals(1, json(unknownCalls).at("/data/calls").size());
+    }
+
+    @Test
+    void discoveryAndIdentitySuggestionsShareTheBoundedRecordingPeriod() throws Exception
+    {
+        String browse = ManagedRecordingsHttpController.BROWSE_PATH;
+        assertEquals(0, json(send(request(browse + "/identities?kind=talkgroup").GET())).at("/data/rows").size());
+        assertEquals(0, json(send(request(browse + "/suggestions?kind=talkgroup&q=4001").GET())).at("/data").size());
+        assertEquals(1, json(send(request(browse + "/suggestions?kind=talkgroup&q=4001&from_ms=0&to_ms=5000").GET()))
+            .at("/data").size());
+        for(String endpoint: List.of("/identities?kind=talkgroup", "/suggestions?kind=talkgroup&q=4001"))
+        {
+            assertEquals(400, send(request(browse + endpoint + "&from_ms=0&to_ms=9223372036854775807").GET()).statusCode());
+            assertEquals(400, send(request(browse + endpoint + "&from_ms=5000&to_ms=1000").GET()).statusCode());
+        }
+    }
+
+    @Test
     void numericAutocompleteReturnsUnaliasedTalkgroupsInSpecificAndGeneralFinders() throws Exception
     {
-        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?from_ms=0&to_ms=5000&q=4001";
         for(String suffix: new String[]{"&kind=talkgroup", ""})
         {
             HttpResponse<String> response = send(request(base + suffix).GET());
@@ -639,11 +701,11 @@ class ManagedRecordingsHttpControllerTest
             assertFalse(rows.get(0).has("alias_list_id"));
         }
         assertEquals("4001", json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
-            "/suggestions?q=40&kind=talkgroup").GET())).at("/data/0/id").textValue());
+            "/suggestions?from_ms=0&to_ms=5000&q=40&kind=talkgroup").GET())).at("/data/0/id").textValue());
         assertEquals("4001", json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
-            "/suggestions?q=4&kind=talkgroup").GET())).at("/data/0/id").textValue());
+            "/suggestions?from_ms=0&to_ms=5000&q=4&kind=talkgroup").GET())).at("/data/0/id").textValue());
         assertEquals(0, json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
-            "/suggestions?q=4009&kind=talkgroup").GET())).at("/data").size());
+            "/suggestions?from_ms=0&to_ms=5000&q=4009&kind=talkgroup").GET())).at("/data").size());
         assertEquals(0, json(send(request(base + "&kind=talkgroup&system_key=other-system").GET()))
             .at("/data").size());
 
@@ -668,7 +730,7 @@ class ManagedRecordingsHttpControllerTest
     void exactUnaliasedNumericTalkgroupPrecedesFullPagesOfRecordedSubstringMatches() throws Exception
     {
         populateNumericSubstringSuggestions();
-        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?from_ms=0&to_ms=5000&q=4001";
         for(String kind: new String[]{"&kind=talkgroup", ""})
         {
             for(int limit: new int[]{20, 1})
@@ -706,7 +768,7 @@ class ManagedRecordingsHttpControllerTest
                 "VALUES(2000,3000,1000,'direct-exact.mp3',5,700,1,3,1,999,4001)," +
                 "(2100,3100,1000,'direct-only.mp3',5,700,1,3,1,998,4002)");
         }
-        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?q=4001";
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/suggestions?from_ms=0&to_ms=5000&q=4001";
         for(String kind: new String[]{"&kind=talkgroup", ""})
         {
             for(int limit: new int[]{20, 1})
@@ -727,12 +789,12 @@ class ManagedRecordingsHttpControllerTest
             }
         }
         JsonNode directOnly = json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
-            "/suggestions?q=4002").GET())).at("/data");
+            "/suggestions?from_ms=0&to_ms=5000&q=4002").GET())).at("/data");
         assertEquals(1, directOnly.size());
         assertEquals("radio", directOnly.get(0).path("kind").textValue());
         assertEquals("4002", directOnly.get(0).path("id").textValue());
         assertEquals(0, json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
-            "/suggestions?q=4002&kind=talkgroup").GET())).at("/data").size());
+            "/suggestions?from_ms=0&to_ms=5000&q=4002&kind=talkgroup").GET())).at("/data").size());
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
             mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
@@ -806,7 +868,7 @@ class ManagedRecordingsHttpControllerTest
         }
 
         String path = ManagedRecordingsHttpController.BROWSE_PATH +
-            "/suggestions?q=Dispatch&kind=talkgroup&limit=1";
+            "/suggestions?from_ms=0&to_ms=5000&q=Dispatch&kind=talkgroup&limit=1";
         HttpResponse<String> response = send(request(path).GET());
         assertEquals(200, response.statusCode(), response.body());
         JsonNode rows = json(response).at("/data");

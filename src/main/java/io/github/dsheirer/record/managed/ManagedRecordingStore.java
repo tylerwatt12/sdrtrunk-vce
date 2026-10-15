@@ -13,6 +13,8 @@ package io.github.dsheirer.record.managed;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.MaintenanceResult;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Selection;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Member;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.RecordingCall;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.SearchFilter;
@@ -36,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -364,267 +367,32 @@ final class ManagedRecordingStore implements AutoCloseable
         Objects.requireNonNull(filter);
         try(Connection connection = openReader())
         {
-            if(filter.transcript != null || !filter.identityNameMatches.isEmpty() || filter.radioIdentityMatch != null || filter.talkgroupIdentityMatch != null)
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
             {
-                long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-                org.sqlite.ProgressHandler.setHandler(connection, 10000, new org.sqlite.ProgressHandler()
+                @Override
+                protected int progress()
                 {
-                    @Override
-                    protected int progress()
-                    {
-                        return System.nanoTime() >= deadline ? 1 : 0;
-                    }
-                });
-            }
-            List<Integer> anyIds = new ArrayList<>(filter.anyIdentityIds);
-            if(filter.anyIdentityId != null && !anyIds.contains(filter.anyIdentityId))
-            {
-                anyIds.add(filter.anyIdentityId);
-            }
-            if(anyIds.size() > 200)
-            {
-                throw new IllegalArgumentException("Too many recording identity search IDs");
-            }
-            List<CandidateQuery> candidateQueries = singleIdentityCandidateQueries(filter, anyIds);
-            if(!candidateQueries.isEmpty())
-            {
-                return searchSingleIdentity(connection, filter, candidateQueries);
-            }
-            boolean anySite = filter.wacn != null || filter.systemId != null ||
-                filter.rfss != null || filter.siteId != null;
-            boolean exactSite = filter.wacn != null && filter.systemId != null &&
-                filter.rfss != null && filter.siteId != null;
-            boolean identityDriver = filter.talkgroupId != null || filter.talkgroupMin != null ||
-                filter.sourceId != null || filter.sourceMin != null || !anyIds.isEmpty();
-            boolean siteDriver = exactSite && !identityDriver;
-            boolean indexedBaseFilter = identityDriver || filter.systemKey != null &&
-                !filter.systemKey.isBlank() || filter.channelId != null && !filter.channelId.isBlank() ||
-                filter.frequencyHz != null;
-            Long selectedSiteId = siteDriver ? findSiteId(connection,
-                new Site(filter.wacn, filter.systemId, filter.rfss, filter.siteId)) : null;
-            if(siteDriver && selectedSiteId == null)
-            {
-                return new SearchPage(List.of(), null);
-            }
-            List<String> predicates = new ArrayList<>();
-            List<Object> parameters = new ArrayList<>();
-            String timeColumn = siteDriver ? "cs.start_ms" : "c.start_ms";
-            String idColumn = siteDriver ? "cs.call_id" : "c.id";
-            predicates.add(timeColumn + ">=? AND " + timeColumn + "<=?");
-            parameters.add(filter.fromMs);
-            parameters.add(filter.toMs);
-            if(siteDriver)
-            {
-                predicates.add("cs.site_id=?");
-                parameters.add(selectedSiteId);
-            }
-            addSystemPredicate(predicates, parameters, filter.systemKey, "sys.system_key=?");
-            addRadioIdentityPredicate(predicates, parameters, filter.radioIdentityMatch);
-            addGroupIdentityPredicate(predicates, parameters, filter.talkgroupIdentityMatch);
-            if(filter.channelId != null && !filter.channelId.isBlank())
-            {
-                predicates.add("ch.channel_uuid=?");
-                parameters.add(filter.channelId);
-            }
-            if(filter.aliasListId != null)
-            {
-                predicates.add("c.alias_list_id=?");
-                parameters.add(filter.aliasListId);
-            }
-            if(filter.minDurationMs != null)
-            {
-                predicates.add("c.duration_ms>=?");
-                parameters.add(filter.minDurationMs);
-            }
-            if(filter.maxDurationMs != null)
-            {
-                predicates.add("c.duration_ms<=?");
-                parameters.add(filter.maxDurationMs);
-            }
-            if(filter.frequencyHz != null)
-            {
-                predicates.add("c.frequency_hz=?");
-                parameters.add(filter.frequencyHz);
-            }
-            if(filter.sourceId != null)
-            {
-                predicates.add("c.id IN (SELECT id FROM recording_call INDEXED BY " +
-                    "idx_recording_call_source_time WHERE source_id=? AND start_ms BETWEEN ? AND ? " +
-                    "UNION SELECT id FROM recording_call INDEXED BY idx_recording_call_target_time " +
-                    "WHERE target_id=? AND call_type=3 AND start_ms BETWEEN ? AND ? " +
-                    "UNION SELECT pm.call_id FROM recording_patch_member pm INDEXED BY " +
-                    "idx_recording_patch_member_lookup WHERE pm.kind=2 AND pm.local_id=? " +
-                    "AND pm.start_ms BETWEEN ? AND ?)");
-                parameters.add(filter.sourceId);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.add(filter.sourceId);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.add(filter.sourceId);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-            }
-            if(filter.sourceMin != null)
-            {
-                predicates.add("c.id IN (SELECT id FROM recording_call INDEXED BY " +
-                    "idx_recording_call_source_time WHERE source_id BETWEEN ? AND ? " +
-                    "AND start_ms BETWEEN ? AND ? UNION SELECT id FROM recording_call " +
-                    "INDEXED BY idx_recording_call_target_time WHERE target_id BETWEEN ? AND ? " +
-                    "AND call_type=3 AND start_ms BETWEEN ? AND ? UNION SELECT pm.call_id FROM " +
-                    "recording_patch_member pm INDEXED BY idx_recording_patch_member_lookup " +
-                    "WHERE pm.kind=2 AND pm.local_id BETWEEN ? AND ? " +
-                    "AND pm.start_ms BETWEEN ? AND ?)");
-                parameters.add(filter.sourceMin);
-                parameters.add(filter.sourceMax);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.add(filter.sourceMin);
-                parameters.add(filter.sourceMax);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.add(filter.sourceMin);
-                parameters.add(filter.sourceMax);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-            }
-            if(filter.talkgroupId != null)
-            {
-                predicates.add("c.id IN (SELECT id FROM recording_call INDEXED BY " +
-                    "idx_recording_call_target_time WHERE target_id=? AND call_type IN(1,2) " +
-                    "AND start_ms BETWEEN ? AND ? UNION SELECT pm.call_id FROM " +
-                    "recording_patch_member pm INDEXED BY idx_recording_patch_member_lookup " +
-                    "WHERE pm.kind=1 AND pm.local_id=? AND pm.start_ms BETWEEN ? AND ?)");
-                parameters.add(filter.talkgroupId);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.add(filter.talkgroupId);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-            }
-            if(filter.talkgroupMin != null)
-            {
-                predicates.add("c.id IN (SELECT id FROM recording_call INDEXED BY " +
-                    "idx_recording_call_target_time WHERE target_id BETWEEN ? AND ? " +
-                    "AND call_type IN(1,2) AND start_ms BETWEEN ? AND ? UNION " +
-                    "SELECT pm.call_id FROM recording_patch_member pm INDEXED BY " +
-                    "idx_recording_patch_member_lookup WHERE pm.kind=1 " +
-                    "AND pm.local_id BETWEEN ? AND ? AND pm.start_ms BETWEEN ? AND ?)");
-                parameters.add(filter.talkgroupMin);
-                parameters.add(filter.talkgroupMax);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.add(filter.talkgroupMin);
-                parameters.add(filter.talkgroupMax);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-            }
-            if(!anyIds.isEmpty())
-            {
-                String placeholders = String.join(",", java.util.Collections.nCopies(anyIds.size(), "?"));
-                predicates.add("c.id IN (SELECT id FROM recording_call INDEXED BY " +
-                    "idx_recording_call_source_time WHERE source_id IN(" + placeholders +
-                    ") AND start_ms BETWEEN ? AND ? UNION SELECT id FROM recording_call INDEXED BY " +
-                    "idx_recording_call_target_time WHERE target_id IN(" + placeholders +
-                    ") AND start_ms BETWEEN ? AND ? UNION SELECT pm.call_id FROM " +
-                    "recording_patch_member pm INDEXED BY idx_recording_patch_member_lookup " +
-                    "WHERE pm.kind IN(1,2) AND pm.local_id IN(" + placeholders +
-                    ") AND pm.start_ms BETWEEN ? AND ?)");
-                parameters.addAll(anyIds);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.addAll(anyIds);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-                parameters.addAll(anyIds);
-                parameters.add(filter.fromMs);
-                parameters.add(filter.toMs);
-            }
-            if(anySite && !siteDriver)
-            {
-                StringBuilder site = indexedBaseFilter ? new StringBuilder(
-                    "EXISTS(SELECT 1 FROM recording_call_site cs JOIN recording_site s " +
-                        "ON s.id=cs.site_id WHERE cs.call_id=c.id") : new StringBuilder(
-                    "c.id IN (SELECT cs.call_id FROM recording_call_site cs JOIN recording_site s " +
-                        "ON s.id=cs.site_id WHERE cs.start_ms BETWEEN ? AND ?");
-                if(!indexedBaseFilter)
-                {
-                    parameters.add(filter.fromMs);
-                    parameters.add(filter.toMs);
+                    return Thread.currentThread().isInterrupted() || System.nanoTime() >= deadline ? 1 : 0;
                 }
-                if(filter.wacn != null) { site.append(" AND s.wacn=?"); parameters.add(filter.wacn); }
-                if(filter.systemId != null) { site.append(" AND s.system_id=?"); parameters.add(filter.systemId); }
-                if(filter.rfss != null) { site.append(" AND s.rfss=?"); parameters.add(filter.rfss); }
-                if(filter.siteId != null) { site.append(" AND s.site_id=?"); parameters.add(filter.siteId); }
-                predicates.add(site.append(')').toString());
-            }
-            if(filter.protocol != null && !filter.protocol.isBlank())
+            });
+            try
             {
-                int code = protocolFilter(filter.protocol);
-                predicates.add("c.protocol=?");
-                parameters.add(code);
+                return searchCandidates(connection, filter,deadline);
             }
-            if(filter.callType != null && !filter.callType.isBlank())
+            finally
             {
-                predicates.add("c.call_type=?");
-                parameters.add(callTypeFilter(filter.callType));
+                org.sqlite.ProgressHandler.clearHandler(connection);
             }
-            if(filter.voiceType != null && !filter.voiceType.isBlank())
-            {
-                predicates.add("c.voice_type=?");
-                parameters.add(voiceTypeFilter(filter.voiceType));
-            }
-            addTranscriptPredicate(predicates, parameters, filter.transcript);
-            if(filter.cursor != null && !filter.cursor.isBlank())
-            {
-                long[] cursor = decodeCursor(filter.cursor);
-                String compare = filter.sortAscending ? ">" : "<";
-                predicates.add("(" + timeColumn + compare + "? OR (" + timeColumn + "=? AND " +
-                    idColumn + compare + "?))");
-                parameters.add(cursor[0]);
-                parameters.add(cursor[0]);
-                parameters.add(cursor[1]);
-            }
-            String order = filter.sortAscending ? "ASC" : "DESC";
-            String select = siteDriver ? SELECT_CALL.replace("FROM recording_call c ",
-                "FROM recording_call_site cs INDEXED BY idx_recording_call_site_lookup " +
-                    "JOIN recording_call c ON c.id=cs.call_id ") : SELECT_CALL;
-            String sql = select + " WHERE " + String.join(" AND ", predicates) +
-                " ORDER BY " + timeColumn + " " + order + "," + idColumn + " " + order + " LIMIT ?";
-            List<RecordingCall> calls = new ArrayList<>(filter.limit + 1);
-            try(PreparedStatement statement = connection.prepareStatement(sql))
-            {
-                int p = 1;
-                for(Object value : parameters)
-                {
-                    statement.setObject(p++, value);
-                }
-                statement.setInt(p, filter.limit + 1);
-                try(ResultSet rows = statement.executeQuery())
-                {
-                    while(rows.next())
-                    {
-                        calls.add(mapCall(connection, rows));
-                    }
-                }
-            }
-            boolean more = calls.size() > filter.limit;
-            if(more)
-            {
-                calls.remove(calls.size() - 1);
-            }
-            String next = more && !calls.isEmpty() ? encodeCursor(calls.getLast()) : null;
-            return new SearchPage(List.copyOf(calls), next);
         }
     }
 
     /**
-     * A single exact identity has a few independently ordered index streams. Reading only the first page from each
-     * stream gives the exact first page of their union, even when a call appears in more than one stream. This avoids
-     * materializing every matching call ID in a multi-year interval before applying the page limit.
+     * Each identity or scope supplies an independently ordered stream. The first page from each stream gives the
+     * exact first page of their union, even when a call appears in several streams. Every combined predicate and
+     * cursor is applied before each stream's limit, avoiding materialization of the complete archive match set.
      */
-    private SearchPage searchSingleIdentity(Connection connection, SearchFilter filter,
-                                            List<CandidateQuery> branches) throws SQLException
+    private SearchPage searchCandidates(Connection connection, SearchFilter filter, long deadline) throws SQLException
     {
         try(Statement transaction = connection.createStatement())
         {
@@ -632,8 +400,9 @@ final class ManagedRecordingStore implements AutoCloseable
             try
             {
                 Map<Long,CallKey> distinct = new HashMap<>();
-                for(CandidateQuery branch : branches)
+                for(CandidateQuery branch : singleIdentityCandidateQueries(filter, connection))
                 {
+                    checkSearchDeadline(deadline);
                     try(PreparedStatement statement = connection.prepareStatement(branch.sql()))
                     {
                         int p = 1;
@@ -671,12 +440,14 @@ final class ManagedRecordingStore implements AutoCloseable
                         int p = 1;
                         for(CallKey key : pageKeys)
                         {
+                            checkSearchDeadline(deadline);
                             statement.setLong(p++, key.id());
                         }
                         try(ResultSet rows = statement.executeQuery())
                         {
                             while(rows.next())
                             {
+                                checkSearchDeadline(deadline);
                                 RecordingCall call = mapCall(connection, rows);
                                 byId.put(call.id(), call);
                             }
@@ -698,127 +469,320 @@ final class ManagedRecordingStore implements AutoCloseable
             }
             catch(SQLException | RuntimeException exception)
             {
-                transaction.execute("ROLLBACK");
+                org.sqlite.ProgressHandler.clearHandler(connection);
+                try { transaction.execute("ROLLBACK"); }
+                catch(SQLException rollback) { exception.addSuppressed(rollback); }
                 throw exception;
             }
         }
     }
 
+    private static void checkSearchDeadline(long deadline) throws SQLException
+    {
+        if(Thread.currentThread().isInterrupted() || System.nanoTime() >= deadline)
+            throw new SQLException("Recording search exceeded its time limit or was cancelled","",9);
+    }
+
     /** Package visibility permits the plan test to inspect the actual bounded search statements. */
-    List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter)
+    List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter) throws SQLException
+    {
+        try(Connection connection = openReader())
+        {
+            return singleIdentityCandidateQueries(filter,connection);
+        }
+    }
+
+    private List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter, Connection connection) throws SQLException
     {
         List<Integer> anyIds = new ArrayList<>(filter.anyIdentityIds);
         if(filter.anyIdentityId != null && !anyIds.contains(filter.anyIdentityId))
         {
             anyIds.add(filter.anyIdentityId);
         }
-        return singleIdentityCandidateQueries(filter, anyIds);
+        if(anyIds.size() > 200) throw new IllegalArgumentException("Too many recording identity search IDs");
+        return singleIdentityCandidateQueries(filter, anyIds, connection);
     }
 
-    private List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter, List<Integer> anyIds)
+    private List<CandidateQuery> singleIdentityCandidateQueries(SearchFilter filter, List<Integer> anyIds,
+                                                               Connection connection) throws SQLException
     {
+        if(!filter.talkgroupSelections.isEmpty() || !filter.radioSelections.isEmpty())
+        {
+            List<Selection> selections = !filter.talkgroupSelections.isEmpty() ?
+                filter.talkgroupSelections : filter.radioSelections;
+            List<CandidateQuery> queries = new ArrayList<>();
+            boolean groups = !filter.talkgroupSelections.isEmpty();
+            for(Selection selection: selections)
+                if(selection.identityKey() == null)
+                    queries.addAll(numericIdentityCandidateQueries(filter,selection.id(),groups,!groups,
+                        new SelectionDriver(selection,!groups)));
+            for(Selection selection: selections)
+            {
+                if(selection.identityKey() == null) continue;
+                RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(selection.identityKey());
+                queries.addAll(homeIdentityCandidateQueries(filter,new HomeMatch(identity.identityId(),
+                    selection.systemKey(),identity.homeWacn(),identity.homeSystemId(),false),!groups,
+                    new SelectionDriver(selection,!groups)));
+            }
+            return List.copyOf(queries);
+        }
         if(!filter.identityNameMatches.isEmpty())
         {
             List<CandidateQuery> queries = new ArrayList<>();
             for(IdentityNameMatch match: filter.identityNameMatches)
             {
                 if(match.systemKey() == null)
-                {
-                    queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_source_time",
-                        "c.source_id=?", List.of(match.identityId()), "c.start_ms", "c.id"));
-                    queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_target_time",
-                        "c.target_id=?", List.of(match.identityId()), "c.start_ms", "c.id"));
-                    queries.add(patchCandidateQuery(filter, match.identityId(), 1));
-                    queries.add(patchCandidateQuery(filter, match.identityId(), 2));
-                }
+                    queries.addAll(numericIdentityCandidateQueries(filter, match.identityId(), false, false));
                 else
-                {
                     queries.addAll(nameIdentityCandidateQueries(filter, match));
-                }
             }
             return List.copyOf(queries);
         }
-        if(filter.talkgroupIdentityMatch != null && filter.talkgroupId == null && filter.sourceId == null &&
-            filter.talkgroupMin == null && filter.sourceMin == null && anyIds.isEmpty())
+        if(filter.talkgroupIdentityMatch != null || filter.radioIdentityMatch != null)
+            return nameIdentityCandidateQueries(filter, filter.talkgroupIdentityMatch != null ?
+                filter.talkgroupIdentityMatch : filter.radioIdentityMatch);
+        if(filter.talkgroupId != null)
+            return numericIdentityCandidateQueries(filter, filter.talkgroupId, true, false);
+        if(filter.sourceId != null)
+            return numericIdentityCandidateQueries(filter, filter.sourceId, false, true);
+        if(!anyIds.isEmpty())
         {
-            return nameIdentityCandidateQueries(filter, filter.talkgroupIdentityMatch);
+            List<CandidateQuery> queries = new ArrayList<>();
+            for(int id: anyIds) queries.addAll(numericIdentityCandidateQueries(filter, id, false, false));
+            return List.copyOf(queries);
         }
-        if(filter.radioIdentityMatch != null && filter.talkgroupId == null && filter.sourceId == null &&
-            filter.talkgroupMin == null && filter.sourceMin == null && anyIds.isEmpty())
+        if(filter.talkgroupMin != null && (long)filter.talkgroupMax - filter.talkgroupMin <= 31 ||
+            filter.sourceMin != null && (long)filter.sourceMax - filter.sourceMin <= 31)
         {
-            return nameIdentityCandidateQueries(filter, filter.radioIdentityMatch);
+            boolean groups = filter.talkgroupMin != null && (long)filter.talkgroupMax - filter.talkgroupMin <= 31;
+            List<CandidateQuery> queries = new ArrayList<>();
+            int first = groups ? filter.talkgroupMin : filter.sourceMin;
+            int last = groups ? filter.talkgroupMax : filter.sourceMax;
+            for(long id = first; id <= last; id++)
+                queries.addAll(numericIdentityCandidateQueries(filter, (int)id, groups, !groups));
+            return List.copyOf(queries);
         }
-        boolean talkgroup = filter.talkgroupId != null;
-        boolean radio = filter.sourceId != null;
-        boolean any = !anyIds.isEmpty();
-        if((talkgroup ? 1 : 0) + (radio ? 1 : 0) + (any ? 1 : 0) != 1 ||
-            filter.talkgroupMin != null || filter.sourceMin != null || anyIds.size() > 1)
+        if(filter.systemKey != null && !filter.systemKey.isBlank())
+            return systemCandidateQueries(filter, filter.systemKey);
+        if(filter.channelId != null && !filter.channelId.isBlank())
+            return List.of(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_channel_time",
+                "c.channel_id=(SELECT id FROM recording_channel WHERE channel_uuid=?)", List.of(filter.channelId),
+                "c.start_ms", "c.id"));
+        if(filter.aliasListId != null)
+            return List.of(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_alias_list_time",
+                "c.alias_list_id=?", List.of(filter.aliasListId), "c.start_ms", "c.id"));
+        if(filter.frequencyHz != null)
+            return List.of(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_frequency_time",
+                "c.frequency_hz=?", List.of(filter.frequencyHz), "c.start_ms", "c.id"));
+        if(filter.wacn != null || filter.systemId != null || filter.rfss != null || filter.siteId != null)
         {
-            return List.of();
+            List<CandidateQuery> sites = siteCandidateQueries(filter,connection);
+            if(sites != null) return sites;
         }
-        int id = talkgroup ? filter.talkgroupId : radio ? filter.sourceId : anyIds.getFirst();
-        List<CandidateQuery> queries = new ArrayList<>(4);
-        if(!talkgroup)
+        if(filter.pagingTones != null || filter.toneFrequencyHz != null)
+            return List.of(candidateQuery(filter,"recording_tone_sequence tone_driver CROSS JOIN recording_call c " +
+                "ON c.id=tone_driver.call_id","1",List.of(),"c.start_ms","c.id"));
+        if(filter.protocol != null && !filter.protocol.isBlank())
+            return List.of(candidateQuery(filter,"recording_call c INDEXED BY idx_recording_call_protocol_time",
+                "c.protocol=?",List.of(protocolFilter(filter.protocol)),"c.start_ms","c.id"));
+        if(filter.callType != null && !filter.callType.isBlank())
+            return List.of(candidateQuery(filter,"recording_call c INDEXED BY idx_recording_call_call_type_time",
+                "c.call_type=?",List.of(callTypeFilter(filter.callType)),"c.start_ms","c.id"));
+        if(filter.voiceType != null && !filter.voiceType.isBlank())
+            return List.of(candidateQuery(filter,"recording_call c INDEXED BY idx_recording_call_voice_type_time",
+                "c.voice_type=?",List.of(voiceTypeFilter(filter.voiceType)),"c.start_ms","c.id"));
+        return List.of(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_time", "1",
+            List.of(), "c.start_ms", "c.id"));
+    }
+
+    /** Resolve the small site directory, then page each matching site's ordered index inside this read snapshot. */
+    private List<CandidateQuery> siteCandidateQueries(SearchFilter filter, Connection connection) throws SQLException
+    {
+        List<String> conditions = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
+        if(filter.wacn != null) { conditions.add("wacn=?"); parameters.add(filter.wacn); }
+        if(filter.systemId != null) { conditions.add("system_id=?"); parameters.add(filter.systemId); }
+        if(filter.rfss != null) { conditions.add("rfss=?"); parameters.add(filter.rfss); }
+        if(filter.siteId != null) { conditions.add("site_id=?"); parameters.add(filter.siteId); }
+        List<CandidateQuery> queries = new ArrayList<>();
+        try(PreparedStatement statement = connection.prepareStatement("SELECT id FROM recording_site WHERE " +
+            String.join(" AND ",conditions) + " ORDER BY id LIMIT 129"))
         {
-            queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_source_time",
-                "c.source_id=?", List.of(id), "c.start_ms", "c.id"));
-        }
-        queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_target_time",
-            talkgroup ? "c.target_id=? AND c.call_type IN(1,2)" : radio ?
-                "c.target_id=? AND c.call_type=3" : "c.target_id=?",
-            List.of(id), "c.start_ms", "c.id"));
-        if(!radio)
-        {
-            queries.add(patchCandidateQuery(filter, id, 1));
-        }
-        if(!talkgroup)
-        {
-            queries.add(patchCandidateQuery(filter, id, 2));
+            int p=1; for(Object value: parameters) statement.setObject(p++,value);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                while(rows.next())
+                {
+                    if(queries.size() == 128) return null;
+                    queries.add(candidateQuery(filter,"recording_call_site cs INDEXED BY " +
+                        "idx_recording_call_site_lookup JOIN recording_call c ON c.id=cs.call_id",
+                        "cs.site_id=? AND cs.start_ms BETWEEN ? AND ?",List.of(rows.getLong(1),filter.fromMs,filter.toMs),
+                        "cs.start_ms","cs.call_id"));
+                }
+            }
         }
         return List.copyOf(queries);
+    }
+
+    /** The index stream proves this one picker choice; other choices of its kind need no repeated OR predicate. */
+    private record SelectionDriver(Selection selection, boolean radio) {}
+
+    private List<CandidateQuery> numericIdentityCandidateQueries(SearchFilter filter, int id,
+                                                                 boolean talkgroup, boolean radio)
+    {
+        return numericIdentityCandidateQueries(filter,id,talkgroup,radio,null);
+    }
+
+    private List<CandidateQuery> numericIdentityCandidateQueries(SearchFilter filter, int id,
+                                                                 boolean talkgroup, boolean radio,
+                                                                 SelectionDriver driver)
+    {
+        List<CandidateQuery> queries = new ArrayList<>(4);
+        if(!talkgroup)
+            queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_source_time",
+                "c.source_id=?", List.of(id), "c.start_ms", "c.id",driver));
+        if(!radio || !"source".equals(filter.radioRole))
+        {
+            queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_target_time",
+                talkgroup ? "c.target_id=? AND c.call_type IN(1,2)" : radio ?
+                    "c.target_id=? AND c.call_type=3" : "c.target_id=?", List.of(id), "c.start_ms", "c.id",driver));
+            if(!radio) queries.add(patchCandidateQuery(filter, id, 1,driver));
+            if(!talkgroup) queries.add(patchCandidateQuery(filter, id, 2,driver));
+        }
+        return List.copyOf(queries);
+    }
+
+    private List<CandidateQuery> systemCandidateQueries(SearchFilter filter, String system)
+    {
+        List<CandidateQuery> queries = new ArrayList<>();
+        queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_system_time",
+            "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)", List.of(system),
+            "c.start_ms", "c.id"));
+        if(RadioSystemKey.isP25Native(system))
+        {
+            List<String> conditions = new ArrayList<>();
+            List<Object> parameters = new ArrayList<>();
+            conditions.add("c.system_id IS NULL");
+            addSystemPredicate(conditions,parameters,system,
+                "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+            queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_unowned_time",
+                String.join(" AND ",conditions), parameters, "c.start_ms", "c.id"));
+        }
+        return List.copyOf(queries);
+    }
+
+    private record HomeMatch(int identityId, String systemKey, Integer homeWacn,
+                             Integer homeSystemId, boolean includeNullHome) {}
+
+    private static HomeMatch homeMatch(IdentityNameMatch match)
+    {
+        return match == null ? null : new HomeMatch(match.identityId(),match.systemKey(),match.homeWacn(),
+            match.homeSystemId(),match.includeNullHome());
     }
 
     private List<CandidateQuery> nameIdentityCandidateQueries(SearchFilter filter, IdentityNameMatch match)
     {
-        List<Object> values = new ArrayList<>();
-        //The scalar exact filter is already applied by candidateQuery; keep additional name owners independent.
-        String radio = match.equals(filter.radioIdentityMatch) || match.equals(filter.talkgroupIdentityMatch) ?
-            "1" : radioIdentityPredicate(match, values);
-        List<CandidateQuery> queries = new ArrayList<>(2);
-        List<Object> parameters = new ArrayList<>();
-        parameters.add(match.systemKey());
-        parameters.addAll(values);
-        boolean p25 = RadioSystemKey.isP25Native(match.systemKey());
-        queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_system_time",
-            "c.system_id=(SELECT id FROM recording_system WHERE system_key=?) AND " +
-                (p25 ? "c.protocol IN(1,2) AND " : "") + radio, parameters, "c.start_ms", "c.id"));
-        if(p25)
+        return homeIdentityCandidateQueries(filter,homeMatch(match),!match.equals(filter.talkgroupIdentityMatch));
+    }
+
+    private List<CandidateQuery> homeIdentityCandidateQueries(SearchFilter filter, HomeMatch match,
+                                                               boolean radio)
+    {
+        return homeIdentityCandidateQueries(filter,match,radio,null);
+    }
+
+    private List<CandidateQuery> homeIdentityCandidateQueries(SearchFilter filter, HomeMatch match,
+                                                               boolean radio, SelectionDriver driver)
+    {
+        List<CandidateQuery> queries = new ArrayList<>();
+        boolean sourceOnly = radio && "source".equals(filter.radioRole);
+        if(match.homeWacn() >= 0)
         {
-            //The system/time index excludes NULL; legacy captured-site proofs use the bounded ordered time index.
-            List<String> conditions = new ArrayList<>();
-            parameters = new ArrayList<>();
-            conditions.add("c.system_id IS NULL");
-            addSystemPredicate(conditions, parameters, match.systemKey(),
-                "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
-            conditions.add(radio);
-            parameters.addAll(values);
-            queries.add(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_time",
-                String.join(" AND ", conditions), parameters, "c.start_ms", "c.id"));
+            if(radio)
+                queries.add(scopedIdentityCandidate(filter,match,"recording_call c INDEXED BY " +
+                    "idx_recording_call_source_home_time", "c.source_home_wacn=? AND c.source_home_system=? " +
+                    "AND c.source_home_id=?", List.of(match.homeWacn(),match.homeSystemId(),match.identityId()),
+                    "c.start_ms","c.id",driver));
+            if(!sourceOnly)
+            {
+                queries.add(scopedIdentityCandidate(filter,match,"recording_call c INDEXED BY " +
+                    "idx_recording_call_target_home_time", "c.target_home_wacn=? AND c.target_home_system=? " +
+                    "AND c.target_home_id=? AND " + (radio ? "c.call_type=3" : "c.call_type IN(1,2)"),
+                    List.of(match.homeWacn(),match.homeSystemId(),match.identityId()),"c.start_ms","c.id",driver));
+                queries.add(scopedIdentityCandidate(filter,match,"recording_patch_member pm INDEXED BY " +
+                    "idx_recording_patch_member_home_lookup JOIN recording_call c ON c.id=pm.call_id",
+                    "pm.kind=? AND pm.home_wacn=? AND pm.home_system=? AND pm.home_id=? " +
+                    "AND pm.start_ms BETWEEN ? AND ? AND NOT EXISTS(SELECT 1 FROM recording_patch_member earlier " +
+                    "WHERE earlier.call_id=pm.call_id AND earlier.kind=pm.kind AND earlier.home_wacn=pm.home_wacn " +
+                    "AND earlier.home_system=pm.home_system AND earlier.home_id=pm.home_id AND earlier.local_id<pm.local_id)",
+                    List.of(radio ? 2 : 1,match.homeWacn(),match.homeSystemId(),match.identityId(),filter.fromMs,filter.toMs),
+                    "pm.start_ms","pm.call_id",driver));
+            }
+        }
+        if(match.homeWacn() >= 0)
+        {
+            // Older metadata can prove a home but omit the canonical number when it equals the local address.
+            if(radio)
+                queries.add(scopedIdentityCandidate(filter,match,"recording_call c INDEXED BY idx_recording_call_source_time",
+                    "c.source_id=? AND c.source_home_wacn=? AND c.source_home_system=? AND c.source_home_id IS NULL",
+                    List.of(match.identityId(),match.homeWacn(),match.homeSystemId()),"c.start_ms","c.id",driver));
+            if(!sourceOnly)
+            {
+                queries.add(scopedIdentityCandidate(filter,match,"recording_call c INDEXED BY idx_recording_call_target_time",
+                    "c.target_id=? AND c.target_home_wacn=? AND c.target_home_system=? AND c.target_home_id IS NULL AND " +
+                    (radio ? "c.call_type=3" : "c.call_type IN(1,2)"),
+                    List.of(match.identityId(),match.homeWacn(),match.homeSystemId()),"c.start_ms","c.id",driver));
+                queries.add(scopedIdentityCandidate(filter,match,"recording_patch_member pm INDEXED BY " +
+                    "idx_recording_patch_member_lookup JOIN recording_call c ON c.id=pm.call_id", "pm.kind=? AND pm.local_id=? " +
+                    "AND pm.home_wacn=? AND pm.home_system=? AND pm.home_id=-1 AND pm.start_ms BETWEEN ? AND ?",
+                    List.of(radio ? 2 : 1,match.identityId(),match.homeWacn(),match.homeSystemId(),filter.fromMs,filter.toMs),
+                    "pm.start_ms","pm.call_id",driver));
+            }
+        }
+        if(match.includeNullHome())
+        {
+            if(radio)
+                queries.add(scopedIdentityCandidate(filter,match,"recording_call c INDEXED BY idx_recording_call_source_time",
+                    "c.source_id=? AND c.source_home_wacn IS NULL AND c.source_home_system IS NULL AND c.source_home_id IS NULL",
+                    List.of(match.identityId()),"c.start_ms","c.id",driver));
+            if(!sourceOnly)
+            {
+                queries.add(scopedIdentityCandidate(filter,match,"recording_call c INDEXED BY idx_recording_call_target_time",
+                    "c.target_id=? AND c.target_home_wacn IS NULL AND c.target_home_system IS NULL AND c.target_home_id IS NULL AND " +
+                    (radio ? "c.call_type=3" : "c.call_type IN(1,2)"), List.of(match.identityId()),"c.start_ms","c.id",driver));
+                queries.add(scopedIdentityCandidate(filter,match,"recording_patch_member pm INDEXED BY " +
+                    "idx_recording_patch_member_lookup JOIN recording_call c ON c.id=pm.call_id", "pm.kind=? AND pm.local_id=? " +
+                    "AND pm.home_wacn=-1 AND pm.home_system=-1 AND pm.home_id=-1 AND pm.start_ms BETWEEN ? AND ?",
+                    List.of(radio ? 2 : 1,match.identityId(),filter.fromMs,filter.toMs),"pm.start_ms","pm.call_id",driver));
+            }
         }
         return List.copyOf(queries);
     }
 
+    private CandidateQuery scopedIdentityCandidate(SearchFilter filter, HomeMatch match, String from,
+                                                    String predicate, List<Object> values, String orderTime, String orderId,
+                                                    SelectionDriver driver)
+    {
+        List<String> conditions = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>(values);
+        conditions.add("c.protocol IN(1,2) AND " + predicate);
+        if(match.systemKey() == null) conditions.add(unknownSystemPredicate());
+        else addSystemPredicate(conditions,parameters,match.systemKey(),
+            "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+        return candidateQuery(filter,from,String.join(" AND ",conditions),parameters,orderTime,orderId,driver);
+    }
+
     private static void addRadioIdentityPredicate(List<String> conditions, List<Object> parameters,
-                                                  IdentityNameMatch match)
+                                                  HomeMatch match, String role)
     {
         if(match != null)
         {
-            conditions.add("c.protocol IN(1,2) AND " + radioIdentityPredicate(match, parameters));
+            conditions.add("c.protocol IN(1,2) AND " + radioIdentityPredicate(match, parameters, role));
         }
     }
 
     private static void addGroupIdentityPredicate(List<String> conditions, List<Object> parameters,
-                                                  IdentityNameMatch match)
+                                                  HomeMatch match)
     {
         if(match == null) return;
         String target = nameRadioValue(match, "c.target_id", "c.target_home_wacn",
@@ -830,10 +794,11 @@ final class ManagedRecordingStore implements AutoCloseable
             "AND member.kind=1 AND " + member + "))");
     }
 
-    private static String radioIdentityPredicate(IdentityNameMatch match, List<Object> parameters)
+    private static String radioIdentityPredicate(HomeMatch match, List<Object> parameters, String role)
     {
         String source = nameRadioValue(match, "c.source_id", "c.source_home_wacn",
             "c.source_home_system", "c.source_home_id", parameters);
+        if("source".equals(role)) return source;
         String target = nameRadioValue(match, "c.target_id", "c.target_home_wacn",
             "c.target_home_system", "c.target_home_id", parameters);
         String member = nameRadioValue(match, "member.local_id", "nullif(member.home_wacn,-1)",
@@ -844,7 +809,7 @@ final class ManagedRecordingStore implements AutoCloseable
     }
 
     /** Home metadata represents the permanent identity; its captured local address can differ. */
-    private static String nameRadioValue(IdentityNameMatch match, String localId, String homeWacn,
+    private static String nameRadioValue(HomeMatch match, String localId, String homeWacn,
                                          String homeSystem, String homeId, List<Object> parameters)
     {
         List<String> choices = new ArrayList<>();
@@ -865,7 +830,7 @@ final class ManagedRecordingStore implements AutoCloseable
         return choices.isEmpty() ? "0" : "(" + String.join(" OR ", choices) + ")";
     }
 
-    private CandidateQuery patchCandidateQuery(SearchFilter filter, int id, int kind)
+    private CandidateQuery patchCandidateQuery(SearchFilter filter, int id, int kind, SelectionDriver driver)
     {
         String patchPredicate = "pm.kind=? AND pm.local_id=? AND pm.start_ms BETWEEN ? AND ? " +
             "AND NOT EXISTS(SELECT 1 FROM recording_patch_member earlier WHERE " +
@@ -874,11 +839,18 @@ final class ManagedRecordingStore implements AutoCloseable
             "(pm.home_wacn,pm.home_system,pm.home_id))";
         return candidateQuery(filter, "recording_patch_member pm INDEXED BY " +
             "idx_recording_patch_member_lookup JOIN recording_call c ON c.id=pm.call_id",
-            patchPredicate, List.of(kind, id, filter.fromMs, filter.toMs), "pm.start_ms", "pm.call_id");
+            patchPredicate, List.of(kind, id, filter.fromMs, filter.toMs), "pm.start_ms", "pm.call_id",driver);
     }
 
     private CandidateQuery candidateQuery(SearchFilter filter, String from, String identityPredicate,
                                           List<Object> identityParameters, String orderTime, String orderId)
+    {
+        return candidateQuery(filter,from,identityPredicate,identityParameters,orderTime,orderId,null);
+    }
+
+    private CandidateQuery candidateQuery(SearchFilter filter, String from, String identityPredicate,
+                                          List<Object> identityParameters, String orderTime, String orderId,
+                                          SelectionDriver driver)
     {
         List<String> conditions = new ArrayList<>();
         List<Object> parameters = new ArrayList<>(identityParameters);
@@ -888,8 +860,8 @@ final class ManagedRecordingStore implements AutoCloseable
         parameters.add(filter.toMs);
         addSystemPredicate(conditions, parameters, filter.systemKey,
             "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
-        addRadioIdentityPredicate(conditions, parameters, filter.radioIdentityMatch);
-        addGroupIdentityPredicate(conditions, parameters, filter.talkgroupIdentityMatch);
+        addRadioIdentityPredicate(conditions, parameters, homeMatch(filter.radioIdentityMatch), filter.radioRole);
+        addGroupIdentityPredicate(conditions, parameters, homeMatch(filter.talkgroupIdentityMatch));
         if(filter.channelId != null && !filter.channelId.isBlank())
         {
             conditions.add("c.channel_id=(SELECT id FROM recording_channel WHERE channel_uuid=?)");
@@ -940,13 +912,20 @@ final class ManagedRecordingStore implements AutoCloseable
             conditions.add("c.voice_type=?");
             parameters.add(voiceTypeFilter(filter.voiceType));
         }
+        addNumericIdentityPredicates(conditions, parameters, filter);
+        addSelectionPredicate(conditions, parameters, driver != null && !driver.radio() ?
+            List.of(driver.selection()) : filter.talkgroupSelections, false, filter.radioRole);
+        addSelectionPredicate(conditions, parameters, driver != null && driver.radio() ?
+            List.of(driver.selection()) : filter.radioSelections, true, filter.radioRole);
+        addTonePredicate(conditions, parameters, filter);
         addTranscriptPredicate(conditions, parameters, filter.transcript);
         if(filter.cursor != null && !filter.cursor.isBlank())
         {
             long[] cursor = decodeCursor(filter.cursor);
             String compare = filter.sortAscending ? ">" : "<";
-            conditions.add("(c.start_ms" + compare + "? OR (c.start_ms=? AND c.id" + compare + "?))");
+            conditions.add(orderTime + (filter.sortAscending ? ">=?" : "<=?"));
             parameters.add(cursor[0]);
+            conditions.add("(" + orderTime + "," + orderId + ")" + compare + "(?,?)");
             parameters.add(cursor[0]);
             parameters.add(cursor[1]);
         }
@@ -956,6 +935,155 @@ final class ManagedRecordingStore implements AutoCloseable
             orderId + " " + order + " LIMIT ?";
         parameters.add(filter.limit + 1);
         return new CandidateQuery(sql, List.copyOf(parameters));
+    }
+
+    private static void addNumericIdentityPredicates(List<String> conditions, List<Object> parameters,
+                                                      SearchFilter filter)
+    {
+        if(filter.talkgroupId != null)
+            conditions.add(numericIdentityPredicate(parameters, filter.talkgroupId, null, true, false, false));
+        if(filter.talkgroupMin != null)
+            conditions.add(numericIdentityPredicate(parameters, filter.talkgroupMin, filter.talkgroupMax,
+                true, false, false));
+        if(filter.sourceId != null)
+            conditions.add(numericIdentityPredicate(parameters, filter.sourceId, null, false, true,
+                "source".equals(filter.radioRole)));
+        if(filter.sourceMin != null)
+            conditions.add(numericIdentityPredicate(parameters, filter.sourceMin, filter.sourceMax, false, true,
+                "source".equals(filter.radioRole)));
+        List<Integer> ids = new ArrayList<>(filter.anyIdentityIds);
+        if(filter.anyIdentityId != null && !ids.contains(filter.anyIdentityId)) ids.add(filter.anyIdentityId);
+        if(!ids.isEmpty())
+        {
+            List<String> choices = new ArrayList<>();
+            for(int id: ids) choices.add(numericIdentityPredicate(parameters,id,null,false,false,false));
+            conditions.add("(" + String.join(" OR ",choices) + ")");
+        }
+    }
+
+    private static String numericIdentityPredicate(List<Object> parameters, int first, Integer last,
+                                                    boolean group, boolean radio, boolean sourceOnly)
+    {
+        List<String> choices = new ArrayList<>();
+        String comparison = last == null ? "=?" : " BETWEEN ? AND ?";
+        if(!group)
+        {
+            choices.add("c.source_id" + comparison);
+            parameters.add(first); if(last != null) parameters.add(last);
+        }
+        if(!sourceOnly)
+        {
+            choices.add("(" + (group ? "c.call_type IN(1,2) AND " : radio ? "c.call_type=3 AND " : "") +
+                "c.target_id" + comparison + ")");
+            parameters.add(first); if(last != null) parameters.add(last);
+            choices.add("EXISTS(SELECT 1 FROM recording_patch_member identity_member WHERE " +
+                "identity_member.call_id=c.id AND " + (group ? "identity_member.kind=1 AND " :
+                    radio ? "identity_member.kind=2 AND " : "") + "identity_member.local_id" + comparison + ")");
+            parameters.add(first); if(last != null) parameters.add(last);
+        }
+        return "(" + String.join(" OR ",choices) + ")";
+    }
+
+    private static void addSelectionPredicate(List<String> conditions, List<Object> parameters,
+                                              List<Selection> selections, boolean radio, String role)
+    {
+        if(selections.isEmpty()) return;
+        Map<String,List<Selection>> bySystem = new LinkedHashMap<>();
+        for(Selection selection: selections)
+            bySystem.computeIfAbsent(selection.systemKey(),ignored -> new ArrayList<>()).add(selection);
+        List<String> choices = new ArrayList<>();
+        for(var entry: bySystem.entrySet())
+        {
+            List<String> scoped = new ArrayList<>();
+            if(entry.getKey() == null) scoped.add(unknownSystemPredicate());
+            else addSystemPredicate(scoped,parameters,entry.getKey(),
+                "c.system_id=(SELECT id FROM recording_system WHERE system_key=?)");
+            if(!radio) scoped.add("c.protocol IN(1,2,3,4)");
+            List<Integer> rawIds = new ArrayList<>();
+            List<RadioSystemIdentityKey.Identity> homes = new ArrayList<>();
+            for(Selection selection: entry.getValue())
+                if(selection.identityKey() == null) rawIds.add(selection.id());
+                else homes.add(RadioSystemIdentityKey.parse(selection.identityKey()));
+            List<String> roles = new ArrayList<>();
+            if(radio)
+                roles.add(selectionValue(parameters,"c.source_id","c.source_home_wacn",
+                    "c.source_home_system","c.source_home_id",rawIds,homes));
+            if(!radio || !"source".equals(role))
+            {
+                roles.add("(" + (radio ? "c.call_type=3" : "c.call_type IN(1,2)") + " AND " +
+                    selectionValue(parameters,"c.target_id","c.target_home_wacn",
+                        "c.target_home_system","c.target_home_id",rawIds,homes) + ")");
+                roles.add("EXISTS(SELECT 1 FROM recording_patch_member selected_member WHERE " +
+                    "selected_member.call_id=c.id AND selected_member.kind=" + (radio ? 2 : 1) + " AND " +
+                    selectionValue(parameters,"selected_member.local_id","nullif(selected_member.home_wacn,-1)",
+                        "nullif(selected_member.home_system,-1)","nullif(selected_member.home_id,-1)",rawIds,homes) + ")");
+            }
+            scoped.add("(" + String.join(" OR ",roles) + ")");
+            choices.add("(" + String.join(" AND ",scoped) + ")");
+        }
+        conditions.add("(" + String.join(" OR ",choices) + ")");
+    }
+
+    /** Keep each receiving scope once, with compact local-number and canonical-home membership probes. */
+    private static String selectionValue(List<Object> parameters, String local, String homeWacn,
+                                          String homeSystem, String homeId, List<Integer> rawIds,
+                                          List<RadioSystemIdentityKey.Identity> homes)
+    {
+        List<String> choices = new ArrayList<>();
+        if(!rawIds.isEmpty())
+        {
+            choices.add("(" + homeWacn + " IS NULL AND " + homeSystem + " IS NULL AND " + homeId +
+                " IS NULL AND " + local + " IN(" + String.join(",",java.util.Collections.nCopies(rawIds.size(),"?")) + "))");
+            parameters.addAll(rawIds);
+        }
+        if(!homes.isEmpty())
+        {
+            choices.add("(c.protocol IN(1,2) AND (" + homeWacn + "," + homeSystem + ",coalesce(" + homeId + "," +
+                local + ")) IN(" + String.join(",",java.util.Collections.nCopies(homes.size(),"(?,?,?)")) + "))");
+            for(RadioSystemIdentityKey.Identity identity: homes)
+            {
+                parameters.add(identity.homeWacn()); parameters.add(identity.homeSystemId());
+                parameters.add(identity.identityId());
+            }
+        }
+        return "(" + String.join(" OR ",choices) + ")";
+    }
+
+    /** Same unresolved routing rule as mapCall, without borrowing a system from disagreeing observed sites. */
+    private static String unknownSystemPredicate()
+    {
+        return "(c.system_id IS NULL AND (c.protocol NOT IN(1,2) OR (c.winner_site_id IS NULL AND (" +
+            "NOT EXISTS(SELECT 1 FROM recording_call_site unknown_site WHERE unknown_site.call_id=c.id) OR " +
+            "EXISTS(SELECT 1 FROM recording_call_site ua JOIN recording_site sa ON sa.id=ua.site_id " +
+            "JOIN recording_call_site ub ON ub.call_id=ua.call_id JOIN recording_site sb ON sb.id=ub.site_id " +
+            "WHERE ua.call_id=c.id AND (sa.wacn<>sb.wacn OR sa.system_id<>sb.system_id))))))";
+    }
+
+    private static void addTonePredicate(List<String> conditions, List<Object> parameters, SearchFilter filter)
+    {
+        if(filter.toneFrequencyHz != null)
+        {
+            String first = toneFrequencyPredicate(parameters,"tone_a",filter.toneFrequencyHz,filter.toneToleranceHz);
+            if(filter.toneThenHz == null)
+                conditions.add("EXISTS(SELECT 1 FROM recording_tone tone_a WHERE tone_a.call_id=c.id AND " + first + ")");
+            else
+            {
+                String next = toneFrequencyPredicate(parameters,"tone_b",filter.toneThenHz,filter.toneToleranceHz);
+                conditions.add("EXISTS(SELECT 1 FROM recording_tone tone_a JOIN recording_tone tone_b " +
+                    "ON tone_b.call_id=tone_a.call_id AND tone_b.ordinal=tone_a.ordinal+1 " +
+                    "WHERE tone_a.call_id=c.id AND " + first + " AND " + next + ")");
+            }
+        }
+        else if(filter.pagingTones != null)
+            conditions.add("EXISTS(SELECT 1 FROM recording_tone_sequence tone_sequence WHERE tone_sequence.call_id=c.id)");
+    }
+
+    private static String toneFrequencyPredicate(List<Object> parameters, String alias, double frequency, double tolerance)
+    {
+        long low = Math.max(1L,(long)Math.ceil((frequency-tolerance)*1000));
+        long high = Math.min(8_000_000L,(long)Math.floor((frequency+tolerance)*1000));
+        parameters.add(low); parameters.add(high); parameters.add(low); parameters.add(high);
+        return "(" + alias + ".frequency_1_millihz BETWEEN ? AND ? OR " + alias + ".frequency_2_millihz BETWEEN ? AND ?)";
     }
 
     private static void addTranscriptPredicate(List<String> conditions, List<Object> parameters, String text)

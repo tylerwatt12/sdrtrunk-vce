@@ -12,6 +12,7 @@ package io.github.dsheirer.record.managed;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -734,6 +735,22 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         }
     }
 
+    /** A picker choice scopes a captured or canonical identity to exactly one receiving system. */
+    public record Selection(int id, String systemKey, String identityKey)
+    {
+        public Selection
+        {
+            if(id < 0 || id > 0xFFFFFF || systemKey != null && (systemKey.isBlank() || systemKey.length() > 160))
+                throw new IllegalArgumentException("Invalid recording identity selection");
+            if(identityKey != null)
+            {
+                RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(identityKey);
+                if(!identity.hasHome() || systemKey != null && !RadioSystemKey.isP25Native(systemKey))
+                    throw new IllegalArgumentException("A qualified selection requires its P25 receiving system");
+            }
+        }
+    }
+
     /** Search parameters are immutable, and every query is constrained to a bounded time window and page size. */
     public static final class SearchFilter
     {
@@ -754,6 +771,13 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final Integer talkgroupMin;
         public final Integer talkgroupMax;
         public final Integer sourceId;
+        public final List<Selection> talkgroupSelections;
+        public final List<Selection> radioSelections;
+        public final String radioRole;
+        public final String pagingTones;
+        public final Double toneFrequencyHz;
+        public final Double toneThenHz;
+        public final double toneToleranceHz;
         public final IdentityNameMatch radioIdentityMatch;
         public final IdentityNameMatch talkgroupIdentityMatch;
         public final Integer sourceMin;
@@ -792,6 +816,21 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             talkgroupMin = builder.talkgroupMin;
             talkgroupMax = builder.talkgroupMax;
             sourceId = builder.sourceId;
+            talkgroupSelections = selections(builder.talkgroupSelections, false);
+            radioSelections = selections(builder.radioSelections, true);
+            radioRole = builder.radioRole != null ? builder.radioRole : "any";
+            if(!"any".equals(radioRole) && !"source".equals(radioRole))
+                throw new IllegalArgumentException("Invalid recording radio role");
+            pagingTones = builder.pagingTones;
+            if(pagingTones != null && !"detected".equals(pagingTones))
+                throw new IllegalArgumentException("Invalid recording paging tone filter");
+            toneFrequencyHz = builder.toneFrequencyHz;
+            toneThenHz = builder.toneThenHz;
+            toneToleranceHz = builder.toneToleranceHz != null ? builder.toneToleranceHz : 20.;
+            if(!validFrequency(toneFrequencyHz) || !validFrequency(toneThenHz) ||
+                toneThenHz != null && toneFrequencyHz == null || !Double.isFinite(toneToleranceHz) ||
+                toneToleranceHz < 0 || toneToleranceHz > 1000)
+                throw new IllegalArgumentException("Invalid recording tone frequency or tolerance");
             radioIdentityMatch = builder.radioIdentityMatch;
             talkgroupIdentityMatch = builder.talkgroupIdentityMatch;
             if(talkgroupIdentityMatch != null && (!RadioSystemKey.isP25Native(systemKey) ||
@@ -843,6 +882,27 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             limit = Math.max(1, Math.min(MAX_PAGE_SIZE, builder.limit));
         }
 
+        private static boolean validFrequency(Double value)
+        {
+            return value == null || Double.isFinite(value) && value > 0 && value <= 8000;
+        }
+
+        private static List<Selection> selections(List<Selection> values, boolean radio)
+        {
+            if(values == null) return List.of();
+            if(values.size() > 100 || values.stream().anyMatch(Objects::isNull))
+                throw new IllegalArgumentException("Too many or invalid recording selections");
+            for(Selection value: values)
+            {
+                if(value.identityKey() == null) continue;
+                int kind = RadioSystemIdentityKey.parse(value.identityKey()).kindCode();
+                if(radio ? kind != RadioSystemIdentityKey.KIND_RADIO :
+                    kind != RadioSystemIdentityKey.KIND_TALKGROUP && kind != RadioSystemIdentityKey.KIND_PATCH_GROUP)
+                    throw new IllegalArgumentException("Recording selection identity has the wrong kind");
+            }
+            return values.stream().distinct().toList();
+        }
+
         public static Builder builder()
         {
             return new Builder();
@@ -855,6 +915,9 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             private Integer wacn, systemId, rfss, siteId, talkgroupId, talkgroupMin, talkgroupMax,
                 sourceId, sourceMin, sourceMax, anyIdentityId;
             private List<Integer> anyIdentityIds;
+            private List<Selection> talkgroupSelections, radioSelections;
+            private String radioRole, pagingTones;
+            private Double toneFrequencyHz, toneThenHz, toneToleranceHz;
             private List<IdentityNameMatch> identityNameMatches;
             private IdentityNameMatch radioIdentityMatch, talkgroupIdentityMatch;
             private boolean sortAscending;
@@ -875,6 +938,13 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder talkgroupMin(Integer value) { talkgroupMin = value; return this; }
             public Builder talkgroupMax(Integer value) { talkgroupMax = value; return this; }
             public Builder sourceId(Integer value) { sourceId = value; return this; }
+            public Builder talkgroupSelections(List<Selection> value) { talkgroupSelections = value; return this; }
+            public Builder radioSelections(List<Selection> value) { radioSelections = value; return this; }
+            public Builder radioRole(String value) { radioRole = value; return this; }
+            public Builder pagingTones(String value) { pagingTones = value; return this; }
+            public Builder toneFrequencyHz(Double value) { toneFrequencyHz = value; return this; }
+            public Builder toneThenHz(Double value) { toneThenHz = value; return this; }
+            public Builder toneToleranceHz(Double value) { toneToleranceHz = value; return this; }
             public Builder radioIdentityMatch(IdentityNameMatch value) { radioIdentityMatch = value; return this; }
             public Builder talkgroupIdentityMatch(IdentityNameMatch value) { talkgroupIdentityMatch = value; return this; }
             public Builder sourceMin(Integer value) { sourceMin = value; return this; }

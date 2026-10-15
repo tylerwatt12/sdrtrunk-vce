@@ -21,14 +21,15 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 5;
+    public static final int CURRENT_FORMAT_VERSION = 6;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
     private static final Map<String,String> FORMAT_TWO_DDL = formatTwoSchema();
     private static final Map<String,String> FORMAT_THREE_DDL = formatThreeSchema();
     private static final Map<String,String> FORMAT_FOUR_DDL = formatFourSchema();
-    static final Map<String,String> DDL = formatFiveSchema();
+    private static final Map<String,String> FORMAT_FIVE_DDL = formatFiveSchema();
+    static final Map<String,String> DDL = formatSixSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -41,7 +42,8 @@ public final class ManagedRecordingSchema
             case 2 -> FORMAT_TWO_DDL;
             case 3 -> FORMAT_THREE_DDL;
             case 4 -> FORMAT_FOUR_DDL;
-            case 5 -> DDL;
+            case 5 -> FORMAT_FIVE_DDL;
+            case 6 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -131,8 +133,35 @@ public final class ManagedRecordingSchema
 
     private static Map<String,String> formatFiveSchema()
     {
-        Map<String,String> schema = new LinkedHashMap<>(FORMAT_THREE_DDL);
-        schema.putAll(ManagedRecordingTones.ddl());
+        // Frozen format 5 must not follow future changes to the current tone creator.
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_FOUR_DDL);
+        schema.put("recording_tone_sequence", FORMAT_FOUR_DDL.get("recording_tone_sequence")
+            .replace("method_code IN(1,2)", "method_code IN(1,2,3)")
+            .replace("CHECK(source_code=method_code)",
+                "CHECK((source_code=1 AND method_code IN(1,3)) OR (source_code=2 AND method_code=2))"));
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    /** Ordered lookup paths for qualified identities and the existing categorical recording filters. */
+    private static Map<String,String> formatSixSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_FIVE_DDL);
+        schema.put("idx_recording_call_unowned_time", "CREATE INDEX idx_recording_call_unowned_time " +
+            "ON recording_call(start_ms DESC,id DESC) WHERE system_id IS NULL");
+        schema.put("idx_recording_call_source_home_time", "CREATE INDEX idx_recording_call_source_home_time " +
+            "ON recording_call(source_home_wacn,source_home_system,source_home_id,start_ms DESC,id DESC,system_id) " +
+            "WHERE source_home_id IS NOT NULL");
+        schema.put("idx_recording_call_target_home_time", "CREATE INDEX idx_recording_call_target_home_time " +
+            "ON recording_call(target_home_wacn,target_home_system,target_home_id,start_ms DESC,id DESC,call_type,system_id) " +
+            "WHERE target_home_id IS NOT NULL");
+        schema.put("idx_recording_patch_member_home_lookup", "CREATE INDEX idx_recording_patch_member_home_lookup " +
+            "ON recording_patch_member(kind,home_wacn,home_system,home_id,start_ms DESC,call_id DESC,local_id)");
+        schema.put("idx_recording_call_protocol_time", "CREATE INDEX idx_recording_call_protocol_time " +
+            "ON recording_call(protocol,start_ms DESC,id DESC)");
+        schema.put("idx_recording_call_call_type_time", "CREATE INDEX idx_recording_call_call_type_time " +
+            "ON recording_call(call_type,start_ms DESC,id DESC)");
+        schema.put("idx_recording_call_voice_type_time", "CREATE INDEX idx_recording_call_voice_type_time " +
+            "ON recording_call(voice_type,start_ms DESC,id DESC)");
         return java.util.Collections.unmodifiableMap(schema);
     }
 
