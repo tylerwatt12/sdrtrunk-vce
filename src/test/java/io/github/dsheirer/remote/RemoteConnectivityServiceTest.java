@@ -9,6 +9,8 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
+import io.github.dsheirer.channel.ChannelAdministrationService;
+import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -45,6 +47,7 @@ import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -54,6 +57,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -346,6 +350,81 @@ class RemoteConnectivityServiceTest
         }
     }
 
+    @Test
+    void renamedRemoteChannelRebindsTheExistingStreamAfterItsOldSourceHasBeenDetached() throws Exception
+    {
+        int port = availablePort();
+        try(Installation host = new Installation(mTemp.resolve("rename-host")))
+        {
+            CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Synthetic sender"));
+            host.remote.start();
+            host.remote.updateListener(host.remote.snapshot().revision(), new ListenerUpdate(true, "127.0.0.1", port));
+            await(() -> host.remote.snapshot().listener().state() == ListenerState.LISTENING);
+            try(RemoteLinkTransport.Connection sender = RemoteLinkTransport.connect("127.0.0.1", port,
+                pair.senderId(), pair.secret(), NO_OP_LISTENER))
+            {
+                String feedId = UUID.randomUUID().toString();
+                String streamId = UUID.randomUUID().toString();
+                assertTrue(sender.offer(new Frame(Type.CATALOG, RemoteWireMessages.json(
+                    new RemoteWireMessages.Catalog(List.of(new RemoteWireMessages.Feed(feedId, "System", "Site",
+                        "Original", "P25_PHASE1", 851_012_500L, true)))))));
+                await(() -> host.remote.snapshot().senders().stream().anyMatch(peer ->
+                    pair.senderId().equals(peer.senderId()) && peer.feeds().stream().anyMatch(feed ->
+                        feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null)));
+                Channel original = host.configuration.getChannelModel().getChannels().stream().filter(channel ->
+                    channel.getSourceConfiguration() instanceof SourceConfigRemote source &&
+                        pair.senderId().equals(source.getSenderId()) && feedId.equals(source.getFeedId()))
+                    .findFirst().orElseThrow();
+                var processing = host.configuration.getChannelProcessingManager();
+                await(() -> processing.getProcessingChain(original) != null &&
+                    processing.getProcessingChain(original).isProcessing());
+                var oldChain = processing.getProcessingChain(original);
+                RemoteP25BitstreamSource oldSource = (RemoteP25BitstreamSource)oldChain.getSource();
+                CountDownLatch beforeRename = new CountDownLatch(1);
+                oldSource.setRemoteBitstreamListener(packet -> beforeRename.countDown());
+                assertTrue(sender.offer(new Frame(Type.OPEN, RemoteWireMessages.json(new RemoteWireMessages.Open(
+                    streamId, feedId, true, "PHASE_1", 851_012_500L, 1L,
+                    System.currentTimeMillis(), null, null, null)))));
+                assertTrue(sender.offer(data(streamId, 0L)));
+                assertTrue(beforeRename.await(3, TimeUnit.SECONDS), "The original live stream must deliver data");
+
+                var entry = host.channels.get(original.getConfigurationId());
+                ChannelDefinition current = entry.channel();
+                ChannelDefinition renamed = new ChannelDefinition(current.configurationId(), current.protocolId(),
+                    "Official system", "Official site", "Official name", current.radioResolveId(), current.aliasListId(),
+                    current.source(), current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
+                    current.auxiliaryDecoders(), current.observed());
+                host.channels.update(current.configurationId(), renamed, entry.revision());
+                assertNull(oldChain.getSource(), "Normal channel shutdown detaches its source before notification");
+                Channel replacement = host.configuration.getChannelModel().getChannels().stream().filter(channel ->
+                    original.getConfigurationId().equals(channel.getConfigurationId())).findFirst().orElseThrow();
+                assertNotSame(original, replacement);
+                var newChain = processing.getProcessingChain(replacement);
+                RemoteP25BitstreamSource newSource = (RemoteP25BitstreamSource)newChain.getSource();
+                assertNotSame(oldSource, newSource);
+                CountDownLatch afterRename = new CountDownLatch(2);
+                newSource.setRemoteBitstreamListener(packet -> afterRename.countDown());
+                assertTrue(sender.offer(data(streamId, 1L)));
+                await(() -> afterRename.getCount() == 1);
+                //A delayed old stop must not remove the replacement's binding, even for the same saved identity.
+                host.remote.channelStopped(original, oldChain);
+                host.remote.channelStopped(replacement, oldChain);
+                assertTrue(sender.offer(data(streamId, 2L)));
+                assertTrue(afterRename.await(3, TimeUnit.SECONDS), "The same stream must still reach the replacement source");
+                await(() -> host.remote.originSnapshot().find(replacement.getConfigurationId()).dependencyState() ==
+                    DependencyState.READY);
+                assertEquals(1, host.configuration.getChannelModel().getChannels().size());
+            }
+        }
+    }
+
+    private static Frame data(String streamId, long sequence) throws java.io.IOException
+    {
+        return new Frame(Type.DATA, RemoteWireMessages.encodeData(new RemoteWireMessages.Data(streamId, 1L,
+            sequence, System.currentTimeMillis(), new byte[300])));
+    }
+
     private static void await(java.util.function.BooleanSupplier condition) throws Exception
     {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
@@ -361,6 +440,7 @@ class RemoteConnectivityServiceTest
     {
         private final ConfigurationManager configuration;
         private final RemoteConnectivityService remote;
+        private final ChannelAdministrationService channels;
 
         private Installation(Path root) throws Exception
         {
@@ -370,8 +450,8 @@ class RemoteConnectivityServiceTest
             configuration = new ConfigurationManager(preferences, null, aliases,
                 new EventLogManager(aliases, preferences), null);
             configuration.init();
-            remote = new RemoteConnectivityService(configuration,
-                ChannelAdministrationServiceTestSupport.create(configuration));
+            channels = ChannelAdministrationServiceTestSupport.create(configuration);
+            remote = new RemoteConnectivityService(configuration, channels);
             configuration.getChannelProcessingManager().setP25RemoteBitstreamService(remote);
         }
 

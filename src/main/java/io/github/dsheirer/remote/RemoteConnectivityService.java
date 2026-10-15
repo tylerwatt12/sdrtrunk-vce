@@ -176,7 +176,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     public void channelStarted(Channel channel, ChannelStartProcessingRequest request, ProcessingChain chain)
     {
         if(channel == null || chain == null) return;
-        ActiveChain active = new ActiveChain(channel, request, chain);
+        ActiveChain active = new ActiveChain(channel, request, chain, chain.getSource());
         ActiveChain replaced = mActiveChains.put(channel, active);
         synchronized(mExports)
         {
@@ -192,7 +192,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                 for(Map.Entry<StreamKey,BoundStream> entry: Map.copyOf(mOpenSources).entrySet())
                 {
                     BoundStream bound = entry.getValue();
-                    if(bound.open.control() && bound.source == replaced.chain().getSource() &&
+                    if(bound.open.control() && bound.source == replaced.source() &&
                         remote.getSenderId().equals(entry.getKey().senderId()) &&
                         remote.getFeedId().equals(bound.open.feedId()))
                     {
@@ -225,7 +225,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
         if(channel.getSourceConfiguration() instanceof SourceConfigRemote remote && channel.isStandardChannel())
         {
-            if(chain.getSource() instanceof RemoteP25BitstreamSource source)
+            if(active.source() instanceof RemoteP25BitstreamSource source)
             {
                 mWaitingSources.remove(new FeedKey(remote.getSenderId(), remote.getFeedId()), source);
             }
@@ -233,7 +233,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             {
                 BoundStream bound = entry.getValue();
                 if(bound.open.control() && remote.getSenderId().equals(entry.getKey().senderId()) &&
-                    remote.getFeedId().equals(bound.open.feedId()) && bound.source == chain.getSource())
+                    remote.getFeedId().equals(bound.open.feedId()) && bound.source == active.source())
                 {
                     mOpenSources.remove(entry.getKey(), bound);
                 }
@@ -1519,7 +1519,9 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
     }
 
-    private record ActiveChain(Channel channel, ChannelStartProcessingRequest request, ProcessingChain chain)
+    // Retain the source identity because ProcessingChain.stop() detaches it before channelStopped is notified.
+    private record ActiveChain(Channel channel, ChannelStartProcessingRequest request, ProcessingChain chain,
+                               Source source)
     {
     }
 
