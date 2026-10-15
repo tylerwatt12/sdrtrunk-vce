@@ -44,6 +44,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
@@ -189,7 +191,7 @@ public final class ApplicationMigrationService
         Files.createDirectories(targetParent);
         listener.update("Checking previous data");
         ApprovedMigrationPlan expectedPlan = approvedPlan != null ? approvedPlan :
-            readMigrationApproval(sourceDatabase, targetParent);
+            readMigrationApproval(source, targetParent);
         listener.update("Migration plan: " + describePlan(expectedPlan.plan()));
         listener.update("Migration scope: " + describeScope(inputScope));
         FileAccessAttributeSnapshot targetRootAttributes =
@@ -213,10 +215,27 @@ public final class ApplicationMigrationService
             requireApprovedPlan(expectedPlan, stagedPlan, "source database selected after confirmation");
             DatabaseMigrationChain.PreflightReport sourcePlan = stagedPlan.plan();
 
+            LegacyReceiverSettingsMigration.Snapshot legacySnapshot = null;
+            if(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE)
+            {
+                LegacyReceiverSettingsMigration.Snapshot actual = LegacyReceiverSettingsMigration.captureMissing(
+                    sourceRoot, stagedDatabase, sourcePlan.source().version());
+                legacySnapshot = expectedPlan.mLegacyReceiverSettings;
+                if(legacySnapshot == null)
+                {
+                    if(!actual.values().isEmpty())
+                        throw new IOException("Review the complete source folder again before importing its legacy receiver settings");
+                    legacySnapshot = actual;
+                }
+                legacySnapshot.requireUnchanged(actual);
+                LegacyReceiverSettingsMigration.stage(legacySnapshot, stageRoot);
+            }
+
             listener.update("Updating database");
             String helperOutput = inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
                 mMigrationRunner.run(stagedDatabase, sourceRoot, targetRoot) :
                 mMigrationRunner.run(stagedDatabase, null, null);
+            LegacyReceiverSettingsMigration.removeStage(stageRoot);
 
             listener.update("Checking updated data");
             InitialAdminSetup.initializeNewProfile(stagedDatabase);
@@ -238,6 +257,9 @@ public final class ApplicationMigrationService
             }
 
             listener.update("Finishing");
+            if(legacySnapshot != null)
+                legacySnapshot.requireUnchanged(LegacyReceiverSettingsMigration.capture(sourceRoot,
+                    legacySnapshot.fingerprints().keySet()));
             if(targetRootAttributes != null)
             {
                 targetRootAttributes.applyTo(stageRoot);
@@ -470,6 +492,21 @@ public final class ApplicationMigrationService
     public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
+        return migrateCurrent(dataRoot, createBackup, Map.of(), progress);
+    }
+
+    /** Returns only labels' stable keys; callers must explicitly offer recovery, never infer user intent from defaults. */
+    public static Set<String> availableRecoveryKeys(Path dataRoot) throws IOException, SQLException
+    {
+        return LegacyReceiverSettingsMigration.availableRecoveryKeys(dataRoot.toAbsolutePath().normalize());
+    }
+
+    /** Explicit recovery is limited to selected legacy settings whose reviewed SQLite defaults remain unchanged. */
+    public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup,
+        Map<String,String> expectedLegacyDefaults, ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        Map<String,String> recovery = Map.copyOf(Objects.requireNonNull(expectedLegacyDefaults));
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot.toAbsolutePath().normalize());
         SqliteDatabaseSnapshot.requireSourceUsable(database);
@@ -497,7 +534,7 @@ public final class ApplicationMigrationService
                     requireNoSidecars(incomplete, "The recovery backup must be a standalone SQLite snapshot.");
                     moveAtomically(incomplete, backup);
                     backedUp.set(true);
-                } : null);
+                } : null, recovery);
             String backupReport = backedUp.get() ? "Recovery backup retained: " + backup :
                 createBackup ? "No recovery backup was needed; the database was already current." :
                     "WARNING: Recovery backup skipped by operator choice.";
@@ -620,6 +657,18 @@ public final class ApplicationMigrationService
             throw new IOException("The selected SQLite database has no parent directory: " + normalized);
         }
         return readMigrationApproval(normalized, parent);
+    }
+
+    /** Binds profile-owned legacy configuration files only when the operator selected the complete folder. */
+    public static ApprovedMigrationPlan readMigrationApproval(PreviousBuildLocator.Selection source, Path scratchDirectory)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(source);
+        ApprovedMigrationPlan database = readMigrationApproval(source.database(), scratchDirectory);
+        if(!source.portableProfile()) return database;
+        LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.captureMissing(
+            source.path(), source.database(), database.plan().source().version());
+        return new ApprovedMigrationPlan(database.plan(), database.sourceContentSha256(), legacy);
     }
 
     /** Creates approval scratch data beside the caller's selected destination rather than in the JVM temp volume. */
@@ -1689,11 +1738,19 @@ public final class ApplicationMigrationService
     {
         private final DatabaseMigrationChain.PreflightReport mPlan;
         private final String mSourceContentSha256;
+        private final LegacyReceiverSettingsMigration.Snapshot mLegacyReceiverSettings;
 
         private ApprovedMigrationPlan(DatabaseMigrationChain.PreflightReport plan, String sourceContentSha256)
         {
+            this(plan, sourceContentSha256, null);
+        }
+
+        private ApprovedMigrationPlan(DatabaseMigrationChain.PreflightReport plan, String sourceContentSha256,
+                                     LegacyReceiverSettingsMigration.Snapshot legacyReceiverSettings)
+        {
             mPlan = Objects.requireNonNull(plan);
             mSourceContentSha256 = Objects.requireNonNull(sourceContentSha256);
+            mLegacyReceiverSettings = legacyReceiverSettings;
         }
 
         public DatabaseMigrationChain.PreflightReport plan()

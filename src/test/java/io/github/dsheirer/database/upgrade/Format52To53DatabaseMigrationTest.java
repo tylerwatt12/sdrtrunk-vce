@@ -46,11 +46,12 @@ class Format52To53DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-52-to-53"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-52-to-53", "format-53-to-54"),
+                report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(3, report.steps().getFirst().effects().getLast().affectedRows());
             assertEquals(before, retainedContents(connection));
             assertDefaults(connection);
-            assertEquals(53, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             integrity(connection);
         }
@@ -132,7 +133,7 @@ class Format52To53DatabaseMigrationTest
             try(Connection connection = open(database))
             {
                 assertDefaults(connection);
-                assertEquals(53, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 integrity(connection);
             }
         }

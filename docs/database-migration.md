@@ -61,8 +61,15 @@ new reception rebuilds those observations. An unusable setting or configuration 
 or skipped independently. The plan describes these possibilities and the final report names the actual effects.
 
 Remote Links pairing and connection settings, paging-tone detection, and voice-enhancement choices are stored in the
-application database. Both folder imports and SQLite-only imports preserve these saved choices with the rest of the
-database configuration.
+application database. Upgrading an older profile or importing its complete data folder also imports these three
+settings from their former JSON files when the database has no saved value. The original files remain unchanged.
+A SQLite-only import preserves choices already stored in the selected database; it does not read neighboring JSON
+files. Choose the complete folder when moving settings that an older build still kept outside SQLite.
+
+An earlier format-53 update could create defaults without importing the old JSON files. A later update preserves
+those database choices because a default may also be an intentional selection. Setup offers optional recovery for
+valid legacy files whose corresponding database values are still defaults. Select only the settings you want to
+recover; recovery stops if the reviewed database value changes. Newer or non-default database choices are retained.
 
 A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
 Missing or unusable optional files are reported; you can select or set them up again. Logs, recordings, screenshots,
@@ -181,7 +188,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -716,6 +723,28 @@ database contents. The table layout is unchanged, so the authoritative global ma
 formats. Format 52 keeps its frozen populated fixture and signature; the adjacent migration, rollback, and retry
 checks reach the same exact format-53 contract.
 
+The format 53-to-54 step versions the profile-scoped import of the three configuration files converted to SQLite:
+`remote-links/settings.json`, `audio-analysis/paging-tones.json`, and `audio-models/selection.json`. For an owned
+profile update or explicitly selected complete folder whose source format is 52 or earlier, the Application Migrator
+captures bounded validated values and imports only absent database settings before the 52-to-53 step creates its
+remaining defaults. Existing SQLite values always take precedence. Voice-enhancement version-1 and version-2 files
+contribute only their enabled choice; the selected JMBE library owns the voice model.
+
+Format-53 or later profiles retain every existing database value automatically. Recovery from a retained legacy file
+requires an explicit selection and a reviewed expected default value; the same writer transaction refuses a changed
+or non-default database value. This also permits explicit recovery after an ordinary update has already reached
+format 54. No runtime service imports files or repairs settings at startup. Fresh creation uses the existing typed
+SQLite defaults, and the table layout is unchanged. The authoritative format marker distinguishes this semantic
+contract; populated format-53 fixtures remain frozen and supported.
+
+Folder approval binds the three eligible files, including their absence, to immutable validated input. Import refuses
+a source changed after review, and the bundled child reads only private staged copies. SQLite-file-only imports and
+replacement never read the source or destination's neighboring files. Malformed, oversized, symbolic-linked, or
+unsupported eligible files refuse safely without displaying their contents or credentials. Original files are never
+rewritten, removed, or permission-adjusted. Completion reports imported and explicitly recovered setting counts.
+Upload-queue manifests, backup receipts, recordings, bundled resources, and diagnostic JSON are not these converted
+configuration files and retain their existing ownership and lifecycle.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -732,7 +761,7 @@ allocator, adding no historical tone rows. The exact format-3 signature remains 
 creator; fresh and migrated format-4 catalogs share the same authoritative definitions. Catalog format 5 admits the
 same new nominal-frequency PCM method, preserving every existing recording and tone fact through its adjacent
 format-4-to-5 step. The format-4 signature remains frozen and the upgrade neither converts old measured frequencies
-nor backfills tones. The main application database is independently at format 53; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+nor backfills tones. The main application database is independently at format 54; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -832,8 +861,8 @@ interrupted. Old in-memory preferences are closed before replacement and are nev
 ## Input Scope
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
-as the vault, JMBE library, optional modules, and paths that need remapping. Remote Links settings and the paging-tone
-and voice-enhancement choices are part of the application database for every import scope. Remote Links network
+as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping. Remote Links settings and the paging-tone
+and voice-enhancement choices already in the application database are preserved for every import scope. Remote Links network
 destinations and stable channel/sender identities are preserved without path remapping. An unavailable optional artifact is
 reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the

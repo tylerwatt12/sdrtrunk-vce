@@ -185,6 +185,13 @@ public final class ApplicationDatabaseMigrator
     static InPlaceMigrationResult migrateInPlace(Path database, Consumer<String> progress, BackupAction backup)
         throws IOException, SQLException
     {
+        return migrateInPlace(database, progress, backup, Map.of());
+    }
+
+    static InPlaceMigrationResult migrateInPlace(Path database, Consumer<String> progress, BackupAction backup,
+                                                Map<String,String> recoveryDefaults)
+        throws IOException, SQLException
+    {
         Path normalized = database.toAbsolutePath().normalize();
         Consumer<String> listener = progress == null ? ignored -> { } : progress;
         if(Files.isSymbolicLink(normalized) || !Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS))
@@ -210,7 +217,11 @@ public final class ApplicationDatabaseMigrator
                 throw new SQLException(exception.getMessage(), exception);
             }
             DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source);
-            if(!plan.requiresMigration())
+            Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
+                recoveryDefaults.keySet();
+            LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
+                normalized.getParent().getParent(), legacyKeys);
+            if(!plan.requiresMigration() && recoveryDefaults.isEmpty())
             {
                 DatabaseFormatCatalog.requireCurrent(connection);
                 validateConfiguration(connection, normalized);
@@ -218,7 +229,10 @@ public final class ApplicationDatabaseMigrator
                 return new InPlaceMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
             }
             printPreflight(output, plan, null);
-            MigrationSummary migration = migrateInTransaction(connection, source, null, normalized, true, listener, backup);
+            if(!recoveryDefaults.isEmpty())
+                output.println("Explicitly selected legacy receiver settings recovery: " + recoveryDefaults.size() + " setting(s).");
+            MigrationSummary migration = migrateInTransaction(connection, source, null, normalized, true, listener, backup,
+                legacy, recoveryDefaults);
             printCompletion(output, migration);
             output.println("RESULT: In-place application database update complete.");
             return new InPlaceMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
@@ -278,6 +292,9 @@ public final class ApplicationDatabaseMigrator
             printPreflight(output, preflight, relocation);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
+            LegacyReceiverSettingsMigration.Snapshot legacy = relocation == null ?
+                new LegacyReceiverSettingsMigration.Snapshot(Map.of()) :
+                LegacyReceiverSettingsMigration.staged(database.getParent().getParent());
             if(!preflight.requiresMigration() && !relocationRequired)
             {
                 validateCurrentDatabase(connection);
@@ -295,7 +312,7 @@ public final class ApplicationDatabaseMigrator
 
             output.println("Pre-migration checks passed. Updating the staged database.");
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, false,
-                ignored -> { }, null);
+                ignored -> { }, null, legacy, Map.of());
             //The transaction already completed the full schema, row, foreign-key and quick checks before COMMIT.
             //Finalizing the private stage changes only journal state; do not rescan the same retained history here.
             finalizeStagedDatabase(connection);
@@ -376,7 +393,8 @@ public final class ApplicationDatabaseMigrator
 
     private static MigrationSummary migrateInTransaction(Connection connection,
             DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database,
-            boolean inPlace, Consumer<String> progress, BackupAction backup)
+            boolean inPlace, Consumer<String> progress, BackupAction backup,
+            LegacyReceiverSettingsMigration.Snapshot legacy, Map<String,String> recoveryDefaults)
         throws IOException, SQLException
     {
         MigrationSummary committed = null;
@@ -415,6 +433,8 @@ public final class ApplicationDatabaseMigrator
                     progress.accept("Creating the database backup");
                     backup.run();
                 }
+                int recoveredLegacySettings = legacy.recoverSelected(connection, recoveryDefaults);
+                int[] importedLegacySettings = {0};
 
                 PortablePreferenceResult portablePreferences = new PortablePreferenceResult(0, 0);
                 CurrentDatabaseAdministrativeRepair.Inspection administrativeRepair =
@@ -451,7 +471,11 @@ public final class ApplicationDatabaseMigrator
                 int[] stepNumber = {0};
                 DatabaseMigrationChain.MigrationReport chainReport = DatabaseMigrationChain.migrate(connection,
                     lockedSource, !inPlace, step -> progress.accept(
-                        "Step " + (++stepNumber[0]) + " of " + totalSteps + " — " + step.description()));
+                        "Step " + (++stepNumber[0]) + " of " + totalSteps + " — " + step.description()),
+                    step -> {
+                        if(step.sourceVersion() == 52)
+                            importedLegacySettings[0] = legacy.importMissing(connection);
+                    });
                 if(inPlace)
                 {
                     //All historical layouts have now reached current configuration semantics. Repair this bounded
@@ -499,7 +523,7 @@ public final class ApplicationDatabaseMigrator
                         portablePreferences.rebasedDirectories() > 0 || portablePreferences.resetEntries() > 0),
                     portablePreferences.rebasedDirectories(),
                     portablePreferences.resetEntries(), administrativeRepair, currentRepair, derivedStateRepair,
-                    identityRepair, chainReport);
+                    identityRepair, chainReport, importedLegacySettings[0], recoveredLegacySettings);
                 statement.execute("COMMIT");
                 transactionOpen = false;
                 committed = summary;
@@ -933,6 +957,9 @@ public final class ApplicationDatabaseMigrator
 
     private static void printCompletion(PrintStream output, MigrationSummary migration)
     {
+        output.println("Legacy receiver settings imported from profile JSON: " + migration.importedLegacySettings() + ".");
+        output.println("Explicitly selected legacy receiver settings recovered: " + migration.recoveredLegacySettings() + ".");
+        output.println("Original legacy settings files were left unchanged.");
         DatabaseMigrationChain.MigrationReport report = migration.chainReport();
         boolean portableRepairRan = migration.portableRepairRan();
         long recoveryChanges = recoveryChangeCount(migration, portableRepairRan);
@@ -968,7 +995,7 @@ public final class ApplicationDatabaseMigrator
             migration.administrativeRepair().requiresRepair() || migration.derivedStateRepair().requiresRepair() ||
             migration.identityRepair().requiresRepair() ||
             migration.rebasedDirectories() > 0 ||
-            migration.resetPortablePreferenceEntries() > 0);
+            migration.resetPortablePreferenceEntries() > 0 || migration.recoveredLegacySettings() > 0);
         int supplementalSteps = (migration.currentRepair().requiresRepair() ? 1 : 0) +
             (migration.administrativeRepair().requiresRepair() ? 1 : 0) +
             (migration.derivedStateRepair().requiresRepair() ? 1 : 0) +
@@ -1285,7 +1312,8 @@ public final class ApplicationDatabaseMigrator
                                     CurrentDatabaseBestEffortRepair.Inspection currentRepair,
                                     CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair,
                                     SqliteIdentityRepair.Inspection identityRepair,
-                                    DatabaseMigrationChain.MigrationReport chainReport)
+                                    DatabaseMigrationChain.MigrationReport chainReport, int importedLegacySettings,
+                                    int recoveredLegacySettings)
     {
     }
 
