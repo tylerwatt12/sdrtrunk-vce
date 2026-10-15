@@ -52,7 +52,7 @@ vm.runInContext(`
   ${functionSource('function channelIsRemote(channel)')}
   ${functionSource('function channelEnrichmentSupported(channel, profile)')}
   ${functionSource('function channelEnrichmentAvailability(channel, profile, account)')}
-  ${functionSource('function channelEnrichmentChanges(preview, replaceName = false)')}
+  ${functionSource('function channelEnrichmentChanges(preview)')}
   ${functionSource('function channelEditorSections(profile, channel)')}
   ${functionSource('function channelEditorPayload(form, profile, channel = null)')}
   ${functionSource('function channelEditorSectionId(value)')}
@@ -461,7 +461,6 @@ context.enrichmentPreview = { changes: [
   { field: 'source', before: 'remote', after: 'tuner' }
 ] };
 assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(channelEnrichmentChanges(enrichmentPreview))', context)),
-  [{ field: 'system', before: 'Unknown', after: 'County Radio' }],
-  'Only changed System/Site names are selected by default');
-assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(channelEnrichmentChanges(enrichmentPreview, true).map((change) => change.field))', context)),
-  ['system', 'name'], 'Opting into Name must not allow source, RadioResolve, or other fields into the reviewed change set');
+  [{ field: 'system', before: 'Unknown', after: 'County Radio' },
+    { field: 'name', before: 'My control', after: 'County Radio · North' }],
+  'Review all changed names while excluding source, RadioResolve, and other fields');

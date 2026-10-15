@@ -95,13 +95,11 @@ test('remote P25 compares names, preserves cancelled choices and saves only revi
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openEditor(page, { remote: true });
   let preview = await state.openPreview();
-  await expect(preview.getByRole('checkbox', { name: 'Replace channel name' })).not.toBeChecked();
-  await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toHaveCount(0);
+  await expect(preview.getByRole('checkbox', { name: 'Replace channel name' })).toHaveCount(0);
+  await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toBeVisible();
   await expect(preview.getByText('P25 BEE00-348', { exact: true })).toBeVisible();
   await expect(preview.getByText('Countywide Public Safety Radio System', { exact: true })).toBeVisible();
   await preview.screenshot({ path: test.info().outputPath('enrichment-light-desktop.png') });
-  await preview.getByRole('checkbox', { name: 'Replace channel name' }).locator('..').click();
-  await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toBeVisible();
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.original.name);
   expect(state.applies).toHaveLength(0);
@@ -109,27 +107,25 @@ test('remote P25 compares names, preserves cancelled choices and saves only revi
   await preview.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(preview).toHaveCount(0);
   await expect(state.editor.getByLabel('System', { exact: true })).toHaveValue(state.changes[0].after);
-  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.original.name);
+  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.changes[2].after);
   await expect(state.editor.getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
   expect(await state.editor.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await state.editor.screenshot({ path: test.info().outputPath('enrichment-editor-light-desktop.png') });
   expect(state.previews[0]).toEqual({ configuration_id: 'enrichment', revision: 1 });
-  expect(state.applies[0]).toEqual({ preview_id: 'preview-2', replace_name: false });
+  expect(state.applies[0]).toEqual({ preview_id: 'preview-2', replace_name: true });
   expect(state.puts).toHaveLength(0);
   for (const field of ['source', 'radio_resolve_id', 'alias_list_id', 'settings', 'recorders', 'event_logs']) {
     expect(state.channel[field]).toEqual(state.original[field]);
   }
 });
 
-test('optional name is opt-in and saving locks duplicate submits and dismissal on a dark phone', async ({ page }) => {
+test('name-only changes can be saved and saving locks duplicate submits and dismissal on a dark phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await openEditor(page, { theme: 'dark', running: true });
   state.changes = state.changes.filter((change) => change.field === 'name');
   const preview = await state.openPreview();
   const save = preview.getByRole('button', { name: 'Save', exact: true });
-  await expect(save).toBeDisabled();
-  await preview.getByRole('checkbox', { name: 'Replace channel name' }).focus();
-  await page.keyboard.press('Space');
+  await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toBeVisible();
   await expect(save).toBeEnabled();
   await expect(preview.getByText('Saving briefly stops this channel and restores its running state.')).toBeVisible();
   expect(await preview.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);

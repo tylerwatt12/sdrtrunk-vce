@@ -25387,9 +25387,9 @@ function channelEnrichmentAvailability(channel, profile, account) {
     reason: 'Run this channel until it learns its WACN, System ID, RFSS, and Site ID, then reopen this editor.' };
 }
 
-function channelEnrichmentChanges(preview, replaceName = false) {
+function channelEnrichmentChanges(preview) {
   return (Array.isArray(preview?.changes) ? preview.changes : []).filter((change) =>
-    ['system', 'site', ...(replaceName ? ['name'] : [])].includes(change?.field) &&
+    ['system', 'site', 'name'].includes(change?.field) &&
     String(change.before || '') !== String(change.after || ''));
 }
 
@@ -25415,15 +25415,14 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
   });
   if (!modal || (modal.ready && !await modal.ready)) return;
   let preview = null;
-  let replaceName = null;
   let lookupSequence = 0;
-  // Choosing an optional replacement is part of this review; Cancel discards it directly.
+  // Cancel discards this review directly; names change only after Save succeeds.
   const workflow = createFormWorkflow({ form, submit: save, feedback: message, ready: false,
     modal: { setBusy: modal.setBusy, setDirty: () => {} } });
   const comparisons = node('div', 'ui-editor-sections');
   const refreshChanges = () => {
     comparisons.replaceChildren();
-    const changes = channelEnrichmentChanges(preview, replaceName?.checked === true);
+    const changes = channelEnrichmentChanges(preview);
     for (const change of changes) {
       const label = { system: 'System', site: 'Site', name: 'Name' }[change.field];
       const section = node('section', 'ui-form-section');
@@ -25436,13 +25435,12 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
       comparisons.append(section);
     }
     if (!changes.length) comparisons.append(node('p', 'ui-feedback ui-feedback-empty',
-      'System and site names are already up to date.'));
+      'Names are already up to date.'));
     workflow.setReady(Boolean(preview?.preview_id) && changes.length > 0);
   };
   const lookup = async () => {
     const sequence = ++lookupSequence;
     preview = null;
-    replaceName = null;
     workflow.setReady(false);
     retry.hidden = true;
     details.replaceChildren(node('p', 'ui-feedback ui-feedback-loading', 'Looking up this channel in RadioReference…'));
@@ -25471,18 +25469,11 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
       }
       details.replaceChildren();
       const links = node('div', 'ui-action-row');
-      if (loaded.system_url) links.append(externalAnchor('RadioReference system', loaded.system_url));
-      if (loaded.site_url) links.append(externalAnchor('RadioReference site', loaded.site_url));
+      if (loaded.system_url) links.append(externalAnchor('RadioReference system', loaded.system_url,
+        'ui-button ui-button-secondary'));
+      if (loaded.site_url) links.append(externalAnchor('RadioReference site', loaded.site_url,
+        'ui-button ui-button-secondary'));
       if (links.childNodes.length) details.append(links);
-      const nameChange = (loaded.changes || []).find((change) => change.field === 'name' &&
-        String(change.before || '') !== String(change.after || ''));
-      if (nameChange) {
-        const choice = uiToggleField('Replace channel name', false, 'Replace channel name',
-          `Uses the RadioReference system and site names: ${nameChange.after}`);
-        replaceName = choice.querySelector('input');
-        replaceName.addEventListener('change', refreshChanges);
-        details.append(choice);
-      }
       details.append(comparisons);
       if (loaded.running) details.append(node('p', 'ui-notice ui-notice-warning',
         'Saving briefly stops this channel and restores its running state.'));
@@ -25504,7 +25495,7 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
     let applied = false;
     await workflow.save(async () => {
       const result = await requestJson('/api/v1/admin/radioreference/channels/enrichment/apply', {
-        method: 'POST', body: { preview_id: preview.preview_id, replace_name: replaceName?.checked === true },
+        method: 'POST', body: { preview_id: preview.preview_id, replace_name: true },
         page: false, timeoutMs: 30_000
       });
       applied = true;
