@@ -31,10 +31,10 @@ Java is included in the download.
 Both release lines are pre-release software. **The features and screenshots here describe current Nightly; Alpha
 may have fewer features or a different interface.** Read the notes on the release you choose.
 
-On the release page, open **Assets** and choose the ZIP for your operating system and processor. For Nightly, use the
-build number identified at the top of the release page to find the current ZIP. Apple Silicon Macs use ARM64; Intel
-Macs and most Intel/AMD PCs use the 64-bit x86 package. See the [release-channel guide](docs/release-channels.md) for
-more detail.
+On the release page, open **Assets** and choose the ZIP for your operating system and processor. Nightly downloads
+use the same filenames for each new build; the release page identifies the current build. Apple Silicon Macs use
+ARM64; Intel Macs and most Intel/AMD PCs use the 64-bit x86 package. See the
+[release-channel guide](docs/release-channels.md) for more detail.
 
 ## What VCE adds
 

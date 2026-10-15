@@ -139,6 +139,161 @@ function verified() {
   return result;
 }
 
+const stagingStep = 'Stage stable Nightly download names without changing package contents';
+const publishStep = 'Publish the approved candidate files';
+const cleanupStep = 'Remove superseded Nightly packages after verifying the new uploads';
+const staging = literal(step(stagingStep), '        run: |\n', 10)
+  .match(/python3 - <<'PY'\n([\s\S]+?)\nPY/);
+assert(staging, 'Missing executable stable download staging');
+const cleanup = new AsyncFunction('github', 'context', 'core',
+  literal(step(cleanupStep), '          script: |\n', 12));
+const publicNames = [...platforms.map(platform => `vce-${platform}-nightly.zip`),
+  'build_info.txt', 'candidate.json', 'SHA256SUMS', 'update.properties'];
+
+function verifyStagedDownloads() {
+  resetCandidate();
+  const original = new Map(fs.readdirSync(candidate).map(name =>
+    [name, fs.readFileSync(path.join(candidate, name))]));
+  const result = spawnSync(python, ['-c', staging[1]], { cwd: temporary, encoding: 'utf8', timeout: 10_000,
+    env: { ...process.env, CANDIDATE_RUN_ID: '100' } });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const published = path.join(temporary, 'nightly-assets');
+  assert.deepEqual(fs.readdirSync(published).sort(), [...publicNames].sort());
+  assert.deepEqual(fs.readdirSync(candidate).sort(), [...original.keys()].sort(),
+    'Staging must leave the prepared file inventory unchanged.');
+  for (const [name, bytes] of original) {
+    assert.deepEqual(fs.readFileSync(path.join(candidate, name)), bytes,
+      `Staging must leave prepared candidate bytes unchanged: ${name}`);
+  }
+  for (const name of publicNames.filter(name => name !== 'SHA256SUMS')) {
+    const preparedName = name.endsWith('-nightly.zip') ? name.replace(/-nightly\.zip$/, '-100.zip') : name;
+    assert.deepEqual(fs.readFileSync(path.join(published, name)), original.get(preparedName),
+      `Published ZIP contents and embedded identity must match the tested candidate: ${name}`);
+  }
+  const checksums = fs.readFileSync(path.join(published, 'SHA256SUMS'), 'utf8').trimEnd().split('\n')
+    .map(line => {
+      const match = /^([0-9a-f]{64})  (.+)$/.exec(line);
+      assert(match, `Invalid public checksum entry: ${line}`);
+      return { digest: match[1], name: match[2] };
+    });
+  assert.equal(new Set(checksums.map(item => item.name)).size, checksums.length,
+    'Public checksums must not contain duplicate names.');
+  assert.deepEqual(checksums.map(item => item.name).sort(), publicNames.filter(name => name !== 'SHA256SUMS').sort(),
+    'Public checksums must list exactly the stable ZIP names and unchanged candidate metadata.');
+  for (const { digest, name } of checksums) {
+    assert.equal(createHash('sha256').update(fs.readFileSync(path.join(published, name))).digest('hex'), digest,
+      `Public checksum must match staged bytes: ${name}`);
+  }
+  assert.notDeepEqual(fs.readFileSync(path.join(published, 'SHA256SUMS')), original.get('SHA256SUMS'),
+    'Public checksums must be regenerated for renamed downloads.');
+}
+
+function cleanupFixture() {
+  const uploaded = publicNames.map((name, index) => ({ id: 2000 + index, name, state: 'uploaded', size: 64 + index }));
+  const obsoleteNames = [...platforms.map(platform => `vce-${platform}-99.zip`),
+    ...['linux', 'osx', 'windows'].flatMap(platform => ['aarch64', 'x86_64']
+      .map(architecture => `sdrtrunk-vce-${platform}-${architecture}-vnightly.zip`))];
+  const preservedNames = ['release-notes.txt', 'vce-win64-0.6.2-alpha-10.zip', 'vce-linux64-99.zip.backup',
+    'vce-linux64-99-extra.zip', 'vce-linux64--99.zip', 'vce-linux64-abc.zip', 'vce-other-99.zip',
+    'prefix-vce-linux64-99.zip', 'vce-linux64-99.tar.gz', 'sdrtrunk-vce-linux-aarch64-vnightly.zip.backup',
+    'sdrtrunk-vce-linux-arm64-vnightly.zip', 'sdrtrunk-vce-mac-x86_64-vnightly.zip'];
+  const old = obsoleteNames.map((name, index) => ({ id: 3000 + index, name }));
+  const preserved = preservedNames.map((name, index) => ({ id: 4000 + index, name }));
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: 5000 + index, name: `unrelated-${index}.txt` }));
+  return { uploaded, releaseId: '123', release: { id: 123 },
+    pages: [firstPage, [...uploaded.map(asset => ({ ...asset })), ...old, ...preserved]],
+    obsoleteIds: old.map(asset => asset.id), deleted: [], paginationCalls: 0, releaseCalls: 0 };
+}
+
+async function evaluateCleanup(state) {
+  const listReleaseAssets = Symbol('release assets');
+  const github = { rest: { repos: {
+    getReleaseByTag: async (params) => {
+      assert.deepEqual(params, { owner: 'example', repo: 'vce', tag: 'nightly' });
+      state.releaseCalls++;
+      return { data: state.release };
+    },
+    listReleaseAssets,
+    deleteReleaseAsset: async (params) => {
+      assert.equal(params.owner, 'example');
+      assert.equal(params.repo, 'vce');
+      state.deleted.push(params.asset_id);
+    }
+  } }, paginate: async (method, params) => {
+    assert.equal(method, listReleaseAssets, 'Cleanup must use the paginated release asset API.');
+    assert.deepEqual(params, { owner: 'example', repo: 'vce', release_id: 123, per_page: 100 });
+    state.paginationCalls++;
+    return state.pages.flat();
+  } };
+  const saved = { RELEASE_ID: process.env.RELEASE_ID, UPLOADED_ASSETS: process.env.UPLOADED_ASSETS };
+  process.env.RELEASE_ID = state.releaseId;
+  process.env.UPLOADED_ASSETS = JSON.stringify(state.uploaded);
+  try {
+    await cleanup(github, { repo: { owner: 'example', repo: 'vce' } }, { info() {} });
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+async function verifyGuardedCleanup() {
+  const complete = cleanupFixture();
+  await evaluateCleanup(complete);
+  assert.equal(complete.paginationCalls, 1);
+  assert.deepEqual(complete.deleted.sort((a, b) => a - b), complete.obsoleteIds.sort((a, b) => a - b),
+    'Delete every recognized old ZIP across pages while retaining stable downloads and unrelated files.');
+  for (const tamper of [
+    state => state.uploaded.pop(),
+    state => state.uploaded.push({ ...state.uploaded[0] }),
+    state => { state.uploaded[0].name = state.uploaded[1].name; },
+    state => { state.uploaded[0].name = 'unexpected.zip'; },
+    state => { state.uploaded[0].state = 'starter'; },
+    state => { state.uploaded[0].size = 0; }
+  ]) {
+    const incomplete = cleanupFixture(); tamper(incomplete);
+    await assert.rejects(evaluateCleanup(incomplete), /uploads are incomplete/);
+    assert.deepEqual(incomplete.deleted, [], 'Incomplete upload outputs must never delete previous downloads.');
+    assert.equal(incomplete.releaseCalls, 0, 'Validate every upload output before reading or changing the release.');
+  }
+  const wrongRelease = cleanupFixture(); wrongRelease.release.id = 124;
+  await assert.rejects(evaluateCleanup(wrongRelease), /release identity changed/);
+  assert.deepEqual(wrongRelease.deleted, []);
+  assert.equal(wrongRelease.paginationCalls, 0);
+  for (const tamper of [
+    state => state.pages[1].shift(),
+    state => { state.pages[1][0].id = 9999; },
+    state => { state.pages[1][0].name = 'replaced.zip'; },
+    state => { state.pages[1][0].size++; },
+    state => { state.pages[1][0].state = 'starter'; }
+  ]) {
+    const unverified = cleanupFixture(); tamper(unverified);
+    await assert.rejects(evaluateCleanup(unverified), /Cannot verify the new Nightly downloads/);
+    assert.deepEqual(unverified.deleted, [], 'Missing or replaced public uploads must prevent every deletion.');
+  }
+}
+
+function verifyRollingPublicationWiring() {
+  const ordered = ['Verify candidate identity, exact file list, and every checksum',
+    'Refuse changed main or an out-of-order publication', stagingStep, publishStep, cleanupStep,
+    'Point only the rolling Nightly tag to the approved commit'];
+  for (let index = 1; index < ordered.length; index++) {
+    assert(workflow.indexOf(`      - name: ${ordered[index - 1]}\n`) <
+      workflow.indexOf(`      - name: ${ordered[index]}\n`), `${ordered[index]} must follow ${ordered[index - 1]}`);
+  }
+  const publication = step(publishStep);
+  assert.match(publication, /^        id: release$/m);
+  assert.match(publication, /^          overwrite_files: true$/m);
+  assert.match(publication, /^          tag_name: nightly$/m);
+  const files = literal(publication, '          files: |\n', 12).split('\n');
+  assert.deepEqual(files, ['nightly-assets/*.zip', 'nightly-assets/build_info.txt', 'nightly-assets/candidate.json',
+    'nightly-assets/SHA256SUMS', 'nightly-assets/update.properties']);
+  assert.match(step(cleanupStep), /RELEASE_ID: \$\{\{ steps\.release\.outputs\.id \}\}/);
+  assert.match(step(cleanupStep), /UPLOADED_ASSETS: \$\{\{ steps\.release\.outputs\.assets \}\}/);
+}
+
 async function main() {
   assert.deepEqual(await evaluate(fixture()), { 'artifact-id': 501 });
   for (const id of ['-1', '0', 'NaN', '9007199254740992']) {
@@ -190,7 +345,10 @@ async function main() {
     result = verified();
     assert.notEqual(result.status, 0, `A matching checksum must not admit the wrong ${field}.`);
   }
-  console.log('Nightly operation authorization, candidate provenance, required gates, expiry, newer candidates and checksum tamper checks passed.');
+  verifyStagedDownloads();
+  await verifyGuardedCleanup();
+  verifyRollingPublicationWiring();
+  console.log('Nightly authorization, candidate verification, stable download staging and guarded rolling asset cleanup checks passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; })
   .finally(() => fs.rmSync(temporary, { recursive: true, force: true }));

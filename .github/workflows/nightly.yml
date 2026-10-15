@@ -299,7 +299,28 @@ jobs:
             echo "Cannot verify the current Nightly manifest (HTTP ${status})."
             exit 1
           fi
+      - name: Stage stable Nightly download names without changing package contents
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, shutil
+          source = pathlib.Path('candidate')
+          destination = pathlib.Path('nightly-assets')
+          destination.mkdir()
+          names = {f'vce-{platform}-{os.environ["CANDIDATE_RUN_ID"]}.zip': f'vce-{platform}-nightly.zip'
+                   for platform in ('linux64', 'linux-arm64', 'win64', 'win-arm64', 'mac64', 'mac-arm64')}
+          names.update({name: name for name in ('build_info.txt', 'update.properties', 'candidate.json')})
+          checksums = []
+          for original, published in sorted(names.items()):
+              target = destination / published
+              shutil.copyfile(source / original, target)
+              with target.open('rb') as handle:
+                  digest = hashlib.file_digest(handle, 'sha256').hexdigest()
+              checksums.append(f'{digest}  {published}\n')
+          (destination / 'SHA256SUMS').write_text(''.join(checksums), encoding='utf-8')
+          PY
       - name: Publish the approved candidate files
+        id: release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
@@ -308,12 +329,14 @@ jobs:
           prerelease: true
           fail_on_unmatched_files: true
           preserve_order: true
+          overwrite_files: true
           body: |
             Rolling pre-release build from current `main`.
 
             Current build: `${{ inputs.candidate_run_id }}`
 
-            Choose the platform ZIP ending in `-${{ inputs.candidate_run_id }}.zip`. Older builds remain available below.
+            Choose the ZIP for your operating system and processor. These downloads are replaced with each new Nightly;
+            only the current build is kept.
 
             Nightly builds contain the newest completed features and fixes and may change frequently. Back up the
             complete portable data folder before upgrading.
@@ -323,13 +346,43 @@ jobs:
             [database migration guide](https://github.com/tylerwatt12/sdrtrunk-vce/blob/main/docs/database-migration.md)
             for current behavior and upgrade guidance.
           files: |
-            candidate/*.zip
-            candidate/build_info.txt
-            candidate/candidate.json
-            candidate/SHA256SUMS
-            candidate/update.properties
+            nightly-assets/*.zip
+            nightly-assets/build_info.txt
+            nightly-assets/candidate.json
+            nightly-assets/SHA256SUMS
+            nightly-assets/update.properties
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Remove superseded Nightly packages after verifying the new uploads
+        uses: actions/github-script@v8
+        env:
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+          UPLOADED_ASSETS: ${{ steps.release.outputs.assets }}
+        with:
+          script: |
+            const platforms = ['linux64', 'linux-arm64', 'win64', 'win-arm64', 'mac64', 'mac-arm64'];
+            const expected = new Set([...platforms.map(platform => `vce-${platform}-nightly.zip`),
+              'build_info.txt', 'candidate.json', 'SHA256SUMS', 'update.properties']);
+            const uploaded = JSON.parse(process.env.UPLOADED_ASSETS);
+            if (uploaded.length !== expected.size || new Set(uploaded.map(asset => asset.name)).size !== expected.size ||
+                !uploaded.every(asset => expected.has(asset.name) && asset.state === 'uploaded' && asset.size > 0)) {
+              throw new Error('New Nightly uploads are incomplete; keeping all previous packages');
+            }
+            const repo = {...context.repo};
+            const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag: 'nightly'});
+            if (String(release.id) !== process.env.RELEASE_ID) throw new Error('Nightly release identity changed');
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets,
+              {...repo, release_id: release.id, per_page: 100});
+            if (!uploaded.every(upload => assets.some(asset => asset.id === upload.id && asset.name === upload.name &&
+                asset.state === 'uploaded' && asset.size === upload.size))) {
+              throw new Error('Cannot verify the new Nightly downloads; keeping all previous packages');
+            }
+            const numbered = new RegExp(`^vce-(${platforms.join('|')})-[0-9]+\\.zip$`);
+            const legacy = /^sdrtrunk-vce-(linux|osx|windows)-(aarch64|x86_64)-vnightly\.zip$/;
+            for (const asset of assets.filter(asset => numbered.test(asset.name) || legacy.test(asset.name))) {
+              await github.rest.repos.deleteReleaseAsset({...repo, asset_id: asset.id});
+              core.info(`Removed superseded Nightly package: ${asset.name}`);
+            }
       - name: Point only the rolling Nightly tag to the approved commit
         run: |
           git tag --force nightly "$GITHUB_SHA"

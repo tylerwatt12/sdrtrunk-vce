@@ -19,8 +19,9 @@ included.
 - **Intel Macs and Intel/AMD 64-bit PCs:** x86-64.
 - **Windows or Linux ARM computers:** ARM64.
 
-The rolling Nightly page can contain more than one build's files. Use the current build number identified on that
-page to choose the matching package.
+The rolling Nightly page keeps one ZIP per operating system and processor, using the same download names for each
+new build. Each publication replaces those downloads and removes older Nightly packages. The release page identifies
+the current build; the application retains its version and build information.
 
 Extract the ZIP into a new writable folder and run its **Start VCE** launcher. The
 [getting-started steps](../README.md#get-started) explain first launch and importing a mainline sdrtrunk playlist.
