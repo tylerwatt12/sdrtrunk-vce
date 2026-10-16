@@ -28,8 +28,6 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
-import io.github.dsheirer.audio.enhance.VocoderAudioFixtures;
-import io.github.dsheirer.dsp.gain.AudioOutputGain;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -54,6 +52,7 @@ import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -61,59 +60,74 @@ class AudioCallRecorderTest
 {
     @TempDir Path mDirectory;
 
+
     @Test
-    void longAgcCallRecordsResampledMp3WithoutChangingNativePcmOrBufferBoundaries() throws Exception
+    void supplied16kWritesTruthfulWaveAndMp3WithoutDoublingDurationOrMutatingNativeCall() throws Exception
     {
-        List<float[]> buffers = new ArrayList<>(), original = new ArrayList<>();
+        CompletedAudioCall template = callWithQuality();
+        List<float[]> nativePackets = new ArrayList<>();
         for(int frame = 0; frame < 600; frame++)
         {
             float[] samples = new float[160];
-            for(int index = 0; index < samples.length; index++)
-                samples[index] = (float)(.1 * Math.sin((frame * 160 + index) * Math.PI / 10));
-            buffers.add(samples);
-            original.add(samples.clone());
+            for(int i=0;i<samples.length;i++) samples[i] = (float)(.1 * Math.sin(2*Math.PI*700*(frame*160+i)/8000));
+            nativePackets.add(samples);
         }
-        CompletedAudioCall source = new CompletedAudioCall(callWithQuality().snapshot(), buffers);
-        var provider = VocoderAudioFixtures.provider("recording-buffer-test");
-        provider.mutateInput = true;
-        var prepared = AudioOutputGain.prepare(source, provider.bridge());
-        assertTrue(prepared.agcApplied());
-        assertEquals(1, provider.processCount, "JMBE still processes the entire call continuously once");
-        assertEquals(12_000, prepared.call().getDuration());
-
+        CompletedAudioCall call = new CompletedAudioCall(template.snapshot(), nativePackets);
+        float[] original = nativePackets.getFirst().clone();
+        var supplied = io.github.dsheirer.audio.output.JmbeAudioOutput.renderWithProcessor(call,
+            new io.github.dsheirer.audio.codec.mbe.JmbeAudioOutputProcessor(new Supplied16k()));
+        assertEquals(16000, supplied.sampleRate());
+        assertEquals(12000, call.getDuration());
+        Path wav = mDirectory.resolve("supplied.wav");
         UserPreferences preferences = new UserPreferences();
+        AudioCallRecorder.writeRendered(call, supplied, wav, RecordFormat.WAVE, preferences,
+            call.recordingIdentifierCollection(), false);
+        byte[] wave = Files.readAllBytes(wav);
+        ByteBuffer format = ByteBuffer.wrap(waveChunk(wave, "fmt ")).order(ByteOrder.LITTLE_ENDIAN);
+        assertEquals(16000, format.getInt(4));
+        assertEquals(192000 * 2, waveChunk(wave, "data").length);
+        assertArrayEquals(original, nativePackets.getFirst());
+
         InputAudioFormat originalRate = preferences.getMP3Preference().getAudioSampleRate();
         MP3Setting originalSetting = preferences.getMP3Preference().getMP3Setting();
         try
         {
-            for(InputAudioFormat rate: List.of(InputAudioFormat.getDefault(), InputAudioFormat.SR_44100))
-            {
-                preferences.getMP3Preference().setMP3Setting(rate == InputAudioFormat.SR_44100 ?
-                    MP3Setting.VBR_5 : MP3Setting.getDefault());
-                preferences.getMP3Preference().setAudioSampleRate(rate);
-                Path file = mDirectory.resolve("long-agc-" + rate.name() + ".mp3");
-                AudioCallRecorder.write(prepared.call(), file, RecordFormat.MP3, preferences, false);
-                Mp3File recorded = new Mp3File(file.toString());
-                assertEquals((int)rate.getSampleRate(), recorded.getSampleRate());
-                assertTrue(recorded.hasId3v2Tag());
-                assertTrue(recorded.getFrameCount() > 100, "Recording contains audio frames beyond its ID3 tag");
-                assertTrue(recorded.getLengthInMilliseconds() >= 11_900 &&
-                    recorded.getLengthInMilliseconds() <= 12_300, "All twelve seconds were encoded");
-            }
+            preferences.getMP3Preference().setMP3Setting(MP3Setting.CBR_16);
+            preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_16000);
+            Path mp3 = mDirectory.resolve("supplied.mp3");
+            AudioCallRecorder.writeRendered(call, supplied, mp3, RecordFormat.MP3, preferences,
+                call.recordingIdentifierCollection(), false);
+            Mp3File recorded = new Mp3File(mp3.toString());
+            assertEquals(16000, recorded.getSampleRate(), "Supplied audio must not be silently treated as 8 kHz");
+            assertTrue(recorded.getLengthInMilliseconds() >= 11900 && recorded.getLengthInMilliseconds() < 12300,
+                "The encoder receives twelve seconds, not twenty-four seconds");
+            assertEquals(InputAudioFormat.SR_16000, preferences.getMP3Preference().getAudioSampleRate(),
+                "Supplied format does not rewrite saved preferences");
+            assertArrayEquals(original, nativePackets.getFirst());
+            preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_8000);
+            Path constrained = mDirectory.resolve("supplied-target8k.mp3");
+            AudioCallRecorder.writeRendered(call, supplied, constrained, RecordFormat.MP3, preferences,
+                call.recordingIdentifierCollection(), false);
+            Mp3File downsampled = new Mp3File(constrained.toString());
+            assertEquals(8000, downsampled.getSampleRate(), "Explicit destination constraints are honored");
+            assertTrue(downsampled.getLengthInMilliseconds() >= 11900 && downsampled.getLengthInMilliseconds() < 12400,
+                "Resampling a 16 kHz source to 8 kHz preserves duration and pitch");
         }
         finally
         {
             preferences.getMP3Preference().setMP3Setting(originalSetting);
             preferences.getMP3Preference().setAudioSampleRate(originalRate);
         }
-        assertEquals(buffers.size(), prepared.call().audioBuffers().size());
-        for(int frame = 0; frame < buffers.size(); frame++)
+    }
+
+    public static class Supplied16k
+    {
+        public Map<String,Object> process(float[] input, int sampleRate, String codec)
         {
-            assertArrayEquals(original.get(frame), buffers.get(frame), "Native PCM remains immutable");
-            float[] output = prepared.call().audioBuffers().get(frame);
-            assertEquals(buffers.get(frame).length, output.length);
-            for(int index = 0; index < output.length; index++)
-                assertEquals(original.get(frame)[index] * 2, output[index], "Processed order and gain are preserved");
+            float[] output = new float[input.length * 2];
+            for(int i=0;i<output.length;i++) output[i] = input[i/2];
+            Arrays.fill(input, 0);
+            return Map.of("samples", output, "sample_rate", 16000);
         }
     }
 

@@ -721,12 +721,11 @@ public final class SetupWizard extends JDialog
         {
             for(String key: ReceiverSettingsSchema.KEYS)
             {
-                if(!available.contains(key)) continue;
+                if(!available.contains(key) || ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY.equals(key)) continue;
                 String label = switch(key)
                 {
                     case ReceiverSettingsSchema.REMOTE_LINKS_KEY -> "Recover saved Remote Links";
                     case ReceiverSettingsSchema.PAGING_TONES_KEY -> "Recover saved paging-tone detection";
-                    case ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY -> "Recover saved voice enhancement";
                     default -> throw new IllegalArgumentException("Unsupported saved setting");
                 };
                 JCheckBox choice = new JCheckBox(label, false);

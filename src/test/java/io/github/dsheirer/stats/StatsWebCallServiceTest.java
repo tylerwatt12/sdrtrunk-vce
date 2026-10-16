@@ -29,13 +29,10 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.ResolvedCallPolicy;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
-import io.github.dsheirer.audio.enhance.VocoderAudioFixtures;
-import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
+import io.github.dsheirer.audio.output.JmbeAudioOutput;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
-import io.github.dsheirer.database.SdrTrunkTestDatabase;
-import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Form;
@@ -89,87 +86,88 @@ import org.junit.jupiter.api.io.TempDir;
 class StatsWebCallServiceTest
 {
     @Test
-    void continuousAgcIsCapturedPerBrowserCallWithoutChangingRawAudioOrCachedOutput(@TempDir Path directory) throws Exception
+    void suppliedAudioFormatIsUsedWithoutChangingNativeCallOrCachedOutput() throws Exception
     {
-        var enabled = new java.util.concurrent.atomic.AtomicBoolean(false);
-        CompletedAudioCall source = pagingCall();
-        float[] before = source.audioBuffers().getFirst().clone();
-        var processor = VocoderAudioFixtures.provider("embedded-model");
-        var enhancement = new VoiceEnhancementService(settings(directory), processor::bridge);
-        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement, enabled::get));
-            FeedClient client = listen(service, Set.of()))
-        {
-            service.receive(source);
-            var off = client.awaitCall();
-            assertEquals(false, off.get("continuous_agc"));
-            byte[] original = service.get(String.valueOf(off.get("call_id"))).wave().clone();
-            enabled.set(true);
-            service.receive(source);
-            var on = client.awaitCall();
-            assertEquals(true, on.get("continuous_agc"));
-            byte[] adjusted = service.get(String.valueOf(on.get("call_id"))).wave();
-            assertEquals(original.length, adjusted.length);
-            assertFalse(java.util.Arrays.equals(original, adjusted));
-            assertArrayEquals(original, service.get(String.valueOf(off.get("call_id"))).wave());
-            assertArrayEquals(before, source.audioBuffers().getFirst());
-            enabled.set(false);
-            service.receive(source);
-            var restored = client.awaitCall();
-            assertArrayEquals(original, service.get(String.valueOf(restored.get("call_id"))).wave());
-        }
-    }
-
-    @Test
-    void optionalModelUsesExplicit16kWaveAndPreservesNativeCallAndDuration(@TempDir Path directory) throws Exception
-    {
-        var selected = new AtomicReference<>(VocoderAudioFixtures.provider("first-model").bridge());
-        var enhancement = new VoiceEnhancementService(settings(directory), selected::get);
-        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement));
+        var rate = new java.util.concurrent.atomic.AtomicInteger(8000);
+        java.util.function.Function<CompletedAudioCall,JmbeAudioOutput.RenderedAudio> renderer = source -> {
+            int outputRate = rate.get();
+            float[] output = new float[Math.toIntExact(source.getDuration() * outputRate / 1000)];
+            java.util.Arrays.fill(output, .1f);
+            return new JmbeAudioOutput.RenderedAudio(List.of(output), outputRate);
+        };
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, renderer, ignored -> null));
             FeedClient client = listen(service, Set.of()))
         {
             CompletedAudioCall source = call();
             float[] before = source.audioBuffers().getFirst().clone();
             service.receive(source);
             var plain = client.awaitCall();
-            assertEquals(false, plain.get("voice_enhancement"));
+            byte[] original = service.get(String.valueOf(plain.get("call_id"))).wave().clone();
             assertEquals(8000, plain.get("audio_sample_rate"));
-            assertEquals(8000, ByteBuffer.wrap(service.get(String.valueOf(plain.get("call_id"))).wave())
-                .order(ByteOrder.LITTLE_ENDIAN).getInt(24));
-
-            enhancement.setEnabled(enhancement.snapshot().revision(), true);
-            service.receive(source);
-            var enhanced = client.awaitCall();
-            assertEquals(true, enhanced.get("voice_enhancement"));
-            assertEquals("first-model", enhanced.get("voice_model"));
-            assertEquals(100L, enhanced.get("duration_ms"));
-            assertEquals(16000, enhanced.get("audio_sample_rate"));
-            byte[] wave = service.get(String.valueOf(enhanced.get("call_id"))).wave();
-            assertEquals(44 + 1600 * 2, wave.length);
-            assertEquals(16000, ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN).getInt(24));
+            assertEquals(8000, ByteBuffer.wrap(original).order(ByteOrder.LITTLE_ENDIAN).getInt(24));
+            for(int outputRate : new int[] {16000, 24000})
+            {
+                rate.set(outputRate);
+                service.receive(source);
+                var supplied = client.awaitCall();
+                assertEquals(100L, supplied.get("duration_ms"));
+                assertEquals(outputRate, supplied.get("audio_sample_rate"));
+                byte[] wave = service.get(String.valueOf(supplied.get("call_id"))).wave();
+                assertEquals(44 + outputRate / 10 * 2, wave.length);
+                assertEquals(outputRate, ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN).getInt(24));
+                assertFalse(supplied.containsKey("voice_model"));
+                assertFalse(supplied.containsKey("voice_enhancement"));
+                assertFalse(supplied.containsKey("continuous_agc"));
+            }
+            assertArrayEquals(original, service.get(String.valueOf(plain.get("call_id"))).wave());
             assertArrayEquals(before, source.audioBuffers().getFirst());
             assertEquals(100L, source.getDuration());
+        }
+    }
 
-            selected.set(VocoderAudioFixtures.provider("updated-model").bridge());
+    @Test
+    void outputBeyondBrowserCapacityRetainsThePlayableNativeCall() throws Exception
+    {
+        CompletedAudioCall source = new CompletedAudioCall(call().snapshot(), audioBuffers(8000 * 90));
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null,
+                ignored -> new JmbeAudioOutput.RenderedAudio(List.of(new float[96000 * 90]), 96000),
+                ignored -> null)); FeedClient client = listen(service, Set.of()))
+        {
             service.receive(source);
-            assertEquals("updated-model", client.awaitCall().get("voice_model"));
-            enhancement.setEnabled(enhancement.snapshot().revision(), false);
-            service.receive(source);
-            assertEquals(false, client.awaitCall().get("voice_enhancement"));
+            var metadata = client.awaitCall();
+            assertEquals(90000L, metadata.get("duration_ms"));
+            assertEquals(8000, metadata.get("audio_sample_rate"));
+            assertEquals(1L, service.observerStatus().get("audio_output_failures"));
+            assertEquals(44 + 8000 * 90 * 2, service.get(String.valueOf(metadata.get("call_id"))).wave().length);
+        }
+    }
+
+    @Test
+    void failedAudioOutputPreservesNativePlayback() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null,
+                ignored -> { throw new IllegalStateException("Output failed"); }, ignored -> null));
+            FeedClient client = listen(service, Set.of()))
+        {
+            service.receive(call());
+            var metadata = client.awaitCall();
+            assertEquals(8000, metadata.get("audio_sample_rate"));
+            assertEquals(1L, service.observerStatus().get("audio_output_failures"));
+            assertEquals(8000, ByteBuffer.wrap(service.get(String.valueOf(metadata.get("call_id"))).wave())
+                .order(ByteOrder.LITTLE_ENDIAN).getInt(24));
         }
     }
 
     @Test
     void sharedToneDetailsDoNotRequireEnhancementOrBrowserAnalysis(@TempDir Path directory) throws Exception
     {
-        var enhancement = new VoiceEnhancementService(settings(directory), () -> null);
         CompletedAudioCall source = pagingCall();
         CompletedToneSequence sequence = inferredTones(source.snapshot());
-        try(StatsWebCallService service = started(new StatsWebCallService(null, null, enhancement,
+        try(StatsWebCallService service = started(new StatsWebCallService(null, null, null,
                 snapshot -> sequence.matches(snapshot) ? sequence : null)); FeedClient client = listen(service, Set.of()))
         {
             service.receive(source);
             var metadata = client.awaitCall();
-            assertEquals(false, metadata.get("voice_enhancement"));
             assertEquals(ToneSummaryPayload.summary(sequence), metadata.get("paging_tone_summary"));
             assertFalse(metadata.containsKey("detected_paging_tones"), "Shared outcome replaces duplicate PCM analysis");
         }
@@ -188,7 +186,6 @@ class StatsWebCallServiceTest
             service.receive(source);
             var off = client.awaitCall();
             assertFalse(off.containsKey("paging_tone_summary"));
-            assertEquals(false, off.get("voice_enhancement"));
             byte[] plain = service.get(String.valueOf(off.get("call_id"))).wave();
             enabled.set(true);
             service.receive(source);
@@ -1821,11 +1818,6 @@ class StatsWebCallServiceTest
         field.setAccessible(true);
         return (AtomicLong)field.get(service);
     }
-    private static ApplicationSettingsStore settings(Path directory) throws Exception
-    {
-        Path database = directory.resolve("settings.sqlite");
-        SdrTrunkTestDatabase.create(database);
-        return new ApplicationSettingsStore(database);
-    }
+
 
 }

@@ -22,7 +22,6 @@ package io.github.dsheirer.record;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
-import io.github.dsheirer.dsp.gain.AudioOutputGain;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -239,10 +238,6 @@ public class AudioRecordingManager
                     }
                     //A worker-only encoding view keeps the elected raw PCM available for ML and tone evidence.
                     boolean normalizeAudio = mUserPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-                    AudioOutputGain.Prepared prepared = AudioOutputGain.prepare(completedAudioCall,
-                        mUserPreferences.getAudioOutputPreference().isContinuousAgcEnabled(),
-                        mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary());
-                    CompletedAudioCall encodingCall = prepared.call();
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
                         BasicRecordingContract.nextPath(getRecordingBasePath(),
                             completedAudioCall.recordingIdentifierCollection(), recordFormat, writerTimestamp,
@@ -260,8 +255,7 @@ public class AudioRecordingManager
                     {
                         try
                         {
-                            mRecordingWriter.write(encodingCall, path, recordFormat, mUserPreferences,
-                                normalizeAudio && !prepared.agcApplied());
+                            mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences, normalizeAudio);
                             break;
                         }
                         catch(FileAlreadyExistsException collision)

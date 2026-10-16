@@ -54,31 +54,27 @@ public class MP3AudioConverter implements IAudioConverter
      */
     public MP3AudioConverter(InputAudioFormat inputAudioFormat, MP3Setting setting, boolean normalizeAudio)
     {
+        this(inputAudioFormat, setting, normalizeAudio, 8000);
+    }
+
+    /** Encodes PCM using its actual source clock; resamples only when the requested encoder clock differs. */
+    public MP3AudioConverter(InputAudioFormat inputAudioFormat, MP3Setting setting, boolean normalizeAudio,
+                             int sourceSampleRate)
+    {
+        if(sourceSampleRate < 8000 || sourceSampleRate > 96000)
+            throw new IllegalArgumentException("Unsupported source sample rate");
         mInputAudioFormat = inputAudioFormat;
         mEncoder = LameFactory.getLameEncoder(inputAudioFormat, setting);
         mNormalizeAudio = normalizeAudio;
-
-        //Ensure input audio sample rate is supported for the MP3 setting and update as necessary - should never happen.
-        if((mInputAudioFormat.getSampleRate() - mEncoder.getEffectiveSampleRate()) > 1.0)
-        {
-            mInputAudioFormat = InputAudioFormat.getDefault();
-            mLog.warn("MP3 setting [" + setting + "] does not support requested input audio sample rate [" +
-                    inputAudioFormat + "] - using default sample rate [" + mInputAudioFormat + "]");
-            mEncoder = LameFactory.getLameEncoder(inputAudioFormat, setting);
-        }
-
-        //Resampling is only required if desired input sample rate is not system default of 8kHz
-        if(mInputAudioFormat != InputAudioFormat.SR_8000 && mInputAudioFormat != InputAudioFormat.SR_32_8000)
-        {
-            mResampler = LameFactory.getResampler(inputAudioFormat);
-        }
+        if((int)mInputAudioFormat.getSampleRate() != sourceSampleRate)
+            mResampler = new RealResampler(sourceSampleRate, mInputAudioFormat.getSampleRate(), 8192, 512);
 
         mOutputFramesBuffer = new byte[mEncoder.getPCMBufferSize()];
     }
 
     /**
      * Converts the list of PCM audio packets to MP3 encoded.
-     * @param audioPackets of PCM audio sampled at 8 kHz
+     * @param audioPackets of PCM audio sampled at the configured source rate
      * @return encoded MP3 audio
      */
     public List<byte[]> convert(List<float[]> audioPackets)
@@ -91,7 +87,7 @@ public class MP3AudioConverter implements IAudioConverter
     /**
      * Incrementally encodes audio without closing the MP3 stream.  Call {@link #flush()} once when the stream ends.
      *
-     * @param audioPackets PCM audio sampled at 8 kHz
+     * @param audioPackets PCM audio sampled at the configured source rate
      * @return zero or more complete MP3 chunks
      */
     public List<byte[]> encode(List<float[]> audioPackets)
@@ -105,7 +101,11 @@ public class MP3AudioConverter implements IAudioConverter
 
         if(mResampler != null)
         {
-            audioPackets = mResampler.resample(audioPackets);
+            List<float[]> packets = new ArrayList<>();
+            for(float[] packet : audioPackets)
+                for(int offset = 0; offset < packet.length; offset += 2048)
+                    packets.add(Arrays.copyOfRange(packet, offset, Math.min(packet.length, offset + 2048)));
+            audioPackets = mResampler.resample(packets);
         }
 
         for(int x = 0; x < audioPackets.size(); x++)

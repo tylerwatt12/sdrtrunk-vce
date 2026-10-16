@@ -40,7 +40,8 @@ public final class JmbeLibraryLoader implements AutoCloseable
     private final List<URLClassLoader> mClassLoaders = new ArrayList<>();
     private LibraryFingerprint mFingerprint;
     private IAudioCodecLibrary mLibrary;
-    private JmbeVocoderAudio mVocoderAudio;
+    private JmbeAudioOutputProcessor mAudioOutput;
+    private boolean mAudioOutputChecked;
     private String mLastError;
 
     JmbeLibraryLoader(ClassLoader parentClassLoader, boolean registerShutdownHook)
@@ -136,22 +137,24 @@ public final class JmbeLibraryLoader implements AutoCloseable
         }
     }
 
-    /** Worker-only capability; codec construction never loads or warms an enhancement model. */
-    public synchronized JmbeVocoderAudio getVocoderAudioProcessor(Path libraryPath)
+    /** Worker-only optional output capability; decoder construction never loads or warms output processing. */
+    public synchronized JmbeAudioOutputProcessor getAudioOutputProcessor(Path libraryPath)
     {
         if(libraryPath == null) return null;
         try
         {
             LibraryFingerprint requested = LibraryFingerprint.from(libraryPath);
             if(!requested.equals(mFingerprint)) load(requested);
-            if(mVocoderAudio == null)
+            if(!requested.equals(mFingerprint) || mLibrary == null) return null;
+            if(!mAudioOutputChecked)
             {
                 Object provider;
-                try { provider = mLibrary.getClass().getMethod("getVocoderAudioProcessor").invoke(mLibrary); }
-                catch(NoSuchMethodException unavailable) { return null; }
-                mVocoderAudio = new JmbeVocoderAudio(provider);
+                try { provider = mLibrary.getClass().getMethod("getAudioOutputProcessor").invoke(mLibrary); }
+                catch(NoSuchMethodException unavailable) { mAudioOutputChecked = true; return null; }
+                mAudioOutput = provider != null ? new JmbeAudioOutputProcessor(provider) : null;
+                mAudioOutputChecked = true;
             }
-            return mVocoderAudio;
+            return mAudioOutput;
         }
         catch(IOException | ReflectiveOperationException | LinkageError | RuntimeException exception)
         {
@@ -185,7 +188,8 @@ public final class JmbeLibraryLoader implements AutoCloseable
 
             mClassLoaders.add(classLoader);
             mLibrary = library;
-            mVocoderAudio = null;
+            mAudioOutput = null;
+            mAudioOutputChecked = false;
             mFingerprint = fingerprint;
             mLastError = null;
             mLog.info("JMBE audio conversion library loaded from [{}]: {}", fingerprint.path(), library.getVersion());
@@ -232,7 +236,8 @@ public final class JmbeLibraryLoader implements AutoCloseable
 
         mClassLoaders.clear();
         mLibrary = null;
-        mVocoderAudio = null;
+        mAudioOutput = null;
+        mAudioOutputChecked = false;
         mFingerprint = null;
     }
 

@@ -78,61 +78,6 @@ class AudioRecordingManagerTest
     Path mTemporaryFolder;
     private RecordingMode mOriginalMode;
 
-    @Test
-    void continuousAgcRunsOnlyOnRecordingWorkerAndKeepsNativeCallForObservers() throws Exception
-    {
-        String originalDataRoot = System.getProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
-        UserPreferences preferences = new UserPreferences();
-        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
-        boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
-        boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
-        List<CompletedAudioCall> written = new ArrayList<>(), observed = new ArrayList<>();
-        List<Boolean> normalization = new ArrayList<>();
-        AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
-            (call, path, format, prefs, normalizeAudio) -> {
-                written.add(call);
-                prefs.getAudioOutputPreference().setContinuousAgcEnabled(false);
-                normalization.add(normalizeAudio);
-                Files.write(path,new byte[]{1},StandardOpenOption.CREATE_NEW);
-            },
-            null, null, call -> null);
-        float[] samples = new float[8000];
-        for(int i = 0; i < samples.length; i++) samples[i] = (float)(.025 * Math.sin(i * Math.PI / 4));
-        float[] before = samples.clone();
-        CompletedAudioCall source = withDecoder(completedCall(91, List.of(samples)), DecoderType.P25_PHASE2);
-        try
-        {
-            setPortableDataRoot(mTemporaryFolder.resolve("portable-data").toString());
-            preferences.getJmbeLibraryPreference().setPathJmbeLibrary(
-                io.github.dsheirer.audio.codec.mbe.VocoderLibraryFixture.create(mTemporaryFolder));
-            assertTrue(preferences.getJmbeLibraryPreference().getPathJmbeLibrary().startsWith(mTemporaryFolder));
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
-            preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
-            manager.start(); manager.receive(source);
-            assertTrue(written.isEmpty());
-            manager.stop();
-            assertEquals(1, written.size());
-            assertEquals(List.of(false), normalization, "Successful gain suppresses normalization despite a later preference change");
-            assertSame(source, observed.getFirst());
-            assertSame(source.snapshot(), written.getFirst().snapshot());
-            assertEquals(source.getDuration(), written.getFirst().getDuration());
-            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[7997]) > Math.abs(samples[7997]));
-            assertArrayEquals(before, samples);
-        }
-        finally
-        {
-            manager.stop(); scheduler.shutdownNow();
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
-            setPortableDataRoot(originalDataRoot);
-            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
-            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
-        }
-    }
 
     private static void setPortableDataRoot(String value) throws ReflectiveOperationException
     {
@@ -143,47 +88,49 @@ class AudioRecordingManagerTest
         reset.invoke(null);
     }
 
+
     @Test
-    void missingAgcCapabilityPreservesCapturedNormalizationAndFailedProcessingPreservesRawAudio() throws Exception
+    void installedLibrarySupplies16kOnRecordingWorkerWhileObserversKeepNativeClock() throws Exception
     {
+        String originalDataRoot = System.getProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
         UserPreferences preferences = new UserPreferences();
-        boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
-        boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        var originalRate = preferences.getMP3Preference().getAudioSampleRate();
         ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
-        List<Boolean> normalization = new ArrayList<>();
-        CompletedAudioCall source = withDecoder(completedCall(92, List.of(new float[]{0.1f, -0.2f})),
-            DecoderType.P25_PHASE2);
-        AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
-            (call, path, format, prefs, normalizeAudio) -> {
-                prefs.getMP3Preference().setNormalizeAudioBeforeEncode(false);
-                normalization.add(normalizeAudio);
-                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+        List<Path> files = new ArrayList<>();
+        List<CompletedAudioCall> observed = new ArrayList<>();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
+            (call, path, format, prefs, normalize) -> {
+                AudioCallRecorder.write(call, path, format, prefs, normalize);
+                files.add(path);
             }, null, null, call -> null);
+        CompletedAudioCall source = withDecoder(completedCall(93, List.of(new float[8000])), DecoderType.P25_PHASE2);
         try
         {
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
-            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            setPortableDataRoot(mTemporaryFolder.resolve("portable-output").toString());
+            preferences.getJmbeLibraryPreference().setPathJmbeLibrary(
+                io.github.dsheirer.audio.codec.mbe.JmbeOutputLibraryFixture.create(mTemporaryFolder.resolve("output-library")));
             preferences.getDirectoryPreference().setDirectoryRecording(mTemporaryFolder);
-            manager.start();
-            manager.receive(source);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.MP3);
+            preferences.getMP3Preference().setAudioSampleRate(io.github.dsheirer.audio.convert.InputAudioFormat.SR_16000);
+            manager.start(); manager.receive(source);
+            assertTrue(files.isEmpty(), "No library processing or encoding runs on completed-call ingress");
             manager.stop();
-            assertEquals(List.of(true), normalization, "Unavailable gain must retain the captured MP3 normalization");
-            var provider = io.github.dsheirer.audio.enhance.VocoderAudioFixtures.provider("failure");
-            provider.fail = true;
-            var failed = io.github.dsheirer.dsp.gain.AudioOutputGain.prepare(source, provider.bridge());
-            assertFalse(failed.agcApplied());
-            assertSame(source, failed.call());
-            assertArrayEquals(new float[]{0.1f, -0.2f}, source.audioBuffers().getFirst());
+            assertEquals(1, files.size());
+            assertEquals(16000, new com.mpatric.mp3agic.Mp3File(files.getFirst().toString()).getSampleRate());
+            assertSame(source, observed.getFirst());
+            assertEquals(1000, source.getDuration());
+            assertEquals(8000, source.audioBuffers().getFirst().length);
         }
         finally
         {
-            manager.stop();
-            scheduler.shutdownNow();
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
+            manager.stop(); scheduler.shutdownNow();
+            io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().close();
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+            preferences.getMP3Preference().setAudioSampleRate(originalRate);
+            setPortableDataRoot(originalDataRoot);
             if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
             else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
             preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
@@ -252,7 +199,7 @@ class AudioRecordingManagerTest
     }
 
     @Test
-    void appliesImbeGainOnlyOnWriterViewAndRetainsRawCallForObservers() throws Exception
+    void recordingWriterReceivesNativePcmAndRetainsRawCallForObservers() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
@@ -281,7 +228,7 @@ class AudioRecordingManagerTest
             assertSame(rawCall.snapshot(), written.getFirst().snapshot());
             assertSame(rawCall.resolvedPolicy(), written.getFirst().resolvedPolicy());
             assertEquals(rawCall.getDuration(), written.getFirst().getDuration());
-            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[3]) <= 0.95f);
+            assertSame(rawCall, written.getFirst(), "The recorder owns format rendering and presentation gain");
             assertEquals(2.0f, written.getFirst().audioBuffers().getFirst()[2] /
                 written.getFirst().audioBuffers().getFirst()[1] * -1.0f, 0.000001f);
             assertArrayEquals(new float[]{0.1f, -0.2f, 0.4f, -0.8f}, rawSamples);

@@ -25,7 +25,6 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.preference.application.ApplicationPreference;
-import io.github.dsheirer.preference.audio.AudioOutputPreference;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
 import io.github.dsheirer.preference.call.CallManagementPreference;
 import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
@@ -60,7 +59,6 @@ import io.github.dsheirer.sample.Listener;
 public class UserPreferences implements Listener<PreferenceType>
 {
     private ApplicationPreference mApplicationPreference;
-    private AudioOutputPreference mAudioOutputPreference;
     private DirectoryPreference mDirectoryPreference;
     private CallManagementPreference mCallManagementPreference;
     private EncryptionKeyPreference mEncryptionKeyPreference;
@@ -168,12 +166,6 @@ public class UserPreferences implements Listener<PreferenceType>
         return mMP3Preference;
     }
 
-    /** Audio processing shared by browser calls, recordings, and outgoing streams. */
-    public AudioOutputPreference getAudioOutputPreference()
-    {
-        return mAudioOutputPreference;
-    }
-
     /**
      * Browser Live activity and optional Java desktop view preferences
      */
@@ -237,7 +229,6 @@ public class UserPreferences implements Listener<PreferenceType>
     private void loadPreferenceTypes()
     {
         mApplicationPreference = new ApplicationPreference(this::receive);
-        mAudioOutputPreference = new AudioOutputPreference(this::receive);
         mDirectoryPreference = new DirectoryPreference(this::receive);
         mCallManagementPreference = new CallManagementPreference(this::receive);
         mEncryptionKeyPreference = new EncryptionKeyPreference(this::receive, mDirectoryPreference);

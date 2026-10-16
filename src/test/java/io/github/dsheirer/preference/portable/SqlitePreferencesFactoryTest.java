@@ -16,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.preference.audio.AudioOutputPreference;
 import java.nio.file.Path;
 import java.util.prefs.Preferences;
 import org.junit.jupiter.api.Test;
@@ -65,8 +64,6 @@ class SqlitePreferencesFactoryTest
         SqlitePreferencesFactory.PreferenceStore reader =
             new SqlitePreferencesFactory.PreferenceStore(database);
         assertEquals("true", reader.get("user/portable/smoke", "enabled"));
-        assertEquals("true", reader.get("user/io/github/dsheirer/preference/audio",
-            "audio.output.continuous.agc.enabled"));
         reader.close();
     }
 
@@ -96,10 +93,6 @@ class SqlitePreferencesFactoryTest
             preferences.putBoolean("enabled", true);
             preferences.flush();
             assertTrue(preferences.getBoolean("enabled", false));
-            AudioOutputPreference audio = new AudioOutputPreference(ignored -> {});
-            assertEquals(false, audio.isContinuousAgcEnabled());
-            audio.setContinuousAgcEnabled(true);
-            assertTrue(new AudioOutputPreference(ignored -> {}).isContinuousAgcEnabled());
             SqlitePreferencesFactory.shutdown();
         }
     }

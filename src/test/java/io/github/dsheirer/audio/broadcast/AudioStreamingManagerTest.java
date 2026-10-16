@@ -100,60 +100,6 @@ public class AudioStreamingManagerTest
     @TempDir
     Path mTemporaryFolder;
 
-    @Test
-    void continuousAgcRunsOnStreamingWorkerAndPreservesRawPhase2Evidence() throws Exception
-    {
-        String originalDataRoot = System.getProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
-        UserPreferences preferences = new UserPreferences();
-        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
-        boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
-        boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
-        List<CompletedAudioCall> written = new ArrayList<>(), observed = new ArrayList<>();
-        List<Boolean> normalization = new ArrayList<>();
-        AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, observed::add, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) -> {
-                userPreferences.getAudioOutputPreference().setContinuousAgcEnabled(false);
-                normalization.add(normalizeAudio);
-                written.add(call); Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
-            });
-        float[] samples = new float[8000];
-        for(int i = 0; i < samples.length; i++) samples[i] = (float)(.025 * Math.sin(i * Math.PI / 4));
-        float[] before = samples.clone();
-        CompletedAudioCall source = withDecoder(withAudioBuffers(List.of(samples)), DecoderType.P25_PHASE2);
-        try
-        {
-            setPortableDataRoot(mTemporaryFolder.resolve("portable-data").toString());
-            preferences.getJmbeLibraryPreference().setPathJmbeLibrary(
-                io.github.dsheirer.audio.codec.mbe.VocoderLibraryFixture.create(mTemporaryFolder));
-            assertTrue(preferences.getJmbeLibraryPreference().getPathJmbeLibrary().startsWith(mTemporaryFolder));
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
-            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
-            manager.start(); manager.receive(source);
-            assertTrue(written.isEmpty());
-            manager.new AudioSegmentProcessor().run();
-            assertEquals(1, written.size());
-            assertEquals(List.of(false), normalization);
-            assertSame(source, observed.getFirst());
-            assertSame(source.snapshot(), written.getFirst().snapshot());
-            assertSame(source.resolvedPolicy(), written.getFirst().resolvedPolicy());
-            assertEquals(source.getDuration(), written.getFirst().getDuration());
-            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[7997]) > Math.abs(samples[7997]));
-            assertArrayEquals(before, samples);
-        }
-        finally
-        {
-            manager.stop(); scheduler.shutdownNow();
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
-            setPortableDataRoot(originalDataRoot);
-            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
-            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
-        }
-    }
 
     private static void setPortableDataRoot(String value) throws ReflectiveOperationException
     {
@@ -165,12 +111,56 @@ public class AudioStreamingManagerTest
     }
 
     @Test
-    void unavailableAgcKeepsCapturedStreamingNormalizationDespitePreferenceChanges() throws Exception
+    void installedLibrarySupplies16kUploadWithoutChangingNativeDurationOrEvidence() throws Exception
+    {
+        String originalDataRoot = System.getProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        var originalRate = preferences.getMP3Preference().getAudioSampleRate();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        List<AudioRecording> delivered = new ArrayList<>();
+        List<CompletedAudioCall> observed = new ArrayList<>();
+        AudioStreamingManager manager = new AudioStreamingManager(delivered::add, BroadcastFormat.MP3,
+            preferences, observed::add, scheduler, (call, path, prefs, identifiers, normalize) ->
+                io.github.dsheirer.record.AudioCallRecorder.write(call, path, io.github.dsheirer.record.RecordFormat.MP3,
+                    prefs, identifiers, normalize));
+        CompletedAudioCall source = withDecoder(withAudioBuffers(List.of(new float[8000])), DecoderType.P25_PHASE2);
+        try
+        {
+            setPortableDataRoot(mTemporaryFolder.resolve("portable-output").toString());
+            preferences.getJmbeLibraryPreference().setPathJmbeLibrary(
+                io.github.dsheirer.audio.codec.mbe.JmbeOutputLibraryFixture.create(mTemporaryFolder.resolve("output-library")));
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            preferences.getMP3Preference().setAudioSampleRate(io.github.dsheirer.audio.convert.InputAudioFormat.SR_16000);
+            manager.start(); manager.receive(source);
+            assertTrue(delivered.isEmpty(), "Ingress does no library processing or encoding");
+            manager.new AudioSegmentProcessor().run();
+            assertEquals(1, delivered.size());
+            assertEquals(16000, new com.mpatric.mp3agic.Mp3File(delivered.getFirst().getPath().toString()).getSampleRate());
+            assertEquals(1000, delivered.getFirst().getRecordingLength());
+            assertSame(source, observed.getFirst());
+            assertEquals(1000, source.getDuration());
+            assertEquals(8000, source.audioBuffers().getFirst().length);
+        }
+        finally
+        {
+            manager.stop(); scheduler.shutdownNow();
+            io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().close();
+            preferences.getMP3Preference().setAudioSampleRate(originalRate);
+            setPortableDataRoot(originalDataRoot);
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
+    @Test
+    void streamingWorkerKeepsCapturedNormalizationDespitePreferenceChanges() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
         Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-        boolean originalAgc = preferences.getAudioOutputPreference().isContinuousAgcEnabled();
         boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         List<Boolean> normalization = new ArrayList<>();
@@ -186,13 +176,12 @@ public class AudioStreamingManagerTest
         {
             preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
             preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(true);
             preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
             manager.start();
             manager.receive(withDecoder(withAudioBuffers(List.of(new float[]{0.1f, -0.2f})), DecoderType.P25_PHASE2));
             manager.new AudioSegmentProcessor().run();
             assertEquals(List.of(true), normalization);
-            assertEquals(1, delivered.get(), "Unavailable optional gain must not discard streamed audio");
+            assertEquals(1, delivered.get(), "The recording worker must retain captured normalization");
         }
         finally
         {
@@ -201,13 +190,12 @@ public class AudioStreamingManagerTest
             preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
             if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
             else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getAudioOutputPreference().setContinuousAgcEnabled(originalAgc);
             preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
         }
     }
 
     @Test
-    void appliesConventionalImbeGainOnWorkerWithoutMutatingRawStreamingEvidence() throws Exception
+    void streamingWriterReceivesNativeImbeEvidenceBeforeOutputProcessing() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
@@ -235,7 +223,7 @@ public class AudioStreamingManagerTest
             assertSame(rawCall.snapshot(), written.getFirst().snapshot());
             assertSame(rawCall.resolvedPolicy(), written.getFirst().resolvedPolicy());
             assertEquals(rawCall.getDuration(), written.getFirst().getDuration());
-            assertTrue(Math.abs(written.getFirst().audioBuffers().getFirst()[3]) <= 0.95f);
+            assertSame(rawCall, written.getFirst(), "The recorder owns format rendering and presentation gain");
             assertArrayEquals(new float[]{0.1f, -0.2f, 0.4f, -0.8f}, rawSamples);
         }
         finally

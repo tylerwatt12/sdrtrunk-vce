@@ -45,7 +45,7 @@ class SetupLegacyRecoveryChoicesTest
     {
         SwingUtilities.invokeAndWait(() -> {
             var choices = new SetupWizard.LegacyRecoveryChoices(Set.copyOf(ReceiverSettingsSchema.KEYS));
-            assertEquals(3, choices.choices().size());
+            assertEquals(2, choices.choices().size());
             assertTrue(choices.choices().values().stream().noneMatch(JCheckBox::isSelected));
             assertFalse(choices.anySelected());
             assertEquals(Map.of(), choices.selectedDefaults());
@@ -69,20 +69,17 @@ class SetupLegacyRecoveryChoicesTest
         });
     }
 
-    @Test void independentAudioChoicesAndUnknownKeysCannotAuthorizeUnselectedSettings() throws Exception
+    @Test void retiredAndUnknownSettingsCannotBeRecoveredThroughTheWizard() throws Exception
     {
         SwingUtilities.invokeAndWait(() -> {
             var choices = new SetupWizard.LegacyRecoveryChoices(Set.of(
                 ReceiverSettingsSchema.PAGING_TONES_KEY, ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, "unknown"));
-            assertEquals(Set.of(ReceiverSettingsSchema.PAGING_TONES_KEY, ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY),
-                choices.choices().keySet());
-            choices.choices().get(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY).doClick();
-            assertEquals(Map.of(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, "{\"enabled\":false}"),
-                choices.selectedDefaults());
+            assertEquals(Set.of(ReceiverSettingsSchema.PAGING_TONES_KEY), choices.choices().keySet());
             choices.choices().get(ReceiverSettingsSchema.PAGING_TONES_KEY).doClick();
-            assertEquals(Map.of(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, "{\"enabled\":false}",
-                ReceiverSettingsSchema.PAGING_TONES_KEY, "{\"enabled\":true}"), choices.selectedDefaults());
-            var empty = new SetupWizard.LegacyRecoveryChoices(Set.of("unknown"));
+            assertEquals(Map.of(ReceiverSettingsSchema.PAGING_TONES_KEY, "{\"enabled\":true}"),
+                choices.selectedDefaults());
+            var empty = new SetupWizard.LegacyRecoveryChoices(Set.of(
+                ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, "unknown"));
             assertEquals(Map.of(), empty.selectedDefaults());
             assertFalse(empty.anySelected());
         });
@@ -94,8 +91,7 @@ class SetupLegacyRecoveryChoicesTest
             var choices = new SetupWizard.LegacyRecoveryChoices(Set.copyOf(ReceiverSettingsSchema.KEYS));
             List<String> labels = new ArrayList<>();
             collectLabels(choices.panel(), labels);
-            assertEquals(List.of("Recover saved Remote Links", "Recover saved paging-tone detection",
-                "Recover saved voice enhancement"), labels);
+            assertEquals(List.of("Recover saved Remote Links", "Recover saved paging-tone detection"), labels);
             assertTrue(labels.stream().noneMatch(label -> label.contains("{") || label.contains("senderId") ||
                 label.contains("credential") || label.contains("token")));
         });

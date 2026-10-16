@@ -8,6 +8,20 @@ import org.junit.jupiter.api.Test;
 class GitHubTest
 {
     @Test
+    void optionalAudioBuildDoesNotReplaceTheStandardPublicRelease()
+    {
+        Release release = GitHub.parseResponse("""
+            [
+              {"tag_name":"v1.0.17-16khz.1","draft":false,"prerelease":true},
+              {"tag_name":"v1.0.17","draft":false,"prerelease":false}
+            ]
+            """);
+
+        assertEquals("v1.0.17", release.getTagName());
+        assertEquals(Version.fromString("1.0.17"), release.getVersion());
+    }
+
+    @Test
     void selectsHighestStableVersionRegardlessOfReleaseOrder()
     {
         Release release = GitHub.parseResponse("""

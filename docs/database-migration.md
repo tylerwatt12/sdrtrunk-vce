@@ -60,15 +60,16 @@ Some older activity, signal history, or cached information may be reset when it 
 new reception rebuilds those observations. An unusable setting or configuration component may be repaired, defaulted,
 or skipped independently. The plan describes these possibilities and the final report names the actual effects.
 
-Remote Links pairing and connection settings, paging-tone detection, and voice-enhancement choices are stored in the
-application database. Upgrading an older profile or importing its complete data folder also imports these three
-settings from their former JSON files when the database has no saved value. The original files remain unchanged.
+Remote Links pairing and connection settings and paging-tone detection are stored in the application database.
+The database also retains the former voice-enhancement choice for compatibility; current VCE does not use it.
+Upgrading an older profile or importing its complete data folder preserves these settings and imports their former
+JSON values when the database has no saved value. The original files remain unchanged.
 A SQLite-only import preserves choices already stored in the selected database; it does not read neighboring JSON
 files. Choose the complete folder when moving settings that an older build still kept outside SQLite.
 
 An earlier format-53 update could create defaults without importing the old JSON files. A later update preserves
 those database choices because a default may also be an intentional selection. Setup offers optional recovery for
-valid legacy files whose corresponding database values are still defaults. Select only the settings you want to
+valid legacy Remote Links and paging-tone files whose corresponding database values are still defaults. Select only the settings you want to
 recover; recovery stops if the reviewed database value changes. Newer or non-default database choices are retained.
 
 A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
@@ -885,7 +886,8 @@ interrupted. Old in-memory preferences are closed before replacement and are nev
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
 as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping. Remote Links settings and the paging-tone
-and voice-enhancement choices already in the application database are preserved for every import scope. Remote Links network
+and retired voice-enhancement choices already in the application database are preserved for every import scope.
+The retired choice has no effect on audio processing. Remote Links network
 destinations and stable channel/sender identities are preserved without path remapping. An unavailable optional artifact is
 reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the

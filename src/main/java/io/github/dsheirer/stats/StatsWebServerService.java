@@ -32,12 +32,10 @@ import io.github.dsheirer.alerts.TopicAlertService;
 import io.github.dsheirer.alerts.delivery.PushDeliveryService;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
-import io.github.dsheirer.audio.enhance.VoiceEnhancementService;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.audio.tone.PagingToneSettingsService;
 import io.github.dsheirer.web.http.PagingToneHttpController;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
-import io.github.dsheirer.web.http.VoiceEnhancementHttpController;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.channel.ChannelAdministrationService;
@@ -233,7 +231,6 @@ public class StatsWebServerService implements AutoCloseable
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
         event -> mDecodeEventHub.publish("decode_event", event);
     private final StatsWebCallService mWebCallService;
-    private final VoiceEnhancementService mVoiceEnhancementService;
     private final PagingToneSettingsService mPagingToneSettingsService;
     private final StaticWebAssetResponse mStaticWebAssetResponse = new StaticWebAssetResponse();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
@@ -412,11 +409,8 @@ public class StatsWebServerService implements AutoCloseable
             SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mPagingToneSettingsService = new PagingToneSettingsService(receiverSettings,
             P25PagingToneService.getInstance()::setEnabled);
-        mVoiceEnhancementService = new VoiceEnhancementService(receiverSettings,
-            () -> io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().getVocoderAudioProcessor(
-                mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary()));
-        mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog, mVoiceEnhancementService,
-            () -> mUserPreferences.getAudioOutputPreference().isContinuousAgcEnabled());
+        mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog,
+            () -> mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary());
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mSavedActivityLiveService = new SavedActivityLiveService(new SavedActivityLiveService.Source()
@@ -1079,10 +1073,6 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext(OperationalPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, operationalPreferencesController::handle));
 
-        VoiceEnhancementHttpController voiceEnhancementController =
-            new VoiceEnhancementHttpController(mVoiceEnhancementService);
-        server.createContext(VoiceEnhancementHttpController.PATH, mWebRequestSecurity.protectApi(
-            WebCapability.ADMIN_SETTINGS, voiceEnhancementController::handle));
         PagingToneHttpController pagingToneController = new PagingToneHttpController(mPagingToneSettingsService);
         server.createContext(PagingToneHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, pagingToneController::handle));
