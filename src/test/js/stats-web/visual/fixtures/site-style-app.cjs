@@ -53,7 +53,7 @@ const pageOf = (rows, limit = 100) => ({ rows, total_count: rows.length, limit,
   offset: 0, has_more: false, next_offset: null });
 const operational = { revision: 'a'.repeat(64), settings: {
   patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-  mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, audio_continuous_agc: false,
+  mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false,
   stats_logging_enabled: true,
   stats_detailed_history_enabled: true, stats_logging_retention_days: 30 }, options: {
   patch_group_streaming_options: [{ value: 'PATCH_GROUP', label: 'Patch Group' }, { value: 'TALKGROUPS', label: 'Individual Talkgroups' }],
@@ -359,10 +359,6 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/admin/aliases/options') return respond({ revision: 1, alias_list: list,
       streams: [{ configuration_id: stream.configuration_id, name: stream.name }] });
     if (p === '/api/v1/admin/operational-preferences') return route.fulfill({ json: operational });
-    if (p === '/api/v1/admin/voice-enhancement') return route.fulfill({ json: {
-      revision: 'a'.repeat(64), enabled: false, status: 'ready', model: {
-        id: 'voice-model-1', input_sample_rate: 8000, output_sample_rate: 16000,
-        codecs: ['IMBE', 'AMBE_PLUS_2'], sha256: 'd'.repeat(64) } } });
     if (p === '/api/v1/admin/paging-tone-detection') return route.fulfill({ json: {
       revision: '1'.repeat(64), enabled: true, status: 'ready' } });
     if (p === '/api/v1/admin/streaming') return respond({ revision: '1:1:1', destinations: [stream] });

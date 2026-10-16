@@ -2,7 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
-const { openVoiceEnhancementApp } = require('./fixtures/voice-enhancement-app.cjs');
+const { openPagingToneApp } = require('./fixtures/paging-tone-app.cjs');
 
 const panel = page => page.locator('[data-paging-tone-detection]');
 const toggle = page => panel(page).getByRole('checkbox', { name: 'Tone detection', exact: true });
@@ -14,8 +14,7 @@ async function screenshot(page, name) {
 
 test('default On paging-tone control saves independently, guards revisions, and preserves drafts after failure', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  const app = await openVoiceEnhancementApp(page, { holdPagingStatus: true,
-    snapshot: { status: 'no_model', model: null } });
+  const app = await openPagingToneApp(page, { holdPagingStatus: true });
   const state = app.pagingTone;
   await expect(page.locator('.admin-settings-content [data-paging-tone-detection]')).toHaveCount(1);
   await expect(panel(page)).toContainText('Loading tone detection setting…');
@@ -24,7 +23,7 @@ test('default On paging-tone control saves independently, guards revisions, and 
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).toBeChecked();
   await expect(save(page)).toBeDisabled();
   await expect(save(page)).toBeHidden();
-  await expect(page.locator('[data-voice-enhancement] input[type=checkbox]')).toBeDisabled();
+  await expect(page.locator('[data-voice-enhancement]')).toHaveCount(0);
   await expect(panel(page)).toContainText('Off skips detection; tones remain audible.');
   await toggle(page).focus(); await screenshot(page, 'paging-tones-light-desktop');
   await toggle(page).press('Space');
@@ -42,7 +41,6 @@ test('default On paging-tone control saves independently, guards revisions, and 
   expect(state.writes[0].headers['x-csrf-token']).toBe('test-only-csrf');
   expect(state.writes[0].method).toBe('PUT');
   expect(JSON.parse(state.writes[0].body)).toEqual({ value: false });
-  expect(app.writes).toHaveLength(0);
   state.current = { ...state.current, revision: '2'.repeat(64) };
   await toggle(page).press('Space'); await save(page).click();
   await expect(panel(page)).toContainText('The latest saved setting was loaded.');
@@ -60,13 +58,12 @@ test('default On paging-tone control saves independently, guards revisions, and 
   await expect(panel(page).getByRole('alert')).toContainText('Reload status');
   await expect(toggle(page)).toBeDisabled();
   await reload(page).click(); await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).toBeChecked();
-  expect(app.writes).toHaveLength(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test('unavailable safe Off setting remains editable and can be repaired without a changed value on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const app = await openVoiceEnhancementApp(page, { theme: 'dark', pagingSnapshot: { enabled: false, status: 'unavailable' } });
+  const app = await openPagingToneApp(page, { theme: 'dark', pagingSnapshot: { enabled: false, status: 'unavailable' } });
   const state = app.pagingTone;
   await expect(panel(page)).toContainText('Tone detection setting could not be loaded. Detection is off. Save to choose a setting.');
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).not.toBeChecked();

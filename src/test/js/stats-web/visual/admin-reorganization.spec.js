@@ -27,7 +27,7 @@ function operationalDocument() {
     revision: 'a'.repeat(64),
     settings: {
       patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, audio_continuous_agc: false,
+      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false,
       stats_logging_enabled: true, stats_detailed_history_enabled: true, stats_logging_retention_days: 30
     },
     options: {
@@ -71,6 +71,8 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         primary: true, capabilities });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
+    } else if (pathname === '/api/v1/admin/paging-tone-detection') {
+      await route.fulfill({ json: { revision: '1'.repeat(64), enabled: true, status: 'ready' } });
     } else if (pathname === '/api/v1/admin/operational-preferences') {
       if (options.operationalErrorOnce && !failedOperationalRequest) {
         failedOperationalRequest = true;
@@ -160,38 +162,26 @@ test('desktop administration navigation includes every grouped page and its icon
   await expect(navigation.getByRole('link', { name: 'Call output & activity' })).toHaveCount(0);
 });
 
-test('audio quality retains server choices, dependent options, draft fields, and revision saves', async ({ page }) => {
+test('audio quality retains MP3 choices, draft fields, and revision saves without enhancement controls', async ({ page }) => {
   const app = await openAdmin(page);
   await expect.poll(() => preferenceIds(page))
-    .toEqual(['audio_continuous_agc', 'mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
-  const gain = page.locator('form[data-preference="audio_continuous_agc"]');
+    .toEqual(['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
+  await expect(page.getByText('Continuous automatic gain', { exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-voice-enhancement]')).toHaveCount(0);
   const quality = page.locator('form[data-preference="mp3_setting"]');
   const sampleRate = page.locator('form[data-preference="mp3_input_audio_format"]');
   const normalize = page.locator('form[data-preference="mp3_normalize_audio"]');
-  await expect(gain.locator('input')).not.toBeChecked();
-  await expect(gain).toContainText('Balances speech volume in new browser calls, recordings, and outgoing streams.');
   await expect(quality.locator('option')).toHaveText(['16 kbps', 'Variable']);
   await expect(sampleRate.locator('option')).toHaveText(['8 kHz', '16 kHz']);
   await normalize.locator('.ui-toggle').click();
-  await gain.locator('.ui-toggle').click();
-  await gain.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(gain.locator('input')).toBeChecked();
-  await expect(normalize.getByText('Unsaved changes', { exact: true })).toBeVisible();
-  await expect(normalize.locator('input')).toBeDisabled();
-  await expect(normalize.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
-  await expect(normalize).toContainText('Continuous automatic gain replaces MP3 volume normalization');
   await quality.locator('select').selectOption('VBR_5');
   await quality.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(sampleRate.locator('option')).toHaveText(['16 kHz', '44.1 kHz']);
   await expect(normalize.getByText('Unsaved changes', { exact: true })).toBeVisible();
-  await gain.locator('.ui-toggle').click();
-  await gain.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(normalize.locator('input')).toBeEnabled();
   await normalize.getByRole('button', { name: 'Save', exact: true }).click();
   expect(app.writes).toEqual([
-    { field: 'audio_continuous_agc', value: true, revision: `"${'a'.repeat(64)}"` },
-    { field: 'mp3_setting', value: 'VBR_5', revision: `"${'b'.repeat(64)}"` },
-    { field: 'audio_continuous_agc', value: false, revision: `"${'b'.repeat(64)}"` },
+    { field: 'mp3_setting', value: 'VBR_5', revision: `"${'a'.repeat(64)}"` },
     { field: 'mp3_normalize_audio', value: true, revision: `"${'b'.repeat(64)}"` }
   ]);
   await expect(normalize.getByRole('button', { name: 'Save', exact: true })).toBeHidden();
@@ -235,7 +225,7 @@ test('a focused settings page can retry its initial failed load', async ({ page 
   await expect(retry).toBeEnabled();
   await retry.click();
   await expect.poll(() => preferenceIds(page))
-    .toEqual(['audio_continuous_agc', 'mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
+    .toEqual(['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']);
   expect(app.requests.filter((request) => request === '/api/v1/admin/operational-preferences'))
     .toHaveLength(2);
   await expect(page.getByText('Settings temporarily unavailable. Reload saved settings and try again.'))
@@ -650,6 +640,10 @@ for (const [theme, viewport, size] of [
       if (field) await expect(page.locator(`.admin-settings-content form[data-preference="${field}"]`))
         .toBeVisible();
       else await expect(page.getByRole('combobox', { name: /^Country/ })).toHaveValue('US');
+      if (tab === 'audio-quality') {
+        await expect(page.locator('[data-paging-tone-detection] input')).toBeEnabled();
+        await expect(page.locator('[data-paging-tone-detection] [role=alert]')).toBeHidden();
+      }
       await page.evaluate(() => window.scrollTo(0, 0));
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await expect(page.locator('body')).toHaveScreenshot(`admin-${tab}-${theme}-${size}.png`, { fullPage: true });

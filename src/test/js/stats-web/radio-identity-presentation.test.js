@@ -12,6 +12,15 @@ const callAudioDetailsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/call-audio-details.js'), 'utf8');
 const callAudioDetails = vm.runInNewContext(callAudioDetailsSource.replace(/^export /gm, '') +
   '\n({callAudioDetailGroups});');
+for (const rate of [8000, 16000, 32000, 44100, 48000]) {
+  const groups = callAudioDetails.callAudioDetailGroups({ audio_sample_rate: rate,
+    voice_enhancement: true, voice_model: 'retired-metadata' });
+  assert.deepEqual(JSON.parse(JSON.stringify(groups)), [['Audio', [['Sample rate', `${rate / 1000} kHz`]]]],
+    'Call details show the supplied sample rate without codec-specific enhancement or model controls.');
+}
+for (const rate of [0, -8000, 1.5, '16000', NaN, Infinity]) {
+  assert.equal(callAudioDetails.callAudioDetailGroups({ audio_sample_rate: rate }).length, 0);
+}
 assert.equal(callFormats.formatHexDecimal(0xBEE00, 5), '0xBEE00 (781824)');
 assert.equal(callFormats.formatHexDecimal('0x293', 3), '0x293 (659)');
 assert.equal(callFormats.formatHexDecimal('BEE00', 5), '0xBEE00 (781824)');

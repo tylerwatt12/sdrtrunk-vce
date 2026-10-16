@@ -230,7 +230,7 @@ async function openRecordings(page, options = {}) {
     } else if (pathname === '/api/v1/admin/operational-preferences') {
       await route.fulfill({ json: { revision: 'a'.repeat(64), settings: { audio_record_format: 'MP3',
         patch_group_streaming_option: 'PATCH_GROUP', mp3_setting: 'CBR_16', mp3_input_audio_format: 'SR_16000',
-        mp3_normalize_audio: false, audio_continuous_agc: false, stats_logging_enabled: true,
+        mp3_normalize_audio: false, stats_logging_enabled: true,
         stats_detailed_history_enabled: false,
         stats_logging_retention_days: 30 },
       options: {

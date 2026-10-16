@@ -42,10 +42,8 @@ export function formatPagingToneSummary(summary) {
 
 export function callAudioDetailGroups(call = {}) {
   const audio = [];
-  if ([8000, 16000].includes(call.audio_sample_rate)) audio.push(['Sample rate', `${call.audio_sample_rate / 1000} kHz`]);
-  if (typeof call.voice_enhancement === 'boolean') audio.push(['Voice enhancement', call.voice_enhancement ? 'On' : 'Off']);
-  if (call.voice_enhancement === true && typeof call.voice_model === 'string' && call.voice_model.trim()) {
-    audio.push(['Voice model', call.voice_model]);
+  if (Number.isInteger(call.audio_sample_rate) && call.audio_sample_rate > 0) {
+    audio.push(['Sample rate', `${call.audio_sample_rate / 1000} kHz`]);
   }
   const groups = audio.length ? [['Audio', audio]] : [];
   const tones = Array.isArray(call.detected_paging_tones) ? call.detected_paging_tones.filter(tone =>

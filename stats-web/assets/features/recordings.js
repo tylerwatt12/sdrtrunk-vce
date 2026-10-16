@@ -2,7 +2,7 @@ import { systemLabel, systemName } from '../core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
-import { callAudioDetailGroups } from '../core/call-audio-details.js?v=4';
+import { callAudioDetailGroups } from '../core/call-audio-details.js?v=5';
 import { createFormWorkflow } from '../core/form-workflows.js?v=4';
 
 const CALLS = '/api/v1/recordings/calls';

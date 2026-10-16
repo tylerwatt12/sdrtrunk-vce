@@ -34,16 +34,15 @@ import { createStreamingWorkspace } from './features/streaming.js?v=10';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
 import { createAlertsWorkspace } from './features/alerts.js?v=11';
-import { createRecordingsFeature } from './features/recordings.js?v=46';
-import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=5';
+import { createRecordingsFeature } from './features/recordings.js?v=47';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=28';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=24';
-import { formatPagingToneSummary } from './core/call-audio-details.js?v=4';
+import { createAudioDock } from './core/audio-dock.js?v=25';
+import { formatPagingToneSummary } from './core/call-audio-details.js?v=5';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -28044,14 +28043,14 @@ function decodeOperationalPreferencesEnvelope(value) {
   const options = value?.options;
   const fields = [
     'patch_group_streaming_option', 'audio_record_format', 'mp3_setting', 'mp3_input_audio_format',
-    'mp3_normalize_audio', 'audio_continuous_agc', 'stats_logging_enabled', 'stats_detailed_history_enabled',
+    'mp3_normalize_audio', 'stats_logging_enabled', 'stats_detailed_history_enabled',
     'stats_logging_retention_days'
   ];
   if (!value || !/^[0-9a-f]{64}$/.test(String(value.revision || '')) ||
       !settings || typeof settings !== 'object' || Array.isArray(settings) ||
       !options || typeof options !== 'object' || Array.isArray(options) ||
       !fields.every((field) => Object.hasOwn(settings, field)) ||
-      typeof settings.audio_continuous_agc !== 'boolean' ||
+      typeof settings.mp3_normalize_audio !== 'boolean' ||
       !Array.isArray(options.patch_group_streaming_options) ||
       !Array.isArray(options.audio_record_formats) || !Array.isArray(options.mp3_settings) ||
       !options.mp3_input_audio_formats_by_setting ||
@@ -28122,19 +28121,13 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       { id: 'audio_record_format', label: 'Recording format', kind: 'select',
         options: 'audio_record_formats' }
     ] },
-    { area: 'output', title: 'Audio level',
-      description: '', fields: [
-      { id: 'audio_continuous_agc', label: 'Continuous automatic gain', kind: 'boolean',
-        detail: 'Balances speech volume in new browser calls, recordings, and outgoing streams. Requires JMBE 1.0.19 or newer.' }
-    ] },
     { area: 'output', title: 'MP3 encoding',
       description: '', layout: 'wide', fields: [
       { id: 'mp3_setting', label: 'MP3 bit rate and quality', kind: 'select', options: 'mp3_settings',
         detail: 'Higher bit rates improve quality but use more storage and network bandwidth. Choices depend on ' +
           'the sample rate.' },
       { id: 'mp3_input_audio_format', label: 'MP3 sample rate and bit depth', kind: 'select' },
-      { id: 'mp3_normalize_audio', label: 'Even out MP3 volume', kind: 'boolean',
-        detail: 'Used when continuous automatic gain is off.' }
+      { id: 'mp3_normalize_audio', label: 'Even out MP3 volume', kind: 'boolean' }
     ] },
     { area: 'activity', title: 'Saved activity',
       description: '', fields: [
@@ -28171,8 +28164,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         const form = node('form', 'admin-form operational-preference-form ui-form-workflow-inset');
         form.dataset.preference = field.id;
         const current = confirmed.settings[field.id];
-        const handledByContinuousAgc = field.id === 'mp3_normalize_audio' && confirmed.settings.audio_continuous_agc;
-        const detail = handledByContinuousAgc ? 'Continuous automatic gain replaces MP3 volume normalization while on. Turn it off to change this setting.' : field.detail || '';
+        const detail = field.detail || '';
         const draft = drafts.has(field.id) ? drafts.get(field.id) : current;
         let input;
         if (field.kind === 'select') {
@@ -28190,7 +28182,6 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         } else if (field.kind === 'boolean') {
           const toggle = uiToggleField(field.label, draft, field.label, detail);
           input = toggle.querySelector('input');
-          input.disabled = handledByContinuousAgc;
           form.append(toggle);
         } else {
           input = node('input');
@@ -28219,7 +28210,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         input.addEventListener(field.kind === 'number' ? 'input' : 'change', updateDraft);
         form.append(actions);
         const workflow = createFormWorkflow({ form, submit: save, feedback: state,
-          ready: !handledByContinuousAgc, changed: () => readValue() !== current });
+          ready: true, changed: () => readValue() !== current });
         workflow.showFeedback('status', readValue() !== current ? 'Unsaved changes' : '');
         actions.hidden = save.hidden;
         form.addEventListener('submit', async (event) => {
@@ -33528,7 +33519,7 @@ function adminSettingsGroups() {
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Choose how calls are recorded and how long managed calls are kept.' },
       { id: 'audio-quality', label: 'Audio quality', icon: 'audio-quality', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Choose voice enhancement, automatic gain, paging-tone detection, and MP3 encoding.' },
+        description: 'Choose paging-tone detection and MP3 encoding.' },
       { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
@@ -33646,18 +33637,14 @@ async function renderAdmin() {
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
-    const enhancement = createVoiceEnhancementSettings({ node, section, sectionActionHost, uiToggleField,
-      setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
-      isCurrent: () => renderIsCurrent(renderContext) });
-    body.append(enhancement.element);
     const pagingTones = createPagingToneDetectionSettings({ node, section, sectionActionHost, uiToggleField,
       setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
       isCurrent: () => renderIsCurrent(renderContext) });
     body.append(pagingTones.element);
     body.append(node('div', 'ui-notice',
       'MP3 settings apply to recordings and outgoing streams. Managed recordings use MP3.'));
-    await Promise.all([enhancement.load(), pagingTones.load(), renderAdminOperationalPreferences(renderContext, {
-      target: body, fields: ['audio_continuous_agc', 'mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']
+    await Promise.all([pagingTones.load(), renderAdminOperationalPreferences(renderContext, {
+      target: body, fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']
     })]);
     if (renderIsCurrent(renderContext)) {
       const actions = node('div', 'ui-action-row');
