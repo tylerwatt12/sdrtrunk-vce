@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -25,6 +26,7 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -50,6 +52,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +68,95 @@ class StatsWebServerServiceLifecycleTest
 
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void publishesActualListenerStateAfterAccessChangesFailuresAndShutdown() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("runtime-notification-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = Files.createDirectories(mTemporaryDirectory.resolve("runtime-notification-assets"));
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        TestApplicationPreference application = new TestApplicationPreference(0, false, false, true);
+        TestUserPreferences preferences = new TestUserPreferences(application, new TestDirectoryPreference(dataRoot));
+
+        try(StatsWebServerService service = StatsWebServerService.forListenerValidation(preferences))
+        {
+            assertTrue(service.getRuntimeState().running(), service.getRuntimeState().statusMessage());
+            RuntimeStateObserver observer = new RuntimeStateObserver(service);
+            MyEventBus.getGlobalEventBus().register(observer);
+
+            try
+            {
+                application.setNetworkAccessEnabled(true);
+                service.preferenceUpdated(PreferenceType.APPLICATION);
+                WebServerRuntimeState network = service.getRuntimeState();
+                assertTrue(network.running(), network.statusMessage());
+                assertTrue(network.anyIpEnabled());
+                assertTrue(network.https());
+                observer.assertLatest(1, network);
+
+                service.preferenceUpdated(PreferenceType.APPLICATION);
+                observer.assertLatest(1, network);
+
+                application.setNetworkAccessEnabled(false);
+                service.preferenceUpdated(PreferenceType.APPLICATION);
+                WebServerRuntimeState local = service.getRuntimeState();
+                assertTrue(local.running(), local.statusMessage());
+                assertFalse(local.anyIpEnabled());
+                observer.assertLatest(2, local);
+
+                try(ServerSocket occupied = new ServerSocket(0, 50, InetAddress.getLoopbackAddress()))
+                {
+                    application.setPort(occupied.getLocalPort());
+                    service.preferenceUpdated(PreferenceType.APPLICATION);
+                    WebServerRuntimeState failed = service.getRuntimeState();
+                    assertTrue(failed.running(), failed.statusMessage());
+                    assertEquals(local.port(), failed.port());
+                    assertEquals(local.anyIpEnabled(), failed.anyIpEnabled());
+                    assertEquals(local.https(), failed.https());
+                    assertEquals(local.certificateFingerprint(), failed.certificateFingerprint());
+                    assertTrue(failed.statusMessage().contains("previous listener remains active"));
+                    observer.assertLatest(3, failed);
+                }
+
+                application.setEnabled(false);
+                service.preferenceUpdated(PreferenceType.APPLICATION);
+                WebServerRuntimeState disabled = service.getRuntimeState();
+                assertFalse(disabled.running());
+                observer.assertLatest(4, disabled);
+                service.preferenceUpdated(PreferenceType.APPLICATION);
+                observer.assertLatest(4, disabled);
+
+                application.setEnabled(true);
+                application.setPort(0);
+                service.preferenceUpdated(PreferenceType.APPLICATION);
+                assertTrue(service.getRuntimeState().running(), service.getRuntimeState().statusMessage());
+                observer.assertLatest(5, service.getRuntimeState());
+
+                service.close();
+                assertFalse(service.getRuntimeState().running());
+                observer.assertLatest(6, service.getRuntimeState());
+            }
+            finally
+            {
+                MyEventBus.getGlobalEventBus().unregister(observer);
+            }
+        }
+        finally
+        {
+            if(previousAssetOverride == null)
+            {
+                System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            }
+            else
+            {
+                System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+            }
+        }
+    }
 
     @Test
     void activitySubscriptionIncarnationsRefreshBaselinesWithoutReopeningUnchangedConsumers() throws Exception
@@ -869,6 +961,36 @@ class StatsWebServerServiceLifecycleTest
         }
     }
 
+    private static final class RuntimeStateObserver
+    {
+        private final StatsWebServerService mService;
+        private final List<WebServerRuntimeState> mNotifications = new ArrayList<>();
+        private final List<WebServerRuntimeState> mReadbacks = new ArrayList<>();
+
+        private RuntimeStateObserver(StatsWebServerService service)
+        {
+            mService = service;
+        }
+
+        @Subscribe
+        public void stateChanged(WebServerRuntimeState state)
+        {
+            mNotifications.add(state);
+            mReadbacks.add(mService.getRuntimeState());
+        }
+
+        private void assertLatest(int count, WebServerRuntimeState expected)
+        {
+            assertEquals(count, mNotifications.size());
+            assertSame(expected, mNotifications.getLast());
+            for(int index = 0; index < count; index++)
+            {
+                assertSame(mNotifications.get(index), mReadbacks.get(index),
+                    "Notifications must follow runtime-state publication");
+            }
+        }
+    }
+
     private static final class TestUserPreferences extends UserPreferences
     {
         private final ApplicationPreference mApplicationPreference;
@@ -899,8 +1021,8 @@ class StatsWebServerServiceLifecycleTest
         private volatile int mPort;
         private volatile boolean mEnabled = true;
         private volatile boolean mWebDiagnosticLoggingEnabled;
-        private final boolean mAnyIpEnabled;
-        private final boolean mHttpsEnabled;
+        private boolean mAnyIpEnabled;
+        private boolean mHttpsEnabled;
         private boolean mCertificateModeConfigured;
         private WebCertificateMode mCertificateMode = WebCertificateMode.AUTOMATIC;
 
@@ -922,6 +1044,15 @@ class StatsWebServerServiceLifecycleTest
         private void setEnabled(boolean enabled)
         {
             mEnabled = enabled;
+        }
+
+        private void setNetworkAccessEnabled(boolean enabled)
+        {
+            mAnyIpEnabled = enabled;
+            if(enabled)
+            {
+                mHttpsEnabled = true;
+            }
         }
 
         @Override

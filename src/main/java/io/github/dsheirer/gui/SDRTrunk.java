@@ -178,6 +178,7 @@ public class SDRTrunk
     private JLabel mNetworkAccessWarningLabel;
     private Timer mNetworkAccessRefreshTimer;
     private final AtomicBoolean mNetworkAccessRefreshInProgress = new AtomicBoolean();
+    private final AtomicBoolean mNetworkAccessRefreshRequested = new AtomicBoolean();
     private String mDisplayedNetworkAccessUrl;
     private boolean mOpenWebAfterSetup;
     private JMenuItem mEncryptionKeysItem;
@@ -1247,12 +1248,19 @@ public class SDRTrunk
 
     private void refreshNetworkAccessStatus()
     {
+        if(mStatsWebServerService == null || mShutdownProcessed)
+        {
+            return;
+        }
+
+        mNetworkAccessRefreshRequested.set(true);
         if(!mNetworkAccessRefreshInProgress.compareAndSet(false, true))
         {
             return;
         }
 
         ThreadPool.CACHED.execute(() -> {
+            mNetworkAccessRefreshRequested.set(false);
             NetworkAccessPresentation presentation;
             try
             {
@@ -1263,24 +1271,31 @@ public class SDRTrunk
                 presentation = new NetworkAccessPresentation("Network address unavailable", null,
                     "Unable to inspect the active web listener or local network addresses.", null);
             }
-            finally
-            {
-                mNetworkAccessRefreshInProgress.set(false);
-            }
-
             NetworkAccessPresentation status = presentation;
             EventQueue.invokeLater(() -> {
-                if(mNetworkAccessUrlField != null && !mShutdownProcessed)
+                try
                 {
-                    mDisplayedNetworkAccessUrl = status.url();
-                    mNetworkAccessUrlField.setText(status.display());
-                    mNetworkAccessUrlField.setCaretPosition(0);
-                    mNetworkAccessUrlField.setToolTipText(status.explanation());
-                    mCopyNetworkAccessUrlButton.setEnabled(status.url() != null);
-                    mNetworkAccessWarningLabel.setText(status.warning());
-                    mNetworkAccessWarningLabel.setVisible(status.warning() != null);
-                    mMainGui.revalidate();
-                    ensureShellFitsContent();
+                    // A listener change during discovery makes this result stale; inspect again before displaying it.
+                    if(!mNetworkAccessRefreshRequested.get() && mNetworkAccessUrlField != null && !mShutdownProcessed)
+                    {
+                        mDisplayedNetworkAccessUrl = status.url();
+                        mNetworkAccessUrlField.setText(status.display());
+                        mNetworkAccessUrlField.setCaretPosition(0);
+                        mNetworkAccessUrlField.setToolTipText(status.explanation());
+                        mCopyNetworkAccessUrlButton.setEnabled(status.url() != null);
+                        mNetworkAccessWarningLabel.setText(status.warning());
+                        mNetworkAccessWarningLabel.setVisible(status.warning() != null);
+                        mMainGui.revalidate();
+                        ensureShellFitsContent();
+                    }
+                }
+                finally
+                {
+                    mNetworkAccessRefreshInProgress.set(false);
+                    if(mNetworkAccessRefreshRequested.get())
+                    {
+                        refreshNetworkAccessStatus();
+                    }
                 }
             });
         });
@@ -1421,6 +1436,12 @@ public class SDRTrunk
                     "Web Interface", JOptionPane.WARNING_MESSAGE);
             }
         }
+    }
+
+    @Subscribe
+    public void webServerRuntimeStateUpdated(WebServerRuntimeState state)
+    {
+        refreshNetworkAccessStatus();
     }
 
     @Subscribe

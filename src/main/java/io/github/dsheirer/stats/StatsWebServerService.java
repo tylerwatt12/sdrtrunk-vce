@@ -629,7 +629,7 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             stopActiveListener();
-            mRuntimeState = stoppedState("Web server is disabled.");
+            setRuntimeState(stoppedState("Web server is disabled."));
             return mRuntimeState;
         }
 
@@ -672,7 +672,7 @@ public class StatsWebServerService implements AutoCloseable
             }
             ListenerRuntime replacement = startListener(prepared);
             mListener = replacement;
-            mRuntimeState = runningState(replacement, "Web server is running.");
+            setRuntimeState(runningState(replacement, "Web server is running."));
 
             if(previous != null && !releasePreviousFirst)
             {
@@ -1319,20 +1319,31 @@ public class StatsWebServerService implements AutoCloseable
 
         if(active != null)
         {
-            mRuntimeState = runningState(active,
-                "Web server reload failed; the previous listener remains active.");
+            setRuntimeState(runningState(active,
+                "Web server reload failed; the previous listener remains active."));
         }
         else if(restorationAttempted)
         {
-            mRuntimeState = stoppedState(
-                "Web server reload failed and the previous listener could not be restored; check the application log.");
+            setRuntimeState(stoppedState(
+                "Web server reload failed and the previous listener could not be restored; check the application log."));
         }
         else
         {
-            mRuntimeState = stoppedState("Web server failed to start; check the application log.");
+            setRuntimeState(stoppedState("Web server failed to start; check the application log."));
         }
 
         return mRuntimeState;
+    }
+
+    private void setRuntimeState(WebServerRuntimeState state)
+    {
+        WebServerRuntimeState previous = mRuntimeState;
+        mRuntimeState = state;
+
+        if(!state.equals(previous))
+        {
+            MyEventBus.getGlobalEventBus().post(state);
+        }
     }
 
     private static WebServerRuntimeState runningState(ListenerRuntime listener, String statusMessage)
@@ -2869,7 +2880,7 @@ public class StatsWebServerService implements AutoCloseable
         mWebDiagnosticLogService.close();
         mAudioCallCoordinator = null;
         mLogicalCallDiagnosticService = null;
-        mRuntimeState = stoppedState("Web server is stopped.");
+        setRuntimeState(stoppedState("Web server is stopped."));
 
         if(mWebRequestSecurity != null)
         {
