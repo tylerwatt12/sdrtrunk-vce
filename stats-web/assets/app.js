@@ -32,7 +32,7 @@ import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=10';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=15';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
 import { createAlertsWorkspace } from './features/alerts.js?v=10';
 import { createRecordingsFeature } from './features/recordings.js?v=42';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=5';

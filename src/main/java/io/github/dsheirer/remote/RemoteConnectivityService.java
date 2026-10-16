@@ -52,8 +52,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.UnaryOperator;
 import javafx.collections.ListChangeListener;
@@ -80,6 +84,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final ArrayBlockingQueue<OutboundEvent> mOutboundPackets =
         new ArrayBlockingQueue<>(OUTBOUND_PACKET_CAPACITY);
     private final Map<String,PeerState> mPeers = new ConcurrentHashMap<>();
+    private final Set<String> mRemovingSenders = ConcurrentHashMap.newKeySet();
     private final Map<Channel,ActiveChain> mActiveChains = new ConcurrentHashMap<>();
     private final Map<Channel,ExportStream> mExports = new ConcurrentHashMap<>();
     private final Map<FeedKey,RemoteP25BitstreamSource> mWaitingSources = new ConcurrentHashMap<>();
@@ -99,6 +104,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final AtomicBoolean mCatalogDirty = new AtomicBoolean();
     private volatile Settings mSettings;
+    private volatile boolean mRemovalInProgress;
+    private volatile boolean mRemovalRestartRequired;
     private volatile RemoteLinkTransport.Server mServer;
     private volatile RemoteLinkTransport.Connection mOutbound;
     private volatile ListenerState mListenerState = ListenerState.STOPPED;
@@ -155,6 +162,10 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         {
             throw new SourceException("Remote source configuration is required");
         }
+        if(trusted(remote.getSenderId()) == null)
+        {
+            throw new SourceException("Remote sender is no longer trusted");
+        }
         P25RemoteTrafficOpen traffic = request != null ? request.getRemoteTrafficOpen() : null;
         long frequency = traffic != null ? traffic.frequency() : remote.getFrequency();
         P25RemotePhase phase = traffic != null ? traffic.phase() :
@@ -169,6 +180,11 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         {
             mWaitingSources.put(new FeedKey(remote.getSenderId(), remote.getFeedId()), source);
         }
+        if(trusted(remote.getSenderId()) == null)
+        {
+            discardRemoteSource(remote.getSenderId(), source);
+            throw new SourceException("Remote sender is no longer trusted");
+        }
         return source;
     }
 
@@ -176,8 +192,19 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     public void channelStarted(Channel channel, ChannelStartProcessingRequest request, ProcessingChain chain)
     {
         if(channel == null || chain == null) return;
+        if(channel.getSourceConfiguration() instanceof SourceConfigRemote remote && trusted(remote.getSenderId()) == null)
+        {
+            if(chain.getSource() instanceof RemoteP25BitstreamSource source) discardRemoteSource(remote.getSenderId(), source);
+            return;
+        }
         ActiveChain active = new ActiveChain(channel, request, chain, chain.getSource());
         ActiveChain replaced = mActiveChains.put(channel, active);
+        if(channel.getSourceConfiguration() instanceof SourceConfigRemote remote && trusted(remote.getSenderId()) == null)
+        {
+            mActiveChains.remove(channel, active);
+            if(active.source() instanceof RemoteP25BitstreamSource source) discardRemoteSource(remote.getSenderId(), source);
+            return;
+        }
         synchronized(mExports)
         {
             ExportStream previousExport = mExports.get(channel);
@@ -365,7 +392,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             new SenderConnectionSnapshot(outbound.enabled(), outbound.host(), outbound.port(), outbound.senderId(),
                 outbound.secret() != null && !outbound.secret().isBlank(), mOutboundState,
                 mLastOutboundConnectionMs, mOutboundStatus, outbound.exportedChannelIds()),
-            exports, aliases, senders);
+            exports, aliases, senders, mRemovalRestartRequired);
     }
 
     @Override
@@ -471,15 +498,122 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     }
 
     @Override
-    public synchronized RemoteLinkSnapshot revokeSender(long expectedRevision, String senderId)
+    public RemoteLinkSnapshot removeSender(long expectedRevision, String senderId)
     {
-        requireRevision(expectedRevision);
-        replaceSender(senderId, sender -> new TrustedSender(sender.senderId(), sender.displayName(), null,
-            false, sender.defaultAliasListId(), sender.pairedAtMs(), true));
-        PeerState peer = mPeers.get(canonicalUuid(senderId));
-        if(peer != null && peer.connection != null) peer.connection.close();
-        publishOriginSnapshot();
+        String id = canonicalUuid(senderId);
+        Settings next;
+        PeerState peer;
+        synchronized(this)
+        {
+            requireRevision(expectedRevision);
+            if(id == null || trusted(id) == null) throw new NotFoundException();
+            Settings old = mSettings;
+            next = new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
+                old.trustedSenders().stream().filter(sender -> !id.equals(sender.senderId())).toList(), old.outbound());
+            mRemovalInProgress = true;
+            mRemovingSenders.add(id);
+            peer = mPeers.get(id);
+            if(peer != null)
+            {
+                peer.removalIdle = new CompletableFuture<>();
+                if(peer.admittedWork.get() == 0) peer.removalIdle.complete(null);
+            }
+        }
+        try
+        {
+            if(peer != null)
+            {
+                if(peer.connection != null) peer.connection.close();
+                // Only the administration request waits. Decoder/processing callbacks never acquire this gate.
+                peer.removalIdle.get(10, TimeUnit.SECONDS);
+            }
+            mChannels.removeRemoteSender(id, next, () -> mSettings = next, () -> mRemovingSenders.remove(id));
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            throw new BusyException();
+        }
+        catch(ExecutionException | TimeoutException | ChannelAdministrationService.ConfigurationBusyException exception)
+        {
+            throw new BusyException();
+        }
+        catch(ConfigurationManager.ConfigurationPublicationException exception)
+        {
+            if(mSettings != next) throw new UnavailableException();
+            mRemovalRestartRequired = true;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new UnavailableException();
+        }
+        finally
+        {
+            try
+            {
+                // A committed removal stays removed even if a runtime observer requires a restart.
+                if(mSettings == next)
+                {
+                    try { forgetSenderRuntime(id); }
+                    catch(RuntimeException exception) { mRemovalRestartRequired = true; }
+                }
+            }
+            finally
+            {
+                mRemovingSenders.remove(id);
+                mRemovalInProgress = false;
+            }
+        }
         return snapshot();
+    }
+
+    private void forgetSenderRuntime(String senderId)
+    {
+        Set<RemoteP25BitstreamSource> sources = new HashSet<>();
+        PeerState peer = mPeers.remove(senderId);
+        if(peer != null)
+        {
+            if(peer.connection != null) peer.connection.close();
+            peer.activeOpens.clear();
+            peer.feeds = Map.of();
+        }
+        for(var entry: mWaitingSources.entrySet())
+            if(senderId.equals(entry.getKey().senderId()) && mWaitingSources.remove(entry.getKey(), entry.getValue()))
+                sources.add(entry.getValue());
+        for(var entry: mOpeningSources.entrySet())
+            if(senderId.equals(entry.getKey().senderId()) && mOpeningSources.remove(entry.getKey(), entry.getValue()))
+                sources.add(entry.getValue());
+        for(var entry: mOpenSources.entrySet())
+            if(senderId.equals(entry.getKey().senderId()) && mOpenSources.remove(entry.getKey(), entry.getValue()))
+                sources.add(entry.getValue().source);
+        for(var entry: mActiveChains.entrySet())
+            if(entry.getKey().getSourceConfiguration() instanceof SourceConfigRemote remote &&
+                senderId.equals(remote.getSenderId()) && mActiveChains.remove(entry.getKey(), entry.getValue()) &&
+                entry.getValue().source() instanceof RemoteP25BitstreamSource source) sources.add(source);
+        mCatalogSetupDirty.remove(senderId);
+        mCatalogSetupRunning.remove(senderId);
+        synchronized(mChannelIndexLock)
+        {
+            Map<String,SavedChannel> retained = new HashMap<>(mSavedChannels);
+            retained.entrySet().removeIf(entry -> senderId.equals(entry.getValue().remoteSenderId()));
+            mSavedChannels = Map.copyOf(retained);
+        }
+        // Remove every registration before invoking any source observer, then isolate failures per source.
+        for(RemoteP25BitstreamSource source: sources)
+        {
+            try { source.stop(); }
+            catch(RuntimeException exception) { mRemovalRestartRequired = true; }
+        }
+        publishOriginSnapshot();
+    }
+
+    /** Nonblocking cleanup also fences a source whose start raced a committed removal. */
+    private void discardRemoteSource(String senderId, RemoteP25BitstreamSource source)
+    {
+        mWaitingSources.entrySet().removeIf(entry -> senderId.equals(entry.getKey().senderId()) && entry.getValue() == source);
+        mOpeningSources.entrySet().removeIf(entry -> senderId.equals(entry.getKey().senderId()) && entry.getValue() == source);
+        mOpenSources.entrySet().removeIf(entry -> senderId.equals(entry.getKey().senderId()) && entry.getValue().source == source);
+        source.stop();
     }
 
     @Override
@@ -532,6 +666,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private void requireRevision(long expected)
     {
         if(expected != mSettings.revision()) throw new StaleRevisionException();
+        if(mRemovalInProgress) throw new BusyException();
     }
 
     private void bumpRevision()
@@ -712,6 +847,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
 
     private TrustedSender trusted(String senderId)
     {
+        if(senderId == null || mRemovingSenders.contains(senderId)) return null;
         return mSettings.trustedSenders().stream().filter(sender -> sender.senderId().equals(senderId))
             .findFirst().orElse(null);
     }
@@ -1109,7 +1245,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private void receiveInbound(String senderId, RemoteLinkTransport.Connection connection, Frame frame)
     {
         PeerState peer = mPeers.get(senderId);
-        if(peer == null || peer.connection != connection) return;
+        if(peer == null || peer.connection != connection || trusted(senderId) == null) return;
         peer.lastSeenAtMs = System.currentTimeMillis();
         try
         {
@@ -1164,7 +1300,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     /** Coalesce catalog bursts into at most one background setup worker per trusted sender. */
     private void scheduleCatalogSetup(String senderId)
     {
-        if(mClosed.get()) return;
+        TrustedSender sender = trusted(senderId);
+        if(mClosed.get() || sender == null || sender.revoked()) return;
         mCatalogSetupDirty.add(senderId);
         if(mCatalogSetupRunning.add(senderId))
         {
@@ -1190,7 +1327,34 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
     }
 
-    private synchronized void setupCatalogFeeds(String senderId)
+    private boolean admitSenderWork(String senderId, PeerState peer)
+    {
+        peer.admittedWork.incrementAndGet();
+        if(trusted(senderId) == null || mPeers.get(senderId) != peer)
+        {
+            finishSenderWork(senderId, peer);
+            return false;
+        }
+        return true;
+    }
+
+    private void finishSenderWork(String senderId, PeerState peer)
+    {
+        if(peer.admittedWork.decrementAndGet() == 0 && mRemovingSenders.contains(senderId))
+        {
+            peer.removalIdle.complete(null);
+        }
+    }
+
+    private void setupCatalogFeeds(String senderId)
+    {
+        PeerState peer = mPeers.get(senderId);
+        if(peer == null || !admitSenderWork(senderId, peer)) return;
+        try { setupCatalogFeedsAdmitted(senderId); }
+        finally { finishSenderWork(senderId, peer); }
+    }
+
+    private synchronized void setupCatalogFeedsAdmitted(String senderId)
     {
         TrustedSender sender = trusted(senderId);
         if(sender == null || sender.revoked()) return;
@@ -1242,6 +1406,14 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private void acceptOpen(String senderId, RemoteLinkTransport.Connection connection, RemoteWireMessages.Open open)
     {
         PeerState peer = mPeers.get(senderId);
+        if(peer == null || peer.connection != connection || !connection.isOpen() || !admitSenderWork(senderId, peer)) return;
+        try { acceptOpenAdmitted(senderId, connection, open, peer); }
+        finally { finishSenderWork(senderId, peer); }
+    }
+
+    private void acceptOpenAdmitted(String senderId, RemoteLinkTransport.Connection connection,
+                                    RemoteWireMessages.Open open, PeerState peer)
+    {
         ObservedFeed advertised = peer != null ? peer.feeds.get(open.feedId()) : null;
         if(advertised == null || !advertised.present ||
             !"P25_PHASE1".equals(advertised.advertisement.decoder())) return;
@@ -1488,6 +1660,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         private volatile long lastSeenAtMs;
         private volatile Map<String,ObservedFeed> feeds = Map.of();
         private final Map<StreamKey,ActiveOpen> activeOpens = new ConcurrentHashMap<>();
+        private final AtomicInteger admittedWork = new AtomicInteger();
+        private volatile CompletableFuture<Void> removalIdle = CompletableFuture.completedFuture(null);
     }
 
     private record ActiveOpen(RemoteWireMessages.Open open, String sessionId)

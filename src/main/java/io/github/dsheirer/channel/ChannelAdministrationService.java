@@ -31,6 +31,7 @@ import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.TrunkedDiscoveryEvidence;
 import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
@@ -54,6 +55,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.function.Consumer;
 import javafx.application.Platform;
@@ -863,6 +865,88 @@ public final class ChannelAdministrationService
                 }
                 if(exception instanceof RuntimeException runtime) throw runtime;
                 throw new LifecycleException("Unable to stop channels before deletion", exception);
+            }
+        });
+    }
+
+    /**
+     * Removes the selected sender's persisted channels and credentials together. The caller must prevent new
+     * remote catalog/open work for that sender, and the callback must only expose the newly committed settings.
+     */
+    public MutationResult removeRemoteSender(String senderId, RemoteLinkSettingsStore.Settings nextSettings,
+                                             Runnable afterCommit, Runnable beforeRollback)
+    {
+        String id = requireConfigurationId(senderId);
+        Objects.requireNonNull(nextSettings);
+        Objects.requireNonNull(afterCommit);
+        Objects.requireNonNull(beforeRollback);
+        return admitted(() ->
+        {
+            record Selection(long revision, List<Channel> channels) {}
+            Selection selected = onConfigurationThread(() -> new Selection(revision(),
+                mConfigurationManager.getChannelModel().getChannels().stream()
+                    .filter(channel -> channel.getSourceConfiguration() instanceof SourceConfigRemote remote &&
+                        id.equals(remote.getSenderId())).toList()));
+            List<Channel> stopped = new ArrayList<>();
+            AtomicBoolean committed = new AtomicBoolean();
+            try
+            {
+                for(Channel channel: selected.channels())
+                {
+                    if(isProcessing(channel.getConfigurationId()))
+                    {
+                        mConfigurationManager.getChannelProcessingManager().stop(channel);
+                        stopped.add(channel);
+                    }
+                }
+                return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
+                {
+                    requireRevision(selected.revision());
+                    List<Channel> channels = detachedChannels(false);
+                    List<String> removed = selected.channels().stream().map(Channel::getConfigurationId).toList();
+                    for(String channelId: removed)
+                    {
+                        if(isProcessing(channelId)) throw new ChannelRunningException(channelId);
+                        channels.remove(requireChannelIndex(channels, channelId));
+                    }
+                    try
+                    {
+                        mConfigurationManager.commitAndPublishRemoteSenderRemoval(
+                            new ChannelConfigurationSnapshot(channels), Set.copyOf(removed), id, nextSettings, () ->
+                            {
+                                committed.set(true);
+                                afterCommit.run();
+                            });
+                    }
+                    catch(ConfigurationManager.ConfigurationCommitException exception)
+                    {
+                        throw new PersistenceException("Unable to remove remote sender", exception);
+                    }
+                    return new MutationResult(revision(), removed, removed.size());
+                }));
+            }
+            catch(RuntimeException | ChannelException exception)
+            {
+                // Once SQLite committed, a publication failure must never restart channels that were deleted.
+                if(!committed.get())
+                {
+                    try { beforeRollback.run(); }
+                    catch(RuntimeException recoveryFailure) { exception.addSuppressed(recoveryFailure); }
+                    for(Channel channel: stopped)
+                    {
+                        try
+                        {
+                            if(!isProcessing(channel.getConfigurationId()))
+                                mConfigurationManager.getChannelProcessingManager().start(channel);
+                        }
+                        catch(ChannelException recoveryFailure)
+                        {
+                            exception.addSuppressed(recoveryFailure);
+                        }
+                    }
+                }
+                if(exception instanceof RuntimeException runtime) throw runtime;
+                throw new LifecycleException("Unable to stop remote channels before removal", exception);
             }
         });
     }

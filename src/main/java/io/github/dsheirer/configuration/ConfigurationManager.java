@@ -44,6 +44,7 @@ import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryException;
 import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.scanlist.ScanListModel;
+import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
@@ -489,6 +490,46 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             throw new ConfigurationCommitException("Unable to commit channel configuration", exception);
         }
 
+        return publishChannelConfigurationAfterCommit(committed, changed, autoStartOnly);
+    }
+
+    /** Atomic sender/channel removal; the callback exposes the committed credential state before publication. */
+    public synchronized ChannelConfigurationSnapshot commitAndPublishRemoteSenderRemoval(
+        ChannelConfigurationSnapshot proposed, Set<String> changedConfigurationIds, String senderId,
+        RemoteLinkSettingsStore.Settings nextSettings, Runnable afterCommit)
+    {
+        if(mExternalConfigurationOperation)
+            throw new ConfigurationPublicationException("Configuration saves are suspended until VCE restarts");
+        Set<String> changed = Set.copyOf(changedConfigurationIds);
+        if(changed.stream().anyMatch(id -> !mChannelProcessingManager.getProcessingChainsByConfiguration(id, null).isEmpty()))
+            throw new IllegalStateException("Stop running channels before changing their configuration");
+        AtomicBoolean committed = new AtomicBoolean();
+        ChannelConfigurationSnapshot saved;
+        try
+        {
+            saveNow();
+            if(hasDirtyConfiguration()) throw new IllegalStateException("Unable to save pending channel and broadcast configuration");
+            saved = mConfigurationRepository.commitRemoteSenderRemoval(proposed, senderId, nextSettings, () ->
+            {
+                committed.set(true);
+                afterCommit.run();
+            });
+        }
+        catch(Exception exception)
+        {
+            if(committed.get())
+            {
+                mExternalConfigurationOperation = true;
+                throw new ConfigurationPublicationException("Remote sender removal committed; restart VCE", exception);
+            }
+            throw new ConfigurationCommitException("Unable to remove remote sender", exception);
+        }
+        return changed.isEmpty() ? saved : publishChannelConfigurationAfterCommit(saved, changed, false);
+    }
+
+    private ChannelConfigurationSnapshot publishChannelConfigurationAfterCommit(ChannelConfigurationSnapshot committed,
+        Set<String> changed, boolean autoStartOnly)
+    {
         try
         {
             publishCommittedChannelConfiguration(committed, changed, autoStartOnly);

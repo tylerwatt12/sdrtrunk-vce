@@ -11,6 +11,10 @@ export function createRemoteLinksWorkspace(deps) {
   const summary = node('div', 'remote-links-summary');
   const message = node('div');
   message.setAttribute('role', 'status');
+  const restartNotice = node('div', 'ui-notice ui-notice-warning remote-links-restart-notice',
+    'Sender removed. Restart VCE to finish updating its channel list.');
+  restartNotice.setAttribute('role', 'status');
+  restartNotice.hidden = true;
   const overview = node('div', 'remote-links-overview');
   const senderHeader = node('div', 'remote-links-section-header ui-surface ui-surface-heading');
   const senderHeading = node('div', 'ui-heading-group');
@@ -23,7 +27,7 @@ export function createRemoteLinksWorkspace(deps) {
   const freshness = node('span', 'muted');
   pageMeta.append(freshness,
     node('span', 'muted', 'Remote channels use this receiver’s Alias Lists and depend on their sender for live traffic.'));
-  host.append(summary, message, overview, senderHeader, senderHost, pageMeta);
+  host.append(summary, message, restartNotice, overview, senderHeader, senderHost, pageMeta);
 
   let snapshot = null;
   let loading = false;
@@ -199,6 +203,7 @@ export function createRemoteLinksWorkspace(deps) {
 
   function draw(value) {
     snapshot = value;
+    restartNotice.hidden = snapshot.restart_required !== true;
     const senders = Array.isArray(snapshot.senders) ? snapshot.senders : [];
     const connectedCount = senders.filter((sender) => stateKey(sender.state) === 'CONNECTED').length;
     summary.replaceChildren(status(snapshot.listener?.state),
@@ -488,26 +493,26 @@ export function createRemoteLinksWorkspace(deps) {
     const name = input('text', sender.display_name || '');
     name.required = true; name.maxLength = 120;
     const alias = selectAlias(sender.default_alias_list_id, true);
-    const revoke = button('Revoke sender');
-    revoke.className = 'ui-button ui-button-danger';
+    const remove = button('Remove sender');
+    remove.className = 'ui-button ui-button-danger';
     const editor = submitModal('Trusted sender', [formField('Sender name', name),
       formField('Preferred P25 Alias List', uiSelectFrame(alias),
         'Used for new feeds. If blank, this receiver chooses Default P25 or the first available P25 Alias List.')],
     'Save sender', () => write(`/senders/${pathPart(sender.sender_id)}`, 'PUT', {
       revision: snapshot.revision, display_name: name.value.trim(),
       default_alias_list_id: alias.value ? Number(alias.value) : null
-    }), { danger: revoke, fieldLayout: 'single' });
+    }), { danger: remove, fieldLayout: 'single' });
     if (!editor) return;
-    let revoking = false;
-    revoke.addEventListener('click', async () => {
-      if (revoking || editor.modal.state?.isBusy?.()) return;
-      revoking = true;
+    let removing = false;
+    remove.addEventListener('click', async () => {
+      if (removing || editor.modal.state?.isBusy?.()) return;
+      removing = true;
       const disabled = [...editor.form.elements].map(control => [control, control.disabled]);
       disabled.forEach(([control]) => { control.disabled = true; });
       editor.modal.setBusy(true);
       try {
-        if (!await confirmAction(`Revoke ${sender.display_name || sender.sender_id}? Existing remote channels will stop receiving.`, {
-          title: 'Revoke trusted sender', confirmLabel: 'Revoke sender'
+        if (!await confirmAction(`Remove ${sender.display_name || sender.sender_id}? This removes the sender and all of its remote channels from this receiver.`, {
+          title: 'Remove trusted sender', confirmLabel: 'Remove sender'
         }) || !editor.modal.dialog.isConnected) return;
         const result = await write(`/senders/${pathPart(sender.sender_id)}`, 'DELETE',
           { revision: snapshot.revision });
@@ -520,7 +525,7 @@ export function createRemoteLinksWorkspace(deps) {
           showError(editor.message, error);
         }
       } finally {
-        revoking = false;
+        removing = false;
         editor.modal.setBusy(false);
         disabled.forEach(([control, wasDisabled]) => { control.disabled = wasDisabled; });
       }

@@ -31,7 +31,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
 
     RemoteLinkSnapshot updateSender(long expectedRevision, String senderId, UpdateSenderRequest request);
 
-    RemoteLinkSnapshot revokeSender(long expectedRevision, String senderId);
+    RemoteLinkSnapshot removeSender(long expectedRevision, String senderId);
 
     RemoteLinkSnapshot updateFeed(long expectedRevision, String senderId, String feedId, UpdateFeedRequest request);
 
@@ -82,7 +82,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     record RemoteLinkSnapshot(long revision, ListenerSnapshot listener,
                               SenderConnectionSnapshot senderConnection,
                               List<ExportChannelOption> exportChannelOptions,
-                              List<AliasListOption> aliasLists, List<SenderSnapshot> senders)
+                              List<AliasListOption> aliasLists, List<SenderSnapshot> senders, boolean restartRequired)
     {
         public RemoteLinkSnapshot
         {

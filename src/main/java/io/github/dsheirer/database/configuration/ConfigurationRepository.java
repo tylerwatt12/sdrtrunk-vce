@@ -23,6 +23,8 @@ import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.remote.RemoteLinkSettingsStore;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -36,6 +38,8 @@ import java.sql.Statement;
 import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Single persistence facade for Alias, scan-list, channel, and broadcast-stream playlist configuration.
@@ -175,6 +179,34 @@ public final class ConfigurationRepository
             mChannelAndBroadcastStore.replaceChannels(connection, proposed.channels());
             return new ChannelConfigurationSnapshot(mChannelAndBroadcastStore.loadChannels(connection));
         });
+    }
+
+    /** Deletes one sender's saved channels and credential document in the same writer transaction. */
+    public synchronized ChannelConfigurationSnapshot commitRemoteSenderRemoval(ChannelConfigurationSnapshot proposed,
+        String senderId, RemoteLinkSettingsStore.Settings nextSettings, Runnable afterCommit) throws IOException, SQLException
+    {
+        return inTransaction(connection ->
+        {
+            List<Channel> current = mChannelAndBroadcastStore.loadChannels(connection);
+            Set<String> retainedIds = current.stream().filter(channel ->
+                !(channel.getSourceConfiguration() instanceof SourceConfigRemote remote) ||
+                    !senderId.equals(remote.getSenderId()))
+                .map(Channel::getConfigurationId).collect(Collectors.toSet());
+            if(!retainedIds.equals(proposed.channels().stream().map(Channel::getConfigurationId)
+                .collect(Collectors.toSet())) || proposed.channels().stream().anyMatch(channel ->
+                    channel.getSourceConfiguration() instanceof SourceConfigRemote remote &&
+                        senderId.equals(remote.getSenderId())))
+                throw new IOException("Remote sender channel selection changed");
+            List<AliasListDefinition> definitions = mAliasStore.loadAliasListDefinitions(connection);
+            List<Alias> aliases = mAliasStore.loadAliases(connection, definitions);
+            List<BroadcastConfiguration> broadcasts = mChannelAndBroadcastStore.load(connection).broadcastConfigurations();
+            ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
+                proposed.channels(), broadcasts);
+            if(retainedIds.size() != current.size())
+                mChannelAndBroadcastStore.replaceChannels(connection, proposed.channels());
+            RemoteLinkSettingsStore.saveSenderRemoval(connection, senderId, nextSettings);
+            return new ChannelConfigurationSnapshot(mChannelAndBroadcastStore.loadChannels(connection));
+        }, afterCommit);
     }
 
     /** Saves a bounded group of discovered channels and their optional new Alias Lists in one transaction. */
@@ -321,12 +353,18 @@ public final class ConfigurationRepository
 
     private <T> T inTransaction(TransactionOperation<T> operation) throws IOException, SQLException
     {
+        return inTransaction(operation, () -> {});
+    }
+
+    private <T> T inTransaction(TransactionOperation<T> operation, Runnable afterCommit) throws IOException, SQLException
+    {
         try(Connection connection = SdrTrunkDatabase.openWriteTransaction(mDatabasePath))
         {
             try
             {
                 T result = operation.apply(connection);
                 SdrTrunkDatabase.commitWriteTransaction(connection);
+                afterCommit.run();
                 return result;
             }
             catch(IOException | SQLException | RuntimeException | Error exception)

@@ -200,7 +200,7 @@ public final class RemoteLinksHttpController
             else if("DELETE".equals(method))
             {
                 body = WebHttpSupport.readJsonObject(exchange, Set.of("revision"));
-                result = mService.revokeSender(revision(body), senderId);
+                result = mService.removeSender(revision(body), senderId);
             }
             else
             {
@@ -345,6 +345,7 @@ public final class RemoteLinksHttpController
     {
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         value.put("revision", snapshot.revision());
+        value.put("restart_required", snapshot.restartRequired());
         value.put("listener", listenerDocument(snapshot.listener()));
         value.put("sender_connection", senderConnectionDocument(snapshot.senderConnection()));
         value.put("export_channel_options", snapshot.exportChannelOptions().stream().map(option -> Map.of(

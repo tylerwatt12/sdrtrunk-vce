@@ -59,13 +59,18 @@ function snapshot() {
   };
 }
 
-async function openApp(page, theme = 'light') {
+async function openApp(page, theme = 'light', options = {}) {
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
   let current = snapshot();
+  if (options.senderState) current.senders[0].state = options.senderState;
+  if (options.multipleFeeds) current.senders[0].feeds.push({ ...current.senders[0].feeds[0],
+    feed_id: 'south-control', display_name: 'Metro South', channel_configuration_id: 'local-channel-2' });
   let reads = 0;
-  let revocations = 0;
-  let revocationBlock = null;
+  let removals = 0;
+  let removalBlock = null;
+  let readBlock = null;
+  const removalRequests = [];
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
@@ -76,21 +81,23 @@ async function openApp(page, theme = 'light') {
       await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/admin/remote-links' && route.request().method() === 'GET') {
       reads += 1;
+      if (readBlock) await readBlock;
       await route.fulfill({ json: { data: current } });
     } else if (pathname === '/api/v1/admin/remote-links/senders' && route.request().method() === 'POST') {
       await route.fulfill({ json: { data: { sender_id: senderId, secret: fixtureSecret } } });
     } else if (pathname === `/api/v1/admin/remote-links/senders/${senderId}` &&
       route.request().method() === 'DELETE') {
-      revocations += 1;
-      if (revocationBlock) {
-        const error = await revocationBlock;
-        revocationBlock = null;
+      removals += 1;
+      removalRequests.push(route.request().postDataJSON());
+      if (removalBlock) {
+        const error = await removalBlock;
+        removalBlock = null;
         if (error) {
           await route.fulfill({ status: 503, json: { error: { status: 503, message: error } } });
           return;
         }
       }
-      current = { ...current, senders: [] };
+      current = { ...current, senders: [], restart_required: options.restartRequiredOnRemoval === true };
       await route.fulfill({ json: { data: current } });
     } else if (pathname === `/api/v1/admin/remote-links/senders/${senderId}` &&
       route.request().method() === 'PUT') {
@@ -112,10 +119,16 @@ async function openApp(page, theme = 'light') {
   await expect(page.locator('.remote-links-sender-card')).toBeVisible();
   return {
     reads: () => reads,
-    revocations: () => revocations,
-    deferRevocation: (error = null) => {
+    removals: () => removals,
+    removalRequests,
+    deferRemoval: (error = null) => {
       let release;
-      revocationBlock = new Promise(resolve => { release = () => resolve(error); });
+      removalBlock = new Promise(resolve => { release = () => resolve(error); });
+      return release;
+    },
+    deferReads: () => {
+      let release;
+      readBlock = new Promise(resolve => { release = () => { readBlock = null; resolve(); }; });
       return release;
     },
     updateListener: (changes) => { current = { ...current, listener: { ...current.listener, ...changes } }; },
@@ -254,62 +267,147 @@ test('new credential is announced and guarded until its secret is copied', async
   await expect(page.getByRole('button', { name: 'Add trusted sender' })).toBeFocused();
 });
 
-test('trusted sender revocation waits for themed confirmation and preserves cancellation', async ({ page }) => {
-  const app = await openApp(page);
-  await page.getByRole('button', { name: 'Manage sender' }).click();
-  const editor = page.getByRole('dialog', { name: 'Trusted sender' });
-  const revoke = editor.getByRole('button', { name: 'Revoke sender' });
-  await revoke.click();
-  const confirmation = page.getByRole('alertdialog', { name: 'Revoke trusted sender' });
-  await expect(confirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
-  expect(app.revocations()).toBe(0);
-  await confirmation.getByRole('button', { name: 'Cancel' }).click();
-  await expect(editor).toBeVisible();
-  await expect(revoke).toBeFocused();
-  expect(app.revocations()).toBe(0);
-  await revoke.click();
-  await confirmation.getByRole('button', { name: 'Revoke sender' }).click();
-  await expect(editor).toHaveCount(0);
-  expect(app.revocations()).toBe(1);
-});
+for (const [theme, viewport] of [
+  ['light', { width: 1280, height: 900 }], ['dark', { width: 1280, height: 900 }],
+  ['light', { width: 390, height: 844 }], ['dark', { width: 390, height: 844 }]
+]) {
+  const presentation = `${theme} ${viewport.width}px`;
+  test(`sender removal confirms its channel scope, preserves cancellation, and applies its returned snapshot in ${presentation}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const app = await openApp(page, theme, { multipleFeeds: true });
+    await page.getByRole('button', { name: 'Manage sender' }).click();
+    const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+    const name = editor.getByLabel('Sender name');
+    await name.fill('Unfinished sender name');
+    const remove = editor.getByRole('button', { name: 'Remove sender', exact: true });
+    await expect(editor.getByRole('button', { name: /revoke/i })).toHaveCount(0);
+    await remove.click();
+    const confirmation = page.getByRole('alertdialog', { name: 'Remove trusted sender', exact: true });
+    await expect(confirmation).toContainText('Remove Field receiver?');
+    await expect(confirmation).toContainText('This removes the sender and all of its remote channels from this receiver.');
+    await expect(confirmation.getByRole('button', { name: 'Remove sender', exact: true })).toHaveClass(/ui-button-danger/);
+    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    expect(app.removals()).toBe(0);
+    if (process.env.FORM_WORKFLOW_AUDIT_DIR) await confirmation.screenshot({
+      path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `remove-confirm-${theme}-${viewport.width}.png`),
+      animations: 'disabled', caret: 'hide'
+    });
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(editor).toBeVisible();
+    await expect(remove).toBeFocused();
+    await expect(name).toHaveValue('Unfinished sender name');
+    await expect(editor.locator('form')).toHaveClass(/is-dirty/);
+    await expect(page.locator('.remote-links-sender-card')).toHaveCount(1);
+    await expect(page.locator('.remote-links-feed-card')).toHaveCount(2);
+    expect(app.removals()).toBe(0);
+    const releaseReads = app.deferReads();
+    await remove.click();
+    await confirmation.getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.locator('.remote-links-sender-card')).toHaveCount(0);
+    await expect(page.locator('.remote-links-feed-card')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'No trusted senders', exact: true })).toBeVisible();
+    expect(app.removals()).toBe(1);
+    expect(app.removalRequests).toEqual([{ revision: 'fixture-revision' }]);
+    if (process.env.FORM_WORKFLOW_AUDIT_DIR) await page.locator('.remote-links-page').screenshot({
+      path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `removed-sender-${theme}-${viewport.width}.png`),
+      animations: 'disabled', caret: 'hide'
+    });
+    releaseReads();
+  });
 
-test('pending revocation freezes sender actions, bypasses edit validation, and restores controls on failure', async ({ page }) => {
-  const app = await openApp(page);
-  const writes = [];
-  page.on('request', request => {
-    if (request.method() === 'PUT' && request.url().includes('/remote-links/senders/')) writes.push(request);
+  test(`sender removal locks duplicate actions and dismissal, preserves failed drafts, and retries in ${presentation}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const app = await openApp(page, theme, { multipleFeeds: true });
+    const writes = [];
+    page.on('request', request => {
+      if (request.method() === 'PUT' && request.url().includes('/remote-links/senders/')) writes.push(request);
+    });
+    await page.getByRole('button', { name: 'Manage sender' }).click();
+    const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+    const name = editor.getByLabel('Sender name');
+    await name.fill('');
+    const release = app.deferRemoval('Sender could not be removed. Try again.');
+    const remove = editor.getByRole('button', { name: 'Remove sender', exact: true });
+    await remove.click();
+    const confirmation = page.getByRole('alertdialog', { name: 'Remove trusted sender', exact: true });
+    await confirmation.getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await expect.poll(() => app.removals()).toBe(1);
+    await expect(editor).toHaveAttribute('aria-busy', 'true');
+    await expect(remove).toBeDisabled();
+    await expect(editor.getByRole('button', { name: 'Save sender' })).toBeDisabled();
+    await expect(name).toBeDisabled();
+    await editor.locator('form').evaluate(form => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form.querySelector('.ui-button-danger').dispatchEvent(new Event('click', { bubbles: true }));
+    });
+    await page.keyboard.press('Escape');
+    await expect(editor).toBeVisible();
+    expect(app.removals()).toBe(1);
+    expect(writes).toHaveLength(0);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    release();
+    await expect(editor.getByRole('alert')).toContainText('Sender could not be removed. Try again.');
+    await expect(editor).not.toHaveAttribute('aria-busy', 'true');
+    await expect(remove).toBeEnabled();
+    await expect(name).toBeEnabled();
+    await expect(name).toHaveValue('');
+    await expect(editor.locator('form')).toHaveClass(/is-dirty/);
+    await expect(page.locator('.remote-links-sender-card')).toHaveCount(1);
+    await expect(page.locator('.remote-links-feed-card')).toHaveCount(2);
+    await captureFormWorkflowEvidence(editor.locator('form'), `remove-error-${theme}-${viewport.width}`);
+    await remove.click();
+    await confirmation.getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(page.locator('.remote-links-sender-card')).toHaveCount(0);
+    await expect(page.locator('.remote-links-feed-card')).toHaveCount(0);
+    expect(app.removals()).toBe(2);
+    expect(app.removalRequests).toEqual(Array(2).fill({ revision: 'fixture-revision' }));
+    expect(writes).toHaveLength(0);
   });
-  await page.getByRole('button', { name: 'Manage sender' }).click();
-  const editor = page.getByRole('dialog', { name: 'Trusted sender' });
-  const name = editor.getByLabel('Sender name');
-  await name.fill('');
-  const release = app.deferRevocation('Sender could not be revoked. Try again.');
-  const revoke = editor.getByRole('button', { name: 'Revoke sender', exact: true });
-  await revoke.click();
-  await page.getByRole('alertdialog', { name: 'Revoke trusted sender' })
-    .getByRole('button', { name: 'Revoke sender', exact: true }).click();
-  await expect.poll(() => app.revocations()).toBe(1);
-  await expect(editor).toHaveAttribute('aria-busy', 'true');
-  await expect(revoke).toBeDisabled();
-  await expect(editor.getByRole('button', { name: 'Save sender' })).toBeDisabled();
-  await expect(name).toBeDisabled();
-  await editor.locator('form').evaluate(form => {
-    form.querySelector('input').value = 'Field receiver';
-    form.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
-    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    form.querySelector('.ui-button-danger').dispatchEvent(new Event('click', { bubbles: true }));
+
+  test(`legacy revoked senders can be removed with their retained feeds in ${presentation}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const app = await openApp(page, theme, { senderState: 'REVOKED', multipleFeeds: true });
+    await page.getByRole('button', { name: 'Manage sender' }).click();
+    const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+    await editor.getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await page.getByRole('alertdialog', { name: 'Remove trusted sender', exact: true })
+      .getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(page.locator('.remote-links-sender-card, .remote-links-feed-card')).toHaveCount(0);
+    expect(app.removals()).toBe(1);
   });
-  expect(app.revocations()).toBe(1);
-  expect(writes).toHaveLength(0);
-  await expect(page.getByRole('alertdialog')).toHaveCount(0);
-  release();
-  await expect(editor.getByRole('alert')).toContainText('Sender could not be revoked. Try again.');
-  await expect(editor).not.toHaveAttribute('aria-busy', 'true');
-  await expect(revoke).toBeEnabled();
-  await expect(name).toBeEnabled();
-  await name.fill('Field receiver');
-  await expect(editor.getByRole('button', { name: 'Save sender' })).toBeEnabled();
-});
+
+  test(`committed sender removal preserves its restart warning through polling in ${presentation}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const app = await openApp(page, theme, { multipleFeeds: true, restartRequiredOnRemoval: true });
+    const warning = page.locator('.remote-links-restart-notice');
+    await expect(warning).toBeHidden();
+    await page.getByRole('button', { name: 'Manage sender', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Trusted sender', exact: true });
+    await editor.getByLabel('Sender name').fill('Unfinished sender name');
+    await editor.getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await page.getByRole('alertdialog', { name: 'Remove trusted sender', exact: true })
+      .getByRole('button', { name: 'Remove sender', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(page.locator('.remote-links-sender-card, .remote-links-feed-card')).toHaveCount(0);
+    await expect(warning).toHaveText('Sender removed. Restart VCE to finish updating its channel list.');
+    await expect(warning).toBeVisible();
+    await expect(page.locator('.remote-links-page > [role="status"]').filter({ hasText: /try again|could not/i }))
+      .toHaveCount(0);
+    const previousReads = app.reads();
+    await expect.poll(() => app.reads(), { timeout: 7000 }).toBeGreaterThan(previousReads);
+    await expect(warning).toBeVisible();
+    await expect(page.locator('.remote-links-sender-card, .remote-links-feed-card')).toHaveCount(0);
+    expect(app.removals()).toBe(1);
+    if (process.env.FORM_WORKFLOW_AUDIT_DIR) await page.locator('.remote-links-page').screenshot({
+      path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `remove-restart-${theme}-${viewport.width}.png`),
+      animations: 'disabled', caret: 'hide'
+    });
+  });
+}
 
 test('polling refreshes status and restores a focused remote action', async ({ page }) => {
   const app = await openApp(page);

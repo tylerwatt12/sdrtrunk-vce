@@ -44,6 +44,7 @@ class RemoteLinksHttpControllerTest
             assertEquals(200, response.statusCode());
             JsonNode data = data(response);
             assertEquals(7L, data.path("revision").longValue());
+            assertFalse(data.path("restart_required").booleanValue());
             assertEquals("10.8.0.2", data.at("/sender_connection/destination_host").textValue());
             assertEquals("feed-1", data.at("/senders/0/feeds/0/feed_id").textValue());
             assertEquals("Metro", data.at("/senders/0/feeds/0/system_name").textValue());
@@ -211,6 +212,38 @@ class RemoteLinksHttpControllerTest
         }
     }
 
+    @Test
+    void deleteRemovesTheSenderAndRequiresTheCurrentRevisionAndStrictBody() throws Exception
+    {
+        FakeService service = new FakeService();
+        try(TestServer server = new TestServer(service))
+        {
+            assertEquals(400, server.send(server.jsonRequest("/senders/sender-1")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7,\"extra\":1}"))).statusCode());
+            assertEquals(409, server.send(server.jsonRequest("/senders/sender-1")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":6}"))).statusCode());
+            assertEquals(null, service.mRemovedSenderId);
+            HttpResponse<String> response = server.send(server.jsonRequest("/senders/sender-1")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7}")));
+            assertEquals(200, response.statusCode());
+            assertEquals("sender-1", service.mRemovedSenderId);
+            assertEquals(8L, data(response).path("revision").longValue());
+            assertTrue(data(response).path("senders").isEmpty());
+            assertFalse(response.body().contains("shared-secret"));
+        }
+    }
+
+    @Test
+    void snapshotPreservesTheCommittedRemovalRestartWarning() throws Exception
+    {
+        FakeService service = new FakeService();
+        service.mRestartRequired = true;
+        try(TestServer server = new TestServer(service))
+        {
+            assertTrue(data(server.send(server.request("").GET())).path("restart_required").booleanValue());
+        }
+    }
+
     private static JsonNode data(HttpResponse<String> response) throws Exception
     {
         JsonNode document = MAPPER.readTree(response.body());
@@ -261,6 +294,8 @@ class RemoteLinksHttpControllerTest
         private CreateSenderRequest mCreateRequest;
         private UpdateSenderRequest mSenderRequest;
         private UpdateFeedRequest mFeedRequest;
+        private String mRemovedSenderId;
+        private boolean mRestartRequired;
 
         @Override
         public RemoteLinkSnapshot snapshot()
@@ -276,9 +311,9 @@ class RemoteLinksHttpControllerTest
                 "remote-channel-1", 2L, 1_100L, 24L, 0L, 0L, null);
             SenderSnapshot sender = new SenderSnapshot("sender-1", "Hilltop", SenderState.CONNECTED, true,
                 500L, 1_100L, 2L, null, List.of(feed));
-            return new RemoteLinkSnapshot(7L, listener, connection,
+            return new RemoteLinkSnapshot(mRemovedSenderId == null ? 7L : 8L, listener, connection,
                 List.of(new ExportChannelOption("channel-a", "Downtown", "Metro", "Central", "P25_PHASE_1")),
-                List.of(new AliasListOption(2L, "Metro aliases")), List.of(sender));
+                List.of(new AliasListOption(2L, "Metro aliases")), mRemovedSenderId == null ? List.of(sender) : List.of(), mRestartRequired);
         }
 
         @Override
@@ -309,8 +344,10 @@ class RemoteLinksHttpControllerTest
         }
 
         @Override
-        public RemoteLinkSnapshot revokeSender(long expectedRevision, String senderId)
+        public RemoteLinkSnapshot removeSender(long expectedRevision, String senderId)
         {
+            if(expectedRevision != 7L) throw new StaleRevisionException();
+            mRemovedSenderId = senderId;
             return snapshot();
         }
 

@@ -16,6 +16,8 @@ import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -73,6 +75,50 @@ public final class RemoteLinkSettingsStore
         }
     }
 
+    /** Saves only an explicitly removed sender, inside the caller's channel-deletion transaction. */
+    public static void saveSenderRemoval(Connection connection, String senderId, Settings next) throws IOException
+    {
+        try
+        {
+            validate(next);
+            Settings current;
+            try(PreparedStatement query = connection.prepareStatement(
+                "SELECT settings_json FROM application_settings WHERE key=?"))
+            {
+                query.setString(1, SETTINGS_KEY);
+                try(var row = query.executeQuery())
+                {
+                    if(!row.next()) throw new IOException("Remote-link settings are missing");
+                    String json = row.getString(1);
+                    ReceiverSettingsSchema.validateJson(SETTINGS_KEY, json);
+                    current = JSON.readValue(json, Settings.class);
+                    validate(current);
+                }
+            }
+            List<TrustedSender> remaining = current.trustedSenders().stream()
+                .filter(sender -> !sender.senderId().equals(senderId)).toList();
+            Settings expected = new Settings(current.revision() + 1, current.listenerEnabled(),
+                current.bindAddress(), current.listenPort(), remaining, current.outbound());
+            if(remaining.size() == current.trustedSenders().size() || !expected.equals(next))
+                throw new IOException("Remote-link settings changed before sender removal");
+            String json = JSON.writeValueAsString(next);
+            ReceiverSettingsSchema.validateJson(SETTINGS_KEY, json);
+            try(PreparedStatement update = connection.prepareStatement(
+                "UPDATE application_settings SET settings_json=?, updated_at_ms=? WHERE key=?"))
+            {
+                update.setString(1, json);
+                update.setLong(2, System.currentTimeMillis());
+                update.setString(3, SETTINGS_KEY);
+                if(update.executeUpdate() != 1) throw new IOException("Remote-link settings are missing");
+            }
+        }
+        catch(IOException | SQLException | RuntimeException exception)
+        {
+            // Stored credentials and database diagnostics must not escape this boundary.
+            throw new IOException("Remote-link sender could not be removed");
+        }
+    }
+
     public static void validate(Settings settings) throws IOException
     {
         if(settings == null || settings.revision() < 1L || !validPort(settings.listenPort()) ||
@@ -127,7 +173,10 @@ public final class RemoteLinkSettingsStore
         catch(IllegalArgumentException ignored) { return false; }
     }
 
-    /** The saved autoAdopt preference is retained; automatic channel setup is unconditional. */
+    /**
+     * The saved autoAdopt preference is retained; automatic channel setup is unconditional.
+     * revoked retains its legacy persisted meaning for supported database/import formats; removal drops the sender entry.
+     */
     public record TrustedSender(String senderId, String displayName, String secret, boolean autoAdopt,
                                 Long defaultAliasListId, long pairedAtMs, boolean revoked)
     {

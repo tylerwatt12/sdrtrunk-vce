@@ -12,6 +12,7 @@ import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
@@ -46,9 +47,11 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -116,12 +119,130 @@ class RemoteConnectivityServiceTest
     }
 
     @Test
-    void revokedSenderCannotFinishAnInFlightAuthentication() throws Exception
+    void removesAnUnusedSenderPermanentlyAndRejectsStaleOrMissingIdentities() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("unused-sender-host")))
+        {
+            CreateSenderResult removed = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Remove this sender"));
+            CreateSenderResult retained = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Keep this sender"));
+            long revision = host.remote.snapshot().revision();
+            assertThrows(RemoteLinkAdministrationService.StaleRevisionException.class,
+                () -> host.remote.removeSender(revision - 1, removed.senderId()));
+            assertEquals(2, host.remote.snapshot().senders().size());
+            var result = host.remote.removeSender(revision, removed.senderId());
+            assertEquals(revision + 1, result.revision());
+            assertEquals(List.of(retained.senderId()), result.senders().stream().map(sender -> sender.senderId()).toList());
+            assertEquals(List.of(retained.senderId()), new RemoteLinkSettingsStore(host.configuration.getDatabasePath())
+                .load().trustedSenders().stream().map(sender -> sender.senderId()).toList());
+            assertThrows(RemoteLinkAdministrationService.NotFoundException.class,
+                () -> host.remote.removeSender(result.revision(), removed.senderId()));
+            assertEquals(result.revision(), host.remote.snapshot().revision());
+        }
+    }
+
+    @Test
+    void failedRemovalRestoresRunningRemoteChannelAndRetriesTheSameRemoteRevision() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("failed-removal-host")))
+        {
+            CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Synthetic sender"));
+            Channel channel = host.addRemote("Synthetic feed", pair.senderId(), UUID.randomUUID().toString());
+            host.configuration.flushConfiguration();
+            host.channels.setProcessing(List.of(channel.getConfigurationId()), true);
+            await(() -> !host.configuration.getChannelProcessingManager()
+                .getProcessingChainsByConfiguration(channel.getConfigurationId(), null).isEmpty());
+            long revision = host.remote.snapshot().revision();
+            try(Connection connection = SdrTrunkDatabase.open(host.configuration.getDatabasePath());
+                Statement statement = connection.createStatement())
+            {
+                statement.execute("""
+                    CREATE TRIGGER refuse_remote_removal BEFORE UPDATE ON application_settings
+                    WHEN NEW.key='remote.links'
+                    BEGIN SELECT RAISE(ABORT, 'synthetic-removal-refusal'); END
+                    """);
+            }
+            assertThrows(RemoteLinkAdministrationService.UnavailableException.class,
+                () -> host.remote.removeSender(revision, pair.senderId()));
+            assertEquals(revision, host.remote.snapshot().revision());
+            assertEquals(pair.senderId(), new RemoteLinkSettingsStore(host.configuration.getDatabasePath())
+                .load().trustedSenders().getFirst().senderId());
+            assertEquals(channel.getConfigurationId(), host.configuration.getChannelModel().getChannels()
+                .getFirst().getConfigurationId());
+            await(() -> !host.configuration.getChannelProcessingManager()
+                .getProcessingChainsByConfiguration(channel.getConfigurationId(), null).isEmpty());
+            try(Connection connection = SdrTrunkDatabase.open(host.configuration.getDatabasePath());
+                Statement statement = connection.createStatement())
+            {
+                statement.execute("DROP TRIGGER refuse_remote_removal");
+            }
+            assertTrue(host.remote.removeSender(revision, pair.senderId()).senders().isEmpty());
+            assertTrue(host.configuration.getChannelModel().getChannels().isEmpty());
+            assertTrue(host.remote.originSnapshot().byChannelConfigurationId().isEmpty());
+            assertTrue(host.configuration.getChannelProcessingManager()
+                .getProcessingChainsByConfiguration(channel.getConfigurationId(), null).isEmpty());
+        }
+    }
+
+    @Test
+    void committedRemovalReturnsRestartRequiredWhenChannelPublicationFails() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("publication-failed-removal-host"), true))
+        {
+            CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Synthetic sender"));
+            Channel channel = host.addRemote("Synthetic feed", pair.senderId(), UUID.randomUUID().toString());
+            host.configuration.flushConfiguration();
+            host.channels.setProcessing(List.of(channel.getConfigurationId()), true);
+            var result = host.remote.removeSender(host.remote.snapshot().revision(), pair.senderId());
+            assertTrue(result.restartRequired());
+            assertTrue(result.senders().isEmpty());
+            assertTrue(host.remote.snapshot().restartRequired(), "The restart warning persists on later polls");
+            assertTrue(new RemoteLinkSettingsStore(host.configuration.getDatabasePath()).load().trustedSenders().isEmpty());
+            assertTrue(host.remote.originSnapshot().byChannelConfigurationId().isEmpty());
+            assertTrue(host.configuration.getChannelProcessingManager()
+                .getProcessingChainsByConfiguration(channel.getConfigurationId(), null).isEmpty(),
+                "Committed deletion must not restart the removed channel");
+        }
+    }
+
+    @Test
+    void committedRemovalIsSuccessfulAndReleasesAdmissionWhenASourceObserverThrows() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("cleanup-failed-removal-host")))
+        {
+            CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Synthetic sender"));
+            Channel first = host.addRemote("First synthetic feed", pair.senderId(), UUID.randomUUID().toString());
+            Channel second = host.addRemote("Second synthetic feed", pair.senderId(), UUID.randomUUID().toString());
+            host.configuration.flushConfiguration();
+            var firstSource = host.remote.acquireSource(first, "synthetic-first-source");
+            var secondSource = host.remote.acquireSource(second, "synthetic-second-source");
+            firstSource.setOverflowListener(overflow -> { throw new IllegalStateException("Synthetic observer failure"); });
+            AtomicBoolean secondStopped = new AtomicBoolean();
+            secondSource.setOverflowListener(overflow -> secondStopped.set(!overflow));
+            var result = host.remote.removeSender(host.remote.snapshot().revision(), pair.senderId());
+            assertTrue(result.senders().isEmpty());
+            assertTrue(result.restartRequired());
+            assertTrue(secondStopped.get(), "One faulty observer must not strand another removed source");
+            assertTrue(host.configuration.getChannelModel().getChannels().isEmpty());
+            assertTrue(host.remote.originSnapshot().byChannelConfigurationId().isEmpty());
+            assertThrows(io.github.dsheirer.source.SourceException.class,
+                () -> host.remote.acquireSource(first, "synthetic-late-source"));
+            host.remote.createSender(result.revision(), new RemoteLinkAdministrationService.CreateSenderRequest("Next sender"));
+            assertEquals(1, host.remote.snapshot().senders().size(), "Cleanup failure must release administration admission");
+        }
+    }
+
+    @Test
+    void removedSenderCannotFinishAnInFlightAuthentication() throws Exception
     {
         try(Installation host = new Installation(mTemp.resolve("revocation-host")))
         {
             CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
-                new RemoteLinkAdministrationService.CreateSenderRequest("Revoked receiver"));
+                new RemoteLinkAdministrationService.CreateSenderRequest("Removed receiver"));
             host.remote.start();
             host.remote.updateListener(host.remote.snapshot().revision(),
                 new ListenerUpdate(true, "127.0.0.1", availablePort()));
@@ -139,7 +260,7 @@ class RemoteConnectivityServiceTest
                 Frame challenge = RemoteWireProtocol.read(input);
                 assertEquals(Type.CHALLENGE, challenge.type());
 
-                host.remote.revokeSender(host.remote.snapshot().revision(), pair.senderId());
+                host.remote.removeSender(host.remote.snapshot().revision(), pair.senderId());
                 Mac mac = Mac.getInstance("HmacSHA256");
                 mac.init(new SecretKeySpec(pair.secret().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
                 mac.update(pair.senderId().getBytes(StandardCharsets.US_ASCII));
@@ -147,9 +268,10 @@ class RemoteConnectivityServiceTest
                 RemoteWireProtocol.write(output, new Frame(Type.AUTH, mac.doFinal()));
                 output.flush();
                 assertEquals(Type.ACCEPT, RemoteWireProtocol.read(input).type());
-                assertEquals(-1, input.read(), "revocation must close even a just-authenticated socket");
+                assertEquals(-1, input.read(), "removal must close even a just-authenticated socket");
             }
-            assertEquals(SenderState.REVOKED, host.remote.snapshot().senders().getFirst().state());
+            assertTrue(host.remote.snapshot().senders().isEmpty());
+            assertTrue(new RemoteLinkSettingsStore(host.configuration.getDatabasePath()).load().trustedSenders().isEmpty());
         }
     }
 
@@ -227,6 +349,78 @@ class RemoteConnectivityServiceTest
         try(ServerSocket reservation = new ServerSocket(0, 1, InetAddress.getLoopbackAddress()))
         {
             return reservation.getLocalPort();
+        }
+    }
+
+    @Test
+    void removalDrainsConcurrentCatalogAndOpenWorkAndPreservesUnrelatedChannels() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("remove-live-sender-host")))
+        {
+            CreateSenderResult removed = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Remove live sender"));
+            CreateSenderResult retained = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Keep remote sender"));
+            Channel local = host.addControl("Keep local channel", 852_012_500L);
+            Channel otherRemote = host.addRemote("Keep other remote feed", retained.senderId(), UUID.randomUUID().toString());
+            host.configuration.flushConfiguration();
+            host.remote.start();
+            host.remote.updateListener(host.remote.snapshot().revision(),
+                new ListenerUpdate(true, "127.0.0.1", availablePort()));
+            await(() -> host.remote.snapshot().listener().state() == ListenerState.LISTENING);
+            int port = host.remote.snapshot().listener().port();
+            String feedId = UUID.randomUUID().toString();
+            String streamId = UUID.randomUUID().toString();
+            Frame catalog = new Frame(Type.CATALOG, RemoteWireMessages.json(new RemoteWireMessages.Catalog(
+                List.of(new RemoteWireMessages.Feed(feedId, "Synthetic system", "Synthetic site", "Remove feed",
+                    "P25_PHASE1", 851_012_500L, true)))));
+            Frame open = new Frame(Type.OPEN, RemoteWireMessages.json(new RemoteWireMessages.Open(streamId,
+                feedId, true, "PHASE_1", 851_012_500L, 1L, System.currentTimeMillis(), 0x123, null, null)));
+            try(RemoteLinkTransport.Connection sender = RemoteLinkTransport.connect("127.0.0.1", port,
+                removed.senderId(), removed.secret(), NO_OP_LISTENER))
+            {
+                assertTrue(sender.offer(catalog));
+                await(() -> host.remote.snapshot().senders().stream().filter(peer -> removed.senderId().equals(peer.senderId()))
+                    .flatMap(peer -> peer.feeds().stream()).anyMatch(feed -> feed.channelConfigurationId() != null));
+                String removedChannelId = host.remote.snapshot().senders().stream()
+                    .filter(peer -> removed.senderId().equals(peer.senderId())).findFirst().orElseThrow()
+                    .feeds().getFirst().channelConfigurationId();
+                assertTrue(sender.offer(open));
+                assertTrue(sender.offer(data(streamId, 0L)));
+                await(() -> host.remote.originSnapshot().find(removedChannelId) != null &&
+                    host.remote.originSnapshot().find(removedChannelId).dependencyState() == DependencyState.READY);
+                CountDownLatch burstStarted = new CountDownLatch(1);
+                Thread burst = Thread.ofVirtual().start(() -> {
+                    try
+                    {
+                        for(int sequence = 1; sequence < 200 && sender.isOpen(); sequence++)
+                        {
+                            sender.offer(catalog);
+                            sender.offer(open);
+                            sender.offer(data(streamId, sequence));
+                            burstStarted.countDown();
+                            Thread.sleep(1);
+                        }
+                    }
+                    catch(Exception ignored) { }
+                });
+                assertTrue(burstStarted.await(2, TimeUnit.SECONDS));
+                var result = host.remote.removeSender(host.remote.snapshot().revision(), removed.senderId());
+                burst.join(2_000);
+                assertFalse(burst.isAlive(), "A removed sender cannot continue catalog/open admission");
+                await(() -> !sender.isOpen());
+                assertEquals(List.of(retained.senderId()), result.senders().stream().map(peer -> peer.senderId()).toList());
+                assertEquals(Set.of(local.getConfigurationId(), otherRemote.getConfigurationId()),
+                    host.configuration.getChannelModel().getChannels().stream()
+                        .map(Channel::getConfigurationId).collect(java.util.stream.Collectors.toSet()));
+                assertNull(host.remote.originSnapshot().find(removedChannelId));
+                assertTrue(host.configuration.getChannelProcessingManager()
+                    .getProcessingChainsByConfiguration(removedChannelId, null).isEmpty());
+                assertEquals(List.of(retained.senderId()), new RemoteLinkSettingsStore(host.configuration.getDatabasePath())
+                    .load().trustedSenders().stream().map(peer -> peer.senderId()).toList());
+                assertThrows(java.io.IOException.class, () -> RemoteLinkTransport.connect("127.0.0.1", port,
+                    removed.senderId(), removed.secret(), NO_OP_LISTENER));
+            }
         }
     }
 
@@ -441,14 +635,34 @@ class RemoteConnectivityServiceTest
         private final ConfigurationManager configuration;
         private final RemoteConnectivityService remote;
         private final ChannelAdministrationService channels;
+        private final boolean skipConfigurationFlush;
 
         private Installation(Path root) throws Exception
+        {
+            this(root, false);
+        }
+
+        private Installation(Path root, boolean failRemovalPublication) throws Exception
         {
             SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(root));
             TestPreferences preferences = new TestPreferences(root);
             AliasModel aliases = new AliasModel();
+            skipConfigurationFlush = failRemovalPublication;
             configuration = new ConfigurationManager(preferences, null, aliases,
-                new EventLogManager(aliases, preferences), null);
+                new EventLogManager(aliases, preferences), null)
+            {
+                @Override
+                public synchronized ChannelConfigurationSnapshot commitAndPublishRemoteSenderRemoval(
+                    ChannelConfigurationSnapshot proposed, Set<String> changedIds, String senderId,
+                    RemoteLinkSettingsStore.Settings nextSettings, Runnable afterCommit)
+                {
+                    return super.commitAndPublishRemoteSenderRemoval(proposed, changedIds, senderId, nextSettings, () ->
+                    {
+                        afterCommit.run();
+                        if(failRemovalPublication) throw new IllegalStateException("Synthetic postcommit publication failure");
+                    });
+                }
+            };
             configuration.init();
             channels = ChannelAdministrationServiceTestSupport.create(configuration);
             remote = new RemoteConnectivityService(configuration, channels);
@@ -472,6 +686,23 @@ class RemoteConnectivityServiceTest
             return channel;
         }
 
+        private Channel addRemote(String name, String senderId, String feedId)
+        {
+            Channel channel = new Channel(name, Channel.ChannelType.STANDARD);
+            AliasListDefinition aliasList = configuration.getAliasModel().aliasListDefinitions().stream()
+                .filter(alias -> alias.getFamily() == AliasListFamily.P25).findFirst().orElseThrow();
+            channel.setAliasListId(aliasList.getId());
+            channel.setAliasListName(aliasList.getName());
+            channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            SourceConfigRemote source = new SourceConfigRemote();
+            source.setSenderId(senderId);
+            source.setFeedId(feedId);
+            source.setFrequency(851_012_500L);
+            channel.setSourceConfiguration(source);
+            configuration.getChannelModel().addChannel(channel);
+            return channel;
+        }
+
         @Override
         public void close()
         {
@@ -484,7 +715,7 @@ class RemoteConnectivityServiceTest
                 try
                 {
                     configuration.getChannelProcessingManager().shutdown();
-                    configuration.flushConfiguration();
+                    if(!skipConfigurationFlush) configuration.flushConfiguration();
                 }
                 finally
                 {
