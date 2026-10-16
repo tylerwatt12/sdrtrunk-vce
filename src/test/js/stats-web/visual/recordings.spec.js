@@ -333,6 +333,22 @@ async function openPicker(page, topic = 'targets', name = 'Talkgroups & channels
 async function openCallDetails(page) {
   await page.locator('.recordings-call-details').first().click();
 }
+
+async function expectCallActionDescriptions(dialog, expectedCount = 9) {
+  const actions = dialog.locator('.recordings-secondary-action');
+  await expect(actions).toHaveCount(expectedCount);
+  for (const action of await actions.all()) {
+    const title = action.locator('.recordings-action-title');
+    const description = action.locator('.recordings-action-description');
+    await expect(title).toBeVisible();
+    await expect(description).toBeVisible();
+    const sentence = (await description.textContent()).trim();
+    expect(sentence).toMatch(/^[^.!?]+[.]$/);
+    await expect(action).toHaveAccessibleName((await title.textContent()).trim());
+    await expect(action).toHaveAccessibleDescription(sentence);
+    await expect(action.locator('svg')).toHaveCount(1);
+  }
+}
 async function searchNow(page, state) {
   const count = state.requestedFilters.length;
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
@@ -946,6 +962,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
     await firstCard.locator('.recordings-call-info').click();
     let actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await expectCallActionDescriptions(actions);
     const targetSearch = actions.getByRole('link', { name: 'Search this talkgroup', exact: true });
     await expect(targetSearch).toBeVisible();
     await expect(targetSearch).toHaveClass(/recordings-secondary-action/);
@@ -968,7 +985,31 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
     await firstCard.locator('.recordings-call-info').click();
     actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await expectCallActionDescriptions(actions);
     await expect(actions).toHaveScreenshot(`recordings-actions-mobile-${theme}.png`, componentScreenshot);
+    for (const width of [800, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      const controls = await actions.locator('.recordings-secondary-action').all();
+      for (const control of controls) {
+        const bounds = await control.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      }
+      if (width === 800) for (let index = 0; index + 1 < controls.length; index += 2) {
+        const left = await controls[index].boundingBox(), right = await controls[index + 1].boundingBox();
+        expect(Math.abs(left.y - right.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(left.height - right.height)).toBeLessThanOrEqual(1);
+      }
+      expect(await actions.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+      if (width === 320 || theme === 'light') {
+        await expect(actions).toHaveScreenshot(`recordings-actions-flow-${theme}-${width}.png`, componentScreenshot);
+      }
+      if (width === 320) {
+        const live = actions.getByRole('link', { name: 'Go to Live', exact: true });
+        await live.scrollIntoViewIfNeeded();
+        await expect(live).toBeInViewport();
+      }
+    }
   });
 }
 
@@ -1481,6 +1522,80 @@ test('call actions reuse VCE playback choices and route Live to the saved channe
   expect(request).toHaveProperty('talkgroup_identity_key', 'v1-g-00001-001-1201'); expect(request).not.toHaveProperty('transcript');
 });
 
+test('conventional call actions explain channel and radio searches without inventing a talkgroup', async ({ page }) => {
+  const conventional = { ...linkedCall, protocol: 'NXDN', talkgroup_id: null,
+    talkgroup_alias: null, target_entity_ref: null, source_entity_ref: null,
+    system_key: 'nxdn-c:global:7', radio_system_entity_ref: null,
+    system_name: 'NXDN Operations', channel_name: 'Operations Channel' };
+  const state = await openRecordings(page, { call: conventional });
+  await page.locator('.recordings-call-info').click();
+  const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+  await expectCallActionDescriptions(actions);
+  await expect(actions).not.toContainText(/talkgroup/i);
+  await expect(actions.getByRole('link', { name: 'Search this channel', exact: true }))
+    .toHaveAttribute('href', new RegExp(`channel_id=${channelId}`));
+  await expect(actions.getByRole('link', { name: 'Search this radio', exact: true }))
+    .toHaveAttribute('href', /radios=/);
+  await actions.getByRole('button', { name: 'Search channel + radio', exact: true }).click();
+  await expect(actions).toBeHidden();
+  await expect.poll(() => state.requestedFilters.length).toBe(2);
+  const request = state.requestedFilters.at(-1);
+  expect(request.channel_id).toBe(channelId);
+  expect(JSON.parse(request.radios)).toEqual([{ id: call.source_id, system_key: 'nxdn-c:global:7', protocol: 'NXDN' }]);
+  expect(request).not.toHaveProperty('talkgroups');
+  expect(request).not.toHaveProperty('talkgroup_id');
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`call details keep playback grouped and download separate at every width in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openRecordings(page, { theme, call: linkedCall });
+    await openCallDetails(page);
+    const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+    const footer = detail.locator('.recordings-detail-footer');
+    const playback = footer.getByRole('group', { name: 'Playback actions', exact: true });
+    const play = playback.getByRole('button', { name: 'Play once', exact: true });
+    const continued = playback.getByRole('button', { name: 'Continue from here', exact: true });
+    const queue = playback.getByRole('button', { name: 'Add to queue', exact: true });
+    const download = footer.getByRole('link', { name: 'Download recording', exact: true });
+    await expect(playback.locator('button')).toHaveText(['Play once', 'Continue from here', 'Add to queue']);
+    await expect(footer.locator(':scope > *')).toHaveCount(2);
+    await expect(footer.locator(':scope > *').first()).toHaveAttribute('aria-label', 'Playback actions');
+    for (const width of [1280, 800, 700, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const control of [play, continued, queue, download]) {
+        await expect(control).toBeVisible();
+        const bounds = await control.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      }
+      const [primaryBox, continueBox, queueBox, downloadBox, groupBox] = await Promise.all(
+        [play, continued, queue, download, playback].map(control => control.boundingBox()));
+      if (width <= 700) {
+        expect(primaryBox.y + primaryBox.height).toBeLessThanOrEqual(continueBox.y);
+        if (width <= 430) {
+          expect(continueBox.y + continueBox.height).toBeLessThanOrEqual(queueBox.y);
+          for (const bounds of [primaryBox, continueBox, queueBox]) {
+            expect(bounds.height).toBeLessThanOrEqual(48);
+            expect(Math.abs(bounds.width - groupBox.width)).toBeLessThanOrEqual(1);
+          }
+        } else {
+          expect(Math.abs(continueBox.y - queueBox.y)).toBeLessThanOrEqual(1);
+        }
+        expect(downloadBox.y).toBeGreaterThanOrEqual(groupBox.y + groupBox.height);
+      } else {
+        expect(Math.abs(primaryBox.y - continueBox.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(primaryBox.y - queueBox.y)).toBeLessThanOrEqual(1);
+      }
+      expect(await detail.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+      if (width === 320 || theme === 'light' && [800, 700].includes(width)) {
+        await expect(detail).toHaveScreenshot(`recordings-details-flow-${theme}-${width}.png`, componentScreenshot);
+      }
+    }
+  });
+}
+
 test('successful searches reset playback and queue while failed searches and cursor paging preserve them', async ({ page }) => {
   await page.addInitScript(() => { HTMLMediaElement.prototype.play = function() { return Promise.resolve(); }; HTMLMediaElement.prototype.pause = function() {}; });
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
@@ -1549,11 +1664,20 @@ test('High Interest is an explicit toggle and result controls have recognizable 
   }
   await expect(page.getByRole('button', { name: 'Search recordings', exact: true }).locator('svg')).toHaveCount(1);
   await expect(page.locator('.recordings-search-panel .ui-field-label svg')).toHaveCount(0);
-  await page.locator('.recordings-call-details').click();
+  const details = page.locator('.recordings-call-details');
+  await expect(details).toHaveText('');
+  await expect(details.locator('svg')).toHaveCount(1);
+  await expect(details).toHaveAccessibleName(/Call details/);
+  await details.hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Call details');
+  await page.locator('.recordings-card-play').focus();
+  await page.keyboard.press('Tab');
+  await expect(details).toBeFocused();
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Call actions', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await expect(page.locator('.recordings-call-details')).toBeFocused();
+  await expect(details).toBeFocused();
 });
 
 test('recordings accents follow every color scheme in day and night themes', async ({ page }) => {
@@ -1600,6 +1724,8 @@ test('recordings accents follow every color scheme in day and night themes', asy
   for (const theme of ['light', 'dark']) {
     expect(new Set(palettes.filter(palette => palette.theme === theme).map(palette => palette.accent)).size).toBe(8);
   }
+  // The screenshot stylesheet hides timing text; keep its reserved width deterministic too.
+  await page.locator('.recordings-search-timing').evaluate(element => { element.textContent = 'Loaded in 100 ms'; });
   for (const [scheme, theme, viewport] of [['Ocean', 'light', { width: 1280, height: 900 }],
     ['Amber', 'dark', { width: 390, height: 844 }], ['Forest', 'light', { width: 390, height: 844 }]]) {
     await page.setViewportSize(viewport);

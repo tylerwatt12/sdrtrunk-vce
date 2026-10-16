@@ -139,10 +139,12 @@ for (const [name, query, selector, content] of cases) {
         })));
         expect(actions).toHaveLength(3);
         for (const action of actions) {
-          if (!action.labelled) expect(action.width).toBeLessThanOrEqual(48);
+          expect(action.labelled).toBe(false);
+          expect(action.width).toBeLessThanOrEqual(48);
           expect(action.height).toBeLessThanOrEqual(48);
           expect(action.stroke).not.toBe('none');
         }
+        await expect(page.locator('.recordings-call-details')).toHaveAccessibleName('Call details');
       }
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
         await expect(page.locator('#content')).toHaveScreenshot(`${name}-${presentation.name}.png`,

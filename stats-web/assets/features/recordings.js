@@ -1363,10 +1363,16 @@ export function createRecordingsFeature(deps) {
         const start = () => { if (!started) { started = true; playbackAction(call, mode); } };
         if (modal.close(start)) start();
       };
-      const footer = modalFooter(download,
-        addGlyph(button(node, 'Add to queue', () => playAfterClose('queue')), 'icon-plus'),
+      const playbackActions = node('div', 'recordings-detail-playback-actions');
+      playbackActions.setAttribute('role', 'group');
+      playbackActions.setAttribute('aria-label', 'Playback actions');
+      playbackActions.append(
+        addGlyph(button(node, 'Play once', () => playAfterClose('once'), 'ui-button ui-button-primary'), 'icon-play'),
         addGlyph(button(node, 'Continue from here', () => playAfterClose('continue')), 'icon-forward'),
-        addGlyph(button(node, 'Play once', () => playAfterClose('once'), 'ui-button ui-button-primary'), 'icon-play'));
+        addGlyph(button(node, 'Add to queue', () => playAfterClose('queue')), 'icon-plus'));
+      download.classList.add('recordings-detail-download');
+      const footer = modalFooter(playbackActions, download);
+      footer.classList.add('recordings-detail-footer');
       activate('overview');
       body.replaceChildren(heading, tabs, ...panels.values(), footer);
       modal.focus(controls.get('overview'));
@@ -1380,39 +1386,60 @@ export function createRecordingsFeature(deps) {
     const body = node('div', 'recordings-call-menu');
     body.append(node('p', 'recordings-dialog-help', `${dateTime(millis(row))} · ${protocolLabel(row.protocol)} · ${systemLabel(row)}`));
     let modal;
+    let actionIndex = 0;
     const run = perform => { let done = false; const next = () => { if (!done) { done = true; perform(); } }; if (modal.close(next)) next(); };
     const actions = node('div', 'recordings-call-menu-grid');
-    for (const [mode, title, icon] of [['once', 'Play once', 'icon-play'], ['continue', 'Continue from here', 'icon-forward'], ['queue', 'Add to queue', 'icon-plus']])
-      actions.append(addGlyph(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'), icon));
-    actions.append(addGlyph(button(node, 'Call details', () => run(() => void openDetails(row)), 'recordings-secondary-action'), 'icon-info-circle'));
-    const use = (key, reference, field, icon) => {
+    const explain = (control, title, description, icon) => {
+      const copy = node('span', 'recordings-action-copy');
+      const help = node('span', 'recordings-action-description', description);
+      help.id = `recording-${row.id}-action-description-${++actionIndex}`;
+      copy.append(node('strong', 'recordings-action-title', title), help);
+      control.replaceChildren(copy);
+      control.setAttribute('aria-label', title);
+      control.setAttribute('aria-describedby', help.id);
+      return addGlyph(control, icon);
+    };
+    for (const [mode, title, description, icon] of [
+      ['once', 'Play once', 'Replace the queue and play only this call.', 'icon-play'],
+      ['continue', 'Continue from here', 'Replace the queue and play this call followed by newer calls that match your search.', 'icon-forward'],
+      ['queue', 'Add to queue', 'Add this call to the end of the queue without starting or interrupting playback.', 'icon-plus']])
+      actions.append(explain(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'), title, description, icon));
+    actions.append(explain(button(node, 'Call details', () => run(() => void openDetails(row)), 'recordings-secondary-action'),
+      'Call details', 'View the transcript and recording details for this call.', 'icon-info-circle'));
+    const use = (title, reference, field, description, icon) => {
       const filter = recordingResultFilter(row, reference, field);
       if (!filter) return;
       const filterLabel = field === 'source' ? sourceLabel(row, getSourceNameDisplay()) : label(row);
-      const link = entityLink(key, reference, row, field, filterLabel);
+      const link = entityLink(title, reference, row, field, filterLabel);
       if (typeof link !== 'string') {
         link.classList.add('recordings-secondary-action');
-        actions.append(addGlyph(link, icon));
+        actions.append(explain(link, title, description, icon));
       }
     };
     const hasGroup = recordingHasTalkgroup(row);
     use(hasGroup ? 'Search this talkgroup' : 'Search this channel', hasGroup ? row.target_entity_ref : row.channel_entity_ref,
-      hasGroup ? 'target' : 'channel', hasGroup ? 'icon-identities' : 'icon-channel');
+      hasGroup ? 'target' : 'channel', hasGroup ? 'Show calls on this talkgroup within your current search.' :
+        'Show calls recorded on this channel within your current search.', hasGroup ? 'icon-identities' : 'icon-channel');
     const sourceRef = recordingSourceReference(row);
-    use('Search this radio', sourceRef, 'source', 'icon-scanner');
+    use('Search this radio', sourceRef, 'source', 'Show calls involving this radio within your current search.', 'icon-scanner');
     const source = recordingResultFilter(row, sourceRef, 'source');
     const target = recordingResultFilter(row, hasGroup ? row.target_entity_ref : row.channel_entity_ref, hasGroup ? 'target' : 'channel');
-    if (source && target) actions.append(addGlyph(button(node, hasGroup ? 'Search talkgroup + radio' : 'Search channel + radio', () => run(() => {
+    const bothTitle = hasGroup ? 'Search talkgroup + radio' : 'Search channel + radio';
+    if (source && target) actions.append(explain(button(node, bothTitle, () => run(() => {
       Object.assign(search, appliedSearch || search, resultSearchFilters(target, 'target'), resultSearchFilters(source, 'source')); replaceSearchForm(); submitSearch();
-    }), 'recordings-secondary-action'), 'icon-search'));
-    actions.append(addGlyph(button(node, 'Open context · ±30 min', () => run(() => {
+    }), 'recordings-secondary-action'), bothTitle, hasGroup ? 'Show calls involving this radio on this talkgroup.' :
+      'Show calls involving this radio on this channel.', 'icon-search'));
+    actions.append(explain(button(node, 'Open context · ±30 min', () => run(() => {
       Object.keys(search).forEach(key => { search[key] = ''; }); selectedSuggestions.clear();
       Object.assign(search, target?.filters || {}, { transcript: '', text_range: 'time', range: 'custom',
         from_ms: String(millis(row) - 1_800_000), to_ms: String(millis(row) + 1_800_000) });
       replaceSearchForm(); submitSearch();
-    }), 'recordings-secondary-action'), 'icon-replay'));
+    }), 'recordings-secondary-action'), 'Open context · ±30 min', target ?
+      `Show this ${hasGroup ? 'talkgroup’s' : 'channel’s'} calls from 30 minutes before to 30 minutes after this call.` :
+      'Show calls from 30 minutes before to 30 minutes after this call.', 'icon-replay'));
     const channel = row.channel_id || row.channel_entity_ref?.key;
-    actions.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'recordings-secondary-action'), 'icon-live'));
+    actions.append(explain(anchor('Go to Live', href('live', channel ? { channel } : {}), 'recordings-secondary-action'),
+      'Go to Live', channel ? 'Open this channel on the Live page.' : 'Open the Live page to browse current traffic.', 'icon-live'));
     body.append(actions);
     modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'recordings-actions-modal' });
   }
@@ -1426,7 +1453,7 @@ export function createRecordingsFeature(deps) {
     const description = `${label(row)} at ${dateTime(millis(row))}`;
     card.setAttribute('aria-label', description);
     const play = action('icon-play', '▶', `Play ${description}`, 'Play recording', () => playClicked(row), 'ui-button ui-icon-button recordings-card-play recordings-card-action');
-    const detail = addGlyph(button(node, 'Call details', () => void openDetails(row), 'recordings-card-action recordings-card-action-details recordings-call-details'), 'icon-info-circle');
+    const detail = action('icon-info-circle', 'i', 'Call details', 'Call details', () => void openDetails(row), 'ui-button ui-icon-button recordings-card-action recordings-call-details');
     const info = action('icon-more', '…', `More actions for ${description}`, 'Call actions', () => openCallActions(row), 'ui-button ui-icon-button recordings-call-info recordings-card-action');
     const head = node('div', 'recordings-call-head');
     const time = node('div', 'recordings-call-time'); time.title = dateTime(millis(row)); time.append(node('strong', '', timeOnly(millis(row))));
