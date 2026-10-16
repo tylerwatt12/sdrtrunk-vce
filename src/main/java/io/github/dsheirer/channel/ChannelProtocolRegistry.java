@@ -162,6 +162,11 @@ public final class ChannelProtocolRegistry
                 double number = ((Number)value).doubleValue();
                 if(!Double.isFinite(number)) throw typeError(rule);
                 validateRange(rule, number);
+                if(!rule.options().isEmpty() && rule.options().stream().noneMatch(option ->
+                    Double.parseDouble(option) == number))
+                {
+                    throw new IllegalArgumentException(rule.label() + " is not an allowed value");
+                }
             }
             case "enum" -> {
                 if(!(value instanceof String text) || !rule.options().contains(text))

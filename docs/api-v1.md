@@ -251,6 +251,12 @@ cursor and rebuild its selected history window. Global reads require inclusive `
 no larger than 24 hours, and a nonempty `actions` whitelist. `action` and `actions` are mutually exclusive. This mode
 reads the existing retained Activity table and does not introduce a second history store.
 
+Owner-scoped Activity reads also accept `has_tones=true`, independently of `action` and `event_type`.
+The tone filter applies before cursor paging. A call containing tones keeps its original classification, such as
+`CALL` / `CALL_GROUP`, and includes an optional `paging_tone_summary` with ordered frequencies or DTMF symbols,
+durations, known offsets, source, and method. Historical standalone `TONE` rows remain readable. CTCSS receive
+squelch does not produce tone summaries or Activity entries.
+
 Radio-system radio and relationship pages accept `affiliated=true|false` and optional `configuration_id`. Both
 filters are applied before paging. A relationship request must include `radio_identity_key` or
 `group_identity_key`. The opaque key includes whether a group is a talkgroup or patch group; clients must not parse

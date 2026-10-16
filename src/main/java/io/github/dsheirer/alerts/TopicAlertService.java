@@ -2,6 +2,8 @@
 package io.github.dsheirer.alerts;
 
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.stats.WebEntityReferences;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
@@ -30,6 +32,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -44,7 +47,7 @@ public final class TopicAlertService implements AutoCloseable
     private static final Pattern TEMPLATE_TOKEN = Pattern.compile("\\{([a-z_]+)}");
     private final TopicAlertStore mStore;
     private final LongSupplier mClock;
-    private final BoundedMpscPairQueue<AlertEvent,Object> mIngress = new BoundedMpscPairQueue<>(INGRESS_CAPACITY);
+    private final BoundedMpscPairQueue<Object,Object> mIngress = new BoundedMpscPairQueue<>(INGRESS_CAPACITY);
     private final ScheduledExecutorService mWorker = Executors.newSingleThreadScheduledExecutor(new ObserverThreadFactory("sdrtrunk topic alerts"));
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final AtomicBoolean mStarted = new AtomicBoolean();
@@ -61,6 +64,9 @@ public final class TopicAlertService implements AutoCloseable
         return origin == null || event.sourceFrequencyHz() != null && origin.processingChain().getDecodeEventSource() == origin &&
             origin.processingChain().getSource() == origin.source() && origin.source().getFrequency() == event.sourceFrequencyHz();
     };
+    private volatile Function<CompletedToneSequence,DecodeEventViewService.EventView> mToneProjector =
+        sequence -> DecodeEventViewService.completedToneView(sequence, null);
+    private AutoCloseable mToneSubscription;
     private long mWorkerRevision;
     private Map<String,AlertRule> mEvaluatedRules = Map.of();
     private long mLastPrune;
@@ -83,15 +89,23 @@ public final class TopicAlertService implements AutoCloseable
         };
     }
 
-    public void start()
+    public synchronized void start()
     {
-        if(!mClosed.get() && mStarted.compareAndSet(false, true)) mWorker.scheduleWithFixedDelay(this::drainSafely, 0, 10, TimeUnit.MILLISECONDS);
+        if(!mClosed.get() && mStarted.compareAndSet(false, true))
+        {
+            mToneSubscription = P25PagingToneService.getInstance().addCompletedToneListener(this::receiveCompletedToneSequence);
+            mWorker.scheduleWithFixedDelay(this::drainSafely, 0, 10, TimeUnit.MILLISECONDS);
+        }
     }
 
     public TopicAlertConfiguration configuration() { return mConfiguration; }
     public void setEventValidator(Predicate<DecodeEventViewService.EventView> validator)
     {
         if(validator != null) mEventValidator = validator;
+    }
+    public void setToneProjector(Function<CompletedToneSequence,DecodeEventViewService.EventView> projector)
+    {
+        mToneProjector = java.util.Objects.requireNonNull(projector);
     }
     public List<AlertTopic> topics() { return mConfiguration.topics(); }
     public List<AlertRule> rules() { return mConfiguration.rules(); }
@@ -232,11 +246,17 @@ public final class TopicAlertService implements AutoCloseable
     {
         return offer(event, OBSERVATION);
     }
-    private boolean offer(AlertEvent event, Object origin)
+    private boolean offer(Object event, Object origin)
     {
         if(event == null || mClosed.get() || !mConfiguration.push().enabled()) return false;
         if(mIngress.offer(event, origin)) return true;
         mDropped.incrementAndGet(); return false;
+    }
+
+    /** Shared completed outcomes are handed off directly; neither Activity nor recording enables this path. */
+    public void receiveCompletedToneSequence(CompletedToneSequence sequence)
+    {
+        if(sequence != null && !sequence.tones().isEmpty()) offer(sequence, OBSERVATION);
     }
 
     /** Called on the existing DecodeEventViewService observer worker, after its lifecycle/source validation. */
@@ -272,7 +292,7 @@ public final class TopicAlertService implements AutoCloseable
             DecodeEventType.COMMANDS.contains(type) ? "command" : "event";
         AlertAction.Context actionContext = AlertAction.capture(view);
         offer(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts, actionContext), view);
-        if(!facts.getOrDefault("tone", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":tone", Math.max(1, view.timeStartMs()), "tone", facts, actionContext), view);
+        //Tone rules consume the completed native-call outcome exactly once, rather than legacy codec identifier updates.
         if(!facts.getOrDefault("dcs", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts, actionContext), view);
     }
     private static void parties(Map<String,List<String>> facts, List<DecodeEventViewService.PartyIdentifier> parties, boolean source, String servingKey)
@@ -360,12 +380,42 @@ public final class TopicAlertService implements AutoCloseable
         {
             var next = mIngress.poll(); if(next == null) break;
             if(config.push().enabled() && (!(next.second() instanceof DecodeEventViewService.EventView source) || mEventValidator.test(source)))
-                process(config, next.first(), mClock.getAsLong());
+            {
+                if(next.first() instanceof CompletedToneSequence sequence)
+                {
+                    DecodeEventViewService.EventView view = mToneProjector.apply(sequence);
+                    if(view != null)
+                    {
+                        AlertEvent event = completedToneEvent(view, sequence);
+                        if(event != null) process(config, event, mClock.getAsLong());
+                    }
+                }
+                else if(next.first() instanceof AlertEvent event) process(config, event, mClock.getAsLong());
+            }
         }
         long now = mClock.getAsLong();
         if(now - mLastPrune >= 60_000) { mStore.prune(now); mLastPrune = now; }
         if(now - mLastSystemRefresh >= 5000) { mSystemFacts = mStore.currentSystemFacts(); mLastSystemRefresh = now; }
     }
+    private static AlertEvent completedToneEvent(DecodeEventViewService.EventView view, CompletedToneSequence sequence)
+    {
+        Map<String,List<String>> facts = new LinkedHashMap<>();
+        add(facts, "channel_id", view.configurationId()); add(facts, "system_key", view.servingSystemKey());
+        add(facts, "protocol", view.protocol()); add(facts, "event_type", view.eventType());
+        add(facts, "channel", view.channelName()); add(facts, "duration_seconds", Double.toString(view.durationMs() / 1000.0));
+        if(sequence.snapshot().encryptionState().isKnown()) add(facts, "encrypted", Boolean.toString(sequence.snapshot().isEncrypted()));
+        String servingKey = view.alertFacts().systemKey() != null ? view.alertFacts().systemKey() : view.servingSystemKey();
+        parties(facts, view.fromParty(), true, servingKey); parties(facts, view.toParty(), false, servingKey);
+        add(facts, "radio_name", view.fromAliases()); add(facts, "talkgroup_name", view.toAliases());
+        facts.put("alias_id", view.alertFacts().aliasIds().stream().map(String::valueOf).toList());
+        facts.put("tone", view.alertFacts().toneCodes());
+        add(facts, "site_id", view.alertFacts().siteId()); add(facts, "site_name", view.alertFacts().siteName());
+        add(facts, "protocol_family", view.alertFacts().protocolFamily());
+        if(servingKey != null) facts.put("system_key", List.of(servingKey));
+        return facts.get("tone").isEmpty() ? null : new AlertEvent(view.eventId(), Math.max(1, sequence.completedTimestamp()),
+            "tone", facts, AlertAction.capture(view));
+    }
+
     private void process(TopicAlertConfiguration config, AlertEvent event, long now) throws SQLException
     {
         if("health".equals(event.trigger()) && !"active".equals(event.first("state")))
@@ -521,9 +571,14 @@ public final class TopicAlertService implements AutoCloseable
     private static String bounded(String value, int maximum) { return value == null || value.isBlank() ? "VCE alert" : value.substring(0, Math.min(maximum, value.length())); }
 
     public long droppedObservations() { return mDropped.get(); }
-    @Override public void close()
+    @Override public synchronized void close()
     {
         if(!mClosed.compareAndSet(false, true)) return;
+        if(mToneSubscription != null)
+        {
+            try { mToneSubscription.close(); } catch(Exception ignored) { }
+            mToneSubscription = null;
+        }
         mWorker.shutdown();
         try { mWorker.awaitTermination(2, TimeUnit.SECONDS); } catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
     }

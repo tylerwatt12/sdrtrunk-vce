@@ -120,6 +120,97 @@ class TrunkedCallStartTrackerTest
     }
 
     @Test
+    void audioTokenFollowsExactResourceCallAcrossUpdatesAndCannotSurviveEndOrReset()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5000);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel one = channel(451_012_500L, 1);
+        DMRTier3Channel two = channel(451_012_500L, 2);
+        TrunkedCallStartEvent first = tracker.observe(parent, Protocol.DMR, one, 1, identifiers(101, 91),
+            DecodeEventType.CALL_GROUP, 1000L);
+        assertNotNull(first.callToken());
+        assertEquals(first.callToken(), tracker.callTokenForActiveCall(one, 1, 1100, identifiers(101, 91)));
+        assertNull(tracker.callTokenForActiveCall(two, 2, 1100, identifiers(101, 91)), "A sister timeslot must not inherit the token");
+        tracker.observe(parent, Protocol.DMR, one, 1, identifiers(102, 91), DecodeEventType.CALL_GROUP, 1200L);
+        assertEquals(first.callToken(), tracker.callTokenForActiveCall(one, 1, 1200, identifiers(101, 91)));
+        tracker.touch(one, 1, 1300L);
+        assertEquals(first.callToken(), tracker.callTokenForActiveCall(one, 1, 1300, identifiers(101, 91)));
+        tracker.end(one, 1, 1400L);
+        assertNull(tracker.callTokenForActiveCall(one, 1, 1400, identifiers(101, 91)));
+        TrunkedCallStartEvent second = tracker.observe(parent, Protocol.DMR, one, 1, identifiers(101, 91),
+            DecodeEventType.CALL_GROUP, 1500L);
+        assertFalse(first.callToken().equals(second.callToken()));
+        assertNull(tracker.callTokenForActiveCall(one, 1, 1499, identifiers(101, 91)));
+        assertNull(tracker.callTokenForActiveCall(one, 1, 7000, identifiers(101, 91)));
+        tracker.clear();
+        assertNull(tracker.callTokenForActiveCall(one, 1, 1600, identifiers(101, 91)));
+    }
+
+    @Test
+    void replacementGrantCannotBindOldDestinationOnTheSameCarrier()
+    {
+        for(Protocol protocol: new Protocol[] {Protocol.DMR, Protocol.NXDN})
+        {
+            TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5000);
+            Channel parent = new Channel("Shared carrier", Channel.ChannelType.STANDARD);
+            parent.setDecodeConfiguration(protocol == Protocol.DMR ? new DecodeConfigDMR() : new DecodeConfigNXDN());
+            IChannelDescriptor resource = protocol == Protocol.DMR ? channel(451_012_500L, 1) : new NXDNChannelLookup(12);
+            Integer slot = protocol == Protocol.DMR ? 1 : null;
+            MutableIdentifierCollection oldCall = protocol == Protocol.DMR ? identifiers(101, 91) :
+                identifiers(NXDNRadioIdentifier.createFrom(101), NXDNTalkgroupIdentifier.createTo(91));
+            MutableIdentifierCollection nextCall = protocol == Protocol.DMR ? identifiers(102, 92) :
+                identifiers(NXDNRadioIdentifier.createFrom(102), NXDNTalkgroupIdentifier.createTo(92));
+            TrunkedCallStartEvent first = tracker.observe(parent, protocol, resource, slot, oldCall,
+                DecodeEventType.CALL_GROUP, 1000L);
+            assertEquals(first.callToken(), tracker.callTokenForActiveCall(resource, slot, 1050, oldCall));
+            TrunkedCallStartEvent replacement = tracker.observe(parent, protocol, resource, slot, nextCall,
+                DecodeEventType.CALL_GROUP, 1100L);
+            assertNotNull(replacement);
+            assertNull(tracker.callTokenForActiveCall(resource, slot, 1150, oldCall),
+                "A later old-destination frame cannot consume the new grant's token");
+            assertNull(tracker.callTokenForActiveCall(resource, slot, 1150, new MutableIdentifierCollection()),
+                "An unidentified frame cannot establish ownership of the replacement grant");
+            assertEquals(replacement.callToken(), tracker.callTokenForActiveCall(resource, slot, 1150, nextCall));
+            MutableIdentifierCollection privateCall = protocol == Protocol.DMR ? identifiers(DMRRadio.createTo(92)) :
+                identifiers(NXDNRadioIdentifier.createTo(92));
+            assertNull(tracker.callTokenForActiveCall(resource, slot, 1150, privateCall),
+                "Equal group and private destination numbers remain different identities");
+            assertNull(tracker.callTokenForActiveCall(resource, slot, 1150,
+                protocol == Protocol.DMR ? nextCallForNxdn() : identifiers(102, 92)),
+                "A different protocol cannot borrow an equal target number");
+            if(protocol == Protocol.NXDN)
+                assertNull(tracker.callTokenForActiveCall(resource, slot, 1150,
+                    identifiers(NXDNTalkgroupIdentifier.createTypeDTo(92))),
+                    "A Type-D address cannot borrow a Type-C destination's token");
+        }
+    }
+
+    private static MutableIdentifierCollection nextCallForNxdn()
+    {
+        return identifiers(NXDNRadioIdentifier.createFrom(102), NXDNTalkgroupIdentifier.createTo(92));
+    }
+
+    @Test
+    void audioBindingReadCannotWaitForTheSignallingTrackerMonitor() throws Exception
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5000);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel channel = channel(451_012_500L, 1);
+        TrunkedCallStartEvent first = tracker.observe(parent, Protocol.DMR, channel, 1, identifiers(101, 91),
+            DecodeEventType.CALL_GROUP, 1000L);
+        try(var executor = java.util.concurrent.Executors.newSingleThreadExecutor())
+        {
+            synchronized(tracker)
+            {
+                var read = executor.submit(() -> tracker.callTokenForActiveCall(channel, 1, 1100, identifiers(101, 91)));
+                assertEquals(first.callToken(), read.get(1, java.util.concurrent.TimeUnit.SECONDS));
+            }
+        }
+    }
+
+    @Test
     void treatsLateTargetIdentificationAsCallEnrichment()
     {
         TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5_000);
@@ -445,10 +536,10 @@ class TrunkedCallStartTrackerTest
         return identifiers;
     }
 
-    private static MutableIdentifierCollection identifiers(io.github.dsheirer.identifier.Identifier<?> target)
+    private static MutableIdentifierCollection identifiers(io.github.dsheirer.identifier.Identifier<?>... values)
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
-        identifiers.update(target);
+        for(var identifier: values) identifiers.update(identifier);
         return identifiers;
     }
 

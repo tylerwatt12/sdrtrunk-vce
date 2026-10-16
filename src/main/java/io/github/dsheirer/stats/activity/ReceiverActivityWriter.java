@@ -98,6 +98,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
     /* Writer-thread-owned evidence that the matching logical-call counters committed successfully. */
     private final Map<LogicalCallId,Long> mResolvedLogicalCalls = new LinkedHashMap<>(1024, 0.75f, true);
+    private ActivityToneAssociations mActivityToneAssociations = new ActivityToneAssociations();
     private final Map<ToneReceipt,Long> mCompletedToneReceipts = new LinkedHashMap<>(256, 0.75f, true);
     /* This bounded receipt cache is writer-owned. No producer treats a queue offer as committed call credit. */
     private final Map<String,ConventionalCallState> mConventionalCalls = new LinkedHashMap<>(256, 0.75f, true);
@@ -747,6 +748,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     mResolvedLogicalCalls.clear();
                     mCompletedToneReceipts.clear();
+                    mActivityToneAssociations = new ActivityToneAssociations();
                     mConventionalCalls.clear();
                     mConventionalCallRecoveryFloor = System.currentTimeMillis();
                 }
@@ -1046,6 +1048,7 @@ class ReceiverActivityWriter implements AutoCloseable
         try
         {
             int writtenRecords = 0;
+            ActivityToneAssociations toneAssociations = mActivityToneAssociations.copy();
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
             Set<ToneReceipt> acceptedToneSequences = new LinkedHashSet<>();
             Map<String,ConventionalCallState> acceptedConventionalCalls = new LinkedHashMap<>();
@@ -1061,7 +1064,15 @@ class ReceiverActivityWriter implements AutoCloseable
             {
                 if(record instanceof ReceiverActivityRecords.ActivityEvent activityEvent)
                 {
-                    activityEvents.add(activityEvent);
+                    if(activityEvent.activityCallToken() != null && activityEvent.action() == ReceiverActivityRecords.Action.CALL)
+                    {
+                        ReceiverActivitySchema.recordActivityBatch(connection, activityEvents, mDetailedEventHistoryEnabled);
+                        activityEvents.clear();
+                        Long id = ReceiverActivitySchema.recordActivity(connection, activityEvent, mDetailedEventHistoryEnabled);
+                        toneAssociations.call(connection, activityEvent.activityCallToken(), activityEvent.configurationId(), id,
+                            System.currentTimeMillis());
+                    }
+                    else activityEvents.add(activityEvent);
                     writtenRecords++;
                     continue;
                 }
@@ -1073,7 +1084,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     ToneReceipt receipt = new ToneReceipt(tone.sequence().callId(), tone.sequence().callLegId(), tone.sequence().source().code(), tone.sequence().method().code());
                     if(!acceptedToneSequences.contains(receipt) && !mCompletedToneReceipts.containsKey(receipt) &&
-                        ToneActivitySchema.record(connection, tone, mDetailedEventHistoryEnabled))
+                        mDetailedEventHistoryEnabled && toneAssociations.tone(connection, tone, System.currentTimeMillis()))
                     {
                         acceptedToneSequences.add(receipt); writtenRecords++;
                     }
@@ -1124,6 +1135,8 @@ class ReceiverActivityWriter implements AutoCloseable
                     if(updated != null)
                     {
                         acceptedConventionalCalls.put(observation.callToken(), updated);
+                        toneAssociations.call(connection, observation.callToken(), observation.activity().configurationId(),
+                            updated.credit().detailedEventId(), System.currentTimeMillis());
                         writtenRecords++;
                     }
                 }
@@ -1161,14 +1174,18 @@ class ReceiverActivityWriter implements AutoCloseable
                 }
                 else if(record instanceof ReceiverActivityRecords.DmrConventionalCall dmrCall)
                 {
-                    ReceiverActivitySchema.recordDmrConventionalCall(connection, dmrCall,
+                    Long id = ReceiverActivitySchema.recordDmrConventionalCall(connection, dmrCall,
                         mDetailedEventHistoryEnabled);
+                    toneAssociations.call(connection, dmrCall.activityCallToken(), dmrCall.configurationId(), id,
+                        System.currentTimeMillis());
                     writtenRecords++;
                 }
                 else if(record instanceof ReceiverActivityRecords.NxdnConventionalCall nxdnCall)
                 {
-                    ReceiverActivitySchema.recordNxdnConventionalCall(connection, nxdnCall,
+                    Long id = ReceiverActivitySchema.recordNxdnConventionalCall(connection, nxdnCall,
                         mDetailedEventHistoryEnabled);
+                    toneAssociations.call(connection, nxdnCall.activityCallToken(), nxdnCall.configurationId(), id,
+                        System.currentTimeMillis());
                     writtenRecords++;
                 }
                 else if(record instanceof ReceiverActivityRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
@@ -1199,6 +1216,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 Long.toString(successfulWrite));
 
             connection.commit();
+            mActivityToneAssociations = toneAssociations;
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
             for(ToneReceipt receipt: acceptedToneSequences) mCompletedToneReceipts.put(receipt, successfulWrite);
             pruneToneReceipts(successfulWrite);

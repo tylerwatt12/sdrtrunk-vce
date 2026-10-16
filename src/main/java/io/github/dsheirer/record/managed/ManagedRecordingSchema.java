@@ -21,7 +21,7 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 8;
+    public static final int CURRENT_FORMAT_VERSION = 9;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
@@ -31,7 +31,8 @@ public final class ManagedRecordingSchema
     private static final Map<String,String> FORMAT_FIVE_DDL = formatFiveSchema();
     private static final Map<String,String> FORMAT_SIX_DDL = formatSixSchema();
     private static final Map<String,String> FORMAT_SEVEN_DDL = formatSevenSchema();
-    static final Map<String,String> DDL = formatEightSchema();
+    private static final Map<String,String> FORMAT_EIGHT_DDL = formatEightSchema();
+    static final Map<String,String> DDL = formatNineSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -47,7 +48,8 @@ public final class ManagedRecordingSchema
             case 5 -> FORMAT_FIVE_DDL;
             case 6 -> FORMAT_SIX_DDL;
             case 7 -> FORMAT_SEVEN_DDL;
-            case 8 -> DDL;
+            case 8 -> FORMAT_EIGHT_DDL;
+            case 9 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -81,6 +83,15 @@ public final class ManagedRecordingSchema
         schema.put("recording_transcript_fts_update", "CREATE TRIGGER recording_transcript_fts_update AFTER UPDATE ON recording_transcript BEGIN " +
             "INSERT INTO recording_transcript_fts(recording_transcript_fts,rowid,text) VALUES('delete',old.call_id,old.text); " +
             "INSERT INTO recording_transcript_fts(rowid,text) VALUES(new.call_id,new.text); END");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    private static Map<String,String> formatNineSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_EIGHT_DDL);
+        schema.put("recording_tone_sequence", FORMAT_EIGHT_DDL.get("recording_tone_sequence")
+            .replace("method_code IN(1,2,3)", "method_code IN(1,2,3,4)")
+            .replace("method_code IN(1,3)", "method_code IN(1,3,4)"));
         return java.util.Collections.unmodifiableMap(schema);
     }
 

@@ -21,8 +21,18 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 public record NXDNConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
                                         long frequencyHertz, TargetKind targetKind, Integer talkgroupId,
                                         Integer sourceRadioId, Integer targetRadioId, boolean encrypted,
-                                        TrunkedIdentityDomain identityDomain)
+                                        TrunkedIdentityDomain identityDomain, String callToken)
 {
+    public NXDNConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
+                                        long frequencyHertz, TargetKind targetKind, Integer talkgroupId,
+                                        Integer sourceRadioId, Integer targetRadioId, boolean encrypted,
+                                        TrunkedIdentityDomain identityDomain)
+    {
+        this(startTimestamp, endTimestamp, channelConfigurationId, frequencyHertz, targetKind, talkgroupId,
+            sourceRadioId, targetRadioId, encrypted, identityDomain, null);
+    }
+
+
     public enum TargetKind
     {
         GROUP,

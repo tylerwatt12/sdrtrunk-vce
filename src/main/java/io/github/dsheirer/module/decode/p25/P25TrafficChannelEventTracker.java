@@ -52,6 +52,7 @@ public class P25TrafficChannelEventTracker
     static final long CONTROL_CONTINUATION_THRESHOLD_MS = 10000;
     private static final long MAX_TDMA_DATA_CHANNEL_EVENT_DURATION_MS = 15000;
     private P25ChannelGrantEvent mEvent;
+    private final String mActivityCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
     private final String mRadioSystemKey;
     private long mLastObservationTimestamp;
     private boolean mStarted = false;
@@ -84,6 +85,8 @@ public class P25TrafficChannelEventTracker
     {
         return mRadioSystemKey;
     }
+
+    public String getActivityCallToken() { return mActivityCallToken; }
 
     /** Captured once before the conventional tracker is published to asynchronous observers. */
     void setConventionalCallStart(P25CallStartEvent callStart)

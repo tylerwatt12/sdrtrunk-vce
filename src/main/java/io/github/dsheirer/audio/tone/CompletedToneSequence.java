@@ -10,6 +10,7 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
+import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import java.util.Objects;
@@ -35,7 +36,8 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
     public enum Method
     {
         P25_PCM_TONE_V1(1, "p25_pcm_tone_v1"), AMBE_TONE_V1(2, "ambe_tone_v1"),
-        P25_PCM_AMBE_TONE_V2(3, "p25_pcm_ambe_tone_v2");
+        P25_PCM_AMBE_TONE_V2(3, "p25_pcm_ambe_tone_v2"),
+        ANALOG_PCM_TONE_V1(4, "analog_pcm_tone_v1");
         private final int mCode;
         private final String mValue;
         Method(int code, String value) { mCode = code; mValue = value; }
@@ -67,15 +69,17 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
         tones = List.copyOf(tones);
         if(snapshot.callId() == null || snapshot.callLegId() == null || !snapshot.complete() ||
             firstVoiceSampleTimestamp < 0 || tones.size() > MAXIMUM_TONES ||
-            source == Source.DECODED_AUDIO && method != Method.P25_PCM_TONE_V1 && method != Method.P25_PCM_AMBE_TONE_V2 ||
+            source == Source.DECODED_AUDIO && method != Method.P25_PCM_TONE_V1 && method != Method.P25_PCM_AMBE_TONE_V2 && method != Method.ANALOG_PCM_TONE_V1 ||
             source == Source.ENCODED && method != Method.AMBE_TONE_V1)
             throw new IllegalArgumentException("Complete bounded native-call context required");
         for(Element element: tones)
         {
             if(source == Source.ENCODED && (element.codecSymbol() == null || element.confidence() != null) ||
-                source == Source.DECODED_AUDIO && (element.codecSymbol() != null || element.frequenciesMilliHertz().size() != 1))
+                source == Source.DECODED_AUDIO && method != Method.ANALOG_PCM_TONE_V1 &&
+                    (element.codecSymbol() != null || element.frequenciesMilliHertz().size() != 1))
                 throw new IllegalArgumentException("Tone source and fields differ");
             if(method == Method.P25_PCM_AMBE_TONE_V2) requireNominalPcmTone(element);
+            if(method == Method.ANALOG_PCM_TONE_V1) requireAnalogPcmTone(element);
         }
         //Detach on the observer worker. Existing AMBE ToneIdentifiers contain mutable duration objects;
         //the explicit elements own that evidence, so do not retain those identifiers in captured call facts.
@@ -84,7 +88,8 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(), true,
             snapshot.encryptionState(), snapshot.recordAudio(), snapshot.recordingMetadata(), snapshot.voiceCallQuality(),
-            snapshot.callLegId(), snapshot.callLegSource(), snapshot.callEncryptionEvidence());
+            snapshot.callLegId(), snapshot.callLegSource(), snapshot.callEncryptionEvidence(),
+            snapshot.analogCallAttribution(), snapshot.activityCallToken());
     }
 
     /** New nominal PCM evidence must not be confused with legacy measured-frequency evidence. */
@@ -96,6 +101,23 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
         {
             throw new IllegalArgumentException("Nominal PCM tone method requires a predefined single frequency");
         }
+    }
+
+    /** Analog paging uses nominal singles; waveform DTMF keeps its standard symbol and frequency pair. */
+    public static void requireAnalogPcmTone(Element element)
+    {
+        if(element.codecSymbol() == null)
+        {
+            requireNominalPcmTone(element);
+            if(element.frequenciesMilliHertz().getFirst() < 281_250)
+                throw new IllegalArgumentException("Subaudible squelch tones are not call tone evidence");
+            return;
+        }
+        AmbeTone tone;
+        try { tone = AmbeTone.valueOf(element.codecSymbol()); }
+        catch(IllegalArgumentException invalid) { throw new IllegalArgumentException("Unknown analog tone symbol"); }
+        if(!tone.name().startsWith("DTMF_") || !EncodedToneMetadata.frequencies(tone).equals(element.frequenciesMilliHertz()))
+            throw new IllegalArgumentException("Analog waveform symbols require standard DTMF frequencies");
     }
 
     public AudioCallId callId() { return snapshot.callId(); }

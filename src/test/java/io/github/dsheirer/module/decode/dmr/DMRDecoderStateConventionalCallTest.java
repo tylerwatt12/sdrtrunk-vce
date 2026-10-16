@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.eventbus.Subscribe;
+import com.google.common.eventbus.EventBus;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
@@ -101,6 +103,10 @@ class DMRDecoderStateConventionalCallTest
             .timeslot(2)
             .build();
         ConventionalCallSubscriber subscriber = new ConventionalCallSubscriber();
+        EventBus localBus = new EventBus();
+        ActivityBindingSubscriber binding = new ActivityBindingSubscriber();
+        localBus.register(binding);
+        state.setInterModuleEventBus(localBus);
         MyEventBus.getGlobalEventBus().register(subscriber);
 
         try
@@ -117,6 +123,8 @@ class DMRDecoderStateConventionalCallTest
         assertEquals(1, subscriber.count.get());
         DMRConventionalCallEvent event = subscriber.event.get();
         assertNotNull(event);
+        assertNotNull(event.callToken());
+        assertEquals(event.callToken(), binding.tokens.stream().filter(java.util.Objects::nonNull).findFirst().orElseThrow());
         assertEquals(1_000L, event.startTimestamp());
         assertTrue(event.endTimestamp() >= event.startTimestamp());
         assertEquals(461_125_000L, event.frequencyHertz());
@@ -353,6 +361,12 @@ class DMRDecoderStateConventionalCallTest
         configuration.setChannelMode(mode);
         channel.setDecodeConfiguration(configuration);
         return channel;
+    }
+
+    private static class ActivityBindingSubscriber
+    {
+        private final List<String> tokens = new java.util.ArrayList<>();
+        @Subscribe public void receive(AudioActivityCallEvent event) { tokens.add(event.token()); }
     }
 
     private static class ConventionalCallSubscriber

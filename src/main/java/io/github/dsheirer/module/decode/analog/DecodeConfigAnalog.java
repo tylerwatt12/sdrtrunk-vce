@@ -32,6 +32,7 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
 {
     private Bandwidth mBandwidth;
     private int mTalkgroup = 1;
+    private double mCtcssFrequency;
 
     /**
      * Constructs an instance
@@ -93,6 +94,21 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
         }
 
         mTalkgroup = talkgroup;
+    }
+
+    /** Selected receive CTCSS frequency in Hertz; zero leaves tone squelch disabled. */
+    public double getCtcssFrequency()
+    {
+        return mCtcssFrequency;
+    }
+
+    public void setCtcssFrequency(double frequency)
+    {
+        if(!io.github.dsheirer.dsp.squelch.CtcssFrequencies.isSupported(frequency))
+        {
+            throw new IllegalArgumentException("Choose Off or a standard CTCSS frequency");
+        }
+        mCtcssFrequency = frequency;
     }
 
     public enum Bandwidth

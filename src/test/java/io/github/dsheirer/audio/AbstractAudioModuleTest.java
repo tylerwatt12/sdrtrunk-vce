@@ -21,6 +21,7 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
@@ -48,6 +49,47 @@ class AbstractAudioModuleTest
     void defaultRolloverLengthIsOneMinuteInMilliseconds()
     {
         assertEquals(60_000L, AbstractAudioModule.DEFAULT_SEGMENT_AUDIO_LENGTH_MILLISECONDS);
+    }
+
+    @Test
+    void aNewExactCallTokenTerminatesThePreviousCallWithoutACarrierBreak()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        module.activityCallBound(new AudioActivityCallEvent("first", 0));
+        module.appendFrame();
+        module.activityCallBound(new AudioActivityCallEvent("second", 0));
+        module.appendFrame();
+        module.stop();
+
+        List<AudioCallEvent> completions = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+        assertEquals(2, completions.size());
+        assertEquals("first", completions.get(0).snapshot().activityCallToken());
+        assertEquals("second", completions.get(1).snapshot().activityCallToken());
+        assertFalse(completions.get(0).continuationExpected());
+        assertNotEquals(completions.get(0).snapshot().callLegId(), completions.get(1).snapshot().callLegId());
+    }
+
+    @Test
+    void anUnassociatedSegmentIsClosedBeforeBindingNewAudioAndTokenIsNeverReusedAfterStop()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        module.appendFrame();
+        module.activityCallBound(new AudioActivityCallEvent("late", 0));
+        module.appendFrame();
+        module.stop();
+        module.appendFrame();
+        module.stop();
+        List<AudioCallEvent> completions = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+        assertEquals(3, completions.size());
+        assertNull(completions.get(0).snapshot().activityCallToken());
+        assertEquals("late", completions.get(1).snapshot().activityCallToken());
+        assertNull(completions.get(2).snapshot().activityCallToken());
     }
 
     @Test
@@ -104,6 +146,46 @@ class AbstractAudioModuleTest
         assertTrue(metadata.snapshot().recordAudio(),
             "The metadata event must include the alias policy for the identifier that triggered it");
         assertEquals(APCO25Talkgroup.create(1200), metadata.snapshot().identifierCollection().getToIdentifier());
+    }
+
+    @Test
+    void nextDestinationUpdateCompletesPreviousCallBeforeChangingItsTargetAndAliases()
+    {
+        AliasListDefinition definition = new AliasListDefinition("Test", AliasListFamily.P25);
+        AliasList aliases = new AliasList(definition);
+        for(int group: new int[]{100,200})
+        {
+            Alias alias = new Alias("Group " + group); alias.setAliasListDefinition(definition);
+            alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25,group)); aliases.addAlias(alias);
+        }
+        TestAudioModule module = new TestAudioModule(aliases,60000);
+        List<AudioCallEvent> events = new ArrayList<>(); module.setAudioCallEventListener(events::add);
+        module.activityCallBound(new AudioActivityCallEvent("old-call",0));
+        module.appendFrameAt(1000,0);
+        // Unknown -> known is late attribution, and changing the talker within a group keeps the same call.
+        module.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(APCO25Talkgroup.create(100),
+            IdentifierUpdateNotification.Operation.ADD,0));
+        module.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(
+            io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier.createFrom(10),
+            IdentifierUpdateNotification.Operation.ADD,0));
+        module.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(
+            io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier.createFrom(11),
+            IdentifierUpdateNotification.Operation.ADD,0));
+        assertFalse(events.stream().anyMatch(event -> event.eventType()==AudioCallEventType.CALL_COMPLETED));
+        // P1 applies this identifier before the decoder publishes the next call's token.
+        module.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(APCO25Talkgroup.create(200),
+            IdentifierUpdateNotification.Operation.ADD,0));
+        var old = events.stream().filter(event -> event.eventType()==AudioCallEventType.CALL_COMPLETED).findFirst().orElseThrow();
+        assertEquals("old-call",old.snapshot().activityCallToken());
+        assertEquals(APCO25Talkgroup.create(100),old.snapshot().identifierCollection().getToIdentifier());
+        assertEquals("Group 100",old.snapshot().recordingMetadata().destinationAlias());
+        module.activityCallBound(new AudioActivityCallEvent("new-call",0));
+        module.appendFrameAt(2000,0); module.closeAt(2020);
+        var last = events.stream().filter(event -> event.eventType()==AudioCallEventType.CALL_COMPLETED).toList().getLast();
+        assertEquals("new-call",last.snapshot().activityCallToken());
+        assertEquals(APCO25Talkgroup.create(200),last.snapshot().identifierCollection().getToIdentifier());
+        assertEquals("Group 200",last.snapshot().recordingMetadata().destinationAlias());
+        assertNotEquals(old.snapshot().callLegId(),last.snapshot().callLegId());
     }
 
     @Test

@@ -4,7 +4,7 @@ package io.github.dsheirer.database.upgrade;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
-/** Populated current fixture retaining every frozen format-53 configuration and receiver-evidence row. */
+/** Populated frozen format-54 fixture retaining every format-53 configuration and receiver-evidence row. */
 public final class Format54TestDatabase
 {
     private Format54TestDatabase() {}
@@ -25,7 +25,8 @@ public final class Format54TestDatabase
                 connection.rollback();
                 throw failure;
             }
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 54)
+                throw new IllegalStateException("Format-54 fixture was not preserved");
         }
         return database;
     }

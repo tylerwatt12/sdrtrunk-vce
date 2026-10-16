@@ -46,7 +46,7 @@ class Format52To53DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-52-to-53", "format-53-to-54"),
+            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55"),
                 report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(3, report.steps().getFirst().effects().getLast().affectedRows());
             assertEquals(before, retainedContents(connection));

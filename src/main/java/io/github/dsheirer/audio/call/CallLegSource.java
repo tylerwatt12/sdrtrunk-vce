@@ -30,7 +30,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
                             TrunkedIdentityDomain identityDomain,
                             ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
                             String radioSystemKey, long siteEvidenceProcessingIncarnation,
-                            long siteEvidenceTuningGeneration)
+                            long siteEvidenceTuningGeneration, String servingSiteId)
 {
     public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null,
         TrunkedIdentityDomain.STANDARD, null, false, null, 0L, 0L);
@@ -44,6 +44,10 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
             decoderType == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C :
                 TrunkedIdentityDomain.STANDARD;
         radioSystemKey = normalize(radioSystemKey);
+        servingSiteId = normalize(servingSiteId);
+        if(servingSiteId != null && (servingSiteId.length() > 4 || servingSiteId.chars().anyMatch(character -> character < '0' || character > '9') ||
+            decoderType != DecoderType.DMR && decoderType != DecoderType.NXDN))
+            throw new IllegalArgumentException("A native serving-site number is required");
         siteEvidenceProcessingIncarnation = Math.max(0L, siteEvidenceProcessingIncarnation);
         siteEvidenceTuningGeneration = Math.max(0L, siteEvidenceTuningGeneration);
         if(radioSystemKey != null)
@@ -52,6 +56,18 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
                 decoderType != null ? decoderType.getProtocol() : null, identityDomain,
                 channelConfigurationId, radioSystemKey);
         }
+    }
+
+    /** Compatibility constructor for call sources captured before native serving-site evidence was added. */
+    public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
+                         String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                         TrunkedIdentityDomain identityDomain,
+                         ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
+                         String radioSystemKey, long siteEvidenceProcessingIncarnation, long siteEvidenceTuningGeneration)
+    {
+        this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
+            identityDomain, channelKind, trafficChannel, radioSystemKey, siteEvidenceProcessingIncarnation,
+            siteEvidenceTuningGeneration, null);
     }
 
     public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
@@ -114,7 +130,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
             radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true,
-            radioSystemKey, siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration);
+            radioSystemKey, siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, servingSiteId);
     }
 
     /** Returns a new source template for calls created after a processing-chain-local system identity change. */
@@ -122,7 +138,16 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
-            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration);
+            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration,
+            java.util.Objects.equals(this.radioSystemKey, radioSystemKey) ? servingSiteId : null);
+    }
+
+    /** Preserves an already-validated native serving site in this immutable source snapshot. */
+    public CallLegSource withServingSiteId(String siteId)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
+            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration, siteId);
     }
 
     /** Returns a source template tied to the exact control-channel processing incarnation that can verify its site. */
@@ -130,7 +155,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey, processingIncarnation,
-            siteEvidenceTuningGeneration);
+            siteEvidenceTuningGeneration, servingSiteId);
     }
 
     /** Returns a source tied to the exact control-source tuning generation within the processing run. */
@@ -138,7 +163,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
-            siteEvidenceProcessingIncarnation, tuningGeneration);
+            siteEvidenceProcessingIncarnation, tuningGeneration, servingSiteId);
     }
 
     /** Returns a source tied to one exact verified control-channel processing and tuning generation. */
@@ -146,7 +171,7 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
             p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey, processingIncarnation,
-            tuningGeneration);
+            tuningGeneration, servingSiteId);
     }
 
     private static String normalize(String value)

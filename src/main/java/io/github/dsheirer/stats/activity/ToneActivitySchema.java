@@ -40,6 +40,9 @@ public final class ToneActivitySchema
         .replace("method_code IN (1,2)", "method_code IN (1,2,3)")
         .replace("CHECK(source_code=method_code)",
             "CHECK((source_code=1 AND method_code IN (1,3)) OR (source_code=2 AND method_code=2))");
+    private static final String CURRENT_SEQUENCE_SQL = SEQUENCE_SQL
+        .replace("method_code IN (1,2,3)", "method_code IN (1,2,3,4)")
+        .replace("method_code IN (1,3)", "method_code IN (1,3,4)");
     private static final String TONE_SQL = """
         CREATE TABLE receiver_activity_tone (
             event_id INTEGER NOT NULL REFERENCES receiver_activity_tone_sequence(event_id) ON DELETE CASCADE,
@@ -62,10 +65,10 @@ public final class ToneActivitySchema
         addToneHistory(connection, FORMAT_50_SEQUENCE_SQL);
     }
 
-    /** Fresh current schema uses the same authoritative method definitions as the format-51-to-52 step. */
+    /** Fresh current schema admits the same methods as the adjacent format-54-to-55 step. */
     public static void createCurrent(Connection connection) throws SQLException
     {
-        addToneHistory(connection, SEQUENCE_SQL);
+        addToneHistory(connection, CURRENT_SEQUENCE_SQL);
     }
 
     private static void addToneHistory(Connection connection, String sequenceSql) throws SQLException
@@ -185,24 +188,111 @@ public final class ToneActivitySchema
         }
     }
 
+    /** Adjacent Application Migrator step; retained tone rows keep their existing parent and method. */
+    public static void upgradeFrom54(Connection connection) throws SQLException
+    {
+        ApplicationMigrationTransaction.requireActive(connection);
+        try(Statement statement = connection.createStatement())
+        {
+            try(var rows = statement.executeQuery("PRAGMA foreign_keys"))
+            { if(rows.next() && rows.getInt(1) != 0) throw new SQLException("Tone upgrade requires the Application Migrator boundary"); }
+            List<String[]> statistics = new ArrayList<>();
+            List<IndexSample> samples = new ArrayList<>();
+            try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"))
+            {
+                if(exists.next()) try(Statement stats = connection.createStatement(); var rows = stats.executeQuery(
+                    "SELECT idx,stat FROM sqlite_stat1 WHERE tbl='receiver_activity_tone_sequence'"))
+                {
+                    while(rows.next()) statistics.add(new String[]{rows.getString(1), rows.getString(2)});
+                }
+            }
+            try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat4'"))
+            {
+                if(exists.next()) try(Statement stats = connection.createStatement(); var rows = stats.executeQuery(
+                    "SELECT idx,neq,nlt,ndlt,sample FROM sqlite_stat4 WHERE tbl='receiver_activity_tone_sequence'"))
+                {
+                    while(rows.next()) samples.add(new IndexSample(rows.getString(1), rows.getString(2),
+                        rows.getString(3), rows.getString(4), rows.getBytes(5)));
+                }
+            }
+            statement.executeUpdate(CURRENT_SEQUENCE_SQL.replace("receiver_activity_tone_sequence (", "receiver_activity_tone_sequence_format55 ("));
+            statement.executeUpdate("INSERT INTO receiver_activity_tone_sequence_format55 SELECT * FROM receiver_activity_tone_sequence");
+            statement.executeUpdate("DROP TABLE receiver_activity_tone_sequence");
+            statement.executeUpdate("ALTER TABLE receiver_activity_tone_sequence_format55 RENAME TO receiver_activity_tone_sequence");
+            if(!statistics.isEmpty())
+            {
+                try(PreparedStatement restore = connection.prepareStatement(
+                    "INSERT INTO sqlite_stat1(tbl,idx,stat) VALUES('receiver_activity_tone_sequence',?,?)"))
+                {
+                    for(String[] row: statistics)
+                    { restore.setString(1, row[0]); restore.setString(2, row[1]); restore.addBatch(); }
+                    restore.executeBatch();
+                }
+            }
+            if(!samples.isEmpty()) try(PreparedStatement restore = connection.prepareStatement(
+                "INSERT INTO sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample) VALUES('receiver_activity_tone_sequence',?,?,?,?,?)"))
+            {
+                for(IndexSample row: samples)
+                {
+                    restore.setString(1, row.index()); restore.setString(2, row.equal()); restore.setString(3, row.less());
+                    restore.setString(4, row.distinct()); restore.setBytes(5, row.sample()); restore.addBatch();
+                }
+                restore.executeBatch();
+            }
+            if(!statistics.isEmpty() || !samples.isEmpty()) statement.execute("ANALYZE sqlite_schema");
+        }
+    }
+
     public static void validate(Connection connection) throws SQLException
     {
         SqliteSchemaValidator.validateDefinitions(connection, List.of(
-            new SqliteSchemaValidator.Definition("table", "receiver_activity_tone_sequence", SEQUENCE_SQL),
+            new SqliteSchemaValidator.Definition("table", "receiver_activity_tone_sequence", CURRENT_SEQUENCE_SQL),
             new SqliteSchemaValidator.Definition("table", "receiver_activity_tone", TONE_SQL)));
     }
 
+    /** New evidence annotates an exact existing call. No synthetic Activity event is created. */
     static boolean record(Connection connection, ReceiverActivityRecords.CompletedToneObservation observation,
-                          boolean detailedHistoryEnabled) throws SQLException
+                          boolean detailedHistoryEnabled, Long id) throws SQLException
     {
-        if(!detailedHistoryEnabled || observation.sequence().tones().isEmpty()) return false;
-        Long id = ReceiverActivitySchema.insertDetailedToneEvent(connection, observation.activity());
-        if(id == null) return false;
+        if(!detailedHistoryEnabled || id == null || observation.sequence().tones().isEmpty()) return false;
+        try(PreparedStatement parent = connection.prepareStatement("SELECT 1 FROM receiver_activity_event WHERE id=? AND action_code=4"))
+        {
+            parent.setLong(1, id);
+            try(var rows = parent.executeQuery()) { if(!rows.next()) return false; }
+        }
         CompletedToneSequence sequence = observation.sequence();
+        int firstOrdinal = 0;
+        long offsetShift = 0;
+        boolean knownOffsetShift = true;
+        try(PreparedStatement existing = connection.prepareStatement("SELECT source_code,method_code,tone_count,first_voice_sample_at_ms,completed_at_ms FROM receiver_activity_tone_sequence WHERE event_id=?"))
+        {
+            existing.setLong(1, id);
+            try(var rows = existing.executeQuery())
+            {
+                if(rows.next())
+                {
+                    firstOrdinal = rows.getInt(3);
+                    if(rows.getInt(1) != sequence.source().code() || rows.getInt(2) != sequence.method().code() ||
+                        firstOrdinal + sequence.tones().size() > CompletedToneSequence.MAXIMUM_TONES ||
+                        sequence.completedTimestamp() < rows.getLong(5)) return false;
+                    Number firstVoice = (Number)rows.getObject(4);
+                    knownOffsetShift = firstVoice != null && sequence.firstVoiceSampleTimestamp() > 0;
+                    if(knownOffsetShift) offsetShift = sequence.firstVoiceSampleTimestamp() - firstVoice.longValue();
+                }
+            }
+        }
         DecoderType decoder = sequence.callLegSource().decoderType();
         Integer phase = decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_CONVENTIONAL ? Integer.valueOf(1) :
             decoder == DecoderType.P25_PHASE2 ? Integer.valueOf(2) : null;
-        try(PreparedStatement statement = connection.prepareStatement("INSERT INTO receiver_activity_tone_sequence VALUES(?,?,?,?,?,?,?,?)"))
+        if(firstOrdinal > 0)
+        {
+            try(PreparedStatement update = connection.prepareStatement("UPDATE receiver_activity_tone_sequence SET completed_at_ms=?,tone_count=? WHERE event_id=?"))
+            {
+                update.setLong(1, sequence.completedTimestamp()); update.setInt(2, firstOrdinal + sequence.tones().size());
+                update.setLong(3, id); update.executeUpdate();
+            }
+        }
+        else try(PreparedStatement statement = connection.prepareStatement("INSERT INTO receiver_activity_tone_sequence VALUES(?,?,?,?,?,?,?,?)"))
         {
             statement.setLong(1, id); statement.setInt(2, sequence.source().code()); statement.setInt(3, sequence.method().code());
             optionalLong(statement, 4, phase != null ? phase.longValue() : null);
@@ -212,13 +302,14 @@ public final class ToneActivitySchema
         }
         try(PreparedStatement statement = connection.prepareStatement("INSERT INTO receiver_activity_tone VALUES(?,?,?,?,?,?,?,?)"))
         {
-            int ordinal = 0;
+            int ordinal = firstOrdinal;
             for(CompletedToneSequence.Element tone: sequence.tones())
             {
                 statement.setLong(1, id); statement.setInt(2, ordinal++);
                 optionalLong(statement, 3, tone.frequenciesMilliHertz().isEmpty() ? null : tone.frequenciesMilliHertz().getFirst().longValue());
                 optionalLong(statement, 4, tone.frequenciesMilliHertz().size() < 2 ? null : tone.frequenciesMilliHertz().get(1).longValue());
-                statement.setString(5, tone.codecSymbol()); optionalLong(statement, 6, tone.offsetMilliseconds());
+                statement.setString(5, tone.codecSymbol()); optionalLong(statement, 6,
+                    knownOffsetShift && tone.offsetMilliseconds() != null ? tone.offsetMilliseconds() + offsetShift : null);
                 statement.setLong(7, tone.durationMilliseconds());
                 optionalLong(statement, 8, tone.confidence() != null ? Math.round(tone.confidence() * 1_000_000) : null);
                 statement.addBatch();
@@ -234,10 +325,14 @@ public final class ToneActivitySchema
     /** Hydrate only the already limited page; primary-key seeks preserve its order and ownership. */
     public static void enrichPage(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
-        List<Long> ids = rows.stream().filter(row -> "TONE".equals(row.get("event_type")))
-            .map(row -> ((Number)row.get("id")).longValue()).toList();
+        for(int start = 0; start < rows.size(); start += 500)
+            enrichBoundedPage(connection, rows.subList(start, Math.min(start + 500, rows.size())));
+    }
+
+    private static void enrichBoundedPage(Connection connection, List<Map<String,Object>> rows) throws SQLException
+    {
+        List<Long> ids = rows.stream().map(row -> ((Number)row.get("id")).longValue()).toList();
         if(ids.isEmpty()) return;
-        if(ids.size() > 500) throw new IllegalArgumentException("Tone page exceeds Activity bound");
         Map<Long,StoredSequence> summaries = new LinkedHashMap<>();
         Set<Long> incomplete = new HashSet<>();
         String placeholders = ids.stream().map(id -> "?").collect(Collectors.joining(","));

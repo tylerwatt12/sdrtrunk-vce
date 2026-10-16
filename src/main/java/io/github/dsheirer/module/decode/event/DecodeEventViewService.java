@@ -11,6 +11,8 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.AmbeToneFrequencyMapping;
 import io.github.dsheirer.channel.metadata.activity.ConventionalLiveSources;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -483,15 +485,88 @@ public class DecodeEventViewService implements AutoCloseable
             RadioSystemKey.p25Broadcast(identifiers), alertFacts(identifiers, origin));
     }
 
-    /** Stable Alias IDs and existing decoded tone metadata, detached on this observer worker only. */
+    /** Completed native-call tone projection, invoked only by an observer worker, independent of Activity demand. */
+    public EventView completedToneView(CompletedToneSequence sequence)
+    {
+        return completedToneView(sequence, mAliasModel);
+    }
+
+    /** Alias-free callers retain all native call identities and source scope. No live-source lookup is required. */
+    public static EventView completedToneView(CompletedToneSequence sequence, AliasModel aliasModel)
+    {
+        var snapshot = sequence.snapshot();
+        var source = sequence.callLegSource();
+        IdentifierCollection identifiers = snapshot.identifierCollection();
+        String servingKey = source.radioSystemKey() != null ? source.radioSystemKey() :
+            RadioSystemKey.p25Serving(null, source.p25SiteIdentity(), identifiers);
+        if(servingKey == null && (source.decoderType() == io.github.dsheirer.module.decode.DecoderType.DMR ||
+            source.decoderType() == io.github.dsheirer.module.decode.DecoderType.NXDN))
+            servingKey = RadioSystemKey.effectiveForReceiver(sequence.protocol(), source.identityDomain(),
+                source.channelConfigurationId(), null);
+        Parties from = parties(identifiers, Role.FROM, servingKey, aliasModel);
+        Parties to = parties(identifiers, Role.TO, servingKey, aliasModel);
+        AlertFacts projected = alertFacts(identifiers, null, aliasModel, servingKey);
+        LinkedHashSet<String> tones = new LinkedHashSet<>();
+        for(var tone: sequence.tones())
+        {
+            if(tone.codecSymbol() != null) tones.add(tone.codecSymbol());
+            else if(tone.frequenciesMilliHertz().size() == 1)
+                AmbeToneFrequencyMapping.nearest(tone.frequenciesMilliHertz().getFirst()).ifPresent(match -> tones.add(match.code()));
+        }
+        LinkedHashSet<Long> aliasIds = new LinkedHashSet<>(projected.aliasIds());
+        var analog = snapshot.analogCallAttribution();
+        if(analog != null) for(var match: analog.matches()) if(aliasIds.size() < 64) aliasIds.add(match.aliasId());
+        var site = source.p25SiteIdentity();
+        String siteId = site != null ? site.rfss() + ":" + site.site() :
+            source.servingSiteId() != null ? source.servingSiteId() : projected.siteId();
+        AlertFacts facts = new AlertFacts(List.copyOf(aliasIds), List.copyOf(tones), List.of(), siteId,
+            servingKey, projected.siteName(), io.github.dsheirer.alerts.AlertProtocolFamily.fromDecoder(source.decoderType()));
+        DecodeEventType type = completedCallType(sequence);
+        return new EventView("completed-tone:" + sequence.callId(), source.channelConfigurationId(),
+            sequence.callStartTimestamp(), Math.max(0, sequence.completedTimestamp() - sequence.callStartTimestamp()),
+            type.name(), type.getLabel(), "calls", from.identifiers(), from.aliases(), to.identifiers(), to.aliases(),
+            null, null, snapshot.timeslot(), null, sequence.protocol().name(), from.party(), to.party(), 0L,
+            source.channelName(), null, null, servingKey, facts);
+    }
+
+    private static DecodeEventType completedCallType(CompletedToneSequence sequence)
+    {
+        var snapshot = sequence.snapshot();
+        var decoder = sequence.callLegSource().decoderType();
+        boolean encrypted = snapshot.isEncrypted();
+        if(decoder == io.github.dsheirer.module.decode.DecoderType.AM || decoder == io.github.dsheirer.module.decode.DecoderType.NBFM)
+            return DecodeEventType.CALL;
+        var identifiers = snapshot.identifierCollection();
+        if(!identifiers.getIdentifiers(Form.PATCH_GROUP).isEmpty())
+            return encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
+        if(!identifiers.getIdentifiers(Form.TELEPHONE_NUMBER).isEmpty())
+            return encrypted ? DecodeEventType.CALL_INTERCONNECT_ENCRYPTED : DecodeEventType.CALL_INTERCONNECT;
+        if(!identifiers.getIdentifiers(Form.TALKGROUP).isEmpty())
+            return encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP;
+        if(identifiers.getIdentifiers(Role.TO).stream().anyMatch(identifier -> identifier.getForm() == Form.RADIO))
+            return encrypted ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
+        return encrypted ? DecodeEventType.CALL_ENCRYPTED : DecodeEventType.CALL;
+    }
+
     private AlertFacts alertFacts(IdentifierCollection identifiers, DecodeEventSource origin)
+    {
+        return alertFacts(identifiers, origin, mAliasModel);
+    }
+
+    private static AlertFacts alertFacts(IdentifierCollection identifiers, DecodeEventSource origin, AliasModel aliasModel)
+    {
+        return alertFacts(identifiers, origin, aliasModel, null);
+    }
+
+    private static AlertFacts alertFacts(IdentifierCollection identifiers, DecodeEventSource origin, AliasModel aliasModel,
+                                         String capturedServingKey)
     {
         if(identifiers == null) identifiers = new IdentifierCollection();
         LinkedHashSet<Long> aliases = new LinkedHashSet<>();
         LinkedHashSet<String> tones = new LinkedHashSet<>();
         LinkedHashSet<String> dcs = new LinkedHashSet<>();
-        AliasList aliasList = mAliasModel != null ? mAliasModel.getAliasList(identifiers) : null;
-        String servingKey = RadioSystemKey.p25Serving(null,
+        AliasList aliasList = aliasModel != null ? aliasModel.getAliasList(identifiers) : null;
+        String servingKey = capturedServingKey != null ? capturedServingKey : RadioSystemKey.p25Serving(null,
             origin != null ? origin.channel().getP25SiteIdentity() : null, identifiers);
         int examined = 0;
         for(Identifier<?> identifier: identifiers.getIdentifiers())
@@ -537,6 +612,11 @@ public class DecodeEventViewService implements AutoCloseable
 
     private Parties parties(IdentifierCollection collection, Role role, String servingKey)
     {
+        return parties(collection, role, servingKey, mAliasModel);
+    }
+
+    private static Parties parties(IdentifierCollection collection, Role role, String servingKey, AliasModel aliasModel)
+    {
         if(collection == null)
         {
             return Parties.EMPTY;
@@ -552,7 +632,7 @@ public class DecodeEventViewService implements AutoCloseable
         LinkedHashSet<String> values = new LinkedHashSet<>();
         LinkedHashMap<String,PartyIdentifier> party = new LinkedHashMap<>();
         LinkedHashSet<String> aliases = new LinkedHashSet<>();
-        AliasList aliasList = mAliasModel != null ? mAliasModel.getAliasList(collection) : null;
+        AliasList aliasList = aliasModel != null ? aliasModel.getAliasList(collection) : null;
 
         int examined = 0;
 

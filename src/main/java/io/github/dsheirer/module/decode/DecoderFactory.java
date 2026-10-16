@@ -207,9 +207,11 @@ public class DecoderFactory
                 (decodeConfig != null ? decodeConfig.getClass() : "null/empty"));
         }
 
-        modules.add(new AMDecoder(config));
+        AMDecoder decoder = new AMDecoder(config);
+        modules.add(decoder);
         AMDecoderState state = new AMDecoderState(channel.getName(), config);
         AudioModule audio = new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList));
+        decoder.setRawAudioBufferListener(audio::receiveRawAudio);
         var tracker = new io.github.dsheirer.alias.AnalogCallAttributionTracker(channel.getConfigurationId(),
             aliasList, new io.github.dsheirer.module.decode.am.AMTalkgroup(config.getTalkgroup()));
         state.setCallAttributionTracker(tracker);
@@ -406,6 +408,7 @@ public class DecoderFactory
             nxdn.getTransmissionMode() != null && nxdn.getTransmissionMode().isTypeD() ?
             TrunkedIdentityDomain.NXDN_TYPE_D : decodeConfiguration instanceof DecodeConfigNXDN ?
                 TrunkedIdentityDomain.NXDN_TYPE_C : TrunkedIdentityDomain.STANDARD;
+        String radioSystemKey = initialRadioSystemKey(channel, decodeConfiguration, identityDomain);
         return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
             ChannelConfigurationKey.configured(channel),
             channel != null ? channel.getName() : null,
@@ -414,9 +417,35 @@ public class DecoderFactory
             channel != null ? channel.getP25SiteIdentity() : null,
             identityDomain,
             channel != null ? ChannelConfigurationPolicy.requireChannelKind(channel) : null,
-            channel != null && channel.getChannelType() == ChannelType.TRAFFIC, null,
+            channel != null && channel.getChannelType() == ChannelType.TRAFFIC, radioSystemKey,
             channel != null ? channel.getSiteEvidenceProcessingIncarnation() : 0L,
-            channel != null ? channel.getSiteEvidenceTuningGeneration() : 0L);
+            channel != null ? channel.getSiteEvidenceTuningGeneration() : 0L)
+            .withServingSiteId(io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent
+                .verifiedServingSiteId(channel, radioSystemKey));
+    }
+
+    private static String initialRadioSystemKey(Channel channel, DecodeConfiguration configuration,
+                                                TrunkedIdentityDomain identityDomain)
+    {
+        if(configuration == null || configuration.getDecoderType() != DecoderType.DMR &&
+            configuration.getDecoderType() != DecoderType.NXDN) return null;
+        String nativeKey = null;
+        var proof = channel != null ? channel.getTrunkedDiscoveryIdentity() : null;
+        if(proof != null)
+        {
+            try
+            {
+                proof.validateFor(channel);
+                nativeKey = proof.identity().radioSystemKey();
+            }
+            catch(IllegalArgumentException invalid)
+            {
+                //Unverified source scope falls back to the saved channel's exact ownership.
+            }
+        }
+        return io.github.dsheirer.module.decode.traffic.RadioSystemKey.effectiveForReceiver(
+            configuration.getDecoderType().getProtocol(), identityDomain, ChannelConfigurationKey.configured(channel),
+            nativeKey);
     }
 
     private static boolean shouldAddP25ControlChannelRotationMonitor(Channel channel,
@@ -497,9 +526,11 @@ public class DecoderFactory
         }
 
         DecodeConfigNBFM decodeConfigNBFM = (DecodeConfigNBFM)decodeConfig;
-        modules.add(new NBFMDecoder(decodeConfigNBFM));
+        NBFMDecoder decoder = new NBFMDecoder(decodeConfigNBFM);
+        modules.add(decoder);
         NBFMDecoderState state = new NBFMDecoderState(channel.getName(), decodeConfigNBFM);
         AudioModule audio = new AudioModule(aliasList, 0, 60000, false, createCallLegSource(channel, aliasList));
+        decoder.setRawAudioBufferListener(audio::receiveRawAudio);
         var tracker = new io.github.dsheirer.alias.AnalogCallAttributionTracker(channel.getConfigurationId(),
             aliasList, new io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup(decodeConfigNBFM.getTalkgroup()));
         state.setCallAttributionTracker(tracker);

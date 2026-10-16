@@ -43,8 +43,22 @@ class ToneSummaryPayloadMethodTest
 
     @Test void invalidSourceMethodPairsAreRefused()
     {
-        for(int[] pair: new int[][]{{1,2},{2,1},{2,3},{1,4},{0,1},{3,3}})
+        for(int[] pair: new int[][]{{1,2},{2,1},{2,3},{2,4},{1,5},{0,1},{3,3}})
             assertThrows(IllegalArgumentException.class, () -> summary(pair[0],pair[1],List.of()));
+    }
+
+    @Test void analogMethodKeepsNominalSinglesAndOnlyExactDtmfPairs()
+    {
+        var single = new CompletedToneSequence.Element(List.of(437_500),null,54L,250,.98);
+        var dtmf = new CompletedToneSequence.Element(List.of(770_000,1336_000),"DTMF_5",400L,100,.99);
+        var summary = summary(1,4,List.of(single,dtmf));
+        assertEquals("analog_pcm_tone_v1",summary.get("method"));
+        assertEquals("DTMF_5",tones(summary).getLast().get("code"));
+        assertDoesNotThrow(() -> sequence(CompletedToneSequence.Source.DECODED_AUDIO,CompletedToneSequence.Method.ANALOG_PCM_TONE_V1,dtmf));
+        for(var invalid:List.of(new CompletedToneSequence.Element(List.of(770_000,1209_000),"DTMF_5",0L,100,.9),
+            new CompletedToneSequence.Element(List.of(),"CTCSS_100",0L,100,.9),
+            new CompletedToneSequence.Element(List.of(440_000),null,0L,100,.9)))
+            assertThrows(IllegalArgumentException.class,()->summary(1,4,List.of(invalid)));
     }
 
     @Test void methodThreeCannotRelabelMeasuredPairUnknownOrOutOfRangeEvidence()

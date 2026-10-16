@@ -137,6 +137,8 @@ public class DMRDecoderState extends TimeslotDecoderState
     private final AtomicReference<OperationalMode> mOperationalMode = new AtomicReference<>();
     private final DMRTrafficChannelManager mTrafficChannelEventManager;
     private DecodeEvent mCurrentCallEvent;
+    private String mCurrentCallToken;
+    private String mPublishedActivityCallToken;
     private boolean mCurrentCallEncrypted;
     private String mCapacityMaxAliasBase;
     private String mCapacityMaxAliasContinuation;
@@ -281,8 +283,13 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     public void setCurrentCallEvent(DecodeEvent decodeEvent)
     {
+        if(decodeEvent != mCurrentCallEvent && !mTrunkingEnabled)
+        {
+            mCurrentCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
+        }
         mCurrentCallEvent = decodeEvent;
         setCurrentChannel(decodeEvent.getChannelDescriptor());
+        publishActivityCallToken(Math.max(decodeEvent.getTimeStart(), decodeEvent.getTimeEnd()));
     }
 
     /**
@@ -452,6 +459,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
 
         offerRestChannelHandoff(operationalMode);
+        if(message.getTimeslot() == getTimeslot()) publishActivityCallToken(message.getTimestamp());
     }
 
     private DMRNetworkConfigurationSnapshot snapshotNetworkConfiguration()
@@ -1873,6 +1881,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
         else
         {
+            if(!mTrunkingEnabled) mCurrentCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
             mCurrentCallEvent = DMRDecodeEvent.builder(isGroup ? DecodeEventType.CALL_GROUP_ENCRYPTED :
                             DecodeEventType.CALL_ENCRYPTED, timestamp)
                     .channel(getCurrentChannel())
@@ -1910,6 +1919,7 @@ public class DMRDecoderState extends TimeslotDecoderState
 
         if(mCurrentCallEvent == null)
         {
+            if(!mTrunkingEnabled) mCurrentCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
             mCurrentCallEvent = DMRDecodeEvent.builder(type, timestamp)
                 .channel(getCurrentChannel())
                 .details(details)
@@ -1991,6 +2001,8 @@ public class DMRDecoderState extends TimeslotDecoderState
             publishConventionalCall(mCurrentCallEvent, timestamp);
             mCurrentCallEvent = null;
         }
+        mCurrentCallToken = null;
+        publishActivityCallToken(timestamp);
 
         mCurrentCallEncrypted = false;
         clearTalkerAliasState();
@@ -2050,7 +2062,21 @@ public class DMRDecoderState extends TimeslotDecoderState
             DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new DMRConventionalCallEvent(startTimestamp, endTimestamp,
             channel.getConfigurationId(), frequency, getTimeslot(), targetKind, talkgroup, sourceRadio, targetRadio,
-            encrypted));
+            encrypted, mCurrentCallToken));
+    }
+
+    private void publishActivityCallToken(long timestamp)
+    {
+        String token = mTrunkingEnabled && mTrafficChannelEventManager != null ?
+            mTrafficChannelEventManager.getActivityCallToken(getCurrentChannel(), getTimeslot(), timestamp,
+                getIdentifierCollection()) :
+            mCurrentCallToken;
+        if(hasInterModuleEventBus() && !java.util.Objects.equals(token, mPublishedActivityCallToken))
+        {
+            mPublishedActivityCallToken = token;
+            getInterModuleEventBus().post(new io.github.dsheirer.audio.call.AudioActivityCallEvent(token,
+                getTimeslot()));
+        }
     }
 
     private static DMRConventionalCallEvent.TargetKind targetKind(DecodeEventType eventType)

@@ -33,8 +33,22 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
                                     TrunkedChannelDescriptorSnapshot channelDescriptorSnapshot,
                                     Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId,
                                     Integer encryptionKeyId, Integer systemId, Integer siteId, String talkerAlias,
-                                    String radioSystemKey)
+                                    String radioSystemKey, String callToken)
 {
+    public TrunkedCallStartEvent(String configurationId, DecoderType decoderType, Protocol protocol,
+                                    TrunkedIdentityDomain identityDomain, DecodeEventType eventType,
+                                    long callStartEpochMilliseconds, Integer sourceRadioId, Integer targetId,
+                                    Form targetForm, Long frequencyHertz,
+                                    TrunkedChannelDescriptorSnapshot channelDescriptorSnapshot,
+                                    Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId,
+                                    Integer encryptionKeyId, Integer systemId, Integer siteId, String talkerAlias,
+                                    String radioSystemKey)
+    {
+        this(configurationId, decoderType, protocol, identityDomain, eventType, callStartEpochMilliseconds,
+            sourceRadioId, targetId, targetForm, frequencyHertz, channelDescriptorSnapshot, timeslot, encrypted,
+            encryptionAlgorithmId, encryptionKeyId, systemId, siteId, talkerAlias, radioSystemKey, null);
+    }
+
     public TrunkedCallStartEvent
     {
         configurationId = ChannelConfigurationKey.canonical(configurationId);
@@ -60,14 +74,14 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
                                  long callStartEpochMilliseconds, String radioSystemKey)
     {
         this(channel, protocol, TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot,
-            identifiers, eventType, callStartEpochMilliseconds, radioSystemKey);
+            identifiers, eventType, callStartEpochMilliseconds, radioSystemKey, null);
     }
 
     /** Uses the one producer-side descriptor capture already used to correlate this call. */
     TrunkedCallStartEvent(Channel channel, Protocol protocol,
                           TrunkedChannelDescriptorSnapshot channelDescriptorSnapshot,
                           Integer timeslot, IdentifierCollection identifiers, DecodeEventType eventType,
-                          long callStartEpochMilliseconds, String radioSystemKey)
+                          long callStartEpochMilliseconds, String radioSystemKey, String callToken)
     {
         this(TrunkedCallSnapshot.eligibleConfigurationId(channel, protocol, identifiers), decoderType(channel), protocol,
             TrunkedCallSnapshot.identityDomain(channel, protocol), eventType, callStartEpochMilliseconds,
@@ -79,7 +93,7 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
             TrunkedCallSnapshot.integerValue(identifiers, io.github.dsheirer.identifier.Form.SYSTEM),
             TrunkedCallSnapshot.integerValue(identifiers, io.github.dsheirer.identifier.Form.SITE),
             TrunkedCallSnapshot.talkerAlias(identifiers),
-            radioSystemKey);
+            radioSystemKey, callToken);
     }
 
     private static DecoderType decoderType(Channel channel)

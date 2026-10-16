@@ -38,8 +38,25 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                                 AudioCallRecordingMetadata recordingMetadata, VoiceCallQuality voiceCallQuality,
                                 CallLegId callLegId, CallLegSource callLegSource,
                                 CallEncryptionEvidence callEncryptionEvidence,
-                                AnalogCallAttribution analogCallAttribution)
+                                AnalogCallAttribution analogCallAttribution,
+                                String activityCallToken)
 {
+    /** Compatibility for snapshots captured before exact Activity call association was introduced. */
+    public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
+        IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
+        long startTimestamp, long lastActivityTimestamp, int burstCount, long burstGeneration,
+        long lastBurstStartTimestamp, long lastBurstEndTimestamp, boolean burstActive, boolean complete,
+        CallEncryptionState encryptionState, boolean recordAudio, AudioCallRecordingMetadata recordingMetadata,
+        VoiceCallQuality voiceCallQuality, CallLegId callLegId, CallLegSource callLegSource,
+        CallEncryptionEvidence callEncryptionEvidence, AnalogCallAttribution analogCallAttribution)
+    {
+        this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
+            lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
+            burstActive, complete, encryptionState, recordAudio, recordingMetadata, voiceCallQuality, callLegId,
+            callLegSource, callEncryptionEvidence, analogCallAttribution,
+            analogCallAttribution != null ? analogCallAttribution.callToken() : null);
+    }
+
     public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
         IdentifierCollection identifierCollection, Set<BroadcastChannel> broadcastChannels,
         long startTimestamp, long lastActivityTimestamp, int burstCount, long burstGeneration,

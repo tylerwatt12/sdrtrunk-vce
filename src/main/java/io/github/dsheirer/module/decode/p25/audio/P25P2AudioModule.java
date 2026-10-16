@@ -444,6 +444,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mTrafficCallFrequency = getTrafficFrequency();
         mTrafficCall = mTrafficChannelManager.getP2TrafficCallForAudio(mTrafficCallFrequency, getTimeslot(),
             mIdentifierCollection, timestamp);
+        if(mTrafficCall != null) setActivityCallToken(mTrafficCall.getActivityCallToken());
     }
 
     private long getTrafficFrequency()

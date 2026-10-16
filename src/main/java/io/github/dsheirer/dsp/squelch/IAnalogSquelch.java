@@ -22,6 +22,11 @@ public interface IAnalogSquelch extends INoiseSquelchController
 
     void setSampleRate(double sampleRate);
 
+    /** Discards receive qualification across a restart or retune. */
+    default void reset()
+    {
+    }
+
     void setAudioListener(Listener<float[]> listener);
 
     void setSquelchStateListener(Listener<SquelchState> listener);

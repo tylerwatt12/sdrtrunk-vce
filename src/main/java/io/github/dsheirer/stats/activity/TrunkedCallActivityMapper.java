@@ -61,7 +61,7 @@ class TrunkedCallActivityMapper
             callStart.encryptionAlgorithmId(), callStart.encryptionKeyId(), null, callStart.systemId(), null, null,
             callStart.siteId(), callStart.talkerAlias(), true, null, null, callStart.identityDomain(),
             ReceiverActivityRecords.P25Identity.UNKNOWN,
-            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), callStart.radioSystemKey());
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), callStart.radioSystemKey(), null, null, null, null, callStart.callToken());
     }
 
     ReceiverActivityRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)

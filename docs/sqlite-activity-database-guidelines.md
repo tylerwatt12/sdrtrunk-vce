@@ -85,44 +85,52 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
   history. The existing action-specific radio ranking and historical Alias evidence paths below document their
   bounded, indexed exceptions.
 
-### Complete-call tone evidence (format 50)
+### Complete-call tone evidence (format 55)
 
-The Activity browser needs to retrieve the actual ordered tone sequence for one retained row. Existing call and
-signaling counters cannot answer that query. The optional detailed-history writer therefore adds one `TONE` event,
-one `receiver_activity_tone_sequence` context and 1–32 `receiver_activity_tone` facts per accepted completed physical
-call leg with tones. Empty results and detailed-history-off results create no rows; retries are suppressed by a
-bounded, commit-only in-memory receipt set. Tone evidence changes no call, signaling, presence or Alias totals.
+New completed-call tone evidence annotates the exact original Activity call row. Its `CALL` action and event types
+such as `CALL_GROUP` retain their existing meanings, as do its owner, RF carrier frequency, identities and counters. The optional
+detailed-history writer adds one `receiver_activity_tone_sequence` context and 1–32 ordered
+`receiver_activity_tone` facts to that parent. It creates no standalone `TONE` event. Older standalone `TONE` rows
+remain readable with their original parent IDs; the upgrade neither reparents them nor guesses historical call links.
+
+A producer-issued, process-local call token connects the original accepted call and its completed audio result.
+The background writer holds bounded call receipts and early results, publishing receipt changes only after SQLite
+commits. Tokens are never stored in SQLite. Missing, expired, mismatched or uncollected parents produce no tone
+annotation; there is no frequency, talkgroup or timestamp fallback. Alerts consume completed results independently
+of Activity collection and recording policy. This association creates no recording link and forces no recording.
 
 The context uses stable integer source/method categories, optional P25 phase and epoch milliseconds. Each ordered
-fact stores zero, one or two millihertz frequencies, a bounded encoded symbol when supplied by the codec, duration,
-optional offset and optional integer-millionth evidence score. Encoded symbols without known numeric frequencies
-retain their exact symbol. DMR/NXDN do not acquire a P25 phase. RF carrier frequency stays on the original event;
-there is no JSON, raw message, audio or process-local call identifier in these tables.
+fact stores zero, one or two integer millihertz frequencies, a bounded symbol when applicable, duration, optional
+offset and optional integer-millionth evidence score. Unknown encoded frequencies, offsets and confidence remain
+unknown. DMR/NXDN and analog results do not acquire a P25 phase. Linked audio segments can append compatible,
+ordered evidence to their one original parent within the same 32-fact bound. No JSON, raw message, audio or
+process-local call identifier is stored in these tables. Tone evidence changes no call, signaling, presence or Alias
+totals.
 
-At `R` tone-bearing completed legs per hour, storage is `R` events, `R` contexts and at most `32R` facts per hour;
-for `H` retained hours the upper bound is `34RH` rows. The fact payload has at most seven integers plus a 64-character
-ASCII symbol (up to 120 bytes before SQLite row/index overhead); the context has eight bounded integers (up to
-64 bytes before overhead). The parent retains the existing normalized channel, system and identity keys rather
-than duplicating names or aliases. This is prospective evidence and creates no backfill.
+At `R` newly annotated calls per hour, storage adds at most `R` contexts and `32R` facts per hour, without another
+parent event. For `H` retained hours this is at most `33RH` additional rows. The fact payload has at most seven
+integers plus a 64-character ASCII symbol; the context has eight bounded integers. Existing normalized parent keys
+supply names, aliases and identity context without duplication.
 
-The existing Activity owner/type/time/ID indexes select the bounded page first. Its at most 500 event IDs then seek
-the context integer primary key and the fact `(event_id,ordinal)` primary key; no secondary tone index is added.
-`EXPLAIN QUERY PLAN` for these `IN` lookups reports primary-key seeks, and ordered fact reads require no temporary
-history sort. Alias enrichment, friendly-name filters and drilldowns still use the original parent context.
+The Has tones filter uses an indexed context-primary-key existence check before pagination. Existing Activity
+owner/type/time/ID indexes select the bounded page; batches of at most 500 selected IDs then seek the context
+integer primary key and fact `(event_id,ordinal)` primary key. Existing larger bounded pages use successive batches. No secondary tone index is needed. Ordered fact reads require no
+history-wide sort. Friendly-name filters, Alias enrichment and drilldowns use the original call context.
 
-Retention explicitly deletes tone facts, then empty tone contexts, then eligible parent events. Those deletions
-count toward the existing 256-row statement and 1,000-row pass limits; parent retention refuses to cascade still
-retained tone contexts. Scoped deletion expands and counts both child levels under its bounded plan, and Reset
-Stats clears children before parents. The separate Managed Recordings catalog format 4 uses the same typed summary
-shape but follows recording ownership and deletion, independently of Activity retention.
+Retention deletes tone facts, then empty contexts, then eligible parent events within the existing 256-row statement
+and 1,000-row pass limits. Scoped deletion counts both child levels in its bounded plan. Reset Stats clears children
+before parents. The separate Managed Recordings catalog follows recording ownership and deletion independently.
 
-The current PCM detector reports only predefined AMBE single-tone nominal frequencies. It uses the original
-spectral estimates to qualify a sustained tone, then assigns the nearest nominal, with exact halfway cases choosing
-the lower frequency. New reports use method code 3 (`p25_pcm_ambe_tone_v2`); existing method-1 measurements and
-method-2 encoded metadata keep their original stored values. The Activity and recording readouts show one nominal
-frequency for PCM tones, including older detections, rather than separate measured and matching values. There are
-no extra matching-frequency columns or per-tone matching fields. Formats 52 (application) and 5 (Managed Recordings)
-admit the new explicit method while preserving prior tone rows during upgrade.
+P25 Phase 1 PCM uses method 3 (`p25_pcm_ambe_tone_v2`) for single tones. Analog AM/NBFM PCM uses method 4
+(`analog_pcm_tone_v1`) for nominal single tones and waveform DTMF symbols with their two standard frequencies.
+Ordinary detected single tones map to the nearest predefined AMBE nominal frequency; exact halfway cases choose
+the lower frequency. Existing method-1 measured values and method-2 encoded metadata retain their original stored
+values. Encoded digital evidence remains distinct from waveform inference. CTCSS is solely an analog channel
+squelch control; it creates no tone facts, Activity evidence or alert facts.
+
+Application format 55 and Managed Recordings catalog format 9 admit method 4 while preserving prior tone evidence.
+Absent analog CTCSS configuration means disabled; existing channel settings are preserved. Runtime startup validates
+the current schema and settings without performing migrations.
 
 ### Alias Editor large-list indexes
 

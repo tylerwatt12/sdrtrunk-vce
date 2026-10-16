@@ -102,6 +102,8 @@ public class NXDNDecoderState extends DecoderState
     private final boolean mTrunkingEnabled;
     private final TrunkedIdentityDomain mIdentityDomain;
     private DecodeEvent mCurrentConventionalCallEvent;
+    private String mCurrentConventionalCallToken;
+    private String mPublishedActivityCallToken;
     private boolean mEncryptedCallStateDetermined = false;
     private boolean mEncryptedCall = false;
     private int mDisconnectResponseCount = 0;
@@ -259,6 +261,7 @@ public class NXDNDecoderState extends DecoderState
             {
                 processPacketMessage(packetMessage);
             }
+            publishActivityCallToken(iMessage.getTimestamp());
         }
     }
 
@@ -1034,6 +1037,7 @@ public class NXDNDecoderState extends DecoderState
 
         if(started)
         {
+            mCurrentConventionalCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
             mCurrentConventionalCallEvent = NXDNDecodeEvent.builder(type, voiceCall.getTimestamp())
                 .channel(getCurrentChannel())
                 .details(voiceCall.getCallOption().toString())
@@ -1112,6 +1116,8 @@ public class NXDNDecoderState extends DecoderState
         broadcast(mCurrentConventionalCallEvent);
         publishConventionalCall(mCurrentConventionalCallEvent, timestamp);
         mCurrentConventionalCallEvent = null;
+        mCurrentConventionalCallToken = null;
+        publishActivityCallToken(timestamp);
     }
 
     /**
@@ -1152,7 +1158,20 @@ public class NXDNDecoderState extends DecoderState
         boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new NXDNConventionalCallEvent(startTimestamp, endTimestamp,
             mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted,
-            mIdentityDomain));
+            mIdentityDomain, mCurrentConventionalCallToken));
+    }
+
+    private void publishActivityCallToken(long timestamp)
+    {
+        String token = mTrunkingEnabled && mTrafficChannelManager != null ?
+            mTrafficChannelManager.getActivityCallToken(getCurrentChannel(), null, timestamp,
+                getIdentifierCollection()) :
+            mCurrentConventionalCallToken;
+        if(hasInterModuleEventBus() && !java.util.Objects.equals(token, mPublishedActivityCallToken))
+        {
+            mPublishedActivityCallToken = token;
+            getInterModuleEventBus().post(new io.github.dsheirer.audio.call.AudioActivityCallEvent(token, 0));
+        }
     }
 
     private static DecodeEventType callEventType(CallType callType, EncryptionKeyIdentifier encryption)

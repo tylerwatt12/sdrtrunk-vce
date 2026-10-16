@@ -260,6 +260,43 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
+    void phaseOneReturnsItsSelectedTokenAndRefusesToBindOldTrafficToANewerTracker() throws Exception
+    {
+        long frequency = 851_012_500L;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        MutableIdentifierCollection identifiers = identifiers(1201, APCO25RadioIdentifier.createFrom(700_001));
+        P25TrafficChannelEventTracker first = new P25TrafficChannelEventTracker(
+            P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, VoiceServiceOptions.createUnencrypted())
+                .identifiers(identifiers).build());
+        trafficTrackers(manager).put(frequency, first);
+        String selected = manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+            DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_100L, null);
+        assertEquals(first.getActivityCallToken(), selected);
+
+        P25TrafficChannelEventTracker replacement = new P25TrafficChannelEventTracker(
+            P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 2_000L, VoiceServiceOptions.createUnencrypted())
+                .identifiers(identifiers(1301, APCO25RadioIdentifier.createFrom(700_002))).build());
+        trafficTrackers(manager).put(frequency, replacement);
+        assertEquals(first.getActivityCallToken(), selected,
+            "The returned selection stays attached to its physical observation after a grant replacement");
+        assertFalse(replacement.getActivityCallToken().equals(selected));
+        assertNull(manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+            DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_200L, null));
+        assertNull(manager.processP1TrafficLDU1(frequency, identifiers.getIdentifiers(), 1_200L));
+        assertNull(manager.processP1TrafficCallStart(frequency, APCO25Talkgroup.create(1201), null,
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x80, 0)),
+            VoiceServiceOptions.createUnencrypted(), new StandardChannel(frequency), 1_200L));
+        manager.processP1TrafficCurrentUser(frequency, APCO25RadioIdentifier.createFrom(700_001), 1_200L);
+        assertNull(manager.processP1TrafficLDU1(frequency, identifiers.getIdentifiers(), 2_100L),
+            "A matching carrier and later timestamp do not make a conflicting destination the same call");
+        assertNull(manager.processP1TrafficCallStart(frequency, APCO25Talkgroup.create(1201), null,
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x80, 0)),
+            VoiceServiceOptions.createUnencrypted(), new StandardChannel(frequency), 2_100L));
+        assertSame(replacement, trafficTrackers(manager).get(frequency));
+        assertEquals(APCO25Talkgroup.create(1301), replacement.getEvent().getIdentifierCollection().getToIdentifier());
+    }
+
+    @Test
     void publishesOneCallStartForEachConventionalTrafficCall()
     {
         long frequency = 154_875_000L;

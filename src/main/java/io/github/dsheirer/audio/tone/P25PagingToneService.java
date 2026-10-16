@@ -131,6 +131,9 @@ public final class P25PagingToneService
     /** Module-owned PCM observation stays available independently of the optional receiver-message audience. */
     public Registration registerGlobalPcm() { return new Registration(this, 0, true); }
 
+    /** Arbitrary 8 kHz analog blocks; single paging tones plus waveform DTMF, never CTCSS. */
+    public Registration registerAnalogPcm() { return new Registration(this, 0, true, true); }
+
     /** Qualification is inherited from the audio producer: P2 three frames, DMR/NXDN one frame. */
     public Registration registerEncoded(int minimumToneFrames)
     {
@@ -162,7 +165,8 @@ public final class P25PagingToneService
         if(available != null || snapshot == null || milliseconds == 0) return available;
         var decoder = snapshot.callLegSource().decoderType();
         boolean pcm = decoder == io.github.dsheirer.module.decode.DecoderType.P25_PHASE1 ||
-            decoder == io.github.dsheirer.module.decode.DecoderType.P25_CONVENTIONAL;
+            decoder == io.github.dsheirer.module.decode.DecoderType.P25_CONVENTIONAL ||
+            decoder == io.github.dsheirer.module.decode.DecoderType.NBFM || decoder == io.github.dsheirer.module.decode.DecoderType.AM;
         boolean encoded = decoder == io.github.dsheirer.module.decode.DecoderType.P25_PHASE2 ||
             decoder == io.github.dsheirer.module.decode.DecoderType.DMR || decoder == io.github.dsheirer.module.decode.DecoderType.NXDN;
         if(!snapshot.complete() || !pcm && !encoded || pcm && !isEnabled()) return null;
@@ -324,7 +328,7 @@ public final class P25PagingToneService
             event.eventType() != AudioCallEventType.AUDIO_FRAME &&
             event.eventType() != AudioCallEventType.CALL_COMPLETED) return false;
         int samples = !reset ? event.audioFrameSampleCount() : 0;
-        if(samples != 0 && samples != 160)
+        if(samples != 0 && (registration.encoded() && samples != 160 || samples > P25PagingToneDetector.MAXIMUM_SAMPLES))
         {
             lose(registration, binding, seal);
             return false;
@@ -521,8 +525,10 @@ public final class P25PagingToneService
             Context context = mContexts.get(key);
             if(context == null) return false;
             long frameDelta = event.voiceFrameTimestamp() - context.lastFrameTimestamp;
-            if(event.audioFrameSampleCount() != 160 || context.samples > P25PagingToneDetector.MAXIMUM_SAMPLES - 160 ||
-                (!queued.registration().encoded() && context.lastFrameTimestamp != 0 &&
+            int sampleCount = event.audioFrameSampleCount();
+            if(sampleCount == 0 || !queued.registration().analog && sampleCount != 160 || context.samples > P25PagingToneDetector.MAXIMUM_SAMPLES - sampleCount ||
+                context.buffers.size() >= 6000 ||
+                (!queued.registration().analog && !queued.registration().encoded() && context.lastFrameTimestamp != 0 &&
                     (frameDelta < MINIMUM_PCM_FRAME_DELTA_MILLISECONDS ||
                         frameDelta > MAXIMUM_PCM_FRAME_DELTA_MILLISECONDS)))
             {
@@ -549,7 +555,11 @@ public final class P25PagingToneService
                     return false;
                 }
             }
-            if(context.firstFrameTimestamp == 0) context.firstFrameTimestamp = event.voiceFrameTimestamp();
+            if(context.firstFrameTimestamp == 0)
+            {
+                context.firstFrameTimestamp = event.voiceFrameTimestamp();
+                context.firstFrameSamples = sampleCount;
+            }
             context.lastFrameTimestamp = event.voiceFrameTimestamp();
             context.buffers.add(audio);
             context.samples += audio.length;
@@ -573,21 +583,36 @@ public final class P25PagingToneService
                 return false;
             }
             List<P25PagingToneDetector.DetectedTone> tones;
+            List<CompletedToneSequence.Element> analogDtmf = List.of();
             try
             {
                 if(!current(queued.epoch())) return false;
-                tones = mDetector.apply(context.buffers);
+                List<float[]> analysisAudio = queued.registration().analog ?
+                    AnalogToneAudioFilter.filter(context.buffers) : context.buffers;
+                tones = mDetector.apply(analysisAudio);
+                if(queued.registration().analog)
+                {
+                    //Subaudible squelch tones belong only to the analog receive gate, never call evidence.
+                    tones = tones.stream().filter(tone -> tone.frequencyHz() >= 281.25).toList();
+                    analogDtmf = new AnalogDtmfDetector().detect(analysisAudio);
+                }
                 mAnalyzedCalls.incrementAndGet();
             }
             finally
             {
                 releasePcm(context);
             }
-            List<CompletedToneSequence.Element> elements = tones.stream().map(tone -> new CompletedToneSequence.Element(
+            List<CompletedToneSequence.Element> elements = new ArrayList<>(tones.stream().map(tone -> new CompletedToneSequence.Element(
                 List.of((int)Math.round(tone.frequencyHz() * 1000)),null,tone.offsetMilliseconds(),
-                tone.durationMilliseconds(),tone.confidence())).toList();
-            publishCompleted(queued,new CompletedToneSequence(event.snapshot(),Math.max(0,context.firstFrameTimestamp - 20),
-                CompletedToneSequence.Source.DECODED_AUDIO,CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2,elements));
+                tone.durationMilliseconds(),tone.confidence())).toList());
+            elements.addAll(analogDtmf);
+            elements.sort(java.util.Comparator.comparingLong(tone -> tone.offsetMilliseconds()));
+            if(elements.size() > CompletedToneSequence.MAXIMUM_TONES)
+                throw new IllegalArgumentException("Incomplete tone sequence exceeds bound");
+            publishCompleted(queued,new CompletedToneSequence(event.snapshot(),
+                Math.max(0,context.firstFrameTimestamp - context.firstFrameSamples / 8L),
+                CompletedToneSequence.Source.DECODED_AUDIO,queued.registration().analog ?
+                    CompletedToneSequence.Method.ANALOG_PCM_TONE_V1 : CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2,elements));
             Binding legacy = queued.registration().legacyBinding(queued);
             if(!tones.isEmpty() && current(queued.epoch()) && queued.registration().legacyCurrent(legacy) &&
                 queued.epoch().claim())
@@ -739,6 +764,7 @@ public final class P25PagingToneService
         private final Pending pending;
         private final List<float[]> buffers = new ArrayList<>();
         private long firstFrameTimestamp;
+        private int firstFrameSamples = 160;
         private long lastFrameTimestamp;
         private int samples;
         private long bytes;
@@ -773,13 +799,18 @@ public final class P25PagingToneService
         private final P25PagingToneService service;
         private final int minimumToneFrames;
         private final boolean globalLifetime;
+        private final boolean analog;
         private final AtomicReference<Binding> mLegacyBinding = new AtomicReference<>();
         private final AtomicReference<Binding> mBinding = new AtomicReference<>();
         private final AtomicBoolean mClosed = new AtomicBoolean();
         private final AtomicReference<CallSeal> mCallSeal = new AtomicReference<>();
         private Registration(P25PagingToneService owner,int minimumFrames,boolean global)
         {
-            service = owner; minimumToneFrames = minimumFrames; globalLifetime = global;
+            this(owner, minimumFrames, global, false);
+        }
+        private Registration(P25PagingToneService owner,int minimumFrames,boolean global,boolean analogPcm)
+        {
+            service = owner; minimumToneFrames = minimumFrames; globalLifetime = global; analog = analogPcm;
             if(global) mBinding.set(new Binding(message -> {}));
         }
         private boolean encoded() { return minimumToneFrames != 0; }

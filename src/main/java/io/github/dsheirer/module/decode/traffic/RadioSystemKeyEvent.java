@@ -16,6 +16,7 @@ public final class RadioSystemKeyEvent extends PreloadDataContent<String>
 {
     private final long mCallStartEpochMilliseconds;
     private final Integer mTimeslot;
+    private final String mServingSiteId;
 
     public RadioSystemKeyEvent(String radioSystemKey)
     {
@@ -28,9 +29,36 @@ public final class RadioSystemKeyEvent extends PreloadDataContent<String>
      */
     public RadioSystemKeyEvent(String radioSystemKey, long callStartEpochMilliseconds, Integer timeslot)
     {
+        this(radioSystemKey, callStartEpochMilliseconds, timeslot, null);
+    }
+
+    public RadioSystemKeyEvent(String radioSystemKey, long callStartEpochMilliseconds, Integer timeslot,
+                                String servingSiteId)
+    {
         super(canonicalKey(radioSystemKey));
+        mServingSiteId = servingSiteId;
         mCallStartEpochMilliseconds = Math.max(0L, callStartEpochMilliseconds);
         mTimeslot = timeslot != null && timeslot >= 0 ? timeslot : null;
+    }
+
+    public String servingSiteId() { return mServingSiteId; }
+
+    /** Captures verified channel proof now; completed audio never consults a later edited or retuned channel. */
+    public static String verifiedServingSiteId(io.github.dsheirer.controller.channel.Channel channel, String systemKey)
+    {
+        var proof = channel != null ? channel.getTrunkedDiscoveryIdentity() : null;
+        if(proof == null) return null;
+        try
+        {
+            proof.validateFor(channel);
+            String known = proof.identity().radioSystemKey();
+            if(systemKey != null && (known != null ? !known.equals(systemKey) :
+                !RadioSystemKey.isChannelScoped(systemKey) || !systemKey.endsWith(":channel:" +
+                    io.github.dsheirer.controller.channel.ChannelConfigurationKey.configured(channel))))
+                return null;
+            return proof.identity().site().toString();
+        }
+        catch(IllegalArgumentException invalid) { return null; }
     }
 
     public String radioSystemKey()

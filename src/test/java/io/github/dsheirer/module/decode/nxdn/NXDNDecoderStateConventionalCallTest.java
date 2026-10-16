@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.eventbus.Subscribe;
+import com.google.common.eventbus.EventBus;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
@@ -39,6 +41,10 @@ class NXDNDecoderStateConventionalCallTest
         NXDNDecoderState state = new NXDNDecoderState(channel, null);
         state.receiveDecoderStateEvent(frequencyNotification(461_125_000L));
         ConventionalCallSubscriber subscriber = new ConventionalCallSubscriber();
+        EventBus localBus = new EventBus();
+        ActivityBindingSubscriber binding = new ActivityBindingSubscriber();
+        localBus.register(binding);
+        state.setInterModuleEventBus(localBus);
         MyEventBus.getGlobalEventBus().register(subscriber);
 
         try
@@ -55,6 +61,8 @@ class NXDNDecoderStateConventionalCallTest
 
         assertEquals(1, subscriber.events.size());
         NXDNConventionalCallEvent event = subscriber.events.getFirst();
+        assertNotNull(event.callToken());
+        assertEquals(event.callToken(), binding.tokens.stream().filter(java.util.Objects::nonNull).findFirst().orElseThrow());
         assertEquals(1_000L, event.startTimestamp());
         assertEquals(2_000L, event.endTimestamp());
         assertEquals(461_125_000L, event.frequencyHertz());
@@ -161,6 +169,12 @@ class NXDNDecoderStateConventionalCallTest
         configuration.setChannelMode(mode);
         channel.setDecodeConfiguration(configuration);
         return channel;
+    }
+
+    private static class ActivityBindingSubscriber
+    {
+        private final List<String> tokens = new java.util.ArrayList<>();
+        @Subscribe public void receive(AudioActivityCallEvent event) { tokens.add(event.token()); }
     }
 
     private static class ConventionalCallSubscriber

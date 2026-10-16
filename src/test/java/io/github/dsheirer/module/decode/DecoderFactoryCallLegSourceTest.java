@@ -59,6 +59,70 @@ class DecoderFactoryCallLegSourceTest
     }
 
     @Test
+    void capturesVerifiedDmrAndNxdnSiteSeparatelyFromMutableChannelProof()
+    {
+        for(boolean dmr: new boolean[] {true, false})
+        {
+            Channel channel = new Channel("Verified site");
+            channel.setConfigurationId("11111111-1111-1111-1111-111111111111");
+            if(dmr)
+            {
+                var config = new io.github.dsheirer.module.decode.dmr.DecodeConfigDMR();
+                config.setChannelMode(io.github.dsheirer.module.decode.dmr.DMRChannelMode.TRUNKED);
+                channel.setDecodeConfiguration(config);
+            }
+            else channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN());
+            String key = dmr ? "dmr:tier3:small:42" : "nxdn-c:local:303";
+            channel.setTrunkedDiscoveryIdentity(new io.github.dsheirer.channel.TrunkedDiscoveryIdentity(
+                dmr ? "dmr" : "nxdn", dmr ? "TIER_III" : "TYPE_C",
+                new io.github.dsheirer.stats.TrunkedDiscoveryEvidence.Identity(null, key, key + ":site:3",
+                    dmr ? 42 : null, dmr ? 42 : 303, 3, dmr ? "small" : null, dmr ? null : "local",
+                    null, null, null)));
+            CallLegSource captured = DecoderFactory.createCallLegSource(channel, AliasList.empty("test"));
+            assertEquals("3", captured.servingSiteId());
+            assertEquals(key, captured.radioSystemKey());
+            channel.setTrunkedDiscoveryIdentity(null);
+            assertEquals("3", captured.servingSiteId(), "Later channel edits must not relabel a native call");
+            assertNull(DecoderFactory.createCallLegSource(channel, AliasList.empty("test")).servingSiteId());
+        }
+    }
+
+    @Test
+    void capacityPlusAndTypeDStartWithExactSavedChannelSystemAndSiteScope()
+    {
+        for(boolean dmr: new boolean[] {true, false})
+        {
+            Channel channel = new Channel("Shared carrier site");
+            channel.setConfigurationId("11111111-1111-1111-1111-111111111111");
+            if(dmr)
+            {
+                var config = new io.github.dsheirer.module.decode.dmr.DecodeConfigDMR();
+                config.setChannelMode(io.github.dsheirer.module.decode.dmr.DMRChannelMode.TRUNKED);
+                channel.setDecodeConfiguration(config);
+            }
+            else channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN(
+                io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode.TYPE_D));
+            var tuner = new io.github.dsheirer.source.config.SourceConfigTuner();
+            tuner.setFrequency(451_012_500L);
+            channel.setSourceConfiguration(tuner);
+            String protocol = dmr ? "dmr" : "nxdn";
+            String variant = dmr ? "CAPACITY_PLUS" : "TYPE_D";
+            channel.setTrunkedDiscoveryIdentity(new io.github.dsheirer.channel.TrunkedDiscoveryIdentity(protocol,
+                variant, new io.github.dsheirer.stats.TrunkedDiscoveryEvidence.Identity(null, null,
+                    protocol + ':' + variant + ":frequency:451012500:site:3", null, null, 3,
+                    null, null, null, null, null)));
+            CallLegSource source = DecoderFactory.createCallLegSource(channel, AliasList.empty("test"));
+            assertEquals((dmr ? "dmr" : "nxdn-d") + ":channel:" + channel.getConfigurationId(), source.radioSystemKey());
+            assertEquals("3", source.servingSiteId());
+            tuner.setFrequency(452_012_500L);
+            CallLegSource retuned = DecoderFactory.createCallLegSource(channel, AliasList.empty("test"));
+            assertEquals(source.radioSystemKey(), retuned.radioSystemKey());
+            assertNull(retuned.servingSiteId(), "A frequency-scoped site proof cannot follow a retune");
+            assertEquals("3", source.servingSiteId(), "The prior physical call keeps its original site");
+        }
+    }
+
+    @Test
     void marksTrafficChannelScopeExplicitly()
     {
         Channel channel = new Channel("Traffic", Channel.ChannelType.TRAFFIC);

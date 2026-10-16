@@ -152,12 +152,14 @@ class ChannelDefinitionCodecTest
         Map<String,Object> nbfm = new LinkedHashMap<>(mRegistry.require("nbfm").defaultSettings());
         nbfm.put("bandwidth", "BW_25_0");
         nbfm.put("deemphasis", "US_750US");
+        nbfm.put("ctcss_frequency_hz", 100.0);
         nbfm.put("low_pass_enabled", true);
         nbfm.put("low_pass_cutoff_hz", 3000L);
         ChannelDefinition analogRead = mCodec.fromChannel(mCodec.toChannel(
             definition("nbfm", analog.getId(), nbfm, List.of(154_325_000L), false), analog, null));
         assertEquals("BW_25_0", analogRead.settings().get("bandwidth"));
         assertEquals("US_750US", analogRead.settings().get("deemphasis"));
+        assertEquals(100.0, analogRead.settings().get("ctcss_frequency_hz"));
         assertEquals(true, analogRead.settings().get("low_pass_enabled"));
         assertEquals(3000, analogRead.settings().get("low_pass_cutoff_hz"));
 
@@ -208,6 +210,28 @@ class ChannelDefinitionCodecTest
         assertEquals(0x293, p25Read.settings().get("scramble_nac"));
         assertEquals(true, p25Read.settings().get("ignore_encrypted_calls"));
         assertTrue(p25Read.source().frequenciesHz().contains(851_012_500L));
+    }
+
+    @Test
+    void analogCtcssDefaultsOffAndRejectsNonstandardChoices()
+    {
+        AliasListDefinition aliases = aliasList(1, AliasListFamily.NBFM);
+        for(String protocol: List.of("am", "nbfm"))
+        {
+            Map<String,Object> settings = new LinkedHashMap<>(mRegistry.require(protocol).defaultSettings());
+            assertEquals(0L, settings.get("ctcss_frequency_hz"));
+            settings.remove("ctcss_frequency_hz");
+            Channel channel = mCodec.toChannel(definition(protocol, aliases.getId(), settings,
+                List.of(154_325_000L), false), aliases, null);
+            assertEquals(0.0, mCodec.fromChannel(channel).settings().get("ctcss_frequency_hz"));
+            settings.put("ctcss_frequency_hz", 99.0);
+            assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(definition(protocol, aliases.getId(),
+                settings, List.of(154_325_000L), false), aliases, null));
+            settings.put("ctcss_frequency_hz", 123.0);
+            Channel selected = mCodec.toChannel(definition(protocol, aliases.getId(), settings,
+                List.of(154_325_000L), false), aliases, null);
+            assertEquals(123.0, mCodec.fromChannel(selected).settings().get("ctcss_frequency_hz"));
+        }
     }
 
     private static ChannelDefinition definition(String protocol, long aliasListId, Map<String,Object> settings,

@@ -42,7 +42,7 @@ class LegacyReceiverSettingsMigrationTest
         var result = new ApplicationMigrationService().migrateCurrent(root, false, null);
 
         assertImported(root, expected);
-        assertEquals(54, version(root));
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, version(root));
         assertOriginals(originals);
         assertFalse(result.helperOutput().contains(SYNTHETIC_SECRET));
         assertTrue(new ApplicationMigrationService().migrateCurrent(root, false, null).sourcePlan().steps().isEmpty());

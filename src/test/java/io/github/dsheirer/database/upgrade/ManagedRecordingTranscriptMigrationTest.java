@@ -36,7 +36,7 @@ class ManagedRecordingTranscriptMigrationTest
         assertTrue(result.migrated()); assertNotNull(result.backup());
         try(var c=open(db))
         {
-            ManagedRecordingSchema.validate(c,8); assertEquals(before,contents(c));
+            ManagedRecordingSchema.validate(c,ManagedRecordingSchema.CURRENT_FORMAT_VERSION); assertEquals(before,contents(c));
             assertEquals(1,matches(c,"fixture AND retained"));
             assertEquals(9000,scalar(c,"SELECT seq FROM sqlite_sequence WHERE name='recording_call'"));
             integrity(c);
@@ -65,7 +65,7 @@ class ManagedRecordingTranscriptMigrationTest
             assertArrayEquals(before,Files.readAllBytes(db));
             try(var c=open(db)) { ManagedRecordingSchema.validate(c,7); }
             assertTrue(ManagedRecordingCatalogMigrator.migrate(db,false).migrated());
-            try(var c=open(db)) { ManagedRecordingSchema.validate(c,8);assertEquals(1,matches(c,"fixture")); }
+            try(var c=open(db)) { ManagedRecordingSchema.validate(c,ManagedRecordingSchema.CURRENT_FORMAT_VERSION);assertEquals(1,matches(c,"fixture")); }
         }
     }
 

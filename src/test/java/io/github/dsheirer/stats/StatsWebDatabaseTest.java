@@ -2549,6 +2549,42 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void tonesFilterKeepsCallClassificationAndFindsEvidenceBeforePagination() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code,event_type_code)
+                VALUES(990001,71,71,10000,4,7),(990002,71,71,11000,4,7),(990003,71,71,12000,4,7)
+                """);
+            statement.executeUpdate("INSERT INTO receiver_activity_tone_sequence VALUES(990001,1,3,1,9000,9000,10500,2)");
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone VALUES
+                (990001,0,437500,NULL,NULL,0,500,990000),
+                (990001,1,593750,NULL,NULL,500,500,990000)
+                """);
+        }
+        StatsWebDatabase.ActivityQuery[] query = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> response = mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&action=CALL&event_type=CALL_GROUP&has_tones=true&limit=1"), value -> query[0] = value);
+        List<Map<String,Object>> found = rows(response);
+        assertEquals(1, found.size());
+        assertEquals(990001L, ((Number)found.getFirst().get("id")).longValue());
+        assertEquals("CALL", found.getFirst().get("action"));
+        assertEquals("CALL_GROUP", found.getFirst().get("event_type"));
+        assertTrue(found.getFirst().containsKey("paging_tone_summary"));
+        assertTrue(rows(mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
+            "&event_type=CALL&has_tones=true"))).isEmpty());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(line -> line.startsWith("SEARCH tones ") && line.contains("USING INTEGER PRIMARY KEY")),
+                () -> "Tone existence must seek the selected event key: " + plan);
+        }
+    }
+
+    @Test
     void activityFiltersComposeAcrossScopeRolePatchTimeAndRadioFrequencyFields() throws Exception
     {
         seedActivityFilterRows();

@@ -745,6 +745,11 @@ class DMRTrafficChannelManagerTest
         config.setChannelMode(DMRChannelMode.TRUNKED);
         config.setTrafficChannelPoolSize(1);
         parent.setDecodeConfiguration(config);
+        parent.setTrunkedDiscoveryIdentity(new io.github.dsheirer.channel.TrunkedDiscoveryIdentity(
+            "dmr", "TIER_III", new io.github.dsheirer.stats.TrunkedDiscoveryEvidence.Identity(null,
+                "dmr:tier3:small:42", "dmr:tier3:small:42:site:1", 42, 42, 1,
+                "small", null, null, null, null)));
+
         DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
         StartRequestSubscriber starts = new StartRequestSubscriber();
         EventBus eventBus = new EventBus();
@@ -765,6 +770,7 @@ class DMRTrafficChannelManagerTest
             RadioSystemKeyEvent initial = (RadioSystemKeyEvent)starts.requests.getFirst()
                 .getPreloadDataContents().getFirst();
             assertEquals("dmr:tier3:small:42", initial.radioSystemKey());
+            assertEquals("1", initial.servingSiteId());
             InterleavedAudioModule racingCall = new InterleavedAudioModule(DecoderType.DMR,
                 TrunkedIdentityDomain.STANDARD, parent.getConfigurationId(), 1, initial.radioSystemKey());
             InterleavedAudioModule olderCall = new InterleavedAudioModule(DecoderType.DMR,
@@ -785,6 +791,7 @@ class DMRTrafficChannelManagerTest
             String expected = RadioSystemKey.channelScoped(Protocol.DMR, TrunkedIdentityDomain.STANDARD,
                 parent.getConfigurationId());
             assertEquals(expected, activation.radioSystemKey());
+            assertNull(activation.servingSiteId(), "Unresolved next calls cannot inherit a previous native site");
             assertEquals(1_100L, activation.callStartEpochMilliseconds());
             assertEquals(1, activation.timeslot());
 

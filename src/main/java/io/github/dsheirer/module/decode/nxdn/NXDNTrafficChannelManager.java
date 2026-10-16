@@ -104,6 +104,14 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private final Map<Long, NXDNChannelEventTracker> mEventTrackerMap = new HashMap<>();
     private final Map<Long, Long> mLastActivityProgressMap = new HashMap<>();
     private final TrunkedCallStartTracker mCallStartTracker = new TrunkedCallStartTracker(3000);
+
+    /** Producer binding for audio on the same active physical resource; never reconstructed by observers. */
+    public String getActivityCallToken(IChannelDescriptor descriptor, Integer timeslot, long timestamp,
+                                       IdentifierCollection identifiers)
+    {
+        return mCallStartTracker.callTokenForActiveCall(descriptor, timeslot, timestamp, identifiers);
+    }
+
     private final BooleanSupplier mVoiceDecryptionModuleLoaded;
     private final Queue<Channel> mAvailableTrafficChannelQueue = new LinkedTransferQueue<>();
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
@@ -173,7 +181,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
             if(eventBus != null)
             {
-                eventBus.post(new RadioSystemKeyEvent(radioSystemKey));
+                eventBus.post(systemKeyEvent(radioSystemKey, 0L, null));
             }
         }
     }
@@ -464,7 +472,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                         if(traffic != null)
                         {
                             requestTrafficChannelStart(traffic, channel, ic, tracker,
-                                new RadioSystemKeyEvent(effectiveCurrentRadioSystemKey()));
+                                systemKeyEvent(effectiveCurrentRadioSystemKey(), 0L, null));
                         }
                         else
                         {
@@ -786,8 +794,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                     String radioSystemKey = callStart != null ? callStart.radioSystemKey() :
                         effectiveCurrentRadioSystemKey();
                     requestTrafficChannelStart(traffic, channel, ic, tracker, callStart != null ?
-                        new RadioSystemKeyEvent(radioSystemKey, callStart.callStartEpochMilliseconds(),
-                            callStart.timeslot()) : new RadioSystemKeyEvent(radioSystemKey));
+                        systemKeyEvent(radioSystemKey, callStart.callStartEpochMilliseconds(),
+                            callStart.timeslot()) : systemKeyEvent(radioSystemKey, 0L, null));
                 }
                 else
                 {
@@ -871,6 +879,13 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             mNativeRadioSystemKey);
     }
 
+    /** Captures site proof with the system key before crossing a processing-chain boundary. */
+    private RadioSystemKeyEvent systemKeyEvent(String radioSystemKey, long startedAt, Integer timeslot)
+    {
+        return new RadioSystemKeyEvent(radioSystemKey, startedAt, timeslot,
+            radioSystemKey != null ? RadioSystemKeyEvent.verifiedServingSiteId(mParentChannel, radioSystemKey) : null);
+    }
+
     /** Carries the frozen key and activation boundary to an already-running child. */
     private void postCallSystemKeyToActiveTrafficChannel(long frequency, String radioSystemKey,
                                                          long callStartEpochMilliseconds, Integer timeslot)
@@ -881,7 +896,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         if(eventBus != null && trafficChannel != null)
         {
             eventBus.post(new PostChannelModuleEventRequest(List.of(trafficChannel),
-                new RadioSystemKeyEvent(radioSystemKey, callStartEpochMilliseconds, timeslot)));
+                systemKeyEvent(radioSystemKey, callStartEpochMilliseconds, timeslot)));
         }
     }
 

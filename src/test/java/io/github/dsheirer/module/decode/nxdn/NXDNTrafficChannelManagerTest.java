@@ -137,6 +137,11 @@ class NXDNTrafficChannelManagerTest
         DecodeConfigNXDN config = new DecodeConfigNXDN();
         config.setTrafficChannelPoolSize(1);
         parent.setDecodeConfiguration(config);
+        parent.setTrunkedDiscoveryIdentity(new io.github.dsheirer.channel.TrunkedDiscoveryIdentity(
+            "nxdn", "TYPE_C", new io.github.dsheirer.stats.TrunkedDiscoveryEvidence.Identity(null,
+                "nxdn-c:local:303", "nxdn-c:local:303:site:3", null, 303, 3,
+                null, "local", null, null, null)));
+
         NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
         manager.updateNativeRadioSystemKey("nxdn-c:local:303");
         StartRequestSubscriber starts = new StartRequestSubscriber();
@@ -158,6 +163,7 @@ class NXDNTrafficChannelManagerTest
             RadioSystemKeyEvent initial = (RadioSystemKeyEvent)starts.requests.getFirst()
                 .getPreloadDataContents().getFirst();
             assertEquals("nxdn-c:local:303", initial.radioSystemKey());
+            assertEquals("3", initial.servingSiteId());
             InterleavedAudioModule racingCall = new InterleavedAudioModule(parent.getConfigurationId(),
                 initial.radioSystemKey());
             InterleavedAudioModule olderCall = new InterleavedAudioModule(parent.getConfigurationId(),
@@ -177,6 +183,7 @@ class NXDNTrafficChannelManagerTest
             String expected = RadioSystemKey.channelScoped(Protocol.NXDN, TrunkedIdentityDomain.NXDN_TYPE_C,
                 parent.getConfigurationId());
             assertEquals(expected, activation.radioSystemKey());
+            assertNull(activation.servingSiteId(), "Unresolved next calls cannot inherit a previous native site");
             assertEquals(1_100L, activation.callStartEpochMilliseconds());
             assertNull(activation.timeslot());
 

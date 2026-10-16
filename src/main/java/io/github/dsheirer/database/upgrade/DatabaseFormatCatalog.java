@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 54;
+    public static final int CURRENT_VERSION = 55;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -604,13 +604,21 @@ public final class DatabaseFormatCatalog
             "Never read neighboring files for SQLite-only imports; preserve original JSON files",
             "Require explicit reviewed recovery before replacing any earlier defaulted receiver settings"));
 
+    private static final FormatDescriptor FORMAT_55 = new FormatDescriptor(55, "call-tone-annotations-v1",
+        "Call-owned digital and analog tone evidence", "abcf67ea57618a57c37963dfef0674a8eead6cbb02e9a55f6f687b8512102b60", Map.of(),
+        List.of("main format 55"), "src/test/java/io/github/dsheirer/database/upgrade/Format55TestDatabase.java", List.of(
+            "Preserve configuration, call classifications, observations, counters, relationships and allocators",
+            "Keep historical standalone tone observations without guessing original calls",
+            "Attach prospective tone evidence to exact original calls and preserve encoded metadata",
+            "Default absent analog CTCSS selection to disabled; CTCSS controls squelch only"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
             FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54);
+            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -792,7 +800,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_54;
+        return FORMAT_55;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -1113,7 +1121,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
-            case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54 -> 11;
+            case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

@@ -256,6 +256,35 @@ public final class ManagedRecordingCatalogMigrator
                         statement.execute(definitions.get("recording_transcript_fts_" + trigger));
                     statement.execute("INSERT INTO recording_transcript_fts(recording_transcript_fts) VALUES('rebuild')");
                 }
+                case 8 ->
+                {
+                    var statistics = new java.util.ArrayList<String>();
+                    for(String table: List.of("sqlite_stat1", "sqlite_stat4"))
+                    {
+                        try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='" + table + "'"))
+                        { if(exists.next()) statistics.add(table); }
+                        if(statistics.contains(table)) statement.execute("CREATE TEMP TABLE recording_tone_" + table +
+                            "_before_format9 AS SELECT * FROM " + table +
+                            " WHERE tbl IN('recording_tone_sequence','recording_tone')");
+                    }
+                    statement.execute("CREATE TEMP TABLE recording_tone_before_format9 AS SELECT * FROM recording_tone");
+                    statement.execute("DROP TABLE recording_tone");
+                    statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format8");
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone_sequence"));
+                    statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format8");
+                    statement.execute("DROP TABLE recording_tone_sequence_format8");
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone"));
+                    statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format9");
+                    statement.execute("DROP TABLE temp.recording_tone_before_format9");
+                    for(String table: statistics)
+                    {
+                        statement.executeUpdate("DELETE FROM " + table +
+                            " WHERE tbl IN('recording_tone_sequence','recording_tone','recording_tone_sequence_format8')");
+                        statement.executeUpdate("INSERT INTO " + table + " SELECT * FROM temp.recording_tone_" + table + "_before_format9");
+                        statement.execute("DROP TABLE temp.recording_tone_" + table + "_before_format9");
+                    }
+                    if(!statistics.isEmpty()) statement.execute("ANALYZE sqlite_schema");
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

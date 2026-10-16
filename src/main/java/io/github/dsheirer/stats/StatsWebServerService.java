@@ -501,7 +501,10 @@ public class StatsWebServerService implements AutoCloseable
         mPushDeliveryService = pushDelivery;
         mTopicAlertEventListener = topicAlerts != null ? topicAlerts::receiveEventView : event -> { };
         if(topicAlerts != null && mDecodeEventViewService != null)
+        {
             topicAlerts.setEventValidator(mDecodeEventViewService::isCurrent);
+            topicAlerts.setToneProjector(mDecodeEventViewService::completedToneView);
+        }
         mSupportBundleService = new SupportBundleService(mWebAccessDatabasePath,
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog(),
             mReceiverHealthService::snapshot);

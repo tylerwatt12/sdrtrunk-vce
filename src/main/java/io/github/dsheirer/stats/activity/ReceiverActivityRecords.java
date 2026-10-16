@@ -462,9 +462,31 @@ final class ReceiverActivityRecords
                          String radioSystemKey,
                          Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
                          P25WuidObservation p25WuidObservation,
-                         io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution)
+                         io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution, String activityCallToken)
         implements ReceiverActivityRecord
     {
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                      P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities, String radioSystemKey,
+                      Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                      P25WuidObservation p25WuidObservation,
+                      io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
+                countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId, targetObservedWorkingId,
+                p25WuidObservation, analogCallAttribution,
+                analogCallAttribution != null ? analogCallAttribution.callToken() : null);
+        }
+
         ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
                       String protocol, Action action, String eventType, String sourceRadioId, String targetId,
                       String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
@@ -550,7 +572,7 @@ final class ReceiverActivityRecords
                 lcn, timeslot, encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
                 talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, targetIdentity,
                 sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId,
-                p25WuidObservation, analogCallAttribution);
+                p25WuidObservation, analogCallAttribution, activityCallToken);
         }
 
     }
@@ -717,9 +739,16 @@ final class ReceiverActivityRecords
      */
     record DmrConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String configurationId,
                                long frequencyHertz, int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
-                               Integer targetRadioId, boolean encrypted)
+                               Integer targetRadioId, boolean encrypted, String activityCallToken)
         implements ReceiverActivityRecord
     {
+        DmrConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String configurationId,
+            long frequencyHertz, int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
+            Integer targetRadioId, boolean encrypted)
+        {
+            this(callStartEpochMilliseconds, callEndEpochMilliseconds, configurationId, frequencyHertz, timeslot,
+                targetKind, talkgroupId, sourceRadioId, targetRadioId, encrypted, null);
+        }
         @Override
         public long observedAtEpochMilliseconds()
         {
@@ -740,9 +769,16 @@ final class ReceiverActivityRecords
      */
     record NxdnConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String configurationId,
                                 long frequencyHertz, NxdnTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
-                                Integer targetRadioId, boolean encrypted, TrunkedIdentityDomain identityDomain)
+                                Integer targetRadioId, boolean encrypted, TrunkedIdentityDomain identityDomain, String activityCallToken)
         implements ReceiverActivityRecord
     {
+        NxdnConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String configurationId,
+            long frequencyHertz, NxdnTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
+            Integer targetRadioId, boolean encrypted, TrunkedIdentityDomain identityDomain)
+        {
+            this(callStartEpochMilliseconds, callEndEpochMilliseconds, configurationId, frequencyHertz, targetKind,
+                talkgroupId, sourceRadioId, targetRadioId, encrypted, identityDomain, null);
+        }
         NxdnConventionalCall
         {
             identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.NXDN_TYPE_C;

@@ -635,8 +635,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         mTrafficChannelManager.enrichMutableIdentifiers(getIdentifierCollection(), timestamp);
         MutableIdentifierCollection mic = getMutableIdentifierCollection(getIdentifierCollection().getIdentifiers(), timestamp);
-        mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), getCurrentChannel(), decodeEventType,
-                serviceOptions, mic, timestamp, null);
+        publishActivityCallToken(mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), getCurrentChannel(), decodeEventType,
+                serviceOptions, mic, timestamp, null));
 
         if(serviceOptions.isEncrypted())
         {
@@ -1103,8 +1103,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 Identifier<?> radio = getIdentifierCollection().getFromIdentifier();
 
-                mTrafficChannelManager.processP1TrafficCallStart(getCurrentFrequency(), talkgroup, radio,
-                        headerData.getEncryptionKey(), mCurrentServiceOptions, getCurrentChannel(), message.getTimestamp());
+                publishActivityCallToken(mTrafficChannelManager.processP1TrafficCallStart(getCurrentFrequency(), talkgroup, radio,
+                        headerData.getEncryptionKey(), mCurrentServiceOptions, getCurrentChannel(), message.getTimestamp()));
 
                 if(headerData.isEncryptedAudio())
                 {
@@ -1134,8 +1134,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(lcw != null && lcw.isValid())
             {
                 processLC(lcw, message.getTimestamp(), false);
-                mTrafficChannelManager.processP1TrafficLDU1(getCurrentFrequency(),
-                        getIdentifierCollection().getIdentifiers(), message.getTimestamp());
+                publishActivityCallToken(mTrafficChannelManager.processP1TrafficLDU1(getCurrentFrequency(),
+                        getIdentifierCollection().getIdentifiers(), message.getTimestamp()));
             }
         }
         else if(message instanceof LDU2Message ldu2)
@@ -1163,9 +1163,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
     }
 
-    /**
-     * Process Terminator Data Unit (TDU).
-     */
+    /** Publishes the exact selection returned under the manager's existing call-update lock. */
+    private void publishActivityCallToken(String token)
+    {
+        if(token != null && hasInterModuleEventBus())
+            getInterModuleEventBus().post(new io.github.dsheirer.audio.call.AudioActivityCallEvent(token, 0));
+    }
+
+    /** Process Terminator Data Unit (TDU). */
     private void processTDU(P25P1Message message)
     {
         resetHarrisTalkerAliasSource();

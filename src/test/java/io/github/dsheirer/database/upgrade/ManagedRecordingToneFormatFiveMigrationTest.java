@@ -133,13 +133,13 @@ class ManagedRecordingToneFormatFiveMigrationTest
         ManagedRecordingCatalogMigrator.migrate(catalog, false);
         try(Connection connection = open(catalog); var statement = connection.createStatement())
         {
-            for(int[] pair: new int[][]{{1,1}, {1,3}, {2,2}})
+            for(int[] pair: new int[][]{{1,1}, {1,3}, {1,4}, {2,2}})
             {
                 statement.executeUpdate("INSERT INTO recording_tone_sequence VALUES(43," + pair[0] + "," + pair[1] +
                     ",1,4000,4000,5000,1)");
                 statement.executeUpdate("DELETE FROM recording_tone_sequence WHERE call_id=43");
             }
-            for(int[] pair: new int[][]{{1,2}, {2,1}, {2,3}, {1,0}, {1,4}})
+            for(int[] pair: new int[][]{{1,2}, {2,1}, {2,3}, {2,4}, {1,0}, {1,5}})
             {
                 assertThrows(SQLException.class, () -> statement.executeUpdate(
                     "INSERT INTO recording_tone_sequence VALUES(43," + pair[0] + "," + pair[1] + ",1,4000,4000,5000,1)"));

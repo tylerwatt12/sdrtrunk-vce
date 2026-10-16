@@ -133,7 +133,7 @@ class Format51To52DatabaseMigrationTest
             var before = contents(connection); var indexes = indexDefinitions(connection);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(List.of("format-51-to-52", "format-52-to-53"),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-51-to-52", "format-52-to-53", "format-53-to-54", "format-54-to-55"),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before,contents(connection)); assertEquals(indexes,indexDefinitions(connection));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));

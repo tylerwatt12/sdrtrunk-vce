@@ -40,6 +40,8 @@ public class TrunkedCallStartTracker
     private final long mEntryRetentionMilliseconds;
     private final Map<ResourceKey,ActiveCall> mObservations = new LinkedHashMap<>(32, 0.75f, true);
     private final Map<ResourceKey,Long> mEndedObservations = new LinkedHashMap<>(32, 0.75f, true);
+    private final java.util.concurrent.ConcurrentMap<ResourceKey,ActiveCall> mAudioBindings =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * @param continuationThresholdMilliseconds maximum gap between observations belonging to the same call
@@ -202,12 +204,13 @@ public class TrunkedCallStartTracker
 
             String effectiveRadioSystemKey = effectiveRadioSystemKey(parentChannel, protocol, identityDomain,
                 radioSystemKey);
-            mObservations.put(resourceKey, new ActiveCall(target, source, encrypted,
+            String callToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
+            putObservation(resourceKey, new ActiveCall(target, source, encrypted,
                 observedEncryption.algorithmId(), observedEncryption.keyId(), timestamp, timestamp,
-                effectiveRadioSystemKey));
+                effectiveRadioSystemKey, callToken, protocol, identityDomain));
             enforceMaximumSize(mObservations);
             return new ObservationResult(new TrunkedCallStartEvent(parentChannel, protocol, channelSnapshot,
-                effectiveTimeslot, identifiers, eventType, timestamp, effectiveRadioSystemKey), null);
+                effectiveTimeslot, identifiers, eventType, timestamp, effectiveRadioSystemKey, callToken), null);
         }
 
         boolean destinationBecameKnown = !previous.target().isKnown() && target.isKnown();
@@ -224,9 +227,10 @@ public class TrunkedCallStartTracker
         //create additional counted source identities.
         TargetIdentity updatedSource = previous.source().isKnown() ? previous.source() : source;
         IdentifierCollection mergedIdentifiers = mergedIdentifiers(identifiers, updatedTarget, updatedSource);
-        mObservations.put(resourceKey, new ActiveCall(updatedTarget, updatedSource,
+        putObservation(resourceKey, new ActiveCall(updatedTarget, updatedSource,
             previous.encrypted() || encrypted, updatedEncryptionAlgorithm, updatedEncryptionKey,
-            previous.callStartEpochMilliseconds(), timestamp, previous.radioSystemKey()));
+            previous.callStartEpochMilliseconds(), timestamp, previous.radioSystemKey(), previous.callToken(),
+            previous.protocol(), previous.identityDomain()));
         enforceMaximumSize(mObservations);
 
         if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown &&
@@ -280,6 +284,7 @@ public class TrunkedCallStartTracker
         }
 
         mObservations.remove(key);
+        mAudioBindings.remove(key);
         mEndedObservations.merge(key, timestamp, Math::max);
         enforceMaximumSize(mEndedObservations);
     }
@@ -302,6 +307,7 @@ public class TrunkedCallStartTracker
                 {
                     mEndedObservations.merge(entry.getKey(), timestamp, Math::max);
                     iterator.remove();
+                    mAudioBindings.remove(entry.getKey());
                 }
             }
 
@@ -329,9 +335,10 @@ public class TrunkedCallStartTracker
 
         if(current != null && timestamp >= current.lastObservedAtMilliseconds())
         {
-            mObservations.put(key, new ActiveCall(current.target(), current.source(), current.encrypted(),
+            putObservation(key, new ActiveCall(current.target(), current.source(), current.encrypted(),
                 current.encryptionAlgorithmId(), current.encryptionKeyId(),
-                current.callStartEpochMilliseconds(), timestamp, current.radioSystemKey()));
+                current.callStartEpochMilliseconds(), timestamp, current.radioSystemKey(), current.callToken(),
+                current.protocol(), current.identityDomain()));
         }
     }
 
@@ -386,12 +393,36 @@ public class TrunkedCallStartTracker
     }
 
     /**
+     * Exact binding to the active resource and destination. A delayed old-call frame cannot acquire a replacement
+     * grant's token merely because its timestamp is newer. Source/talker changes retain the same physical call.
+     * Unknown or conflicting destinations leave the audio unassociated rather than guessing.
+     */
+    public String callTokenForActiveCall(IChannelDescriptor channelDescriptor, Integer timeslot, long timestamp,
+                                        IdentifierCollection identifiers)
+    {
+        ResourceKey key = ResourceKey.from(TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot);
+        ActiveCall active = key != null ? mAudioBindings.get(key) : null;
+        if(active == null || timestamp < active.callStartEpochMilliseconds() ||
+            timestamp - active.lastObservedAtMilliseconds() > mContinuationThresholdMilliseconds)
+            return null;
+        Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
+        if(target == null || target.getProtocol() != active.protocol() ||
+            active.protocol() == Protocol.NXDN &&
+                !TrunkedIdentityEligibility.nxdnIdentifierMatchesDomain(target, active.identityDomain()))
+            return null;
+        TargetIdentity observed = TargetIdentity.fromTarget(active.protocol(), active.identityDomain(), target);
+        return active.target().isKnown() && observed.isKnown() && active.target().sameIdentity(observed) ?
+            active.callToken() : null;
+    }
+
+    /**
      * Clears all current call state.
      */
     public synchronized void clear()
     {
         mObservations.clear();
         mEndedObservations.clear();
+        mAudioBindings.clear();
     }
 
     private void cleanup(long timestamp)
@@ -400,12 +431,14 @@ public class TrunkedCallStartTracker
 
         while(iterator.hasNext())
         {
-            ActiveCall observation = iterator.next().getValue();
+            Map.Entry<ResourceKey,ActiveCall> entry = iterator.next();
+            ActiveCall observation = entry.getValue();
 
             if(timestamp >= observation.lastObservedAtMilliseconds() &&
                 timestamp - observation.lastObservedAtMilliseconds() > mEntryRetentionMilliseconds)
             {
                 iterator.remove();
+                mAudioBindings.remove(entry.getKey());
             }
         }
 
@@ -422,14 +455,21 @@ public class TrunkedCallStartTracker
         }
     }
 
-    private static <V> void enforceMaximumSize(Map<ResourceKey,V> observations)
+    private void putObservation(ResourceKey key, ActiveCall call)
+    {
+        mObservations.put(key, call);
+        mAudioBindings.put(key, call);
+    }
+
+    private <V> void enforceMaximumSize(Map<ResourceKey,V> observations)
     {
         Iterator<ResourceKey> iterator = observations.keySet().iterator();
 
         while(observations.size() > MAXIMUM_ACTIVE_OBSERVATIONS && iterator.hasNext())
         {
-            iterator.next();
+            ResourceKey key = iterator.next();
             iterator.remove();
+            if(observations == mObservations) mAudioBindings.remove(key);
         }
     }
 
@@ -472,7 +512,8 @@ public class TrunkedCallStartTracker
     private record ActiveCall(TargetIdentity target, TargetIdentity source, boolean encrypted,
                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
                               long callStartEpochMilliseconds, long lastObservedAtMilliseconds,
-                              String radioSystemKey)
+                              String radioSystemKey, String callToken, Protocol protocol,
+                              TrunkedIdentityDomain identityDomain)
     {
     }
 

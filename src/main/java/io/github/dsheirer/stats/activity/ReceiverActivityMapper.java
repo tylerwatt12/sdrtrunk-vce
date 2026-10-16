@@ -110,7 +110,7 @@ class ReceiverActivityMapper
 
         return new ReceiverActivityRecords.DmrConventionalCall(event.startTimestamp(), event.endTimestamp(),
             configurationId, event.frequencyHertz(),
-            event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
+            event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted(), event.callToken());
     }
 
     ReceiverActivityRecords.NxdnConventionalCall map(NXDNConventionalCallEvent event)
@@ -150,7 +150,7 @@ class ReceiverActivityMapper
         return new ReceiverActivityRecords.NxdnConventionalCall(event.startTimestamp(), event.endTimestamp(),
             configurationId, event.frequencyHertz(),
             targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted(),
-            event.identityDomain());
+            event.identityDomain(), event.callToken());
     }
 
     ReceiverActivityRecords.TalkerAliasUpdate map(TrunkedTalkerAliasEvent event)
@@ -238,7 +238,7 @@ class ReceiverActivityMapper
             facts.site(), facts.talkerAlias(), true, null, null, TrunkedIdentityDomain.STANDARD,
             p25TargetIdentity(targetIdentifier, true), p25Identity(sourceIdentifier, true),
             facts.p25PatchMemberIdentities(), callStart.radioSystemKey(),
-            p25WorkingAddress(sourceIdentifier), p25WorkingAddress(targetIdentifier));
+            p25WorkingAddress(sourceIdentifier), p25WorkingAddress(targetIdentifier), null, null, callStart.callToken());
     }
 
     ReceiverActivityRecord mapCallStart(P25CallStartEvent callStart)

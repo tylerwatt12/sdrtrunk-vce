@@ -113,6 +113,14 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private Map<Long,IDecodeEvent> mCallEventsTS2 = new ConcurrentHashMap<>();
     private final TrunkedCallStartTracker mCallStartTracker =
         new TrunkedCallStartTracker(EVENT_TIME_STALE_THRESHOLD);
+
+    /** Producer binding for audio on the same active physical resource; never reconstructed by observers. */
+    public String getActivityCallToken(IChannelDescriptor descriptor, Integer timeslot, long timestamp,
+                                       IdentifierCollection identifiers)
+    {
+        return mCallStartTracker.callTokenForActiveCall(descriptor, timeslot, timestamp, identifiers);
+    }
+
     private volatile Listener<ChannelEvent> mChannelEventListener;
     private final AtomicReference<Listener<IDecodeEvent>> mDecodeEventListener = new AtomicReference<>();
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -526,7 +534,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
             if(eventBus != null)
             {
-                eventBus.post(new RadioSystemKeyEvent(radioSystemKey));
+                eventBus.post(systemKeyEvent(radioSystemKey, 0L, null));
             }
         }
     }
@@ -754,7 +762,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             trafficChannel.setSourceConfiguration(trafficSourceConfig);
             ChannelStartProcessingRequest startRequest = new ChannelStartProcessingRequest(channel, restChannel,
                 null, this);
-            startRequest.addPreloadDataContent(new RadioSystemKeyEvent(mNativeRadioSystemKey));
+            startRequest.addPreloadDataContent(systemKeyEvent(mNativeRadioSystemKey, 0L, null));
 
             if(handoff.networkConfigurationSnapshot() != null)
             {
@@ -1237,8 +1245,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                                     io.github.dsheirer.controller.channel.ChannelConfigurationKey.configured(
                                         mParentChannel), mNativeRadioSystemKey);
                             request.addPreloadDataContent(callStart != null ?
-                                new RadioSystemKeyEvent(radioSystemKey, callStart.callStartEpochMilliseconds(),
-                                    callStart.timeslot()) : new RadioSystemKeyEvent(radioSystemKey));
+                                systemKeyEvent(radioSystemKey, callStart.callStartEpochMilliseconds(),
+                                    callStart.timeslot()) : systemKeyEvent(radioSystemKey, 0L, null));
                             request.addPreloadDataContent(new DMRChannelGrantPreloadData(event));
                             trafficStartRequest = request;
                         }
@@ -1304,9 +1312,16 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         }
     }
 
+    /** Captures site proof with the system key before crossing a processing-chain boundary. */
+    private RadioSystemKeyEvent systemKeyEvent(String radioSystemKey, long startedAt, Integer timeslot)
+    {
+        return new RadioSystemKeyEvent(radioSystemKey, startedAt, timeslot,
+            radioSystemKey != null ? RadioSystemKeyEvent.verifiedServingSiteId(mParentChannel, radioSystemKey) : null);
+    }
+
     /**
      * Gives an already-running traffic chain the exact system key and activation boundary captured for this physical
-     * call.  The audio module can correct a call that raced this handoff without relabelling an older call.
+     * call. The audio module can correct a call that raced this handoff without relabelling an older call.
      */
     private void postCallSystemKeyToActiveTrafficChannel(long frequency, String radioSystemKey,
                                                          long callStartEpochMilliseconds, Integer timeslot)
@@ -1318,7 +1333,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             trafficChannel != mRestChannelReservationToken)
         {
             eventBus.post(new PostChannelModuleEventRequest(List.of(trafficChannel),
-                new RadioSystemKeyEvent(radioSystemKey, callStartEpochMilliseconds, timeslot)));
+                systemKeyEvent(radioSystemKey, callStartEpochMilliseconds, timeslot)));
         }
     }
 

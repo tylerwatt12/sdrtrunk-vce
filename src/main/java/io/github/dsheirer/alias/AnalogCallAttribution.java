@@ -14,8 +14,14 @@ import java.util.List;
 
 /** The configured number and winning aliases observed when one analog squelch call starts. */
 public record AnalogCallAttribution(String channelConfigurationId, long aliasListId, Protocol protocol,
-                                    int assignedTalkgroup, long startedAt, List<Match> matches)
+                                    int assignedTalkgroup, long startedAt, List<Match> matches, String callToken)
 {
+    public AnalogCallAttribution(String channelConfigurationId, long aliasListId, Protocol protocol,
+                                 int assignedTalkgroup, long startedAt, List<Match> matches)
+    {
+        this(channelConfigurationId, aliasListId, protocol, assignedTalkgroup, startedAt, matches,
+            io.github.dsheirer.audio.call.ActivityCallToken.next());
+    }
     public AnalogCallAttribution
     {
         channelConfigurationId = ChannelConfigurationKey.canonical(channelConfigurationId);

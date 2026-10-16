@@ -230,6 +230,7 @@ public final class ChannelDefinitionCodec
         settings.put("voice_enhance_percent", analog.getVoiceEnhanceAmount());
         settings.put("bass_boost_db", analog.getBassBoostDb());
         settings.put("output_gain", analog.getOutputGain());
+        settings.put("ctcss_frequency_hz", analog.getCtcssFrequency());
         settings.put("squelch_noise_open", analog.getSquelchNoiseOpenThreshold());
         settings.put("squelch_noise_close", analog.getSquelchNoiseCloseThreshold());
         settings.put("squelch_hysteresis_open", analog.getSquelchHysteresisOpenThreshold());
@@ -302,6 +303,7 @@ public final class ChannelDefinitionCodec
         analog.setVoiceEnhanceAmount(decimal(settings, "voice_enhance_percent"));
         analog.setBassBoostDb(decimal(settings, "bass_boost_db"));
         analog.setOutputGain(decimal(settings, "output_gain"));
+        analog.setCtcssFrequency(((Number)settings.get("ctcss_frequency_hz")).doubleValue());
         float noiseOpen = decimal(settings, "squelch_noise_open");
         float noiseClose = decimal(settings, "squelch_noise_close");
         int hysteresisOpen = integer(settings, "squelch_hysteresis_open");

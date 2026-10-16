@@ -5346,6 +5346,7 @@ class StatsWebDatabase
         String systemKey = request.text("radio_system_key");
         String configurationId = request.text("configuration_id");
         boolean hideGrants = request.booleanValue("hide_grants", false);
+        boolean hasTones = request.booleanValue("has_tones", false);
         Long fromMilliseconds = positiveActivityLong(request, "from_ms");
         Long toMilliseconds = positiveActivityLong(request, "to_ms");
         Integer actionCode = activityCode(request.text("action"), "action", true);
@@ -5450,7 +5451,7 @@ class StatsWebDatabase
             throw new StatsApiException(400, "invalid_parameter",
                 "target_kind must match target_identity_key", "target_kind");
         }
-        boolean hasNewFilter = fromMilliseconds != null || toMilliseconds != null || actionCode != null ||
+        boolean hasNewFilter = hasTones || fromMilliseconds != null || toMilliseconds != null || actionCode != null ||
             actionCodes != null || afterId != null || requestedWatermarkId != null ||
             eventTypeCode != null || encryptionValue != null || radioRoleValue != null || groupMatchValue != null ||
             sourceIdentityKey != null || targetIdentityKey != null || sourceId != null || targetId != null ||
@@ -5573,7 +5574,7 @@ class StatsWebDatabase
                 radioIdentitySummaryId, radioRole, sourceIdentitySummaryId, targetIdentitySummaryId,
                 fromMilliseconds, toMilliseconds, actionCode, actionCodes, eventTypeCode, encryption, sourceId, targetId,
                 targetKind, frequencyHertz, lcn.band(), lcn.number(), timeslot, hideGrants, beforeTimestamp,
-                beforeId, afterId, watermarkId, forwardFloorId, limit, p25Visualizer);
+                beforeId, afterId, watermarkId, forwardFloorId, limit, p25Visualizer, hasTones);
             ActivityQuery query = buildActivityQuery(connection, filters);
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
@@ -5752,6 +5753,10 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.action_code = ?", filters.actionCode());
         appendActivityInPredicate(sql, parameters, "candidate.action_code", filters.actionCodes());
         appendActivityPredicate(sql, parameters, "candidate.event_type_code = ?", filters.eventTypeCode());
+        if(filters.hasTones())
+        {
+            sql.append("\n  AND EXISTS (SELECT 1 FROM receiver_activity_tone_sequence tones WHERE tones.event_id = candidate.id)");
+        }
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms >= ?", filters.fromMilliseconds());
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms < ?", filters.toMilliseconds());
 
@@ -8523,7 +8528,7 @@ class StatsWebDatabase
                                    Integer targetId, Integer targetKind, Long frequencyHertz, Integer lcnBand,
                                    Integer lcnNumber, Integer timeslot, boolean hideGrants, Long beforeTimestamp,
                                    long beforeId, Long afterId, long watermarkId, Long forwardFloorId, int limit,
-                                   boolean p25Visualizer)
+                                   boolean p25Visualizer, boolean hasTones)
     {
     }
 

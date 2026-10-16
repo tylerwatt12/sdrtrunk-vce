@@ -33,6 +33,7 @@ import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
 import io.github.dsheirer.dsp.squelch.IAnalogSquelch;
+import io.github.dsheirer.dsp.squelch.CtcssSquelch;
 import io.github.dsheirer.dsp.squelch.INoiseSquelchController;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
@@ -67,6 +68,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private IRealDecimationFilter mIDecimationFilter;
     private IRealDecimationFilter mQDecimationFilter;
     private Listener<float[]> mResampledBufferListener;
+    private Listener<float[]> mRawAudioBufferListener;
     private Listener<DecoderStateEvent> mDecoderStateEventListener;
     private RealResampler mResampler;
     private final double mChannelBandwidth;
@@ -122,7 +124,9 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     {
         super(config);
         mDemodulator = java.util.Objects.requireNonNull(demodulator);
-        mSquelch = java.util.Objects.requireNonNull(squelch);
+        java.util.Objects.requireNonNull(squelch);
+        mSquelch = config.getCtcssFrequency() > 0.0 ?
+            new CtcssSquelch(squelch, config.getCtcssFrequency()) : squelch;
 
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
@@ -146,7 +150,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             //  the output buffer gets emptied.
             if(mSquelch.isSquelched())
             {
-                float[] processedAudio = applyDeemphasis(audio);
+                float[] processedAudio = audio;
 
                 if(mSquelchTailRemovalEnabled)
                 {
@@ -159,7 +163,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             }
             else
             {
-                float[] processedAudio = applyDeemphasis(audio);
+                float[] processedAudio = audio;
 
                 if(mSquelchTailRemovalEnabled)
                 {
@@ -305,19 +309,20 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     @Override
     public void reset()
     {
-        /* no action required */
+        mSquelch.reset();
+        mPreviousDeemphasis = 0.0f;
     }
 
     @Override
     public void start()
     {
-        /* no action required */
+        reset();
     }
 
     @Override
     public void stop()
     {
-        /* no action required */
+        reset();
     }
 
     /**
@@ -327,6 +332,11 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      */
     protected void broadcast(float[] demodulatedSamples)
     {
+        if(mRawAudioBufferListener != null)
+        {
+            mRawAudioBufferListener.receive(demodulatedSamples);
+        }
+        demodulatedSamples = applyDeemphasis(demodulatedSamples);
         demodulatedSamples = applyAudioPostProcessing(demodulatedSamples);
         demodulatedSamples = processOutputAudio(demodulatedSamples);
 
@@ -334,6 +344,12 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         {
             mResampledBufferListener.receive(demodulatedSamples);
         }
+    }
+
+    /** Receives the same accepted 8 kHz buffer before listening filters; listener must copy retained samples. */
+    public void setRawAudioBufferListener(Listener<float[]> listener)
+    {
+        mRawAudioBufferListener = listener;
     }
 
     protected float[] processOutputAudio(float[] audio)
@@ -782,6 +798,10 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_SAMPLE_RATE_CHANGE)
             {
                 setSampleRate(sourceEvent.getValue().doubleValue());
+            }
+            else if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE)
+            {
+                reset();
             }
         }
     }

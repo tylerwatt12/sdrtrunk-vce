@@ -22,6 +22,9 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AnalogCallAttribution;
 import io.github.dsheirer.alias.AnalogCallAttributionTracker;
 import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.SquelchState;
@@ -47,6 +50,41 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     private SquelchState mSquelchState = SquelchState.SQUELCH;
     private AnalogCallAttributionTracker mCallAttributionTracker;
     private AnalogCallAttribution mCallAttribution;
+    private final P25PagingToneService.Registration mToneRegistration = P25PagingToneService.getInstance().registerAnalogPcm();
+    private volatile Listener<AudioCallEvent> mAudioCallListener;
+    private float[] mPendingRawAudio;
+    private boolean mRawAudioExpected;
+    private static final int MAXIMUM_RAW_BLOCK_SAMPLES = 16_384;
+
+    /** Borrowed pre-filter 8 kHz block, immediately followed by the normal processed block on this producer. */
+    public void receiveRawAudio(float[] audio)
+    {
+        mRawAudioExpected = true;
+        if(mSquelchState == SquelchState.UNSQUELCH && audio != null && audio.length <= MAXIMUM_RAW_BLOCK_SAMPLES &&
+            P25PagingToneService.getInstance().isEnabled())
+            mPendingRawAudio = audio.clone();
+        else
+            mPendingRawAudio = null;
+    }
+
+    private void observeAudioCallEvent(AudioCallEvent event)
+    {
+        if(event.eventType() != AudioCallEventType.AUDIO_FRAME) mToneRegistration.receive(event);
+        Listener<AudioCallEvent> listener = mAudioCallListener;
+        if(listener != null) listener.receive(event);
+    }
+
+    @Override protected void observeRawAudioFrame(AudioCallEvent event) { mToneRegistration.receive(event); }
+    @Override public void setAudioCallEventListener(Listener<AudioCallEvent> listener) { mAudioCallListener = listener; }
+    @Override public void removeAudioCallEventListener() { mAudioCallListener = null; }
+    @Override public void dispose()
+    {
+        mToneRegistration.close();
+        mPendingRawAudio = null;
+        mAudioCallListener = null;
+        super.removeAudioCallEventListener();
+        super.dispose();
+    }
 
     public void setCallAttributionTracker(AnalogCallAttributionTracker tracker)
     {
@@ -80,6 +118,7 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     {
         super(aliasList, timeslot, maxAudioSegmentLength, callLegSource);
         mAudioFilterEnable = audioFilterEnable;
+        super.setAudioCallEventListener(this::observeAudioCallEvent);
     }
 
     /**
@@ -91,6 +130,7 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     {
         super(aliasList);
         mAudioFilterEnable = audioFilterEnable;
+        super.setAudioCallEventListener(this::observeAudioCallEvent);
     }
 
     @Override
@@ -102,6 +142,8 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
     @Override
     public void reset()
     {
+        mToneRegistration.resetUnfinishedCall();
+        mPendingRawAudio = null;
         getIdentifierCollection().clear();
     }
 
@@ -140,12 +182,18 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
                 touchCurrentAudioSegment();
             }
 
+            float[] rawAudio = mPendingRawAudio;
+            mPendingRawAudio = null;
+            if(!mRawAudioExpected && audioBuffer.length <= MAXIMUM_RAW_BLOCK_SAMPLES &&
+                P25PagingToneService.getInstance().isEnabled()) rawAudio = audioBuffer.clone();
+            if(rawAudio == null || rawAudio.length != audioBuffer.length) mToneRegistration.resetUnfinishedCall();
+
             if(mAudioFilterEnable)
             {
                 audioBuffer = mHighPassFilter.filter(audioBuffer);
             }
 
-            addAudio(audioBuffer);
+            addAudioWithRawObservation(audioBuffer, rawAudio, System.currentTimeMillis());
         }
     }
 
@@ -173,6 +221,7 @@ public class AudioModule extends AbstractAudioModule implements ISquelchStateLis
 
                 if(mSquelchState == SquelchState.SQUELCH)
                 {
+                    mPendingRawAudio = null;
                     endCurrentAudioBurst();
                     closeAudioSegment();
                 }

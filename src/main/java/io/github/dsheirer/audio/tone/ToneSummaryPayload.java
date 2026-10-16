@@ -25,7 +25,7 @@ public final class ToneSummaryPayload
     public static Map<String,Object> summary(int sourceCode, int methodCode, Integer phase,
         long callStartMs, Long firstVoiceSampleMs, long completedMs, List<CompletedToneSequence.Element> tones)
     {
-        if(!(sourceCode == 1 && (methodCode == 1 || methodCode == 3) || sourceCode == 2 && methodCode == 2) ||
+        if(!(sourceCode == 1 && (methodCode == 1 || methodCode == 3 || methodCode == 4) || sourceCode == 2 && methodCode == 2) ||
             phase != null && phase != 1 && phase != 2 ||
             tones.size() > CompletedToneSequence.MAXIMUM_TONES)
             throw new IllegalArgumentException("Invalid tone summary context");
@@ -36,6 +36,7 @@ public final class ToneSummaryPayload
             case 1 -> "p25_pcm_tone_v1";
             case 2 -> "ambe_tone_v1";
             case 3 -> "p25_pcm_ambe_tone_v2";
+            case 4 -> "analog_pcm_tone_v1";
             default -> throw new IllegalArgumentException("Unknown tone method");
         });
         if(phase != null) result.put("phase", phase);
@@ -46,6 +47,7 @@ public final class ToneSummaryPayload
         for(CompletedToneSequence.Element tone: tones)
         {
             if(methodCode == 3) CompletedToneSequence.requireNominalPcmTone(tone);
+            if(methodCode == 4) CompletedToneSequence.requireAnalogPcmTone(tone);
             Map<String,Object> value = new LinkedHashMap<>();
             value.put("frequencies_hz", tone.frequenciesMilliHertz().stream().map(frequency -> frequency / 1000.).toList());
             if(tone.codecSymbol() != null) value.put("code", tone.codecSymbol());
