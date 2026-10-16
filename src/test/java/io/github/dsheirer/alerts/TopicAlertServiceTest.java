@@ -36,6 +36,127 @@ class TopicAlertServiceTest
         }
     }
 
+    @Test void testRuleUsesSavedContentAndFansOutToEveryCurrentSubscriber() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        var rule = new AlertRule("r", "Radio activity", "fire", true, "call", "", "1:2", CHANNEL, "", "APCO25",
+            new AlertRule.Condition("all", List.of(new AlertRule.Condition("", null, "radio", "is", "100"),
+                new AlertRule.Condition("", null, "talkgroup", "in", "200,201")), "", "", ""),
+            null, null, 1, "rule", false, "{vce}: Radio {radio}", "{talkgroup} at {site}: {time}", "listen", true);
+        try(TopicAlertService service = configured(clock, rule))
+        {
+            service.saveDevice(new AlertDevice("tablet", "Tablet", "proxy", "remote-tablet", "", "", "", "b".repeat(64), List.of("fire"), false));
+            service.saveDevice(new AlertDevice("expired", "Expired", "proxy", "remote-expired", "", "", "", "c".repeat(64), List.of("fire"), true));
+            service.saveDevice(new AlertDevice("unsubscribed", "Unsubscribed", "proxy", "remote-unsubscribed", "", "", "", "d".repeat(64), List.of(), false));
+            service.saveDevice(new AlertDevice("direct", "Direct", "direct", "", "https://push.example.test/direct", "key", "auth", "e".repeat(64), List.of("fire"), false));
+            long revision = service.configuration().revision();
+            service.testRule("r", revision);
+            List<AlertDelivery> deliveries = service.pendingDeliveries(100);
+            assertEquals(List.of("phone", "tablet"), deliveries.stream().map(AlertDelivery::deviceId).toList());
+            assertEquals(1, deliveries.stream().map(AlertDelivery::alertId).distinct().count());
+            for(AlertDelivery delivery: deliveries)
+            {
+                assertEquals("TEST: VCE test: Radio 100", delivery.title());
+                assertEquals("TEST: 200 at 1:2: " + Instant.ofEpochMilli(START), delivery.body());
+                assertEquals("Radio activity", delivery.alertName());
+                assertEquals("listen", delivery.clickAction());
+                var history = service.historyItem(delivery.alertId()).orElseThrow();
+                assertEquals("r", history.get("rule_id"));
+                assertEquals("call", history.get("event_type"));
+                assertEquals(new AlertAction("channel", io.github.dsheirer.stats.WebEntityReferences.channel(CHANNEL)), history.get("action"));
+            }
+            assertEquals(revision, service.configuration().revision(), "Sending a test does not edit saved settings");
+            service.testRule("r", revision);
+            assertEquals(2, service.pendingDeliveries(100).stream().map(AlertDelivery::alertId).distinct().count(), "Repeated clicks each create a separate alert");
+            assertEquals(4, service.pendingDeliveries(100).size());
+        }
+    }
+
+    @Test void testRuleUsesDirectDeliveryAndDoesNotRequireAnEnabledRuleOrOpenSchedule() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        var rule = new AlertRule("r", "Paused", "fire", false, "call", "", "", CHANNEL, "APCO25", null,
+            new AlertRule.Timing("count", 0, 5, 10), new AlertRule.Schedule("custom", List.of(0), "00:00", "00:01", "UTC"),
+            10080, "rule", false, "Radio {radio}", "Group {talkgroup}", "details");
+        try(TopicAlertService service = configured(clock, rule))
+        {
+            var config = service.configuration();
+            service.updateConfiguration(new TopicAlertConfiguration(config.revision(), new TopicAlertConfiguration.PushSettings(true, "direct", "", "VCE test"),
+                config.topics(), config.rules()), config.revision());
+            service.saveDevice(new AlertDevice("direct", "Direct", "direct", "", "https://push.example.test/direct", "key", "auth", "e".repeat(64), List.of("fire"), false));
+            service.testRule("r", service.configuration().revision());
+            var delivery = service.pendingDeliveries(100).getFirst();
+            assertEquals("direct", delivery.deviceId());
+            assertEquals("direct", delivery.method());
+            assertEquals("TEST: Radio Unknown", delivery.title());
+            assertEquals("TEST: Group Unknown", delivery.body());
+            assertEquals(AlertAction.NONE, service.historyItem(delivery.alertId()).orElseThrow().get("action"));
+            assertEquals(1, service.pendingDeliveries(100).size());
+        }
+    }
+
+    @Test void testRuleDoesNotConsumeCountsOrStartTheNormalCooldown() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        var source = rule("count", 0, 2, 5);
+        var rule = new AlertRule(source.id(), source.name(), source.topicId(), true, source.trigger(), source.systemKey(),
+            source.siteId(), source.channelId(), source.protocol(), source.conditions(), source.timing(), source.schedule(),
+            source.cooldownMinutes(), "rule", false, source.titleTemplate(), source.bodyTemplate(), source.clickAction());
+        try(TopicAlertService service = configured(clock, rule))
+        {
+            service.observe(event("a", START, CHANNEL, "100", "200")); service.drain();
+            service.testRule("r", service.configuration().revision());
+            assertEquals(1, service.history(null, 100, 0).get("total"));
+            service.observe(event("b", START, CHANNEL, "100", "200")); service.drain();
+            assertEquals(2, service.history(null, 100, 0).get("total"), "The original count remains and the test starts no cooldown");
+            service.testRule("r", service.configuration().revision());
+            assertEquals(3, service.history(null, 100, 0).get("total"), "A real alert cooldown does not suppress administrator tests");
+            service.observe(event("a", START, CHANNEL, "100", "200")); service.observe(event("b", START, CHANNEL, "100", "200")); service.drain();
+            assertEquals(3, service.history(null, 100, 0).get("total"), "The test does not reset real event deduplication");
+            clock.addAndGet(60_000);
+            service.observe(event("c", clock.get(), CHANNEL, "100", "200")); service.drain();
+            assertEquals(3, service.history(null, 100, 0).get("total"), "The test adds nothing to the normal match count");
+            service.observe(event("d", clock.get(), CHANNEL, "100", "200")); service.drain();
+            assertEquals(4, service.history(null, 100, 0).get("total"));
+        }
+    }
+
+    @Test void testRuleRejectsStaleOrMissingRulesAndUnavailablePushOrTopics() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        try(TopicAlertService service = configured(clock, rule("immediate", 0, 0, 0)))
+        {
+            assertThrows(ConcurrentModificationException.class, () -> service.testRule("r", 1));
+            assertThrows(IllegalArgumentException.class, () -> service.testRule("missing", service.configuration().revision()));
+            for(AlertTopic topic: List.of(new AlertTopic("fire", "Fire", "", false, true, false), new AlertTopic("fire", "Fire", "", true, false, false)))
+            {
+                service.saveTopic(topic, service.configuration().revision());
+                assertTrue(assertThrows(IllegalArgumentException.class, () -> service.testRule("r", service.configuration().revision())).getMessage().contains("enable it"));
+            }
+            service.saveTopic(new AlertTopic("fire", "Fire", "", true, true, false), service.configuration().revision());
+            var config = service.configuration();
+            service.updateConfiguration(new TopicAlertConfiguration(config.revision(), new TopicAlertConfiguration.PushSettings(false, "proxy", "", "VCE test"),
+                config.topics(), config.rules()), config.revision());
+            assertEquals("Enable push notifications before testing an alert.",
+                assertThrows(IllegalArgumentException.class, () -> service.testRule("r", service.configuration().revision())).getMessage());
+            assertEquals(0, service.history(null, 100, 0).get("total"));
+        }
+    }
+
+    @Test void testRuleKeepsTheTestPrefixWithinExistingPayloadLimits() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        var rule = new AlertRule("r", "Maximum length", "fire", true, "call", "", "", "", "", null,
+            null, null, 0, "rule", false, "a".repeat(128), "b".repeat(2048), "details");
+        try(TopicAlertService service = configured(clock, rule))
+        {
+            service.testRule("r", service.configuration().revision());
+            var delivery = service.pendingDeliveries(1).getFirst();
+            assertEquals("TEST: " + "a".repeat(122), delivery.title());
+            assertEquals("TEST: " + "b".repeat(2042), delivery.body());
+        }
+    }
+
     @Test void countAndRepeatLimitsCountDistinctEventsAndKeepRadiosSeparate() throws Exception
     {
         AtomicLong clock = new AtomicLong(START);

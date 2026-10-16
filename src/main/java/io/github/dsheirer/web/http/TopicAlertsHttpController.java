@@ -93,7 +93,7 @@ public final class TopicAlertsHttpController
         }
         catch(ConcurrentModificationException ignored)
         {
-            ApiHttpResponse.sendError(exchange, 409, "revision_conflict", "Alert settings changed. Reload before saving.");
+            ApiHttpResponse.sendError(exchange, 409, "revision_conflict", "Alert settings changed. Reload before trying again.");
         }
         catch(SecurityException ignored)
         {
@@ -269,7 +269,17 @@ public final class TopicAlertsHttpController
                 else WebHttpSupport.methodNotAllowed(exchange, "GET, POST, DELETE");
             }
             default -> {
-                if(path.startsWith("/topics/") || path.startsWith("/rules/"))
+                if(path.startsWith("/rules/") && exchange.getRequestURI().getRawPath().endsWith("/test"))
+                {
+                    if(!method(exchange, "POST")) return;
+                    JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision"));
+                    long revision = revision(body);
+                    if(!mPush.ready()) throw new IllegalArgumentException("Finish push setup and enable notifications before sending a test alert.");
+                    String id = path.substring("/rules/".length(), path.length() - "/test".length());
+                    mAlerts.testRule(id, revision);
+                    send(exchange, Map.of("queued", true));
+                }
+                else if(path.startsWith("/topics/") || path.startsWith("/rules/"))
                 {
                     if(!method(exchange, "DELETE")) return;
                     JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision"));

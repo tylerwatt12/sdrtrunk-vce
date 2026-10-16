@@ -3,6 +3,7 @@ package io.github.dsheirer.alerts;
 
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
+import io.github.dsheirer.stats.WebEntityReferences;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.io.IOException;
@@ -23,6 +24,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -132,6 +134,59 @@ public final class TopicAlertService implements AutoCloseable
     public synchronized TopicAlertConfiguration deleteRule(String id, long expectedRevision) throws IOException, SQLException
     {
         return updateConfiguration(new TopicAlertConfiguration(mConfiguration.revision(), mConfiguration.push(), topics(), rules().stream().filter(r -> !r.id().equals(id)).toList(), mConfiguration.builtinActionButtonEnabled()), expectedRevision);
+    }
+
+    /** Explicit administrator test: normal durable fanout without changing rule matching or repeat state. */
+    public synchronized void testRule(String id, long expectedRevision) throws SQLException
+    {
+        TopicAlertConfiguration config = mConfiguration;
+        if(config.revision() != expectedRevision)
+            throw new ConcurrentModificationException("Alert settings changed. Refresh and try again.");
+        AlertRule rule = config.rules().stream().filter(candidate -> candidate.id().equals(id)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("This alert no longer exists. Refresh and try again."));
+        if(!config.push().enabled())
+            throw new IllegalArgumentException("Enable push notifications before testing an alert.");
+        AlertTopic topic = config.topics().stream().filter(candidate -> candidate.id().equals(rule.topicId())).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("This alert topic no longer exists. Refresh and try again."));
+        if(!topic.visible() || !topic.enabled())
+            throw new IllegalArgumentException("Make this topic available to listeners and enable it before testing an alert.");
+        if(mClosed.get()) throw new IllegalArgumentException("Alert notifications are unavailable. Try again after the receiver restarts.");
+        long now = mClock.getAsLong();
+        Map<String,List<String>> facts = new LinkedHashMap<>();
+        // Positive saved values provide useful examples; unavailable event details use normal template fallbacks.
+        testFacts(rule.conditions(), facts);
+        testScope(facts, "system_key", rule.systemKey()); testScope(facts, "site_id", rule.siteId());
+        testScope(facts, "channel_id", rule.channelId()); testScope(facts, "protocol_family", rule.protocolFamily());
+        testScope(facts, "protocol", rule.protocol());
+        Map<String,Object> channel = null, system = null;
+        try { if(!rule.channelId().isEmpty()) channel = WebEntityReferences.channel(rule.channelId()); }
+        catch(IllegalArgumentException ignored) { }
+        try { if(!rule.systemKey().isEmpty()) system = WebEntityReferences.radioSystem(rule.systemKey()); }
+        catch(IllegalArgumentException ignored) { }
+        AlertEvent event = new AlertEvent("test:" + UUID.randomUUID(), now, rule.trigger(), facts,
+            new AlertAction.Context(channel, system, null, null, null));
+        if(!publish(config, topic, rule.id(), rule.name(), event,
+            "TEST: " + expand(rule.titleTemplate(), event, config.push().senderLabel(), now),
+            "TEST: " + expand(rule.bodyTemplate(), event, config.push().senderLabel(), now),
+            rule.clickAction(), rule.actionButtonEnabled(), now))
+            throw new IllegalArgumentException("The notification queue is full. Wait for pending alerts to finish and try again.");
+    }
+    private static void testScope(Map<String,List<String>> facts, String field, String value)
+    {
+        if(!value.isEmpty()) facts.put(field, List.of(value));
+    }
+    private static void testFacts(AlertRule.Condition condition, Map<String,List<String>> facts)
+    {
+        if("none".equals(condition.op())) return;
+        if(!condition.op().isEmpty())
+        {
+            for(AlertRule.Condition item: condition.items()) testFacts(item, facts);
+        }
+        else if("is".equals(condition.operator()) || "in".equals(condition.operator()))
+        {
+            String value = "in".equals(condition.operator()) ? condition.value().split(",", -1)[0].strip() : condition.value();
+            if(!value.isBlank()) facts.putIfAbsent(condition.field(), List.of(value));
+        }
     }
 
     public List<AlertDevice> devices() throws SQLException { return mStore.devices(); }

@@ -6,6 +6,9 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.sun.net.httpserver.HttpServer;
+import io.github.dsheirer.alerts.AlertDevice;
+import io.github.dsheirer.alerts.AlertRule;
+import io.github.dsheirer.alerts.AlertTopic;
 import io.github.dsheirer.alerts.TopicAlertConfiguration;
 import io.github.dsheirer.alerts.TopicAlertService;
 import io.github.dsheirer.alerts.delivery.PushDeliveryService;
@@ -26,6 +29,7 @@ import java.sql.SQLException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,6 +40,64 @@ class TopicAlertsHttpControllerTest
 {
     private static final ObjectMapper JSON = new ObjectMapper();
     @TempDir Path mDirectory;
+
+    @Test void ruleTestsRequireAnAdministratorPostAndQueueTheSavedTemplatesForSubscribers() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("rule-tests.sqlite")))
+        {
+            String path = "/api/v1/admin/alerts/rules/fire%20rule%2Ftest/test";
+            f.service.saveTopic(new AlertTopic("fire", "Fire", "", true, true, false), f.service.configuration().revision());
+            f.service.saveRule(new AlertRule("fire rule/test", "Fire activity", "fire", false, "call", "", "", "", "", "",
+                AlertRule.Condition.all(), AlertRule.Timing.immediate(), AlertRule.Schedule.always(), 60, "rule", false,
+                "Fire at {vce}", "Activity detected", "details"), f.service.configuration().revision());
+            f.service.saveDevice(new AlertDevice("subscriber", "Phone", "direct", "", "https://push.example/device",
+                "key", "auth", "a".repeat(64), List.of("fire"), false));
+            Map<String,Object> request = Map.of("revision", f.service.configuration().revision());
+            assertEquals(401, f.send("POST", path, request, null, true).statusCode());
+            f.login();
+            var unready = f.send("POST", path, request, null, true);
+            assertEquals(422, unready.statusCode());
+            assertEquals("Finish push setup and enable notifications before sending a test alert.",
+                f.body(unready).at("/error/message").asText());
+            var current = f.service.configuration();
+            f.service.updateConfiguration(new TopicAlertConfiguration(current.revision(),
+                new TopicAlertConfiguration.PushSettings(true, "direct", "https://vce.example", "East"),
+                current.topics(), current.rules()), current.revision());
+            long revision = f.service.configuration().revision();
+            request = Map.of("revision", revision);
+
+            var noCsrf = HttpRequest.newBuilder(f.origin.resolve(path)).header("Cookie", f.cookie)
+                .header("Origin", f.origin.toString()).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(request))).build();
+            assertEquals(403, f.client.send(noCsrf, HttpResponse.BodyHandlers.ofString()).statusCode());
+            assertEquals(403, f.send("POST", path, request, null, false).statusCode());
+            var get = f.send("GET", path, null, null, false);
+            assertEquals(405, get.statusCode());
+            assertEquals("POST", get.headers().firstValue("Allow").orElseThrow());
+            assertEquals(400, f.send("POST", path + "?test=true", request, null, true).statusCode());
+            assertEquals(400, f.send("POST", path, Map.of("revision", revision, "title", "Override"), null, true).statusCode());
+            assertEquals(409, f.send("POST", path, Map.of("revision", revision - 1), null, true).statusCode());
+            assertEquals(422, f.send("POST", "/api/v1/admin/alerts/rules/missing/test", request, null, true).statusCode());
+            assertEquals(0, f.service.history(null, 100, 0).get("total"));
+
+            var sent = f.send("POST", path, request, null, true);
+            assertEquals(200, sent.statusCode(), sent.body());
+            assertTrue(f.body(sent).path("queued").asBoolean());
+            var deliveries = f.service.pendingDeliveries(100);
+            assertEquals(1, deliveries.size());
+            assertEquals("subscriber", deliveries.getFirst().deviceId());
+            assertEquals("TEST: Fire at East", deliveries.getFirst().title());
+            assertEquals("TEST: Activity detected", deliveries.getFirst().body());
+            assertEquals("Fire activity", deliveries.getFirst().alertName());
+            assertEquals(revision, f.service.configuration().revision());
+            assertFalse(f.service.rules().getFirst().enabled(), "Testing must preserve the paused rule");
+            assertEquals(200, f.send("POST", path, request, null, true).statusCode());
+            assertEquals(2, f.service.pendingDeliveries(100).size(), "Each confirmed test is a new alert");
+            assertEquals(200, f.send("DELETE", "/api/v1/admin/alerts/rules/fire%20rule%2Ftest", request, null, true).statusCode(),
+                "A rule ID ending in /test must retain its delete action");
+            assertTrue(f.service.rules().isEmpty());
+        }
+    }
 
     @Test void guestTopicsBypassGlobalLoginButAdminStillNeedsSessionAndDirectProof() throws Exception
     {
