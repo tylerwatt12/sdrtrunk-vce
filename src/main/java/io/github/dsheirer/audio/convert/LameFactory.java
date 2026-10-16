@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.audio.convert;
 
-import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import net.sourceforge.lame.lowlevel.LameEncoder;
 import net.sourceforge.lame.mp3.MPEGMode;
 
@@ -51,19 +50,4 @@ public class LameFactory
         };
     }
 
-    /**
-     * Creates a resampler to resample from 8 kHz default audio sample rate to the specified sample rate.
-     * @param sampleRate to resample to
-     * @return resampler.
-     */
-    public static RealResampler getResampler(InputAudioFormat sampleRate)
-    {
-        return switch(sampleRate)
-        {
-            case SR_16000, SR_32_16000 -> new RealResampler(8000, 16000, 4096, 512);
-            case SR_22050, SR_32_22050 -> new RealResampler(8000, 22050, 4096, 512);
-            case SR_44100, SR_32_44100 -> new RealResampler(8000, 44100, 4096, 512);
-            default -> throw new IllegalArgumentException("Unrecognized sample rate for resampling: " + sampleRate);
-        };
-    }
 }

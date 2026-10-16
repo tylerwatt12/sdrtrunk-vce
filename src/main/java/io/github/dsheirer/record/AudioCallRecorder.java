@@ -47,9 +47,6 @@ import javax.sound.sampled.AudioFormat;
 public class AudioCallRecorder
 {
 
-    public static final int MP3_BIT_RATE = 16;
-    public static final boolean CONSTANT_BIT_RATE = false;
-
     private AudioCallRecorder()
     {
     }
