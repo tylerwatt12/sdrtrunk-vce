@@ -55,7 +55,7 @@ async function main() {
   assert.deepEqual(callAudioDetailGroups({ audio_sample_rate: 16000, voice_enhancement: true,
     voice_model: 'voice-model-1', detected_paging_tones: [tone] }), [
     ['Audio', [['Sample rate', '16 kHz'], ['Voice enhancement', 'On'], ['Voice model', 'voice-model-1']]],
-    ['Paging tones', [['Source', 'Audio detection'], ['Tone 1', '593.75 Hz · 1020 ms · at 80 ms']]]
+    ['Tones', [['Source', 'Audio detection'], ['Tone 1', '593.75 Hz · 1020 ms · at 80 ms']]]
   ]);
   assert.deepEqual(callAudioDetailGroups({ audio_sample_rate: 8000, voice_enhancement: false, voice_model: 'stale' }),
     [['Audio', [['Sample rate', '8 kHz'], ['Voice enhancement', 'Off']]]]);
@@ -73,12 +73,21 @@ async function main() {
     'DTMF 3 · 697 + 1477 Hz · 120 ms', 'TONE 600 · 600.2 Hz · 1020 ms · at 80 ms', 'RESERVED 255 · 20 ms'
   ] });
   assert.deepEqual(callAudioDetailGroups({ paging_tone_summary: encoded, detected_paging_tones: [tone] }), [
-    ['Paging tones', [['Source', 'Encoded'], ['Tone 1', 'DTMF 3 · 697 + 1477 Hz · 120 ms'],
+    ['Tones', [['Source', 'Encoded'], ['Tone 1', 'DTMF 3 · 697 + 1477 Hz · 120 ms'],
       ['Tone 2', 'TONE 600 · 600.2 Hz · 1020 ms · at 80 ms'], ['Tone 3', 'RESERVED 255 · 20 ms']]]
   ], 'Unified encoded details take precedence without duplicating historical detections.');
   assert.deepEqual(formatPagingToneSummary({ source: 'decoded_audio', method: 'p25_pcm_tone_v1', tones: [
     { frequencies_hz: [600], duration_milliseconds: 1000, confidence: .97 }
   ] }), { source: 'Audio detection', tones: ['593.75 Hz · 1000 ms'] });
+  assert.deepEqual(formatPagingToneSummary({ source: 'decoded_audio', method: 'analog_pcm_tone_v1', tones: [
+    { frequencies_hz: [697, 1477], code: 'DTMF_3', duration_milliseconds: 120, offset_milliseconds: 60 },
+    { frequencies_hz: [600], duration_milliseconds: 1000 }
+  ] }), { source: 'Audio detection', tones: [
+    'DTMF 3 · 697 + 1477 Hz · 120 ms · at 60 ms', '593.75 Hz · 1000 ms'
+  ] }, 'Analog DTMF pairs retain their exact frequencies alongside mapped single tones.');
+  assert.equal(formatPagingToneSummary({ source: 'decoded_audio', method: 'analog_pcm_tone_v1', tones: [
+    { frequencies_hz: [100], code: 'CTCSS_100', duration_milliseconds: 1000 }
+  ] }), null, 'CTCSS has no representation in call tone details.');
   const nominal = { source: 'decoded_audio', method: 'p25_pcm_ambe_tone_v2', tones: [
     { frequencies_hz: [562.5], duration_milliseconds: 900, offset_milliseconds: 514, confidence: .99 }
   ] };
@@ -93,7 +102,7 @@ async function main() {
   assert.equal(formatPagingToneSummary({ ...old, tones: [{ ...old.tones[0], frequencies_hz: [156.249] }] }), null);
   assert.deepEqual(callAudioDetailGroups({ detected_paging_tones: [
     { ...tone, method: 'p25_pcm_ambe_tone_v2', frequency_hz: 593.75 }
-  ] }), [['Paging tones', [['Source', 'Audio detection'], ['Tone 1', '593.75 Hz · 1020 ms · at 80 ms']]]]);
+  ] }), [['Tones', [['Source', 'Audio detection'], ['Tone 1', '593.75 Hz · 1020 ms · at 80 ms']]]]);
   assert.deepEqual(formatPagingToneSummary({ source: 'encoded', tones: [
     { frequencies_hz: [343.75], code: 'HZ_343_75', duration_milliseconds: 120 }
   ] }), { source: 'Encoded', tones: ['343.75 Hz · 120 ms'] });

@@ -95,6 +95,15 @@ assert.equal(context.activityActionControlValue({ action: '', includeGrants: tru
   nativeSystemCapabilities), '__include_grants__');
 assert.equal(context.activityActionControlValue({ action: '', includeGrants: false },
   nativeSystemCapabilities), '');
+const callToneFilters = context.activityRouteFilters(parameters({ activity_action: 'CALL',
+  activity_event_type: 'CALL_GROUP', activity_has_tones: 'true' }), systemContext);
+assert.equal(context.activityApiFilterParameters(callToneFilters).has_tones, true);
+assert.equal(context.activityApiFilterParameters(callToneFilters).event_type, 'CALL_GROUP');
+assert.equal(context.activityFilterRouteOverrides(callToneFilters).activity_has_tones, true);
+assert.equal(context.activityMoreFilterCount(callToneFilters, nativeSystemCapabilities), 2);
+assert.deepEqual(JSON.parse(JSON.stringify(context.activityCellFilterPatch(systemContext,
+  { action: 'CALL', event_type: 'CALL_GROUP', paging_tone_summary: { tones: [{}] } }, 'tones'))),
+  { hasTones: true });
 const toneFilters = context.activityRouteFilters(parameters({ activity_action: 'TONE', activity_event_type: 'TONE' }), systemContext);
 assert.equal(context.activityApiFilterParameters(toneFilters).action, 'TONE');
 assert.equal(context.activityApiFilterParameters(toneFilters).event_type, 'TONE');

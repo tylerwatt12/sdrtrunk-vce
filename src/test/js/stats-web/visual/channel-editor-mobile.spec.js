@@ -8,7 +8,7 @@ test.beforeAll(async () => {
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
 });
 
-async function openEditor(page, theme) {
+async function openEditor(page, theme, options = {}) {
   const preferences = structuredClone(defaults);
   preferences.appearance.theme = theme;
   const channel = {
@@ -34,8 +34,23 @@ async function openEditor(page, theme) {
       ] }
     ]
   };
+  if (options.ctcss) {
+    channel.settings.ctcss_frequency_hz = options.ctcssFrequency ?? 0;
+    profile.sections.find(section => section.id === 'protocol').fields.push({
+      path: 'settings.ctcss_frequency_hz', label: 'CTCSS squelch', type: 'number', default: 0,
+      help: 'Opens only when normal squelch and the selected CTCSS tone both pass. Off uses normal squelch.',
+      options: [{ value: '0', label: 'Off' }, { value: '67.0', label: '67.0 Hz' },
+        { value: '97.4', label: '97.4 Hz' }]
+    });
+  }
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/api/v1/admin/channels/mobile-editor' && route.request().method() === 'PUT') {
+      const payload = route.request().postDataJSON();
+      options.onSave?.(payload);
+      await route.fulfill({ json: { data: { revision: 2, channel: { ...channel, ...payload } } } });
+      return;
+    }
     if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
       return;
@@ -60,6 +75,41 @@ async function openEditor(page, theme) {
   await expect(dialog).toBeVisible();
   return dialog;
 }
+
+test('analog CTCSS is a channel squelch selection and submits its standard numeric frequency', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const writes = [];
+  const dialog = await openEditor(page, 'dark', { ctcss: true, onSave: value => writes.push(value) });
+  await dialog.locator('details[data-channel-section="protocol"] > summary').click();
+  const ctcss = dialog.getByRole('combobox', { name: /^CTCSS squelch/ });
+  await expect(ctcss).toHaveValue('0');
+  await expect(ctcss.getByRole('option', { name: 'None', exact: true })).toHaveCount(0);
+  await ctcss.selectOption('97.4');
+  await expect(dialog).toContainText('normal squelch and the selected CTCSS tone both pass');
+  if (process.env.WEB_REVIEW_DIR) await page.screenshot({
+    path: path.join(process.env.WEB_REVIEW_DIR, 'ctcss-squelch-dark-phone.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0].settings.ctcss_frequency_hz).toBe(97.4);
+  expect(writes[0].settings).not.toHaveProperty('tone');
+  expect(writes[0].settings).not.toHaveProperty('alert');
+});
+
+test('saved whole-number CTCSS frequencies remain selected and can be turned off', async ({ page }) => {
+  const writes = [];
+  const dialog = await openEditor(page, 'light', { ctcss: true, ctcssFrequency: 67,
+    onSave: value => writes.push(value) });
+  const ctcss = dialog.getByRole('combobox', { name: /^CTCSS squelch/ });
+  await expect(ctcss).toHaveValue('67');
+  await dialog.getByText('Opens only when normal squelch and the selected CTCSS tone both pass. Off uses normal squelch.',
+    { exact: true }).scrollIntoViewIfNeeded();
+  if (process.env.WEB_REVIEW_DIR) await page.screenshot({
+    path: path.join(process.env.WEB_REVIEW_DIR, 'ctcss-squelch-light-desktop.png'), fullPage: true });
+  await ctcss.selectOption('0');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0].settings.ctcss_frequency_hz).toBe(0);
+});
 
 for (const [width, theme] of [[320, 'light'], [390, 'dark']]) {
   test(`mobile channel editor keeps one section open and preserves drafts ${theme} ${width}`, async ({ page }) => {

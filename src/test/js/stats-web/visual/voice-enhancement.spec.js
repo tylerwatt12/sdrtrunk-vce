@@ -95,7 +95,7 @@ test('completed call Details shows audio enhancement and measured tones without 
   await dock.getByRole('button', { name: 'Listen live', exact: true }).click();
   await selectAudioPanel(dock, 'Details');
   await dock.locator('summary').filter({ hasText: /^Audio$/ }).click();
-  await dock.locator('summary').filter({ hasText: /^Paging tones$/ }).click();
+  await dock.locator('summary').filter({ hasText: /^Tones$/ }).click();
   await expect(dock.locator('#audio-dock-panel')).toContainText('16 kHz');
   await expect(dock.locator('#audio-dock-panel')).toContainText('voice-model-1');
   await expect(dock.locator('#audio-dock-panel')).toContainText('Audio detection');
@@ -125,11 +125,11 @@ test('late paging-tone metadata refreshes current call Details without replaying
   await dock.getByRole('button', { name: 'Listen live', exact: true }).click();
   await selectAudioPanel(dock, 'Details');
   await expect(dock.locator('#audio-dock-panel')).toContainText('Engine 4');
-  await expect(dock.locator('summary').filter({ hasText: /^Paging tones$/ })).toHaveCount(0);
+  await expect(dock.locator('summary').filter({ hasText: /^Tones$/ })).toHaveCount(0);
   const audioRequests = state.requests.filter(item => /\/audio$/.test(item.path)).length;
   expect(audioRequests).toBe(1);
   update = true;
-  const tones = dock.locator('summary').filter({ hasText: /^Paging tones$/ });
+  const tones = dock.locator('summary').filter({ hasText: /^Tones$/ });
   await expect(tones).toHaveCount(1); await tones.click();
   await expect(dock.locator('#audio-dock-panel')).toContainText('Encoded');
   await expect(dock.locator('#audio-dock-panel')).toContainText('TONE 600 · 600 Hz · 1000 ms');
@@ -166,7 +166,7 @@ for (const source of ['encoded', 'decoded_audio']) {
     await expect(modal).toContainText('Loading call details');
     await expect.poll(() => requested).toBe(1); releaseDetails();
     await modal.getByRole('tab', { name: 'Technical', exact: true }).click();
-    await expect(modal).toContainText('Paging tones');
+    await expect(modal).toContainText('Tones');
     await expect(modal).toContainText(source === 'encoded' ? 'Encoded' : 'Audio detection');
     await expect(modal).toContainText(tone);
     expect(await page.evaluate(() => window.audioTest.recordings.filter(item => item.action === 'play').length)).toBe(0);
@@ -191,9 +191,9 @@ for (const source of ['encoded', 'decoded_audio']) {
     await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
     await selectAudioPanel(dock, 'Details');
     await expect(dock.locator('#audio-dock-panel')).toContainText('Loading complete call details');
-    await expect(dock.locator('summary').filter({ hasText: /^Paging tones$/ })).toHaveCount(0);
+    await expect(dock.locator('summary').filter({ hasText: /^Tones$/ })).toHaveCount(0);
     releaseDetails();
-    const heading = dock.locator('summary').filter({ hasText: /^Paging tones$/ });
+    const heading = dock.locator('summary').filter({ hasText: /^Tones$/ });
     await expect(heading).toHaveCount(1); await heading.click();
     await expect(dock.locator('#audio-dock-panel')).toContainText(source === 'encoded' ? 'Encoded' : 'Audio detection');
     await expect(dock.locator('#audio-dock-panel')).toContainText(tone);

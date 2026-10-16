@@ -5,7 +5,7 @@ const path = require('node:path');
 const { openVoiceEnhancementApp } = require('./fixtures/voice-enhancement-app.cjs');
 
 const panel = page => page.locator('[data-paging-tone-detection]');
-const toggle = page => panel(page).getByRole('checkbox', { name: 'Paging-tone detection', exact: true });
+const toggle = page => panel(page).getByRole('checkbox', { name: 'Tone detection', exact: true });
 const save = page => panel(page).getByRole('button', { name: 'Save', exact: true, includeHidden: true });
 const reload = page => panel(page).getByRole('button', { name: 'Reload status', exact: true });
 async function screenshot(page, name) {
@@ -18,7 +18,7 @@ test('default On paging-tone control saves independently, guards revisions, and 
     snapshot: { status: 'no_model', model: null } });
   const state = app.pagingTone;
   await expect(page.locator('.admin-settings-content [data-paging-tone-detection]')).toHaveCount(1);
-  await expect(panel(page)).toContainText('Loading paging-tone setting…');
+  await expect(panel(page)).toContainText('Loading tone detection setting…');
   await expect(toggle(page)).toBeDisabled(); await expect(save(page)).toBeDisabled();
   state.releaseStatus();
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).toBeChecked();
@@ -53,7 +53,7 @@ test('default On paging-tone control saves independently, guards revisions, and 
   await expect(toggle(page)).toBeChecked(); await expect(save(page)).toBeEnabled();
   await save(page).click();
   await expect(save(page)).toBeHidden();
-  await expect(panel(page)).not.toContainText('Paging-tone detection saved.');
+  await expect(panel(page)).not.toContainText('Tone detection saved.');
   await expect(toggle(page)).toBeChecked();
   state.nextFailure = 'network';
   await toggle(page).press('Space'); await save(page).click();
@@ -68,12 +68,12 @@ test('unavailable safe Off setting remains editable and can be repaired without 
   await page.setViewportSize({ width: 390, height: 844 });
   const app = await openVoiceEnhancementApp(page, { theme: 'dark', pagingSnapshot: { enabled: false, status: 'unavailable' } });
   const state = app.pagingTone;
-  await expect(panel(page)).toContainText('Paging-tone setting could not be loaded. Detection is off. Save to choose a setting.');
+  await expect(panel(page)).toContainText('Tone detection setting could not be loaded. Detection is off. Save to choose a setting.');
   await expect(toggle(page)).toBeEnabled(); await expect(toggle(page)).not.toBeChecked();
   await expect(save(page)).toBeEnabled(); await screenshot(page, 'paging-tones-dark-phone');
   await save(page).click();
   await expect(save(page)).toBeHidden();
-  await expect(panel(page)).not.toContainText('Paging-tone detection saved.');
+  await expect(panel(page)).not.toContainText('Tone detection saved.');
   await expect(panel(page).locator('.ui-notice-warning')).toBeHidden();
   await expect(save(page)).toBeDisabled();
   expect(JSON.parse(state.writes[0].body)).toEqual({ value: false });

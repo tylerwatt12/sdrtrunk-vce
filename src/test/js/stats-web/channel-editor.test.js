@@ -133,6 +133,12 @@ assert.equal(vm.runInContext(`channelEditorFieldValue(
 assert.equal(vm.runInContext(`channelEditorFieldValue(
   { checked: false, dataset: {} }, { type: 'boolean' })`, context), false,
   'An ordinary boolean control must submit its displayed value');
+assert.equal(vm.runInContext(`channelEditorFieldValue(
+  { value: '97.4' }, { type: 'number', path: 'settings.ctcss_frequency_hz' })`, context), 97.4,
+  'A CTCSS selection must remain a numeric frequency in the channel payload');
+assert.equal(vm.runInContext(`channelEditorFieldValue(
+  { value: '0' }, { type: 'number', path: 'settings.ctcss_frequency_hz' })`, context), 0,
+  'Off must remain the explicit disabled CTCSS value');
 const lockedToggle = JSON.parse(vm.runInContext(`JSON.stringify((() => {
   const state = { textContent: 'On' };
   const input = { checked: true, closest: () => ({ querySelector: () => state }) };

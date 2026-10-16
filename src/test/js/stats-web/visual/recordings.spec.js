@@ -1383,7 +1383,7 @@ test('tone filters validate ordered pairs, browse captured DCS, and discard canc
   const state = await openRecordings(page, { entities: [{ kind: 'dcs', id: 'I023', value: 'I023', label: 'DCS-023 Inverted', call_count: 4, selection: { dcs_code: 'I023' } }] });
   let dialog = await openPicker(page, 'tones', 'Tones & signaling');
   await expect(dialog.getByRole('option', { name: 'Without paging tones' })).toHaveCount(0);
-  await dialog.getByRole('combobox', { name: 'Paging tones', exact: true }).selectOption('detected');
+  await dialog.getByRole('combobox', { name: 'Tones', exact: true }).selectOption('detected');
   await dialog.getByLabel('Then tone (Hz)', { exact: true }).fill('1180');
   await dialog.getByRole('button', { name: 'Use filters', exact: true }).click();
   await expect(dialog).toContainText('Enter the first tone');
@@ -1392,12 +1392,12 @@ test('tone filters validate ordered pairs, browse captured DCS, and discard canc
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   dialog = await openPicker(page, 'tones', 'Tones & signaling');
   await expect(dialog.getByLabel('First tone (Hz)', { exact: true })).toHaveValue('');
-  await dialog.getByRole('combobox', { name: 'Paging tones', exact: true }).selectOption('detected');
+  await dialog.getByRole('combobox', { name: 'Tones', exact: true }).selectOption('detected');
   await dialog.getByLabel('First tone (Hz)', { exact: true }).fill('832.5'); await dialog.getByLabel('Then tone (Hz)', { exact: true }).fill('1180');
   await dialog.getByRole('button', { name: 'DCS-023 Inverted · 4 calls', exact: true }).click();
   await dialog.getByRole('button', { name: 'Use filters', exact: true }).click(); await searchNow(page, state);
   expect(state.requestedFilters.at(-1)).toMatchObject({ paging_tones: 'detected', tone_frequency_hz: '832.5', tone_then_hz: '1180', dcs_code: 'I023' });
-  dialog = await openPicker(page, 'tones', 'Tones & signaling'); await dialog.getByRole('combobox', { name: 'Paging tones', exact: true }).selectOption('');
+  dialog = await openPicker(page, 'tones', 'Tones & signaling'); await dialog.getByRole('combobox', { name: 'Tones', exact: true }).selectOption('');
   await dialog.getByRole('button', { name: 'Use filters', exact: true }).click(); await searchNow(page, state);
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('tone_frequency_hz'); expect(state.requestedFilters.at(-1).dcs_code).toBe('I023');
 });

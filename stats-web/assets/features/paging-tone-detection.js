@@ -10,7 +10,7 @@ export function decodePagingToneDetection(value) {
       typeof value.revision !== 'string' || !REVISION.test(value.revision) ||
       typeof value.enabled !== 'boolean' || !['ready', 'unavailable'].includes(value.status) ||
       (value.status === 'unavailable' && value.enabled)) {
-    throw new Error('Paging-tone status could not be read. Reload status to try again.');
+    throw new Error('Tone detection status could not be read. Reload status to try again.');
   }
   return { revision: value.revision, enabled: value.enabled, status: value.status };
 }
@@ -22,7 +22,7 @@ export async function requestPagingToneDetection(fetchDocument, { action = 'stat
   const options = { method: action === 'status' ? 'GET' : 'PUT', headers };
   if (action === 'enabled') {
     if (typeof revision !== 'string' || !REVISION.test(revision)) throw new Error('Reload paging-tone status before saving.');
-    if (typeof value !== 'boolean') throw new Error('Choose On or Off for paging-tone detection.');
+    if (typeof value !== 'boolean') throw new Error('Choose On or Off for tone detection.');
     headers['If-Match'] = `"${revision}"`; headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify({ value });
   }
@@ -36,7 +36,7 @@ export async function requestPagingToneDetection(fetchDocument, { action = 'stat
     let result = null;
     try { result = await response.json(); } catch (_) { }
     if (!response.ok) {
-      const error = new Error(result?.error?.message || 'Paging-tone detection could not be saved. Try again.');
+      const error = new Error(result?.error?.message || 'Tone detection could not be saved. Try again.');
       error.status = response.status;
       if (response.status === 409) {
         try { error.current = decodePagingToneDetection(result); } catch (_) { }
@@ -58,13 +58,13 @@ export function createPagingToneDetectionSettings({ node, section, sectionAction
   const body = node('div', 'admin-section-body');
   const form = node('form', 'admin-form settings-page-form ui-settings-form');
   const reload = node('button', 'ui-button ui-button-secondary', 'Reload status'); reload.type = 'button';
-  const panel = section('Paging tones', body, sectionActionHost(reload));
+  const panel = section('Tone detection', body, sectionActionHost(reload));
   panel.classList.add('ui-settings-panel'); panel.dataset.pagingToneDetection = '';
-  const toggle = uiToggleField('Paging-tone detection', true, 'Paging-tone detection',
-    'Detects sustained tones in P25 Phase 1 calls. Off skips detection; tones remain audible.');
+  const toggle = uiToggleField('Tone detection', true, 'Tone detection',
+    'Detects single tones in P25 Phase 1 calls, and single tones and DTMF in AM/NBFM calls. Off skips detection; tones remain audible.');
   const enabled = toggle.querySelector('input');
   const recovery = node('p', 'ui-notice ui-notice-warning',
-    'Paging-tone setting could not be loaded. Detection is off. Save to choose a setting.');
+    'Tone detection setting could not be loaded. Detection is off. Save to choose a setting.');
   recovery.setAttribute('role', 'status'); recovery.hidden = true;
   const save = node('button', 'ui-button ui-button-primary', 'Save'); save.type = 'submit';
   const feedback = node('div', 'admin-form-message'); feedback.setAttribute('role', 'status');
@@ -87,17 +87,17 @@ export function createPagingToneDetectionSettings({ node, section, sectionAction
   const failure = error => {
     if (error.current) {
       apply(error.current);
-      return { state: 'warning', message: 'Paging-tone detection changed elsewhere. The latest saved setting was loaded.' };
+      return { state: 'warning', message: 'Tone detection changed elsewhere. The latest saved setting was loaded.' };
     }
     if (!error.status || error.code === 'request_timeout') {
       confirmed = null; recovery.hidden = true; sync();
       return { state: 'error', message: 'The change could not be confirmed. Reload status before trying again.' };
     }
-    return { state: 'error', message: error.message || 'Paging-tone detection could not be saved. Try again.' };
+    return { state: 'error', message: error.message || 'Tone detection could not be saved. Try again.' };
   };
   async function load() {
     if (pending || !current()) return;
-    pending = true; sync(); workflow.showFeedback('loading', 'Loading paging-tone setting…');
+    pending = true; sync(); workflow.showFeedback('loading', 'Loading tone detection setting…');
     try {
       const snapshot = await requestPagingToneDetection(fetchDocument, { signal });
       if (!current()) return;
@@ -105,7 +105,7 @@ export function createPagingToneDetectionSettings({ node, section, sectionAction
     } catch (error) {
       if (!current()) return;
       confirmed = null; recovery.hidden = true;
-      workflow.showFeedback('error', error.message || 'Paging-tone status could not be loaded. Reload status to try again.');
+      workflow.showFeedback('error', error.message || 'Tone detection status could not be loaded. Reload status to try again.');
     } finally { if (current()) { pending = false; sync(); } }
   }
   enabled.addEventListener('change', sync);
@@ -116,7 +116,7 @@ export function createPagingToneDetectionSettings({ node, section, sectionAction
       pending = true; sync();
       const snapshot = await requestPagingToneDetection(fetchDocument, { action: 'enabled', revision: confirmed.revision, value, signal });
       if (current()) apply(snapshot);
-    }, { saving: 'Saving paging-tone detection…',
+    }, { saving: 'Saving tone detection…',
       onError: error => current() ? failure(error) : null });
     if (current()) { pending = false; sync(); }
   });

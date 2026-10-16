@@ -131,38 +131,39 @@ function toneActivityRow(id, summary, overrides = {}) {
     paging_tone_summary: summary, ...overrides };
 }
 
-test('paging tones show inferred and encoded sequences with alias context and exact event filtering', async ({ page }) => {
+test('call tones preserve group call types and filter independently with alias context', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const requests = await openActivity(page, { rows: [
     toneActivityRow(18, { source: 'decoded_audio', method: 'p25_pcm_ambe_tone_v2', phase: 1, call_started_at_ms: 1_790_720_000_000,
-      tones: [{ frequencies_hz: [593.75], duration_milliseconds: 1020, offset_milliseconds: 80, confidence: .99 }] }, { action: 'tone', event_type: 'tone' }),
+      tones: [{ frequencies_hz: [593.75], duration_milliseconds: 1020, offset_milliseconds: 80, confidence: .99 }] }, { action: 'CALL', event_type: 'CALL_GROUP' }),
     toneActivityRow(19, { source: 'encoded', method: 'ambe_tone_v1', phase: 2, call_started_at_ms: 1_790_720_000_000,
       tones: [{ frequencies_hz: [600], code: 'TONE_600', duration_milliseconds: 120 },
         { frequencies_hz: [700], code: 'TONE_700', duration_milliseconds: 240 }] }),
     toneActivityRow(20, undefined, { source_alias_name: '', source_radio_id: 999, source_identity_key: '', source_entity_ref: null })
   ] });
   const row = page.locator('tr[data-id="18"]');
-  await expect(row.locator('[data-column="event"]')).toContainText('Paging tones');
-  await expect(row.locator('[data-column="action"]')).toHaveText('Paging tones');
-  await expect(row.locator('[data-column="event"]')).toContainText('Audio detection');
-  await expect(row.locator('[data-column="event"]')).toContainText('593.75 Hz · 1020 ms · at 80 ms');
+  await expect(row.locator('[data-column="event"]')).toHaveText('CALL_GROUP');
+  await expect(row.locator('[data-column="action"]')).toHaveText('CALL');
+  await expect(row.locator('[data-column="tones"]')).toContainText('Audio detection');
+  await expect(row.locator('[data-column="tones"]')).toContainText('593.75 Hz · 1020 ms · at 80 ms');
   await expect(row.locator('[data-column="event"]')).not.toContainText('measured');
   await expect(row.locator('[data-column="event"]')).not.toContainText('mapped');
-  await expect(row.locator('[data-column="event"]')).toContainText('Call started');
-  await expect(row.locator('[data-column="event"] time')).toHaveText('2026-09-29 22:13:20');
   await expect(row.locator('[data-column="event"]')).not.toContainText('[object');
   await expect(row).toContainText('Engine 12'); await expect(row).toContainText('CPD D3 DISP');
   await expect(row.locator('[data-column="channel"]')).toContainText('855.73750 MHz');
-  await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('Encoded');
-  await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('TONE 600 · 600 Hz · 120 ms');
-  await expect(page.locator('tr[data-id="19"] [data-column="event"]')).toContainText('TONE 700 · 700 Hz · 240 ms');
+  await expect(page.locator('tr[data-id="19"] [data-column="tones"]')).toContainText('Encoded');
+  await expect(page.locator('tr[data-id="19"] [data-column="tones"]')).toContainText('TONE 600 · 600 Hz · 120 ms');
+  await expect(page.locator('tr[data-id="19"] [data-column="tones"]')).toContainText('TONE 700 · 700 Hz · 240 ms');
   await expect(page.locator('tr[data-id="20"] [data-column="event"]')).toHaveText('Paging tones');
   await expect(row.locator('[data-column="event"]')).not.toContainText('99%');
   await expect(row.locator('[data-column="event"]')).not.toContainText('p25_pcm_tone_v1');
   await toneScreenshot(page, 'activity-tones-light-desktop');
   await row.locator('[data-column="event"] .activity-cell-filter-link').click();
-  await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('TONE');
-  await expect(page.locator('.activity-filter-chips')).toContainText('Paging tones');
+  await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('CALL_GROUP');
+  await row.locator('[data-column="tones"] .activity-cell-filter-link').click();
+  await expect.poll(() => requests.activity.at(-1)?.has_tones).toBe('true');
+  await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('CALL_GROUP');
+  await expect(page.locator('.activity-filter-chips')).toContainText('With tones');
   const source = page.locator('tr[data-id="18"] [data-column="source-alias"] .activity-cell-action-link');
   await source.click();
   await expect(page.getByRole('link', { name: 'Open source radio details', exact: true })).toBeVisible();
@@ -176,12 +177,12 @@ test('paging tones keep DMR encoded dual frequencies and code readable on a dark
       { protocol: 'DMR', source_alias_name: 'Depot Portable', target_alias_name: 'Depot Dispatch', timeslot: 2 })
   ] });
   const row = page.locator('tr[data-id="21"]');
-  await expect(row.locator('[data-column="event"]')).toContainText('Encoded');
-  await expect(row.locator('[data-column="event"]')).toContainText('DTMF 3 · 697 + 1477 Hz · 120 ms');
-  await expect(row.locator('[data-column="event"]')).not.toContainText('[object');
+  await expect(row.locator('[data-column="tones"]')).toContainText('Encoded');
+  await expect(row.locator('[data-column="tones"]')).toContainText('DTMF 3 · 697 + 1477 Hz · 120 ms');
+  await expect(row.locator('[data-column="tones"]')).not.toContainText('[object');
   await expect(row).toContainText('Depot Portable'); await expect(row).toContainText('Depot Dispatch');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await row.locator('[data-column="event"]').evaluate(cell => cell.scrollIntoView({ inline: 'center', block: 'nearest' }));
+  await row.locator('[data-column="tones"]').evaluate(cell => cell.scrollIntoView({ inline: 'center', block: 'nearest' }));
   await page.evaluate(() => window.scrollTo(0, 0));
   await toneScreenshot(page, 'activity-tones-dark-phone');
 });

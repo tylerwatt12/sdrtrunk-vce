@@ -3,7 +3,7 @@ import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=17';
+import * as tableDefaults from './core/table-defaults.js?v=18';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -34,16 +34,16 @@ import { createStreamingWorkspace } from './features/streaming.js?v=10';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
 import { createAlertsWorkspace } from './features/alerts.js?v=11';
-import { createRecordingsFeature } from './features/recordings.js?v=42';
+import { createRecordingsFeature } from './features/recordings.js?v=43';
 import { createVoiceEnhancementSettings } from './features/voice-enhancement.js?v=5';
-import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=3';
+import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=28';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=23';
-import { formatPagingToneSummary } from './core/call-audio-details.js?v=3';
+import { createAudioDock } from './core/audio-dock.js?v=24';
+import { formatPagingToneSummary } from './core/call-audio-details.js?v=4';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -22032,6 +22032,7 @@ function activityRouteFilters(parameters, context, now = Date.now()) {
   if (!allowTargetIdentity && !capabilities.rawIdentities) targetKind = '';
   return Object.freeze({
     range, fromMs, toMs, action, eventType, encryption,
+    hasTones: value('activity_has_tones').toLowerCase() === 'true',
     includeGrants: action === 'GRANT' || capabilities.grants &&
       value('activity_include_grants').toLowerCase() === 'true',
     configurationId,
@@ -22059,6 +22060,7 @@ function activityApiFilterParameters(filters, now = Date.now()) {
   }
   if (filters.action) result.action = filters.action;
   if (filters.eventType) result.event_type = filters.eventType;
+  if (filters.hasTones) result.has_tones = true;
   if (filters.encryption !== 'all') result.encryption = filters.encryption;
   if (filters.configurationId) result.configuration_id = filters.configurationId;
   if (filters.radioRole !== 'any') result.radio_role = filters.radioRole;
@@ -22081,6 +22083,7 @@ function activityFilterRouteOverrides(filters) {
     activity_to_ms: filters.range === 'custom' ? filters.toMs : null,
     activity_action: filters.action || null,
     activity_event_type: filters.eventType || null,
+    activity_has_tones: filters.hasTones ? true : null,
     activity_encryption: filters.encryption === 'all' ? null : filters.encryption,
     activity_include_grants: filters.includeGrants && filters.action !== 'GRANT' ? true : null,
     activity_configuration_id: filters.configurationId || null,
@@ -22106,6 +22109,7 @@ function activityActionControlValue(filters, capabilities) {
 function activityMoreFilterCount(filters, capabilities) {
   return [
     Boolean(filters?.eventType),
+    Boolean(filters?.hasTones),
     capabilities?.encryption && Boolean(filters?.encryption) && filters.encryption !== 'all',
     Boolean(filters?.configurationId),
     filters?.groupMatch && filters.groupMatch !== 'all',
@@ -22136,6 +22140,7 @@ function activityCellFilterPatch(context, row, columnId) {
     const eventType = String(row?.event_type || '').trim().toUpperCase();
     return ACTIVITY_EVENT_TYPE_VALUES.includes(eventType) ? { eventType } : null;
   }
+  if (columnId === 'tones' && row?.paging_tone_summary?.tones?.length) return { hasTones: true };
   const encryptionValue = row?.encrypted;
   if (columnId === 'encryption' && capabilities.encryption &&
       (typeof encryptionValue === 'boolean' || encryptionValue === 0 || encryptionValue === 1)) {
@@ -22743,6 +22748,9 @@ function activityFilterChipDefinitions(filters, capabilities) {
     chips.push({ id: 'event', prefix: 'Event subtype:', value: activityOptionLabel(filters.eventType),
       keys: ['activity_event_type'] });
   }
+  if (filters.hasTones) {
+    chips.push({ id: 'tones', value: 'With tones', keys: ['activity_has_tones'] });
+  }
   if (filters.configurationId) {
     chips.push({ id: 'channel', prefix: 'Channel/site:', value: 'Selected channel',
       keys: ['activity_configuration_id'] });
@@ -22919,6 +22927,9 @@ function activityFilterToolbar(context, initialFilters) {
     { value: '', label: 'All event subtypes' },
     ...ACTIVITY_EVENT_TYPE_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
   ], initialFilters.eventType);
+  const toneControl = activityFilterSelect('Tones', [
+    { value: '', label: 'Any' }, { value: 'true', label: 'With tones' }
+  ], initialFilters.hasTones ? 'true' : '');
 
   let channelControl = null;
   if (capabilities.channel && context.radioSystemKey) {
@@ -22977,7 +22988,7 @@ function activityFilterToolbar(context, initialFilters) {
   morePanel.setAttribute('popover', 'auto');
   morePanel.setAttribute('role', 'dialog');
   morePanel.setAttribute('aria-label', 'Activity filters');
-  const eventControls = [eventControl.field];
+  const eventControls = [eventControl.field, toneControl.field];
   if (encryptionControl) eventControls.push(encryptionControl.field);
   const scopeControls = [];
   if (channelControl) scopeControls.push(channelControl.element);
@@ -23130,6 +23141,7 @@ function activityFilterToolbar(context, initialFilters) {
     const action = actionSelection === ACTIVITY_ACTION_INCLUDE_GRANTS ? '' : actionSelection;
     const next = {
       range, fromMs, toMs, action, eventType: eventControl.select.value,
+      hasTones: toneControl.select.value === 'true',
       encryption: encryptionControl?.select.value || 'all',
       includeGrants: action === 'GRANT' || actionSelection === ACTIVITY_ACTION_INCLUDE_GRANTS,
       configurationId: channelControl?.read() || '',
@@ -23196,7 +23208,7 @@ function activityCellDimension(columnId) {
     action: 'action', event: 'event subtype', source: 'source radio',
     'source-alias': 'source radio', 'source-ota-alias': 'source radio',
     target: 'target', 'target-alias': 'target', channel: 'channel',
-    encryption: 'encryption state'
+    encryption: 'encryption state', tones: 'tone content'
   })[columnId] || 'value';
 }
 
@@ -23364,20 +23376,15 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
 }
 
 function activityEventValue(row) {
-  if (String(row?.event_type || '').toUpperCase() !== 'TONE') return row.event_type;
-  const value = node('span', 'identity-summary');
-  value.append(node('span', 'identity-summary-primary', 'Paging tones'));
+  return String(row?.event_type || '').toUpperCase() === 'TONE' ? 'Paging tones' : row.event_type;
+}
+
+function activityToneValue(row) {
   const summary = formatPagingToneSummary(row.paging_tone_summary);
-  if (summary) {
-    value.append(node('small', 'identity-summary-context', summary.source));
-    const started = row.paging_tone_summary.call_started_at_ms;
-    if (typeof started === 'number' && started > 0 && Number.isFinite(new Date(started).getTime())) {
-      const context = node('small', 'identity-summary-context');
-      context.append('Call started ', dateTime(started));
-      value.append(context);
-    }
-    summary.tones.forEach((tone, index) => value.append(node('small', 'identity-summary-context', `${index + 1}. ${tone}`)));
-  }
+  if (!summary) return '';
+  const value = node('span', 'identity-summary');
+  value.append(node('span', 'identity-summary-primary', summary.source));
+  summary.tones.forEach((tone, index) => value.append(node('small', 'identity-summary-context', `${index + 1}. ${tone}`)));
   return value;
 }
 
@@ -23389,6 +23396,9 @@ function activityColumns(context, filters) {
     { id: 'event', label: 'Event subtype', render: (row) =>
       activityCellValue(activityEventValue(row), row, 'event', context, filters),
       sortValue: (row) => row.event_type || '' },
+    { id: 'tones', label: 'Tones', render: (row) =>
+      activityCellValue(activityToneValue(row), row, 'tones', context, filters),
+      sortValue: (row) => formatPagingToneSummary(row.paging_tone_summary)?.tones.join(' ') || '' },
     { id: 'source', label: 'Src', fullLabel: 'Source ID',
       render: (row) => activityCellValue(activityIdentifier(row, row.source_radio_id, 'radio',
         row.source_entity_ref, false, 'source'), row, 'source', context, filters),
@@ -23419,7 +23429,7 @@ function activityColumns(context, filters) {
 function activityColumnsForContext(context, filters) {
   const columns = activityColumns(context, filters);
   if (context?.kind === 'conventional-analog') {
-    const visible = new Set(['time', 'action', 'event', 'channel']);
+    const visible = new Set(['time', 'action', 'event', 'tones', 'channel']);
     return columns.filter((column) => visible.has(column.id));
   }
   return columns;
@@ -24806,13 +24816,16 @@ function channelEditorControl(field, profile, options, channel, protocolCatalog)
   let control;
   if (field.type === 'boolean') {
     control = uiToggle(Boolean(value ?? field.default), field.label);
-  } else if (field.type === 'enum' || field.type === 'dynamic_select') {
-    const entries = [...channelFieldOptions(field, profile, options)];
+  } else if (field.type === 'enum' || field.type === 'dynamic_select' ||
+      field.type === 'number' && Array.isArray(field.options)) {
+    const entries = channelFieldOptions(field, profile, options).map(entry => field.type === 'number' ?
+      { ...entry, value: Number(entry.value) } : entry);
     if (field.type === 'dynamic_select' && value != null && value !== '' &&
         !entries.some((entry) => String(entry.value) === String(value))) {
       entries.unshift({ value, label: `Current (unavailable): ${value}` });
     }
-    control = uiSelect(entries, value ?? field.default ?? '', field.required !== true);
+    control = uiSelect(entries, value ?? field.default ?? '',
+      field.type === 'number' ? field.nullable === true : field.required !== true);
   } else if (field.type === 'multi_select') {
     const selected = new Set(value || []);
     control = node('fieldset', 'channel-multi-select');

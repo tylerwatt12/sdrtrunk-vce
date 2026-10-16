@@ -2,7 +2,7 @@ import { systemLabel, systemName } from '../core/system-labels.js?v=1';
 import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
-import { callAudioDetailGroups } from '../core/call-audio-details.js?v=3';
+import { callAudioDetailGroups } from '../core/call-audio-details.js?v=4';
 import { createFormWorkflow } from '../core/form-workflows.js?v=4';
 
 const CALLS = '/api/v1/recordings/calls';
@@ -1341,7 +1341,7 @@ export function createRecordingsFeature(deps) {
       }
       const locations = { 'Source & target identities': 'identities', 'Patch member identities': 'identities',
         'Protocol & signaling': 'technical', 'Additional signaling': 'technical', 'Received site identities': 'technical',
-        'Audio': 'technical', 'Paging tones': 'technical',
+        'Audio': 'technical', 'Tones': 'technical',
         'Recording identifiers': 'recording' };
       for (const [title, facts] of [...factGroups(call), ...callAudioDetailGroups(call)]) {
         const group = node('section', 'ui-form-section');
@@ -2082,9 +2082,9 @@ export function createRecordingsFeature(deps) {
     } else if (topic === 'tones') {
       panels.append(node('p', 'recordings-dialog-help', 'Search saved paging tones and DCS codes. A recording without saved detections may still contain audible tones.'));
       const fields = node('div', 'recordings-tone-fields');
-      const presence = select(node, [['', 'Any recording'], ['detected', 'Has detected paging tones']], 'Paging tones');
+      const presence = select(node, [['', 'Any recording'], ['detected', 'Has detected tones']], 'Tones');
       presence.value = draft.paging_tones || (draft.tone_frequency_hz ? 'detected' : '');
-      fields.append(field('Paging tones', presence));
+      fields.append(field('Tones', presence));
       const first = addInput(fields, 'tone_frequency_hz', 'First tone (Hz)', 'Any frequency', 'number');
       const second = addInput(fields, 'tone_then_hz', 'Then tone (Hz)', 'Optional second tone', 'number');
       const tolerance = addInput(fields, 'tone_tolerance_hz', 'Tolerance (± Hz)', '20', 'number');
@@ -2240,7 +2240,7 @@ export function createRecordingsFeature(deps) {
     for (const id of recordingChannelSelections(search.channel_ids).slice(0, Math.max(0, 3 - paths.children.length))) paths.append(node('p', '', channelLabels.get(id) || `Channel ${id}`));
     const radioCount = recordingIdentitySelections(search.radios, 'radio').length;
     const radios = pickerButton('radios', 'Radios', radioCount ? `${radioCount} selected` : 'Any source · name or radio ID', 'icon-scanner');
-    const tones = pickerButton('tones', 'Tones & signaling', search.dcs_code ? `DCS ${search.dcs_code}` : search.tone_frequency_hz ? `${search.tone_frequency_hz}${search.tone_then_hz ? ` → ${search.tone_then_hz}` : ''} Hz` : search.paging_tones ? 'Has detected paging tones' : 'Paging tones or DCS', 'icon-audio-quality');
+    const tones = pickerButton('tones', 'Tones & signaling', search.dcs_code ? `DCS ${search.dcs_code}` : search.tone_frequency_hz ? `${search.tone_frequency_hz}${search.tone_then_hz ? ` → ${search.tone_then_hz}` : ''} Hz` : search.paging_tones ? 'Has detected tones' : 'Tones or DCS', 'icon-audio-quality');
     const more = pickerButton('more', 'More filters', [search.protocol ? protocolLabel(search.protocol) : '', search.site ? 'Site' : '', search.min_duration_ms || search.max_duration_ms ? 'Duration' : ''].filter(Boolean).join(' · ') || 'Protocol, site, duration…', 'icon-filter');
     filterCountHost = node('span', 'recordings-filter-count'); filterCountHost.hidden = true; more.append(filterCountHost);
     const actions = node('div', 'recordings-search-actions');
