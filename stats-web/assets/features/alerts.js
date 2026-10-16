@@ -22,6 +22,7 @@ export function createAlertsWorkspace(deps) {
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');
   feedback.setAttribute('role', 'status');
+  feedback.setAttribute('aria-live', 'polite');
   const body = node('div', 'alerts-content');
   host.append(feedback, body);
   let snapshot = null;
@@ -32,6 +33,7 @@ export function createAlertsWorkspace(deps) {
   let publicTopic = selectedTopic;
   let openedLinkedAlert = false;
   let directConnection = { state: 'none' };
+  let ruleTestBusy = false;
   let device = readAlertDevice(window.localStorage);
   const originalManifest = document.querySelector('link[rel="manifest"]')?.getAttribute('href');
 
@@ -140,6 +142,15 @@ export function createAlertsWorkspace(deps) {
     control.addEventListener('click', action);
     return control;
   }
+  function catalogRuleActions(rule) {
+    const test = button('Test', () => void testRule(rule, test));
+    test.setAttribute('aria-label', 'Test alert rule: ' + rule.name);
+    test.setAttribute('data-alert-rule-test', '');
+    test.disabled = ruleTestBusy;
+    const actions = node('div', 'alerts-catalog-action-row');
+    actions.append(test, catalogDelete('Delete rule: ' + rule.name, () => void deleteRule(rule)));
+    return actions;
+  }
   function catalogPublicTopic(topic) {
     const label = 'View public topic: ' + topic.name;
     const control = node('a', 'ui-button ui-button-secondary ui-icon-button');
@@ -181,7 +192,7 @@ export function createAlertsWorkspace(deps) {
         { id: 'topic', label: 'Topic', render: rule => topicName(rule.topic_id) },
         { id: 'enabled', label: 'State', render: rule => uiStatus(rule.enabled ? 'Enabled' : 'Paused', 'neutral') },
         { id: 'actions', label: 'Actions', essential: true, className: 'ui-record-action alerts-catalog-actions',
-          render: rule => catalogDelete('Delete rule: ' + rule.name, () => void deleteRule(rule)) }
+          render: catalogRuleActions }
       ], 'No alert rules yet. Create a rule to publish activity to a topic.', 'alert-rules', add));
     } else {
       body.append(catalogPanel('Topics', snapshot.topics || [], [
@@ -220,6 +231,27 @@ export function createAlertsWorkspace(deps) {
       { title: 'Delete alert rule', confirmLabel: 'Delete rule', tone: 'danger' })) return;
     try { replaceSnapshot(await write(ADMIN + '/rules/' + encodeURIComponent(rule.id), 'DELETE', { revision: snapshot.revision })); }
     catch (error) { showError(error); }
+  }
+
+  async function testRule(rule, control) {
+    if (ruleTestBusy || disposed) return;
+    ruleTestBusy = true;
+    try {
+      const confirmation = confirmAction(`Send a test alert for “${rule.name}”? This will send an alert to all users subscribed to the “${topicName(rule.topic_id)}” topic. The title and text will start with “TEST: ”.`,
+        { title: 'Send test alert', confirmLabel: 'Send test alert', tone: 'primary' });
+      host.querySelectorAll('[data-alert-rule-test]').forEach(button => { button.disabled = true; });
+      if (!await confirmation || disposed) return;
+      feedback.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Sending test alert…'));
+      await write(ADMIN + '/rules/' + encodeURIComponent(rule.id) + '/test', 'POST', { revision: snapshot.revision });
+      if (!disposed) feedback.replaceChildren(notice('Test alert queued for subscribed users.'));
+    } catch (error) {
+      if (!disposed && error?.name !== 'AbortError') feedback.replaceChildren(notice(
+        error?.message || 'Test alert could not be sent. Try the Test button again.', 'danger'));
+    } finally {
+      ruleTestBusy = false;
+      host.querySelectorAll('[data-alert-rule-test]').forEach(button => { button.disabled = false; });
+      if (!disposed && control.isConnected && document.activeElement === document.body) control.focus({ preventScroll: true });
+    }
   }
 
   async function editTopic(existing = null) {

@@ -37,11 +37,19 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     tone_types: [{ value: 'CALL_PROGRESS_TONE', label: 'Call progress tone' }], dcs_codes: [{ value: 'N023', label: 'DCS 023' }] },
     config: { revision: 1, enabled: true, mode: 'proxy', site_url: '', sender_label: 'VCE installation', registration: { status: 'approved', sender_id: 'synthetic-sender' } },
     writes: [], pending: [], enrollmentStatus: 'pending', publicMode: 'proxy', deviceMode: 'proxy', deviceStatus: 'connected', deviceTopics: ['fire'],
-    holdTopic: false, localExpiry: false, enrollmentOutage: false, enrollmentChecks: 0, registrationFailure: false, publicTestFailure: false };
+    holdTopic: false, holdRuleTest: false, ruleTestFailure: false, localExpiry: false, enrollmentOutage: false,
+    enrollmentChecks: 0, registrationFailure: false, publicTestFailure: false };
   await page.route('**/api/v1/**', async route => {
     const request = route.request(); const url = new URL(request.url()); const p = url.pathname;
     const data = value => route.fulfill({ json: { data: value } });
     if (guest && p === '/api/v1/auth/session') return data({ configured: true, authenticated: false, capabilities: { 'web-access': false } });
+    if (/^\/api\/v1\/admin\/alerts\/rules\/[^/]+\/test$/.test(p)) {
+      state.writes.push({ p, method: request.method(), value: request.postDataJSON() });
+      const complete = () => state.ruleTestFailure ? route.fulfill({ status: 503,
+        json: { error: { message: 'Test alert could not be sent. Try the Test button again.' } } }) : data({ queued: true });
+      if (state.holdRuleTest) return new Promise(resolve => state.pending.push(async () => { await complete(); resolve(); }));
+      return complete();
+    }
     if (p === '/api/v1/admin/alerts/topics' || p === '/api/v1/admin/alerts/rules') {
       if (request.method() === 'GET') return data(state);
       const value = request.postDataJSON(); state.writes.push({ p, value });
@@ -1000,6 +1008,76 @@ test('rule catalog keeps linked rule names, topic context, and confirmed deletio
   expect(state.writes[0].value.revision).toBe(1);
   expect(fixture.pageErrors).toEqual([]);
 });
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+  test(`rule tests confirm all subscribers and prevent duplicate sends in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { state, fixture } = await installAlerts(page, { theme });
+    state.revision = 7;
+    state.holdRuleTest = true;
+    const rule = { id: 'dispatch / west', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call',
+      conditions: { op: 'all', items: [] }, timing: { mode: 'immediate' }, schedule: { mode: 'always' },
+      cooldown_minutes: 15, repeat_key: 'rule', title_template: 'Dispatch is active', body_template: '{radio} transmitted.' };
+    state.rules = [rule, { ...rule, id: 'weather', name: 'Weather activity', topic_id: 'paused', enabled: false }];
+    await page.goto('/app.html?view=admin&tab=alert-rules');
+    const tests = page.locator('.alerts-catalog [data-alert-rule-test]');
+    const dispatch = page.getByRole('button', { name: 'Test alert rule: Dispatch activity', exact: true });
+    const weather = page.getByRole('button', { name: 'Test alert rule: Weather activity', exact: true });
+    await expect(tests).toHaveCount(2);
+    await expect(dispatch).toHaveText('Test');
+    await expect(weather).toBeEnabled();
+    await expect(page.locator('.alerts-catalog tbody tr[data-id="weather"]')).toContainText('Paused');
+    await dispatch.click();
+    const confirmation = page.getByRole('alertdialog', { name: 'Send test alert', exact: true });
+    await expect(confirmation).toContainText('This will send an alert to all users subscribed to the “Fire activity” topic.');
+    await expect(confirmation).toContainText('The title and text will start with “TEST: ”.');
+    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await expect(dispatch).toBeDisabled();
+    await expect(weather).toBeDisabled();
+    await auditScreenshot(page, `rule-test-confirmation-${theme}-${width}`, false);
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dispatch).toBeEnabled();
+    await expect(dispatch).toBeFocused();
+    expect(state.writes).toHaveLength(0);
+    await dispatch.click();
+    await dispatch.evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await expect(confirmation).toHaveCount(1);
+    await confirmation.getByRole('button', { name: 'Send test alert', exact: true }).click();
+    await expect.poll(() => state.pending.length).toBe(1);
+    await expect(dispatch).toBeDisabled();
+    await expect(weather).toBeDisabled();
+    await dispatch.evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(state.writes).toEqual([{ p: '/api/v1/admin/alerts/rules/dispatch%20%2F%20west/test', method: 'POST', value: { revision: 7 } }]);
+    await state.pending.shift()();
+    const feedback = page.locator('.alerts-workspace > [role="status"]');
+    await expect(feedback).toHaveAttribute('aria-live', 'polite');
+    await expect(feedback).toHaveText('Test alert queued for subscribed users.');
+    await expect(dispatch).toBeEnabled();
+    await expect(weather).toBeEnabled();
+    state.holdRuleTest = false;
+    state.ruleTestFailure = true;
+    await weather.click();
+    await expect(confirmation).toContainText('all users subscribed to the “Weather operations” topic');
+    await confirmation.getByRole('button', { name: 'Send test alert', exact: true }).click();
+    await expect(feedback).toHaveText('Test alert could not be sent. Try the Test button again.');
+    await expect(weather).toBeEnabled();
+    await expect(dispatch).toBeEnabled();
+    await feedback.scrollIntoViewIfNeeded();
+    await auditScreenshot(page, `rule-test-error-${theme}-${width}`, false);
+    state.ruleTestFailure = false;
+    await weather.click();
+    await confirmation.getByRole('button', { name: 'Send test alert', exact: true }).click();
+    await expect(feedback).toHaveText('Test alert queued for subscribed users.');
+    expect(state.writes).toHaveLength(3);
+    expect(state.writes.slice(1)).toEqual(Array(2).fill({ p: '/api/v1/admin/alerts/rules/weather/test', method: 'POST', value: { revision: 7 } }));
+    expect(state.revision).toBe(7);
+    expect(state.rules[1].enabled).toBe(false);
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace', '.read-only-modal']);
+    await feedback.scrollIntoViewIfNeeded();
+    await auditScreenshot(page, `rule-test-success-${theme}-${width}`, false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
 
 test('topic catalog pages the complete bounded catalog and keeps later edit actions reachable', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
