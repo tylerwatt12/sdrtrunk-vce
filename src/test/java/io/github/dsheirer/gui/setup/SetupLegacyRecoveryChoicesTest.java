@@ -73,13 +73,13 @@ class SetupLegacyRecoveryChoicesTest
     {
         SwingUtilities.invokeAndWait(() -> {
             var choices = new SetupWizard.LegacyRecoveryChoices(Set.of(
-                ReceiverSettingsSchema.PAGING_TONES_KEY, ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, "unknown"));
+                ReceiverSettingsSchema.PAGING_TONES_KEY, "audio.voice_enhancement", "unknown"));
             assertEquals(Set.of(ReceiverSettingsSchema.PAGING_TONES_KEY), choices.choices().keySet());
             choices.choices().get(ReceiverSettingsSchema.PAGING_TONES_KEY).doClick();
             assertEquals(Map.of(ReceiverSettingsSchema.PAGING_TONES_KEY, "{\"enabled\":true}"),
                 choices.selectedDefaults());
             var empty = new SetupWizard.LegacyRecoveryChoices(Set.of(
-                ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, "unknown"));
+                "audio.voice_enhancement", "unknown"));
             assertEquals(Map.of(), empty.selectedDefaults());
             assertFalse(empty.anySelected());
         });

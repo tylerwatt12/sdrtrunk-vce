@@ -721,7 +721,7 @@ public final class SetupWizard extends JDialog
         {
             for(String key: ReceiverSettingsSchema.KEYS)
             {
-                if(!available.contains(key) || ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY.equals(key)) continue;
+                if(!available.contains(key)) continue;
                 String label = switch(key)
                 {
                     case ReceiverSettingsSchema.REMOTE_LINKS_KEY -> "Recover saved Remote Links";

@@ -39,14 +39,14 @@ class Format52To53DatabaseMigrationTest
             assertEquals(52, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("4b8bb01a7b346866f0af8dadc087f680a30bfe310aeeaef2c28d8f282ba00d41",
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(3, ReceiverSettingsSchema.countMissing(connection));
+            assertEquals(3, Format53ReceiverSettingsSchema.countMissing(connection));
             sql.executeUpdate("UPDATE sqlite_sequence SET seq=seq+5000 WHERE name='receiver_activity_event'");
             sql.execute("ANALYZE receiver_activity_tone_sequence");
             before = retainedContents(connection);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55"),
+            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56"),
                 report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(3, report.steps().getFirst().effects().getLast().affectedRows());
             assertEquals(before, retainedContents(connection));
@@ -73,20 +73,21 @@ class Format52To53DatabaseMigrationTest
         Settings remote = new Settings(7, true, "127.0.0.1", 53_800,
             List.of(new TrustedSender(sender, "Synthetic receiver", "synthetic-credential", true, null, 123, false)),
             new Outbound(true, "127.0.0.1", 53_801, sender, "synthetic-credential", List.of(UUID.randomUUID().toString())));
-        store.save(ReceiverSettingsSchema.REMOTE_LINKS_KEY, remote);
-        store.save(ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", false));
-        store.save(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", true));
+        store.save(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, remote);
+        store.save(Format53ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", false));
+        store.save(Format53ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", true));
         try(Connection connection = open(database))
         {
             Map<String,List<String>> before = allContents(connection);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var effects = new Format52To53DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stamp(connection, 53);
             connection.commit();
-            assertEquals(0, report.steps().getFirst().effects().getLast().affectedRows());
+            assertEquals(0, effects.getLast().affectedRows());
             assertEquals(before, allContents(connection));
-            ReceiverSettingsSchema.validate(connection);
+            Format53ReceiverSettingsSchema.validate(connection);
         }
-        assertEquals(remote, store.load(ReceiverSettingsSchema.REMOTE_LINKS_KEY, Settings.class).orElseThrow());
+        assertEquals(remote, store.load(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, Settings.class).orElseThrow());
     }
 
     @Test void invalidExistingChoicesRefuseWithoutCredentialDisclosureOrChanges() throws Exception
@@ -96,7 +97,7 @@ class Format52To53DatabaseMigrationTest
         try(Connection connection = open(database); var insert = connection.prepareStatement(
             "INSERT INTO application_settings VALUES(?,?,1)"))
         {
-            insert.setString(1, ReceiverSettingsSchema.REMOTE_LINKS_KEY);
+            insert.setString(1, Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY);
             insert.setString(2, "{\"secret\":\"" + secret + "\"}");
             insert.executeUpdate();
             Map<String,List<String>> before = allContents(connection);
@@ -126,7 +127,7 @@ class Format52To53DatabaseMigrationTest
             {
                 assertEquals(52, DatabaseFormatCatalog.inspect(connection).version());
                 assertEquals(before, allContents(connection));
-                assertEquals(3, ReceiverSettingsSchema.countMissing(connection));
+                assertEquals(3, Format53ReceiverSettingsSchema.countMissing(connection));
                 integrity(connection);
             }
             new ApplicationMigrationService().migrateCurrent(root, false, null);
@@ -172,18 +173,41 @@ class Format52To53DatabaseMigrationTest
         }
     }
 
+    @Test void missingOrMalformedRetiredChoiceRemainsInvalidForOldStartupButDoesNotBlockCurrentRetirement() throws Exception
+    {
+        for(boolean missing: List.of(false, true))
+        {
+            Path root = directory.resolve("retired-" + missing);
+            Path database = Format53TestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(root));
+            try(Connection connection = open(database); var sql = connection.createStatement())
+            {
+                sql.executeUpdate(missing ? "DELETE FROM application_settings WHERE key='audio.voice_enhancement'" :
+                    "UPDATE application_settings SET settings_json='{}' WHERE key='audio.voice_enhancement'");
+                assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            }
+            assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+            new ApplicationMigrationService().migrateCurrent(root, false, null);
+            try(Connection connection = open(database))
+            {
+                assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertDefaults(connection);
+                assertTrue(new ApplicationSettingsStore(database).loadJson("audio.voice_enhancement", 256).isEmpty());
+            }
+        }
+    }
+
     @Test void strictValuesRejectCoercionDuplicatesTrailingDataAndMissingRemoteFields() throws Exception
     {
         for(String json: List.of("{}", "{\"enabled\":\"false\"}", "{\"enabled\":false,\"enabled\":true}",
             "{\"enabled\":false} {}", "{\"enabled\":false,\"unknown\":true}"))
         {
-            assertThrows(SQLException.class, () -> ReceiverSettingsSchema.validateJson(ReceiverSettingsSchema.PAGING_TONES_KEY, json));
+            assertThrows(SQLException.class, () -> Format53ReceiverSettingsSchema.validateJson(Format53ReceiverSettingsSchema.PAGING_TONES_KEY, json));
         }
-        String defaults = ReceiverSettingsSchema.defaultJson(ReceiverSettingsSchema.REMOTE_LINKS_KEY);
+        String defaults = Format53ReceiverSettingsSchema.defaultJson(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY);
         for(String json: List.of(defaults.replace("\"trustedSenders\":[]", "\"trustedSenders\":null"),
             defaults.replace("\"listenerEnabled\":false,", ""), defaults + " {}"))
         {
-            assertThrows(SQLException.class, () -> ReceiverSettingsSchema.validateJson(ReceiverSettingsSchema.REMOTE_LINKS_KEY, json));
+            assertThrows(SQLException.class, () -> Format53ReceiverSettingsSchema.validateJson(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, json));
         }
     }
 

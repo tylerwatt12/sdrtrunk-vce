@@ -61,9 +61,10 @@ new reception rebuilds those observations. An unusable setting or configuration 
 or skipped independently. The plan describes these possibilities and the final report names the actual effects.
 
 Remote Links pairing and connection settings and paging-tone detection are stored in the application database.
-The database also retains the former voice-enhancement choice for compatibility; current VCE does not use it.
-Upgrading an older profile or importing its complete data folder preserves these settings and imports their former
-JSON values when the database has no saved value. The original files remain unchanged.
+Upgrading an older profile or importing its complete data folder imports their former JSON values when the database
+has no saved value. The original files remain unchanged. The update removes retired application-managed
+voice-enhancement and continuous-gain choices; the selected JMBE library owns its audio processing and output format.
+Unused legacy model-selection files are not read or imported.
 A SQLite-only import preserves choices already stored in the selected database; it does not read neighboring JSON
 files. Choose the complete folder when moving settings that an older build still kept outside SQLite.
 
@@ -189,7 +190,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -755,6 +756,21 @@ pairs. Existing encoded digital metadata is preserved. CTCSS is a separate analo
 when absent, and never becomes tone evidence. The adjacent migrator changes only the tone-context method
 constraints. Fresh creation and migration reach the same format-55 signature; normal startup validates only.
 
+The format 55-to-56 step retires the application-managed voice-enhancement and continuous-gain choices. It removes
+only `audio.voice_enhancement` from `application_settings` and `audio.output.continuous.agc.enabled` from the exact
+`user/io/github/dsheirer/preference/audio` node of `portable_java_preferences_v1`. The plan declares both retirements;
+the completion report counts the setting row and preference actually removed. If that preference was the node's
+last value, the empty node is removed; all other portable values and their stored timestamp remain unchanged.
+Existing bounded component repair remains responsible for independently unreadable portable settings.
+
+Remote Links, paging-tone detection, MP3 normalization, recording and streaming settings, credentials, retained
+Activity, tone facts, relationships and allocators are preserved. Current fresh databases create only the active
+Remote Links and paging-tone rows. Historical formats 53 through 55 keep their frozen three-row validation and
+migration contracts. The table layout is unchanged; the global format marker identifies the new retirement contract.
+Normal startup validates the absence of retired options and never deletes or repairs them. Current folder imports
+and recovery no longer inspect unused `audio-models/selection.json` files; this does not alter the earlier historical
+migration policies. No receiver audio, installed JMBE library or bundled model is changed by the database update.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -785,7 +801,7 @@ it adds no activity summary or memory cache. Catalog format 9 admits the explici
 nominal single tones and waveform DTMF while preserving all existing rows, relationships, transcript search data and
 allocators. The adjacent format-8-to-9 step changes only tone-context method constraints; it creates no historical
 tones or recording-to-alert links. Format 8 retains its frozen populated fixture and exact signature. The main
-application database is independently at format 55; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+application database is independently at format 56; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -885,9 +901,10 @@ interrupted. Old in-memory preferences are closed before replacement and are nev
 ## Input Scope
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
-as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping. Remote Links settings and the paging-tone
-and retired voice-enhancement choices already in the application database are preserved for every import scope.
-The retired choice has no effect on audio processing. Remote Links network
+as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping.
+Remote Links settings and paging-tone choices already in the application database are preserved for every import scope.
+The adjacent update removes retired voice-enhancement and continuous-gain choices and reports their counts.
+Remote Links network
 destinations and stable channel/sender identities are preserved without path remapping. An unavailable optional artifact is
 reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
 `database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the

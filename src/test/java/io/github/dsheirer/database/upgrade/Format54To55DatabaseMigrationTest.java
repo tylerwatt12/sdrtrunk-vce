@@ -41,18 +41,20 @@ class Format54To55DatabaseMigrationTest
             sql.execute("ANALYZE");
             Map<String,List<String>> before = contents(connection);
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            new Format54To55DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 55);
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             connection.rollback();
             assertEquals(54, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
-            DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(55, DatabaseFormatCatalog.requireCurrent(connection).version());
+            new Format54To55DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 55); connection.commit();
+            assertEquals(55, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
             try(var rows = sql.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
             try(var rows = sql.executeQuery("PRAGMA integrity_check")) { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); }
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertThrows(java.sql.SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection));
         }
     }
 

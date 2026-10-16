@@ -1,7 +1,6 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.database.upgrade;
 
-import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
@@ -19,11 +18,11 @@ final class Format52To53DatabaseMigration implements DatabaseMigrationStep
     }
     @Override public List<DatabaseMigrationEffect> inspectSource(Connection connection) throws SQLException
     {
-        return effects(ReceiverSettingsSchema.countMissing(connection));
+        return effects(Format53ReceiverSettingsSchema.countMissing(connection));
     }
     @Override public void migrateSource(Connection connection) throws SQLException
     {
-        ReceiverSettingsSchema.initializeMissing(connection);
+        Format53ReceiverSettingsSchema.initializeMissing(connection);
     }
     private static List<DatabaseMigrationEffect> effects(long defaults)
     {

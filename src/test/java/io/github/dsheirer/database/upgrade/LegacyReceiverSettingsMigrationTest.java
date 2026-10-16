@@ -33,7 +33,7 @@ class LegacyReceiverSettingsMigrationTest
     private static final String VOICE_FILE = "audio-models/selection.json";
     @TempDir Path directory;
 
-    @Test void ownedFormat52ImportsAllLegacyChoicesAndKeepsTheOriginalDocuments() throws Exception
+    @Test void ownedFormat52ImportsActiveLegacyChoicesAndKeepsTheOriginalDocuments() throws Exception
     {
         Path root = profile("owned", 52);
         Settings expected = legacyFiles(root, 2);
@@ -96,7 +96,7 @@ class LegacyReceiverSettingsMigrationTest
             Map.of(ReceiverSettingsSchema.REMOTE_LINKS_KEY,
                 ReceiverSettingsSchema.defaultJson(ReceiverSettingsSchema.REMOTE_LINKS_KEY)), null);
         assertEquals(expected, new RemoteLinkSettingsStore(database(root)).load());
-        assertAudio(root, true, false);
+        assertAudio(root, true);
         assertFalse(result.helperOutput().contains(SYNTHETIC_SECRET));
         assertOriginals(originals);
     }
@@ -109,17 +109,17 @@ class LegacyReceiverSettingsMigrationTest
         ApplicationSettingsStore store = new ApplicationSettingsStore(database(root));
         store.save(ReceiverSettingsSchema.REMOTE_LINKS_KEY, newer);
         store.save(ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", true));
-        store.save(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", false));
+        store.save(Format53ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", false));
         Map<Path,byte[]> originals = originalFiles(root);
 
         new ApplicationMigrationService().migrateCurrent(root, false, null);
         assertEquals(newer, new RemoteLinkSettingsStore(database(root)).load());
-        assertAudio(root, true, false);
+        assertAudio(root, true);
         assertThrows(Exception.class, () -> new ApplicationMigrationService().migrateCurrent(root, false,
             Map.of(ReceiverSettingsSchema.REMOTE_LINKS_KEY,
                 ReceiverSettingsSchema.defaultJson(ReceiverSettingsSchema.REMOTE_LINKS_KEY)), null));
         assertEquals(newer, new RemoteLinkSettingsStore(database(root)).load());
-        assertAudio(root, true, false);
+        assertAudio(root, true);
         assertOriginals(originals);
     }
 
@@ -136,7 +136,7 @@ class LegacyReceiverSettingsMigrationTest
         assertEquals(52, version(root));
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database(root)))
         {
-            assertEquals(3, ReceiverSettingsSchema.countMissing(connection));
+            assertEquals(2, ReceiverSettingsSchema.countMissing(connection));
         }
         assertOriginals(originals);
         new ApplicationMigrationService().migrateCurrent(root, false, null);
@@ -160,6 +160,23 @@ class LegacyReceiverSettingsMigrationTest
                 assertFalse(cause.toString().contains(SYNTHETIC_SECRET));
             assertEquals(52, version(root));
             assertOriginals(originals);
+        }
+    }
+
+    @Test void retiredModelSelectionIsNotReadOrCopiedEvenWhenMalformedOrOversized() throws Exception
+    {
+        for(boolean oversized: List.of(false, true))
+        {
+            Path root = profile("retired-model-" + oversized, 52);
+            Settings expected = legacyFiles(root, 2);
+            String unused = oversized ? "x".repeat(4097) : "{invalid retired model selection";
+            Files.writeString(root.resolve(VOICE_FILE), unused);
+            Map<Path,byte[]> originals = originalFiles(root);
+            new ApplicationMigrationService().migrateCurrent(root, false, null);
+            assertImported(root, expected);
+            assertOriginals(originals);
+            assertFalse(ApplicationMigrationService.availableRecoveryKeys(root)
+                .contains(Format53ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY));
         }
     }
 
@@ -195,7 +212,7 @@ class LegacyReceiverSettingsMigrationTest
         {
             Path source = profile("review-" + change, 52);
             legacyFiles(source, 2);
-            Path altered = source.resolve(change.equals("added") ? VOICE_FILE : REMOTE_FILE);
+            Path altered = source.resolve(change.equals("added") ? PAGING_FILE : REMOTE_FILE);
             if(change.equals("added")) Files.delete(altered);
             var selection = PreviousBuildLocator.resolveSelection(source).orElseThrow();
             var approval = ApplicationMigrationService.readMigrationApproval(selection, directory);
@@ -206,7 +223,7 @@ class LegacyReceiverSettingsMigrationTest
                 //Even a semantically identical rewrite changes the source bytes approved by the operator.
                 case "rewritten" -> Files.writeString(altered,
                     JSON.writerWithDefaultPrettyPrinter().writeValueAsString(JSON.readTree(Files.readAllBytes(altered))));
-                case "added" -> write(altered, Map.of("version", 2, "enabled", true));
+                case "added" -> write(altered, Map.of("version", 1, "enabled", true));
                 case "removed" -> Files.delete(altered);
                 default -> throw new AssertionError(change);
             }
@@ -318,22 +335,21 @@ class LegacyReceiverSettingsMigrationTest
     private static void assertImported(Path root, Settings expected) throws Exception
     {
         assertEquals(expected, new RemoteLinkSettingsStore(database(root)).load());
-        assertAudio(root, false, true);
+        assertAudio(root, false);
     }
 
     private static void assertDefaults(Path root) throws Exception
     {
         assertEquals(Settings.defaults(), new RemoteLinkSettingsStore(database(root)).load());
-        assertAudio(root, true, false);
+        assertAudio(root, true);
     }
 
-    private static void assertAudio(Path root, boolean paging, boolean voice) throws Exception
+    private static void assertAudio(Path root, boolean paging) throws Exception
     {
         ApplicationSettingsStore store = new ApplicationSettingsStore(database(root));
         assertEquals(JSON.valueToTree(Map.of("enabled", paging)),
             JSON.readTree(store.loadJson(ReceiverSettingsSchema.PAGING_TONES_KEY, 256).orElseThrow()));
-        assertEquals(JSON.valueToTree(Map.of("enabled", voice)),
-            JSON.readTree(store.loadJson(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, 256).orElseThrow()));
+        assertTrue(store.loadJson(Format53ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, 256).isEmpty());
     }
 
     private static Map<Path,byte[]> originalFiles(Path root) throws Exception

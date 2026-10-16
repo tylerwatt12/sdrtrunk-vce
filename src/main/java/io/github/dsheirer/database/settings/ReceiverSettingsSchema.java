@@ -16,13 +16,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Required format-53 receiver settings stored as distinct typed application_settings rows. */
+/** Active format-56 receiver settings stored as distinct typed application_settings rows. */
 public final class ReceiverSettingsSchema
 {
     public static final String REMOTE_LINKS_KEY = "remote.links";
     public static final String PAGING_TONES_KEY = "audio.paging_tones";
-    public static final String VOICE_ENHANCEMENT_KEY = "audio.voice_enhancement";
-    public static final List<String> KEYS = List.of(REMOTE_LINKS_KEY, PAGING_TONES_KEY, VOICE_ENHANCEMENT_KEY);
+    public static final List<String> KEYS = List.of(REMOTE_LINKS_KEY, PAGING_TONES_KEY);
     private static final int MAXIMUM_REMOTE_BYTES = 256_000;
     private static final int MAXIMUM_AUDIO_BYTES = 256;
     private static final ObjectMapper JSON = new ObjectMapper()
@@ -64,7 +63,7 @@ public final class ReceiverSettingsSchema
         return missing;
     }
 
-    /** Strict startup admission: existing databases must already contain all three valid settings. */
+    /** Strict startup admission: existing databases must already contain both valid settings. */
     public static void validate(Connection connection) throws SQLException
     {
         for(String key: KEYS)
@@ -81,7 +80,6 @@ public final class ReceiverSettingsSchema
             {
                 case REMOTE_LINKS_KEY -> JSON.writeValueAsString(RemoteLinkSettingsStore.Settings.defaults());
                 case PAGING_TONES_KEY -> "{\"enabled\":true}";
-                case VOICE_ENHANCEMENT_KEY -> "{\"enabled\":false}";
                 default -> throw new IllegalArgumentException("Unknown receiver settings key");
             };
         }
@@ -131,7 +129,7 @@ public final class ReceiverSettingsSchema
                 }
                 RemoteLinkSettingsStore.validate(JSON.treeToValue(value, RemoteLinkSettingsStore.Settings.class));
             }
-            else if(PAGING_TONES_KEY.equals(key) || VOICE_ENHANCEMENT_KEY.equals(key))
+            else if(PAGING_TONES_KEY.equals(key))
             {
                 fields(value, "enabled");
                 bool(value, "enabled");
@@ -204,7 +202,6 @@ public final class ReceiverSettingsSchema
         {
             case REMOTE_LINKS_KEY -> "Remote Links";
             case PAGING_TONES_KEY -> "Paging-tone";
-            case VOICE_ENHANCEMENT_KEY -> "Voice-enhancement";
             default -> "Receiver";
         };
         return new SQLException(label + " settings are missing or invalid; restore a valid database before starting");

@@ -54,7 +54,6 @@ class ApplicationMigrationReceiverSettingsTest
         configure(target);
         ApplicationSettingsStore targetStore = new ApplicationSettingsStore(database(target));
         targetStore.save(ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", true));
-        targetStore.save(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", false));
         byte[] original = Files.readAllBytes(database(source));
 
         service().replaceCurrentDatabase(database(source), target, null);
@@ -109,7 +108,6 @@ class ApplicationMigrationReceiverSettingsTest
         ApplicationSettingsStore store = new ApplicationSettingsStore(database(root));
         store.save(ReceiverSettingsSchema.REMOTE_LINKS_KEY, settings);
         store.save(ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", false));
-        store.save(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", true));
         return settings;
     }
 
@@ -118,7 +116,7 @@ class ApplicationMigrationReceiverSettingsTest
         ApplicationSettingsStore store = new ApplicationSettingsStore(database(root));
         assertEquals(expected, store.load(ReceiverSettingsSchema.REMOTE_LINKS_KEY, Settings.class).orElseThrow());
         assertEquals(Map.of("enabled", false), store.load(ReceiverSettingsSchema.PAGING_TONES_KEY, Map.class).orElseThrow());
-        assertEquals(Map.of("enabled", true), store.load(ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.class).orElseThrow());
+        assertTrue(store.loadJson("audio.voice_enhancement", 256).isEmpty());
     }
 
     private static ApplicationMigrationService service()

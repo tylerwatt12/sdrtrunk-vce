@@ -30,9 +30,7 @@ final class LegacyReceiverSettingsMigration
         ReceiverSettingsSchema.REMOTE_LINKS_KEY,
         new Artifact("remote-links/settings.json", "Remote Links", 256_000),
         ReceiverSettingsSchema.PAGING_TONES_KEY,
-        new Artifact("audio-analysis/paging-tones.json", "Paging-tone", 4096),
-        ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY,
-        new Artifact("audio-models/selection.json", "Voice-enhancement", 4096));
+        new Artifact("audio-analysis/paging-tones.json", "Paging-tone", 4096));
 
     private LegacyReceiverSettingsMigration() {}
 
@@ -68,10 +66,7 @@ final class LegacyReceiverSettingsMigration
                 {
                     if(legacy == null || !legacy.isObject() || !legacy.path("version").isInt() ||
                         !legacy.path("enabled").isBoolean()) throw new IOException();
-                    int version = legacy.path("version").intValue();
-                    boolean voice = ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY.equals(key);
-                    if(voice ? version == 1 ? legacy.size() != 3 || !legacy.path("bundle_sha256").isTextual() :
-                        version != 2 || legacy.size() != 2 : version != 1 || legacy.size() != 2)
+                    if(legacy.path("version").intValue() != 1 || legacy.size() != 2)
                         throw new IOException();
                     current = JSON.createObjectNode().put("enabled", legacy.path("enabled").booleanValue());
                 }
