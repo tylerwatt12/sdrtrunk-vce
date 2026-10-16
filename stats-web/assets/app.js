@@ -15479,7 +15479,7 @@ function openTunerRadioReferenceLookup(selectedHz) {
     } catch (error) {
       if (detailController.signal.aborted) return;
       message.textContent = error.message;
-      results.append(anchor('Open RadioReference settings', href('admin', { tab: 'live-activity' }),
+      results.append(anchor('Open RadioReference settings', href('radioreference'),
         'ui-button ui-button-secondary'));
     }
   })();

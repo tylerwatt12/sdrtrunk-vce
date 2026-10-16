@@ -99,7 +99,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(lookup.contains("requestJson('/api/v1/admin/radioreference'"));
         assertTrue(lookup.contains("/api/v1/admin/radioreference/frequencies?"));
         assertTrue(lookup.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
-        assertTrue(lookup.contains("href('admin', { tab: 'live-activity' })"));
+        assertTrue(lookup.contains("href('radioreference')"));
         assertFalse(results.contains("'Freq Out'"));
         assertFalse(results.contains("'Freq In'"));
         assertTrue(results.contains("row.description"));

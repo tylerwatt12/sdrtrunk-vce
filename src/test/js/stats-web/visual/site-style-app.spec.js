@@ -1,6 +1,7 @@
 'use strict';
 
 const { test, expect } = require('@playwright/test');
+const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { presentations } = require('./fixtures/site-style-cases.cjs');
@@ -118,6 +119,34 @@ test('actual route style matrix includes every production route and administrati
   // coverage lives in web-diagnostic-log.spec.js, with private render evidence.
   expect([...administration.map(([, query]) => new URLSearchParams(query).get('tab')), 'web-diagnostic-log'].sort())
     .toEqual(availableLeaves.sort());
+});
+
+test('Spectrum frequency lookup opens the RadioReference account page from its settings link', async ({ page }) => {
+  const fixture = await installSiteStyleApplication(page);
+  const application = readFileSync(path.resolve(__dirname, '../../../../../stats-web/assets/app.js'), 'utf8');
+  await page.route('**/assets/app.js*', route => route.fulfill({ contentType: 'text/javascript',
+    body: `${application}\nexport { openTunerFrequencyActions };` }));
+  await page.goto('/app.html?view=tuner-spectrum');
+  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
+  await expect(page.locator('.spectrum-browse-control-rail')).toBeVisible();
+  await page.evaluate(async () => {
+    const application = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
+    application.openTunerFrequencyActions({ frequencyHz: 851012500, targetId: 'target-a',
+      actionHost: document.querySelector('.spectrum-browse-control-rail') });
+  });
+  await page.locator('.spectrum-browse-control-rail')
+    .getByRole('button', { name: 'Look up on RadioReference', exact: true }).click();
+  const lookup = page.getByRole('dialog', { name: 'RadioReference lookup', exact: true });
+  await expect(lookup).toContainText('Connect a current RadioReference Premium account');
+  const settings = lookup.getByRole('link', { name: 'Open RadioReference settings', exact: true });
+  await expect(settings).toHaveAttribute('href', '/?view=radioreference');
+  await settings.click();
+  await expect(page).toHaveURL(/\?view=radioreference$/);
+  await expect(lookup).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Connect your account', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect RadioReference', exact: true })).toBeVisible();
+  expect(fixture.unexpected).toEqual([]);
+  expect(fixture.pageErrors).toEqual([]);
 });
 
 for (const [name, query, selector, content] of cases) {
