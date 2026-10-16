@@ -921,15 +921,12 @@ public class SDRTrunk
         try
         {
             processShutdown();
-            System.exit(0);
         }
         catch(RuntimeException exception)
         {
-            mLog.error("Receiver shutdown was not safe to complete", exception);
-            JOptionPane.showMessageDialog(mMainGui,
-                "Receiver shutdown could not finish safely. Review the application log, then try again.",
-                "Shutdown Paused", JOptionPane.ERROR_MESSAGE);
+            mLog.error("Receiver cleanup failed; exiting", exception);
         }
+        System.exit(0);
     }
 
     private void processShutdown()
@@ -959,10 +956,13 @@ public class SDRTrunk
         }
         catch(Exception unsafeShutdown)
         {
-            mShutdownProcessed = false;
-            mLog.error("Receiver shutdown paused before tuner settings were safe and durable", unsafeShutdown);
-            throw new IllegalStateException("Tuner maintenance did not quiesce or its settings could not be saved",
-                unsafeShutdown);
+            // Only database replacement retries cleanup; normal exit must not repeat it in the JVM hook.
+            if(!releaseDataRootLock)
+            {
+                mShutdownProcessed = false;
+            }
+            mLog.error("Receiver cleanup did not complete", unsafeShutdown);
+            throw new IllegalStateException("Receiver cleanup did not complete", unsafeShutdown);
         }
         if(mGuiAvailable)
         {
@@ -1195,13 +1195,12 @@ public class SDRTrunk
             try
             {
                 processShutdown();
-                quitResponse.performQuit();
             }
             catch(Exception e)
             {
                 mLog.error("Error while processing application quit", e);
-                quitResponse.cancelQuit();
             }
+            quitResponse.performQuit();
         });
     }
 

@@ -40,6 +40,8 @@ class HeadlessReceiverLifecycleContractTest
             source.indexOf("private void processShutdown()"));
         assertTrue(guiShutdown.indexOf("processShutdown();") < guiShutdown.indexOf("System.exit(0);"));
         assertTrue(guiShutdown.contains("catch(RuntimeException exception)"));
+        assertTrue(guiShutdown.indexOf("catch(RuntimeException exception)") < guiShutdown.indexOf("System.exit(0);"));
+        assertFalse(guiShutdown.contains("JOptionPane.showMessageDialog"));
         assertTrue(source.contains("public void windowClosing(WindowEvent e)\n        {\n            requestGuiShutdown();"));
         assertTrue(headlessStartup.indexOf("EventQueue.invokeLater") > headlessStartup.indexOf("else\n        {"));
         assertFalse(headlessStartup.substring(0, headlessStartup.indexOf("else\n        {")).contains("EventQueue.invokeLater"));
@@ -55,7 +57,11 @@ class HeadlessReceiverLifecycleContractTest
             shutdown.indexOf("channelProcessingManager.close()"));
         assertTrue(shutdown.indexOf("mStatsWebServerService.close()") <
             shutdown.indexOf("channelProcessingManager.close()"));
-        assertTrue(shutdown.contains("mShutdownProcessed = false;"));
+        assertTrue(shutdown.contains("if(!releaseDataRootLock)\n            {\n                mShutdownProcessed = false;"));
+        String quit = source.substring(source.indexOf("private void registerQuitHandler()"),
+            source.indexOf("private JPanel getMainControlPanel()"));
+        assertTrue(quit.indexOf("catch(Exception e)") < quit.indexOf("quitResponse.performQuit();"));
+        assertTrue(quit.indexOf("quitResponse.cancelQuit();") < quit.indexOf("processShutdown();"));
         String webService = Files.readString(WEB_SERVICE).replace("\r\n", "\n");
         String webClose = webService.substring(webService.indexOf("public synchronized void close()"),
             webService.indexOf("static final class MultiplexOutput"));
