@@ -37,6 +37,7 @@ class ComputerInformationTest
         assertEquals(1000L, first.get("application_uptime_ms"));
         assertEquals(List.of("/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string", "hw.memsize"),
             probe.commands.getFirst());
+        assertEquals(List.of(2000L), probe.timeouts);
         uptime.set(2000L);
         assertEquals(2000L, information.snapshot().get("application_uptime_ms"));
         assertEquals(1, probe.commands.size(), "HTTP polling and support reports reuse cached static metadata");
@@ -46,16 +47,65 @@ class ComputerInformationTest
     @Test
     void windowsQueriesOnlyProcessorNameAndInstalledMemoryCapacity()
     {
-        FakeProbe probe = new FakeProbe("Windows 11", "Intel(R) Core(TM) i7-12700\n17179869184\n", Map.of());
+        FakeProbe probe = new FakeProbe("Windows 11", "CPU=Intel(R) Core(TM) i5-6500T CPU @ 2.50GHz\r\n" +
+            "RAM=17179869184\r\n", Map.of());
         Map<String,Object> snapshot = new ComputerInformation(probe, () -> 0L).snapshot();
-        assertEquals("Intel(R) Core(TM) i7-12700", snapshot.get("cpu_model"));
+        assertEquals("Intel(R) Core(TM) i5-6500T CPU @ 2.50GHz", snapshot.get("cpu_model"));
         assertEquals(16 * GIB, snapshot.get("installed_memory_bytes"));
+        assertEquals(List.of(10000L), probe.timeouts, "Cold PowerShell/CIM startup needs more than two seconds");
         String command = String.join(" ", probe.commands.getFirst());
         assertTrue(command.contains("Win32_Processor"));
         assertTrue(command.contains("Win32_PhysicalMemory"));
         assertFalse(command.contains("SerialNumber"));
         assertFalse(command.contains("Win32_ComputerSystem"));
         assertFalse(command.contains("Format-List"));
+    }
+
+    @Test
+    void windowsPreservesEachAvailableHardwareFact()
+    {
+        for(String output: List.of("RAM=17179869184\r\n", "CPU=\r\nRAM=17179869184\r\n"))
+        {
+            FakeProbe probe = new FakeProbe("Windows 11", output, Map.of());
+            Map<String,Object> snapshot = new ComputerInformation(probe, () -> 0L).snapshot();
+            assertEquals("Unavailable", snapshot.get("cpu_model"));
+            assertEquals(16 * GIB, snapshot.get("installed_memory_bytes"));
+        }
+        for(String output: List.of("CPU=AMD Ryzen 7 7840U\r\n", "CPU=AMD Ryzen 7 7840U\r\nRAM=invalid\r\n"))
+        {
+            FakeProbe probe = new FakeProbe("Windows 11", output, Map.of());
+            Map<String,Object> snapshot = new ComputerInformation(probe, () -> 0L).snapshot();
+            assertEquals("AMD Ryzen 7 7840U", snapshot.get("cpu_model"));
+            assertEquals("Unavailable", snapshot.get("installed_memory_bytes"));
+        }
+        FakeProbe failed = new FakeProbe("Windows 11", null, Map.of());
+        Map<String,Object> snapshot = new ComputerInformation(failed, () -> 0L).snapshot();
+        assertEquals("Unavailable", snapshot.get("cpu_model"));
+        assertEquals("Unavailable", snapshot.get("installed_memory_bytes"));
+        assertEquals(2 * GIB, snapshot.get("jvm_memory_limit_bytes"));
+    }
+
+    @Test
+    void commandCollectsHardwareAfterTwoSecondsAndHonorsItsDeadline() throws Exception
+    {
+        Path java = Path.of(System.getProperty("java.home"), "bin",
+            System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java");
+        List<String> command = List.of(java.toString(), "-cp",
+            Path.of(ComputerInformationTest.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString(),
+            DelayedHardwareOutput.class.getName());
+        ComputerInformation.SystemProbe probe = new ComputerInformation.SystemProbe();
+        assertEquals("Delayed CPU", ComputerInformation.parseWindowsHardware(probe.command(command, 10000)).cpuModel());
+        assertNull(probe.command(command, 100), "Timed-out discovery must return without waiting for the child");
+    }
+
+    public static final class DelayedHardwareOutput
+    {
+        public static void main(String[] arguments) throws InterruptedException
+        {
+            Thread.sleep(2200);
+            System.out.println("CPU=Delayed CPU");
+            System.out.println("RAM=17179869184");
+        }
     }
 
     @Test
@@ -92,10 +142,15 @@ class ComputerInformationTest
     void malformedOrPrivateValuesHaveSafeUnavailableFallbacks()
     {
         for(String value: List.of("/Users/person/private", "C:\\Users\\person", "https://private.example",
-            "person@example.com", "line\nprivate", "a".repeat(257)))
+            "person@example.com", "line\nprivate", "a".repeat(257), "person@example.com @ 2.40GHz"))
         {
             assertEquals("Unavailable", ComputerInformation.safeText(value));
+            assertEquals("Unavailable", ComputerInformation.safeCpuModel(value));
         }
+        assertEquals("Intel(R) Core(TM) i5-6500T CPU @ 2.50GHz",
+            ComputerInformation.safeCpuModel("Intel(R) Core(TM) i5-6500T CPU @ 2.50GHz"));
+        assertEquals("Unavailable", ComputerInformation.safeCpuModel("CPU\t@ 2.40GHz"));
+        assertEquals("Unavailable", ComputerInformation.safeCpuModel("CPU\n@ 2.40GHz"));
         assertEquals("Unavailable", ComputerInformation.safeText(null));
         assertEquals("Apple M3", ComputerInformation.safeText(" Apple M3 "));
         assertNull(ComputerInformation.cpuFromLinux("processor : 0\nHardware : device\n"));
@@ -111,6 +166,7 @@ class ComputerInformationTest
         private final String output;
         private final Map<Path,String> files;
         private final List<List<String>> commands = new ArrayList<>();
+        private final List<Long> timeouts = new ArrayList<>();
 
         private FakeProbe(String osName, String output, Map<Path,String> files)
         {
@@ -131,9 +187,10 @@ class ComputerInformationTest
                 default -> throw new AssertionError("Unexpected property: " + name);
             };
         }
-        @Override public String command(List<String> arguments)
+        @Override public String command(List<String> arguments, long timeoutMilliseconds)
         {
             commands.add(arguments);
+            timeouts.add(timeoutMilliseconds);
             return output;
         }
         @Override public String file(Path path) { return files.get(path); }

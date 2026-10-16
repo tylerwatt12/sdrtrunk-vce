@@ -30,6 +30,7 @@ public final class ComputerInformation
     private static final int MAXIMUM_FILE_BYTES = 64 * 1024;
     private static final int MAXIMUM_COMMAND_BYTES = 4096;
     private static final long COMMAND_TIMEOUT_MILLISECONDS = 2000;
+    private static final long WINDOWS_COMMAND_TIMEOUT_MILLISECONDS = 10000;
     private static final ComputerInformation CURRENT = new ComputerInformation(new SystemProbe(),
         () -> ManagementFactory.getRuntimeMXBean().getUptime());
     private final Probe mProbe;
@@ -80,7 +81,7 @@ public final class ComputerInformation
         information.put("operating_system", osName);
         information.put("operating_system_version", safeText(probe.property("os.version")));
         information.put("architecture", safeText(probe.property("os.arch")));
-        information.put("cpu_model", safeText(hardware.cpuModel()));
+        information.put("cpu_model", safeCpuModel(hardware.cpuModel()));
         information.put("processors_available", positive(probe.processors()));
         information.put("installed_memory_bytes", positive(hardware.installedMemoryBytes()));
         information.put("system_memory_bytes", positive(hardware.systemMemoryBytes()));
@@ -97,16 +98,21 @@ public final class ComputerInformation
         {
             // These two keys return only a processor model and installed memory; sysctl -a includes private facts.
             return parseHardwareLines(probe.command(List.of("/usr/sbin/sysctl", "-n",
-                "machdep.cpu.brand_string", "hw.memsize")));
+                "machdep.cpu.brand_string", "hw.memsize"), COMMAND_TIMEOUT_MILLISECONDS));
         }
         if(os.contains("windows"))
         {
-            // Select specific safe fields rather than exporting CIM objects or computer-system identity.
-            return parseHardwareLines(probe.command(List.of("powershell.exe", "-NoProfile", "-NonInteractive",
-                "-Command", "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); " +
-                    "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name; " +
-                    "[string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0}', " +
-                    "(Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum)")));
+            // Cold PowerShell/CIM startup can exceed two seconds. Discover each safe field independently so a
+            // missing processor or memory provider does not hide the other fact. Never export complete CIM objects.
+            return parseWindowsHardware(probe.command(List.of("powershell.exe", "-NoLogo", "-NoProfile",
+                "-NonInteractive", "-Command", "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); " +
+                    "$ProgressPreference='SilentlyContinue'; " +
+                    "try { 'CPU=' + (Get-CimInstance Win32_Processor -Property Name -ErrorAction Stop | " +
+                    "Select-Object -First 1).Name } catch {}; " +
+                    "try { 'RAM=' + [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0}', " +
+                    "(Get-CimInstance Win32_PhysicalMemory -Property Capacity -ErrorAction Stop | " +
+                    "Measure-Object -Property Capacity -Sum).Sum) } catch {}; exit 0"),
+                WINDOWS_COMMAND_TIMEOUT_MILLISECONDS));
         }
         if(os.contains("linux"))
         {
@@ -123,6 +129,21 @@ public final class ComputerInformation
         String[] lines = output.strip().split("\\R");
         return lines.length == 2 ? new Hardware(lines[0], parsePositiveLong(lines[1]), 0) :
             new Hardware(null, 0, 0);
+    }
+
+    static Hardware parseWindowsHardware(String output)
+    {
+        String cpu = null;
+        long memory = 0;
+        if(output != null)
+        {
+            for(String line: output.split("\\R"))
+            {
+                if(line.startsWith("CPU=")) cpu = line.substring(4);
+                else if(line.startsWith("RAM=")) memory = parsePositiveLong(line.substring(4));
+            }
+        }
+        return new Hardware(cpu, memory, 0);
     }
 
     static String cpuFromLinux(String output)
@@ -175,6 +196,14 @@ public final class ComputerInformation
         return text;
     }
 
+    static String safeCpuModel(String value)
+    {
+        if(value == null || value.length() > MAXIMUM_TEXT_LENGTH) return UNAVAILABLE;
+        // Intel brand strings commonly end in "@ 2.40GHz". Permit that clock suffix without allowing addresses.
+        String withoutClockMarker = value.replaceFirst("(?i)(?<=\\s)@(?=\\s*\\d+(?:\\.\\d+)?\\s*[GM]Hz\\s*$)", "");
+        return UNAVAILABLE.equals(safeText(withoutClockMarker)) ? UNAVAILABLE : value.strip();
+    }
+
     private static long parsePositiveLong(String value)
     {
         try
@@ -197,13 +226,13 @@ public final class ComputerInformation
     interface Probe
     {
         String property(String name);
-        String command(List<String> arguments);
+        String command(List<String> arguments, long timeoutMilliseconds);
         String file(Path path);
         int processors();
         long heapLimitBytes();
     }
 
-    private static final class SystemProbe implements Probe
+    static final class SystemProbe implements Probe
     {
         @Override public String property(String name)
         {
@@ -224,7 +253,7 @@ public final class ComputerInformation
             catch(Exception exception) { return null; }
         }
 
-        @Override public String command(List<String> arguments)
+        @Override public String command(List<String> arguments, long timeoutMilliseconds)
         {
             Process process = null;
             try
@@ -241,7 +270,7 @@ public final class ComputerInformation
                 }, "computer information output");
                 reader.setDaemon(true);
                 reader.start();
-                if(!process.waitFor(COMMAND_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)) return null;
+                if(!process.waitFor(timeoutMilliseconds, TimeUnit.MILLISECONDS)) return null;
                 reader.join(250);
                 byte[] bytes = output.get();
                 return process.exitValue() == 0 && bytes != null && bytes.length <= MAXIMUM_COMMAND_BYTES ?
