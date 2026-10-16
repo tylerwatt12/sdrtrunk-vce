@@ -334,7 +334,7 @@ async function openCallDetails(page) {
   await page.locator('.recordings-call-details').first().click();
 }
 
-async function expectCallActionDescriptions(dialog, expectedCount = 9) {
+async function expectCallActionDescriptions(dialog, expectedCount = 10) {
   const actions = dialog.locator('.recordings-secondary-action');
   await expect(actions).toHaveCount(expectedCount);
   for (const action of await actions.all()) {
@@ -347,6 +347,11 @@ async function expectCallActionDescriptions(dialog, expectedCount = 9) {
     await expect(action).toHaveAccessibleName((await title.textContent()).trim());
     await expect(action).toHaveAccessibleDescription(sentence);
     await expect(action.locator('svg')).toHaveCount(1);
+    const [iconBounds, copyBounds] = await Promise.all([
+      action.locator('svg').boundingBox(), action.locator('.recordings-action-copy').boundingBox()
+    ]);
+    expect(Math.abs(iconBounds.y + iconBounds.height / 2 - copyBounds.y - copyBounds.height / 2))
+      .toBeLessThanOrEqual(1);
   }
 }
 async function searchNow(page, state) {
@@ -1520,6 +1525,67 @@ test('call actions reuse VCE playback choices and route Live to the saved channe
   await expect.poll(() => state.requestedFilters.length).toBe(2);
   const request = state.requestedFilters.at(-1); expect(Number(request.to_ms) - Number(request.from_ms)).toBe(3600000);
   expect(request).toHaveProperty('talkgroup_identity_key', 'v1-g-00001-001-1201'); expect(request).not.toHaveProperty('transcript');
+});
+
+for (const [name, overrides, title, route] of [
+  ['P25 talkgroup', {}, 'Open talkgroup', {
+    view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-g-00001-001-1201'
+  }],
+  ['DMR talkgroup', { protocol: 'DMR', system_key: 'dmr:tier3:small:7',
+    target_entity_ref: { kind: 'talkgroup', radio_system_key: 'dmr:tier3:small:7', identity_key: 'v1-g-x-x-1201' } },
+  'Open talkgroup', { view: 'group-identity', radio_system_key: 'dmr:tier3:small:7', identity_key: 'v1-g-x-x-1201' }],
+  ['NXDN talkgroup', { protocol: 'NXDN', system_key: 'nxdn-c:global:7',
+    target_entity_ref: { kind: 'talkgroup', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-g-x-x-1201' } },
+  'Open talkgroup', { view: 'group-identity', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-g-x-x-1201' }],
+  ['P25 patch group', { call_type: 'PATCH',
+    target_entity_ref: { kind: 'patch_group', radio_system_key: systemKey, identity_key: 'v1-p-00001-001-1201' } },
+  'Open patch group', { view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-p-00001-001-1201' }],
+  ['direct radio', { call_type: 'UNIT_TO_UNIT', talkgroup_id: null, talkgroup_alias: null,
+    destination_radio_id: 30915,
+    target_entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30915' } },
+  'Open radio', { view: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30915' }],
+  ['AM channel', { protocol: 'AM', talkgroup_id: null, talkgroup_alias: null, target_entity_ref: null },
+  'Open channel', { view: 'channel', configuration_id: channelId }],
+  ['NBFM channel', { protocol: 'NBFM', talkgroup_id: null, talkgroup_alias: null, target_entity_ref: null },
+  'Open channel', { view: 'channel', configuration_id: channelId }],
+  ['unresolved digital target', { target_entity_ref: null },
+  'Open channel', { view: 'channel', configuration_id: channelId }],
+  ['invalid digital target', { target_entity_ref: {
+    kind: 'talkgroup', radio_system_key: systemKey, identity_key: 'v1-g-x-001-1201'
+  } }, 'Open channel', { view: 'channel', configuration_id: channelId }]
+]) {
+  test(`call actions open the existing ${name} page separately from a recordings search`, async ({ page }) => {
+    const state = await openRecordings(page, { call: { ...linkedCall, ...overrides } });
+    await page.locator('.recordings-call-info').click();
+    const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    const open = actions.getByRole('link', { name: title, exact: true });
+    const expectedHref = `/?${new URLSearchParams(route)}`;
+    await expect(open).toHaveAttribute('href', expectedHref);
+    await expect(open.locator('.recordings-action-description')).toBeVisible();
+    await expect(open.locator('svg')).toHaveCount(1);
+    const search = actions.getByRole('link', { name: /^Search this (talkgroup|channel)$/ });
+    if (name === 'invalid digital target') await expect(search).toHaveCount(0);
+    else await expect(search).toHaveAttribute('href', /view=recordings/);
+    await open.click();
+    await expect(page).toHaveURL(new RegExp(`${expectedHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+    expect(state.requestedFilters).toHaveLength(1);
+  });
+}
+
+test('call actions suppress entity navigation without radio access or a valid entity destination', async ({ page }) => {
+  for (const options of [
+    { radio: false, call: linkedCall },
+    { call: { ...linkedCall, target_entity_ref: null, channel_entity_ref: null } },
+    { call: { ...linkedCall, target_entity_ref: { kind: 'talkgroup', radio_system_key: 'invalid',
+      identity_key: 'v1-g-00001-001-1201' }, channel_entity_ref: { kind: 'channel', key: 'invalid' } } }
+  ]) {
+    await openRecordings(page, options);
+    await page.locator('.recordings-call-info').click();
+    const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await expect(actions.getByRole('link', { name: /^Open (talkgroup|patch group|radio|channel)$/ })).toHaveCount(0);
+    await expect(actions.getByRole('link', { name: 'Search this radio', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+  }
 });
 
 test('conventional call actions explain channel and radio searches without inventing a talkgroup', async ({ page }) => {

@@ -155,7 +155,7 @@
 .recordings-load-more { margin: var(--space-2) 0 var(--space-2) var(--space-5); }
 .recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
 .recordings-call-menu { display: grid; gap: var(--space-4); }
-.recordings-call-menu-grid .recordings-secondary-action { align-items: flex-start; justify-content: flex-start; text-align: left; min-width: 0; overflow-wrap: anywhere; }
+.recordings-call-menu-grid .recordings-secondary-action { align-items: center; justify-content: flex-start; text-align: left; min-width: 0; overflow-wrap: anywhere; }
 .recordings-call-menu-grid { align-items: stretch; }
 .recordings-action-copy { display: grid; min-width: 0; gap: var(--space-1); }
 .recordings-action-title { font-weight: var(--font-weight-control); }

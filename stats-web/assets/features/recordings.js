@@ -1437,6 +1437,18 @@ export function createRecordingsFeature(deps) {
     }), 'recordings-secondary-action'), 'Open context · ±30 min', target ?
       `Show this ${hasGroup ? 'talkgroup’s' : 'channel’s'} calls from 30 minutes before to 30 minutes after this call.` :
       'Show calls from 30 minutes before to 30 minutes after this call.', 'icon-replay'));
+    if (canViewRadio?.()) {
+      const entityNames = { talkgroup: 'talkgroup', patch_group: 'patch group', radio: 'radio', channel: 'channel' };
+      for (const reference of [row.target_entity_ref, row.channel_entity_ref]) {
+        const name = entityNames[reference?.kind];
+        const destination = name && entityRefHref?.(reference);
+        if (!destination) continue;
+        const title = `Open ${name}`;
+        actions.append(explain(anchor(title, destination, 'recordings-secondary-action'), title,
+          `View this ${name}’s details page.`, 'icon-open-details'));
+        break;
+      }
+    }
     const channel = row.channel_id || row.channel_entity_ref?.key;
     actions.append(explain(anchor('Go to Live', href('live', channel ? { channel } : {}), 'recordings-secondary-action'),
       'Go to Live', channel ? 'Open this channel on the Live page.' : 'Open the Live page to browse current traffic.', 'icon-live'));
