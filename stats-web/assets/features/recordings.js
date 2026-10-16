@@ -1388,6 +1388,7 @@ export function createRecordingsFeature(deps) {
     let modal;
     let actionIndex = 0;
     const run = perform => { let done = false; const next = () => { if (!done) { done = true; perform(); } }; if (modal.close(next)) next(); };
+    const playback = node('div', 'recordings-call-menu-grid recordings-playback-grid');
     const actions = node('div', 'recordings-call-menu-grid');
     const explain = (control, title, description, icon) => {
       const copy = node('span', 'recordings-action-copy');
@@ -1403,7 +1404,7 @@ export function createRecordingsFeature(deps) {
       ['once', 'Play once', 'Replace the queue and play only this call.', 'icon-play'],
       ['continue', 'Continue from here', 'Replace the queue and play this call followed by newer calls that match your search.', 'icon-forward'],
       ['queue', 'Add to queue', 'Add this call to the end of the queue without starting or interrupting playback.', 'icon-plus']])
-      actions.append(explain(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'), title, description, icon));
+      playback.append(explain(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'), title, description, icon));
     actions.append(explain(button(node, 'Call details', () => run(() => void openDetails(row)), 'recordings-secondary-action'),
       'Call details', 'View the transcript and recording details for this call.', 'icon-info-circle'));
     const use = (title, reference, field, description, icon) => {
@@ -1452,7 +1453,14 @@ export function createRecordingsFeature(deps) {
     const channel = row.channel_id || row.channel_entity_ref?.key;
     actions.append(explain(anchor('Go to Live', href('live', channel ? { channel } : {}), 'recordings-secondary-action'),
       'Go to Live', channel ? 'Open this channel on the Live page.' : 'Open the Live page to browse current traffic.', 'icon-live'));
-    body.append(actions);
+    for (const [title, key, grid] of [['Playback', 'playback', playback], ['Explore this call', 'explore', actions]]) {
+      const section = node('section', 'recordings-call-action-section');
+      const heading = node('h3', 'ui-section-heading', title);
+      heading.id = `recording-${row.id}-${key}-actions-title`;
+      section.setAttribute('aria-labelledby', heading.id);
+      section.append(heading, grid);
+      body.append(section);
+    }
     modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'recordings-actions-modal' });
   }
 

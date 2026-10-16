@@ -157,6 +157,9 @@
 .recordings-call-menu { display: grid; gap: var(--space-4); }
 .recordings-call-menu-grid .recordings-secondary-action { align-items: center; justify-content: flex-start; text-align: left; min-width: 0; overflow-wrap: anywhere; }
 .recordings-call-menu-grid { align-items: stretch; }
+.recordings-playback-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.recordings-call-action-section { display: grid; gap: var(--space-3); }
+.recordings-call-action-section + .recordings-call-action-section { border-top: 1px solid var(--line); padding-top: var(--space-5); }
 .recordings-action-copy { display: grid; min-width: 0; gap: var(--space-1); }
 .recordings-action-title { font-weight: var(--font-weight-control); }
 .recordings-action-description { color: var(--muted); font-size: var(--font-size-meta); font-weight: var(--font-weight-normal); line-height: var(--line-height-body); }

@@ -337,6 +337,13 @@ async function openCallDetails(page) {
 async function expectCallActionDescriptions(dialog, expectedCount = 10) {
   const actions = dialog.locator('.recordings-secondary-action');
   await expect(actions).toHaveCount(expectedCount);
+  const playback = dialog.getByRole('region', { name: 'Playback', exact: true });
+  const explore = dialog.getByRole('region', { name: 'Explore this call', exact: true });
+  await expect(playback.locator('.recordings-action-title'))
+    .toHaveText(['Play once', 'Continue from here', 'Add to queue']);
+  await expect(explore.locator('.recordings-secondary-action')).toHaveCount(expectedCount - 3);
+  const playbackBounds = await playback.boundingBox(), exploreBounds = await explore.boundingBox();
+  expect(exploreBounds.y).toBeGreaterThanOrEqual(playbackBounds.y + playbackBounds.height);
   for (const action of await actions.all()) {
     const title = action.locator('.recordings-action-title');
     const description = action.locator('.recordings-action-description');
@@ -1000,10 +1007,22 @@ for (const theme of ['light', 'dark']) {
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
       }
-      if (width === 800) for (let index = 0; index + 1 < controls.length; index += 2) {
-        const left = await controls[index].boundingBox(), right = await controls[index + 1].boundingBox();
-        expect(Math.abs(left.y - right.y)).toBeLessThanOrEqual(1);
-        expect(Math.abs(left.height - right.height)).toBeLessThanOrEqual(1);
+      for (const grid of await actions.locator('.recordings-call-menu-grid').all()) {
+        const gridControls = await grid.locator('.recordings-secondary-action').all();
+        const columns = width <= 700 ? 1 : await grid.evaluate(element =>
+          element.classList.contains('recordings-playback-grid') ? 3 : 2);
+        for (let index = 0; index < gridControls.length; index += columns) {
+          const first = await gridControls[index].boundingBox();
+          for (let offset = 1; offset < columns && index + offset < gridControls.length; offset++) {
+            const next = await gridControls[index + offset].boundingBox();
+            expect(Math.abs(first.y - next.y)).toBeLessThanOrEqual(1);
+            expect(Math.abs(first.height - next.height)).toBeLessThanOrEqual(1);
+          }
+          if (index >= columns) {
+            const previous = await gridControls[index - columns].boundingBox();
+            expect(first.y).toBeGreaterThanOrEqual(previous.y + previous.height);
+          }
+        }
       }
       expect(await actions.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
       if (width === 320 || theme === 'light') {
