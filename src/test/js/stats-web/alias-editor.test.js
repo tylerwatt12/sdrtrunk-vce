@@ -98,11 +98,10 @@ vm.runInContext(`
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
   ${functionSource('function aliasTransferDetectedFormat(csv)')}
-  ${functionSource('function aliasExportParameters(listId, scope)')}
-  ${functionSource("function aliasTransferExportHref(listId, scope = 'all')")}
+  ${functionSource('function aliasTransferExportHref(listId)')}
   ${functionSource("function aliasActivityReportHref(listId, scope = 'all')")}
   ${functionSource('function aliasTransferExportToken()')}
-  ${functionSource('function aliasTransferExportDownloadHref(listId, scope, token)')}
+  ${functionSource('function aliasTransferExportDownloadHref(listId, token)')}
   ${functionSource('function aliasTransferExportIsReady(cookieHeader, token)')}
   ${functionSource("function exportCsvFileName(response, fallback = 'export.csv')")}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
@@ -468,10 +467,8 @@ assert.equal(context.transferDetectedFormat('name,description\nDispatch,County')
   'Unknown CSV headers must require an explicit format choice.');
 assert.equal(context.transferExportToken(), '000102030405060708090a0b0c0d0e0f',
   'Each download must use a 128-bit lowercase hexadecimal browser nonce.');
-assert.equal(context.transferExportDownloadHref(7, 'all', '0123456789abcdef0123456789abcdef'),
+assert.equal(context.transferExportDownloadHref(7, '0123456789abcdef0123456789abcdef'),
   '/api/v1/admin/alias-lists/7/transfer?export_token=0123456789abcdef0123456789abcdef');
-assert.equal(context.transferExportDownloadHref(7, 'filtered', '0123456789abcdef0123456789abcdef'),
-  '/api/v1/exports/alias-list.csv?list=7&scope=filtered&export_token=0123456789abcdef0123456789abcdef');
 assert.equal(context.transferExportIsReady(
   'other=value; sdrtrunk_alias_export_ready_0123456789abcdef0123456789abcdef=1',
   '0123456789abcdef0123456789abcdef'), true);
@@ -486,18 +483,18 @@ assert.equal(context.transferExportIsReady(concurrentReadyCookies,
   '0123456789abcdef0123456789abcdef'), true);
 assert.equal(context.transferExportIsReady(concurrentReadyCookies,
   'fedcba9876543210fedcba9876543210'), true,
-  'Concurrent all-list and filtered downloads must keep independent ready markers.');
+  'Concurrent configuration downloads must keep independent ready markers.');
 
 const transferModal = functionSource("function openAliasTransferModal(selectedList, action = 'Import')");
-const transferExportHref = functionSource("function aliasTransferExportHref(listId, scope = 'all')");
-const exportParameters = functionSource('function aliasExportParameters(listId, scope)');
+const transferExportHref = functionSource('function aliasTransferExportHref(listId)');
+const activityReportHref = functionSource("function aliasActivityReportHref(listId, scope = 'all')");
 assert.match(transferExportHref, /admin\/alias-lists\/\$\{listId\}\/transfer/,
   'The established administrator-only all-list export route must remain compatible.');
-assert.match(transferExportHref, /api\/v1\/exports\/alias-list\.csv/);
-assert.match(exportParameters, /last_activity_after/);
-assert.match(exportParameters, /scan_list_id/);
-assert.doesNotMatch(exportParameters, /limit|offset/,
-  'Filtered transfer exports must not inherit the current browser page.');
+assert.match(activityReportHref, /api\/v1\/exports\/aliases\.csv/);
+assert.match(activityReportHref, /last_activity_after/);
+assert.match(activityReportHref, /scan_list_id/);
+assert.doesNotMatch(activityReportHref, /limit|offset/,
+  'Filtered activity reports must not inherit the current browser page.');
 assert.doesNotMatch(transferExportHref, /route\.get\('sort'\)|route\.get\('direction'\)/,
   'Importable exports use durable alias-ID order instead of presentation order.');
 assert.match(transferModal, /options\.streams_truncated === true/);
@@ -545,11 +542,8 @@ assert.deepEqual(Object.fromEntries(reportQuery), {
 assert.deepEqual(Object.fromEntries(new URL(context.activityReportHref(7), 'http://localhost').searchParams), {
   list: '7', sort: 'name', direction: 'desc'
 }, 'Whole-list activity reports must ignore current search and filters.');
-const configurationQuery = new URL(context.transferExportHref(7, 'filtered'), 'http://localhost').searchParams;
-assert.equal(configurationQuery.get('q'), 'Dispatch');
-assert.equal(configurationQuery.get('scope'), 'filtered');
-assert.equal(configurationQuery.has('sort'), false,
-  'Importable configuration exports must retain durable ordering rather than report ordering.');
+assert.equal(context.transferExportHref(7), '/api/v1/admin/alias-lists/7/transfer',
+  'Importable configuration exports must always use the complete-list route without report filters.');
 context.setRoute('');
 
 const firstTone = { tone: 'A' };

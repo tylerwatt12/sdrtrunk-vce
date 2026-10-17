@@ -61,7 +61,7 @@ async function expectBoundedExport(page, modal) {
   await expectNoHorizontalOverflow(page);
 }
 
-test('the consolidated export defaults to importable configuration and preserves both configuration scopes', async ({ page }) => {
+test('importable configuration always exports the whole alias list, including after a filtered activity report choice', async ({ page }) => {
   const fixture = await openEditor(page);
   const exports = [];
   await page.route(url => url.pathname === '/api/v1/admin/alias-lists/1/transfer' ||
@@ -77,8 +77,13 @@ test('the consolidated export defaults to importable configuration and preserves
   });
 
   const modal = await openExport(page);
+  const scopeChoices = modal.locator('.alias-transfer-export-choices');
   await expect(format(modal, 'configuration')).toBeChecked();
   await expect(scope(modal, 'all')).toBeChecked();
+  await expect(scopeChoices).toBeHidden();
+  await expect(scopeChoices).toHaveJSProperty('disabled', true);
+  await expect(scope(modal, 'all')).toBeDisabled();
+  await expect(scope(modal, 'filtered')).toBeDisabled();
   await expect(modal).toContainText('Importable configuration');
   await expect(modal).toContainText('Activity report');
   await expectBoundedExport(page, modal);
@@ -89,15 +94,26 @@ test('the consolidated export defaults to importable configuration and preserves
   await expect(action).not.toHaveAttribute('aria-disabled', 'true');
   expect(exports[0].pathname).toBe('/api/v1/admin/alias-lists/1/transfer');
   expect([...exports[0].searchParams.keys()]).toEqual(['export_token']);
+  await expect(scopeChoices).toBeHidden();
+  await expect(scopeChoices).toHaveJSProperty('disabled', true);
 
+  await format(modal, 'activity').check();
+  await expect(scopeChoices).toBeVisible();
+  await expect(scopeChoices).toHaveJSProperty('disabled', false);
+  await expect(scope(modal, 'filtered')).toBeEnabled();
   await scope(modal, 'filtered').check();
-  const filteredDownload = page.waitForEvent('download');
+  await format(modal, 'configuration').check();
+  await expect(scopeChoices).toBeHidden();
+  await expect(scopeChoices).toHaveJSProperty('disabled', true);
+  await expect(scope(modal, 'all')).toBeChecked();
+  await expect(scope(modal, 'filtered')).not.toBeChecked();
+  await expect(action).toHaveAttribute('href', '/api/v1/admin/alias-lists/1/transfer');
+  const wholeListDownload = page.waitForEvent('download');
   await action.click();
-  await filteredDownload;
+  expect((await wholeListDownload).suggestedFilename()).toBe('vce-alias-list-1.csv');
   await expect(action).not.toHaveAttribute('aria-disabled', 'true');
-  expect(exports[1].pathname).toBe('/api/v1/exports/alias-list.csv');
-  expect(Object.fromEntries([...exports[1].searchParams].filter(([key]) => key !== 'export_token')))
-    .toEqual({ list: '1', scope: 'filtered', group: 'Fire', record: 'true', q: 'Fire' });
+  expect(exports[1].pathname).toBe('/api/v1/admin/alias-lists/1/transfer');
+  expect([...exports[1].searchParams.keys()]).toEqual(['export_token']);
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
   expectCleanFixture(fixture);
 });
@@ -235,14 +251,16 @@ for (const closeWith of ['Cancel', 'Escape']) {
   });
 }
 
-test('CSV export permission disables activity and filtered configuration while retaining full configuration export', async ({ page }) => {
+test('CSV export permission keeps only full configuration export available', async ({ page }) => {
   const fixture = await openEditor(page, { csvExport: false });
   const modal = await openExport(page);
   await expect(format(modal, 'configuration')).toBeChecked();
   await expect(format(modal, 'configuration')).toBeEnabled();
   await expect(format(modal, 'activity')).toBeDisabled();
+  await expect(modal.locator('.alias-transfer-export-choices')).toBeHidden();
+  await expect(modal.locator('.alias-transfer-export-choices')).toHaveJSProperty('disabled', true);
   await expect(scope(modal, 'all')).toBeChecked();
-  await expect(scope(modal, 'all')).toBeEnabled();
+  await expect(scope(modal, 'all')).toBeDisabled();
   await expect(scope(modal, 'filtered')).toBeDisabled();
   await expect(modal.getByRole('link', { name: 'Export CSV', exact: true }))
     .toHaveAttribute('href', '/api/v1/admin/alias-lists/1/transfer');

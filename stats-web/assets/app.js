@@ -6346,7 +6346,11 @@ function aliasTransferDetectedFormat(csv) {
   return '';
 }
 
-function aliasExportParameters(listId, scope) {
+function aliasTransferExportHref(listId) {
+  return `/api/v1/admin/alias-lists/${listId}/transfer`;
+}
+
+function aliasActivityReportHref(listId, scope = 'all') {
   const parameters = new URLSearchParams({ list: String(listId) });
   if (scope === 'filtered') {
     const filters = new Map([
@@ -6361,18 +6365,6 @@ function aliasExportParameters(listId, scope) {
     const search = route.get('q');
     if (search) parameters.set('q', search);
   }
-  return parameters;
-}
-
-function aliasTransferExportHref(listId, scope = 'all') {
-  if (scope === 'all') return `/api/v1/admin/alias-lists/${listId}/transfer`;
-  const parameters = aliasExportParameters(listId, scope);
-  parameters.set('scope', scope);
-  return `/api/v1/exports/alias-list.csv?${parameters}`;
-}
-
-function aliasActivityReportHref(listId, scope = 'all') {
-  const parameters = aliasExportParameters(listId, scope);
   ['sort', 'direction'].forEach((key) => {
     const value = route.get(key);
     if (value) parameters.set(key, value);
@@ -6386,9 +6378,8 @@ function aliasTransferExportToken() {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-function aliasTransferExportDownloadHref(listId, scope, token) {
-  const href = aliasTransferExportHref(listId, scope);
-  return `${href}${href.includes('?') ? '&' : '?'}export_token=${encodeURIComponent(token)}`;
+function aliasTransferExportDownloadHref(listId, token) {
+  return `${aliasTransferExportHref(listId)}?export_token=${encodeURIComponent(token)}`;
 }
 
 function aliasTransferExportIsReady(cookieHeader, token) {
@@ -6617,7 +6608,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const exportFormats = node('fieldset', 'alias-transfer-mode-choices');
   exportFormats.append(node('legend', '', 'File type'));
   [['configuration', 'Importable configuration',
-    'Preserves matchers, appearance, recording, scan lists, and streaming settings. Edit or add rows, then import the file.'],
+    'Exports the entire Alias List, including matchers, appearance, recording, scan lists, and streaming settings. Edit or add rows, then import the file.'],
    ['activity', 'Activity report',
     'Includes call and signaling statistics, relationships, and evidence dates for spreadsheet analysis. Cannot be imported. Limited to 10,000 rows and 16 MiB.']]
     .forEach(([value, title, description]) => {
@@ -6659,16 +6650,20 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const selectedExportFormat = () =>
     exportFormats.querySelector('input:checked')?.value || 'configuration';
   const selectedExportScope = () =>
-    exportChoices.querySelector('input:checked')?.value || 'all';
+    selectedExportFormat() === 'activity' ? exportChoices.querySelector('input:checked')?.value || 'all' : 'all';
   const updateExportOptions = () => {
     const activity = selectedExportFormat() === 'activity';
+    exportChoices.hidden = !activity;
+    exportChoices.disabled = !activity;
+    if (!activity) exportChoices.querySelector('input[value="all"]').checked = true;
     exportButton.href = activity ? aliasActivityReportHref(listId, selectedExportScope()) :
-      aliasTransferExportHref(listId, selectedExportScope());
+      aliasTransferExportHref(listId);
     exportButton.target = activity ? '' : exportFrame.name;
     errorHost.replaceChildren();
   };
   exportPanel.append(exportFormats, exportChoices, exportFrame,
     aliasModalFooter(exportCancel, node('span', 'alias-modal-footer-spacer'), exportButton));
+  updateExportOptions();
   body.insertBefore(errorHost, importing ? importPanel : exportPanel);
   let exportSequence = 0;
   let activeExportAttempt = 0;
@@ -6895,14 +6890,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
         'This browser could not create a secure export request. Refresh and try again.'));
       return;
     }
-    const scope = selectedExportScope();
     const attempt = ++exportSequence;
     activeExportAttempt = attempt;
     const deadline = Date.now() + ALIAS_TRANSFER_EXPORT_START_TIMEOUT_MS;
     if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
     document.cookie = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}=; Path=/; Max-Age=0; SameSite=Strict`;
     exportFrame.dataset.exportToken = token;
-    exportButton.href = aliasTransferExportDownloadHref(listId, scope, token);
+    exportButton.href = aliasTransferExportDownloadHref(listId, token);
     exportButton.classList.add('disabled');
     exportButton.setAttribute('aria-disabled', 'true');
     exportPanel.querySelectorAll('input').forEach((control) => { control.disabled = true; });
