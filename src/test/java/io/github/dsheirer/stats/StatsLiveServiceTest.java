@@ -180,6 +180,50 @@ class StatsLiveServiceTest
     }
 
     @Test
+    void recoverySnapshotExcludesConfiguredOnlyChannelsAndIncludesStartedChannelsWithoutQuality() throws Exception
+    {
+        ChannelProcessingManager manager = managerForManualActivityEvents();
+        StatsLiveService service = new StatsLiveService(manager);
+        Channel neverStarted = trunkedDmrChannel();
+        neverStarted.setConfigurationId("00000000-0000-0000-0000-000000000021");
+        Channel started = trunkedDmrChannel();
+        started.setConfigurationId("00000000-0000-0000-0000-000000000022");
+        String neverStartedTableId = "channel:" + neverStarted.getPersistedConfigurationId();
+        String startedTableId = "channel:" + started.getPersistedConfigurationId();
+
+        try
+        {
+            var model = manager.getChannelActivityModel();
+            model.channelConfigurationChanged(neverStarted);
+            model.channelConfigurationChanged(started);
+            waitUntil(() -> model.getSnapshotSet().tables().size() == 3);
+            service.start();
+
+            assertEquals(List.of("conventional"), tables(service).stream()
+                .map(table -> String.valueOf(table.get("table_id"))).toList(),
+                "browser recovery must not turn discovered configurations into running channels");
+
+            model.channelStarted(started, List.of());
+            waitUntil(() -> model.getSnapshotSet().tables().stream()
+                .anyMatch(table -> startedTableId.equals(table.tableId()) && table.channelRunning()));
+            assertEquals(List.of("conventional", startedTableId), tables(service).stream()
+                .map(table -> String.valueOf(table.get("table_id"))).toList());
+            Map<String,Object> active = tables(service).stream()
+                .filter(table -> startedTableId.equals(table.get("table_id"))).findFirst().orElseThrow();
+            assertEquals(true, active.get("channel_running"));
+            assertEquals(false, active.get("control_active"), "running does not require a quality observation");
+            String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            assertFalse(encoded.contains(neverStartedTableId));
+            assertTrue(encoded.contains(startedTableId));
+        }
+        finally
+        {
+            service.close();
+            manager.close();
+        }
+    }
+
+    @Test
     void recoverySnapshotDoesNotRestoreAStoppedTrunkedChannel() throws Exception
     {
         ChannelProcessingManager manager = managerForManualActivityEvents();

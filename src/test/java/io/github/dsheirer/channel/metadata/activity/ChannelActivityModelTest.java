@@ -75,6 +75,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
@@ -1082,6 +1083,51 @@ class ChannelActivityModelTest
         assertEquals(2, tables.size());
         assertSame(model.getConventionalTable(), tables.getFirst());
         assertSame(channel, tables.get(1).getOwnerChannel());
+    }
+
+    @Test
+    void configuredTrunkedChannelsRemainStoppedUntilTheirProcessingChainStarts() throws Exception
+    {
+        for(DecodeConfiguration configuration: List.of(new DecodeConfigP25Phase1(), trunkedDmrConfig()))
+        {
+            var model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+            Channel channel = trunkedChannel("Discovered site", "County", "Downtown", configuration,
+                856_137_500L);
+            List<ChannelActivitySnapshot> published = new CopyOnWriteArrayList<>();
+            model.addActivityListener(event -> {
+                if(!"conventional".equals(event.snapshot().tableId())) published.add(event.snapshot());
+            });
+
+            try
+            {
+                run(model, () -> model.channelConfigurationChanged(channel));
+                ChannelActivitySnapshot configured = model.getSnapshotSet().tables().get(1);
+                assertFalse(configured.rows().isEmpty(), "configuration still supplies the control frequency");
+                assertFalse(configured.channelRunning(), "saving a discovered channel does not start it");
+                assertFalse(configured.controlActive());
+                assertFalse(published.isEmpty());
+                assertTrue(published.stream().noneMatch(ChannelActivitySnapshot::channelRunning),
+                    "no intermediate configuration snapshot may advertise a running channel");
+
+                run(model, () -> model.channelStarted(channel, List.of()));
+                ChannelActivitySnapshot started = model.getSnapshotSet().tables().get(1);
+                assertTrue(started.channelRunning(), "a real start is running before signal quality arrives");
+                assertFalse(started.controlActive());
+                assertTrue(started.rows().stream().allMatch(row -> row.signalDbfs() == null &&
+                    row.decodeHealthPercent() == null));
+
+                run(model, () -> model.channelStopped(channel));
+                published.clear();
+                channel.setName("Renamed discovered site");
+                run(model, () -> model.channelConfigurationChanged(channel));
+                ChannelActivitySnapshot stopped = model.getSnapshotSet().tables().get(1);
+                assertFalse(stopped.channelRunning(), "editing a stopped channel must not restart its Live table");
+                assertFalse(stopped.controlActive());
+                assertFalse(published.isEmpty());
+                assertTrue(published.stream().noneMatch(ChannelActivitySnapshot::channelRunning));
+            }
+            finally { model.close(); }
+        }
     }
 
     @Test

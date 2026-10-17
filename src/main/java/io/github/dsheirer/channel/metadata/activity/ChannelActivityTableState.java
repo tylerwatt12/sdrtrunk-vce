@@ -43,7 +43,8 @@ public final class ChannelActivityTableState
     {
         mTitle = title;
         mOwnerChannel = ownerChannel;
-        mChannelRunning = true;
+        // Configuration and discovery observations can create a table before its receiver starts.
+        mChannelRunning = ownerChannel == null;
         mSnapshotListener = snapshotListener;
         publish();
     }
