@@ -58,7 +58,7 @@ async function main() {
   }
   for (const family of ['AM', 'NBFM']) {
     assert.deepEqual(model.alertToneChoices(toneChoices, family).map(value => value.value),
-      ['DTMF_1', 'DTMF_STAR', 'DTMF_POUND', 'HZ_281_25', 'HZ_3000_00'],
+      ['DTMF_1', 'DTMF_STAR', 'DTMF_POUND', 'HZ_281_25', 'HZ_3000_00', 'HZ_3031_25'],
       `${family} offers waveform DTMF and the mapped single-tone boundaries`);
   }
   for (const decoder of ['P25_PHASE1', 'P25_CONVENTIONAL']) {
@@ -67,6 +67,21 @@ async function main() {
       `${decoder} offers only mapped waveform single tones`);
   }
   assert.deepEqual(model.alertToneChoices(toneChoices, 'P25', 'P25_PHASE2').map(value => value.value), toneCodes.slice(1));
+  const pagingChoices = [...toneChoices, { value: 'HZ_382_30', label: 'TONE 382.30', analog_only: true },
+    { value: 'HZ_3487_00', label: 'TONE 3487.00', analog_only: true },
+    { value: 'HZ_3500_00', label: 'TONE 3500.00' }];
+  for (const family of ['AM', 'NBFM']) {
+    const choices = model.alertToneChoices(pagingChoices, family).map(value => value.value);
+    assert.ok(choices.includes('HZ_382_30') && choices.includes('HZ_3487_00'), `${family} includes the added paging frequencies`);
+    assert.ok(!choices.includes('HZ_3500_00'), 'The analog upper boundary excludes unsupported frequencies');
+  }
+  for (const [family, decoder] of [['P25', ''], ['P25', 'P25_PHASE1'], ['P25', 'P25_CONVENTIONAL'],
+    ['P25', 'P25_PHASE2'], ['DMR', 'DMR'], ['NXDN', 'NXDN']]) {
+    assert.ok(!model.alertToneChoices(pagingChoices, family, decoder).some(choice => choice.analog_only),
+      `${family} ${decoder} keeps its existing digital tone choices`);
+  }
+  assert.ok(model.alertToneChoices(pagingChoices).some(choice => choice.value === 'HZ_382_30'),
+    'An unscoped rule can choose an analog paging frequency');
   assert.equal(model.alertActivityChoices('AM').some(([key]) => key === 'health'), true);
   assert.equal(model.ALERT_TRIGGERS.some(([key]) => key === 'audio'), false);
   for (const value of ['http://vce.example.com', 'https://127.0.0.1', 'https://vce.local',

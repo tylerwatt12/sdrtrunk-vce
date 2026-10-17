@@ -4,7 +4,7 @@ package io.github.dsheirer.database.upgrade;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
-/** Populated current fixture retaining active settings and history after retired audio options are removed. */
+/** Populated frozen format-56 fixture retaining active settings and history after retired audio options are removed. */
 public final class Format56TestDatabase
 {
     private Format56TestDatabase() {}
@@ -17,7 +17,8 @@ public final class Format56TestDatabase
             new Format55To56DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 56);
             connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 56)
+                throw new IllegalStateException("Format-56 fixture was not preserved");
         }
         return database;
     }

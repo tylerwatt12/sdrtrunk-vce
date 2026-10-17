@@ -3,6 +3,7 @@ package io.github.dsheirer.stats;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.alerts.AlertProtocolFamily;
 import io.github.dsheirer.identifier.tone.AmbeTone;
+import io.github.dsheirer.audio.tone.PagingToneFrequencyMapping;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.protocol.Protocol;
@@ -12,6 +13,7 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -32,7 +34,20 @@ final class TopicAlertOptions
             .map(TopicAlertOptions::protocolOption).toList());
         result.put("message_types", Arrays.stream(DecodeEventType.values()).filter(value -> value != DecodeEventType.UNKNOWN)
             .map(value -> option(value.name(), value.getLabel(), "")).toList());
-        result.put("tone_types", Arrays.stream(AmbeTone.values()).map(value -> option(value.name(), value.toString(), "")).toList());
+        List<Map<String,Object>> tones = new ArrayList<>(Arrays.stream(AmbeTone.values())
+            .map(value -> option(value.name(), value.toString(), "")).toList());
+        var toneCodes = new LinkedHashSet<>(Arrays.stream(AmbeTone.values()).map(Enum::name).toList());
+        for(var nominal: PagingToneFrequencyMapping.nominals())
+        {
+            if(toneCodes.add(nominal.code()))
+            {
+                Map<String,Object> tone = new LinkedHashMap<>(option(nominal.code(),
+                    String.format(java.util.Locale.ROOT, "TONE %.2f", nominal.frequencyHz()), ""));
+                tone.put("analog_only", true);
+                tones.add(tone);
+            }
+        }
+        result.put("tone_types", List.copyOf(tones));
         result.put("dcs_codes", Arrays.stream(DCSCode.values()).filter(value -> value != DCSCode.UNKNOWN)
             .map(value -> option(value.name(), value.toString(), "")).toList());
         try(Connection connection = SdrTrunkDatabase.open(database))

@@ -285,6 +285,11 @@ public final class ManagedRecordingCatalogMigrator
                     }
                     if(!statistics.isEmpty()) statement.execute("ANALYZE sqlite_schema");
                 }
+                case 9 ->
+                {
+                    // Prospective analog nominal frequency identities expand; preserve all stored facts verbatim.
+                    // The shared adjacent runner stamps format 10 so older method-4 readers refuse this catalog.
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

@@ -37,7 +37,7 @@ class Format55To56DatabaseMigrationTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         try(Connection connection = open(database))
         {
-            assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(List.of("remote.links", "audio.paging_tones"), ReceiverSettingsSchema.KEYS);
             ReceiverSettingsSchema.validate(connection);
@@ -61,7 +61,7 @@ class Format55To56DatabaseMigrationTest
             assertEquals(55, DatabaseFormatCatalog.inspect(connection).version());
             Map<String,List<String>> expected = contents(connection, true);
             var preflight = DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
-            assertEquals(List.of("format-55-to-56"), preflight.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
+            assertEquals(List.of("format-55-to-56", "format-56-to-57"), preflight.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
             assertEquals(2, preflight.steps().getFirst().effects().stream()
                 .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP).count());
 
@@ -69,7 +69,7 @@ class Format55To56DatabaseMigrationTest
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
 
-            assertEquals(List.of("format-55-to-56"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-55-to-56", "format-56-to-57"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             List<DatabaseMigrationEffect> drops = report.steps().getFirst().effects().stream()
                 .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP).toList();
             assertEquals(2, drops.size());
@@ -77,7 +77,7 @@ class Format55To56DatabaseMigrationTest
             assertEquals(2, dropCount(report));
             assertEquals(expected, contents(connection, false));
             assertRetiredStateAbsent(connection);
-            assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             integrity(connection);
         }
@@ -100,7 +100,7 @@ class Format55To56DatabaseMigrationTest
             ObjectNode portable = readPortable(connection);
             assertFalse(portable.has(AUDIO_NODE));
             assertEquals("keep this unrelated key", portable.path("unrelated/node").path(AGC_KEY).asText());
-            assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -121,7 +121,7 @@ class Format55To56DatabaseMigrationTest
                 .map(DatabaseMigrationEffect::affectedRows).toList());
             assertEquals(expected, contents(connection, false));
             assertRetiredStateAbsent(connection);
-            assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 
@@ -151,7 +151,7 @@ class Format55To56DatabaseMigrationTest
             connection.setAutoCommit(false);
             assertEquals(2, dropCount(DatabaseMigrationChain.migrate(connection)));
             connection.commit();
-            assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(expected, contents(connection, false));
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             integrity(connection);
@@ -185,7 +185,7 @@ class Format55To56DatabaseMigrationTest
         new ApplicationMigrationService().migrateCurrent(root, false, null);
         try(Connection connection = open(database))
         {
-            assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(expected, contents(connection, false));
             assertRetiredStateAbsent(connection);
             integrity(connection);
@@ -234,7 +234,7 @@ class Format55To56DatabaseMigrationTest
                 result::helperOutput);
             try(Connection connection = open(database))
             {
-                assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(kept.get(index), readPortable(connection).path("unrelated/node").path("keep").asText());
                 assertRetiredStateAbsent(connection);
                 assertEquals(expected, contents(connection, false));

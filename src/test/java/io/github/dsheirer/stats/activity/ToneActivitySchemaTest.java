@@ -284,10 +284,14 @@ class ToneActivitySchemaTest
             var sequence = new CompletedToneSequence(snapshot, previous.firstVoiceSampleTimestamp(),
                 CompletedToneSequence.Source.DECODED_AUDIO, CompletedToneSequence.Method.ANALOG_PCM_TONE_V1,
                 List.of(new CompletedToneSequence.Element(List.of(562500), null, 0L, 200L, .99),
-                    new CompletedToneSequence.Element(List.of(697000, 1209000), "DTMF_1", 300L, 150L, .99)));
+                    new CompletedToneSequence.Element(List.of(382300), null, 200L, 200L, .99),
+                    new CompletedToneSequence.Element(List.of(510500), null, 400L, 200L, .99),
+                    new CompletedToneSequence.Element(List.of(697000, 1209000), "DTMF_1", 600L, 150L, .99)));
             assertTrue(recordOnCall(connection, new ReceiverActivityMapper().mapCompletedToneSequence(sequence), true));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE action_code=4"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone_sequence WHERE method_code=4 AND phase IS NULL"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone WHERE frequency_1_millihz=382300 AND codec_symbol IS NULL"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone WHERE frequency_1_millihz=510500 AND codec_symbol IS NULL"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone WHERE codec_symbol='DTMF_1' AND frequency_1_millihz=697000 AND frequency_2_millihz=1209000"));
             var rows = page(connection); ToneActivitySchema.enrichPage(connection, rows);
             assertEquals(ToneSummaryPayload.summary(sequence), rows.getFirst().get("paging_tone_summary"));

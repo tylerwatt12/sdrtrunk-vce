@@ -46,7 +46,7 @@ class Format52To53DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56"),
+            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56", "format-56-to-57"),
                 report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(3, report.steps().getFirst().effects().getLast().affectedRows());
             assertEquals(before, retainedContents(connection));
@@ -189,7 +189,7 @@ class Format52To53DatabaseMigrationTest
             new ApplicationMigrationService().migrateCurrent(root, false, null);
             try(Connection connection = open(database))
             {
-                assertEquals(56, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertDefaults(connection);
                 assertTrue(new ApplicationSettingsStore(database).loadJson("audio.voice_enhancement", 256).isEmpty());
             }

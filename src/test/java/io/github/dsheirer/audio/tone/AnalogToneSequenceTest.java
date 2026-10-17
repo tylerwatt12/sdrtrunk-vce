@@ -19,7 +19,7 @@ class AnalogToneSequenceTest
     {
         for(DecoderType decoder:List.of(DecoderType.AM,DecoderType.NBFM))
         {
-            var service = new P25PagingToneService(256, 1_000_000, 8, new P25PagingToneDetector()::detect);
+            var service = service();
             var registration = service.registerAnalogPcm();
             List<CompletedToneSequence> completed = new ArrayList<>();
             service.addCompletedToneListener(completed::add);
@@ -43,7 +43,7 @@ class AnalogToneSequenceTest
 
     @Test void ctcssAndP1WaveformDtmfProduceNoToneEvidence() throws Exception
     {
-        var service = new P25PagingToneService(256,1_000_000,8,new P25PagingToneDetector()::detect);
+        var service = service();
         var analog=service.registerAnalogPcm();
         var p1=service.registerGlobalPcm();
         List<CompletedToneSequence> completed = new ArrayList<>();
@@ -56,7 +56,7 @@ class AnalogToneSequenceTest
 
     @Test void mixedCtcssDoesNotBecomeEvidenceOrMaskPagingAndDtmf() throws Exception
     {
-        var service = new P25PagingToneService(256,1_000_000,8,new P25PagingToneDetector()::detect);
+        var service = service();
         var registration = service.registerAnalogPcm();
         List<CompletedToneSequence> completed = new ArrayList<>();service.addCompletedToneListener(completed::add);
         float[] samples = AnalogDtmfDetectorTest.signal(254.1,0,.25,0,9600);
@@ -72,7 +72,7 @@ class AnalogToneSequenceTest
 
     @Test void lowestAudibleNominalSingleIsPreservedWhileCtcssBandIsExcluded() throws Exception
     {
-        var service = new P25PagingToneService(256,1_000_000,8,new P25PagingToneDetector()::detect);
+        var service = service();
         var registration = service.registerAnalogPcm();
         List<CompletedToneSequence> completed = new ArrayList<>();service.addCompletedToneListener(completed::add);
         send(service,registration,snapshot(8,DecoderType.AM),AnalogDtmfDetectorTest.signal(281.25,0,.3,0,8000),237);
@@ -93,6 +93,42 @@ class AnalogToneSequenceTest
         assertTrue(completed.isEmpty());assertTrue(service.droppedEvents()>0);assertEquals(0,service.retainedBytes());
         registration.resetUnfinishedCall();registration.close();service.drain();
         assertTrue(completed.isEmpty());assertEquals(0,service.retainedBytes());
+    }
+
+    @Test void analogCallsKeepPagingNominalsWithoutChangingP1AmbeReports() throws Exception
+    {
+        var service = service();
+        List<CompletedToneSequence> completed = new ArrayList<>();
+        service.addCompletedToneListener(completed::add);
+        for(DecoderType decoder: List.of(DecoderType.NBFM,DecoderType.AM,DecoderType.P25_PHASE1))
+        {
+            var registration = decoder == DecoderType.P25_PHASE1 ? service.registerGlobalPcm() : service.registerAnalogPcm();
+            float[] samples = new float[16000];
+            System.arraycopy(AnalogDtmfDetectorTest.signal(382.3,0,.3,0,6400),0,samples,0,6400);
+            System.arraycopy(AnalogDtmfDetectorTest.signal(1232,0,.3,0,6400),0,samples,8000,6400);
+            send(service,registration,snapshot(20 + decoder.ordinal(),decoder),samples,decoder == DecoderType.P25_PHASE1 ? 160 : 237);
+        }
+        assertEquals(3,completed.size());
+        for(var sequence: completed.subList(0,2))
+        {
+            assertEquals(CompletedToneSequence.Method.ANALOG_PCM_TONE_V1,sequence.method());
+            assertEquals(List.of(List.of(382300),List.of(1232000)),sequence.tones().stream()
+                .map(CompletedToneSequence.Element::frequenciesMilliHertz).toList());
+        }
+        assertEquals(List.of(List.of(375000),List.of(1218750)),completed.getLast().tones().stream()
+            .map(CompletedToneSequence.Element::frequenciesMilliHertz).toList());
+    }
+
+    @Test void addedHighPlectronFrequencyUsesTheAnalogRangeOnly() throws Exception
+    {
+        var service = service();
+        List<CompletedToneSequence> completed = new ArrayList<>();
+        service.addCompletedToneListener(completed::add);
+        float[] samples = AnalogDtmfDetectorTest.signal(3487,0,.3,0,8000);
+        send(service,service.registerAnalogPcm(),snapshot(50,DecoderType.NBFM),samples,237);
+        send(service,service.registerGlobalPcm(),snapshot(51,DecoderType.P25_PHASE1),samples,160);
+        assertEquals(List.of(3487000),completed.getFirst().tones().getFirst().frequenciesMilliHertz());
+        assertTrue(completed.getLast().tones().isEmpty());
     }
 
     @Test void slowMultipleListenersCannotHoldAnalogProducerOrClose() throws Exception
@@ -126,6 +162,11 @@ class AnalogToneSequenceTest
         return new AudioCallSnapshot(id,null,null,new IdentifierCollection(),Set.of(),1000,3000,1,0,1000,3000,false,true,
             CallEncryptionState.CLEAR,false,null,VoiceCallQuality.EMPTY,new CallLegId(42,sequence,0),
             new CallLegSource(decoder,"00000000-0000-4000-8000-000000000001","Analog",null,0,null,null,null,false),null);
+    }
+    private static P25PagingToneService service()
+    {
+        var detector = new P25PagingToneDetector();
+        return new P25PagingToneService(256,1_000_000,8,detector::detect,detector::detectAnalog,false);
     }
     static AudioCallEvent event(AudioCallEventType type,AudioCallSnapshot snapshot,float[] samples,long timestamp)
     {return new AudioCallEvent(type,snapshot,samples,false,0,timestamp);}

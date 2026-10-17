@@ -43,7 +43,8 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     protocols: [{ value: 'APCO25', label: 'P25 Phase I' }, { value: 'DCS', label: 'DCS' }], message_types: [{ value: 'PAGE', label: 'Page' }],
     tone_types: [{ value: 'INVALID', label: 'INVALID' }, { value: 'CALL_PROGRESS', label: 'Call progress tone' },
       { value: 'DTMF_1', label: 'DTMF 1' }, { value: 'KNOX_1', label: 'KNOX 1' },
-      { value: 'HZ_1000_00', label: 'TONE 1000.00' }],
+      { value: 'HZ_1000_00', label: 'TONE 1000.00' }, { value: 'HZ_382_30', label: 'TONE 382.30', analog_only: true },
+      { value: 'HZ_3487_00', label: 'TONE 3487.00', analog_only: true }],
     dcs_codes: [{ value: 'N023', label: 'DCS 023' }] },
     config: { revision: 1, enabled: true, mode: 'proxy', site_url: '', sender_label: 'VCE installation', registration: { status: 'approved', sender_id: 'synthetic-sender' } },
     writes: [], requests: [], pending: [], enrollmentStatus: 'pending', publicMode: 'proxy', publicReady: true,
@@ -574,6 +575,7 @@ for (const protocol of ['NBFM', 'AM', 'NXDN']) {
       await page.setViewportSize({ width: phone ? 320 : 1280, height: phone ? 844 : 900 });
       const { state, fixture } = await installAlerts(page, { theme: phone ? 'dark' : 'light' });
       const selectedChannel = `tone-channel-${protocol.toLowerCase()}`;
+      const toneCode = protocol === 'NXDN' ? 'HZ_1000_00' : 'HZ_382_30';
       state.options.channels.push({ value: selectedChannel, label: `${protocol} Dispatch`, protocol_family: protocol,
         channel_kind: 'CONVENTIONAL', decoder_type: protocol, system_key: '' });
       await page.goto('/app.html?view=alerts');
@@ -609,7 +611,9 @@ for (const protocol of ['NBFM', 'AM', 'NXDN']) {
       await expect(tone.locator('option[value="DTMF_1"]')).toHaveCount(1);
       await expect(tone.locator('option[value="CALL_PROGRESS"]')).toHaveCount(protocol === 'NXDN' ? 1 : 0);
       await expect(tone.locator('option[value="KNOX_1"]')).toHaveCount(protocol === 'NXDN' ? 1 : 0);
-      await tone.selectOption('HZ_1000_00');
+      await expect(tone.locator('option[value="HZ_382_30"]')).toHaveCount(protocol === 'NXDN' ? 0 : 1);
+      await expect(tone.locator('option[value="HZ_3487_00"]')).toHaveCount(protocol === 'NXDN' ? 0 : 1);
+      await tone.selectOption(toneCode);
       if (phone) await auditScreenshot(page, 'tone-editor-am-conditions-dark-phone');
       await revealPrimaryAction(page, dialog.getByRole('button', { name: 'Create rule', exact: true }));
       await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
@@ -618,7 +622,7 @@ for (const protocol of ['NBFM', 'AM', 'NXDN']) {
       expect(state.writes[0].value.rule).toMatchObject({
         trigger: 'tone', protocol_family: source === 'protocol' ? protocol : '', protocol: '',
         channel_id: source === 'channel' ? selectedChannel : '',
-        conditions: { op: 'all', items: [{ field: 'tone', operator: 'is', value: 'HZ_1000_00' }] }
+        conditions: { op: 'all', items: [{ field: 'tone', operator: 'is', value: toneCode }] }
       });
       await page.locator('.alerts-management-rules').getByRole('button', { name, exact: true }).click();
       const edit = page.getByRole('dialog', { name: 'Edit alert rule', exact: true });
@@ -629,7 +633,7 @@ for (const protocol of ['NBFM', 'AM', 'NXDN']) {
       await expect(edit.getByText('Choose another activity or source.', { exact: true })).toBeHidden();
       await edit.getByRole('button', { name: 'Conditions', exact: true }).click();
       await expect(edit.getByRole('combobox', { name: 'Field', exact: true })).toHaveValue('tone');
-      await expect(edit.getByRole('combobox', { name: 'Value', exact: true })).toHaveValue('HZ_1000_00');
+      await expect(edit.getByRole('combobox', { name: 'Value', exact: true })).toHaveValue(toneCode);
       expect(fixture.pageErrors).toEqual([]);
     });
   }

@@ -36,7 +36,7 @@ class ManagedRecordingAnalogToneMigrationTest
         assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());
         try(Connection connection = open(catalog); var statement = connection.createStatement())
         {
-            ManagedRecordingSchema.validate(connection, 9);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM recording_transcript_fts WHERE recording_transcript_fts MATCH 'verbatim'"));
             statement.executeUpdate("INSERT INTO recording_tone_sequence VALUES(43,1,4,NULL,4000,4000,5000,2)");
@@ -66,7 +66,7 @@ class ManagedRecordingAnalogToneMigrationTest
         assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());
         try(Connection connection = open(catalog))
         {
-            ManagedRecordingSchema.validate(connection, 9);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             integrity(connection);
         }

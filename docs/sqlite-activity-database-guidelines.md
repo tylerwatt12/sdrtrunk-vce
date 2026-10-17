@@ -123,14 +123,16 @@ before parents. The separate Managed Recordings catalog follows recording owners
 
 P25 Phase 1 PCM uses method 3 (`p25_pcm_ambe_tone_v2`) for single tones. Analog AM/NBFM PCM uses method 4
 (`analog_pcm_tone_v1`) for nominal single tones and waveform DTMF symbols with their two standard frequencies.
-Ordinary detected single tones map to the nearest predefined AMBE nominal frequency; exact halfway cases choose
-the lower frequency. Existing method-1 measured values and method-2 encoded metadata retain their original stored
+P25 Phase 1 single tones use the predefined AMBE nominal frequencies. Analog single tones use the admitted AMBE,
+QCII and Plectron nominal paging frequencies. Exact halfway cases choose the lower frequency. Existing method-1 measured values and method-2 encoded metadata retain their original stored
 values. Encoded digital evidence remains distinct from waveform inference. CTCSS is solely an analog channel
 squelch control; it creates no tone facts, Activity evidence or alert facts.
 
 Application format 55 and Managed Recordings catalog format 9 admit method 4 while preserving prior tone evidence.
 Absent analog CTCSS configuration means disabled; existing channel settings are preserved. Runtime startup validates
-the current schema and settings without performing migrations.
+the current schema and settings without performing migrations. Application format 57 and catalog format 10 expand
+only the admitted method-4 nominal paging identities. Their adjacent semantic migrations change no DDL or historical
+tone value; P25 Phase 1 method 3, encoded metadata, waveform DTMF, storage bounds, queries and retention are unchanged.
 
 ### Alias Editor large-list indexes
 

@@ -22,7 +22,8 @@ import org.jtransforms.fft.FloatFFT_1D;
  * Examines 128 ms Hann windows every 20 ms. A candidate must have 90% of its spectral power within five bins of one
  * 200-3000 Hz peak, at least 12 dB separation from any other peak, energy in every 32 ms quarter-window, and continuous
  * frequency within 4 Hz for at least 200 ms of qualified window centers. Qualified tone reports use the nearest
- * allowed AMBE single-tone frequency. Continuity still uses the unsnapped spectral estimates, so different pitches
+ * allowed AMBE single-tone frequency. Analog analysis also admits QCII/Plectron nominals through 3487 Hz.
+ * Continuity still uses the unsnapped spectral estimates, so different pitches
  * in the same nominal band cannot borrow each other's qualification time. Short gaps are not bridged. Offsets/durations
  * describe the qualified
  * centers, with window-limited onset accuracy; short or distorted real tones may be missed. Confidence is an evidence
@@ -42,6 +43,7 @@ public final class P25PagingToneDetector
     private static final int MINIMUM_QUALIFIED_SAMPLES = SAMPLE_RATE / 5;
     private static final double MINIMUM_FREQUENCY_HZ = 200.0;
     private static final double MAXIMUM_FREQUENCY_HZ = 3000.0;
+    private static final double MAXIMUM_ANALOG_NOMINAL_HZ = 3487.0;
     private static final double FREQUENCY_TOLERANCE_HZ = 4.0;
     private static final double MINIMUM_RMS = 0.002;
     private static final double MINIMUM_NARROWBAND_FRACTION = 0.90;
@@ -59,15 +61,29 @@ public final class P25PagingToneDetector
                 throw new IllegalArgumentException("Invalid detected tone evidence");
             }
 
-            frequencyHz = AmbeToneFrequencyMapping.nearest((int)Math.round(frequencyHz * 1000))
-                .orElseThrow(() -> new IllegalArgumentException("Tone frequency is outside the AMBE table")).frequencyHz();
+            boolean analog = "analog_pcm_tone_v1".equals(method);
+            frequencyHz = analog ? PagingToneFrequencyMapping.nearest((int)Math.round(frequencyHz * 1000))
+                .orElseThrow(() -> new IllegalArgumentException("Tone frequency is outside the nominal table")).frequencyHz() :
+                AmbeToneFrequencyMapping.nearest((int)Math.round(frequencyHz * 1000))
+                    .orElseThrow(() -> new IllegalArgumentException("Tone frequency is outside the AMBE table")).frequencyHz();
             source = "decoded_audio";
-            method = "p25_pcm_ambe_tone_v2";
+            method = analog ? "analog_pcm_tone_v1" : "p25_pcm_ambe_tone_v2";
         }
     }
 
     /** Detects raw PCM tones on the concatenated sample clock, independent of decoded-frame buffer boundaries. */
     public List<DetectedTone> detect(List<float[]> rawAudioBuffers)
+    {
+        return detect(rawAudioBuffers,false);
+    }
+
+    /** Same waveform qualification, with analog paging nominals selected before any AMBE rounding. */
+    public List<DetectedTone> detectAnalog(List<float[]> rawAudioBuffers)
+    {
+        return detect(rawAudioBuffers,true);
+    }
+
+    private List<DetectedTone> detect(List<float[]> rawAudioBuffers,boolean analog)
     {
         if(rawAudioBuffers == null || rawAudioBuffers.size() > MAXIMUM_BUFFERS)
         {
@@ -122,7 +138,7 @@ public final class P25PagingToneDetector
 
         for(int start = 0; start <= samples.length - WINDOW_SIZE; start += HOP_SIZE)
         {
-            Candidate candidate = analyze(samples, start, window, spectrum, power, fft);
+            Candidate candidate = analyze(samples, start, window, spectrum, power, fft,analog);
             int center = start + WINDOW_SIZE / 2;
 
             if(candidate != null && run != null &&
@@ -134,7 +150,7 @@ public final class P25PagingToneDetector
             {
                 if(run != null)
                 {
-                    qualify(run, tones);
+                    qualify(run, tones,analog);
 
                     if(tones.size() > MAXIMUM_TONES)
                     {
@@ -148,7 +164,7 @@ public final class P25PagingToneDetector
 
         if(run != null)
         {
-            qualify(run, tones);
+            qualify(run, tones,analog);
         }
 
         if(tones.size() > MAXIMUM_TONES) throw new IllegalArgumentException("Incomplete tone sequence exceeds bound");
@@ -156,7 +172,7 @@ public final class P25PagingToneDetector
     }
 
     private Candidate analyze(float[] samples, int start, double[] window, float[] spectrum, double[] power,
-                               FloatFFT_1D fft)
+                               FloatFFT_1D fft,boolean analog)
     {
         double mean = 0.0;
 
@@ -245,7 +261,10 @@ public final class P25PagingToneDetector
             Math.max(-0.5, Math.min(0.5, 0.5 * (left - right) / denominator)) : 0.0);
         double frequency = interpolatedBin * SAMPLE_RATE / WINDOW_SIZE;
 
-        if(!Double.isFinite(frequency) || frequency < MINIMUM_FREQUENCY_HZ || frequency > MAXIMUM_FREQUENCY_HZ)
+        boolean aboveRange = analog ? PagingToneFrequencyMapping.nearest((int)Math.round(frequency * 1000))
+            .filter(match -> match.frequencyHz() <= MAXIMUM_ANALOG_NOMINAL_HZ).isEmpty() :
+            frequency > MAXIMUM_FREQUENCY_HZ;
+        if(!Double.isFinite(frequency) || frequency < MINIMUM_FREQUENCY_HZ || aboveRange)
         {
             return null;
         }
@@ -253,7 +272,7 @@ public final class P25PagingToneDetector
         return new Candidate(frequency, Math.min(fraction, 1.0 - secondPeak / power[peakBin]));
     }
 
-    private void qualify(Run run, List<DetectedTone> tones)
+    private void qualify(Run run, List<DetectedTone> tones,boolean analog)
     {
         int qualifiedSamples = run.lastCenter - run.firstCenter + HOP_SIZE;
 
@@ -262,7 +281,7 @@ public final class P25PagingToneDetector
             tones.add(new DetectedTone(run.frequencyHz(),
                 (run.firstCenter - HOP_SIZE / 2) * 1000L / SAMPLE_RATE,
                 qualifiedSamples * 1000L / SAMPLE_RATE, run.confidenceSum / run.count,
-                "decoded_audio", "p25_pcm_ambe_tone_v2"));
+                "decoded_audio", analog ? "analog_pcm_tone_v1" : "p25_pcm_ambe_tone_v2"));
         }
     }
 

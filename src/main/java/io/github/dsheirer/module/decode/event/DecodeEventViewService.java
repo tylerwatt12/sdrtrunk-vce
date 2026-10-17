@@ -13,6 +13,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.AmbeToneFrequencyMapping;
+import io.github.dsheirer.audio.tone.PagingToneFrequencyMapping;
 import io.github.dsheirer.channel.metadata.activity.ConventionalLiveSources;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -523,7 +524,12 @@ public class DecodeEventViewService implements AutoCloseable
         {
             if(tone.codecSymbol() != null) tones.add(tone.codecSymbol());
             else if(tone.frequenciesMilliHertz().size() == 1)
+            {
+                if(sequence.method() == CompletedToneSequence.Method.ANALOG_PCM_TONE_V1)
+                    PagingToneFrequencyMapping.nearest(tone.frequenciesMilliHertz().getFirst()).ifPresent(match -> tones.add(match.code()));
+                //Retain existing AMBE-frequency rules when analog paging gains a more precise nominal frequency.
                 AmbeToneFrequencyMapping.nearest(tone.frequenciesMilliHertz().getFirst()).ifPresent(match -> tones.add(match.code()));
+            }
         }
         LinkedHashSet<Long> aliasIds = new LinkedHashSet<>(projected.aliasIds());
         var analog = snapshot.analogCallAttribution();

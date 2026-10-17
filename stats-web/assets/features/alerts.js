@@ -2,7 +2,7 @@ import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS,
   newAlertRule, newAlertCondition, alertRuleDescription,
   alertSourceChoices, alertActivityChoices, alertToneChoices, alertActionLabel, alertPopupAction,
   visibleAlertTopics, availableAlertTopics, visibleAlertHistory, validAlertSiteUrl,
-  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=4';
+  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=5';
 import { readAlertDevice, saveAlertDevice, forgetAlertDevice } from './alerts-device-storage.js?v=1';
 import { reconcileDirectSubscription, syncDirectWorkerDevice } from './alerts-direct.js?v=1';
 import { enrollmentQrCanvas } from './alerts-qr.js?v=2';

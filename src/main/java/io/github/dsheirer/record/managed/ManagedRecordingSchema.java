@@ -21,7 +21,7 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 9;
+    public static final int CURRENT_FORMAT_VERSION = 10;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
@@ -32,7 +32,9 @@ public final class ManagedRecordingSchema
     private static final Map<String,String> FORMAT_SIX_DDL = formatSixSchema();
     private static final Map<String,String> FORMAT_SEVEN_DDL = formatSevenSchema();
     private static final Map<String,String> FORMAT_EIGHT_DDL = formatEightSchema();
-    static final Map<String,String> DDL = formatNineSchema();
+    private static final Map<String,String> FORMAT_NINE_DDL = formatNineSchema();
+    // Format 10 extends the admitted analog nominal identities without changing their stored representation.
+    static final Map<String,String> DDL = FORMAT_NINE_DDL;
 
     private ManagedRecordingSchema() {}
 
@@ -49,7 +51,8 @@ public final class ManagedRecordingSchema
             case 6 -> FORMAT_SIX_DDL;
             case 7 -> FORMAT_SEVEN_DDL;
             case 8 -> FORMAT_EIGHT_DDL;
-            case 9 -> DDL;
+            case 9 -> FORMAT_NINE_DDL;
+            case 10 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }

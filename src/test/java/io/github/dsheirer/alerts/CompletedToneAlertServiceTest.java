@@ -45,6 +45,39 @@ class CompletedToneAlertServiceTest
         }
     }
 
+    @Test void analogPagingFrequencyMatchesExactAndExistingAmbeRulesWithoutChangingEncodedFacts() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START + 2000);
+        for(var decoder: List.of(DecoderType.NBFM, DecoderType.AM))
+        {
+            try(var service = configured(clock, 0, AlertRule.Schedule.always()))
+            {
+                for(String tone: List.of("HZ_382_30", "HZ_375_00"))
+                {
+                    service.saveRule(new AlertRule(tone, tone, "fire", true, "tone", "", "", CHANNEL,
+                        decoder.name(), "", new AlertRule.Condition("", null, "tone", "is", tone), null, null,
+                        0, "rule", false, tone, "{channel}", "details"), service.configuration().revision());
+                }
+                var sequence = new CompletedToneSequence(snapshot(30 + decoder.ordinal(), decoder), START,
+                    CompletedToneSequence.Source.DECODED_AUDIO, CompletedToneSequence.Method.ANALOG_PCM_TONE_V1,
+                    List.of(new CompletedToneSequence.Element(List.of(382300), null, 50L, 250, .99)));
+                assertEquals(List.of("HZ_382_30", "HZ_375_00"),
+                    DecodeEventViewService.completedToneView(sequence, null).alertFacts().toneCodes());
+                service.receiveCompletedToneSequence(sequence);
+                service.drain();
+                assertEquals(2, service.history(null, 100, 0).get("total"), decoder.name());
+            }
+        }
+        var encoded = new CompletedToneSequence(snapshot(40, DecoderType.NXDN), START,
+            CompletedToneSequence.Source.ENCODED, CompletedToneSequence.Method.AMBE_TONE_V1,
+            List.of(new CompletedToneSequence.Element(List.of(375000), "HZ_375_00", 0L, 250, null)));
+        assertEquals(List.of("HZ_375_00"), DecodeEventViewService.completedToneView(encoded, null).alertFacts().toneCodes());
+        var phaseOne = new CompletedToneSequence(snapshot(41, DecoderType.P25_PHASE1), START,
+            CompletedToneSequence.Source.DECODED_AUDIO, CompletedToneSequence.Method.P25_PCM_AMBE_TONE_V2,
+            List.of(new CompletedToneSequence.Element(List.of(375000), null, 0L, 250, .99)));
+        assertEquals(List.of("HZ_375_00"), DecodeEventViewService.completedToneView(phaseOne, null).alertFacts().toneCodes());
+    }
+
     @Test void legacyCodecEventDoesNotFireToneRuleAndAnalogDtmfSharesCompletedPath() throws Exception
     {
         AtomicLong clock=new AtomicLong(START+2000);

@@ -84,12 +84,14 @@ public final class P25PagingToneService
     private final long mMaximumRetainedBytes;
     private final int mMaximumActiveCalls;
     private final Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> mDetector;
+    private final Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> mAnalogDetector;
     private final Thread mWorker;
     private final int mWakeBatchThreshold;
 
     private P25PagingToneService()
     {
-        this(4096, 16L * 1024L * 1024L, 64, new P25PagingToneDetector()::detect, true);
+        this(4096, 16L * 1024L * 1024L, 64, new P25PagingToneDetector()::detect,
+            new P25PagingToneDetector()::detectAnalog,true);
     }
 
     /** Isolated manual-worker constructor for bounded observer tests. */
@@ -104,12 +106,22 @@ public final class P25PagingToneService
                           Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> detector,
                           boolean startWorker)
     {
+        this(maximumQueuedEvents,maximumRetainedBytes,maximumActiveCalls,detector,detector,startWorker);
+    }
+
+    /** Separate waveform mappings; injected detector functions retain control of both observer paths. */
+    P25PagingToneService(int maximumQueuedEvents,long maximumRetainedBytes,int maximumActiveCalls,
+                        Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> detector,
+                        Function<List<float[]>, List<P25PagingToneDetector.DetectedTone>> analogDetector,
+                        boolean startWorker)
+    {
         if(maximumQueuedEvents <= 0 || maximumRetainedBytes <= 0 || maximumActiveCalls <= 0)
             throw new IllegalArgumentException("Positive observer bounds are required");
         mMaximumQueuedEvents = maximumQueuedEvents;
         mMaximumRetainedBytes = maximumRetainedBytes;
         mMaximumActiveCalls = maximumActiveCalls;
         mDetector = java.util.Objects.requireNonNull(detector);
+        mAnalogDetector = java.util.Objects.requireNonNull(analogDetector);
         mWakeBatchThreshold = Math.min(128, Math.max(1, maximumQueuedEvents / 2));
         if(startWorker)
         {
@@ -589,7 +601,7 @@ public final class P25PagingToneService
                 if(!current(queued.epoch())) return false;
                 List<float[]> analysisAudio = queued.registration().analog ?
                     AnalogToneAudioFilter.filter(context.buffers) : context.buffers;
-                tones = mDetector.apply(analysisAudio);
+                tones = (queued.registration().analog ? mAnalogDetector : mDetector).apply(analysisAudio);
                 if(queued.registration().analog)
                 {
                     //Subaudible squelch tones belong only to the analog receive gate, never call evidence.

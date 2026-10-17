@@ -15,6 +15,24 @@ class TopicAlertOptionsTest
 {
     @TempDir Path directory;
 
+    @Test void analogPagingFrequenciesExtendTheToneCatalogWithoutChangingEncodedChoices() throws Exception
+    {
+        Path database = directory.resolve("tone-options.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        var tones = rows(TopicAlertOptions.read(database), "tone_types");
+        assertEquals(tones.size(), tones.stream().map(tone -> tone.get("value")).distinct().count());
+        for(var encoded: io.github.dsheirer.identifier.tone.AmbeTone.values())
+        {
+            var option = tones.stream().filter(tone -> encoded.name().equals(tone.get("value"))).findFirst().orElseThrow();
+            assertEquals(encoded.toString(), option.get("label"));
+            assertFalse(option.containsKey("analog_only"), "Existing encoded options retain their availability");
+        }
+        var paging = tones.stream().filter(tone -> "HZ_382_30".equals(tone.get("value"))).findFirst().orElseThrow();
+        assertEquals("TONE 382.30", paging.get("label"));
+        assertEquals(true, paging.get("analog_only"));
+        assertTrue(tones.stream().anyMatch(tone -> "HZ_3487_00".equals(tone.get("value")) && Boolean.TRUE.equals(tone.get("analog_only"))));
+    }
+
     @Test void sourceOptionsUseCatalogFallbackWhileKeepingSavedRawSystemLabels() throws Exception
     {
         Path database = directory.resolve("catalog-options.sqlite");

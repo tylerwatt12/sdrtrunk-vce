@@ -190,7 +190,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -771,6 +771,14 @@ Normal startup validates the absence of retired options and never deletes or rep
 and recovery no longer inspect unused `audio-models/selection.json` files; this does not alter the earlier historical
 migration policies. No receiver audio, installed JMBE library or bundled model is changed by the database update.
 
+The format 56-to-57 step extends the admitted nominal single-tone frequencies for prospective analog PCM results
+with QCII and Plectron paging frequencies. Method 4 still means analog PCM nominal single tones or waveform DTMF;
+its existing frequency fields, ordering and provenance remain unchanged. P25 Phase 1 method 3 and encoded digital
+metadata keep their existing frequency identities. No stored tone is renormalized, relabeled or backfilled, and every
+setting, retained row, counter, relationship and allocator is preserved. This semantic-only step keeps the exact DDL
+fingerprint; the new global marker prevents an older reader from accepting frequencies it cannot interpret. Normal
+startup validates only, and the populated format-56 fixture remains frozen and supported.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -800,8 +808,12 @@ Format 7 retains its frozen populated fixture and exact signature. The index fol
 it adds no activity summary or memory cache. Catalog format 9 admits the explicit analog PCM tone method for
 nominal single tones and waveform DTMF while preserving all existing rows, relationships, transcript search data and
 allocators. The adjacent format-8-to-9 step changes only tone-context method constraints; it creates no historical
-tones or recording-to-alert links. Format 8 retains its frozen populated fixture and exact signature. The main
-application database is independently at format 56; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+tones or recording-to-alert links. Format 8 retains its frozen populated fixture and exact signature. Catalog format
+10 extends the admitted method-4 nominal single-tone identities with QCII and Plectron frequencies without changing
+any table, field or method code. Its adjacent format-9-to-10 step preserves all prior recording and tone data without
+renormalization or backfill, changing only the format markers. Format 9 retains its exact populated fixture and DDL.
+The new marker makes older readers refuse this expanded semantic contract. The main application database is
+independently at format 57; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

@@ -23,11 +23,15 @@ export function formatPagingToneSummary(summary) {
     if (!tone.frequencies_hz.length && (summary.source !== 'encoded' || !code)) continue;
     let frequencies = tone.frequencies_hz;
     if (summary.source === 'decoded_audio' && !waveformDtmf) {
-      //Older retained detections used measured pitches. Present the same nominal values as new reports.
       if (frequencies.length !== 1) continue;
-      const nominal = ambeSingleFrequency(frequencies[0]);
-      if (nominal === null) continue;
-      frequencies = [nominal];
+      if (summary.method === 'analog_pcm_tone_v1') {
+        if (frequencies[0] < 281.25) continue;
+      } else {
+        //Older retained P25 detections used measured pitches. Preserve their AMBE nominal presentation.
+        const nominal = ambeSingleFrequency(frequencies[0]);
+        if (nominal === null) continue;
+        frequencies = [nominal];
+      }
     }
     const values = [];
     if ((summary.source === 'encoded' || waveformDtmf) && code && !(frequencies.length === 1 && /^HZ_\d+_\d{2}$/.test(code)))

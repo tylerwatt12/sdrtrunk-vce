@@ -108,7 +108,10 @@ public record CompletedToneSequence(AudioCallSnapshot snapshot, long firstVoiceS
     {
         if(element.codecSymbol() == null)
         {
-            requireNominalPcmTone(element);
+            if(element.frequenciesMilliHertz().size() != 1 ||
+                PagingToneFrequencyMapping.nearest(element.frequenciesMilliHertz().getFirst())
+                    .filter(match -> match.frequencyMilliHertz() == element.frequenciesMilliHertz().getFirst()).isEmpty())
+                throw new IllegalArgumentException("Analog PCM singles require a predefined nominal frequency");
             if(element.frequenciesMilliHertz().getFirst() < 281_250)
                 throw new IllegalArgumentException("Subaudible squelch tones are not call tone evidence");
             return;

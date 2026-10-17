@@ -67,12 +67,13 @@ export function alertToneChoices(choices, family = '', decoder = '') {
   return (Array.isArray(choices) ? choices : []).filter(choice => {
     const code = String(choice?.value ?? choice?.[0] ?? '');
     if (code === 'INVALID') return false;
+    if (choice?.analog_only && family && !analog) return false;
     if (!analog && !phaseOne) return true;
     if (analog && /^DTMF_(?:[0-9A-D]|STAR|POUND)$/.test(code)) return true;
     const single = /^HZ_(\d+)_(\d+)$/.exec(code);
     if (!single) return false;
     const frequency = Number(`${single[1]}.${single[2]}`);
-    return frequency >= (analog ? 281.25 : 187.5) && frequency <= 3000;
+    return frequency >= (analog ? 281.25 : 187.5) && frequency <= (analog ? 3487 : 3000);
   });
 }
 export function alertRuleDescription(rule, topicName = '') {

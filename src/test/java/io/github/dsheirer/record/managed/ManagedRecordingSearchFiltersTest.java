@@ -150,6 +150,34 @@ class ManagedRecordingSearchFiltersTest
     }
 
     @Test
+    void analogPagingNominalsRemainExactInRecordingDetailsAndOrderedSearch() throws Exception
+    {
+        Path db = temporary.resolve("paging-frequencies.sqlite");
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db,temporary.resolve("paging-audio")))
+        {
+            store.insert(call(1000,null,10,101,1,List.of(),List.of()));
+            try(var c = DriverManager.getConnection("jdbc:sqlite:"+db); var s = c.createStatement())
+            {
+                s.executeUpdate("UPDATE recording_call SET protocol=5");
+                s.executeUpdate("INSERT INTO recording_tone_sequence VALUES(1,1,4,NULL,1000,1000,2000,4)");
+                s.executeUpdate("INSERT INTO recording_tone VALUES(1,0,382300,NULL,NULL,0,200,990000)," +
+                    "(1,1,1232000,NULL,NULL,200,200,990000),(1,2,510500,NULL,NULL,400,200,990000)," +
+                    "(1,3,330500,NULL,NULL,600,200,990000)");
+            }
+            var summary = (java.util.Map<?,?>)store.find(1).toMap().get("paging_tone_summary");
+            assertEquals("analog_pcm_tone_v1",summary.get("method"));
+            var tones = (List<?>)summary.get("tones");
+            assertEquals(List.of(382.3),((java.util.Map<?,?>)tones.getFirst()).get("frequencies_hz"));
+            assertEquals(List.of(330.5),((java.util.Map<?,?>)tones.getLast()).get("frequencies_hz"));
+            assertEquals(List.of(1000L),starts(store,base().protocol("NBFM").toneFrequencyHz(382.3)
+                .toneThenHz(1232.).toneToleranceHz(0.).build()));
+            assertEquals(List.of(1000L),starts(store,base().toneFrequencyHz(510.5)
+                .toneThenHz(330.5).toneToleranceHz(0.).build()));
+            assertTrue(starts(store,base().toneFrequencyHz(375.).toneToleranceHz(0.).build()).isEmpty());
+        }
+    }
+
+    @Test
     void orderedIndexStreamsKeepMultiSelectionsAndCursorBoundsOverWideArchives() throws Exception
     {
         Path db = temporary.resolve("wide.sqlite");
