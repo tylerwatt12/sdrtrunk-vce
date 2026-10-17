@@ -86,7 +86,7 @@ class RadioReferenceHttpControllerTest
         String id = channels.create(new ChannelDefinition(null, "p25-phase1", "Old system", "Old site", "My channel",
             null, aliasListId, new ChannelDefinition.Source(List.of(853_162_500L), null, null, null, null, null),
             template.settings(), template.frequencyMap(), template.eventLogs(), template.recorders(),
-            template.auxiliaryDecoders(), template.observed()), channels.currentRevision()).configurationIds().getFirst();
+            template.auxiliaryDecoders(), template.observed())).configurationIds().getFirst();
         manager.getChannelModel().getChannels().stream().filter(channel -> channel.getConfigurationId().equals(id))
             .findFirst().orElseThrow().setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 12, 12));
         FakeSettings settings = new FakeSettings();

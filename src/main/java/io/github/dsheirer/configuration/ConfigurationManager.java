@@ -1033,7 +1033,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         try
         {
-            mConfigurationRepository.replaceChannelAndBroadcastConfiguration(
+            mConfigurationRepository.synchronizeChannelAndBroadcastConfiguration(
                 new ArrayList<>(mChannelModel.getChannels()),
                 new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             return true;

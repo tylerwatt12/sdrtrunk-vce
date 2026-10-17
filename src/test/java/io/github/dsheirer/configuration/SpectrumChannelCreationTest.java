@@ -309,8 +309,7 @@ class SpectrumChannelCreationTest
             fixture.channels.create(new ChannelDefinition(null, conventional.protocolId(), null, null,
                 "Dispatch", null, existingId,
                 new ChannelDefinition.Source(List.of(155_100_000L), null, null, null, null, null),
-                conventional.settings(), List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY),
-                fixture.channels.currentRevision());
+                conventional.settings(), List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY));
             P25SiteIdentity identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
             var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
             assertTrue(review.aliasLists().isEmpty());

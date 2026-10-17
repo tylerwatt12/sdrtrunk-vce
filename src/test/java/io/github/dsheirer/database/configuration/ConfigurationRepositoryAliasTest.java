@@ -153,7 +153,7 @@ class ConfigurationRepositoryAliasTest
         AliasConfigurationSnapshot seeded = seedAlias(store, database, "County P25", 1001);
         BroadcastifyCallConfiguration stream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
         stream.setName("Old Stream");
-        store.replaceChannelAndBroadcastConfiguration(List.of(), List.of(stream));
+        store.synchronizeChannelAndBroadcastConfiguration(List.of(), List.of(stream));
         BroadcastChannel destination = new BroadcastChannel(stream.getConfigurationId(), stream.getName());
         seeded.definitions().getFirst().setUnmatchedTalkgroupPolicy(
             new UnmatchedTalkgroupPolicy(false, List.of(destination)));
@@ -162,7 +162,7 @@ class ConfigurationRepositoryAliasTest
         List<List<Object>> aliasRowsBefore = rows(database, "alias_broadcast_channel");
 
         stream.setName("New Stream");
-        store.replaceChannelAndBroadcastConfiguration(List.of(), List.of(stream));
+        store.synchronizeChannelAndBroadcastConfiguration(List.of(), List.of(stream));
 
         assertEquals(aliasRowsBefore, rows(database, "alias_broadcast_channel"));
         AliasConfigurationSnapshot reloaded = store.loadAliasConfiguration();

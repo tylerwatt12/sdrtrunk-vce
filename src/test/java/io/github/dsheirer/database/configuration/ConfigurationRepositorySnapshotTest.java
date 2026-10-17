@@ -254,7 +254,7 @@ class ConfigurationRepositorySnapshotTest
             Future<?> save = executor.submit(() ->
             {
                 saveSubmitted.countDown();
-                repository.replaceChannelAndBroadcastConfiguration(baseline.channels(),
+                repository.synchronizeChannelAndBroadcastConfiguration(baseline.channels(),
                     baseline.broadcastConfigurations());
                 return null;
             });

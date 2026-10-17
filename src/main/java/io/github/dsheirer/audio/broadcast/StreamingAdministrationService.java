@@ -10,6 +10,7 @@ import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.broadcastify.*;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.ConfigurationEditVersion;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.UserFeed;
 import java.awt.GraphicsEnvironment;
 import java.util.*;
@@ -37,22 +38,23 @@ public final class StreamingAdministrationService
     public record Status(String configurationId, String name, String provider, String providerLabel, boolean enabled,
                          String state, String stateLabel, boolean attention, String lastError,
                          Integer queued, Integer sent, Integer agedOff, Integer errors) {}
-    public record Catalog(String revision, List<Status> destinations) {}
-    public record Entry(String revision, StreamingConfigurationCodec.Definition destination, Status status,
+    public record Catalog(List<Status> destinations) {}
+    public record Entry(String editRevision, StreamingConfigurationCodec.Definition destination, Status status,
                         References references) {}
     public record References(int aliases, List<ListReference> aliasLists) {}
     public record ListReference(long id, String name, boolean unmatched, boolean newAliases) {}
     public record Site(String configurationId, String name, long aliasListId, String aliasListName) {}
-    public record Options(String revision, List<StreamingConfigurationCodec.Provider> providers, List<Site> sites) {}
+    public record Options(List<StreamingConfigurationCodec.Provider> providers, List<Site> sites) {}
     public record AliasRow(long id, String name, long aliasListId, String aliasListName, String identifier, boolean assigned) {}
     public record AliasPage(String revision, List<AliasRow> items, int total, int offset, int limit) {}
     public record Feed(int id, String name, boolean configured) {}
     public record TestResult(boolean success, String message) {}
-    public record Mutation(String revision, String configurationId) {}
+    public record Mutation(String editRevision, String configurationId) {}
+    public record AssignmentMutation(String revision, String configurationId) {}
 
     public Catalog catalog()
     {
-        return admitted(() -> onConfigurationThread(() -> new Catalog(revision(),
+        return admitted(() -> onConfigurationThread(() -> new Catalog(
             mConfigurationManager.getBroadcastModel().getConfiguredBroadcasts().stream().map(this::status).toList())));
     }
 
@@ -68,7 +70,7 @@ public final class StreamingAdministrationService
                         String.join(" · ", Objects.toString(channel.getSystem(), ""),
                             Objects.toString(channel.getSite(), ""), Objects.toString(channel.getName(), "")),
                         list.getId(), list.getName()));
-            return new Options(revision(), StreamingConfigurationCodec.providers(), sites);
+            return new Options(StreamingConfigurationCodec.providers(), sites);
         }));
     }
 
@@ -79,19 +81,19 @@ public final class StreamingAdministrationService
             BroadcastConfiguration source = require(id);
             ConfiguredBroadcast configured = mConfigurationManager.getBroadcastModel().getConfiguredBroadcasts().stream()
                 .filter(item -> item.getBroadcastConfiguration() == source).findFirst().orElseThrow();
-            return new Entry(revision(), StreamingConfigurationCodec.view(source), status(configured), references(id));
+            return new Entry(editRevision(source), StreamingConfigurationCodec.view(source), status(configured), references(id));
         }));
     }
 
     public StreamingConfigurationCodec.Definition template(String provider)
     { return StreamingConfigurationCodec.view(StreamingConfigurationCodec.template(provider)); }
 
-    public Mutation save(String id, String provider, Map<String,Object> settings, String expectedRevision)
+    public Mutation save(String id, String provider, Map<String,Object> settings, String expectedEditRevision)
     {
         return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            requireRevision(expectedRevision);
             BroadcastConfiguration original = id == null ? StreamingConfigurationCodec.template(provider) : require(id);
+            if(id != null) requireEditRevision(original, expectedEditRevision);
             if(!original.getBroadcastServerType().name().equals(provider))
                 throw new IllegalArgumentException("The provider of an existing destination cannot be changed");
             BroadcastConfiguration candidate = StreamingConfigurationCodec.apply(original, settings);
@@ -100,22 +102,22 @@ public final class StreamingAdministrationService
             if(id == null) proposed.add(candidate);
             else proposed.replaceAll(item -> item.getConfigurationId().equals(id) ? candidate : item);
             mConfigurationManager.commitAndPublishStreamingConfiguration(proposed, candidate.getConfigurationId());
-            return new Mutation(revision(), candidate.getConfigurationId());
+            return new Mutation(editRevision(candidate), candidate.getConfigurationId());
         })));
     }
 
-    public Mutation delete(String id, String expectedRevision)
+    public Mutation delete(String id, String expectedEditRevision)
     {
         return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            requireRevision(expectedRevision); require(id);
+            requireEditRevision(require(id), expectedEditRevision);
             References references = references(id);
             if(references.aliases() > 0 || !references.aliasLists().isEmpty())
                 throw new IllegalArgumentException("Remove this destination from its aliases and Alias List defaults before deleting it");
             List<BroadcastConfiguration> proposed = mConfigurationManager.getBroadcastModel().getBroadcastConfigurations()
                 .stream().filter(item -> !item.getConfigurationId().equals(id)).toList();
             mConfigurationManager.commitAndPublishStreamingConfiguration(proposed, id);
-            return new Mutation(revision(), id);
+            return new Mutation(null, id);
         })));
     }
 
@@ -135,12 +137,12 @@ public final class StreamingAdministrationService
             List<AliasRow> items = filtered.stream().skip(offset).limit(limit).map(alias ->
                 new AliasRow(alias.getId(), alias.getName(), alias.getAliasListId(), alias.getAliasListName(),
                     Objects.toString(alias.getMatchIdentifier(), ""), alias.hasBroadcastConfiguration(id))).toList();
-            return new AliasPage(revision(), items, filtered.size(), offset, limit);
+            return new AliasPage(assignmentRevision(id), items, filtered.size(), offset, limit);
         }));
     }
 
     /** Applies only explicit changes, preserving selections outside the current search/page. */
-    public Mutation assign(String id, List<Long> add, List<Long> remove, String expectedRevision)
+    public AssignmentMutation assign(String id, List<Long> add, List<Long> remove, String expectedRevision)
     {
         if(add == null || remove == null || add.size() + remove.size() > 500 ||
             add.stream().anyMatch(Objects::isNull) || remove.stream().anyMatch(Objects::isNull))
@@ -151,8 +153,9 @@ public final class StreamingAdministrationService
         changed.addAll(removed);
         return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            requireRevision(expectedRevision);
             BroadcastConfiguration destination = require(id);
+            if(!assignmentRevision(id).equals(expectedRevision))
+                throw new StaleRevisionException("Assignments changed. Your edits are still here. Reload current values before saving");
             AliasConfigurationSnapshot proposed = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
             Set<Long> found = new HashSet<>();
             for(Alias alias: proposed.aliases())
@@ -164,7 +167,7 @@ public final class StreamingAdministrationService
             if(!found.equals(changed)) throw new IllegalArgumentException("An alias no longer exists; reload and try again");
             if(!changed.isEmpty()) mConfigurationManager.commitAndPublishAliasConfiguration(proposed,
                 new ConfigurationManager.AliasConfigurationPublication(changed, false, false, false));
-            return new Mutation(revision(), id);
+            return new AssignmentMutation(assignmentRevision(id), id);
         })));
     }
 
@@ -187,14 +190,13 @@ public final class StreamingAdministrationService
         finally { mNetworkAdmission.release(); }
     }
 
-    public Mutation addFeed(int feedId, String expectedRevision)
+    public Mutation addFeed(int feedId)
     {
         if(System.nanoTime() > mFeedsExpires) throw new IllegalArgumentException("Refresh the available feeds before adding one");
         UserFeed feed = mFeeds.stream().filter(item -> item.id() == feedId).findFirst()
             .orElseThrow(() -> new IllegalArgumentException("Refresh the available feeds before adding one"));
         return admitted(() -> onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            requireRevision(expectedRevision);
             var candidate = BroadcastifyFeedConfiguration.from(feed);
             candidate.setEnabled(false);
             if(mConfigurationManager.getBroadcastModel().getBroadcastConfigurations().stream().anyMatch(item ->
@@ -204,7 +206,7 @@ public final class StreamingAdministrationService
             List<BroadcastConfiguration> proposed = new ArrayList<>(mConfigurationManager.getBroadcastModel().getBroadcastConfigurations());
             proposed.add(candidate);
             mConfigurationManager.commitAndPublishStreamingConfiguration(proposed, candidate.getConfigurationId());
-            return new Mutation(revision(), candidate.getConfigurationId());
+            return new Mutation(editRevision(candidate), candidate.getConfigurationId());
         })));
     }
 
@@ -276,18 +278,28 @@ public final class StreamingAdministrationService
         if(source == null) throw new NotFoundException();
         return source;
     }
-    private String revision()
-    { return mConfigurationManager.getStreamingConfigurationRevision() + ":" + mConfigurationManager.getAliasConfigurationRevision() +
-        ":" + mConfigurationManager.getChannelConfigurationRevision(); }
-    private void requireRevision(String expected)
-    { if(!revision().equals(expected)) throw new StaleRevisionException(); }
+    /** Saved content only: sender state and changes to other destinations do not invalidate an editor. */
+    private static String editRevision(BroadcastConfiguration configuration)
+    { return ConfigurationEditVersion.of(configuration); }
+    private static void requireEditRevision(BroadcastConfiguration configuration, String expected)
+    {
+        if(!editRevision(configuration).equals(expected))
+            throw new StaleRevisionException("This destination changed. Your edits are still here. Reload current values before saving");
+    }
+    /** Alias names and other settings do not change the routing choices this editor can overwrite. */
+    private String assignmentRevision(String id)
+    {
+        return ConfigurationEditVersion.of(mConfigurationManager.getAliasModel().getAliases().stream()
+            .filter(alias -> alias.hasBroadcastConfiguration(id)).map(Alias::getId).sorted().toList());
+    }
     private <T> T admitted(Supplier<T> operation)
     {
         if(!mCommandAdmission.tryAcquire()) throw new ConfigurationBusyException();
         try { return operation.get(); } finally { mCommandAdmission.release(); }
     }
     public static final class NotFoundException extends RuntimeException {}
-    public static final class StaleRevisionException extends RuntimeException {}
+    public static final class StaleRevisionException extends RuntimeException
+    { public StaleRevisionException(String message) { super(message); } }
     public static final class ConfigurationBusyException extends RuntimeException {}
     public static final class NotInitializedException extends RuntimeException {}
     private <T> T onConfigurationThread(Supplier<T> operation)

@@ -27,7 +27,7 @@ public final class StreamingAdminHttpController
         try { route(exchange); }
         catch(RequestException exception) { sendError(exchange, exception.status(), exception.code(), exception.getMessage()); }
         catch(StreamingAdministrationService.NotFoundException exception) { sendError(exchange,404,"not_found","Destination no longer exists"); }
-        catch(StreamingAdministrationService.StaleRevisionException exception) { sendError(exchange,409,"stale_revision","Configuration changed. Reload this editor before saving"); }
+        catch(StreamingAdministrationService.StaleRevisionException exception) { sendError(exchange,409,"stale_revision",exception.getMessage()); }
         catch(StreamingAdministrationService.ConfigurationBusyException exception)
         { exchange.getResponseHeaders().set("Retry-After","1"); sendError(exchange,429,"configuration_busy","Configuration is busy; try again"); }
         catch(StreamingAdministrationService.NotInitializedException exception)
@@ -80,10 +80,10 @@ public final class StreamingAdminHttpController
         { readJsonObject(exchange,Set.of());sendData(exchange,200,Map.of("items",mService.feeds()));return; }
         if(method.equals("POST") && suffix.equals("/feeds"))
         {
-            JsonNode body = readJsonObject(exchange,Set.of("feed_id","revision"));
+            JsonNode body = readJsonObject(exchange,Set.of("feed_id"));
             if(!body.path("feed_id").isIntegralNumber() || !body.path("feed_id").canConvertToInt())
                 throw new IllegalArgumentException("Invalid feed identity");
-            sendData(exchange,201,mService.addFeed(body.path("feed_id").intValue(),requiredText(body,"revision",100))); return;
+            sendData(exchange,201,mService.addFeed(body.path("feed_id").intValue())); return;
         }
         if(method.equals("POST") && suffix.equals("/test"))
         {
@@ -100,14 +100,14 @@ public final class StreamingAdminHttpController
         }
         if(method.equals("POST") && suffix.isEmpty() || method.equals("PUT") && suffix.length()>1 && suffix.indexOf('/',1)<0)
         {
-            JsonNode body=readJsonObject(exchange,Set.of("revision","provider","settings"));
+            JsonNode body=readJsonObject(exchange,suffix.isEmpty()?Set.of("provider","settings"):Set.of("edit_revision","provider","settings"));
             sendData(exchange,suffix.isEmpty()?201:200,mService.save(suffix.isEmpty()?null:suffix.substring(1),
-                requiredText(body,"provider",80),settings(body),requiredText(body,"revision",100)));return;
+                requiredText(body,"provider",80),settings(body),suffix.isEmpty()?null:requiredText(body,"edit_revision",100)));return;
         }
         if(method.equals("DELETE") && suffix.length()>1 && suffix.indexOf('/',1)<0)
         {
-            JsonNode body=readJsonObject(exchange,Set.of("revision"));
-            sendData(exchange,200,mService.delete(suffix.substring(1),requiredText(body,"revision",100)));return;
+            JsonNode body=readJsonObject(exchange,Set.of("edit_revision"));
+            sendData(exchange,200,mService.delete(suffix.substring(1),requiredText(body,"edit_revision",100)));return;
         }
         methodNotAllowed(exchange,"GET, POST, PUT, DELETE");
     }

@@ -31,9 +31,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -105,8 +104,8 @@ public class ConfigurationDatabaseStore
             throw new IllegalArgumentException("Channel and broadcast configuration cannot be null");
         }
 
-        replaceChannels(connection, configuration.channels());
-        replaceBroadcastConfigurations(connection, configuration.broadcastConfigurations());
+        synchronizeChannels(connection, configuration.channels());
+        synchronizeBroadcastConfigurations(connection, configuration.broadcastConfigurations());
     }
 
     /** Loads the channel portion of a caller-owned consistent database view. */
@@ -260,172 +259,185 @@ public class ConfigurationDatabaseStore
         return configurations;
     }
 
-    /** Replaces only saved channels inside a caller-owned transaction. */
-    public void replaceChannels(Connection connection, List<Channel> channels) throws SQLException, IOException
+    /**
+     * Persists an authoritative channel snapshot while writing only new or changed rows. Missing channels are deleted;
+     * unchanged channel identities, history and rows remain untouched. The caller owns the transaction.
+     */
+    public void synchronizeChannels(Connection connection, List<Channel> channels) throws SQLException, IOException
     {
-        Map<String,StoredChannelClassification> stored = storedChannelClassifications(connection);
-        Set<String> retainedIds = new HashSet<>();
-
-        for(Channel channel: channels)
+        requireTransaction(connection);
+        Map<String,ChannelRow> stored = storedChannelRows(connection);
+        Map<String,ChannelRow> desired = new LinkedHashMap<>();
+        for(int sortOrder = 0; sortOrder < channels.size(); sortOrder++)
         {
-            String configurationId = requireCanonicalConfigurationId(channel.getConfigurationId());
-            if(!retainedIds.add(configurationId))
+            Channel channel = channels.get(sortOrder);
+            if(ChannelConfigurationPolicy.isRetired(channel))
             {
-                throw new IOException("Duplicate channel configuration identity: " + configurationId);
+                throw new IOException("Retired channel configuration cannot be stored in the active database");
+            }
+            String id = requireCanonicalConfigurationId(channel.getConfigurationId());
+            ChannelRow row = new ChannelRow(ChannelConfigurationPolicy.requireChannelKind(channel).name(), sortOrder,
+                channel.getSystem(), channel.getSite(), channel.getName(), channel.getAliasListId(),
+                channel.getRadioResolveId(), channel.getAutoStart(), channel.getAutoStartOrder(),
+                ConfigurationChannelProjection.from(channel), channelPayload(channel));
+            if(desired.put(id, row) != null)
+            {
+                throw new IOException("Duplicate channel configuration identity: " + id);
             }
         }
 
-        deleteMissing(connection, "configuration_channel", retainedIds);
+        deleteMissing(connection, "configuration_channel", desired.keySet());
 
-        //A stable channel can be renamed or retuned without losing its history. Changing its channel kind or decoder
-        //changes the meaning of that history, so replace only that row and let the receiver-channel FK discard the
-        //now-incompatible derived data.
+        //Only topology changes discard the receiver's now-incompatible derived history. Renames, frequency changes
+        //and ordering edits retain the stable parent and all of its history.
         try(PreparedStatement delete = connection.prepareStatement(
-            "DELETE FROM configuration_channel WHERE configuration_id=?"))
+                "DELETE FROM configuration_channel WHERE configuration_id=?");
+            PreparedStatement clear = connection.prepareStatement(
+                "UPDATE configuration_channel SET radioresolve_id=NULL WHERE configuration_id=?"))
         {
-            for(Channel channel: channels)
+            for(Map.Entry<String,ChannelRow> entry: desired.entrySet())
             {
-                String configurationId = requireCanonicalConfigurationId(channel.getConfigurationId());
-                StoredChannelClassification previous = stored.get(configurationId);
-                String channelKind = ChannelConfigurationPolicy.requireChannelKind(channel).name();
-                String decoderType = ConfigurationChannelProjection.from(channel).decoderType();
-                int addressDomainCode = ConfigurationChannelProjection.from(channel).addressDomainCode();
-                if(previous != null && (!previous.channelKind().equals(channelKind) ||
-                    !Objects.equals(previous.decoderType(), decoderType) ||
-                    previous.addressDomainCode() != addressDomainCode))
+                ChannelRow previous = stored.get(entry.getKey());
+                ChannelRow next = entry.getValue();
+                if(previous != null && !previous.sameClassification(next))
                 {
-                    delete.setString(1, configurationId);
+                    delete.setString(1, entry.getKey());
                     delete.addBatch();
+                }
+                else if(previous != null && previous.radioResolveId() != null &&
+                    !Objects.equals(previous.radioResolveId(), next.radioResolveId()))
+                {
+                    //Release only IDs whose owners actually change. This supports atomic swaps without touching
+                    //unrelated rows or briefly clearing a stable channel's correlation ID.
+                    clear.setString(1, entry.getKey());
+                    clear.addBatch();
                 }
             }
             delete.executeBatch();
-        }
-
-        //Release correlation-ID uniqueness before applying the complete accepted snapshot. This permits two existing
-        //channels to swap RadioResolve IDs in one atomic save without deleting either stable channel row.
-        try(PreparedStatement clear = connection.prepareStatement(
-            "UPDATE configuration_channel SET radioresolve_id=NULL WHERE configuration_id=?"))
-        {
-            for(String configurationId: retainedIds)
-            {
-                clear.setString(1, configurationId);
-                clear.addBatch();
-            }
             clear.executeBatch();
         }
 
-        upsertChannels(connection, channels);
-    }
-
-    private void upsertChannels(Connection connection, List<Channel> channels) throws SQLException, IOException
-    {
-        int sortOrder = 0;
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO configuration_channel (
-                configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
-                radioresolve_id, auto_start, auto_start_order, decoder_type, address_domain_code,
-                primary_frequency_hz, config_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(configuration_id) DO UPDATE SET
-                channel_kind=excluded.channel_kind,
-                sort_order=excluded.sort_order,
-                system_name=excluded.system_name,
-                site_name=excluded.site_name,
-                name=excluded.name,
-                alias_list_id=excluded.alias_list_id,
-                radioresolve_id=excluded.radioresolve_id,
-                auto_start=excluded.auto_start,
-                auto_start_order=excluded.auto_start_order,
-                decoder_type=excluded.decoder_type,
-                address_domain_code=excluded.address_domain_code,
-                primary_frequency_hz=excluded.primary_frequency_hz,
-                config_json=excluded.config_json
-            """))
+        try(PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO configuration_channel (
+                    channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    radioresolve_id, auto_start, auto_start_order, decoder_type, address_domain_code,
+                    primary_frequency_hz, config_json, configuration_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """);
+            PreparedStatement update = connection.prepareStatement("""
+                UPDATE configuration_channel SET channel_kind=?, sort_order=?, system_name=?, site_name=?, name=?,
+                    alias_list_id=?, radioresolve_id=?, auto_start=?, auto_start_order=?, decoder_type=?,
+                    address_domain_code=?, primary_frequency_hz=?, config_json=? WHERE configuration_id=?
+                """))
         {
-            for(Channel channel: channels)
+            for(Map.Entry<String,ChannelRow> entry: desired.entrySet())
             {
-                if(ChannelConfigurationPolicy.isRetired(channel))
+                ChannelRow row = entry.getValue();
+                ChannelRow previous = stored.get(entry.getKey());
+                if(row.equals(previous))
                 {
-                    throw new IOException("Retired channel configuration cannot be stored in the active database");
+                    continue;
                 }
-
-                ChannelConfigurationPolicy.ChannelKind channelKind =
-                    ChannelConfigurationPolicy.requireChannelKind(channel);
-                //RadioResolve correlation is independent from channel identity and omitted from config_json.
-                String radioResolveId = channel.getRadioResolveId();
-                ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
-
-                statement.setString(1, requireCanonicalConfigurationId(channel.getConfigurationId()));
-                statement.setString(2, channelKind.name());
-                statement.setInt(3, sortOrder++);
-                statement.setString(4, channel.getSystem());
-                statement.setString(5, channel.getSite());
-                statement.setString(6, channel.getName());
-                statement.setLong(7, channel.getAliasListId());
-                statement.setString(8, radioResolveId);
-                statement.setInt(9, channel.getAutoStart() ? 1 : 0);
-                setInteger(statement, 10, channel.getAutoStartOrder());
-                projection.bind(statement, 11);
-                statement.setString(14, channelPayload(channel));
+                PreparedStatement statement = previous != null && previous.sameClassification(row) ? update : insert;
+                statement.setString(1, row.channelKind());
+                statement.setInt(2, row.sortOrder());
+                statement.setString(3, row.system());
+                statement.setString(4, row.site());
+                statement.setString(5, row.name());
+                setLong(statement, 6, row.aliasListId());
+                statement.setString(7, row.radioResolveId());
+                statement.setInt(8, row.autoStart() ? 1 : 0);
+                setInteger(statement, 9, row.autoStartOrder());
+                row.projection().bind(statement, 10);
+                statement.setString(13, mObjectMapper.writeValueAsString(row.payload()));
+                statement.setString(14, entry.getKey());
                 statement.addBatch();
             }
-            statement.executeBatch();
+            insert.executeBatch();
+            update.executeBatch();
         }
     }
 
-    public void replaceBroadcastConfigurations(Connection connection, List<BroadcastConfiguration> configurations)
+    /** Persists an authoritative stream snapshot without rewriting unchanged destinations. */
+    public void synchronizeBroadcastConfigurations(Connection connection, List<BroadcastConfiguration> configurations)
         throws SQLException, IOException
     {
-        Set<String> retainedIds = new HashSet<>();
-        for(BroadcastConfiguration configuration: configurations)
+        requireTransaction(connection);
+        Map<String,BroadcastRow> stored = new HashMap<>();
+        try(PreparedStatement query = connection.prepareStatement(
+                "SELECT configuration_id, sort_order, config_json FROM configuration_broadcast_stream");
+            ResultSet rows = query.executeQuery())
         {
-            String configurationId = requireCanonicalConfigurationId(configuration.getConfigurationId());
-            if(!retainedIds.add(configurationId))
+            while(rows.next())
             {
-                throw new IOException("Duplicate broadcast configuration identity: " + configurationId);
+                stored.put(rows.getString("configuration_id"), new BroadcastRow(rows.getInt("sort_order"),
+                    mObjectMapper.readTree(rows.getString("config_json"))));
+            }
+        }
+        Map<String,BroadcastRow> desired = new LinkedHashMap<>();
+        for(int sortOrder = 0; sortOrder < configurations.size(); sortOrder++)
+        {
+            BroadcastConfiguration configuration = configurations.get(sortOrder);
+            String id = requireCanonicalConfigurationId(configuration.getConfigurationId());
+            BroadcastRow row = new BroadcastRow(sortOrder, broadcastPayload(configuration));
+            if(desired.put(id, row) != null)
+            {
+                throw new IOException("Duplicate broadcast configuration identity: " + id);
             }
         }
 
-        deleteMissing(connection, "configuration_broadcast_stream", retainedIds);
-        int sortOrder = 0;
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO configuration_broadcast_stream (
-                configuration_id, sort_order, config_json
-            ) VALUES (?, ?, ?)
-            ON CONFLICT(configuration_id) DO UPDATE SET
-                sort_order=excluded.sort_order,
-                config_json=excluded.config_json
-            """))
+        deleteMissing(connection, "configuration_broadcast_stream", desired.keySet());
+        try(PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO configuration_broadcast_stream (sort_order, config_json, configuration_id) VALUES (?, ?, ?)
+                """);
+            PreparedStatement update = connection.prepareStatement("""
+                UPDATE configuration_broadcast_stream SET sort_order=?, config_json=? WHERE configuration_id=?
+                """))
         {
-            for(BroadcastConfiguration configuration: configurations)
+            for(Map.Entry<String,BroadcastRow> entry: desired.entrySet())
             {
-                statement.setString(1, requireCanonicalConfigurationId(configuration.getConfigurationId()));
-                statement.setInt(2, sortOrder++);
-                statement.setString(3, broadcastPayload(configuration));
+                BroadcastRow row = entry.getValue();
+                BroadcastRow previous = stored.get(entry.getKey());
+                if(row.equals(previous))
+                {
+                    continue;
+                }
+                PreparedStatement statement = previous != null ? update : insert;
+                statement.setInt(1, row.sortOrder());
+                statement.setString(2, mObjectMapper.writeValueAsString(row.payload()));
+                statement.setString(3, entry.getKey());
                 statement.addBatch();
             }
-            statement.executeBatch();
+            insert.executeBatch();
+            update.executeBatch();
         }
     }
 
-    private static Map<String,StoredChannelClassification> storedChannelClassifications(Connection connection)
-        throws SQLException
+    private Map<String,ChannelRow> storedChannelRows(Connection connection) throws SQLException, IOException
     {
-        Map<String,StoredChannelClassification> stored = new HashMap<>();
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT configuration_id, channel_kind, decoder_type, address_domain_code FROM configuration_channel");
+        Map<String,ChannelRow> stored = new HashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement("SELECT * FROM configuration_channel");
             ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                stored.put(rows.getString("configuration_id"), new StoredChannelClassification(
-                    rows.getString("channel_kind"), rows.getString("decoder_type"),
-                    rows.getInt("address_domain_code")));
+                stored.put(rows.getString("configuration_id"), new ChannelRow(rows.getString("channel_kind"),
+                    rows.getInt("sort_order"), rows.getString("system_name"), rows.getString("site_name"),
+                    rows.getString("name"), readNullableLong(rows, "alias_list_id"),
+                    rows.getString("radioresolve_id"), ConfigurationChannelProjection.readBooleanFlag(rows, "auto_start"),
+                    ConfigurationChannelProjection.readNullableInt(rows, "auto_start_order"),
+                    ConfigurationChannelProjection.read(rows), mObjectMapper.readTree(rows.getString("config_json"))));
             }
         }
-        return Map.copyOf(stored);
+        return stored;
+    }
+
+    private static void requireTransaction(Connection connection) throws SQLException
+    {
+        if(connection == null || connection.getAutoCommit())
+        {
+            throw new IllegalArgumentException("Configuration snapshot writes require a caller-owned transaction");
+        }
     }
 
     private static void deleteMissing(Connection connection, String table, Set<String> retainedIds)
@@ -481,19 +493,20 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private String channelPayload(Channel channel) throws IOException
+    private JsonNode channelPayload(Channel channel) throws IOException
     {
-        ObjectNode payload = mObjectMapper.valueToTree(channel);
+        //Read the serialized document so integer/float Java types use the same node representations as stored JSON.
+        ObjectNode payload = (ObjectNode)mObjectMapper.readTree(mObjectMapper.writeValueAsBytes(channel));
         payload.remove(CHANNEL_ROW_OWNED_JSON_FIELDS);
-        return mObjectMapper.writeValueAsString(payload);
+        return payload;
     }
 
-    private String broadcastPayload(BroadcastConfiguration configuration) throws IOException
+    private JsonNode broadcastPayload(BroadcastConfiguration configuration) throws IOException
     {
         ObjectNode payload = (ObjectNode)mObjectMapper.readTree(
             mObjectMapper.writerFor(BroadcastConfiguration.class).writeValueAsBytes(configuration));
         payload.remove("configurationId");
-        return mObjectMapper.writeValueAsString(payload);
+        return payload;
     }
 
     private void requireAbsent(String json, String property, String source) throws IOException
@@ -546,7 +559,19 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private record StoredChannelClassification(String channelKind, String decoderType, int addressDomainCode)
+    private record ChannelRow(String channelKind, int sortOrder, String system, String site, String name,
+                              Long aliasListId, String radioResolveId, boolean autoStart, Integer autoStartOrder,
+                              ConfigurationChannelProjection projection, JsonNode payload)
+    {
+        private boolean sameClassification(ChannelRow other)
+        {
+            return channelKind.equals(other.channelKind) &&
+                Objects.equals(projection.decoderType(), other.projection.decoderType()) &&
+                projection.addressDomainCode() == other.projection.addressDomainCode();
+        }
+    }
+
+    private record BroadcastRow(int sortOrder, JsonNode payload)
     {
     }
 

@@ -61,8 +61,7 @@ class StreamingAdminHttpTest
             assertEquals(200,options.statusCode());
             JsonNode data=JSON.readTree(options.body()).path("data");
             assertEquals(9,data.path("providers").size());
-            String revision=data.path("revision").asText();
-            String body=JSON.writeValueAsString(Map.of("revision",revision,"provider","BROADCASTIFY_CALL","settings",Map.of("name","County","api_key","fixture-stream-key")));
+            String body=JSON.writeValueAsString(Map.of("provider","BROADCASTIFY_CALL","settings",Map.of("name","County","api_key","fixture-stream-key")));
             assertEquals(403,send(client,root,"POST","",admin,null,body).statusCode());
             var created=send(client,root,"POST","",admin,admin.csrf(),body);
             assertEquals(201,created.statusCode(),created.body());
@@ -79,7 +78,20 @@ class StreamingAdminHttpTest
             assertFalse(testResult.body().contains("fixture-stream-key"));
             assertFalse(send(client,root,"GET","/"+id,admin,null,null).body().contains(root.resolve("/provider").toString()));
             assertTrue(entry.headers().firstValue("Cache-Control").orElse("").contains("no-store"));
-            assertEquals(409,send(client,root,"PUT","/"+id,admin,admin.csrf(),body).statusCode());
+            String editRevision=JSON.readTree(entry.body()).at("/data/edit_revision").asText();
+            assertEquals(64,editRevision.length());
+            String otherBody=JSON.writeValueAsString(Map.of("provider","BROADCASTIFY_CALL","settings",Map.of("name","Archive")));
+            assertEquals(201,send(client,root,"POST","",admin,admin.csrf(),otherBody).statusCode());
+            String updateBody=JSON.writeValueAsString(Map.of("edit_revision",editRevision,"provider","BROADCASTIFY_CALL",
+                "settings",Map.of("name","County calls")));
+            var updated=send(client,root,"PUT","/"+id,admin,admin.csrf(),updateBody);
+            assertEquals(200,updated.statusCode(),updated.body());
+            assertEquals(409,send(client,root,"PUT","/"+id,admin,admin.csrf(),updateBody).statusCode(), "same-destination edits require review");
+            assertEquals(400,send(client,root,"PUT","/"+id,admin,admin.csrf(),body).statusCode(), "updates require the item baseline");
+            String deleteBody=JSON.writeValueAsString(Map.of("edit_revision",editRevision));
+            assertEquals(409,send(client,root,"DELETE","/"+id,admin,admin.csrf(),deleteBody).statusCode());
+            String duplicateBody=JSON.writeValueAsString(Map.of("provider","BROADCASTIFY_CALL","settings",Map.of("name","Archive")));
+            assertEquals(400,send(client,root,"POST","",admin,admin.csrf(),duplicateBody).statusCode());
             assertEquals(400,send(client,root,"GET","/"+id+"/aliases?limit=1000",admin,null,null).statusCode());
             assertEquals(400,send(client,root,"GET","/"+id+"/aliases?q=x&q=y",admin,null,null).statusCode());
             assertEquals(400,send(client,root,"PUT","/"+id,admin,admin.csrf(),"{\"revision\":\"1\",\"revision\":\"2\"}").statusCode());

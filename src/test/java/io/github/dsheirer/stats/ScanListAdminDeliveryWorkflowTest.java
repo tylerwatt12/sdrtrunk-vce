@@ -89,23 +89,20 @@ class ScanListAdminDeliveryWorkflowTest
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-            long revision = data(send(client, request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()))
-                .get("revision").longValue();
-
-            Resource county = createAliasList(client, origin, revision, "County P25");
-            Resource city = createAliasList(client, origin, county.revision(), "City P25");
-            Resource southwest = createScanList(client, origin, city.revision(), "SouthWest", 1);
-            Resource cleveland = createScanList(client, origin, southwest.revision(), "Cleveland", 2);
-            Resource southwestDispatch = createAlias(client, origin, cleveland.revision(), county.id(),
+            Resource county = createAliasList(client, origin, "County P25");
+            Resource city = createAliasList(client, origin, "City P25");
+            Resource southwest = createScanList(client, origin, "SouthWest", 1);
+            Resource cleveland = createScanList(client, origin, "Cleveland", 2);
+            Resource southwestDispatch = createAlias(client, origin, county.id(),
                 "SouthWest Dispatch", 1101, List.of(southwest.id()));
-            Resource clevelandDispatch = createAlias(client, origin, southwestDispatch.revision(), city.id(),
+            Resource clevelandDispatch = createAlias(client, origin, city.id(),
                 "Cleveland Dispatch", 2202, List.of(cleveland.id()));
-            Resource mutualAid = createAlias(client, origin, clevelandDispatch.revision(), city.id(),
+            Resource mutualAid = createAlias(client, origin, city.id(),
                 "Mutual Aid", 3303, List.of(southwest.id(), cleveland.id()));
 
-            Resource countyUnmatched = updateUnmatchedPolicy(client, origin, mutualAid.revision(), county.id(),
+            updateUnmatchedPolicy(client, origin, county.id(),
                 List.of(southwest.id(), cleveland.id()));
-            Resource cityUnmatched = updateUnmatchedPolicy(client, origin, countyUnmatched.revision(), city.id(),
+            Resource cityUnmatched = updateUnmatchedPolicy(client, origin, city.id(),
                 List.of(cleveland.id()));
 
             JsonNode aliasListCatalog = data(send(client,
@@ -294,42 +291,45 @@ class ScanListAdminDeliveryWorkflowTest
         return actual;
     }
 
-    private static Resource createAliasList(HttpClient client, URI origin, long revision, String name)
+    private static Resource createAliasList(HttpClient client, URI origin, String name)
         throws Exception
     {
         JsonNode result = data(send(client, jsonRequest(origin, AliasAdminHttpController.ALIAS_LISTS_PATH)
             .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                "revision", revision, "name", name, "family", "p25"))))));
+                "name", name, "family", "p25"))))));
         return new Resource(result.get("alias_list_id").longValue(), result.get("revision").longValue(), name);
     }
 
-    private static Resource createScanList(HttpClient client, URI origin, long revision, String name, int sortOrder)
+    private static Resource createScanList(HttpClient client, URI origin, String name, int sortOrder)
         throws Exception
     {
         JsonNode result = data(send(client, jsonRequest(origin, AliasAdminHttpController.SCAN_LISTS_PATH)
             .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                "revision", revision, "scan_list", Map.of("sort_order", sortOrder, "name", name,
+                "scan_list", Map.of("sort_order", sortOrder, "name", name,
                     "description", name + " calls", "published", true, "default", false)))))));
         return new Resource(result.get("scan_list_id").longValue(), result.get("revision").longValue(), name);
     }
 
-    private static Resource createAlias(HttpClient client, URI origin, long revision, long aliasListId,
+    private static Resource createAlias(HttpClient client, URI origin, long aliasListId,
                                         String name, int talkgroup, List<Long> scanListIds) throws Exception
     {
         Map<String,Object> alias = alias(aliasListId, name, talkgroup);
         alias.put("scan_list_ids", scanListIds);
         JsonNode result = data(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
             .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                "revision", revision, "alias", alias))))));
+                "alias", alias))))));
         return new Resource(result.at("/alias_ids/0").longValue(), result.get("revision").longValue(), name);
     }
 
-    private static Resource updateUnmatchedPolicy(HttpClient client, URI origin, long revision, long aliasListId,
+    private static Resource updateUnmatchedPolicy(HttpClient client, URI origin, long aliasListId,
                                                    List<Long> scanListIds) throws Exception
     {
+        JsonNode options = data(send(client, request(origin,
+            AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId).GET()));
         JsonNode result = data(send(client, jsonRequest(origin, AliasAdminHttpController.ALIAS_LISTS_PATH + "/" +
             aliasListId + "/unmatched-talkgroups").PUT(HttpRequest.BodyPublishers.ofString(
-            OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "recordable", false,
+            OBJECT_MAPPER.writeValueAsString(Map.of("edit_revision", options.get("edit_revision").textValue(),
+                "recordable", false,
                 "broadcast_configuration_ids", List.of(), "scan_list_ids", scanListIds))))));
         return new Resource(aliasListId, result.get("revision").longValue(), null);
     }

@@ -79,11 +79,11 @@ class AliasAdministrationPersistenceTest
                 notifications.incrementAndGet());
             manager.failNextSave();
 
-            assertEquals(revision, service.replaceAlias(aliasId, service.getAlias(aliasId).alias(), revision).revision());
+            assertEquals(revision, service.replaceAlias(aliasId, service.getAlias(aliasId).alias(), service.getAlias(aliasId).editRevision()).revision());
             assertEquals(revision, service.updateAliasListDefaults(listId,
-                service.getAliasListDefaults(listId).defaults(), revision).revision());
+                service.getAliasListDefaults(listId).defaults(), service.getAliasListDefaults(listId).editRevision()).revision());
             ScanList scanList = manager.getScanListModel().configuration().defaultScanList();
-            assertEquals(revision, service.updateScanList(scanList.getId(), scanList, revision).revision());
+            assertEquals(revision, service.updateScanList(scanList.getId(), scanList, service.getScanList(scanList.getId()).editRevision()).revision());
             assertSame(liveAlias, manager.getAliasModel().getAlias(aliasId));
             assertSame(liveDefinition, liveAlias.getAliasListDefinition());
             assertEquals(0, notifications.get());
@@ -91,7 +91,7 @@ class AliasAdministrationPersistenceTest
             Alias changed = service.getAlias(aliasId).alias();
             changed.setName("Changed Dispatch");
             assertThrows(AliasAdministrationService.PersistenceException.class,
-                () -> service.replaceAlias(aliasId, changed, revision),
+                () -> service.replaceAlias(aliasId, changed, service.getAlias(aliasId).editRevision()),
                 "Unchanged commands must leave the injected next-commit failure unused");
             assertEquals(revision, service.currentRevision());
             assertEquals("Dispatch", liveAlias.getName());
@@ -115,8 +115,7 @@ class AliasAdministrationPersistenceTest
         {
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
-            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25,
-                service.currentRevision()).aliasListId();
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
 
             assertTrue(service.getAliasListDefaults(aliasListId).defaults().scanListIds().isEmpty());
             assertTrue(new ScanListDatabaseStore(database).loadConfiguration()
@@ -142,7 +141,7 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             AliasDatabaseStore store = new AliasDatabaseStore(database);
             AtomicInteger additions = new AtomicInteger();
             AtomicReference<Alias> published = new AtomicReference<>();
@@ -174,7 +173,7 @@ class AliasAdministrationPersistenceTest
             });
 
             AliasAdministrationService.MutationResult created = service.createAlias(
-                alias("Dispatch", list.aliasListId(), 101), list.revision());
+                alias("Dispatch", list.aliasListId(), 101));
             long aliasId = created.aliasIds().getFirst();
 
             assertEquals(1, additions.get());
@@ -205,9 +204,9 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             AliasAdministrationService.ScanListMutationResult scanList = service.createScanList(
-                new ScanList(ScanList.UNASSIGNED_ID, 1, "Dispatch", null, true, false), list.revision());
+                new ScanList(ScanList.UNASSIGNED_ID, 1, "Dispatch", null, true, false));
             AtomicBoolean membershipVisible = new AtomicBoolean();
 
             manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
@@ -222,8 +221,7 @@ class AliasAdministrationPersistenceTest
                 }
             });
 
-            service.createAlias(alias("Dispatch", list.aliasListId(), 101), List.of(scanList.scanListId()),
-                scanList.revision());
+            service.createAlias(alias("Dispatch", list.aliasListId(), 101), List.of(scanList.scanListId()));
 
             assertTrue(membershipVisible.get(), "Alias became visible before its committed scan-list routing");
         }
@@ -247,7 +245,7 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             manager.addChannelDuringNextCommit();
-            service.createAliasList("County P25", AliasListFamily.P25, service.currentRevision());
+            service.createAliasList("County P25", AliasListFamily.P25);
 
             try(Connection connection = SdrTrunkDatabase.open(database);
                 Statement statement = connection.createStatement())
@@ -286,7 +284,7 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
             {
                 while(change.next())
@@ -300,7 +298,7 @@ class AliasAdministrationPersistenceTest
                 }
             });
 
-            service.createAlias(alias("Dispatch", list.aliasListId(), 101), list.revision());
+            service.createAlias(alias("Dispatch", list.aliasListId(), 101));
             manager.flushConfiguration();
 
             assertEquals(List.of("Publication Channel"),
@@ -326,10 +324,10 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             manager.failNextPublication();
 
-            long aliasId = service.createAlias(alias("Dispatch", list.aliasListId(), 101), list.revision())
+            long aliasId = service.createAlias(alias("Dispatch", list.aliasListId(), 101))
                 .aliasIds().getFirst();
 
             assertEquals(aliasId, manager.getAliasModel().getAliases().getFirst().getId());
@@ -357,14 +355,14 @@ class AliasAdministrationPersistenceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             ConfigurationManager.ConfigurationPublicationException initial = assertThrows(
                 ConfigurationManager.ConfigurationPublicationException.class,
-                () -> service.createAliasList("County P25", AliasListFamily.P25, service.currentRevision()));
+                () -> service.createAliasList("County P25", AliasListFamily.P25));
             assertTrue(initial.getMessage().contains("restart"));
             assertEquals(AliasListFamily.values().length + 1,
                 new AliasDatabaseStore(database).loadAliasListDefinitions().size());
 
             ConfigurationManager.ConfigurationPublicationException later = assertThrows(
                 ConfigurationManager.ConfigurationPublicationException.class,
-                () -> service.createAliasList("Other P25", AliasListFamily.P25, service.currentRevision()));
+                () -> service.createAliasList("Other P25", AliasListFamily.P25));
             assertTrue(later.getMessage().contains("restart"));
             assertEquals(AliasListFamily.values().length + 1,
                 new AliasDatabaseStore(database).loadAliasListDefinitions().size());
@@ -388,11 +386,11 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.catalog().revision());
+                "County P25", AliasListFamily.P25);
             AliasAdministrationService.MutationResult first = service.createAlias(
-                alias("Dispatch", list.aliasListId(), 101), list.revision());
+                alias("Dispatch", list.aliasListId(), 101));
             AliasAdministrationService.MutationResult second = service.createAlias(
-                alias("Operations", list.aliasListId(), 102), first.revision());
+                alias("Operations", list.aliasListId(), 102));
             List<Long> aliasIds = List.of(first.aliasIds().getFirst(), second.aliasIds().getFirst());
             AtomicInteger publications = new AtomicInteger();
             manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
@@ -441,7 +439,7 @@ class AliasAdministrationPersistenceTest
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             Alias original = alias("Dispatch", aliasListId, 101);
             long aliasId = service.createAlias(original,
-                Set.of(manager.getScanListModel().defaultScanList().getId()), service.currentRevision())
+                Set.of(manager.getScanListModel().defaultScanList().getId()))
                 .aliasIds().getFirst();
             long secondAliasId = service.createAlias(alias("Secondary", aliasListId, 101)).aliasIds().getFirst();
             AliasList cachedAliasList = manager.getAliasModel().getAliasList("County P25");
@@ -500,10 +498,10 @@ class AliasAdministrationPersistenceTest
             Alias proposed = alias("Dispatch", aliasListId, 101);
             proposed.addBroadcastChannel(route(stream));
             long aliasId = service.createAlias(proposed,
-                Set.of(manager.getScanListModel().defaultScanList().getId()), service.currentRevision())
+                Set.of(manager.getScanListModel().defaultScanList().getId()))
                 .aliasIds().getFirst();
             service.updateUnmatchedTalkgroupPolicy(aliasListId,
-                new UnmatchedTalkgroupPolicy(false, List.of(route(stream))), service.currentRevision());
+                new UnmatchedTalkgroupPolicy(false, List.of(route(stream))), service.getAliasListDefaults(aliasListId).editRevision());
 
             assertEquals("Old Stream", stream.getName());
             stream.setName("New Stream");
@@ -546,31 +544,29 @@ class AliasAdministrationPersistenceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             AliasAdministrationService.MutationResult alias = service.createAlias(
-                alias("Dispatch", list.aliasListId(), 101), list.revision());
+                alias("Dispatch", list.aliasListId(), 101));
             long aliasId = alias.aliasIds().getFirst();
             AliasAdministrationService.ScanListMutationResult created = service.createScanList(
-                new ScanList(ScanList.UNASSIGNED_ID, 10, "SouthWest", "Southwest calls", true, false),
-                alias.revision());
+                new ScanList(ScanList.UNASSIGNED_ID, 10, "SouthWest", "Southwest calls", true, false));
             long scanListId = created.scanListId();
             AliasAdministrationService.ScanListMutationResult configured = service.updateScanListMemberships(
                 scanListId, List.of(aliasId),
-                AliasAdministrationService.MembershipOperation.ADD, created.revision());
+                AliasAdministrationService.MembershipOperation.ADD, service.getScanList(scanListId).editRevision());
             ScanListDatabaseStore store = new ScanListDatabaseStore(database);
             ScanListConfiguration baseline = store.loadConfiguration();
 
             manager.failNextSave();
             assertThrows(AliasAdministrationService.PersistenceException.class, () -> service.updateScanList(
-                scanListId, new ScanList(scanListId, 2, "Renamed", "Changed", true, false),
-                configured.revision()));
+                scanListId, new ScanList(scanListId, 2, "Renamed", "Changed", true, false), service.getScanList(scanListId).editRevision()));
             assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
             assertScanListStateEquals(baseline, store.loadConfiguration());
 
             manager.failNextSave();
             assertThrows(AliasAdministrationService.PersistenceException.class,
                 () -> service.updateScanListMemberships(scanListId, List.of(aliasId),
-                    AliasAdministrationService.MembershipOperation.REMOVE, service.currentRevision()));
+                    AliasAdministrationService.MembershipOperation.REMOVE, service.getScanList(scanListId).editRevision()));
             assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
             assertScanListStateEquals(baseline, store.loadConfiguration());
             assertEquals(Set.of(aliasId), service.getScanList(scanListId).aliasIds());
@@ -578,8 +574,7 @@ class AliasAdministrationPersistenceTest
             int aliasesBeforeAtomicCreate = manager.getAliasModel().getAliases().size();
             manager.failNextSave();
             assertThrows(AliasAdministrationService.PersistenceException.class,
-                () -> service.createAlias(alias("Rejected Atomic", list.aliasListId(), 103), List.of(scanListId),
-                    service.currentRevision()));
+                () -> service.createAlias(alias("Rejected Atomic", list.aliasListId(), 103), List.of(scanListId)));
             assertEquals(aliasesBeforeAtomicCreate, manager.getAliasModel().getAliases().size());
             assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
             assertScanListStateEquals(baseline, store.loadConfiguration());
@@ -589,8 +584,7 @@ class AliasAdministrationPersistenceTest
             manager.failNextSave();
             assertThrows(AliasAdministrationService.PersistenceException.class,
                 () -> service.updateUnmatchedTalkgroupPolicy(list.aliasListId(),
-                    new UnmatchedTalkgroupPolicy(true, List.of()), List.of(scanListId),
-                    service.currentRevision()));
+                    new UnmatchedTalkgroupPolicy(true, List.of()), List.of(scanListId), service.getAliasListDefaults(list.aliasListId()).editRevision()));
             assertEquals(baselinePolicy, manager.getAliasModel().getAliasListDefinition(list.aliasListId())
                 .getUnmatchedTalkgroupPolicy());
             assertScanListStateEquals(baseline, manager.getScanListModel().configuration());

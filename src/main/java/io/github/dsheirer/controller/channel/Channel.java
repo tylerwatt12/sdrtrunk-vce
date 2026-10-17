@@ -1130,7 +1130,7 @@ public class Channel extends Configuration
      */
     public static Callback<Channel,Observable[]> extractor()
     {
-        return (Channel c) -> new Observable[] {c.processingProperty(), c.nameProperty(), c.aliasListNameProperty(),
+        return (Channel c) -> new Observable[] {c.nameProperty(), c.aliasListNameProperty(),
             c.autoStartOrderProperty(), c.autoStartProperty(), c.siteProperty(), c.systemProperty(),
             c.radioResolveIdProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
     }

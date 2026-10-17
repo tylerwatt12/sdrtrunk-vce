@@ -62,7 +62,7 @@ class AliasDatabaseStoreTest
         BroadcastifyCallConfiguration unknownCalls = stream("Unknown Calls");
         BroadcastifyCallConfiguration archive = stream("Archive");
         BroadcastifyCallConfiguration radioResolve = stream("RadioResolve");
-        new ConfigurationRepository(database).replaceChannelAndBroadcastConfiguration(List.of(),
+        new ConfigurationRepository(database).synchronizeChannelAndBroadcastConfiguration(List.of(),
             List.of(unknownCalls, archive, radioResolve));
         AliasListDefinition definition = definition("Lake County", AliasListFamily.P25);
         definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(true,
@@ -396,7 +396,7 @@ class AliasDatabaseStoreTest
 
         AliasDatabaseStore routeStore = populatedStore("duplicate-route.sqlite");
         BroadcastifyCallConfiguration radioResolve = stream("RadioResolve");
-        new ConfigurationRepository(routeStore.getDatabasePath()).replaceChannelAndBroadcastConfiguration(List.of(),
+        new ConfigurationRepository(routeStore.getDatabasePath()).synchronizeChannelAndBroadcastConfiguration(List.of(),
             List.of(radioResolve));
         insertAliasRoute(routeStore.getDatabasePath(), radioResolve.getConfigurationId());
         assertThrows(SQLException.class,

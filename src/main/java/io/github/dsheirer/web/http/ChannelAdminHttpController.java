@@ -84,6 +84,14 @@ public final class ChannelAdminHttpController
         {
             sendError(exchange, 409, "stale_revision", "Channel configuration changed; reload and try again");
         }
+        catch(ChannelAdministrationService.StaleChannelException exception)
+        {
+            sendError(exchange, 409, "stale_channel", "This channel has conflicting changes. Your entry has not been saved.");
+        }
+        catch(ChannelAdministrationService.RestartRequiredException exception)
+        {
+            sendError(exchange, 409, "restart_required", "This channel is now running. Confirm a restart to save your changes.");
+        }
         catch(ChannelAdministrationService.ChannelRunningException exception)
         {
             sendError(exchange, 409, "channel_running", "Stop the channel before changing its configuration");
@@ -190,8 +198,7 @@ public final class ChannelAdminHttpController
             }
             case "POST" -> {
                 ChannelWriteRequest request = readJson(exchange, ChannelWriteRequest.class);
-                ChannelAdministrationService.MutationResult result = mService.create(request.definition(null),
-                    requiredRevision(request.revision()));
+                ChannelAdministrationService.MutationResult result = mService.create(request.definition(null));
                 if(result.configurationIds().size() == 1)
                     exchange.getResponseHeaders().set("Location", PATH + "/" + result.configurationIds().get(0));
                 sendData(exchange, 201, result);
@@ -258,7 +265,8 @@ public final class ChannelAdminHttpController
             case "PUT" -> {
                 ChannelWriteRequest request = readJson(exchange, ChannelWriteRequest.class);
                 sendData(exchange, 200, mService.update(id, request.definition(id),
-                    requiredRevision(request.revision())));
+                    required(request.editRevision(), "edit_revision"), request.original(),
+                    Boolean.TRUE.equals(request.allowRestart())));
             }
             case "DELETE" -> {
                 RevisionRequest request = readJson(exchange, RevisionRequest.class);
@@ -416,11 +424,12 @@ public final class ChannelAdminHttpController
         }
     }
 
-    private record ChannelWriteRequest(Long revision, String protocolId, String system, String site, String name,
+    private record ChannelWriteRequest(String protocolId, String system, String site, String name,
                                        String radioResolveId, Long aliasListId, SourceRequest source,
                                        Map<String,Object> settings, List<FrequencyMapRequest> frequencyMap,
                                        List<String> eventLogs, List<String> recorders,
-                                       List<String> auxiliaryDecoders)
+                                       List<String> auxiliaryDecoders, String editRevision,
+                                       ChannelDefinition original, Boolean allowRestart)
     {
         private ChannelDefinition definition(String configurationId)
         {

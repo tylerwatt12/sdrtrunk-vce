@@ -107,7 +107,7 @@ class RadioSystemIdentityModelTest
             .findFirst().orElseThrow();
         first.setAliasListDefinition(p25);
         second.setAliasListDefinition(p25);
-        repository.replaceChannelAndBroadcastConfiguration(List.of(first, second), List.of());
+        repository.synchronizeChannelAndBroadcastConfiguration(List.of(first, second), List.of());
 
         P25SiteIdentity verified = new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1);
         try(Connection connection = SdrTrunkDatabase.open(database))
@@ -138,7 +138,7 @@ class RadioSystemIdentityModelTest
 
         //The next ordinary accepted save persists the restored value. Full runtime/startup validation succeeds
         //immediately, without waiting for another decoder snapshot to repair contradictory state.
-        repository.replaceChannelAndBroadcastConfiguration(restored, List.of());
+        repository.synchronizeChannelAndBroadcastConfiguration(restored, List.of());
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
             assertEquals(verified.wacn(), scalar(connection, """

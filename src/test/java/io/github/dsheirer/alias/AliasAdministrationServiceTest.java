@@ -68,6 +68,226 @@ class AliasAdministrationServiceTest
     Path mTemporaryFolder;
 
     @Test
+    void concurrentAliasListCreatesRecheckTheCapacityInsideTheSerializedMutation() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("alias-list-capacity-race");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            int missing = AliasAdministrationService.MAX_ALIAS_LISTS - 1 - service.catalog().aliasLists().size();
+            for(int index = 0; index < missing; index++)
+            {
+                AliasListDefinition definition = new AliasListDefinition("Existing List " + index, AliasListFamily.P25);
+                definition.setId(10_000L + index);
+                manager.getAliasModel().addAliasListDefinition(definition);
+            }
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Object>> writers = new ArrayList<>();
+            for(String name: List.of("First New List", "Second New List"))
+            {
+                writers.add(executor.submit(() ->
+                {
+                    start.await();
+                    try
+                    {
+                        return service.createAliasList(name, AliasListFamily.P25);
+                    }
+                    catch(IllegalStateException exception)
+                    {
+                        return exception;
+                    }
+                }));
+            }
+            start.countDown();
+            List<Object> outcomes = List.of(writers.get(0).get(10, TimeUnit.SECONDS),
+                writers.get(1).get(10, TimeUnit.SECONDS));
+            assertEquals(1, outcomes.stream().filter(AliasAdministrationService.MutationResult.class::isInstance).count());
+            assertEquals(1, outcomes.stream().filter(outcome -> outcome instanceof IllegalStateException exception &&
+                exception.getMessage().contains("cannot exceed")).count());
+            assertEquals(AliasAdministrationService.MAX_ALIAS_LISTS, service.catalog().aliasLists().size());
+        }
+        finally
+        {
+            executor.shutdownNow();
+            flushAndUnregister(manager);
+        }
+    }
+
+    @Test
+    void aliasEditorVersionsIgnoreOtherItemsAndDerivedOverlapButRejectChangesToTheEditedAlias() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("scoped-alias-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long list = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long first = service.createAlias(alias("Dispatch", list, 101)).aliasIds().getFirst();
+            long second = service.createAlias(alias("Operations", list, 102)).aliasIds().getFirst();
+            AliasAdministrationService.AliasEntry opened = service.getAlias(first);
+            Alias draft = opened.alias();
+            draft.setDescription("Saved from the open editor");
+
+            Alias other = service.getAlias(second).alias();
+            other.setName("County Operations");
+            service.replaceAlias(second, other, service.getAlias(second).editRevision());
+            service.createAlias(alias("Overlapping dispatch", list, 101));
+            Channel unrelatedChannel = new Channel("Runtime activity");
+            unrelatedChannel.setAliasListDefinition(manager.getAliasModel().getAliasListDefinition(list));
+            unrelatedChannel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            manager.getChannelModel().addChannel(unrelatedChannel);
+            unrelatedChannel.processingProperty().set(true);
+            unrelatedChannel.processingProperty().set(false);
+            BroadcastifyCallConfiguration destination = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+            destination.setName("Other destination");
+            manager.getBroadcastModel().addBroadcastConfiguration(destination);
+
+            assertNotEquals(opened.revision(), service.currentRevision());
+            assertEquals(opened.editRevision(), service.getAlias(first).editRevision(),
+                "Other aliases, overlap flags, channels and destinations do not own this Alias's saved fields");
+            service.replaceAlias(first, draft, opened.scanListIds(), opened.editRevision());
+            assertEquals("Saved from the open editor", service.getAlias(first).alias().getDescription());
+            assertEquals("County Operations", service.getAlias(second).alias().getName());
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.replaceAlias(first, opened.alias(), opened.editRevision()));
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.deleteAlias(first, opened.editRevision()));
+
+            AliasAdministrationService.AliasEntry beforeMembership = service.getAlias(first);
+            long additional = service.createScanList(new ScanList("Additional")).scanListId();
+            service.updateScanListMemberships(additional, Set.of(first),
+                AliasAdministrationService.MembershipOperation.ADD, service.getScanList(additional).editRevision());
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.replaceAlias(first, beforeMembership.alias(), beforeMembership.scanListIds(),
+                    beforeMembership.editRevision()), "An Alias editor must not overwrite concurrent routing edits");
+            assertTrue(service.getAlias(first).scanListIds().contains(additional));
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
+
+    @Test
+    void scanListsAndAliasListDefaultsUseTheirOwnSavedSettingsAndValidateCurrentDependencies() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("scoped-routing-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long firstList = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long otherList = service.createAliasList("City P25", AliasListFamily.P25).aliasListId();
+            long firstScan = service.createScanList(new ScanList("County")).scanListId();
+            long otherScan = service.createScanList(new ScanList("City")).scanListId();
+            long alias = service.createAlias(alias("Dispatch", firstList, 101), Set.of()).aliasIds().getFirst();
+            var defaults = service.getAliasListDefaults(firstList);
+            var firstScanSnapshot = service.getScanList(firstScan);
+            var otherSnapshot = service.getScanList(otherScan);
+            service.updateScanList(otherScan, otherSnapshot.scanList().withDefinition(5, "City Updated", null,
+                true, false), otherSnapshot.editRevision());
+            service.createAlias(alias("Other Alias", otherList, 201));
+            service.updateAliasListDefaults(otherList,
+                new AliasListDefaults(new UnmatchedTalkgroupPolicy(true, List.of()), Set.of(otherScan)),
+                service.getAliasListDefaults(otherList).editRevision());
+            assertEquals(defaults.editRevision(), service.options(firstList).editRevision());
+            service.updateAliasListDefaults(firstList,
+                new AliasListDefaults(new UnmatchedTalkgroupPolicy(true, List.of()), Set.of(firstScan)),
+                defaults.editRevision());
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.updateAliasListDefaults(firstList, defaults.defaults(), defaults.editRevision()));
+            // Defaults just added an owner to the first Scan List: it is a real change to this target.
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.deleteScanList(firstScan, firstScanSnapshot.editRevision()));
+            var openedScan = service.getScanList(firstScan);
+            Alias renamed = service.getAlias(alias).alias();
+            renamed.setName("Dispatch Updated");
+            service.replaceAlias(alias, renamed, service.getAlias(alias).editRevision());
+            assertEquals(openedScan.editRevision(), service.getScanList(firstScan).editRevision());
+            service.updateScanListMemberships(firstScan, Set.of(alias),
+                AliasAdministrationService.MembershipOperation.ADD, openedScan.editRevision());
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.updateScanListMemberships(firstScan, Set.of(),
+                    AliasAdministrationService.MembershipOperation.REPLACE, openedScan.editRevision()));
+            assertEquals(Set.of(alias), service.getScanList(firstScan).aliasIds());
+            assertEquals("City Updated", service.getScanList(otherScan).scanList().getName());
+
+            var aliasDraft = service.getAlias(alias);
+            long removedScan = service.createScanList(new ScanList("Temporary")).scanListId();
+            service.deleteScanList(removedScan, service.getScanList(removedScan).editRevision());
+            assertThrows(AliasAdministrationService.NotFoundException.class,
+                () -> service.replaceAlias(alias, aliasDraft.alias(), Set.of(removedScan), aliasDraft.editRevision()),
+                "A dependency removed after the editor opened is checked against the current model");
+            assertEquals(Set.of(firstScan), service.getAlias(alias).scanListIds());
+            assertEquals(Set.of(firstScan), new ScanListDatabaseStore(database).loadConfiguration().scanListIdsForAlias(alias));
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
+
+    @Test
+    void concurrentEditorsForTheSameAliasCommitOneCompleteWinner() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("scoped-alias-race");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long list = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long id = service.createAlias(alias("Dispatch", list, 101)).aliasIds().getFirst();
+            var opened = service.getAlias(id);
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<Object>> writers = new ArrayList<>();
+            for(String name: List.of("First writer", "Second writer"))
+            {
+                writers.add(executor.submit(() ->
+                {
+                    start.await();
+                    Alias draft = AliasFactory.copyOf(opened.alias());
+                    draft.setName(name);
+                    try
+                    {
+                        return service.replaceAlias(id, draft, opened.editRevision());
+                    }
+                    catch(AliasAdministrationService.StaleEditException exception)
+                    {
+                        return exception;
+                    }
+                }));
+            }
+            start.countDown();
+            List<Object> outcomes = List.of(writers.get(0).get(10, TimeUnit.SECONDS),
+                writers.get(1).get(10, TimeUnit.SECONDS));
+            assertEquals(1, outcomes.stream().filter(AliasAdministrationService.MutationResult.class::isInstance).count());
+            assertEquals(1, outcomes.stream().filter(AliasAdministrationService.StaleEditException.class::isInstance).count());
+            assertTrue(Set.of("First writer", "Second writer").contains(service.getAlias(id).alias().getName()));
+        }
+        finally
+        {
+            executor.shutdownNow();
+            flushAndUnregister(manager);
+        }
+    }
+
+    @Test
     void persistsValidatedChangesAndUpdatesTheLiveCatalog() throws Exception
     {
         exerciseService();
@@ -86,7 +306,7 @@ class AliasAdministrationServiceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             String name = "x".repeat(126) + "🚒";
-            var saved = service.createAliasList("  " + name + "  ", AliasListFamily.P25, service.currentRevision());
+            var saved = service.createAliasList("  " + name + "  ", AliasListFamily.P25);
             assertEquals(128, name.length());
             assertEquals(name, service.catalog().aliasLists().stream()
                 .filter(list -> list.getId() == saved.aliasListId()).findFirst().orElseThrow().getName());
@@ -94,9 +314,9 @@ class AliasAdministrationServiceTest
                 .load().aliasListDefinitions().stream().filter(list -> list.getId() == saved.aliasListId())
                 .findFirst().orElseThrow().getName());
             assertThrows(IllegalArgumentException.class,
-                () -> service.createAliasList("x".repeat(129), AliasListFamily.P25, saved.revision()));
+                () -> service.createAliasList("x".repeat(129), AliasListFamily.P25));
             assertThrows(IllegalArgumentException.class,
-                () -> service.createAliasList("   ", AliasListFamily.P25, saved.revision()));
+                () -> service.createAliasList("   ", AliasListFamily.P25));
             assertEquals(saved.revision(), service.currentRevision(), "invalid names do not change configuration");
         }
         finally
@@ -286,7 +506,7 @@ class AliasAdministrationServiceTest
     }
 
     @Test
-    void concurrentSameRevisionMutationsProduceOneCommitAndOneStaleResult() throws Exception
+    void concurrentCreatesUseCurrentStateAndAllocateDistinctIdentities() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("same-revision-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -313,8 +533,7 @@ class AliasAdministrationServiceTest
                     start.await();
                     try
                     {
-                        return service.createAlias(alias("Dispatch " + talkgroup, list.aliasListId(), talkgroup),
-                            revision);
+                        return service.createAlias(alias("Dispatch " + talkgroup, list.aliasListId(), talkgroup));
                     }
                     catch(RuntimeException exception)
                     {
@@ -331,14 +550,12 @@ class AliasAdministrationServiceTest
                 results.add(future.get(10, TimeUnit.SECONDS));
             }
 
-            assertEquals(1, results.stream()
+            assertEquals(2, results.stream()
                 .filter(AliasAdministrationService.MutationResult.class::isInstance).count());
-            assertEquals(1, results.stream()
-                .filter(AliasAdministrationService.StaleRevisionException.class::isInstance).count());
-            assertEquals(1, manager.getAliasModel().getAliases().size());
+            assertEquals(2, manager.getAliasModel().getAliases().size());
             AliasDatabaseStore store = new AliasDatabaseStore(database);
             List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
-            assertEquals(1, store.loadAliases(definitions).size());
+            assertEquals(2, store.loadAliases(definitions).size());
         }
         finally
         {
@@ -466,80 +683,77 @@ class AliasAdministrationServiceTest
             assertNotEquals(ScanList.UNASSIGNED_ID, initialDefault.getId());
 
             AliasAdministrationService.MutationResult countyList = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             AliasAdministrationService.MutationResult metroList = service.createAliasList(
-                "Metro P25", AliasListFamily.P25, countyList.revision());
+                "Metro P25", AliasListFamily.P25);
             long countyListId = countyList.aliasListId();
             long metroListId = metroList.aliasListId();
             AliasAdministrationService.MutationResult dispatch = service.createAlias(
-                alias("Dispatch", countyListId, "County P25", 101), metroList.revision());
+                alias("Dispatch", countyListId, "County P25", 101));
             AliasAdministrationService.MutationResult operations = service.createAlias(
-                alias("Operations", countyListId, "County P25", 102), dispatch.revision());
+                alias("Operations", countyListId, "County P25", 102));
             AliasAdministrationService.MutationResult tactical = service.createAlias(
-                alias("Tactical", metroListId, "Metro P25", 201), operations.revision());
+                alias("Tactical", metroListId, "Metro P25", 201));
             long dispatchId = dispatch.aliasIds().getFirst();
             long operationsId = operations.aliasIds().getFirst();
             long tacticalId = tactical.aliasIds().getFirst();
 
             ScanList southwest = new ScanList(ScanList.UNASSIGNED_ID, 10, "SouthWest",
                 "Southwest calls", true, false);
-            AliasAdministrationService.ScanListMutationResult southwestCreated = service.createScanList(southwest,
-                tactical.revision());
+            AliasAdministrationService.ScanListMutationResult southwestCreated = service.createScanList(southwest);
             long southwestId = southwestCreated.scanListId();
             AliasAdministrationService.ScanListMutationResult clevelandCreated = service.createScanList(
-                new ScanList(ScanList.UNASSIGNED_ID, 20, "Cleveland", null, true, false),
-                southwestCreated.revision());
+                new ScanList(ScanList.UNASSIGNED_ID, 20, "Cleveland", null, true, false));
             long clevelandId = clevelandCreated.scanListId();
 
             AliasAdministrationService.ScanListMutationResult clevelandUpdated = service.updateScanList(clevelandId,
-                new ScanList(clevelandId, 5, "Cleveland", "Citywide calls", true, true),
-                clevelandCreated.revision());
+                new ScanList(clevelandId, 5, "Cleveland", "Citywide calls", true, true), service.getScanList(clevelandId).editRevision());
             assertEquals("Cleveland", manager.getScanListModel().defaultScanList().getName());
             assertFalse(manager.getScanListModel().scanList(initialDefault.getId()).isDefault());
             assertThrows(IllegalArgumentException.class,
-                () -> service.deleteScanList(clevelandId, clevelandUpdated.revision()));
+                () -> service.deleteScanList(clevelandId, service.getScanList(clevelandId).editRevision()));
             AliasAdministrationService.ScanListMutationResult oldDefaultDeleted = service.deleteScanList(
-                initialDefault.getId(), service.currentRevision());
+                initialDefault.getId(), service.getScanList(initialDefault.getId()).editRevision());
             assertNull(manager.getScanListModel().scanList(initialDefault.getId()));
 
             AliasAdministrationService.ScanListMutationResult countyScoped =
                 service.updateScanListMembershipsByScope(southwestId, countyListId,
-                    AliasAdministrationService.MembershipOperation.ADD, oldDefaultDeleted.revision());
+                    AliasAdministrationService.MembershipOperation.ADD, service.getScanList(southwestId).editRevision());
             assertEquals(2, countyScoped.affected(),
                 "Alias-list scope must add every Alias from that source list");
             assertEquals(Set.of(dispatchId, operationsId), service.getScanList(southwestId).aliasIds());
             AliasAdministrationService.ScanListMutationResult allScopedRemoved =
                 service.updateScanListMembershipsByScope(southwestId, null,
-                    AliasAdministrationService.MembershipOperation.REMOVE, countyScoped.revision());
+                    AliasAdministrationService.MembershipOperation.REMOVE, service.getScanList(southwestId).editRevision());
             assertEquals(2, allScopedRemoved.affected(),
                 "An omitted Alias-list scope must remove every current Alias member");
             assertTrue(service.getScanList(southwestId).aliasIds().isEmpty());
             assertThrows(IllegalArgumentException.class, () ->
                 service.updateScanListMembershipsByScope(southwestId, null,
-                    AliasAdministrationService.MembershipOperation.REPLACE, allScopedRemoved.revision()));
+                    AliasAdministrationService.MembershipOperation.REPLACE, service.getScanList(southwestId).editRevision()));
 
             AliasAdministrationService.ScanListMutationResult southwestAdded = service.updateScanListMemberships(
                 southwestId, List.of(dispatchId, operationsId),
                 List.of(countyListId),
-                AliasAdministrationService.MembershipOperation.ADD, allScopedRemoved.revision());
+                AliasAdministrationService.MembershipOperation.ADD, service.getScanList(southwestId).editRevision());
             assertEquals(Set.of(dispatchId, operationsId), service.getScanList(southwestId).aliasIds());
             assertEquals(Set.of(countyListId), service.getScanList(southwestId).unmatchedAliasListIds());
 
             AliasAdministrationService.ScanListMutationResult clevelandAdded = service.updateScanListMemberships(
                 clevelandId, List.of(dispatchId, tacticalId),
                 List.of(metroListId),
-                AliasAdministrationService.MembershipOperation.ADD, southwestAdded.revision());
+                AliasAdministrationService.MembershipOperation.ADD, service.getScanList(clevelandId).editRevision());
             AliasAdministrationService.ScanListMutationResult southwestRemoved = service.updateScanListMemberships(
                 southwestId, List.of(operationsId),
                 List.of(countyListId),
-                AliasAdministrationService.MembershipOperation.REMOVE, clevelandAdded.revision());
+                AliasAdministrationService.MembershipOperation.REMOVE, service.getScanList(southwestId).editRevision());
             assertEquals(Set.of(dispatchId), service.getScanList(southwestId).aliasIds());
             assertTrue(service.getScanList(southwestId).unmatchedAliasListIds().isEmpty());
 
             AliasAdministrationService.ScanListMutationResult southwestReplaced = service.updateScanListMemberships(
                 southwestId, List.of(operationsId, tacticalId),
                 List.of(countyListId),
-                AliasAdministrationService.MembershipOperation.REPLACE, southwestRemoved.revision());
+                AliasAdministrationService.MembershipOperation.REPLACE, service.getScanList(southwestId).editRevision());
             AliasAdministrationService.ScanListEntry replaced = service.getScanList(southwestId);
             assertEquals(Set.of(operationsId, tacticalId), replaced.aliasIds());
             assertEquals(Set.of(countyListId), replaced.unmatchedAliasListIds());
@@ -574,12 +788,10 @@ class AliasAdministrationServiceTest
 
             Alias unrelatedEdit = service.getAlias(tacticalId).alias();
             unrelatedEdit.setDescription("Unrelated Alias edit");
-            AliasAdministrationService.MutationResult aliasUpdated = service.replaceAlias(tacticalId, unrelatedEdit,
-                southwestReplaced.revision());
+            AliasAdministrationService.MutationResult aliasUpdated = service.replaceAlias(tacticalId, unrelatedEdit, service.getAlias(tacticalId).editRevision());
             assertEquals(Set.of(southwestId, clevelandId), service.getAlias(tacticalId).scanListIds());
 
-            AliasAdministrationService.MutationResult aliasDeleted = service.deleteAlias(operationsId,
-                aliasUpdated.revision());
+            AliasAdministrationService.MutationResult aliasDeleted = service.deleteAlias(operationsId, service.getAlias(operationsId).editRevision());
             assertEquals(Set.of(tacticalId), service.getScanList(southwestId).aliasIds());
 
             AliasAdministrationService.MutationResult aliasListDeleted = service.deleteAliasList(metroListId,
@@ -590,8 +802,8 @@ class AliasAdministrationServiceTest
 
             AliasAdministrationService.ScanListMutationResult southwestRefilled = service.updateScanListMemberships(
                 southwestId, List.of(dispatchId),
-                AliasAdministrationService.MembershipOperation.ADD, aliasListDeleted.revision());
-            service.deleteScanList(southwestId, southwestRefilled.revision());
+                AliasAdministrationService.MembershipOperation.ADD, service.getScanList(southwestId).editRevision());
+            service.deleteScanList(southwestId, service.getScanList(southwestId).editRevision());
             assertEquals(Set.of(clevelandId), service.getAlias(dispatchId).scanListIds());
 
             ScanListConfiguration stored = scanListStore.loadConfiguration();
@@ -619,18 +831,16 @@ class AliasAdministrationServiceTest
             manager.init();
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             long defaultScanListId = manager.getScanListModel().defaultScanList().getId();
             AliasAdministrationService.MutationResult retired = service.createAlias(
-                alias("Retired", list.aliasListId(), "County P25", 100), list.revision());
+                alias("Retired", list.aliasListId(), "County P25", 100));
             long retiredAliasId = retired.aliasIds().getFirst();
-            AliasAdministrationService.MutationResult retiredDeleted = service.deleteAlias(retiredAliasId,
-                retired.revision());
+            AliasAdministrationService.MutationResult retiredDeleted = service.deleteAlias(retiredAliasId, service.getAlias(retiredAliasId).editRevision());
             int commitsBeforeCreate = manager.commitCount();
 
             AliasAdministrationService.MutationResult created = service.createAlias(
-                alias("Dispatch", list.aliasListId(), "County P25", 101), List.of(defaultScanListId),
-                retiredDeleted.revision());
+                alias("Dispatch", list.aliasListId(), "County P25", 101), List.of(defaultScanListId));
             long aliasId = created.aliasIds().getFirst();
 
             assertEquals(commitsBeforeCreate + 1, manager.commitCount());
@@ -660,7 +870,7 @@ class AliasAdministrationServiceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             long defaultScanListId = manager.getScanListModel().defaultScanList().getId();
             AliasAdministrationService.MutationResult list = service.createAliasList(
-                "County P25", AliasListFamily.P25, service.currentRevision());
+                "County P25", AliasListFamily.P25);
             assertTrue(service.getAliasListDefaults(list.aliasListId()).defaults().scanListIds().isEmpty());
 
             BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
@@ -668,11 +878,10 @@ class AliasAdministrationServiceTest
             manager.getBroadcastModel().addBroadcastConfiguration(primary);
             AliasAdministrationService.MutationResult configured = service.updateAliasListDefaults(
                 list.aliasListId(), new AliasListDefaults(
-                    new UnmatchedTalkgroupPolicy(true, List.of(route(primary))), Set.of(defaultScanListId)),
-                list.revision());
+                    new UnmatchedTalkgroupPolicy(true, List.of(route(primary))), Set.of(defaultScanListId)), service.getAliasListDefaults(list.aliasListId()).editRevision());
 
             Alias talkgroup = alias("Dispatch", list.aliasListId(), "County P25", 101);
-            long talkgroupId = service.createAlias(talkgroup, configured.revision()).aliasIds().getFirst();
+            long talkgroupId = service.createAlias(talkgroup).aliasIds().getFirst();
             Alias inherited = service.getAlias(talkgroupId).alias();
             assertTrue(inherited.isRecordable());
             assertEquals(Set.of("Primary"), inherited.getBroadcastChannels().stream()
@@ -681,7 +890,7 @@ class AliasAdministrationServiceTest
 
             Alias range = alias("Range", list.aliasListId(), "County P25", 200);
             range.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 200, 210));
-            long rangeId = service.createAlias(range, service.currentRevision()).aliasIds().getFirst();
+            long rangeId = service.createAlias(range).aliasIds().getFirst();
             assertTrue(service.getAlias(rangeId).alias().isRecordable());
             assertEquals(Set.of(defaultScanListId), service.getAlias(rangeId).scanListIds());
 
@@ -689,20 +898,20 @@ class AliasAdministrationServiceTest
             radio.setAliasListId(list.aliasListId());
             radio.setAliasListName("County P25");
             radio.setMatchIdentifier(new Radio(Protocol.APCO25, 5001));
-            long radioId = service.createAlias(radio, service.currentRevision()).aliasIds().getFirst();
+            long radioId = service.createAlias(radio).aliasIds().getFirst();
             assertTrue(service.getAlias(radioId).alias().isRecordable());
             assertEquals(Set.of("Primary"), service.getAlias(radioId).alias().getBroadcastChannels().stream()
                 .map(BroadcastChannel::getChannelName).collect(java.util.stream.Collectors.toSet()));
             assertEquals(Set.of(defaultScanListId), service.getAlias(radioId).scanListIds());
 
             Alias explicit = alias("Encrypted", list.aliasListId(), "County P25", 102);
-            long explicitId = service.createAlias(explicit, Set.of(), service.currentRevision()).aliasIds().getFirst();
+            long explicitId = service.createAlias(explicit, Set.of()).aliasIds().getFirst();
             assertFalse(service.getAlias(explicitId).alias().isRecordable());
             assertTrue(service.getAlias(explicitId).alias().getBroadcastChannels().isEmpty());
             assertTrue(service.getAlias(explicitId).scanListIds().isEmpty());
 
             service.updateAliasListDefaults(list.aliasListId(),
-                new AliasListDefaults(UnmatchedTalkgroupPolicy.DEFAULT, Set.of()), service.currentRevision());
+                new AliasListDefaults(UnmatchedTalkgroupPolicy.DEFAULT, Set.of()), service.getAliasListDefaults(list.aliasListId()).editRevision());
             assertTrue(service.getAlias(talkgroupId).alias().isRecordable());
             assertEquals(Set.of(defaultScanListId), service.getAlias(talkgroupId).scanListIds());
         }
@@ -727,7 +936,7 @@ class AliasAdministrationServiceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             long defaultScanListId = manager.getScanListModel().defaultScanList().getId();
             AliasAdministrationService.MutationResult custom = service.createAliasList(
-                "Default P25 Copy", AliasListFamily.P25, service.currentRevision());
+                "Default P25 Copy", AliasListFamily.P25);
             assertTrue(service.getAliasListDefaults(custom.aliasListId()).defaults().scanListIds().isEmpty());
 
             AliasListDefinition factory = manager.getAliasModel().getAliasListDefinition(
@@ -735,7 +944,7 @@ class AliasAdministrationServiceTest
             AliasAdministrationService.MutationResult deleted = service.deleteAliasList(factory.getId(),
                 custom.revision(), true);
             AliasAdministrationService.MutationResult recreated = service.createAliasList(
-                "default p25", AliasListFamily.P25, deleted.revision());
+                "default p25", AliasListFamily.P25);
 
             assertEquals(Set.of(defaultScanListId),
                 service.getAliasListDefaults(recreated.aliasListId()).defaults().scanListIds());
@@ -762,23 +971,21 @@ class AliasAdministrationServiceTest
             long emptyRevision = service.catalog().revision();
 
             AliasAdministrationService.MutationResult createdList = service.createAliasList(
-                "County P25", AliasListFamily.P25, emptyRevision);
+                "County P25", AliasListFamily.P25);
             long aliasListId = createdList.aliasListId();
             assertNotEquals(AliasListDefinition.UNASSIGNED_ID, aliasListId);
             assertEquals(aliasListId,
                 manager.getAliasModel().getAliasListDefinition("County P25").getId());
 
-            AliasAdministrationService.StaleRevisionException stale = assertThrows(
-                AliasAdministrationService.StaleRevisionException.class,
-                () -> service.createAliasList("Stale List", AliasListFamily.DMR, emptyRevision));
-            assertEquals(emptyRevision, stale.getExpected());
-            assertEquals(createdList.revision(), stale.getCurrent());
-            assertNull(manager.getAliasModel().getAliasListDefinition("Stale List"));
+            service.createAliasList("Current State", AliasListFamily.DMR);
+            assertTrue(manager.getAliasModel().getAliasListDefinition("Current State") != null,
+                "Creating a list validates current state without rejecting an unrelated change");
+            service.deleteAliasList(manager.getAliasModel().getAliasListDefinition("Current State").getId(), true);
 
             AliasAdministrationService.MutationResult first = service.createAlias(
-                alias("Dispatch", aliasListId, 101), createdList.revision());
+                alias("Dispatch", aliasListId, 101));
             AliasAdministrationService.MutationResult second = service.createAlias(
-                alias("Operations", aliasListId, 102), first.revision());
+                alias("Operations", aliasListId, 102));
             long firstAliasId = first.aliasIds().getFirst();
             long secondAliasId = second.aliasIds().getFirst();
             assertNotEquals(Alias.UNASSIGNED_ID, firstAliasId);
@@ -787,7 +994,7 @@ class AliasAdministrationServiceTest
             Alias retiredCatchAll = alias("Unknown talkgroups", aliasListId, 1);
             retiredCatchAll.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
             IllegalArgumentException catchAllFailure = assertThrows(IllegalArgumentException.class,
-                () -> service.createAlias(retiredCatchAll, second.revision()));
+                () -> service.createAlias(retiredCatchAll));
             assertTrue(catchAllFailure.getMessage().contains("Unmatched Talkgroups"));
 
             BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
@@ -798,8 +1005,7 @@ class AliasAdministrationServiceTest
             manager.getBroadcastModel().addBroadcastConfiguration(archive);
 
             AliasAdministrationService.MutationResult policyChanged = service.updateUnmatchedTalkgroupPolicy(
-                aliasListId, new UnmatchedTalkgroupPolicy(true, List.of(route(primary))),
-                service.catalog().revision());
+                aliasListId, new UnmatchedTalkgroupPolicy(true, List.of(route(primary))), service.getAliasListDefaults(aliasListId).editRevision());
             UnmatchedTalkgroupPolicy livePolicy = manager.getAliasModel()
                 .getAliasListDefinition(aliasListId).getUnmatchedTalkgroupPolicy();
             assertTrue(livePolicy.isRecordEnabled());
@@ -808,7 +1014,7 @@ class AliasAdministrationServiceTest
                 .filter(definition -> definition.getId() == aliasListId)
                 .findFirst().orElseThrow().getUnmatchedTalkgroupPolicy());
             assertThrows(IllegalArgumentException.class, () -> service.updateUnmatchedTalkgroupPolicy(aliasListId,
-                new UnmatchedTalkgroupPolicy(false, List.of(route("Missing"))), policyChanged.revision()));
+                new UnmatchedTalkgroupPolicy(false, List.of(route("Missing"))), service.getAliasListDefaults(aliasListId).editRevision()));
 
             long bulkRevision = service.catalog().revision();
             AliasAdministrationService.MutationResult configured = service.bulkEdit(
@@ -846,22 +1052,21 @@ class AliasAdministrationServiceTest
 
             Alias unrelatedEdit = service.getAlias(firstAliasId).alias();
             unrelatedEdit.setDescription("Unrelated edit");
-            AliasAdministrationService.MutationResult preserved = service.replaceAlias(firstAliasId, unrelatedEdit,
-                service.catalog().revision());
+            AliasAdministrationService.MutationResult preserved = service.replaceAlias(firstAliasId, unrelatedEdit, service.getAlias(firstAliasId).editRevision());
             assertEquals("Unrelated edit", service.getAlias(firstAliasId).alias().getDescription());
 
             Alias invalidReference = service.getAlias(firstAliasId).alias();
             invalidReference.addBroadcastChannel(route("Never configured"));
             assertThrows(IllegalArgumentException.class, () ->
-                service.replaceAlias(firstAliasId, invalidReference, preserved.revision()));
+                service.replaceAlias(firstAliasId, invalidReference, service.getAlias(firstAliasId).editRevision()));
 
-            long beforeDesktopEdit = service.catalog().revision();
+            String beforeDesktopEdit = service.getAlias(firstAliasId).editRevision();
             Alias desktopEdited = service.getAlias(firstAliasId).alias();
             desktopEdited.setDescription("Edited on desktop");
             AliasAdministrationService.MutationResult desktopSaved = service.replaceAlias(firstAliasId,
                 desktopEdited, beforeDesktopEdit);
-            assertNotEquals(beforeDesktopEdit, desktopSaved.revision());
-            assertThrows(AliasAdministrationService.StaleRevisionException.class,
+            assertNotEquals(beforeDesktopEdit, service.getAlias(firstAliasId).editRevision());
+            assertThrows(AliasAdministrationService.StaleEditException.class,
                 () -> service.replaceAlias(firstAliasId, alias("Stale overwrite", aliasListId, 101),
                     beforeDesktopEdit));
             assertEquals("Edited on desktop", service.getAlias(firstAliasId).alias().getDescription());

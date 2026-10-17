@@ -885,7 +885,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         ChannelDefinition definition = new ChannelDefinition(null, template.protocolId(),
             feed.advertisement.system(), feed.advertisement.site(), name, null, aliasListId, source,
             template.settings(), List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
-        ChannelAdministrationService.MutationResult created = mChannels.create(definition, mChannels.currentRevision());
+        ChannelAdministrationService.MutationResult created = mChannels.create(definition);
         String channelId = created.configurationIds().getFirst();
         mChannels.setAutoStart(List.of(channelId), true, mChannels.currentRevision());
         mChannels.setProcessing(List.of(channelId), true);

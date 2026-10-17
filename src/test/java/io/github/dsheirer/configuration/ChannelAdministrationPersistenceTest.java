@@ -53,16 +53,14 @@ class ChannelAdministrationPersistenceTest
         {
             manager.init();
             AliasAdministrationService aliases = AliasAdministrationServiceTestSupport.create(manager);
-            long aliasListId = aliases.createAliasList("County P25", AliasListFamily.P25,
-                aliases.currentRevision()).aliasListId();
+            long aliasListId = aliases.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             ChannelAdministrationService channels = ChannelAdministrationServiceTestSupport.create(manager);
             ChannelDefinition template = channels.template("p25-conventional");
 
             ChannelAdministrationService.MutationResult first = channels.create(
-                withNameAndFrequency(template, aliasListId, "Dispatch", 155_010_000L),
-                channels.currentRevision());
+                withNameAndFrequency(template, aliasListId, "Dispatch", 155_010_000L));
             ChannelAdministrationService.MutationResult second = channels.create(
-                withNameAndFrequency(template, aliasListId, "Operations", 155_020_000L), first.revision());
+                withNameAndFrequency(template, aliasListId, "Operations", 155_020_000L));
 
             String firstId = first.configurationIds().getFirst();
             String secondId = second.configurationIds().getFirst();
@@ -204,7 +202,7 @@ class ChannelAdministrationPersistenceTest
                 null, null, null, null, null, "remote", senderId, UUID.randomUUID().toString()),
             template.settings(), template.frequencyMap(), template.eventLogs(), template.recorders(),
             template.auxiliaryDecoders(), ChannelDefinition.Observed.EMPTY);
-        channels.create(channel, channels.currentRevision());
+        channels.create(channel);
         RemoteLinkSettingsStore store = new RemoteLinkSettingsStore(database);
         RemoteLinkSettingsStore.Settings original = new RemoteLinkSettingsStore.Settings(2, false,
             RemoteLinkSettingsStore.DEFAULT_BIND_ADDRESS, 53_800, List.of(new RemoteLinkSettingsStore.TrustedSender(

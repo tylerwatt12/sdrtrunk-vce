@@ -588,7 +588,7 @@ class StatsWebServerServiceLifecycleTest
         AliasAdministrationService aliasAdministrationService =
             AliasAdministrationServiceTestSupport.create(configurationManager);
         AliasAdministrationService.MutationResult createdList = aliasAdministrationService.createAliasList(
-            "Lifecycle P25", AliasListFamily.P25, aliasAdministrationService.catalog().revision());
+            "Lifecycle P25", AliasListFamily.P25);
         long aliasListId = createdList.aliasListId();
         StatsWebServerService service = null;
 
@@ -735,7 +735,7 @@ class StatsWebServerServiceLifecycleTest
         AliasAdministrationService aliasAdministrationService =
             AliasAdministrationServiceTestSupport.create(configurationManager);
         AliasAdministrationService.MutationResult createdList = aliasAdministrationService.createAliasList(
-            "HTTPS Lifecycle P25", AliasListFamily.P25, aliasAdministrationService.catalog().revision());
+            "HTTPS Lifecycle P25", AliasListFamily.P25);
         long aliasListId = createdList.aliasListId();
         StatsWebServerService service = null;
 

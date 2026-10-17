@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.ConfigurationEditVersion;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.configuration.ConfigurationIdentityAllocator;
 import io.github.dsheirer.identifier.tone.Tone;
@@ -62,6 +63,7 @@ public final class AliasAdministrationService
     public static final int MAX_ALIAS_LIST_NAME_LENGTH = 128;
     public static final int MAX_BROADCAST_CHANNELS = 64;
     public static final int MAX_SCAN_LISTS = 100;
+    public static final int MAX_ALIAS_LISTS = 500;
     public static final int MAX_SCAN_LIST_COVERAGE_ALIASES = 5_000;
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
@@ -243,7 +245,10 @@ public final class AliasAdministrationService
             return new Options(revision(), copyDefinition(definition), AliasMatchRegistry.allowed(definition), icons,
                 streams, includeGroupNames ? aliasModel().getGroupNames() : List.of(), scanListConfiguration.scanLists(),
                 scanListConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId),
-                scanListConfiguration.scanListIdsForNewAliases(aliasListId));
+                scanListConfiguration.scanListIdsForNewAliases(aliasListId),
+                scanListConfiguration.scanLists().stream().collect(java.util.stream.Collectors.toMap(
+                    ScanList::getId, scanList -> scanListEditRevision(scanList.getId()))),
+                defaultsEditRevision(aliasListId, defaultsFor(definition)));
         });
     }
 
@@ -275,7 +280,7 @@ public final class AliasAdministrationService
                         .sorted(Comparator.comparing(ScanListCoverageAliasList::name,
                             String.CASE_INSENSITIVE_ORDER).thenComparingLong(ScanListCoverageAliasList::aliasListId))
                         .toList();
-                return new ScanListSummary(scanList,
+                return new ScanListSummary(scanList, scanListEditRevision(scanList.getId()),
                     Math.toIntExact(configuration.aliasMemberships().values().stream()
                         .filter(ids -> ids.contains(scanList.getId())).count()),
                     unmatchedAliasLists);
@@ -293,7 +298,7 @@ public final class AliasAdministrationService
             ScanListConfiguration configuration = scanListModel().configuration();
             Set<Long> aliasIds = ownersFor(configuration.aliasMemberships(), scanListId);
             Set<Long> unmatchedAliasListIds = ownersFor(configuration.unmatchedAliasListMemberships(), scanListId);
-            return new ScanListEntry(revision(), scanList, aliasIds, unmatchedAliasListIds);
+            return new ScanListEntry(revision(), scanListEditRevision(scanListId), scanList, aliasIds, unmatchedAliasListIds);
         });
     }
 
@@ -352,7 +357,7 @@ public final class AliasAdministrationService
         return value != null ? value : "";
     }
 
-    public ScanListMutationResult createScanList(ScanList scanList, long expectedRevision)
+    public ScanListMutationResult createScanList(ScanList scanList)
     {
         Objects.requireNonNull(scanList, "Scan list cannot be null");
         if(scanList.getId() != ScanList.UNASSIGNED_ID)
@@ -360,7 +365,7 @@ public final class AliasAdministrationService
             throw new IllegalArgumentException("A new scan list cannot already have an ID");
         }
 
-        return mutateScanLists(expectedRevision, () ->
+        return mutateScanListsValidated(() -> {}, () ->
         {
             if(scanListModel().scanLists().size() >= MAX_SCAN_LISTS)
             {
@@ -374,14 +379,15 @@ public final class AliasAdministrationService
         });
     }
 
-    public ScanListMutationResult updateScanList(long scanListId, ScanList replacement, long expectedRevision)
+    public ScanListMutationResult updateScanList(long scanListId, ScanList replacement, String expectedEditRevision)
     {
         requirePositiveId(scanListId, "Scan-list ID");
         Objects.requireNonNull(replacement, "Scan list cannot be null");
         ScanList prepared = replacement.getId() == scanListId ? replacement :
             new ScanList(scanListId, replacement.getSortOrder(), replacement.getName(),
                 replacement.getDescription(), replacement.isPublished(), replacement.isDefault());
-        return mutateScanLists(expectedRevision, () ->
+        return mutateScanListsValidated(() ->
+            requireEditRevision(expectedEditRevision, scanListEditRevision(scanListId)), () ->
         {
             requireScanList(scanListId);
             scanListModel().updateScanList(prepared);
@@ -389,9 +395,10 @@ public final class AliasAdministrationService
         });
     }
 
-    public ScanListMutationResult deleteScanList(long scanListId, long expectedRevision)
+    public ScanListMutationResult deleteScanList(long scanListId, String expectedEditRevision)
     {
-        return mutateScanLists(expectedRevision, () ->
+        return mutateScanListsValidated(() ->
+            requireEditRevision(expectedEditRevision, scanListEditRevision(scanListId)), () ->
         {
             ScanList scanList = requireScanList(scanListId);
             scanListModel().removeScanList(scanListId);
@@ -402,11 +409,12 @@ public final class AliasAdministrationService
     /** Applies one bounded membership batch with one immutable model publication and one database transaction. */
     public ScanListMutationResult updateScanListMemberships(long scanListId, Collection<Long> aliasIds,
                                                              MembershipOperation operation,
-                                                             long expectedRevision)
+                                                             String expectedEditRevision)
     {
         Objects.requireNonNull(operation, "Membership operation cannot be null");
 
-        return mutateScanLists(expectedRevision, () ->
+        return mutateScanListsValidated(() ->
+            requireEditRevision(expectedEditRevision, scanListEditRevision(scanListId)), () ->
         {
             ScanList scanList = requireScanList(scanListId);
             Set<Long> aliases = validatedAliasOwners(aliasIds);
@@ -426,7 +434,7 @@ public final class AliasAdministrationService
      */
     public ScanListMutationResult updateScanListMembershipsByScope(long scanListId, Long aliasListId,
                                                                     MembershipOperation operation,
-                                                                    long expectedRevision)
+                                                                    String expectedEditRevision)
     {
         Objects.requireNonNull(operation, "Membership operation cannot be null");
         if(operation == MembershipOperation.REPLACE)
@@ -434,7 +442,8 @@ public final class AliasAdministrationService
             throw new IllegalArgumentException("Scoped scan-list membership supports only add or remove");
         }
 
-        return mutateScanLists(expectedRevision, () ->
+        return mutateScanListsValidated(() ->
+            requireEditRevision(expectedEditRevision, scanListEditRevision(scanListId)), () ->
         {
             ScanList scanList = requireScanList(scanListId);
             AliasListDefinition definition = aliasListId != null ? requireAliasList(aliasListId) : null;
@@ -455,11 +464,12 @@ public final class AliasAdministrationService
     public ScanListMutationResult updateScanListMemberships(long scanListId, Collection<Long> aliasIds,
                                                              Collection<Long> unmatchedAliasListIds,
                                                              MembershipOperation operation,
-                                                             long expectedRevision)
+                                                             String expectedEditRevision)
     {
         Objects.requireNonNull(operation, "Membership operation cannot be null");
 
-        return mutateScanLists(expectedRevision, () ->
+        return mutateScanListsValidated(() ->
+            requireEditRevision(expectedEditRevision, scanListEditRevision(scanListId)), () ->
         {
             ScanList scanList = requireScanList(scanListId);
             Set<Long> aliases = validatedAliasOwners(aliasIds);
@@ -482,26 +492,20 @@ public final class AliasAdministrationService
         });
     }
 
-    public MutationResult createAliasList(String name, AliasListFamily family, long expectedRevision)
-    {
-        return createAliasList(name, family, Long.valueOf(expectedRevision));
-    }
-
     /**
      * Creates an Alias list from a trusted desktop workflow using the current serialized model state.
      */
     public MutationResult createAliasList(String name, AliasListFamily family)
     {
-        return createAliasList(name, family, null);
-    }
-
-    private MutationResult createAliasList(String name, AliasListFamily family, Long expectedRevision)
-    {
         String preparedName = requireAliasListName(name);
         Objects.requireNonNull(family, "Alias-list family cannot be null");
 
-        return mutate(expectedRevision, () ->
+        return mutate(null, () ->
         {
+            if(aliasModel().aliasListDefinitions().size() >= MAX_ALIAS_LISTS)
+            {
+                throw new IllegalStateException("Alias Lists cannot exceed " + MAX_ALIAS_LISTS + " items");
+            }
             if(aliasModel().getAliasListDefinition(preparedName) != null)
             {
                 throw new IllegalArgumentException("Alias list [" + preparedName + "] already exists");
@@ -522,29 +526,13 @@ public final class AliasAdministrationService
         });
     }
 
-    /** Replaces recording and streaming behavior without changing unmatched scan-list membership. */
-    public MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
-                                                          long expectedRevision)
-    {
-        return updateUnmatchedTalkgroupPolicy(aliasListId, policy, null, false, expectedRevision);
-    }
-
-    /**
-     * Atomically replaces recording, streaming, and scan-list delivery used when a talkgroup or patch group has no
-     * configured exact or range Alias.
-     */
-    public MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
-                                                          Collection<Long> scanListIds, long expectedRevision)
-    {
-        return updateUnmatchedTalkgroupPolicy(aliasListId, policy, scanListIds, true, expectedRevision);
-    }
-
-    /** Atomically replaces all Alias List Defaults while retaining the compatibility API name. */
+    /** Atomically replaces the two independent call-handling policies and their scan-list memberships. */
     public MutationResult updateAliasListDefaults(long aliasListId, AliasListDefaults defaults,
-                                                   long expectedRevision)
+                                                   String expectedEditRevision)
     {
         Objects.requireNonNull(defaults, "Alias List Defaults cannot be null");
-        return mutate(expectedRevision, () ->
+        return mutateValidated(() ->
+            requireEditRevision(expectedEditRevision, aliasListDefaultsEditRevision(aliasListId)), () ->
         {
             AliasListDefinition definition = requireAliasList(aliasListId);
             if(!supportsUnmatchedTalkgroups(definition.getFamily()))
@@ -568,14 +556,30 @@ public final class AliasAdministrationService
         });
     }
 
-    private MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
+    /** Replaces recording and streaming behavior without changing unmatched scan-list membership. */
+    public MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
+                                                          String expectedEditRevision)
+    {
+        return updateUnmatchedTalkgroupPolicyValidated(aliasListId, policy, null, false,
+            () -> requireEditRevision(expectedEditRevision, aliasListDefaultsEditRevision(aliasListId)));
+    }
+
+    /** Replaces unmatched recording, streaming and scan-list delivery together. */
+    public MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
+                                                          Collection<Long> scanListIds, String expectedEditRevision)
+    {
+        return updateUnmatchedTalkgroupPolicyValidated(aliasListId, policy, scanListIds, true,
+            () -> requireEditRevision(expectedEditRevision, aliasListDefaultsEditRevision(aliasListId)));
+    }
+
+    private MutationResult updateUnmatchedTalkgroupPolicyValidated(long aliasListId, UnmatchedTalkgroupPolicy policy,
                                                            Collection<Long> scanListIds,
                                                            boolean replaceScanListMemberships,
-                                                           long expectedRevision)
+                                                           Runnable precondition)
     {
         Objects.requireNonNull(policy, "Unmatched talkgroup policy cannot be null");
 
-        return mutate(expectedRevision, () ->
+        return mutateValidated(precondition, () ->
         {
             AliasListDefinition definition = requireAliasList(aliasListId);
             if(!supportsUnmatchedTalkgroups(definition.getFamily()))
@@ -658,16 +662,10 @@ public final class AliasAdministrationService
         });
     }
 
-    public MutationResult createAlias(Alias alias, long expectedRevision)
-    {
-        return saveAliasRequests(List.of(AliasSaveRequest.inherit(alias)), Long.valueOf(expectedRevision));
-    }
-
     /** Atomically creates one Alias with its initial scan-list memberships. */
-    public MutationResult createAlias(Alias alias, Collection<Long> scanListIds, long expectedRevision)
+    public MutationResult createAlias(Alias alias, Collection<Long> scanListIds)
     {
-        return saveAliasRequests(List.of(AliasSaveRequest.explicit(alias, scanListIds)),
-            Long.valueOf(expectedRevision));
+        return saveAliasRequests(List.of(AliasSaveRequest.explicit(alias, scanListIds)), null);
     }
 
     /**
@@ -678,20 +676,22 @@ public final class AliasAdministrationService
         return saveAliasRequests(List.of(AliasSaveRequest.inherit(alias)), null);
     }
 
-    public MutationResult replaceAlias(long aliasId, Alias replacement, long expectedRevision)
+    public MutationResult replaceAlias(long aliasId, Alias replacement, String expectedEditRevision)
     {
-        return savePreparedAliases(List.of(prepareReplacement(aliasId, replacement)),
-            Long.valueOf(expectedRevision));
+        Alias prepared = prepareReplacement(aliasId, replacement);
+        return mutateValidated(() -> requireEditRevision(expectedEditRevision, aliasEditRevision(aliasId)),
+            () -> saveAliasesTarget(List.of(prepared)));
     }
 
     /** Atomically replaces one existing Alias and its scan-list memberships. */
     public MutationResult replaceAlias(long aliasId, Alias replacement, Collection<Long> scanListIds,
-                                       long expectedRevision)
+                                       String expectedEditRevision)
     {
         Alias prepared = prepareReplacement(aliasId, replacement);
-        Set<Long> memberships = validatedScanListIds(scanListIds);
-        return mutate(Long.valueOf(expectedRevision), () ->
+        return mutateValidated(() ->
+            requireEditRevision(expectedEditRevision, aliasEditRevision(aliasId)), () ->
         {
+            Set<Long> memberships = validatedScanListIds(scanListIds);
             MutationTarget target = saveAliasesTarget(List.of(prepared));
             scanListModel().replaceAliasMemberships(aliasId, memberships);
             return target.withPublication(PublicationMode.SCAN_LISTS_THEN_ALIASES);
@@ -703,12 +703,14 @@ public final class AliasAdministrationService
      */
     public MutationResult replaceAlias(long aliasId, Alias replacement)
     {
-        return savePreparedAliases(List.of(prepareReplacement(aliasId, replacement)), null);
+        Alias prepared = prepareReplacement(aliasId, replacement);
+        return mutate(null, () -> saveAliasesTarget(List.of(prepared)));
     }
 
-    public MutationResult deleteAlias(long aliasId, long expectedRevision)
+    public MutationResult deleteAlias(long aliasId, String expectedEditRevision)
     {
-        return deleteAliases(List.of(aliasId), Long.valueOf(expectedRevision));
+        return mutateValidated(() -> requireEditRevision(expectedEditRevision, aliasEditRevision(aliasId)),
+            () -> deleteAliasesTarget(List.of(aliasId), List.of(requireAlias(aliasId))));
     }
 
     /**
@@ -856,13 +858,17 @@ public final class AliasAdministrationService
 
     private MutationResult mutate(Long expectedRevision, Supplier<MutationTarget> operation)
     {
+        return mutateValidated(() ->
+        {
+            if(expectedRevision != null) requireRevision(expectedRevision);
+        }, operation);
+    }
+
+    private MutationResult mutateValidated(Runnable precondition, Supplier<MutationTarget> operation)
+    {
         return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
             {
-                if(expectedRevision != null)
-                {
-                    requireRevision(expectedRevision);
-                }
-
+                precondition.run();
                 MutationWorkspace workspace = beginMutationWorkspace();
                 MutationTarget target;
 
@@ -889,11 +895,12 @@ public final class AliasAdministrationService
             }));
     }
 
-    private ScanListMutationResult mutateScanLists(long expectedRevision, Supplier<ScanListMutation> operation)
+    private ScanListMutationResult mutateScanListsValidated(Runnable precondition,
+                                                            Supplier<ScanListMutation> operation)
     {
         return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            requireRevision(expectedRevision);
+            precondition.run();
             MutationWorkspace workspace = beginMutationWorkspace();
             ScanListMutation mutation;
 
@@ -915,11 +922,6 @@ public final class AliasAdministrationService
 
             return new ScanListMutationResult(revision(), mutation.scanList().getId(), mutation.affected());
         }));
-    }
-
-    private MutationResult savePreparedAliases(List<Alias> prepared, Long expectedRevision)
-    {
-        return mutate(expectedRevision, () -> saveAliasesTarget(prepared));
     }
 
     private MutationResult saveAliasRequests(List<AliasSaveRequest> requests, Long expectedRevision)
@@ -1026,11 +1028,6 @@ public final class AliasAdministrationService
 
     /** Validates and installs a batch in the detached candidate by durable identity. */
     private MutationTarget saveAliasesTarget(List<Alias> prepared)
-    {
-        return saveAliasesTargetInternal(prepared);
-    }
-
-    private MutationTarget saveAliasesTargetInternal(List<Alias> prepared)
     {
         if(prepared == null || prepared.isEmpty())
         {
@@ -1708,6 +1705,57 @@ public final class AliasAdministrationService
         return Set.copyOf(unique);
     }
 
+    private String aliasEditRevision(long aliasId)
+    {
+        Alias alias = requireAlias(aliasId);
+        return aliasEditRevision(alias, scanListModel().scanListIdsForAlias(aliasId));
+    }
+
+    private static String aliasEditRevision(Alias alias, Set<Long> memberships)
+    {
+        return ConfigurationEditVersion.of(java.util.Arrays.asList(alias.getId(), alias.getAliasListId(),
+            alias.getName(), alias.getDescription(), alias.getGroup(), alias.getColor(), alias.getIconName(),
+            alias.isRecordable(), alias.getBroadcastChannels().stream()
+                .map(BroadcastChannel::getConfigurationId).sorted().toList(),
+            alias.getStreamTalkgroupAlias(), alias.getMatchIdentifier(), memberships.stream().sorted().toList()));
+    }
+
+    private String aliasListDefaultsEditRevision(long aliasListId)
+    {
+        return defaultsEditRevision(aliasListId, defaultsFor(requireAliasList(aliasListId)));
+    }
+
+    private static String defaultsEditRevision(long aliasListId, AliasListDefaults defaults)
+    {
+        return ConfigurationEditVersion.of(List.of(aliasListId,
+            defaults.unknownAliasBehavior().isRecordEnabled(),
+            defaults.unknownAliasBehavior().getStreamDestinations().stream()
+                .map(BroadcastChannel::getConfigurationId).sorted().toList(),
+            defaults.unknownScanListIds().stream().sorted().toList(),
+            defaults.newAliasBehavior().isRecordEnabled(),
+            defaults.newAliasBehavior().getStreamDestinations().stream()
+                .map(BroadcastChannel::getConfigurationId).sorted().toList(),
+            defaults.newAliasScanListIds().stream().sorted().toList()));
+    }
+
+    private String scanListEditRevision(long scanListId)
+    {
+        ScanList scanList = requireScanList(scanListId);
+        ScanListConfiguration configuration = scanListModel().configuration();
+        return ConfigurationEditVersion.of(java.util.Arrays.asList(scanList,
+            ownersFor(configuration.aliasMemberships(), scanListId).stream().sorted().toList(),
+            ownersFor(configuration.unmatchedAliasListMemberships(), scanListId).stream().sorted().toList(),
+            ownersFor(configuration.newAliasListMemberships(), scanListId).stream().sorted().toList()));
+    }
+
+    private static void requireEditRevision(String expected, String current)
+    {
+        if(expected == null || !expected.equals(current))
+        {
+            throw new StaleEditException();
+        }
+    }
+
     private void requireRevision(long expectedRevision)
     {
         long current = revision();
@@ -1964,7 +2012,7 @@ public final class AliasAdministrationService
         }
     }
 
-    public record ScanListSummary(ScanList scanList, int aliasCount,
+    public record ScanListSummary(ScanList scanList, String editRevision, int aliasCount,
                                   List<ScanListCoverageAliasList> unmatchedAliasLists)
     {
         public ScanListSummary
@@ -1978,7 +2026,7 @@ public final class AliasAdministrationService
         }
     }
 
-    public record ScanListEntry(long revision, ScanList scanList, Set<Long> aliasIds,
+    public record ScanListEntry(long revision, String editRevision, ScanList scanList, Set<Long> aliasIds,
                                 Set<Long> unmatchedAliasListIds)
     {
         public ScanListEntry
@@ -2012,8 +2060,14 @@ public final class AliasAdministrationService
     {
     }
 
-    public record AliasEntry(long revision, Alias alias, Set<Long> scanListIds)
+    public record AliasEntry(long revision, Alias alias, Set<Long> scanListIds, String editRevision)
     {
+        public AliasEntry(long revision, Alias alias, Set<Long> scanListIds)
+        {
+            this(revision, alias, scanListIds,
+                aliasEditRevision(alias, scanListIds != null ? scanListIds : Set.of()));
+        }
+
         public AliasEntry
         {
             scanListIds = scanListIds != null ? Set.copyOf(scanListIds) : Set.of();
@@ -2029,8 +2083,13 @@ public final class AliasAdministrationService
         }
     }
 
-    public record AliasListDefaultsEntry(long revision, long aliasListId, AliasListDefaults defaults)
+    public record AliasListDefaultsEntry(long revision, long aliasListId, AliasListDefaults defaults,
+                                         String editRevision)
     {
+        public AliasListDefaultsEntry(long revision, long aliasListId, AliasListDefaults defaults)
+        {
+            this(revision, aliasListId, defaults, defaultsEditRevision(aliasListId, defaults));
+        }
     }
 
     public enum CreationRouting
@@ -2072,7 +2131,8 @@ public final class AliasAdministrationService
 
     public record Options(long revision, AliasListDefinition aliasList, List<AliasMatchDescriptor> matchers,
                           List<String> iconNames, List<BroadcastDestination> streams, List<String> groupNames,
-                          List<ScanList> scanLists, Set<Long> unmatchedScanListIds, Set<Long> newAliasScanListIds)
+                          List<ScanList> scanLists, Set<Long> unmatchedScanListIds, Set<Long> newAliasScanListIds,
+                          Map<Long,String> scanListEditRevisions, String editRevision)
     {
         public Options
         {
@@ -2083,6 +2143,7 @@ public final class AliasAdministrationService
             scanLists = List.copyOf(scanLists);
             unmatchedScanListIds = Set.copyOf(unmatchedScanListIds);
             newAliasScanListIds = Set.copyOf(newAliasScanListIds);
+            scanListEditRevisions = Map.copyOf(scanListEditRevisions);
         }
     }
 
@@ -2255,6 +2316,14 @@ public final class AliasAdministrationService
         public NotFoundException(String message)
         {
             super(message);
+        }
+    }
+
+    public static class StaleEditException extends IllegalStateException
+    {
+        public StaleEditException()
+        {
+            super("The selected settings changed after they were opened");
         }
     }
 

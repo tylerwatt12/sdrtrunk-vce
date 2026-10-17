@@ -199,6 +199,11 @@ public final class AliasAdminHttpController
         {
             sendError(exchange, 404, "not_found", safeMessage(exception, "Alias configuration was not found"));
         }
+        catch(AliasAdministrationService.StaleEditException exception)
+        {
+            sendError(exchange, 409, "stale_revision",
+                "These settings changed after you opened them. Your edits are still available; review the current settings before saving again");
+        }
         catch(AliasAdministrationService.StaleRevisionException exception)
         {
             sendError(exchange, 409, "stale_revision", "Alias configuration changed; reload and try again");
@@ -271,16 +276,10 @@ public final class AliasAdminHttpController
                 }
                 case "POST" -> {
                     requireNoQuery(exchange);
-                    if(mService.catalog().aliasLists().size() >= MAXIMUM_ADMIN_COLLECTION_ITEMS)
-                    {
-                        throw error(409, "collection_limit_reached",
-                            "alias_lists cannot exceed " + MAXIMUM_ADMIN_COLLECTION_ITEMS + " items");
-                    }
-
                     CreateListRequest request = readJson(exchange, CreateListRequest.class);
                     AliasAdministrationService.MutationResult result = changed(mService.createAliasList(
                         requiredText(request.name(), "name", MAXIMUM_TEXT_CHARACTERS),
-                        requiredAliasListFamily(request.family()), requiredRevision(request.revision())));
+                        requiredAliasListFamily(request.family())));
                     exchange.getResponseHeaders().set("Location", ALIAS_LISTS_PATH + "/" + result.aliasListId());
                     sendData(exchange, 201, mutationResponse(result));
                 }
@@ -320,7 +319,7 @@ public final class AliasAdminHttpController
                     .map(configurationId -> new BroadcastChannel(configurationId, null)).toList());
             sendData(exchange, 200, mutationResponse(changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId,
                 replacement, boundedIds(request.scanListIds(), "scan_list_ids"),
-                requiredRevision(request.revision())))));
+                requiredEditRevision(request.editRevision())))));
             return;
         }
 
@@ -340,7 +339,7 @@ public final class AliasAdminHttpController
                         .map(configurationId -> new BroadcastChannel(configurationId, null)).toList()),
                 boundedIds(newAliases.scanListIds(), "new_alias_behavior.scan_list_ids"));
             sendData(exchange, 200, mutationResponse(changed(mService.updateAliasListDefaults(aliasListId,
-                replacement, requiredRevision(request.revision())))));
+                replacement, requiredEditRevision(request.editRevision())))));
             return;
         }
 
@@ -523,9 +522,8 @@ public final class AliasAdminHttpController
                     AliasRequest request = readJson(exchange, AliasRequest.class);
                     AliasPayload payload = required(request.alias(), "alias");
                     AliasAdministrationService.MutationResult result = changed(payload.scanListIds() != null ?
-                        mService.createAlias(toAlias(payload), boundedIds(payload.scanListIds(), "scan_list_ids"),
-                            requiredRevision(request.revision())) :
-                        mService.createAlias(toAlias(payload), requiredRevision(request.revision())));
+                        mService.createAlias(toAlias(payload), boundedIds(payload.scanListIds(), "scan_list_ids")) :
+                        mService.createAlias(toAlias(payload)));
 
                     if(!result.aliasIds().isEmpty())
                     {
@@ -567,22 +565,22 @@ public final class AliasAdminHttpController
             case "GET" -> {
                 requireNoBody(exchange);
                 AliasAdministrationService.AliasEntry entry = mService.getAlias(aliasId);
-                sendData(exchange, 200, Map.of("revision", entry.revision(), "alias",
-                    aliasView(entry.alias(), entry.scanListIds())));
+                sendData(exchange, 200, Map.of("revision", entry.revision(), "editRevision", entry.editRevision(),
+                    "alias", aliasView(entry.alias(), entry.scanListIds())));
             }
             case "PUT" -> {
                 AliasRequest request = readJson(exchange, AliasRequest.class);
                 AliasPayload payload = required(request.alias(), "alias");
                 AliasAdministrationService.MutationResult result = payload.scanListIds() != null ?
                     mService.replaceAlias(aliasId, toAlias(payload), boundedIds(payload.scanListIds(),
-                        "scan_list_ids"), requiredRevision(request.revision())) :
-                    mService.replaceAlias(aliasId, toAlias(payload), requiredRevision(request.revision()));
+                        "scan_list_ids"), requiredEditRevision(request.editRevision())) :
+                    mService.replaceAlias(aliasId, toAlias(payload), requiredEditRevision(request.editRevision()));
                 sendData(exchange, 200, mutationResponse(changed(result)));
             }
             case "DELETE" -> {
                 RevisionRequest request = readJson(exchange, RevisionRequest.class);
                 sendData(exchange, 200, mutationResponse(changed(mService.deleteAlias(aliasId,
-                    requiredRevision(request.revision())))));
+                    requiredEditRevision(request.editRevision())))));
             }
             default -> methodNotAllowed(exchange, "GET, PUT, DELETE");
         }
@@ -613,8 +611,7 @@ public final class AliasAdminHttpController
                 case "POST" -> {
                     ScanListRequest request = readJson(exchange, ScanListRequest.class);
                     AliasAdministrationService.ScanListMutationResult result = mService.createScanList(
-                        toScanList(ScanList.UNASSIGNED_ID, required(request.scanList(), "scan_list")),
-                        requiredRevision(request.revision()));
+                        toScanList(ScanList.UNASSIGNED_ID, required(request.scanList(), "scan_list")));
                     exchange.getResponseHeaders().set("Location", SCAN_LISTS_PATH + "/" + result.scanListId());
                     mAliasChanged.run();
                     sendData(exchange, 201, scanListMutationResponse(result));
@@ -646,7 +643,7 @@ public final class AliasAdminHttpController
                 }
                 result = mService.updateScanListMembershipsByScope(scanListId,
                     optionalPositive(request.aliasScope().aliasListId(), "alias_scope.alias_list_id"), operation,
-                    requiredRevision(request.revision()));
+                    requiredEditRevision(request.editRevision()));
             }
             else
             {
@@ -655,7 +652,7 @@ public final class AliasAdminHttpController
                         AliasAdministrationService.MAX_BULK_ALIASES) : null,
                     request.unmatchedAliasListIds() != null ?
                         boundedIds(request.unmatchedAliasListIds(), "unmatched_alias_list_ids") : null,
-                    operation, requiredRevision(request.revision()));
+                    operation, requiredEditRevision(request.editRevision()));
             }
             mAliasChanged.run();
             sendData(exchange, 200, scanListMutationResponse(result));
@@ -669,6 +666,7 @@ public final class AliasAdminHttpController
                 AliasAdministrationService.ScanListEntry entry = mService.getScanList(scanListId);
                 Map<String,Object> response = new LinkedHashMap<>();
                 response.put("revision", entry.revision());
+                response.put("editRevision", entry.editRevision());
                 response.put("scanList", scanListView(entry.scanList()));
                 putBoundedIds(response, "aliasIds", entry.aliasIds());
                 putBoundedIds(response, "unmatchedAliasListIds", entry.unmatchedAliasListIds());
@@ -678,14 +676,14 @@ public final class AliasAdminHttpController
                 ScanListRequest request = readJson(exchange, ScanListRequest.class);
                 AliasAdministrationService.ScanListMutationResult result = mService.updateScanList(scanListId,
                     toScanList(scanListId, required(request.scanList(), "scan_list")),
-                    requiredRevision(request.revision()));
+                    requiredEditRevision(request.editRevision()));
                 mAliasChanged.run();
                 sendData(exchange, 200, scanListMutationResponse(result));
             }
             case "DELETE" -> {
                 RevisionRequest request = readJson(exchange, RevisionRequest.class);
                 AliasAdministrationService.ScanListMutationResult result = mService.deleteScanList(scanListId,
-                    requiredRevision(request.revision()));
+                    requiredEditRevision(request.editRevision()));
                 mAliasChanged.run();
                 sendData(exchange, 200, scanListMutationResponse(result));
             }
@@ -703,6 +701,7 @@ public final class AliasAdminHttpController
         AliasAdministrationService.Options options = mService.options(aliasListId, includeGroupNames);
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("revision", options.revision());
+        response.put("editRevision", options.editRevision());
         response.put("aliasList", aliasListView(options.aliasList(), options.unmatchedScanListIds(),
             options.newAliasScanListIds()));
         response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
@@ -710,7 +709,12 @@ public final class AliasAdminHttpController
         putBoundedOptions(response, "iconNames", options.iconNames());
         putBoundedOptions(response, "streams", prioritizedDefaultStreams(options));
         putBoundedOptions(response, "groupNames", options.groupNames());
-        response.put("scanLists", options.scanLists().stream().map(AliasAdminHttpController::scanListView).toList());
+        response.put("scanLists", options.scanLists().stream().map(scanList ->
+        {
+            Map<String,Object> view = new LinkedHashMap<>(scanListView(scanList));
+            view.put("editRevision", options.scanListEditRevisions().get(scanList.getId()));
+            return view;
+        }).toList());
 
         if(options.matchers().stream().anyMatch(descriptor -> descriptor.type() == AliasIDType.DCS))
         {
@@ -1050,6 +1054,7 @@ public final class AliasAdminHttpController
     private static Map<String,Object> scanListSummaryView(AliasAdministrationService.ScanListSummary summary)
     {
         Map<String,Object> response = new LinkedHashMap<>(scanListView(summary.scanList()));
+        response.put("editRevision", summary.editRevision());
         response.put("aliasCount", summary.aliasCount());
         response.put("unmatchedAliasListCount", summary.unmatchedAliasListCount());
         response.put("unmatchedAliasLists", summary.unmatchedAliasLists().stream()
@@ -1494,6 +1499,15 @@ public final class AliasAdminHttpController
         return token;
     }
 
+    private static String requiredEditRevision(String value) throws RequestException
+    {
+        if(value == null || !value.matches("[0-9a-f]{64}"))
+        {
+            throw invalid("Reopen these settings before saving again");
+        }
+        return value;
+    }
+
     private static long requiredItemId(String path, String collection) throws RequestException
     {
         String prefix = collection + "/";
@@ -1770,17 +1784,17 @@ public final class AliasAdminHttpController
         return new RequestException(status, code, message, field);
     }
 
-    private record CreateListRequest(Long revision, String name, String family) {}
+    private record CreateListRequest(String name, String family) {}
     private record DeleteListRequest(Long revision, Boolean confirmed) {}
-    private record UnmatchedPolicyRequest(Long revision, Boolean recordable,
+    private record UnmatchedPolicyRequest(String editRevision, Boolean recordable,
                                           List<String> broadcastConfigurationIds,
                                           List<Long> scanListIds) {}
-    private record AliasListDefaultsRequest(Long revision, BehaviorRequest unknownAliasBehavior,
+    private record AliasListDefaultsRequest(String editRevision, BehaviorRequest unknownAliasBehavior,
                                             BehaviorRequest newAliasBehavior) {}
     private record BehaviorRequest(Boolean recordable, List<String> broadcastConfigurationIds,
                                    List<Long> scanListIds) {}
-    private record RevisionRequest(Long revision) {}
-    private record AliasRequest(Long revision, AliasPayload alias) {}
+    private record RevisionRequest(String editRevision) {}
+    private record AliasRequest(String editRevision, AliasPayload alias) {}
     private record BulkRequest(Long revision, List<Long> aliasIds, Long aliasListId, Integer color, String iconName,
                                Boolean recordable, String groupOperation, String group, String streamOperation,
                                List<String> broadcastConfigurationIds, Boolean delete) {}
@@ -1791,10 +1805,10 @@ public final class AliasAdminHttpController
                              String iconName, boolean recordable,
                              List<String> broadcastConfigurationIds, Integer streamAsTalkgroup, boolean overlap,
                              Map<String,Object> matcher, Set<Long> scanListIds) {}
-    private record ScanListRequest(Long revision, ScanListPayload scanList) {}
+    private record ScanListRequest(String editRevision, ScanListPayload scanList) {}
     private record ScanListPayload(Integer sortOrder, String name, String description, Boolean published,
                                    @JsonProperty("default") Boolean defaultScanList) {}
-    private record ScanListMembershipRequest(Long revision, String operation, List<Long> aliasIds,
+    private record ScanListMembershipRequest(String editRevision, String operation, List<Long> aliasIds,
                                              List<Long> unmatchedAliasListIds, AliasScopePayload aliasScope) {}
     private record AliasScopePayload(Long aliasListId) {}
     private record TonePayload(String tone, Integer duration) {}

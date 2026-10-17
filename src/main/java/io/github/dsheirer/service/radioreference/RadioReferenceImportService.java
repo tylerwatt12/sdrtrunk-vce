@@ -218,7 +218,7 @@ public final class RadioReferenceImportService
     {
         PendingChannel pending = consumeChannel(previewId);
         ChannelAdministrationService.MutationResult result = pending.action() == ChannelAction.CREATE ?
-            mChannels.create(pending.channel(), pending.revision()) :
+            mChannels.create(pending.channel()) :
             mChannels.update(pending.existingConfigurationId(), pending.channel(), pending.revision());
         return new ChannelImportResult(result.revision(), pending.action(),
             result.configurationIds().getFirst());

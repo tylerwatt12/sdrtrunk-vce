@@ -310,7 +310,7 @@ class ConfigurationRepositoryDifferentialTest
         subscriber.addBroadcastChannel(route(secondStream));
         ScanListConfiguration factory = repository.loadAliasConfiguration().scanLists();
         ScanList extra = new ScanList("Extra");
-        repository.replaceChannelAndBroadcastConfiguration(List.of(), List.of(firstStream, secondStream));
+        repository.synchronizeChannelAndBroadcastConfiguration(List.of(), List.of(firstStream, secondStream));
         AliasConfigurationSnapshot state = repository.commitAliasConfiguration(new AliasConfigurationSnapshot(
             List.of(first, second), List.of(dispatch, subscriber),
             new ScanListConfiguration(List.of(factory.defaultScanList(), extra), Map.of(), Map.of(), Map.of())));

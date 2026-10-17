@@ -262,7 +262,7 @@ class AliasImportServiceTest
             Alias duplicate = alias(fixture.list, 700, "Duplicate");
             duplicate.setColor(55);
             duplicate.setRecordable(true);
-            fixture.service.createAlias(duplicate, Set.of(), fixture.service.currentRevision());
+            fixture.service.createAlias(duplicate, Set.of());
             List<AliasImportService.Input> repeated = AliasTransferCsv.read(importer.export(fixture.list),
                 AliasTransferCsv.Format.VCE, fixture.service.options(destination).aliasList());
             assertEquals(2, repeated.size());
@@ -317,11 +317,11 @@ class AliasImportServiceTest
         {
             Alias first = alias(fixture.list, 902, "Earlier configuration");
             first.setColor(11);
-            long firstId = fixture.service.createAlias(first, Set.of(), fixture.service.currentRevision())
+            long firstId = fixture.service.createAlias(first, Set.of())
                 .aliasIds().getFirst();
             Alias winner = alias(fixture.list, 902, "Highest ID winner");
             winner.setColor(22);
-            long winnerId = fixture.service.createAlias(winner, Set.of(), fixture.service.currentRevision())
+            long winnerId = fixture.service.createAlias(winner, Set.of())
                 .aliasIds().getFirst();
             assertTrue(winnerId > firstId);
 
@@ -410,8 +410,8 @@ class AliasImportServiceTest
             String scanName = service.catalog().scanLists().getFirst().getName();
             Alias first = alias(list, 100, "Old name"); first.setColor(17); first.setRecordable(true);
             first.setBroadcastChannels(List.of(new BroadcastChannel(fixture.stream.getConfigurationId(), fixture.stream.getName())));
-            long firstId = service.createAlias(first, Set.of(scan), service.currentRevision()).aliasIds().getFirst();
-            long removeId = service.createAlias(alias(list, 200, "Remove"), Set.of(), service.currentRevision()).aliasIds().getFirst();
+            long firstId = service.createAlias(first, Set.of(scan)).aliasIds().getFirst();
+            long removeId = service.createAlias(alias(list, 200, "Remove"), Set.of()).aliasIds().getFirst();
             long otherList = service.createAliasList("Other", AliasListFamily.P25).aliasListId();
             long otherId = service.createAlias(alias(otherList, 100, "Other list")).aliasIds().getFirst();
             Alias changed = alias(list, 100, "Updated"); changed.setColor(99);
@@ -455,7 +455,7 @@ class AliasImportServiceTest
             Alias old = alias(fixture.list, 100, "Old"); old.setColor(123); old.setGroup("Local");
             old.setRecordable(true); old.setStreamTalkgroupAlias(new StreamAsTalkgroup(12));
             old.setBroadcastChannels(List.of(new BroadcastChannel(fixture.stream.getConfigurationId(), fixture.stream.getName())));
-            long id = service.createAlias(old, Set.of(scan), service.currentRevision()).aliasIds().getFirst();
+            long id = service.createAlias(old, Set.of(scan)).aliasIds().getFirst();
             Alias update = alias(fixture.list, 100, "RadioReference"); update.setDescription("Updated description");
             var inputs = List.of(new AliasImportService.Input(update, true, false, true, null, null, null),
                 new AliasImportService.Input(alias(fixture.list, 200, "New"), true, false, false, null, null, null),
@@ -555,8 +555,7 @@ class AliasImportServiceTest
             BroadcastChannel stream = new BroadcastChannel(fixture.stream.getConfigurationId(), streamName);
             service.updateAliasListDefaults(fixture.list,
                 new AliasListDefaults(UnmatchedTalkgroupPolicy.DEFAULT, Set.of(),
-                    new NewAliasBehavior(true, List.of(stream)), Set.of(scan)),
-                service.currentRevision());
+                    new NewAliasBehavior(true, List.of(stream)), Set.of(scan)), service.getAliasListDefaults(fixture.list).editRevision());
             var importer = new AliasImportService(service);
             Alias rrAlias = alias(fixture.list, 400, "RadioReference defaults");
             importer.apply(importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD,

@@ -252,7 +252,7 @@ class RadioReferenceImportServiceTest
             assertEquals(" Dispatch ", row.currentAlias().alphaTag());
             Alias changed = AliasFactory.copyOf(fixture.aliases.getAlias(id).alias());
             changed.setDescription("Primary  dispatch");
-            fixture.aliases.replaceAlias(id, changed, fixture.aliases.currentRevision());
+            fixture.aliases.replaceAlias(id, changed, fixture.aliases.getAlias(id).editRevision());
             var compared = fixture.importer.talkgroupCatalog(10, listId, initial.catalogId()).items().getFirst();
             assertEquals(RadioReferenceImportService.TalkgroupStatus.DIFFERENT, compared.status());
             assertEquals(List.of(new io.github.dsheirer.alias.AliasImportService.Change("description",
@@ -372,7 +372,7 @@ class RadioReferenceImportServiceTest
             assertEquals(dispatch.getId(), importedPage.items().getFirst().existingAliasId());
             Alias locallyStyled = AliasFactory.copyOf(dispatch);
             locallyStyled.setColor(0x123456);
-            fixture.aliases.replaceAlias(dispatch.getId(), locallyStyled, fixture.aliases.currentRevision());
+            fixture.aliases.replaceAlias(dispatch.getId(), locallyStyled, fixture.aliases.getAlias(dispatch.getId()).editRevision());
             fixture.directory.talkgroups.set(0,
                 new RemoteTalkgroup(1, 101, "Dispatch Updated", "Primary dispatch", "D", 0, 50, List.of()));
             fixture.importer.clearSessionData();
@@ -656,8 +656,7 @@ class RadioReferenceImportServiceTest
     {
         try(Fixture fixture = new Fixture(mTemporaryFolder))
         {
-            long listId = fixture.aliases.createAliasList("County public safety names", AliasListFamily.P25,
-                fixture.aliases.currentRevision()).aliasListId();
+            long listId = fixture.aliases.createAliasList("County public safety names", AliasListFamily.P25).aliasListId();
             fixture.directory.talkgroups.clear();
             fixture.directory.talkgroups.addAll(List.of(
                 new RemoteTalkgroup(10, 101, "Fire Dispatch", "Primary fire dispatch", "D", 0, 50, List.of()),
@@ -694,7 +693,8 @@ class RadioReferenceImportServiceTest
             Alias styled = AliasFactory.copyOf(original);
             styled.setColor(0x345678);
             styled.setRecordable(false);
-            fixture.aliases.replaceAlias(original.getId(), styled, java.util.Set.of(), fixture.aliases.currentRevision());
+            fixture.aliases.replaceAlias(original.getId(), styled, java.util.Set.of(),
+                fixture.aliases.getAlias(original.getId()).editRevision());
             fixture.directory.talkgroups.set(0, new RemoteTalkgroup(10, 101, "Fire Dispatch Updated",
                 "Primary fire dispatch updated", "D", 0, 50, List.of()));
             // A completed response retry must not fetch again or overwrite later user changes.
@@ -723,8 +723,7 @@ class RadioReferenceImportServiceTest
             assertFalse(current.alias().isRecordable());
             assertTrue(current.scanListIds().isEmpty());
 
-            long incompatible = fixture.aliases.createAliasList("DMR destination", AliasListFamily.DMR,
-                fixture.aliases.currentRevision()).aliasListId();
+            long incompatible = fixture.aliases.createAliasList("DMR destination", AliasListFamily.DMR).aliasListId();
             var wrongBatch = new DiscoveryAliasImportService.Batch();
             wrongBatch.register(incompatible, "DMR destination", "County P25", matched);
             freshHelper.retain("wrong-family", wrongBatch);
@@ -763,8 +762,7 @@ class RadioReferenceImportServiceTest
             }
             categoryIds.forEach((name, id) -> fixture.directory.categories.add(
                 new RemoteTalkgroupCategory(id, systemId, name)));
-            long listId = fixture.aliases.createAliasList(systemName, AliasListFamily.P25,
-                fixture.aliases.currentRevision()).aliasListId();
+            long listId = fixture.aliases.createAliasList(systemName, AliasListFamily.P25).aliasListId();
             var match = new RadioReferenceDiscoveryResolver.Result("matched", "",
                 new RadioReferenceDiscoveryResolver.Match(systemId, 0, systemName, "", List.of(), "", ""),
                 "radioreference");
@@ -1076,7 +1074,7 @@ class RadioReferenceImportServiceTest
         ChannelDefinition definition = new ChannelDefinition(null, protocol, "My system", "My site", "My channel",
             java.util.UUID.randomUUID().toString(), list, source, template.settings(), template.frequencyMap(),
             template.eventLogs(), template.recorders(), template.auxiliaryDecoders(), template.observed());
-        String id = fixture.channels.create(definition, fixture.channels.currentRevision()).configurationIds().getFirst();
+        String id = fixture.channels.create(definition).configurationIds().getFirst();
         if(protocol.startsWith("p25-phase"))
             savedChannel(fixture, id).setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
         return id;

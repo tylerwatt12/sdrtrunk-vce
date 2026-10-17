@@ -281,7 +281,7 @@ class AliasAdminHttpControllerTest
             JsonNode createdList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "name", "County P25", "family", "p25"))))));
+                    "name", "County P25", "family", "p25"))))));
             long aliasListId = createdList.get("alias_list_id").longValue();
             revision = createdList.get("revision").longValue();
             JsonNode initialCustomCatalog = json(send(client,
@@ -296,7 +296,7 @@ class AliasAdminHttpControllerTest
 
             JsonNode createdScanList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH).POST(HttpRequest.BodyPublishers.ofString(
-                OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "scan_list", Map.of(
+                OBJECT_MAPPER.writeValueAsString(Map.of("scan_list", Map.of(
                     "sort_order", 1, "name", "Cleveland", "description", "Cleveland calls",
                     "published", true, "default", false)))))));
             long clevelandScanListId = createdScanList.get("scan_list_id").longValue();
@@ -305,7 +305,7 @@ class AliasAdminHttpControllerTest
             JsonNode defaultsChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/defaults")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision,
+                    "edit_revision", service.getAliasListDefaults(aliasListId).editRevision(),
                     "unknown_alias_behavior", Map.of("recordable", false,
                         "broadcast_configuration_ids", java.util.List.of(),
                         "scan_list_ids", java.util.List.of(defaultScanListId)),
@@ -325,7 +325,7 @@ class AliasAdminHttpControllerTest
             JsonNode policyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "recordable", true,
+                    "edit_revision", service.getAliasListDefaults(aliasListId).editRevision(), "recordable", true,
                     "broadcast_configuration_ids", java.util.List.of(primary.getConfigurationId()),
                     "scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId)))))));
             revision = policyChanged.get("revision").longValue();
@@ -346,7 +346,7 @@ class AliasAdminHttpControllerTest
             JsonNode defaultPolicyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "recordable", true,
+                    "edit_revision", service.getAliasListDefaults(aliasListId).editRevision(), "recordable", true,
                     "broadcast_configuration_ids", java.util.List.of(primary.getConfigurationId()),
                     "scan_list_ids", java.util.List.of(defaultScanListId)))))));
             revision = defaultPolicyChanged.get("revision").longValue();
@@ -358,13 +358,13 @@ class AliasAdminHttpControllerTest
             JsonNode addedUnmatchedMembership = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "operation", "add", "alias_ids", java.util.List.of(),
+                    "edit_revision", service.getScanList(clevelandScanListId).editRevision(), "operation", "add", "alias_ids", java.util.List.of(),
                     "unmatched_alias_list_ids", java.util.List.of(aliasListId)))))));
             revision = addedUnmatchedMembership.get("revision").longValue();
             JsonNode aliasOwnersReplaced = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "operation", "replace", "alias_ids", java.util.List.of()))))));
+                    "edit_revision", service.getScanList(clevelandScanListId).editRevision(), "operation", "replace", "alias_ids", java.util.List.of()))))));
             revision = aliasOwnersReplaced.get("revision").longValue();
             JsonNode clevelandDetail = json(send(client, request(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId).GET()));
@@ -424,8 +424,7 @@ class AliasAdminHttpControllerTest
                 "home_wacn", 0xFFFFF, "home_system_id", 0xFFF, "subscriber_id", 0xFFFFFC));
             JsonNode maximumCanonicalCreated = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH).POST(HttpRequest.BodyPublishers.ofString(
-                OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision,
-                    "alias", maximumCanonicalAlias))))));
+                OBJECT_MAPPER.writeValueAsString(Map.of("alias", maximumCanonicalAlias))))));
             long maximumCanonicalAliasId = maximumCanonicalCreated.at("/alias_ids/0").longValue();
             revision = maximumCanonicalCreated.get("revision").longValue();
             JsonNode maximumCanonical = json(send(client, request(origin,
@@ -439,7 +438,7 @@ class AliasAdminHttpControllerTest
             JsonNode maximumCanonicalUpdated = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId)
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", updatedCanonicalAlias))))));
+                    Map.of("edit_revision", service.getAlias(maximumCanonicalAliasId).editRevision(), "alias", updatedCanonicalAlias))))));
             revision = maximumCanonicalUpdated.get("revision").longValue();
             JsonNode updatedCanonical = json(send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId).GET()));
@@ -450,7 +449,7 @@ class AliasAdminHttpControllerTest
             JsonNode maximumCanonicalDeleted = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + maximumCanonicalAliasId)
                 .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision))))));
+                    Map.of("edit_revision", service.getAlias(maximumCanonicalAliasId).editRevision()))))));
             revision = maximumCanonicalDeleted.get("revision").longValue();
 
             Map<String,Object> reservedCanonicalAlias = new java.util.LinkedHashMap<>(
@@ -459,7 +458,7 @@ class AliasAdminHttpControllerTest
                 "home_wacn", 0xBEE00, "home_system_id", 0x348, "subscriber_id", 0xFFFFFD));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", reservedCanonicalAlias))))).statusCode());
+                    Map.of("alias", reservedCanonicalAlias))))).statusCode());
 
             for(Map<String,Object> matcher: java.util.List.<Map<String,Object>>of(
                 Map.of("type", "talkgroup_range", "protocol", "p25", "variant", "phase_1",
@@ -472,7 +471,7 @@ class AliasAdminHttpControllerTest
                 candidate.put("matcher", matcher);
                 JsonNode matcherCreated = json(send(client, jsonRequest(origin,
                     AliasAdminHttpController.ALIASES_PATH).POST(HttpRequest.BodyPublishers.ofString(
-                    OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "alias", candidate))))));
+                    OBJECT_MAPPER.writeValueAsString(Map.of("alias", candidate))))));
                 revision = matcherCreated.get("revision").longValue();
             }
 
@@ -484,12 +483,12 @@ class AliasAdminHttpControllerTest
             rejectedMembershipCreate.put("scan_list_ids", java.util.List.of(9_999_999L));
             assertEquals(404, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", rejectedMembershipCreate))))).statusCode());
+                    Map.of("alias", rejectedMembershipCreate))))).statusCode());
             assertEquals(aliasesBeforeRejectedCreate, manager.getAliasModel().getAliases().size());
 
             Map<String,Object> aliasPayload = alias(aliasListId, "Dispatch", false);
             aliasPayload.put("scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId));
-            Map<String,Object> create = Map.of("revision", revision, "alias", aliasPayload);
+            Map<String,Object> create = Map.of("alias", aliasPayload);
             JsonNode created = json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(create)))));
             long aliasId = created.get("alias_ids").get(0).longValue();
@@ -503,6 +502,8 @@ class AliasAdminHttpControllerTest
             assertEquals("p25", live.at("/alias/matcher/protocol").textValue());
             assertEquals("phase_2", live.at("/alias/matcher/variant").textValue());
             assertEquals(2, live.at("/alias/scan_list_ids").size());
+            String openedAliasEditRevision = live.get("edit_revision").textValue();
+            assertTrue(openedAliasEditRevision.matches("[0-9a-f]{64}"));
             assertEquals(200, send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + encodedDecimal(aliasId)).GET()).statusCode());
             assertEquals(400, send(client, request(origin,
@@ -512,9 +513,18 @@ class AliasAdminHttpControllerTest
                 alias(aliasListId, "Dispatch Duplicate", false));
             JsonNode duplicateCreated = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH).POST(HttpRequest.BodyPublishers.ofString(
-                OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "alias", duplicatePayload))))));
+                OBJECT_MAPPER.writeValueAsString(Map.of("alias", duplicatePayload))))));
             long duplicateId = duplicateCreated.at("/alias_ids/0").longValue();
             revision = duplicateCreated.get("revision").longValue();
+            assertEquals(200, send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).PUT(HttpRequest.BodyPublishers.ofString(
+                OBJECT_MAPPER.writeValueAsString(Map.of("edit_revision", openedAliasEditRevision,
+                    "alias", aliasPayload))))).statusCode(),
+                "An unrelated Alias creation must not invalidate this Alias editor");
+            assertEquals(400, send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).PUT(HttpRequest.BodyPublishers.ofString(
+                OBJECT_MAPPER.writeValueAsString(Map.of("alias", aliasPayload))))).statusCode(),
+                "An overwrite must carry the edited Alias's precondition");
             JsonNode conflicts = json(send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId + "/conflicts").GET()));
             assertEquals(aliasId, conflicts.at("/alias/alias_id").longValue());
@@ -527,13 +537,13 @@ class AliasAdminHttpControllerTest
             JsonNode duplicateDeleted = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + duplicateId)
                 .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision))))));
+                    Map.of("edit_revision", service.getAlias(duplicateId).editRevision()))))));
             revision = duplicateDeleted.get("revision").longValue();
 
             JsonNode scopeAdded = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "operation", "add",
+                    "edit_revision", service.getScanList(clevelandScanListId).editRevision(), "operation", "add",
                     "alias_scope", Map.of("alias_list_id", aliasListId)))))));
             assertEquals(0, scopeAdded.get("affected").intValue(),
                 "Every newly created Alias inherits the configured Cleveland membership");
@@ -543,7 +553,8 @@ class AliasAdminHttpControllerTest
             assertEquals(3, clevelandDetail.get("alias_ids_total").intValue());
 
             String removeAllPayload = OBJECT_MAPPER.writeValueAsString(Map.of(
-                "revision", revision, "operation", "remove", "alias_scope", Map.of()));
+                "edit_revision", service.getScanList(clevelandScanListId).editRevision(),
+                "operation", "remove", "alias_scope", Map.of()));
             JsonNode allMembersRemoved = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(removeAllPayload))));
@@ -579,7 +590,7 @@ class AliasAdminHttpControllerTest
             assertEquals(400, send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "operation", "add", "alias_ids", java.util.List.of(aliasId),
+                    "edit_revision", service.getScanList(clevelandScanListId).editRevision(), "operation", "add", "alias_ids", java.util.List.of(aliasId),
                     "alias_scope", Map.of()))))).statusCode());
 
             Map<String,Object> camelAlias = new java.util.LinkedHashMap<>(alias(aliasListId,
@@ -588,7 +599,7 @@ class AliasAdminHttpControllerTest
             HttpResponse<String> rejectedCamelBody = send(client,
                 jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH).POST(
                     HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                        Map.of("revision", revision, "alias", camelAlias)))));
+                        Map.of("alias", camelAlias)))));
             assertEquals(400, rejectedCamelBody.statusCode());
             assertEquals("invalid_request", root(rejectedCamelBody).at("/error/code").textValue());
 
@@ -616,27 +627,32 @@ class AliasAdminHttpControllerTest
                 "variant", "phase_1", "value", 201));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", legacyProtocol))))).statusCode());
+                    Map.of("alias", legacyProtocol))))).statusCode());
             Map<String,Object> missingP25Variant = new java.util.LinkedHashMap<>(aliasPayload);
             missingP25Variant.put("matcher", Map.of("type", "talkgroup", "protocol", "p25", "value", 201));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", missingP25Variant))))).statusCode());
+                    Map.of("alias", missingP25Variant))))).statusCode());
             Map<String,Object> retiredMatcher = new java.util.LinkedHashMap<>(aliasPayload);
             retiredMatcher.put("matcher", Map.of("type", "P25_FULLY_QUALIFIED_TALKGROUP",
                 "wacn", 0xBEE00, "system", 0x348, "value", 201));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", retiredMatcher))))).statusCode());
+                    Map.of("alias", retiredMatcher))))).statusCode());
 
             Map<String,Object> updatedAlias = new java.util.LinkedHashMap<>(
                 alias(aliasListId, "Dispatch Updated", true));
             updatedAlias.put("scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId));
-            Map<String,Object> update = Map.of("revision", revision, "alias", updatedAlias);
+            Map<String,Object> update = Map.of("edit_revision", service.getAlias(aliasId).editRevision(),
+                "alias", updatedAlias);
             JsonNode updated = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId)
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(update)))));
             revision = updated.get("revision").longValue();
+            assertEquals(409, send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).PUT(HttpRequest.BodyPublishers.ofString(
+                OBJECT_MAPPER.writeValueAsString(update)))).statusCode(),
+                "A concurrent change to this same Alias must retain overwrite protection");
             live = json(send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET()));
             assertEquals("Dispatch Updated", live.at("/alias/name").textValue());
@@ -675,7 +691,7 @@ class AliasAdminHttpControllerTest
             JsonNode deleted = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId)
                 .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision))))));
+                    Map.of("edit_revision", service.getAlias(aliasId).editRevision()))))));
             assertEquals(1, deleted.get("affected").intValue());
             assertEquals(404, send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET()).statusCode());
@@ -683,7 +699,7 @@ class AliasAdminHttpControllerTest
             JsonNode nbfmList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", deleted.get("revision").longValue(), "name", "County NBFM", "family", "nbfm"))))));
+                    "name", "County NBFM", "family", "nbfm"))))));
             long nbfmListId = nbfmList.get("alias_list_id").longValue();
             revision = nbfmList.get("revision").longValue();
             JsonNode options = json(send(client, request(origin,
@@ -696,7 +712,7 @@ class AliasAdminHttpControllerTest
             amAlias.put("scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId));
             JsonNode createdAm = json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                    Map.of("revision", revision, "alias", amAlias))))));
+                    Map.of("alias", amAlias))))));
             long amAliasId = createdAm.at("/alias_ids/0").longValue();
             revision = createdAm.get("revision").longValue();
             JsonNode liveAm = json(send(client, request(origin,
@@ -714,7 +730,7 @@ class AliasAdminHttpControllerTest
             JsonNode nbfmPolicyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "recordable", false,
+                    "edit_revision", service.getAliasListDefaults(nbfmListId).editRevision(), "recordable", false,
                     "broadcast_configuration_ids", java.util.List.of(),
                     "scan_list_ids", java.util.List.of(clevelandScanListId)))))));
             revision = nbfmPolicyChanged.get("revision").longValue();
@@ -726,7 +742,7 @@ class AliasAdminHttpControllerTest
             JsonNode nbfmAddedFromScanList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + defaultScanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "operation", "add", "alias_ids", java.util.List.of(),
+                    "edit_revision", service.getScanList(defaultScanListId).editRevision(), "operation", "add", "alias_ids", java.util.List.of(),
                     "unmatched_alias_list_ids", java.util.List.of(nbfmListId)))))));
             revision = nbfmAddedFromScanList.get("revision").longValue();
             nbfmOptions = json(send(client, request(origin,
@@ -743,14 +759,14 @@ class AliasAdminHttpControllerTest
             invalidDcs.put("matcher", Map.of("type", "dcs", "code", "unknown"));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "alias", invalidDcs))))).statusCode());
+                    "alias", invalidDcs))))).statusCode());
 
             Map<String,Object> invalidTone = new java.util.LinkedHashMap<>(alias(nbfmListId, "Invalid Tone", false));
             invalidTone.put("matcher", Map.of("type", "tone_sequence", "tones",
                 java.util.List.of(Map.of("tone", "dtmf_1", "duration", 0))));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "alias", invalidTone))))).statusCode());
+                    "alias", invalidTone))))).statusCode());
 
             BroadcastifyCallConfiguration overflowStream = null;
             for(int index = 0; index <= 500; index++)
@@ -765,7 +781,7 @@ class AliasAdminHttpControllerTest
             JsonNode overflowPolicy = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "recordable", false,
+                    "edit_revision", service.getAliasListDefaults(nbfmListId).editRevision(), "recordable", false,
                     "broadcast_configuration_ids", java.util.List.of(overflowStream.getConfigurationId()),
                     "scan_list_ids", java.util.List.of(clevelandScanListId)))))));
             revision = overflowPolicy.get("revision").longValue();
@@ -854,7 +870,7 @@ class AliasAdminHttpControllerTest
 
             long scanListId = service.scanListCatalog().scanLists().getFirst().scanList().getId();
             String maximumMembershipBody = OBJECT_MAPPER.writeValueAsString(Map.of(
-                "revision", service.currentRevision(), "operation", "add", "alias_ids", maximumIds));
+                "edit_revision", service.getScanList(scanListId).editRevision(), "operation", "add", "alias_ids", maximumIds));
             HttpResponse<String> acceptedMembership = send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + scanListId + "/members")
                 .PUT(HttpRequest.BodyPublishers.ofString(maximumMembershipBody)));

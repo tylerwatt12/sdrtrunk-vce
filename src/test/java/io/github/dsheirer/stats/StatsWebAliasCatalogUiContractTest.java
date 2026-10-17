@@ -157,12 +157,14 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(editor.contains("aliasFormWorkflow(form, save, errorHost, modal"));
         assertTrue(editor.contains("await workflow.save(async () =>"));
         assertTrue(editor.contains("requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases'"));
-        assertTrue(editor.contains("method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }"));
+        assertTrue(editor.contains("body: editing ? { edit_revision: editRevision, alias: payload } : { alias: payload }"));
+        assertTrue(editor.contains("const editRevision = recordResponse?.edit_revision"));
         assertTrue(editor.contains("options?.alias_list?.new_alias_behavior"));
         assertFalse(editor.contains("options?.alias_list?.unmatched_talkgroup_policy"));
         assertFalse(editor.contains("requestedScanLists"));
         assertFalse(editor.contains("its scan-list membership could not be saved"));
-        assertTrue(source.contains("method: 'DELETE', body: { revision }"));
+        assertTrue(function(source, "function openAliasDeleteModal(id, name, editRevision)")
+            .contains("method: 'DELETE', body: { edit_revision: editRevision }"));
         assertTrue(source.contains("/api/v1/admin/alias-lists/${id}/delete-impact"));
         assertTrue(source.contains("code === 'stale_revision'"));
     }
@@ -357,7 +359,7 @@ class StatsWebAliasCatalogUiContractTest
     void opensAllScanListMembersAndRemovesOnlySelectedMemberships() throws Exception
     {
         String source = source();
-        String actions = function(source, "function adminScanListActions(scanList, revision)");
+        String actions = function(source, "function adminScanListActions(scanList)");
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
             "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
@@ -388,15 +390,19 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(remove.contains("/api/v1/admin/scan-lists/${scanList.id}/members"));
         assertTrue(remove.contains("operation: 'remove'"));
         assertTrue(remove.contains("alias_ids: ids"));
+        assertTrue(remove.contains("const editRevision = scanList.edit_revision"));
+        assertTrue(remove.contains("edit_revision: editRevision"));
         assertTrue(remove.contains("aliases and their other scan-list memberships will be preserved"));
         String fullSet = function(source,
             "function openFullScanListMembershipModal(scanList, operation)");
         String fullSetRequest = function(source,
-            "function fullScanListMembershipRequest(revision, operation, aliasListId = null)");
+            "function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)");
         assertTrue(members.contains("'Add an Entire Alias List'"));
         assertTrue(members.contains("'Remove All Assigned Aliases'"));
         assertTrue(fullSet.contains("fullScanListMembershipRequest"));
         assertTrue(fullSet.contains("Add All Aliases"));
+        assertTrue(fullSet.contains("const editRevision = scanList.edit_revision"));
+        assertTrue(fullSetRequest.contains("edit_revision: editRevision"));
         assertTrue(fullSetRequest.contains("alias_scope"));
         assertTrue(fullSetRequest.contains("alias_list_id: id"));
         assertFalse(fullSetRequest.contains("alias_ids"));
@@ -514,8 +520,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(observed.contains("pager({ ...page, rows })"));
 
         assertFalse(source.contains("function unmatchedTalkgroupPolicy"));
-        assertTrue(policy.contains("selectedList?.unknown_alias_behavior"));
-        assertTrue(policy.contains("selectedList?.new_alias_behavior"));
+        assertTrue(policy.contains("const defaults = options.alias_list || {}"));
+        assertTrue(policy.contains("defaults.unknown_alias_behavior"));
+        assertTrue(policy.contains("edit_revision: options.edit_revision"));
+        assertTrue(policy.contains("defaults.new_alias_behavior"));
         assertTrue(prefill.contains("selectedList?.new_alias_behavior"));
         assertTrue(policy.contains("/defaults"));
         assertTrue(policy.contains("'Unmatched Calls'"));

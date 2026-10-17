@@ -176,7 +176,7 @@ public final class ConfigurationRepository
                 mChannelAndBroadcastStore.load(connection).broadcastConfigurations();
             ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
                 proposed.channels(), broadcasts);
-            mChannelAndBroadcastStore.replaceChannels(connection, proposed.channels());
+            mChannelAndBroadcastStore.synchronizeChannels(connection, proposed.channels());
             return new ChannelConfigurationSnapshot(mChannelAndBroadcastStore.loadChannels(connection));
         });
     }
@@ -203,7 +203,7 @@ public final class ConfigurationRepository
             ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
                 proposed.channels(), broadcasts);
             if(retainedIds.size() != current.size())
-                mChannelAndBroadcastStore.replaceChannels(connection, proposed.channels());
+                mChannelAndBroadcastStore.synchronizeChannels(connection, proposed.channels());
             RemoteLinkSettingsStore.saveSenderRemoval(connection, senderId, nextSettings);
             return new ChannelConfigurationSnapshot(mChannelAndBroadcastStore.loadChannels(connection));
         }, afterCommit);
@@ -223,7 +223,7 @@ public final class ConfigurationRepository
                 detached.aliases(), detached.scanLists(), channels.channels(), broadcasts));
             mAliasStore.synchronizeAliases(connection, detached.aliases(), detached.definitions());
             mScanListStore.synchronizeConfiguration(connection, detached.scanLists());
-            mChannelAndBroadcastStore.replaceChannels(connection, channels.channels());
+            mChannelAndBroadcastStore.synchronizeChannels(connection, channels.channels());
             return load(connection);
         });
     }
@@ -238,13 +238,13 @@ public final class ConfigurationRepository
             List<Alias> aliases = mAliasStore.loadAliases(connection, definitions);
             ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
                 mChannelAndBroadcastStore.loadChannels(connection), proposed);
-            mChannelAndBroadcastStore.replaceBroadcastConfigurations(connection, proposed);
+            mChannelAndBroadcastStore.synchronizeBroadcastConfigurations(connection, proposed);
             return mChannelAndBroadcastStore.load(connection).broadcastConfigurations();
         });
     }
 
-    /** Replaces delayed desktop channel and stream edits in one transaction. */
-    public synchronized void replaceChannelAndBroadcastConfiguration(
+    /** Saves delayed desktop edits atomically, writing only changed channel and stream rows. */
+    public synchronized void synchronizeChannelAndBroadcastConfiguration(
         Collection<Channel> channels, Collection<BroadcastConfiguration> broadcastConfigurations)
         throws IOException, SQLException
     {

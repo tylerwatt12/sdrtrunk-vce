@@ -277,9 +277,9 @@ public final class ChannelAdministrationService
         });
     }
 
-    public MutationResult create(ChannelDefinition definition, long expectedRevision)
+    public MutationResult create(ChannelDefinition definition)
     {
-        return admitted(() -> mutate(expectedRevision, false, channels ->
+        return admitted(() -> mutate(() -> {}, false, channels ->
         {
             AliasListDefinition aliasList = requireAliasList(definition.aliasListId());
             Channel created = mCodec.toChannel(definition, aliasList, null);
@@ -720,7 +720,16 @@ public final class ChannelAdministrationService
 
     public MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision)
     {
-        return update(configurationId, definition, expectedRevision, channel -> {});
+        return update(configurationId, definition, () -> requireRevision(expectedRevision), null, null, true,
+            channel -> {});
+    }
+
+    public MutationResult update(String configurationId, ChannelDefinition definition, String editRevision,
+                                 ChannelDefinition original, boolean allowRestart)
+    {
+        if(editRevision == null || editRevision.isBlank())
+            throw new IllegalArgumentException("Channel edit version is required");
+        return update(configurationId, definition, () -> {}, editRevision, original, allowRestart, channel -> {});
     }
 
     /** Keeps a verified RadioReference rename bound to the same learned P25 serving site through restart. */
@@ -728,7 +737,7 @@ public final class ChannelAdministrationService
                                          P25SiteIdentity expectedIdentity)
     {
         Objects.requireNonNull(expectedIdentity);
-        return update(configurationId, definition, expectedRevision, channel ->
+        return update(configurationId, definition, () -> requireRevision(expectedRevision), null, null, true, channel ->
         {
             String protocol = mCodec.fromChannel(channel).protocolId();
             if((!"p25-phase1".equals(protocol) && !"p25-phase2".equals(protocol)) ||
@@ -739,7 +748,8 @@ public final class ChannelAdministrationService
         });
     }
 
-    private MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision,
+    private MutationResult update(String configurationId, ChannelDefinition definition, Runnable precondition,
+                                   String editRevision, ChannelDefinition originalDefinition, boolean allowRestart,
                                    Consumer<Channel> validation)
     {
         String id = requireConfigurationId(configurationId);
@@ -747,15 +757,18 @@ public final class ChannelAdministrationService
         {
             Channel original = onConfigurationThread(() ->
             {
-                requireRevision(expectedRevision);
+                precondition.run();
                 Channel existing = requireChannel(id);
                 validation.accept(existing);
                 // Reject invalid edits and duplicate remote routes before interrupting a running channel.
-                Channel candidate = mCodec.toChannel(definition, requireAliasList(definition.aliasListId()), existing);
+                ChannelDefinition merged = editRevision != null ? ChannelEdit.merge(id, editRevision,
+                    originalDefinition, definition, mCodec.fromChannel(existing)) : definition;
+                Channel candidate = mCodec.toChannel(merged, requireAliasList(merged.aliasListId()), existing);
                 requireUniqueRemoteSource(candidate, mConfigurationManager.getChannelModel().getChannels());
                 return existing;
             });
             boolean restart = isProcessing(id);
+            if(restart && !allowRestart) throw new RestartRequiredException();
             boolean stopped = false;
             try
             {
@@ -764,7 +777,8 @@ public final class ChannelAdministrationService
                     mConfigurationManager.getChannelProcessingManager().stop(original);
                     stopped = true;
                 }
-                MutationResult result = updateStopped(id, definition, expectedRevision, validation);
+                MutationResult result = updateStopped(id, definition, precondition, editRevision,
+                    originalDefinition, allowRestart, validation);
                 if(stopped)
                 {
                     Channel replacement = onConfigurationThread(() -> requireChannel(id));
@@ -794,20 +808,27 @@ public final class ChannelAdministrationService
         });
     }
 
-    private MutationResult updateStopped(String id, ChannelDefinition definition, long expectedRevision,
-                                          Consumer<Channel> validation)
+    private MutationResult updateStopped(String id, ChannelDefinition definition, Runnable precondition,
+                                          String editRevision, ChannelDefinition originalDefinition,
+                                          boolean allowRestart, Consumer<Channel> validation)
     {
-        return mutate(expectedRevision, false, channels ->
+        return mutate(precondition, false, channels ->
         {
             int index = requireChannelIndex(channels, id);
             Channel existing = channels.get(index);
             validation.accept(existing);
-            if(isProcessing(id)) throw new ChannelRunningException(id);
-            ChannelDefinition normalized = new ChannelDefinition(id, definition.protocolId(), definition.system(),
-                definition.site(), definition.name(), definition.radioResolveId(), definition.aliasListId(),
-                definition.source(), definition.settings(), definition.frequencyMap(), definition.eventLogs(),
-                definition.recorders(), definition.auxiliaryDecoders(), definition.observed());
-            Channel replacement = mCodec.toChannel(normalized, requireAliasList(definition.aliasListId()), existing);
+            if(isProcessing(id))
+            {
+                if(!allowRestart) throw new RestartRequiredException();
+                throw new ChannelRunningException(id);
+            }
+            ChannelDefinition merged = editRevision != null ? ChannelEdit.merge(id, editRevision,
+                originalDefinition, definition, mCodec.fromChannel(existing)) : definition;
+            ChannelDefinition normalized = new ChannelDefinition(id, merged.protocolId(), merged.system(),
+                merged.site(), merged.name(), merged.radioResolveId(), merged.aliasListId(),
+                merged.source(), merged.settings(), merged.frequencyMap(), merged.eventLogs(),
+                merged.recorders(), merged.auxiliaryDecoders(), merged.observed());
+            Channel replacement = mCodec.toChannel(normalized, requireAliasList(merged.aliasListId()), existing);
             channels.set(index, replacement);
             requireUniqueRadioResolveIds(channels);
             requireUniqueRemoteSource(replacement, channels);
@@ -1116,9 +1137,15 @@ public final class ChannelAdministrationService
     private MutationResult mutate(long expectedRevision, boolean autoStartOnly,
                                   java.util.function.Function<List<Channel>,MutationTarget> operation)
     {
+        return mutate(() -> requireRevision(expectedRevision), autoStartOnly, operation);
+    }
+
+    private MutationResult mutate(Runnable precondition, boolean autoStartOnly,
+                                  java.util.function.Function<List<Channel>,MutationTarget> operation)
+    {
         return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
-            requireRevision(expectedRevision);
+            precondition.run();
             List<Channel> channels = detachedChannels(autoStartOnly);
             MutationTarget target = operation.apply(channels);
             if(target.changedIds().isEmpty())
@@ -1459,7 +1486,14 @@ public final class ChannelAdministrationService
     }
 
     public record Entry(long revision, ChannelDefinition channel, ProcessingState processingState,
-                        Integer autoStartOrder) {}
+                        Integer autoStartOrder, String editRevision)
+    {
+        public Entry(long revision, ChannelDefinition channel, ProcessingState processingState,
+                     Integer autoStartOrder)
+        {
+            this(revision, channel, processingState, autoStartOrder, ChannelEdit.version(channel));
+        }
+    }
     public record P25EnrichmentSnapshot(Entry entry, Long servingFrequencyHz) {}
     public record AliasListOption(long id, String name, String family) {}
     public record Options(long revision, List<AliasListOption> aliasLists, List<String> tuners)
@@ -1549,6 +1583,8 @@ public final class ChannelAdministrationService
             super("Expected channel revision " + expected + " but found " + actual);
         }
     }
+    public static class StaleChannelException extends RuntimeException {}
+    public static class RestartRequiredException extends RuntimeException {}
     public static class ChannelRunningException extends RuntimeException
     {
         public ChannelRunningException(String id) { super("Channel [" + id + "] is running"); }

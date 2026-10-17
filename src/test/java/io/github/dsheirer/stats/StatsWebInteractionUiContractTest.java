@@ -970,7 +970,7 @@ class StatsWebInteractionUiContractTest
         String renderer = function(source, "async function renderAdminScanLists()");
         String selector = function(source, "function adminScanListSelector(");
         String detail = function(source, "function adminScanListDetail(");
-        String actions = function(source, "function adminScanListActions(scanList, revision)");
+        String actions = function(source, "function adminScanListActions(scanList)");
 
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(renderer.contains("heading.classList.add('scan-list-page-header')"));
@@ -1181,8 +1181,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(unmatchedAliasLists.contains("scanList?.unmatched_alias_lists"));
         assertTrue(unmatchedAliasLists.contains("list: id, aliasTab: 'configure'"));
         assertTrue(unmatchedAliasLists.contains("aliasList.name"));
-        String editScanList = function(source, "function openScanListAdminModal(scanList, revision)");
-        String deleteScanList = function(source, "function openDeleteScanListAdminModal(scanList, revision)");
+        String editScanList = function(source, "function openScanListAdminModal(scanList)");
+        String deleteScanList = function(source, "function openDeleteScanListAdminModal(scanList)");
         assertTrue(deleteScanList.contains("unmatched_alias_list_count"));
         assertTrue(deleteScanList.contains("Call Handling Defaults"));
         assertTrue(source.contains("/api/v1/admin/scan-lists/${scanList.id}"));
