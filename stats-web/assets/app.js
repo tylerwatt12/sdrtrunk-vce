@@ -34,8 +34,9 @@ import { openRadioReferenceConnect } from './features/radioreference-connect.js?
 import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=18';
-import { createAlertsWorkspace } from './features/alerts.js?v=15';
-import { createRecordingsFeature } from './features/recordings.js?v=50';
+import { createAlertsWorkspace } from './features/alerts.js?v=16';
+import { createCallRelations } from './features/call-relations.js?v=1';
+import { createRecordingsFeature } from './features/recordings.js?v=51';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
@@ -23596,14 +23597,20 @@ function activityColumns(context, filters) {
       Number(row.frequency_hz || 0) },
     { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) =>
       activityCellValue(encryptionActivityValue(row), row, 'encryption', context, filters),
-      className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') }
+      className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') },
+    { id: 'related', label: 'Related', render: row => {
+      if (!row.has_call_source) return '';
+      const button = iconButton('icon-info-circle', 'Related recordings and alerts');
+      button.addEventListener('click', () => openCallRelations('activity', row.id));
+      return button;
+    } }
   ];
 }
 
 function activityColumnsForContext(context, filters) {
   const columns = activityColumns(context, filters);
   if (context?.kind === 'conventional-analog') {
-    const visible = new Set(['time', 'action', 'event', 'tones', 'channel']);
+    const visible = new Set(['time', 'action', 'event', 'tones', 'channel', 'related']);
     return columns.filter((column) => visible.has(column.id));
   }
   return columns;
@@ -30235,6 +30242,8 @@ function alertsWorkspace(renderContext, view) {
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
     createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
+    openCallRelations: capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ||
+      capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) ? openCallRelations : undefined,
     identityPicker: activityIdentityPicker, createId: randomLiveClientId, signal: renderContext.signal, view,
     onPushEnabledChanged: updateAlertPushEnabled,
     selectedTopic: route.get('topic') || '', selectedAlert: route.get('alert') || '',
@@ -34155,6 +34164,7 @@ applicationRoutes = routeFoundation.createRegistry({
 
 const recordingsFeature = createRecordingsFeature({
   node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
+  openCallRelations,
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
@@ -34165,6 +34175,20 @@ const recordingsFeature = createRecordingsFeature({
     if (webCallPlayer && !webCallPlayer.stopped) await webCallPlayer.togglePlayback();
   }
 });
+
+const showCallRelations = createCallRelations({
+  node, table, section, sectionActionHost, openReadOnlyModal, requestJson, dateTime, anchor, href,
+  activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
+    row.source_entity_ref, true, 'source'),
+  activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
+  activityChannel: row => activityChannel(row),
+  activityEventLabel: row => activityOptionLabel(row.event_type || row.action),
+  playRecording: row => recordingsFeature.playback.play(row, 'once'),
+  canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
+  canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
+});
+
+function openCallRelations(kind, id) { return showCallRelations(kind, id); }
 
 const audioDock = createAudioDock({
   node, iconButton, uiToggleField, recordings: recordingsFeature.playback,

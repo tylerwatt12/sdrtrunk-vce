@@ -478,7 +478,7 @@ export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
     entityRefHref, stopLiveAudio, href, anchor, iconButton, iconGlyph, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
-    getSourceNameDisplay = () => 'talker_alias' } = deps;
+    getSourceNameDisplay = () => 'talker_alias', openCallRelations } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', alias_list_id: '', radio_identity_key: '', talkgroup_identity_key: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -1404,6 +1404,9 @@ export function createRecordingsFeature(deps) {
       playback.append(explain(button(node, title, () => run(() => playbackAction(row, mode)), 'recordings-secondary-action'), title, description, icon));
     actions.append(explain(button(node, 'Call details', () => run(() => void openDetails(row)), 'recordings-secondary-action'),
       'Call details', 'View the transcript and recording details for this call.', 'icon-info-circle'));
+    if (openCallRelations) actions.append(explain(button(node, 'Related activity and alerts',
+      () => run(() => openCallRelations('recording', row.id)), 'recordings-secondary-action'),
+      'Related activity and alerts', 'View activity and alerts saved for this recorded call.', 'icon-open-details'));
     const use = (title, reference, field, description, icon) => {
       const filter = recordingResultFilter(row, reference, field);
       if (!filter) return;

@@ -19,7 +19,7 @@ export function createAlertsWorkspace(deps) {
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
     identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected,
-    onPushEnabledChanged } = deps;
+    onPushEnabledChanged, openCallRelations } = deps;
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');
   feedback.setAttribute('role', 'status');
@@ -1155,13 +1155,20 @@ export function createAlertsWorkspace(deps) {
     detail.append(node('span', 'ui-field-detail', topicName(event.topic_id)), paragraph(event.body || ''),
       node('time', 'muted', formatTime(event.occurred_at ?? event.created_at_ms)));
     const action = alertPopupAction(event);
+    const actions = actionRow();
     if (action) {
       const control = link(action.label, action.href);
       control.className = 'ui-button ui-button-primary';
-      detail.append(actionRow(control));
+      actions.append(control);
     }
+    if (event.id && openCallRelations) actions.append(button('Related activity and recordings', () => {
+      let opened = false;
+      const open = () => { if (!opened) { opened = true; openCallRelations('alert', event.id); } };
+      if (alertModal.close(open)) open();
+    }));
+    if (actions.childElementCount) detail.append(actions);
     const alertModal = openReadOnlyModal(event.title || 'VCE alert', detail, { id: 'public-alert-detail', className: 'modal-size-small' });
-    const first = detail.querySelector('a');
+    const first = detail.querySelector('a, button');
     void alertModal.ready.then(() => { if (first) alertModal.focus(first); });
   }
 

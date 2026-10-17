@@ -1645,6 +1645,26 @@ test('call actions reuse VCE playback choices and route Live to the saved channe
   expect(request).toHaveProperty('talkgroup_identity_key', 'v1-g-00001-001-1201'); expect(request).not.toHaveProperty('transcript');
 });
 
+test('recording actions open exact related activity and alerts', async ({ page }) => {
+  const state = await openRecordings(page, { call: linkedCall });
+  const requests = [];
+  await page.route('**/api/v1/call-relations/recording/17', route => {
+    requests.push(route.request().url());
+    return route.fulfill({ json: { data: { activity_rows: [], recordings: [], alerts: [] } } });
+  });
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.locator('.recordings-call-info').click();
+  const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+  await actions.getByRole('button', { name: 'Related activity and alerts', exact: true }).click();
+  await expect(actions).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Related call details', exact: true })).toBeVisible();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(new URL(requests[0]).pathname).toBe('/api/v1/call-relations/recording/17');
+  expect(state.requestedFilters).toHaveLength(1);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Related call details', exact: true })).toHaveCount(0);
+});
+
 for (const [name, overrides, title, route] of [
   ['P25 talkgroup', {}, 'Open talkgroup', {
     view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-g-00001-001-1201'

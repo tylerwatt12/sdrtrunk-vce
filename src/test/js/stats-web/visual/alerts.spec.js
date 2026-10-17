@@ -1615,3 +1615,35 @@ test('public alert popup exposes only validated public entity actions and never 
   }
   expect(fixture.pageErrors).toEqual([]);
 });
+
+test('alert details open exact local related calls without notification credentials', async ({ page }) => {
+  const { fixture } = await installAlerts(page);
+  const requests = [];
+  await page.route('**/api/v1/alerts/history?**', route => route.fulfill({ json: { data: { items: [
+    { id: 'alert-exact-call', topic_id: 'fire', title: 'Dispatch tones', body: 'Engine 4 dispatched.', created_at_ms: 1770000000000 }
+  ], total: 1 } } }));
+  await page.route('**/api/v1/alerts/history/alert-exact-call/related', route => {
+    requests.push({ url: route.request().url(), authorization: route.request().headers().authorization });
+    if (requests.length === 1) return route.fulfill({ status: 503, json: { error: { message: 'Temporarily unavailable.' } } });
+    return route.fulfill({ json: { data: { activity_rows: [], recordings: requests.length > 2 ? [
+      { id: 81, start_ms: 1770000000000, group_alias: 'Dispatch', talkgroup_id: 1201, channel_name: 'North Site' }
+    ] : [], alerts: [] } } });
+  });
+  await page.goto('/app.html?view=topics');
+  await page.locator('.alerts-timeline').getByRole('button', { name: 'Dispatch tones', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: 'Dispatch tones', exact: true });
+  await detail.getByRole('button', { name: 'Related activity and recordings', exact: true }).click();
+  await expect(detail).toHaveCount(0);
+  const related = page.getByRole('dialog', { name: 'Related call details', exact: true });
+  await expect(related).toBeVisible();
+  await related.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(related).toContainText('No related recording is available.');
+  await related.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(related.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  await expect.poll(() => requests.length).toBe(3);
+  expect(new URL(requests[0].url).pathname).toBe('/api/v1/alerts/history/alert-exact-call/related');
+  expect(requests.every(request => request.authorization === undefined)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Related call details', exact: true })).toHaveCount(0);
+  expect(fixture.pageErrors).toEqual([]);
+});

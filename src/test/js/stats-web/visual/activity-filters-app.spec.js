@@ -4,8 +4,8 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-async function toneScreenshot(page, name) {
-  if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`), fullPage: true });
+async function toneScreenshot(page, name, fullPage = true) {
+  if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`), fullPage });
 }
 
 const radioSystemKey = 'p25:00001:001';
@@ -52,7 +52,7 @@ async function openActivity(page, options = {}) {
     const respond = (data) => route.fulfill({ json: { data } });
     if (pathname === '/api/v1/auth/session') {
       await respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
-        primary: true, capabilities: { dashboard: true, radio: true, credits: true } });
+        primary: true, capabilities: { dashboard: true, radio: true, credits: true, recordings: options.recordings === true } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/status') {
@@ -129,6 +129,44 @@ function toneActivityRow(id, summary, overrides = {}) {
     target_entity_ref: { kind: 'group', radio_system_key: radioSystemKey, identity_key: talkgroupIdentityKey },
     entity_ref: { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' },
     paging_tone_summary: summary, ...overrides };
+}
+
+for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
+  test(`Activity opens exact related recordings and alerts on ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true,
+      system_name: 'Metro Public Safety' });
+    await openActivity(page, { theme, recordings: true, rows: [activity] });
+    const requests = [];
+    await page.route('**/api/v1/call-relations/activity/18', route => {
+      requests.push(route.request().url());
+      return route.fulfill({ json: { data: { activity_rows: [activity], recordings: [
+        { id: 71, start_ms: activity.observed_at_ms, group_alias: 'CPD D3 DISP', talkgroup_id: 56131,
+          system_name: 'Metro Public Safety', channel_name: 'North Simulcast Control', source_id: 2808137, source_alias: 'Engine 12' },
+        { id: 72, start_ms: activity.observed_at_ms, talkgroup_id: 56131, system_name: 'County Safety', channel_name: 'South Site', source_id: 999 }
+      ], alerts: [{ id: 'alert-exact-call', title: 'Dispatch tones', body: 'Engine 12 dispatched.', topic_id: 'fire', created_at_ms: activity.observed_at_ms }] } } });
+    });
+    await page.getByRole('button', { name: 'Related recordings and alerts', exact: true }).click();
+    const detail = page.getByRole('dialog', { name: 'Related call details', exact: true });
+    await expect(detail).toBeVisible();
+    const bounds = await detail.boundingBox();
+    expect(bounds.y).toBeGreaterThanOrEqual(-1);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(page.viewportSize().height + 1);
+    await expect(detail.locator('[data-table-type="call-relations-recordings"] tbody tr')).toHaveCount(2);
+    await expect(detail).toContainText('CPD D3 DISP');
+    await expect(detail).toContainText('Talkgroup 56131');
+    await expect(detail).toContainText('Metro Public Safety');
+    await expect(detail).toContainText('County Safety');
+    await expect(detail).toContainText('Radio 999');
+    await expect(detail.getByRole('link', { name: 'Dispatch tones', exact: true })).toHaveAttribute('href', /view=topics.*alert=alert-exact-call/);
+    await expect(detail.getByRole('link', { name: 'View all recordings', exact: true })).toHaveAttribute('href', /recording_queue=71%2C72/);
+    expect(requests).toHaveLength(1);
+    expect(new URL(requests[0]).pathname).toBe('/api/v1/call-relations/activity/18');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await toneScreenshot(page, `call-relations-${theme}-${width}`, false);
+    await page.keyboard.press('Escape');
+    await expect(detail).toHaveCount(0);
+  });
 }
 
 test('call tones preserve group call types and filter independently with alias context', async ({ page }) => {
