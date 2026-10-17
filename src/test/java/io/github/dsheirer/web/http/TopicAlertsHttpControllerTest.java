@@ -123,6 +123,60 @@ class TopicAlertsHttpControllerTest
         }
     }
 
+    @Test void topicResponsesDistinguishDisabledNotificationsFromEnabledDeliveryAwaitingApproval() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("enabled-metadata.sqlite")))
+        {
+            var publicTopics = f.body(f.send("GET", "/api/v1/alerts/topics", null, null, false));
+            assertTrue(publicTopics.path("enabled").isBoolean());
+            assertFalse(publicTopics.path("enabled").asBoolean());
+            assertFalse(publicTopics.path("push_enabled").asBoolean());
+            f.login();
+            var catalog = f.body(f.send("GET", "/api/v1/admin/alerts/topics", null, null, false));
+            assertTrue(catalog.path("enabled").isBoolean());
+            assertFalse(catalog.path("enabled").asBoolean());
+
+            var enabled = f.send("PUT", "/api/v1/admin/alerts/config", Map.of("revision", f.service.configuration().revision(),
+                "enabled", true, "mode", "proxy", "sender_label", "County alerts"), null, true);
+            assertEquals(200, enabled.statusCode(), enabled.body());
+            assertEquals("unregistered", f.body(enabled).at("/registration/status").asText());
+            publicTopics = f.body(f.send("GET", "/api/v1/alerts/topics", null, null, false));
+            assertTrue(publicTopics.path("enabled").asBoolean(), "The master switch is independent of approval");
+            assertFalse(publicTopics.path("push_enabled").asBoolean(), "Unapproved Cloud delivery is still unavailable");
+            assertTrue(f.body(f.send("GET", "/api/v1/admin/alerts/topics", null, null, false)).path("enabled").asBoolean());
+        }
+    }
+
+    @Test void directDeliveryCanBeDisabledWithoutFreshProofButCannotBeReenabledWithoutIt() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("direct-disable.sqlite")))
+        {
+            var current = f.service.configuration();
+            var settings = new TopicAlertConfiguration.PushSettings(true, "direct", "https://vce.example:8443", "County alerts");
+            f.service.updateConfiguration(new TopicAlertConfiguration(current.revision(), settings, current.topics(), current.rules()),
+                current.revision());
+            f.login();
+            long revision = f.service.configuration().revision();
+            var disable = Map.of("revision", revision, "enabled", false, "mode", "direct", "site_url", settings.siteUrl(),
+                "sender_label", settings.senderLabel());
+            var disabled = f.send("PUT", "/api/v1/admin/alerts/config", disable, null, true);
+            assertEquals(200, disabled.statusCode(), disabled.body());
+            assertEquals(new TopicAlertConfiguration.PushSettings(false, settings.mode(), settings.siteUrl(), settings.senderLabel()),
+                f.service.configuration().push(), "Disabling preserves the configured delivery details");
+            assertFalse(f.body(disabled).path("enabled").asBoolean());
+            assertEquals(revision + 1, f.body(disabled).path("revision").asLong());
+            assertEquals(409, f.send("PUT", "/api/v1/admin/alerts/config", disable, null, true).statusCode(),
+                "Disabled saves retain revision protection");
+
+            var reenable = f.send("PUT", "/api/v1/admin/alerts/config", Map.of("revision", f.service.configuration().revision(),
+                "enabled", true, "mode", "direct", "site_url", settings.siteUrl(), "sender_label", settings.senderLabel()), null, true);
+            assertEquals(422, reenable.statusCode());
+            assertEquals("public_test_required", f.body(reenable).at("/error/code").asText());
+            assertFalse(f.service.configuration().push().enabled());
+            assertEquals(revision + 1, f.service.configuration().revision());
+        }
+    }
+
     @Test void anonymousDeviceMutationsRequireSameOriginAndUnforgeableManagementToken() throws Exception
     {
         try(Fixture f = new Fixture(mDirectory.resolve("subscriptions.sqlite")))

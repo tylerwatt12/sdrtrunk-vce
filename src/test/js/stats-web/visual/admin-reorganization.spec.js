@@ -115,8 +115,10 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         writes.push({ field: 'p25-bandplan-overrides', profiles: p25.profiles });
       }
       await route.fulfill({ json: p25 });
+    } else if (pathname === '/api/v1/alerts/topics') {
+      await data({ enabled: options.pushEnabled !== false, push_enabled: options.pushReady === true, topics: [] });
     } else if (pathname === '/api/v1/admin/alerts/topics') {
-      await data({ revision: 1, topics: [
+      await data({ revision: 1, enabled: options.pushEnabled !== false, topics: [
         { id: 'fire', name: 'Fire activity', enabled: true, visible: true },
         { id: 'administrator-alerts', name: 'Administrator alerts', enabled: true, visible: false, built_in: true }
       ], rules: [], options: {} });
@@ -190,6 +192,15 @@ test('alert management requires an administrator with settings access', async ({
     await expect(page.locator('body')).toHaveAttribute('data-view', 'access-denied');
     await expect(page.locator('.access-denied-card')).toBeVisible();
     expect(app.requests).not.toContain('/api/v1/admin/alerts/topics');
+  }
+});
+
+test('listener Topics follows the saved push setting while delivery is unavailable', async ({ page }) => {
+  for (const tier of ['admin', 'user']) {
+    await openAdmin(page, 'audio-quality', [], { tier, pushEnabled: false, pushReady: false });
+    await expect(page.locator('.primary-nav a[data-view="topics"]')).toHaveAttribute('hidden', '');
+    await openAdmin(page, 'audio-quality', [], { tier, pushEnabled: true, pushReady: false });
+    await expect(page.locator('.primary-nav a[data-view="topics"]')).not.toHaveAttribute('hidden', '');
   }
 });
 

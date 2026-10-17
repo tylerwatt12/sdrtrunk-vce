@@ -18,7 +18,8 @@ export function createAlertsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
-    identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected } = deps;
+    identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected,
+    onPushEnabledChanged } = deps;
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');
   feedback.setAttribute('role', 'status');
@@ -108,6 +109,13 @@ export function createAlertsWorkspace(deps) {
     return control;
   }
   function paragraph(text) { return node('p', 'muted', text); }
+  function notifyPushState(value) {
+    if (typeof value?.enabled === 'boolean') onPushEnabledChanged?.(value.enabled);
+  }
+  function renderDisabled() {
+    body.replaceChildren(notice('Push notifications are disabled.'));
+    if (view !== 'public') body.append(actionRow(link('Open Push setup', href('admin', { tab: 'push-setup' }))));
+  }
   function catalogDelete(label, action) {
     const control = iconButton('icon-trash', label, 'ui-button ui-button-secondary ui-icon-button ui-button-danger-quiet');
     control.addEventListener('click', action);
@@ -134,7 +142,8 @@ export function createAlertsWorkspace(deps) {
     return control;
   }
   function replaceSnapshot(value, preferredTopic = activeTopic) {
-    snapshot = value;
+    snapshot = { ...value, enabled: value.enabled ?? snapshot?.enabled };
+    notifyPushState(snapshot);
     if (activeTopic !== preferredTopic) onTopicSelected?.(preferredTopic);
     activeTopic = preferredTopic;
     renderCatalog();
@@ -146,9 +155,16 @@ export function createAlertsWorkspace(deps) {
     try {
       snapshot = await read(view === 'public' ? PUBLIC + '/topics' : ADMIN + (view === 'setup' ? '/config' : '/topics'));
       if (disposed) return;
+      if (view !== 'public' && view !== 'setup' && typeof snapshot.enabled !== 'boolean') {
+        const config = await read(ADMIN + '/config');
+        if (disposed) return;
+        snapshot.enabled = config.enabled;
+      }
+      notifyPushState(snapshot);
       feedback.replaceChildren();
       if (view === 'setup') renderSetup();
       else if (view === 'public') {
+        if (snapshot.enabled === false) { renderDisabled(); return; }
         if (snapshot.mode === 'direct') directConnection = await reconcileDirectSubscription(window, device,
           value => write(PUBLIC + '/subscriptions/me/refresh', 'POST', value, { headers: authorize(), csrf: false }));
         await renderPublic();
@@ -198,7 +214,7 @@ export function createAlertsWorkspace(deps) {
     return `${field} ${operator} ${label}`;
   }
   async function loadAliasNames() {
-    if (view === 'public' || view === 'setup' || disposed) return;
+    if (view === 'public' || view === 'setup' || snapshot.enabled === false || disposed) return;
     const ids = new Set();
     const visit = condition => {
       if (Array.isArray(condition?.items)) condition.items.forEach(visit);
@@ -235,6 +251,7 @@ export function createAlertsWorkspace(deps) {
   }
   function renderCatalog() {
     refreshManagementRules = null;
+    if (snapshot.enabled === false) { renderDisabled(); return; }
     body.replaceChildren();
     const topics = snapshot.topics || [];
     if (!topics.some(topic => topic.id === activeTopic)) {
@@ -885,7 +902,10 @@ export function createAlertsWorkspace(deps) {
     const connectionDetail = node('div', 'alerts-form');
     const status = node('div');
     const save = button('Save settings', null, true); save.type = 'submit';
-    const enabled = toggle('Enable push notifications', draft.enabled, value => { draft.enabled = value; });
+    const enabled = toggle('Enable push notifications', draft.enabled, value => {
+      draft.enabled = value;
+      updateSaveAvailability();
+    });
     const deliveryStatus = node('div');
     connection.append(deliveryStatus, connectionDetail);
     const senderName = input(draft.sender_label, 'text', true, 80);
@@ -903,7 +923,7 @@ export function createAlertsWorkspace(deps) {
     setup.append(section('Delivery', fields), section('Connection', connection));
     form.append(setup);
     const workflow = createFormWorkflow({ form, surface: fields, submit: save, feedback: status, changed: () =>
-      (draft.mode === 'proxy' && needsApproval()) || draft.enabled !== saved.enabled || draft.mode !== saved.mode ||
+      (draft.enabled && draft.mode === 'proxy' && needsApproval()) || draft.enabled !== saved.enabled || draft.mode !== saved.mode ||
       draft.sender_label !== (saved.sender_label || 'VCE installation') ||
       (draft.mode === 'direct' && draft.site_url !== (saved.site_url || '')) });
     form.addEventListener('input', () => feedback.replaceChildren());
@@ -913,9 +933,19 @@ export function createAlertsWorkspace(deps) {
       return !snapshot.registration?.sender_id || ['unregistered', 'deregistered'].includes(snapshot.registration?.status);
     }
     function updateSaveAvailability() {
-      save.textContent = draft.mode === 'proxy' && needsApproval() ? 'Request approval' : 'Save settings';
-      workflow.setReady(draft.mode !== 'direct' || Boolean(proof && proof.url === draft.site_url && validAlertSiteUrl(draft.site_url)));
-      if (draft.mode === 'direct') deliveryStatus.replaceChildren(uiStatus(proof ? 'Verified' : 'Needs public test', 'neutral'));
+      save.textContent = draft.enabled && draft.mode === 'proxy' && needsApproval() ? 'Request approval' : 'Save settings';
+      workflow.setReady(!draft.enabled || draft.mode !== 'direct' || Boolean(proof && proof.url === draft.site_url && validAlertSiteUrl(draft.site_url)));
+      for (const control of form.querySelectorAll('input,select,button,textarea')) {
+        if (control !== enabled.control && control !== save) control.disabled = !draft.enabled;
+      }
+      connectionDetail.inert = !draft.enabled;
+      if (!draft.enabled) deliveryStatus.replaceChildren(uiStatus('Disabled', 'neutral'));
+      else if (draft.mode === 'direct') deliveryStatus.replaceChildren(uiStatus(proof ? 'Verified' : 'Needs public test', 'neutral'));
+      else {
+        const status = snapshot.registration?.status;
+        deliveryStatus.replaceChildren(uiStatus(({ approved: 'Approved', pending: 'Awaiting approval', rejected: 'Not approved', banned: 'Banned',
+          deregistered: 'Deregistered', unregistered: 'Not requested' })[status] || 'Not requested', 'neutral'));
+      }
     }
     function renderMode() {
       detail.replaceChildren();
@@ -1007,15 +1037,16 @@ export function createAlertsWorkspace(deps) {
       event.preventDefault();
       if (saved.mode !== draft.mode && !await confirmAction('Switch notification delivery? Connected devices will need to reconnect.',
         { title: 'Change delivery', confirmLabel: 'Switch delivery' })) return;
-      const requestApproval = draft.mode === 'proxy' && needsApproval();
+      const requestApproval = draft.enabled && draft.mode === 'proxy' && needsApproval();
       void workflow.save(async () => {
-        if (draft.mode === 'direct' && (!proof || proof.url !== draft.site_url || !validAlertSiteUrl(draft.site_url))) {
+        if (draft.enabled && draft.mode === 'direct' && (!proof || proof.url !== draft.site_url || !validAlertSiteUrl(draft.site_url))) {
           throw new Error('Test public access before saving.');
         }
         const value = await write(ADMIN + '/config', 'PUT', { revision: saved.revision, ...draft,
-          site_url: draft.mode === 'direct' ? draft.site_url : '', test_token: draft.mode === 'direct' ? proof.token : '' });
+          site_url: draft.mode === 'direct' ? draft.site_url : '', test_token: draft.mode === 'direct' ? proof?.token || '' : '' });
         saved = value;
         snapshot = value;
+        notifyPushState(value);
         if (requestApproval) {
           await write(ADMIN + '/registration', 'POST', { sender_label: draft.sender_label });
           return read(ADMIN + '/config');
@@ -1024,6 +1055,7 @@ export function createAlertsWorkspace(deps) {
       }, { saving: requestApproval ? 'Requesting approval…' : 'Saving…',
         onSuccess: value => {
           snapshot = value;
+          notifyPushState(value);
           renderSetup();
           feedback.replaceChildren(...(requestApproval ? [node('div', 'ui-feedback', 'Approval requested.')] : []));
         },
@@ -1033,6 +1065,7 @@ export function createAlertsWorkspace(deps) {
   }
 
   async function renderPublic() {
+    if (snapshot.enabled === false) { renderDisabled(); return; }
     document.querySelector('link[rel="manifest"]')?.setAttribute('href', '/assets/alerts.webmanifest?v=1');
     const topics = visibleAlertTopics(snapshot.topics);
     if (publicTopic && !topics.some(topic => topic.id === publicTopic)) publicTopic = '';

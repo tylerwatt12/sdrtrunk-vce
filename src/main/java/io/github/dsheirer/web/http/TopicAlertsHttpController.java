@@ -204,14 +204,15 @@ public final class TopicAlertsHttpController
                     JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision", "enabled", "mode", "site_url", "sender_label", "test_token"));
                     long revision = revision(body);
                     TopicAlertConfiguration current = mAlerts.configuration();
+                    if(!body.path("enabled").isBoolean()) throw new IllegalArgumentException("Choose whether notifications are enabled");
+                    boolean enabled = body.path("enabled").asBoolean();
                     String mode = text(body, "mode", 16);
                     String url = "direct".equals(mode) ? PublicAccessVerifier.normalizeUrl(text(body, "site_url", 2048)) : "";
-                    if("direct".equals(mode) && !mPush.verifier().passed(url, body.path("test_token").asText()))
+                    if(enabled && "direct".equals(mode) && !mPush.verifier().passed(url, body.path("test_token").asText()))
                     {
                         ApiHttpResponse.sendError(exchange, 422, "public_test_required", "Test public HTTPS access for this URL before saving Direct delivery."); return;
                     }
-                    if(!body.path("enabled").isBoolean()) throw new IllegalArgumentException("Choose whether notifications are enabled");
-                    var push = new TopicAlertConfiguration.PushSettings(body.path("enabled").asBoolean(), mode, url,
+                    var push = new TopicAlertConfiguration.PushSettings(enabled, mode, url,
                         body.path("sender_label").asText(current.push().senderLabel()));
                     mAlerts.updateConfiguration(new TopicAlertConfiguration(current.revision(), push, current.topics(), current.rules(), current.builtinActionButtonEnabled()), revision);
                     mConfigurationChanged.run();
@@ -317,7 +318,7 @@ public final class TopicAlertsHttpController
                 if(!method(exchange, "GET") || !WebHttpSupport.requireNoQuery(exchange)) return;
                 var push = mAlerts.configuration().push();
                 send(exchange, Map.of("topics", mAlerts.configuration().topics().stream().filter(AlertTopic::visible).toList(),
-                    "mode", push.mode(), "push_enabled", mPush.ready(),
+                    "enabled", push.enabled(), "mode", push.mode(), "push_enabled", mPush.ready(),
                     "vapid_public_key", "direct".equals(push.mode()) ? mPush.publicKey() : ""));
             }
             case "/history" -> {
@@ -387,7 +388,7 @@ public final class TopicAlertsHttpController
             row.put("subscription_count", devices.stream().filter(device -> device.topicIds().contains(topic.id())).count());
             return row;
         }).toList();
-        return Map.of("revision", config.revision(), "topics", topics, "rules", config.rules(), "options", mOptions.get(),
+        return Map.of("revision", config.revision(), "enabled", config.push().enabled(), "topics", topics, "rules", config.rules(), "options", mOptions.get(),
             "builtin_action_button_enabled", config.builtinActionButtonEnabled());
     }
 

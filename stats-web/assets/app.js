@@ -34,7 +34,7 @@ import { openRadioReferenceConnect } from './features/radioreference-connect.js?
 import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=17';
-import { createAlertsWorkspace } from './features/alerts.js?v=12';
+import { createAlertsWorkspace } from './features/alerts.js?v=13';
 import { createRecordingsFeature } from './features/recordings.js?v=48';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
@@ -313,6 +313,10 @@ let serviceStatusRequestPending = false;
 let serviceStatusConsecutiveFailures = 0;
 let p25VisualizerCatalogHasRunningSystem = false;
 let p25VisualizerCatalogRequest = null;
+let alertPushEnabled = null;
+let alertTopicsAvailabilityRefreshedAt = 0;
+let alertTopicsAvailabilityVersion = 0;
+let alertTopicsAvailabilityRequest = null;
 let webClientReloadAttempted = false;
 let activeReadOnlyModal = null;
 let aliasEditorSelection = new Set();
@@ -807,6 +811,7 @@ function updateNavigationAccess() {
     const administratorOnly = String(definition?.access || '').startsWith('admin');
     link.hidden = administratorOnly && locked ||
       link.dataset.view === 'settings' && !accessSession.authenticated ||
+      link.dataset.view === 'topics' && alertPushEnabled === false ||
       link.dataset.view === 'network-visualizer' && !p25VisualizerMenuAvailable();
     link.classList.toggle('access-locked', locked);
     const lock = link.querySelector('.nav-lock');
@@ -820,6 +825,30 @@ function updateNavigationAccess() {
   const supportReport = document.getElementById('support-report-indicator');
   if (supportReport) supportReport.hidden = !(accessSession.tier === 'ADMIN' &&
     capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS));
+}
+
+function updateAlertPushEnabled(enabled) {
+  if (typeof enabled !== 'boolean') return;
+  alertPushEnabled = enabled;
+  alertTopicsAvailabilityVersion += 1;
+  alertTopicsAvailabilityRefreshedAt = Date.now();
+  updateNavigationAccess();
+}
+
+function refreshAlertTopicsNavigation(force = false) {
+  if (document.hidden || alertTopicsAvailabilityRequest) return alertTopicsAvailabilityRequest;
+  if (!force && alertTopicsAvailabilityRefreshedAt &&
+      Date.now() - alertTopicsAvailabilityRefreshedAt < 60_000) return Promise.resolve();
+  alertTopicsAvailabilityRefreshedAt = Date.now();
+  const version = alertTopicsAvailabilityVersion;
+  alertTopicsAvailabilityRequest = requestJson('/api/v1/alerts/topics', {
+    csrf: false, page: false, timeoutMs: 5_000
+  }).then((snapshot) => {
+    if (version === alertTopicsAvailabilityVersion) updateAlertPushEnabled(snapshot?.enabled);
+  }).catch(() => {
+    // A failed availability check does not change the last confirmed notification setting.
+  }).finally(() => { alertTopicsAvailabilityRequest = null; });
+  return alertTopicsAvailabilityRequest;
 }
 
 function updateAccessControls() {
@@ -30207,6 +30236,7 @@ function alertsWorkspace(renderContext, view) {
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
     createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
     identityPicker: activityIdentityPicker, createId: randomLiveClientId, signal: renderContext.signal, view,
+    onPushEnabledChanged: updateAlertPushEnabled,
     selectedTopic: route.get('topic') || '', selectedAlert: route.get('alert') || '',
     onTopicSelected: view === 'manage' ? (id) => {
       if (id) route.set('topic', String(id));
@@ -34067,6 +34097,7 @@ async function reloadForWebClientRevision() {
 async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
   if (await reloadForWebClientRevision()) return;
+  void refreshAlertTopicsNavigation();
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     clearServiceStatus();
     refreshP25VisualizerMenu();
@@ -34288,6 +34319,9 @@ installIconHints();
 initializeAccessControls();
 initializeNavigation();
 initializePlaybackHeader();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refreshAlertTopicsNavigation(true);
+});
 refreshAccessSession(false)
   .then(() => Promise.all([loadStatus(false), receiverHealthController.refresh()]))
   .finally(render);

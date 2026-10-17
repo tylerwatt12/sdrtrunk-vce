@@ -434,7 +434,56 @@ async function checkAliasCoverageIndependentCount() {
   assert.equal(summary()[2], 'Loading…', 'An abandoned page must not receive late count presentation');
 }
 
+async function checkAlertTopicsAvailability() {
+  let now = 1_000;
+  const requests = [];
+  const pending = [];
+  const context = {
+    alertPushEnabled: null, alertTopicsAvailabilityRefreshedAt: 0,
+    alertTopicsAvailabilityVersion: 0, alertTopicsAvailabilityRequest: null,
+    Date: { now: () => now }, document: { hidden: false }, updateNavigationAccess() {},
+    requestJson: (requestPath, options) => {
+      requests.push({ requestPath, options });
+      return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(`function updateAlertPushEnabled(enabled) ${functionBinding(appSource, 'updateAlertPushEnabled')}
+    function refreshAlertTopicsNavigation(force = false) ${functionBinding(appSource, 'refreshAlertTopicsNavigation')}`,
+  context);
+  const initial = context.refreshAlertTopicsNavigation();
+  assert.equal(context.refreshAlertTopicsNavigation(), initial, 'Concurrent availability reads share one request.');
+  assert.equal(requests[0].requestPath, '/api/v1/alerts/topics');
+  pending.shift().resolve({ enabled: false, push_enabled: false });
+  await initial;
+  assert.equal(context.alertPushEnabled, false);
+  await context.refreshAlertTopicsNavigation();
+  assert.equal(requests.length, 1, 'Existing status updates must not repeatedly fetch the topic catalog.');
+  now += 60_001;
+  const older = context.refreshAlertTopicsNavigation();
+  context.updateAlertPushEnabled(true);
+  pending.shift().resolve({ enabled: false });
+  await older;
+  assert.equal(context.alertPushEnabled, true, 'An earlier poll cannot overwrite a newly saved setting.');
+  const readyLater = context.refreshAlertTopicsNavigation(true);
+  pending.shift().resolve({ enabled: true, push_enabled: false });
+  await readyLater;
+  assert.equal(context.alertPushEnabled, true, 'Delivery readiness must not hide enabled topics.');
+  const metadataMissing = context.refreshAlertTopicsNavigation(true);
+  pending.shift().resolve({ push_enabled: false });
+  await metadataMissing;
+  assert.equal(context.alertPushEnabled, true, 'Older metadata must preserve the confirmed setting.');
+  const unavailable = context.refreshAlertTopicsNavigation(true);
+  pending.shift().reject(new Error('Unavailable'));
+  await unavailable;
+  assert.equal(context.alertPushEnabled, true, 'A transport failure must preserve the confirmed setting.');
+  context.document.hidden = true;
+  await context.refreshAlertTopicsNavigation(true);
+  assert.equal(requests.length, 5, 'A hidden document does not refresh topic availability.');
+}
+
 async function main() {
+  await checkAlertTopicsAvailability();
   await require('./radioreference-locality-cache.test').checkLocalityCache(
     path.resolve(core, '../features/radioreference-locality-cache.js'));
   const [routes, preferences, preferenceSchema, tableLayouts, tableDefaults, pageTitles, entityRefs, playerModule] =

@@ -43,11 +43,13 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     protocols: [{ value: 'APCO25', label: 'P25 Phase I' }, { value: 'DCS', label: 'DCS' }], message_types: [{ value: 'PAGE', label: 'Page' }],
     tone_types: [{ value: 'CALL_PROGRESS_TONE', label: 'Call progress tone' }], dcs_codes: [{ value: 'N023', label: 'DCS 023' }] },
     config: { revision: 1, enabled: true, mode: 'proxy', site_url: '', sender_label: 'VCE installation', registration: { status: 'approved', sender_id: 'synthetic-sender' } },
-    writes: [], pending: [], enrollmentStatus: 'pending', publicMode: 'proxy', deviceMode: 'proxy', deviceStatus: 'connected', deviceTopics: ['fire'],
+    writes: [], requests: [], pending: [], enrollmentStatus: 'pending', publicMode: 'proxy', publicReady: true,
+    deviceMode: 'proxy', deviceStatus: 'connected', deviceTopics: ['fire'],
     holdTopic: false, holdRuleTest: false, ruleTestFailure: false, localExpiry: false, enrollmentOutage: false,
-    enrollmentChecks: 0, registrationFailure: false, publicTestFailure: false };
+    enrollmentChecks: 0, registrationFailure: false, publicTestFailure: false, configSaveFailure: false };
   await page.route('**/api/v1/**', async route => {
     const request = route.request(); const url = new URL(request.url()); const p = url.pathname;
+    state.requests.push({ p, method: request.method() });
     const data = value => route.fulfill({ json: { data: value } });
     if (guest && p === '/api/v1/auth/session') return data({ configured: true, authenticated: false, capabilities: { 'web-access': false } });
     if (/^\/api\/v1\/admin\/alerts\/rules\/[^/]+\/test$/.test(p)) {
@@ -58,7 +60,7 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
       return complete();
     }
     if (p === '/api/v1/admin/alerts/topics' || p === '/api/v1/admin/alerts/rules') {
-      if (request.method() === 'GET') return data(state);
+      if (request.method() === 'GET') return data({ ...state, enabled: state.config.enabled });
       const value = request.postDataJSON(); state.writes.push({ p, value });
       if (state.holdTopic && value.topic) {
         await new Promise(resolve => state.pending.push(async () => {
@@ -69,11 +71,13 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
       }
       if (value.topic) state.topics = [...state.topics.filter(topic => topic.id !== value.topic.id), value.topic];
       if (value.rule) state.rules = [...state.rules.filter(rule => rule.id !== value.rule.id), value.rule];
-      state.revision++; return data(state);
+      state.revision++; return data({ ...state, enabled: state.config.enabled });
     }
     if (p === '/api/v1/admin/alerts/config') {
       if (request.method() === 'GET') return data(state.config);
       const value = request.postDataJSON(); state.writes.push({ p, value });
+      if (state.configSaveFailure) return route.fulfill({ status: 503,
+        json: { error: { message: 'Push settings could not be saved. Try again.' } } });
       state.config = { ...state.config, ...value, revision: state.config.revision + 1 }; return data(state.config);
     }
     if (p === '/api/v1/admin/alerts/public-test') {
@@ -89,7 +93,8 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
       }
       return data(state.config.registration);
     }
-    if (p === '/api/v1/alerts/topics') return data({ topics: state.topics.filter(topic => topic.visible), mode: state.publicMode, push_enabled: true,
+    if (p === '/api/v1/alerts/topics') return data({ topics: state.topics.filter(topic => topic.visible), mode: state.publicMode,
+      enabled: state.config.enabled, push_enabled: state.config.enabled && state.publicReady,
       vapid_public_key: state.publicMode === 'direct' ? 'AQID' : '' });
     if (p === '/api/v1/alerts/history') return data({ items: [{ id: 'alert-1', topic_id: 'fire', title: 'Fire Tactical is active', body: 'Engine 12 transmitted.', created_at_ms: 1770000000000 }], total: 1 });
     if (p === '/api/v1/alerts/history/older-alert') return data({ id: 'older-alert', topic_id: 'fire',
@@ -227,6 +232,152 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     await captureFormWorkflowEvidence(form, `alerts-alias-search-${theme}-${width}-error`);
   });
 }
+
+for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
+  test(`globally disabled alerts replace management actions with Push setup in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { state, fixture } = await installAlerts(page, { theme });
+    state.config.enabled = false;
+    state.rules = [{ id: 'dispatch', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call' }];
+    await page.goto('/app.html?view=alerts&topic=fire');
+    const workspace = page.locator('.alerts-workspace');
+    await expect(workspace).toContainText('Push notifications are disabled.');
+    await expect(workspace.getByRole('link', { name: 'Open Push setup', exact: true }))
+      .toHaveAttribute('href', /view=admin.*tab=push-setup/);
+    await expect(workspace.getByRole('button')).toHaveCount(0);
+    await expect(workspace.getByRole('navigation', { name: 'Topics', exact: true })).toHaveCount(0);
+    await expect(workspace).not.toContainText('Dispatch activity');
+    expect(state.writes).toEqual([]);
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace']);
+    await auditScreenshot(page, `alerts-disabled-management-${theme}-${width}`, false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+
+  test(`globally disabled public Topics retain the device without history or connection work in ${theme} at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { state, fixture } = await installAlerts(page, { guest: true, theme });
+    state.config.enabled = false;
+    state.publicMode = state.deviceMode = 'direct';
+    await installDirectDevice(page, { missing: true });
+    await page.goto('/app.html?view=topics&topic=fire&alert=older-alert');
+    const workspace = page.locator('.alerts-workspace');
+    await expect(workspace).toContainText('Push notifications are disabled.');
+    if (theme === 'dark') {
+      if (await page.locator('html').getAttribute('data-theme') !== 'dark') {
+        await page.getByRole('button', { name: 'Use dark theme', exact: true }).click();
+      }
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    }
+    await expect(workspace.getByRole('button')).toHaveCount(0);
+    await expect(workspace.locator('.alerts-topic-card, .alerts-timeline')).toHaveCount(0);
+    expect(state.requests.filter(({ p }) => /^\/api\/v1\/alerts\/(history|subscriptions|enrollments)(?:\/|$)/.test(p))).toEqual([]);
+    expect(state.writes).toEqual([]);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('vce-alert-device-v1'))))
+      .toMatchObject({ id: 'synthetic-device', mode: 'direct', status: 'connected' });
+    expect(await page.evaluate(() => window.syntheticPermissionCalls)).toBe(0);
+    expect(await page.evaluate(() => window.syntheticUnsubscribeCalls)).toBe(0);
+    expect(await page.evaluate(() => window.syntheticWorkerMessages)).toEqual([]);
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace']);
+    await auditScreenshot(page, `alerts-disabled-public-${theme}-${width}`, false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
+test('enabled alerts retain management and listener navigation while delivery awaits approval', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.publicReady = false;
+  state.config.registration = { status: 'pending', sender_id: 'synthetic-sender' };
+  state.rules = [{ id: 'dispatch', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call' }];
+  await page.goto('/app.html?view=alerts');
+  await expect(page.getByRole('button', { name: 'New topic', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Edit topic', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Create alert rule', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Test alert rule: Dispatch activity', exact: true })).toBeEnabled();
+  await expect(page.locator('#primary-navigation a[data-view="topics"]')).toHaveJSProperty('hidden', false);
+  await expect(page.locator('.alerts-workspace')).not.toContainText('Push notifications are disabled.');
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('saving the global toggle updates listener navigation after success and restores management without a reload', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  await page.evaluate(() => { window.syntheticPushSettingsDocument = 'same-document'; });
+  const master = page.getByRole('checkbox', { name: 'Enable push notifications', exact: true });
+  const topicsLink = page.locator('#primary-navigation a[data-view="topics"]');
+  await expect(master).toBeChecked();
+  await expect(topicsLink).toHaveJSProperty('hidden', false);
+  await master.focus(); await master.press('Space');
+  await expect(master).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'VCE name', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Direct', exact: true })).toBeDisabled();
+  await expect(topicsLink).toHaveJSProperty('hidden', false);
+  const save = page.getByRole('button', { name: 'Save settings', exact: true });
+  await expect(save).toBeEnabled();
+  await revealPrimaryAction(page, save);
+  state.configSaveFailure = true;
+  await save.click();
+  await expect(page.locator('.alerts-workspace').getByRole('alert')).toContainText('Push settings could not be saved. Try again.');
+  await expect(topicsLink).toHaveJSProperty('hidden', false);
+  expect(state.config.enabled).toBe(true);
+  state.configSaveFailure = false;
+  await save.click();
+  await expect(topicsLink).toHaveJSProperty('hidden', true);
+  expect(state.config.enabled).toBe(false);
+  await expect(master).not.toBeChecked();
+  await master.focus(); await master.press('Space');
+  await expect(page.getByRole('textbox', { name: 'VCE name', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Direct', exact: true })).toBeEnabled();
+  await expect(topicsLink).toHaveJSProperty('hidden', true);
+  await revealPrimaryAction(page, save);
+  await save.click();
+  await expect(topicsLink).toHaveJSProperty('hidden', false);
+  expect(state.config.enabled).toBe(true);
+  expect(state.writes.map(write => write.value.enabled)).toEqual([false, false, true]);
+  expect(await page.evaluate(() => window.syntheticPushSettingsDocument)).toBe('same-document');
+  await page.locator('#primary-navigation [data-nav-group="configuration"] > summary').click();
+  await page.locator('#primary-navigation a[data-view="alerts"]').click();
+  await expect(page.getByRole('button', { name: 'New topic', exact: true })).toBeVisible();
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('disabling Direct delivery saves without another public access test and locks dependent controls', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.config.mode = 'direct';
+  state.config.site_url = 'https://vce.example.net';
+  state.publicMode = state.deviceMode = 'direct';
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  const master = page.getByRole('checkbox', { name: 'Enable push notifications', exact: true });
+  await master.focus(); await master.press('Space');
+  await expect(page.getByRole('textbox', { name: 'VCE site URL', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Test public access', exact: true })).toBeDisabled();
+  const save = page.getByRole('button', { name: 'Save settings', exact: true });
+  await expect(save).toBeEnabled();
+  await revealPrimaryAction(page, save);
+  await save.click();
+  await expect(page.locator('#primary-navigation a[data-view="topics"]')).toHaveJSProperty('hidden', true);
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0].p).toBe('/api/v1/admin/alerts/config');
+  expect(state.writes[0].value).toMatchObject({ enabled: false, mode: 'direct', site_url: 'https://vce.example.net' });
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('disabled cloud setup does not offer approval until push notifications are enabled', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.config.enabled = false;
+  state.config.registration = { status: 'unregistered', sender_id: '' };
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  const master = page.getByRole('checkbox', { name: 'Enable push notifications', exact: true });
+  await expect(master).not.toBeChecked();
+  await expect(master).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'VCE name', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Direct', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Request approval', exact: true })).toHaveCount(0);
+  await master.focus(); await master.press('Space');
+  await expect(page.getByRole('button', { name: 'Request approval', exact: true })).toBeEnabled();
+  await expect(page.locator('#primary-navigation a[data-view="topics"]')).toHaveJSProperty('hidden', true);
+  expect(state.writes).toEqual([]);
+  expect(fixture.pageErrors).toEqual([]);
+});
 
 test('guest topics hide private names and connect through RadioResolve without an account', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 700 });
