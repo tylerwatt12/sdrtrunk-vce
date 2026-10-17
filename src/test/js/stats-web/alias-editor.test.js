@@ -98,7 +98,9 @@ vm.runInContext(`
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
   ${functionSource('function aliasTransferDetectedFormat(csv)')}
+  ${functionSource('function aliasExportParameters(listId, scope)')}
   ${functionSource("function aliasTransferExportHref(listId, scope = 'all')")}
+  ${functionSource("function aliasActivityReportHref(listId, scope = 'all')")}
   ${functionSource('function aliasTransferExportToken()')}
   ${functionSource('function aliasTransferExportDownloadHref(listId, scope, token)')}
   ${functionSource('function aliasTransferExportIsReady(cookieHeader, token)')}
@@ -151,6 +153,7 @@ vm.runInContext(`
   globalThis.transferAssignmentNames = aliasTransferAssignmentNames;
   globalThis.transferDetectedFormat = aliasTransferDetectedFormat;
   globalThis.transferExportHref = aliasTransferExportHref;
+  globalThis.activityReportHref = aliasActivityReportHref;
   globalThis.transferExportToken = aliasTransferExportToken;
   globalThis.transferExportDownloadHref = aliasTransferExportDownloadHref;
   globalThis.transferExportIsReady = aliasTransferExportIsReady;
@@ -487,12 +490,13 @@ assert.equal(context.transferExportIsReady(concurrentReadyCookies,
 
 const transferModal = functionSource("function openAliasTransferModal(selectedList, action = 'Import')");
 const transferExportHref = functionSource("function aliasTransferExportHref(listId, scope = 'all')");
+const exportParameters = functionSource('function aliasExportParameters(listId, scope)');
 assert.match(transferExportHref, /admin\/alias-lists\/\$\{listId\}\/transfer/,
   'The established administrator-only all-list export route must remain compatible.');
 assert.match(transferExportHref, /api\/v1\/exports\/alias-list\.csv/);
-assert.match(transferExportHref, /last_activity_after/);
-assert.match(transferExportHref, /scan_list_id/);
-assert.doesNotMatch(transferExportHref, /limit|offset/,
+assert.match(exportParameters, /last_activity_after/);
+assert.match(exportParameters, /scan_list_id/);
+assert.doesNotMatch(exportParameters, /limit|offset/,
   'Filtered transfer exports must not inherit the current browser page.');
 assert.doesNotMatch(transferExportHref, /route\.get\('sort'\)|route\.get\('direction'\)/,
   'Importable exports use durable alias-ID order instead of presentation order.');
@@ -502,7 +506,10 @@ assert.match(transferModal, /Up to 500 destinations are listed/);
 assert.match(transferModal, /Drop a CSV file here/);
 assert.match(transferModal, /Add new aliases and update matches/);
 assert.match(transferModal, /Replace this list’s aliases/);
-assert.match(transferModal, /Export alias list as CSV/);
+assert.match(transferModal, /Importable configuration/);
+assert.match(transferModal, /Activity report/);
+assert.match(transferModal, /Cannot be imported/);
+assert.match(transferModal, /Export CSV/);
 assert.match(transferModal, /All aliases in this Alias List/);
 assert.match(transferModal, /Current filtered results/);
 assert.match(transferModal, /not only the visible page/);
@@ -524,8 +531,26 @@ assert.match(transferModal, /sign-in or export access may have changed/);
 assert.match(transferModal, /window\.clearInterval\(exportStartPoll\)/,
   'Closing the modal must stop the ready-marker poll.');
 assert.doesNotMatch(transferModal, /fetch\(endpoint/);
-assert.doesNotMatch(transferModal, /createObjectURL/);
+assert.match(transferModal, /reportController\?\.abort\(\)/,
+  'Closing the export dialog must cancel an activity report that is still being prepared.');
 assert.match(transferModal, /timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS/g);
+
+context.setRoute('q=Dispatch&type=talkgroup&group=Fire&scanListId=2&record=on&' +
+  'lastActivityAfter=2026-10-01&sort=name&direction=desc&limit=25&offset=50');
+const reportQuery = new URL(context.activityReportHref(7, 'filtered'), 'http://localhost').searchParams;
+assert.deepEqual(Object.fromEntries(reportQuery), {
+  list: '7', type: 'talkgroup', group: 'Fire', scan_list_id: '2', record: 'on',
+  last_activity_after: '2026-10-01', q: 'Dispatch', sort: 'name', direction: 'desc'
+}, 'Filtered activity reports must include all matching results in the current sort order.');
+assert.deepEqual(Object.fromEntries(new URL(context.activityReportHref(7), 'http://localhost').searchParams), {
+  list: '7', sort: 'name', direction: 'desc'
+}, 'Whole-list activity reports must ignore current search and filters.');
+const configurationQuery = new URL(context.transferExportHref(7, 'filtered'), 'http://localhost').searchParams;
+assert.equal(configurationQuery.get('q'), 'Dispatch');
+assert.equal(configurationQuery.get('scope'), 'filtered');
+assert.equal(configurationQuery.has('sort'), false,
+  'Importable configuration exports must retain durable ordering rather than report ordering.');
+context.setRoute('');
 
 const firstTone = { tone: 'A' };
 const secondTone = { tone: 'B' };
