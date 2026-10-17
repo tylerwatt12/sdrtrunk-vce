@@ -24,35 +24,22 @@ import java.util.LinkedHashSet;
 /**
  * Final immutable representation of one resolved logical call.  The elected receiver leg owns the audio and
  * snapshot.  All physical receiver legs remain represented by compact summaries so that site observations can be
- * counted without treating each received copy as another system call. Standard recording filenames and tags use
- * the winner's observed identifiers, retained separately from identities promoted by the logical-call resolver.
+ * counted without treating each received copy as another system call. Every output uses the resolved snapshot's
+ * attribution; the native snapshot and leg summaries retain the physical reception evidence.
  */
 public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
                                  List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
                                  List<CallLegSummary> callLegSummaries,
-                                 @JsonIgnore IdentifierCollection recordingIdentifierCollection,
                                  @JsonIgnore AudioCallSnapshot nativeAudioSnapshot,
                                  @JsonIgnore io.github.dsheirer.audio.tone.CompletedToneSequence completedToneSequence)
 {
-    /** Compatibility constructor: a caller without multi-receiver resolution owns its snapshot's native audio. */
-    public CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
-                              List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
-                              List<CallLegSummary> callLegSummaries, IdentifierCollection recordingIdentifierCollection)
-    {
-        this(logicalCallId, snapshot, audioBuffers, resolvedPolicy, callLegSummaries,
-            recordingIdentifierCollection, snapshot, null);
-    }
-
-    /**
-     * Existing callers without a logical-call identity promotion use their snapshot's recording observations.
-     * The full constructor deliberately preserves a null recording collection when the winning leg had none.
-     */
+    /** A caller without multi-receiver resolution owns its snapshot's native audio. */
     public CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot snapshot,
                               List<float[]> audioBuffers, ResolvedCallPolicy resolvedPolicy,
                               List<CallLegSummary> callLegSummaries)
     {
         this(logicalCallId, snapshot, audioBuffers, resolvedPolicy, callLegSummaries,
-            snapshot != null ? snapshot.identifierCollection() : null);
+            snapshot, null);
     }
 
     /**
@@ -129,7 +116,7 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
     public CompletedAudioCall withCompletedTones(io.github.dsheirer.audio.tone.CompletedToneSequence sequence)
     {
         return new CompletedAudioCall(logicalCallId, snapshot, audioBuffers, resolvedPolicy, callLegSummaries,
-            recordingIdentifierCollection, nativeAudioSnapshot, sequence);
+            nativeAudioSnapshot, sequence);
     }
 
     public long getDuration()

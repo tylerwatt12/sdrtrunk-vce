@@ -31,6 +31,7 @@ import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -66,7 +67,6 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
-import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1NACPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
@@ -940,11 +940,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
     private void broadcast(P25TrafficChannelEventTracker tracker, long observedAt)
     {
+        tracker.publishAttribution();
         broadcast(tracker.getEvent());
-        P25ConventionalCallUpdateEvent conventionalUpdate = tracker.conventionalCallUpdate();
-        if(conventionalUpdate != null)
+        P25CallUpdateEvent update = tracker.callUpdate();
+        if(update != null)
         {
-            MyEventBus.getGlobalEventBus().post(conventionalUpdate);
+            MyEventBus.getGlobalEventBus().post(update);
         }
         notifyActivityCallFacts(tracker, observedAt);
     }
@@ -1050,50 +1051,18 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
         P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event, servingSystemKey);
         addTracker(tracker, frequency, timeslot);
-        return tracker;
-    }
 
-    /**
-     * Creates a tracker from traffic-channel voice signalling. Conventional P25 has no control-channel tracker to
-     * announce the call, so publish the same one-time call-start contract when its first valid voice signalling
-     * creates the tracker. Updates to that tracker do not publish another start.
-     */
-    private P25TrafficChannelEventTracker createTrafficTracker(P25ChannelGrantEvent event, long frequency,
-                                                                int timeslot)
-    {
-        P25TrafficChannelEventTracker tracker = createTracker(event, frequency, timeslot);
-
-        if(mParentChannel != null &&
-            mParentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Conventional &&
-            event.getEventType() != null && event.getEventType().isVoiceCallEvent())
+        if(event.getEventType() != null && event.getEventType().isVoiceCallEvent())
         {
             if(event.getChannelDescriptor() == null && frequency > 0)
             {
                 event.setChannelDescriptor(new StandardChannel(frequency));
             }
 
-            P25CallStartEvent callStart = new P25CallStartEvent(mParentChannel, event,
+            P25CallStartEvent start = new P25CallStartEvent(mParentChannel, event,
                 tracker.getRadioSystemKey(), tracker.getActivityCallToken());
-            tracker.setConventionalCallStart(callStart);
-            MyEventBus.getGlobalEventBus().post(callStart);
-        }
-
-        return tracker;
-    }
-
-    /**
-     * Creates a control-channel tracker and announces a new voice call exactly once.  Tuner allocation and traffic
-     * decoding are intentionally not prerequisites for this notification.
-     */
-    private P25TrafficChannelEventTracker createControlTracker(P25ChannelGrantEvent event, long frequency,
-                                                                int timeslot)
-    {
-        P25TrafficChannelEventTracker tracker = createTracker(event, frequency, timeslot);
-
-        if(event.getEventType() != null && event.getEventType().isVoiceCallEvent())
-        {
-            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event,
-                tracker.getRadioSystemKey(), tracker.getActivityCallToken()));
+            tracker.setCallStart(start);
+            MyEventBus.getGlobalEventBus().post(start);
         }
 
         return tracker;
@@ -1360,8 +1329,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param timeslot for the call event
      * @param timestamp for the update
      */
-    public void processP2TrafficVoice(long frequency, int timeslot, long timestamp)
+    public AudioActivityCallEvent processP2TrafficVoice(long frequency, int timeslot, long timestamp)
     {
+        if(frequency <= 0 || (timeslot != TimeslotMessage.TIMESLOT_1 && timeslot != TimeslotMessage.TIMESLOT_2)) return null;
         MyEventBus.getGlobalEventBus().post(
             new P25TrafficChannelConfirmationEvent(mParentChannel, frequency, timeslot, timestamp));
         mLock.lock();
@@ -1369,6 +1339,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         try
         {
             P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timeslot, timestamp);
+            if(tracker != null && timestamp < tracker.getEvent().getTimeStart()) return null;
 
             if(tracker != null && tracker.isComplete())
             {
@@ -1381,6 +1352,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker, timestamp);
             }
+            return tracker != null ? tracker.audioCallEvent(timeslot) : null;
         }
         finally
         {
@@ -1408,9 +1380,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         try
         {
             P25TrafficChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timeslot, timestamp);
+            if(tracker != null && timestamp < tracker.getEvent().getTimeStart()) return null;
 
-            if(tracker != null && tracker.isComplete())
+            if(tracker != null && (tracker.isComplete() || macOpcode == MacOpcode.PUSH_TO_TALK && tracker.isStarted()))
             {
+                if(tracker.completeTraffic(timestamp))
+                {
+                    broadcast(tracker, timestamp);
+                    P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
+                }
                 removeTracker(frequency, timeslot);
                 tracker = null;
             }
@@ -1436,6 +1414,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .details(additionalDetails != null ? additionalDetails : "PHASE 2 CALL " +
                             (serviceOptions != null ? serviceOptions : ""))
                     .identifiers(ic)
+                    .timeslot(timeslot)
                     .build();
 
             tracker = createTracker(callEvent, frequency, timeslot);
@@ -1447,84 +1426,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mLock.unlock();
         }
-    }
-
-    /** Captures an existing tracked call for audio metadata without making either decoder wait. */
-    public P25TrafficChannelEventTracker getP2TrafficCallForAudio(long frequency, int timeslot,
-                                                                 IdentifierCollection identifiers, long timestamp)
-    {
-        if(frequency <= 0 || (timeslot != TimeslotMessage.TIMESLOT_1 && timeslot != TimeslotMessage.TIMESLOT_2) ||
-            identifiers == null || !mLock.tryLock())
-        {
-            return null;
-        }
-
-        try
-        {
-            P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
-            return tracker != null && tracker.isStarted() && !tracker.isComplete() &&
-                timestamp >= tracker.getEvent().getTimeStart() &&
-                hasEligibleP25AudioDestinations(tracker, identifiers) &&
-                hasCompatibleP25AudioNac(tracker, identifiers) &&
-                tracker.isSameCallCheckingToAndFrom(identifiers, timestamp) ? tracker : null;
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
-    /**
-     * Supplies only a missing audio source from the exact captured call. A completed tracker remains eligible because
-     * decoder state consumes End PTT before the audio module completes its builder. Replaced trackers are never used.
-     */
-    public Identifier getP2TrafficCallSourceForAudio(P25TrafficChannelEventTracker expected, long frequency,
-                                                    int timeslot, IdentifierCollection identifiers, long timestamp)
-    {
-        if(expected == null || frequency <= 0 ||
-            (timeslot != TimeslotMessage.TIMESLOT_1 && timeslot != TimeslotMessage.TIMESLOT_2) || identifiers == null ||
-            identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) != null || !mLock.tryLock())
-        {
-            return null;
-        }
-
-        try
-        {
-            if(getTracker(frequency, timeslot) != expected || !expected.isStarted() || expected.isStale(timestamp) ||
-                timestamp < expected.getEvent().getTimeStart() || !hasEligibleP25AudioDestinations(expected, identifiers) ||
-                !expected.hasMatchingDestination(identifiers) ||
-                !hasCompatibleP25AudioNac(expected, identifiers))
-            {
-                return null;
-            }
-
-            Identifier source = expected.getEvent().getIdentifierCollection()
-                .getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-            return isEligibleP25EndFrameIdentifier(Protocol.APCO25_PHASE2, source) ? source : null;
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
-    private static boolean hasEligibleP25AudioDestinations(P25TrafficChannelEventTracker tracker,
-                                                          IdentifierCollection identifiers)
-    {
-        Identifier current = identifiers.getToIdentifier();
-        Identifier tracked = tracker.getEvent().getIdentifierCollection().getToIdentifier();
-
-        return isEligibleP25EndFrameIdentifier(Protocol.APCO25_PHASE2, current) &&
-            isEligibleP25EndFrameIdentifier(Protocol.APCO25_PHASE2, tracked);
-    }
-
-    private static boolean hasCompatibleP25AudioNac(P25TrafficChannelEventTracker tracker,
-                                                    IdentifierCollection identifiers)
-    {
-        Identifier current = identifiers.getIdentifier(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
-        Identifier tracked = tracker.getEvent().getIdentifierCollection()
-            .getIdentifier(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
-        return current == null || tracked == null || current.equals(tracked);
     }
 
     /**
@@ -1662,9 +1563,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param talkgroup to update within the event.
      * @param eki for encryption settings.
      * @param timestamp for the update
-     * @return exact selected call token, or null when the observation cannot bind a call
+     * @return exact selected call attribution, or null when the observation cannot bind a call
      */
-    public String processP1TrafficCallStart(long frequency, Identifier<?> talkgroup, Identifier<?> radio,
+    public AudioActivityCallEvent processP1TrafficCallStart(long frequency, Identifier<?> talkgroup, Identifier<?> radio,
                                           EncryptionKeyIdentifier eki, ServiceOptions serviceOptions,
                                           IChannelDescriptor channelDescriptor, long timestamp)
     {
@@ -1708,12 +1609,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .identifiers(mic)
                         .build();
 
-                tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
             P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
             broadcast(tracker, timestamp);
-            return tracker != null ? tracker.getActivityCallToken() : null;
+            return tracker != null ? tracker.audioCallEvent(0) : null;
         }
         finally
         {
@@ -1758,14 +1659,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param identifier to update within the event.
      * @param timestamp for the update
      */
-    public void processP1TrafficCurrentUser(long frequency, Identifier identifier, long timestamp)
+    public AudioActivityCallEvent processP1TrafficCurrentUser(long frequency, Identifier identifier, long timestamp)
     {
         mLock.lock();
 
         try
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, TimeslotMessage.TIMESLOT_1);
-            if(tracker != null && timestamp < tracker.getEvent().getTimeStart()) return;
+            if(tracker != null && timestamp < tracker.getEvent().getTimeStart()) return null;
 
             if(tracker != null && tracker.isComplete())
             {
@@ -1787,6 +1688,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker, timestamp);
             }
+            return tracker != null ? tracker.audioCallEvent(0) : null;
         }
         finally
         {
@@ -1925,9 +1827,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param frequency for the call event
      * @param identifiers to update within the event.
      * @param timestamp for the update
-     * @return exact selected call token, or null when the observation cannot bind a call
+     * @return exact selected call attribution, or null when the observation cannot bind a call
      */
-    public String processP1TrafficLDU1(long frequency, List<Identifier> identifiers, long timestamp)
+    public AudioActivityCallEvent processP1TrafficLDU1(long frequency, List<Identifier> identifiers, long timestamp)
     {
         MyEventBus.getGlobalEventBus().post(
             new P25TrafficChannelConfirmationEvent(mParentChannel, frequency, TimeslotMessage.TIMESLOT_1, timestamp));
@@ -1984,11 +1886,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                             .identifiers(mic)
                             .build();
 
-                    tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
+                    tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
                     broadcast(tracker, timestamp);
                 }
             }
-            return tracker != null ? tracker.getActivityCallToken() : null;
+            return tracker != null ? tracker.audioCallEvent(0) : null;
         }
         finally
         {
@@ -2004,9 +1906,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * @param serviceOptions for the call
      * @param ic identifiers for the call
      * @param timestamp for the message that is being processed
-     * @return exact selected call token, or null for a stale observation
+     * @return exact selected call attribution, or null for a stale observation
      */
-    public String processP1TrafficCurrentUser(long frequency, IChannelDescriptor channelDescriptor,
+    public AudioActivityCallEvent processP1TrafficCurrentUser(long frequency, IChannelDescriptor channelDescriptor,
                                             DecodeEventType decodeEventType, ServiceOptions serviceOptions,
                                             IdentifierCollection ic, long timestamp, String additionalDetails)
     {
@@ -2033,7 +1935,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker.updateDurationTraffic(timestamp);
                 tracker.addDetailsIfMissing(additionalDetails);
                 broadcast(tracker, timestamp);
-                return tracker.getActivityCallToken();
+                return tracker.audioCallEvent(0);
             }
 
             //Create a new event for the current call.
@@ -2044,9 +1946,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .identifiers(ic)
                     .build();
 
-            tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
+            tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             broadcast(tracker, timestamp);
-            return tracker != null ? tracker.getActivityCallToken() : null;
+            return tracker != null ? tracker.audioCallEvent(0) : null;
         }
         finally
         {
@@ -2539,7 +2441,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .identifiers(ic)
                     .build();
 
-                tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
             //The tracked event can have an empty FROM identifier at start of call ... update here
@@ -2600,7 +2502,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .details("IGNORED: PHASE 1 DATA CALL " + (serviceOptions != null ? serviceOptions : ""))
                         .identifiers(ic)
                         .build();
-                tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
                 broadcast(tracker, timestamp);
             }
 
@@ -2619,7 +2521,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             .details(details)
             .identifiers(ic)
             .build();
-        tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
+        tracker = createTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
         if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation)
@@ -2685,7 +2587,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .timeslot(apco25Channel.getTimeslot())
                     .build();
 
-                tracker = createControlTracker(continuationGrantEvent, frequency, timeslot);
+                tracker = createTracker(continuationGrantEvent, frequency, timeslot);
                 broadcast(tracker, timestamp);
             }
 
@@ -2740,7 +2642,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 .timeslot(apco25Channel.getTimeslot())
                 .build();
 
-            tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
+            tracker = createTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
             broadcast(tracker, timestamp);
             return;
         }
@@ -2759,7 +2661,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             .timeslot(apco25Channel.getTimeslot())
             .build();
 
-        tracker = createControlTracker(event, frequency, timeslot);
+        tracker = createTracker(event, frequency, timeslot);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
         if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation)

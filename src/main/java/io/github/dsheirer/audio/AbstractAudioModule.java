@@ -94,18 +94,18 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private boolean mLinkNextAudioCallToPrevious;
     private MutableAudioCallBuilder mCurrentAudioCall;
     private AudioCallSnapshot mLastPublishedAudioCallSnapshot;
-    private final AtomicReference<String> mPendingActivityCallToken = new AtomicReference<>();
-    private String mCurrentActivityCallToken;
-    private String mPreviousActivityCallToken;
+    private final AtomicReference<io.github.dsheirer.audio.call.AudioActivityCallEvent> mPendingActivityCall =
+        new AtomicReference<>();
+    private volatile io.github.dsheirer.audio.call.AudioActivityCallEvent mCurrentActivityCall;
+    private io.github.dsheirer.audio.call.AudioActivityCallEvent mPreviousActivityCall;
 
     @Subscribe
     public void activityCallBound(io.github.dsheirer.audio.call.AudioActivityCallEvent event)
     {
-        if(event.timeslot() == getTimeslot()) setActivityCallToken(event.token());
+        if(event.timeslot() == getTimeslot() && event.token() != null &&
+            (mCurrentActivityCall == null || !event.token().equals(mCurrentActivityCall.token())))
+            mPendingActivityCall.set(event);
     }
-
-    /** Producer-owned binding only; observers never perform a lookup or send acknowledgements to this module. */
-    protected final void setActivityCallToken(String token) { mPendingActivityCallToken.set(token); }
 
     /**
      * Constructs an abstract audio module
@@ -147,7 +147,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 if(mCurrentAudioCall != null)
                 {
                     //Apply this identifier and its alias policy before publishing the corresponding snapshot.
-                    mCurrentAudioCall.receive(notification);
+                    if(mCurrentActivityCall == null || mCurrentActivityCall.attribution() == null ||
+                        !AudioCallRecordingMetadata.isSource(notification.getIdentifier()))
+                        mCurrentAudioCall.receive(notification);
                     emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
                 }
             }
@@ -298,9 +300,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mPreviousAudioCallId = mCurrentAudioCallId;
                 mPreviousCallLegId = mCurrentCallLegId;
                 mPreviousCallLegSource = completedSource != null ? completedSource.source() : null;
-                mPreviousActivityCallToken = mCurrentActivityCallToken;
-                mPendingActivityCallToken.compareAndSet(mCurrentActivityCallToken, null);
-                mCurrentActivityCallToken = null;
+                mPreviousActivityCall = mCurrentActivityCall;
+                mPendingActivityCall.compareAndSet(mCurrentActivityCall, null);
+                mCurrentActivityCall = null;
                 mCurrentAudioCallId = null;
                 mCurrentLinkedAudioCallId = null;
                 mCurrentCallLegId = null;
@@ -313,8 +315,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     public void stop()
     {
         closeAudioSegment();
-        mPendingActivityCallToken.set(null);
-        mPreviousActivityCallToken = null;
+        mPendingActivityCall.set(null);
+        mPreviousActivityCall = null;
     }
 
     /**
@@ -333,8 +335,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mLastPublishedAudioCallSnapshot = null;
                 mCurrentAudioCallId = new AudioCallId(mProducerId, mNextAudioCallSequence++, getTimeslot());
                 boolean linkedContinuation = mLinkNextAudioCallToPrevious;
-                mCurrentActivityCallToken = linkedContinuation ? mPreviousActivityCallToken :
-                    mPendingActivityCallToken.getAndSet(null);
+                mCurrentActivityCall = linkedContinuation ? mPreviousActivityCall :
+                    mPendingActivityCall.getAndSet(null);
                 mCurrentLinkedAudioCallId = linkedContinuation ? mPreviousAudioCallId : null;
                 mCurrentCallLegId = linkedContinuation && mPreviousCallLegId != null ? mPreviousCallLegId :
                     new CallLegId(mProducerId, mCurrentAudioCallId.sequence(), getTimeslot());
@@ -346,7 +348,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 applyPendingCallSystemKey();
                 applyPendingSiteEvidenceGeneration();
                 mLinkNextAudioCallToPrevious = false;
-                mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
+                mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()).stream()
+                    .filter(identifier -> mCurrentActivityCall == null || mCurrentActivityCall.attribution() == null ||
+                        !AudioCallRecordingMetadata.isSource(identifier)).toList());
                 if(mRecordAudioOverride)
                 {
                     mCurrentAudioCall.setRecordAudio(true);
@@ -590,9 +594,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                           long voiceFrameFingerprint, long correctedVoiceFrameFingerprint, float[] rawAudio)
     {
         long carrierTimestamp = timestamp > 0L ? timestamp : System.currentTimeMillis();
-        String pendingCallToken = mPendingActivityCallToken.get();
-        if(mCurrentAudioCall != null && pendingCallToken != null &&
-            !pendingCallToken.equals(mCurrentActivityCallToken))
+        var pendingCall = mPendingActivityCall.get();
+        if(mCurrentAudioCall != null && pendingCall != null &&
+            (mCurrentActivityCall == null || !pendingCall.token().equals(mCurrentActivityCall.token())))
         {
             // A decoder can identify the next physical call before carrier/squelch closes the old audio.
             mLinkNextAudioCallToPrevious = false;
@@ -693,6 +697,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     private AudioCallSnapshot getSnapshotForEvent(AudioCallEventType eventType)
     {
+        boolean attributionChanged = applyCurrentCallAttribution();
         boolean refresh = switch(eventType)
         {
             case CALL_CREATED, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, CALL_COMPLETED -> true;
@@ -702,12 +707,27 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             case ACTIVITY -> false;
         };
 
-        if(refresh || mLastPublishedAudioCallSnapshot == null)
+        if(refresh || attributionChanged || mLastPublishedAudioCallSnapshot == null)
         {
             mLastPublishedAudioCallSnapshot = getCurrentAudioCallSnapshot();
         }
 
         return mLastPublishedAudioCallSnapshot;
+    }
+
+    /** Read only this call's accepted source, including evidence received after its last voice frame. */
+    private boolean applyCurrentCallAttribution()
+    {
+        var attribution = mCurrentActivityCall != null ? mCurrentActivityCall.attribution() : null;
+        Identifier<?> source = attribution != null ? attribution.source() : null;
+        if(mCurrentAudioCall != null && source != null &&
+            !io.github.dsheirer.identifier.IdentifierObservation.same(source,
+                mCurrentAudioCall.getIdentifierCollection().getFromIdentifier()))
+        {
+            mCurrentAudioCall.addIdentifier(source);
+            return true;
+        }
+        return false;
     }
 
     private AudioCallSnapshot createSnapshot(MutableAudioCallBuilder audioCall, AudioCallId callId, AudioCallId linkedCallId)
@@ -733,7 +753,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             audioCall.getEncryptionState(),
             audioCall.isRecordAudio(), audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality(),
             mCurrentCallLegId, callLegSource, audioCall.getCallEncryptionEvidence(), analogAttribution,
-            analogAttribution != null ? analogAttribution.callToken() : mCurrentActivityCallToken);
+            analogAttribution != null ? analogAttribution.callToken() :
+                mCurrentActivityCall != null ? mCurrentActivityCall.token() : null);
     }
 
     /** Analog subclasses supply the same frozen match decision carried by their decoder event. */

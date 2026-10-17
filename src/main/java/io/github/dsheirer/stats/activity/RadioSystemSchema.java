@@ -2799,8 +2799,8 @@ final class RadioSystemSchema
             .toList();
     }
 
-    /** Normalize only captured tone identities; directory references need not invent any call/signaling credit. */
-    static void retainDetailedToneIdentities(Connection connection, RadioSystem radioSystem,
+    /** Normalize accepted identities without inventing any call or signaling credit. */
+    static void retainDetailedIdentities(Connection connection, RadioSystem radioSystem,
                                             ReceiverActivityRecords.ActivityEvent activity) throws SQLException
     {
         if(radioSystem == null) return;

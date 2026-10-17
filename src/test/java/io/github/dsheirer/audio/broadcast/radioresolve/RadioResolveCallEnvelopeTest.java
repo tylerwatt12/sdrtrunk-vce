@@ -368,6 +368,26 @@ class RadioResolveCallEnvelopeTest
     }
 
     @Test
+    void resolvedCallSourceOverridesAConflictingAudioLegObservation()
+    {
+        AudioRecording base = RadioResolveTestFixtures.recording(Path.of("call.mp3"));
+        var expected = RadioResolveCallEnvelope.create(base, RadioResolveTestFixtures.SUBMISSION_ID).envelope().call().source();
+        List<CallLegSummary> stale = base.getCompletedCallMetadata().callLegSummaries().stream().map(leg ->
+            new CallLegSummary(leg.callLegId(), leg.source(), leg.startTimestamp(), leg.endTimestamp(),
+                leg.voiceCallQuality(), leg.retainedAudioSampleCount(), leg.ingressLoss(), leg.audioTruncated(),
+                leg.winner(), leg.callEncryptionEvidence(),
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(123,
+                    RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 456),
+                base.getIdentifierCollection().getToIdentifier(), leg.voiceFrameFingerprints(), leg.frequencyHz(),
+                leg.timeslot())).toList();
+        var envelope = RadioResolveCallEnvelope.create(withSummaries(base, stale),
+            RadioResolveTestFixtures.SUBMISSION_ID).envelope();
+
+        assertEquals(expected, envelope.call().source());
+        assertEquals(expected, envelope.reception().source());
+    }
+
+    @Test
     void canonicalSourceObservationPreservesLegacyNumericLocalId()
     {
         Identifier<?> identityOnly = APCO25FullyQualifiedRadioIdentifier.createFrom(900_001,
@@ -610,17 +630,20 @@ class RadioResolveCallEnvelopeTest
     {
         AudioRecording base = RadioResolveTestFixtures.recording(Path.of("call.mp3"));
         CompletedCallBroadcastMetadata metadata = base.getCompletedCallMetadata();
-        List<CallLegSummary> summaries = metadata.callLegSummaries().stream().map(summary -> summary.winner() ?
-            new CallLegSummary(summary.callLegId(), summary.source(), summary.startTimestamp(),
-                summary.endTimestamp(), summary.voiceCallQuality(), summary.retainedAudioSampleCount(),
-                summary.ingressLoss(), summary.audioTruncated(), true, summary.callEncryptionEvidence(),
-                summary.p25SourceIdentity(),
-                new CallLegSummary.P25IdentityObservation(Form.TALKGROUP, 0, 0xABCDE, 0x321, 12_345),
-                summary.p25PatchMemberIdentities(), summary.voiceFrameFingerprints(), summary.frequencyHz(),
-                summary.timeslot()) : summary).toList();
+        AudioCallSnapshot prior = metadata.snapshot();
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(0, 0xABCDE, 0x321, 12_345),
+            prior.identifierCollection().getFromIdentifier(),
+            FrequencyConfigurationIdentifier.create(RadioResolveTestFixtures.FREQUENCY)));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(prior.callId(), prior.linkedCallId(), prior.aliasList(),
+            identifiers, prior.broadcastChannels(), prior.startTimestamp(), prior.lastActivityTimestamp(),
+            prior.burstCount(), prior.burstGeneration(), prior.lastBurstStartTimestamp(), prior.lastBurstEndTimestamp(),
+            prior.burstActive(), prior.complete(), prior.encryptionState(), prior.recordAudio(),
+            prior.recordingMetadata(), prior.voiceCallQuality(), prior.callLegId(), prior.callLegSource(),
+            prior.callEncryptionEvidence());
         AudioRecording recording = new AudioRecording(base.getPath(), base.getBroadcastChannels(),
-            base.getIdentifierCollection(), base.getStartTime(), base.getRecordingLength(), base.getDeliveryEvidence(),
-            new CompletedCallBroadcastMetadata(metadata.snapshot(), summaries));
+            identifiers, base.getStartTime(), base.getRecordingLength(), base.getDeliveryEvidence(),
+            new CompletedCallBroadcastMetadata(snapshot, metadata.callLegSummaries()));
 
         RadioResolveCallEnvelope.BuildResult result = RadioResolveCallEnvelope.create(recording,
             RadioResolveTestFixtures.SUBMISSION_ID);

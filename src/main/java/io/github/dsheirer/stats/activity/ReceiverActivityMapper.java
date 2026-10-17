@@ -45,7 +45,7 @@ import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
-import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
+import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
@@ -245,17 +245,15 @@ class ReceiverActivityMapper
     ReceiverActivityRecord mapCallStart(P25CallStartEvent callStart)
     {
         ReceiverActivityRecords.ActivityEvent activity = map(callStart);
-        return activity != null && activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 &&
-            callStart.callToken() != null ? new ReceiverActivityRecords.ConventionalCallObservation(
+        return activity != null && callStart.callToken() != null ? new ReceiverActivityRecords.P25CallObservation(
                 callStart.callToken(), activity, true, false) : activity;
     }
 
-    ReceiverActivityRecords.ConventionalCallObservation map(P25ConventionalCallUpdateEvent update)
+    ReceiverActivityRecords.P25CallObservation map(P25CallUpdateEvent update)
     {
         P25CallStartEvent call = update != null ? update.call() : null;
         ReceiverActivityRecords.ActivityEvent activity = map(call);
-        return activity != null && activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 &&
-            call.callToken() != null ? new ReceiverActivityRecords.ConventionalCallObservation(call.callToken(),
+        return activity != null && call.callToken() != null ? new ReceiverActivityRecords.P25CallObservation(call.callToken(),
                 activity, false, update.complete()) : null;
     }
 
@@ -402,7 +400,7 @@ class ReceiverActivityMapper
             facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
             facts.encryptionAlgorithmId(), facts.encryptionKeyId(), resolvedTargetIdentity,
             resolvedSourceIdentity, p25 ? facts.p25PatchMemberIdentities() : List.of(), siteObservations,
-            radioSystemKey, p25WorkingAddress(source), p25WorkingAddress(target));
+            radioSystemKey, p25WorkingAddress(source), p25WorkingAddress(target), call.sourceCallReferences());
     }
 
     private static List<ReceiverActivityRecords.P25SiteCallObservation> p25SiteCallObservations(

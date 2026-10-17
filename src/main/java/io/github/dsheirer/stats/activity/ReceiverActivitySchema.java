@@ -662,7 +662,7 @@ public class ReceiverActivitySchema
         RadioSystemSchema.RadioSystem system = activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE ?
             RadioSystemSchema.ensureReceiverRadioSystem(connection, channelId, activity.observedAtEpochMilliseconds(), activity.identityDomain(),
                 activity.wacn(), activity.systemId(), activity.radioSystemKey()) : null;
-        RadioSystemSchema.retainDetailedToneIdentities(connection,system,activity);
+        RadioSystemSchema.retainDetailedIdentities(connection,system,activity);
         return insertReceiverActivityEvent(connection, activity, channelId, system);
     }
 
@@ -981,7 +981,7 @@ public class ReceiverActivitySchema
     }
 
     /** Worker-only receipt for credits that will be retained only after their transaction commits. */
-    record ConventionalCallCredit(long channelId, Long detailedEventId, Integer sourceRadioId,
+    record P25CallCredit(long channelId, Long detailedEventId, Integer sourceRadioId,
                                   String targetId, String targetKind, List<Integer> patchMemberTalkgroupIds,
                                   ReceiverActivityRecords.P25Identity sourceIdentity,
                                   ReceiverActivityRecords.P25Identity targetIdentity,
@@ -989,31 +989,33 @@ public class ReceiverActivitySchema
     {
     }
 
-    static ConventionalCallCredit recordConventionalCall(Connection connection,
+    static P25CallCredit recordP25Call(Connection connection,
         ReceiverActivityRecords.ActivityEvent activity, boolean detailedEventHistoryEnabled) throws SQLException
     {
-        if(activity.receiverKind() != ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 ||
+        if((activity.receiverKind() != ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25 &&
+                activity.receiverKind() != ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE) ||
             !configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()),
                 protocolCode(activity.protocol()), activity.identityDomain()))
         {
             return null;
         }
-        var channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity), false);
+        var channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity),
+            activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE);
         if(channelId <= 0 || !matchesCurrentP25Generation(
             selectReceiverChannelIdentity(connection, activity.configurationId()), activity))
         {
             return null;
         }
         Long detailId = recordAcceptedActivity(connection, activity, detailedEventHistoryEnabled, channelId, null);
-        return new ConventionalCallCredit(channelId, detailId, positiveInteger(activity.sourceRadioId()),
-            conventionalDestinationId(activity), activity.targetKind(),
+        return new P25CallCredit(channelId, detailId, positiveInteger(activity.sourceRadioId()),
+            p25DestinationId(activity), activity.targetKind(),
             activity.patchMemberTalkgroupIds(), activity.p25SourceIdentity(), activity.p25TargetIdentity(),
             activity.sourceObservedWorkingId(), activity.targetObservedWorkingId());
     }
 
-    static ConventionalCallCredit enrichConventionalCall(Connection connection,
+    static P25CallCredit enrichP25Call(Connection connection,
         ReceiverActivityRecords.ActivityEvent original, ReceiverActivityRecords.ActivityEvent observation,
-        ConventionalCallCredit credit) throws SQLException
+        P25CallCredit credit) throws SQLException
     {
         ReceiverChannelIdentity channel = selectReceiverChannelIdentity(connection, original.configurationId());
         if(channel == null || channel.channelId() != credit.channelId() ||
@@ -1027,22 +1029,28 @@ public class ReceiverActivitySchema
             return null;
         }
 
+        if(credit.sourceIdentity().isStableFullyQualified() && observation.p25SourceIdentity().isStableFullyQualified() &&
+            !credit.sourceIdentity().equals(observation.p25SourceIdentity())) return credit;
         Integer source = positiveInteger(observation.sourceRadioId());
         boolean newSource = credit.sourceRadioId() == null && source != null;
-        boolean newTarget = credit.targetId() == null && conventionalDestinationId(observation) != null;
+        boolean sourceEvidenceKnown = observation.p25SourceIdentity().isStableFullyQualified() &&
+            !credit.sourceIdentity().isStableFullyQualified() &&
+            (credit.sourceRadioId() == null || java.util.Objects.equals(credit.sourceRadioId(), source));
+        boolean newTarget = credit.targetId() == null && p25DestinationId(observation) != null;
         boolean sameTarget = newTarget || java.util.Objects.equals(credit.targetId(), observation.targetId()) &&
             java.util.Objects.equals(credit.targetKind(), observation.targetKind());
         List<Integer> newMembers = sameTarget && "PATCH_GROUP".equals(observation.targetKind()) ?
             observation.patchMemberTalkgroupIds().stream()
                 .filter(member -> !credit.patchMemberTalkgroupIds().contains(member)).toList() : List.of();
+        boolean conventional = original.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25;
         long bucket = bucketStart(original.observedAtEpochMilliseconds());
         int encrypted = original.encrypted() ? 1 : 0;
-        if(newSource)
+        if(conventional && newSource)
         {
             upsertCallIdentityBucket(connection, credit.channelId(), bucket, IDENTITY_ROLE_SOURCE,
                 IDENTITY_KIND_RADIO, source, 1, encrypted, 0, 0);
         }
-        if(newTarget || !newMembers.isEmpty())
+        if(conventional && (newTarget || !newMembers.isEmpty()))
         {
             for(CallIdentity destination: destinationIdentities(newTarget ? observation.targetId() : null,
                 observation.targetKind(), newMembers, TrunkedIdentityPolicy.protocolFamilyCode(original.protocol()),
@@ -1077,26 +1085,30 @@ public class ReceiverActivitySchema
         }
         List<Integer> members = new ArrayList<>(credit.patchMemberTalkgroupIds());
         members.addAll(newMembers);
-        ConventionalCallCredit updated = new ConventionalCallCredit(credit.channelId(), credit.detailedEventId(),
+        P25CallCredit updated = new P25CallCredit(credit.channelId(), credit.detailedEventId(),
             newSource ? source : credit.sourceRadioId(), newTarget ? observation.targetId() : credit.targetId(),
             newTarget ? observation.targetKind() : credit.targetKind(), List.copyOf(members),
-            newSource ? observation.p25SourceIdentity() : credit.sourceIdentity(),
+            sourceEvidenceKnown || newSource && !credit.sourceIdentity().isStableFullyQualified() ?
+                observation.p25SourceIdentity() : credit.sourceIdentity(),
             newTarget ? observation.p25TargetIdentity() : credit.targetIdentity(),
             newSource ? observation.sourceObservedWorkingId() : credit.sourceWorkingId(),
             newTarget ? observation.targetObservedWorkingId() : credit.targetWorkingId());
-        if(newSource || newTarget || !newMembers.isEmpty())
+        if(newSource || sourceEvidenceKnown || newTarget || !newMembers.isEmpty())
         {
-            ReceiverActivityRecords.ActivityEvent effective = observation.withConventionalIdentities(
+            ReceiverActivityRecords.ActivityEvent effective = observation.withP25Identities(
                 updated.sourceRadioId(), updated.targetId(), updated.targetKind(), updated.patchMemberTalkgroupIds(),
                 updated.sourceIdentity(), updated.targetIdentity(), updated.sourceWorkingId(), updated.targetWorkingId());
-            AliasActivityProjection.recordConventionalCallAttribution(connection, effective, newSource,
-                newTarget, newMembers, original.encrypted(), credit.sourceRadioId() != null);
-            enrichDetailedConventionalCall(connection, credit, effective, newSource, newTarget);
+            if(conventional)
+            {
+                AliasActivityProjection.recordConventionalCallAttribution(connection, effective, newSource,
+                    newTarget, newMembers, original.encrypted(), credit.sourceRadioId() != null);
+            }
+            enrichDetailedP25Call(connection, credit, effective, newSource, newTarget);
         }
         return updated;
     }
 
-    private static String conventionalDestinationId(ReceiverActivityRecords.ActivityEvent activity)
+    private static String p25DestinationId(ReceiverActivityRecords.ActivityEvent activity)
     {
         Integer target = positiveInteger(activity.targetId());
         Integer kind = TrunkedIdentityPolicy.identityKindCode(activity.targetKind());
@@ -1105,21 +1117,35 @@ public class ReceiverActivitySchema
             activity.targetId() : null;
     }
 
-    private static void enrichDetailedConventionalCall(Connection connection, ConventionalCallCredit credit,
+    private static void enrichDetailedP25Call(Connection connection, P25CallCredit credit,
         ReceiverActivityRecords.ActivityEvent observation, boolean newSource, boolean newTarget) throws SQLException
     {
-        if(credit.detailedEventId() == null)
-        {
-            return;
-        }
+        RadioSystemSchema.RadioSystem system = observation.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE ?
+            RadioSystemSchema.ensureReceiverRadioSystem(connection, credit.channelId(),
+                observation.observedAtEpochMilliseconds(), observation.identityDomain(), observation.wacn(),
+                observation.systemId(), observation.radioSystemKey()) : null;
+        RadioSystemSchema.retainDetailedIdentities(connection, system, observation);
+        if(credit.detailedEventId() == null) return;
+        RadioSystemSchema.IdentityReference source = system != null ? RadioSystemSchema.identityReference(connection,
+            system, IDENTITY_KIND_RADIO, positiveInteger(observation.sourceRadioId()), observation.p25SourceIdentity(),
+            observation.observedAtEpochMilliseconds()) : null;
+        List<RadioSystemSchema.IdentityReference> destinations = system != null ?
+            RadioSystemSchema.destinationIdentityReferences(connection, system, observation.targetId(),
+                observation.targetKind(), observation.patchMemberTalkgroupIds(), observation.p25TargetIdentity(),
+                observation.p25PatchMemberIdentities(), observation.observedAtEpochMilliseconds()) : List.of();
+        RadioSystemSchema.IdentityReference target = destinations.isEmpty() ? null : destinations.getFirst();
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE receiver_activity_event SET
                 source_observed_local_id = coalesce(source_observed_local_id, ?),
                 source_observed_working_id = coalesce(source_observed_working_id, ?),
                 target_observed_local_id = CASE WHEN ? = 1 THEN ? ELSE target_observed_local_id END,
                 target_kind_code = CASE WHEN ? = 1 THEN ? ELSE target_kind_code END,
-                target_observed_working_id = CASE WHEN ? = 1 THEN ? ELSE target_observed_working_id END
-            WHERE id = ? AND channel_id = ? AND observed_at_ms = ? AND radio_system_id IS NULL
+                target_observed_working_id = CASE WHEN ? = 1 THEN ? ELSE target_observed_working_id END,
+                radio_system_id = coalesce(radio_system_id, ?),
+                source_identity_summary_id = coalesce(?, source_identity_summary_id),
+                target_identity_summary_id = coalesce(target_identity_summary_id, ?)
+            WHERE id = ? AND channel_id = ? AND observed_at_ms = ?
+              AND (radio_system_id IS NULL OR radio_system_id = ?)
             """))
         {
             setInteger(statement, 1, newSource ? positiveInteger(observation.sourceRadioId()) : null);
@@ -1130,11 +1156,17 @@ public class ReceiverActivitySchema
             setInteger(statement, 6, newTarget ? targetKindCode(observation.targetKind()) : null);
             statement.setInt(7, newTarget ? 1 : 0);
             setInteger(statement, 8, newTarget ? observation.targetObservedWorkingId() : null);
-            statement.setLong(9, credit.detailedEventId());
-            statement.setLong(10, credit.channelId());
-            statement.setLong(11, observation.observedAtEpochMilliseconds());
+            setLong(statement, 9, system != null ? system.radioSystemId() : null);
+            setLong(statement, 10, source != null ? source.summaryId() : null);
+            setLong(statement, 11, target != null ? target.summaryId() : null);
+            statement.setLong(12, credit.detailedEventId());
+            statement.setLong(13, credit.channelId());
+            statement.setLong(14, observation.observedAtEpochMilliseconds());
+            setLong(statement, 15, system != null ? system.radioSystemId() : null);
             statement.executeUpdate();
         }
+        insertActivityEventIdentityMembers(connection, credit.detailedEventId(), credit.channelId(), system,
+            destinations, target != null ? target.summaryId() : null);
     }
 
     static boolean applyConventionalCallOutput(Connection connection,
@@ -1294,9 +1326,36 @@ public class ReceiverActivitySchema
             }
         }
 
+        enrichResolvedCallSource(connection, radioSystem, call);
         AliasActivityProjection.recordResolvedLogicalCall(connection, call);
 
         return true;
+    }
+
+    /** Shared call identity enriches only exact receiver calls; their observed RF addresses remain evidence. */
+    private static void enrichResolvedCallSource(Connection connection, RadioSystemSchema.RadioSystem system,
+        ReceiverActivityRecords.ResolvedLogicalCall call) throws SQLException
+    {
+        RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, system,
+            IDENTITY_KIND_RADIO, call.sourceRadioId(), call.p25SourceIdentity(), call.callStartEpochMilliseconds());
+        if(source == null || call.sourceCallReferences().isEmpty()) return;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE receiver_activity_event SET radio_system_id = ?, source_identity_summary_id = ?
+            WHERE source_call_uuid = ? AND action_code = ?
+              AND (radio_system_id IS NULL OR radio_system_id = ?)
+            """))
+        {
+            for(String reference: call.sourceCallReferences())
+            {
+                statement.setLong(1, system.radioSystemId());
+                statement.setLong(2, source.summaryId());
+                statement.setString(3, reference);
+                statement.setInt(4, actionCode(ReceiverActivityRecords.Action.CALL));
+                statement.setLong(5, system.radioSystemId());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
     }
 
     static boolean applyLogicalCallOutput(Connection connection, ReceiverActivityRecords.LogicalCallOutput output)

@@ -93,7 +93,7 @@ class VceRecordingMetadataFileTest
                 String name = "tones-" + encoded + "-" + format;
                 Recording original = writeAndRead(nativeCall, name + "-plain", format, null);
                 Recording recording = writeAndRead(tagged, name, format, null);
-                assertExistingFieldsUnchanged(nativeCall, nativeCall.recordingIdentifierCollection(), recording);
+                assertExistingFieldsUnchanged(nativeCall, nativeCall.snapshot().identifierCollection(), recording);
                 assertEquals("1", recording.vceFields().get("VCE_PAGING_TONE_SCHEMA"));
                 assertEquals(encoded ? "encoded" : "decoded_audio", recording.vceFields().get("VCE_PAGING_TONE_SOURCE"));
                 assertEquals(encoded ? "2" : "1", recording.vceFields().get("VCE_PAGING_TONE_COUNT"));
@@ -169,7 +169,7 @@ class VceRecordingMetadataFileTest
         {
             Recording recording = writeAndRead(call, "complete", format, null);
             assertEquals(expected, recording.vceFields());
-            assertExistingFieldsUnchanged(call, call.recordingIdentifierCollection(), recording);
+            assertExistingFieldsUnchanged(call, call.snapshot().identifierCollection(), recording);
             ID3v24Tag standard = new ID3v24Tag(recording.id3());
             assertEquals("120045", standard.getArtist());
             assertEquals("3101", standard.getTitle());
@@ -248,12 +248,12 @@ class VceRecordingMetadataFileTest
         {
             Recording recording = writeAndRead(unknown, "unknown", format, null);
             assertTrue(recording.vceFields().isEmpty(), "No facts must produce no placeholder TXXX frames");
-            assertExistingFieldsUnchanged(unknown, unknown.recordingIdentifierCollection(), recording);
+            assertExistingFieldsUnchanged(unknown, unknown.snapshot().identifierCollection(), recording);
         }
     }
 
     @Test
-    void recordingFactsExcludePromotedIdentityLosingReceiverAndCohortAdjustedQuality() throws Exception
+    void recordingUsesResolvedAttributionAndSelectedReceiverQuality() throws Exception
     {
         IdentifierCollection observed = identifiers(APCO25RadioIdentifier.createFrom(120045),
             APCO25Talkgroup.create(3101), APCO25Nac.create(0x3A7));
@@ -269,14 +269,13 @@ class VceRecordingMetadataFileTest
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(333, 0x11111, 0x222, 444),
             APCO25Talkgroup.create(555), List.of(), 852000000L, 2);
         CompletedAudioCall call = new CompletedAudioCall(original.logicalCallId(), original.snapshot(),
-            original.audioBuffers(), original.resolvedPolicy(), List.of(winner, loser), observed);
+            original.audioBuffers(), original.resolvedPolicy(), List.of(winner, loser));
         Map<String, String> expected = fullGroupFields();
-        expected.remove("VCE_P25_SUID");
         for(RecordFormat format: RecordFormat.values())
         {
             Recording recording = writeAndRead(call, "winner", format, null);
             assertEquals(expected, recording.vceFields());
-            assertExistingFieldsUnchanged(call, observed, recording);
+            assertExistingFieldsUnchanged(call, promoted, recording);
             assertEquals("120045", new ID3v24Tag(recording.id3()).getArtist());
         }
     }

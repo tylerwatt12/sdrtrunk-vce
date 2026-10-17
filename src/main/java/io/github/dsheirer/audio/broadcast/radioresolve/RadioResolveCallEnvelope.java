@@ -289,15 +289,13 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
 
     private static ReceptionProjection reception(List<CallLegSummary> summaries, AudioCallSnapshot snapshot,
                                                   AudioRecording recording, long callStart, long callEnd,
-                                                  Long frequencyHz, Integer timeslot, Party fallbackDestination,
-                                                  Party fallbackSource, ProtocolProfile protocolProfile,
+                                                  Long frequencyHz, Integer timeslot, Party destination,
+                                                  Party source, ProtocolProfile protocolProfile,
                                                   Placement conventionalPlacement)
     {
         List<PhysicalLeg> physicalLegs = new ArrayList<>();
         List<PlacementLookup> lookups = new ArrayList<>();
         Quality selectedQuality = quality(snapshot.voiceCallQuality(), sampleCount(recording), false, false);
-        Party selectedDestination = fallbackDestination;
-        Party selectedSource = fallbackSource;
         Long selectedFrequencyHz = frequencyHz;
         Integer selectedTimeslot = timeslot;
         List<FingerprintFrame> combinedFingerprintFrames = new ArrayList<>();
@@ -334,12 +332,6 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
                     selectedTimeslot = legTimeslot != null ? legTimeslot : timeslot;
                     legFrequencyHz = selectedFrequencyHz;
                     legTimeslot = selectedTimeslot;
-                    if(!protocolProfile.analog())
-                    {
-                        selectedDestination = party(summary.p25DestinationIdentity(),
-                            summary.p25PatchMemberIdentities(), fallbackDestination);
-                        selectedSource = party(summary.p25SourceIdentity(), List.of(), fallbackSource);
-                    }
                 }
 
                 int index = physicalLegs.size();
@@ -359,7 +351,7 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
         }
 
         Reception result = new Reception(conventionalPlacement, selectedFrequencyHz, selectedTimeslot,
-            selectedDestination, selectedSource, selectedQuality, combinedFingerprints(combinedFingerprintFrames),
+            destination, source, selectedQuality, combinedFingerprints(combinedFingerprintFrames),
             List.copyOf(physicalLegs));
         HoldContext holdContext = protocolProfile.conventional() ? HoldContext.EMPTY :
             new HoldContext(selectedLookup, List.copyOf(lookups));
@@ -542,44 +534,6 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
         }
 
         return null;
-    }
-
-    private static Party party(CallLegSummary.P25IdentityObservation observation,
-                               List<CallLegSummary.P25IdentityObservation> memberObservations, Party fallback)
-    {
-        if(observation == null)
-        {
-            return fallback;
-        }
-
-        String type = observation.form() == Form.PATCH_GROUP ? "patch_group" :
-            observation.form() == Form.TALKGROUP ? "talkgroup" :
-                observation.form() == Form.RADIO ? "radio" : null;
-
-        if(type == null)
-        {
-            return fallback;
-        }
-
-        List<Party> members = new ArrayList<>();
-
-        if(memberObservations != null)
-        {
-            for(CallLegSummary.P25IdentityObservation member : memberObservations)
-            {
-                Party projected = party(member, List.of(), null);
-
-                if(projected != null)
-                {
-                    members.add(projected);
-                }
-            }
-        }
-
-        long canonicalId = observation.homeIdentityId() != null ? observation.homeIdentityId() :
-            observation.observedLocalId();
-        return new Party(type, (long)observation.observedLocalId(), canonicalId, observation.homeWacn(),
-            observation.homeSystemId(), List.copyOf(members));
     }
 
     private static Encryption encryption(AudioCallSnapshot snapshot)

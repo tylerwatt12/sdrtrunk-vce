@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.google.common.eventbus.EventBus;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
@@ -149,7 +150,7 @@ class P25P2AudioModuleTest
         identifiers.update(APCO25Talkgroup.create(group));
         manager.processP2TrafficCurrentUser(FREQUENCY, TIMESLOT, new StandardChannel(FREQUENCY),
             VoiceServiceOptions.createUnencrypted(), MacOpcode.PUSH_TO_TALK, identifiers, 1_000L, null);
-        manager.processP2TrafficVoice(FREQUENCY, TIMESLOT, 1_100L);
+        manager.processP2TrafficCurrentUser(FREQUENCY, TIMESLOT, APCO25Talkgroup.create(group), 1_100L);
         mAudioModule.receive(pushToTalk(1_000L));
         MacMessage endPushToTalk = endPushToTalk(2_000L, nac, source, group);
 
@@ -386,8 +387,7 @@ class P25P2AudioModuleTest
                 try(LateSourceCall call = new LateSourceCall(timeslot, phaseOneControl, 1_000L))
                 {
                     call.startPushToTalk(1_100L);
-                    String token = call.manager.getP2TrafficCallForAudio(FREQUENCY,timeslot,
-                        call.audio.getIdentifierCollection(),1_100L).getActivityCallToken();
+                    String token = call.events.getFirst().snapshot().activityCallToken();
                     call.voice(1_160L);
                     call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_200L);
                     call.endPushToTalk(1_300L);
@@ -452,13 +452,50 @@ class P25P2AudioModuleTest
             call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_200L);
             call.grant(APCO25RadioIdentifier.createFrom(700_002), 1_250L);
             call.endPushToTalk(1_300L);
-            assertNull(call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
+            assertEquals("700001", call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
 
             call.startPushToTalk(1_400L);
             call.voice(1_460L);
             call.endPushToTalk(1_500L);
             assertEquals("700002", call.completedCalls().getLast().snapshot().recordingMetadata().sourceValue());
             assertNull(call.audio.getIdentifierCollection().getFromIdentifier());
+        }
+    }
+
+    @Test
+    void freshPushToTalkSeparatesSameRadioAndUnknownRadioWhenEndWasMissed()
+    {
+        for(int secondSource: List.of(0, 700_001))
+        {
+            try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+            {
+                call.startPushToTalk(1_100L, 700_001);
+                call.voice(1_160L);
+                call.startPushToTalk(1_200L, secondSource);
+                call.voice(1_260L);
+                call.endPushToTalk(1_300L);
+
+                List<CompletedAudioCall> completed = call.completedCalls();
+                assertEquals(2, completed.size());
+                assertEquals("700001", completed.getFirst().snapshot().recordingMetadata().sourceValue());
+                assertEquals(secondSource == 0 ? null : "700001",
+                    completed.getLast().snapshot().recordingMetadata().sourceValue());
+                assertNotEquals(completed.getFirst().snapshot().activityCallToken(),
+                    completed.getLast().snapshot().activityCallToken());
+            }
+        }
+    }
+
+    @Test
+    void preloadedGrantSourceSurvivesZeroSourcePushToTalk()
+    {
+        try(LateSourceCall call = new LateSourceCall(2, false, 1_000L))
+        {
+            call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_050L);
+            call.startPushToTalk(1_100L);
+            call.voice(1_160L);
+            call.endPushToTalk(1_300L);
+            assertEquals("700001", call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
         }
     }
 
@@ -482,7 +519,7 @@ class P25P2AudioModuleTest
     }
 
     @Test
-    void retuneCannotBorrowSourceFromOriginalFrequency()
+    void retuneDoesNotEraseTheOriginalCallsAcceptedSource()
     {
         try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
         {
@@ -492,7 +529,7 @@ class P25P2AudioModuleTest
             call.frequency(FREQUENCY + 12_500L);
             call.hangtime(1_300L);
 
-            assertNull(call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
+            assertEquals("700001", call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
         }
     }
 
@@ -518,9 +555,7 @@ class P25P2AudioModuleTest
     {
         try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
         {
-            call.audio.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(
-                APCO25RadioIdentifier.createFrom(700_009), IdentifierUpdateNotification.Operation.ADD, 1));
-            call.startPushToTalk(1_100L);
+            call.startPushToTalk(1_100L, 700_009);
             call.voice(1_160L);
             call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_200L);
             call.endPushToTalk(1_300L);
@@ -635,7 +670,7 @@ class P25P2AudioModuleTest
             descriptor.setFrequencyBand(band);
             IAudioCodec codec = new TestAudioCodec();
             audio = new P25P2AudioModule(new UserPreferences(), timeslot, aliases,
-                CallLegSource.UNKNOWN, manager)
+                CallLegSource.UNKNOWN)
             {
                 @Override
                 protected boolean hasAudioCodec()
@@ -655,6 +690,9 @@ class P25P2AudioModuleTest
             traffic.setDecodeConfiguration(new DecodeConfigP25Phase2());
             state = new P25P2DecoderState(traffic, timeslot, manager, new PatchGroupManager());
             state.setCurrentChannel(descriptor);
+            EventBus bus = new EventBus();
+            audio.setInterModuleEventBus(bus);
+            state.setInterModuleEventBus(bus);
             state.setIdentifierUpdateListener(audio.getIdentifierUpdateListener());
             frequency(FREQUENCY);
             audio.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(
@@ -694,8 +732,14 @@ class P25P2AudioModuleTest
 
         private void startPushToTalk(long timestamp)
         {
+            startPushToTalk(timestamp, 0);
+        }
+
+        private void startPushToTalk(long timestamp, int source)
+        {
             CorrectedBinaryMessage bits = messageBits(1);
             bits.setInt(0x80, IntField.length8(80));
+            bits.setInt(source, SOURCE);
             bits.setInt(TALKGROUP, GROUP);
             send(new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new PushToTalk(bits)));
         }

@@ -58,8 +58,8 @@ class SourceCallPersistenceTest
                 ReceiverActivityRecords.Action.CALL,"conventional:1");
             var complete = activity(now + 100,ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25,
                 ReceiverActivityRecords.Action.CALL,"conventional:1");
-            writer.enqueue(new ReceiverActivityRecords.ConventionalCallObservation("conventional:1",initial,true,false));
-            writer.enqueue(new ReceiverActivityRecords.ConventionalCallObservation("conventional:1",complete,false,true));
+            writer.enqueue(new ReceiverActivityRecords.P25CallObservation("conventional:1",initial,true,false));
+            writer.enqueue(new ReceiverActivityRecords.P25CallObservation("conventional:1",complete,false,true));
         }
         finally { writer.close(); }
         assertEquals(0,writer.getDroppedRecords());
@@ -69,6 +69,150 @@ class SourceCallPersistenceTest
             assertTrue(rows.next()); assertEquals(SourceCallReference.fromToken("conventional:1"),rows.getString(1));
             assertFalse(rows.next());
         }
+    }
+
+    @Test void lateTrunkedFactsEnrichOnlyTheirExactCallAndLeaveSignalingAndCountsAlone() throws Exception
+    {
+        Path database = createDatabase("trunked-updates.sqlite");
+        configure(database,CHANNEL,"TRUNKED","P25_PHASE1","P25");
+        long now = System.currentTimeMillis();
+        var initial = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            ReceiverActivityRecords.Action.CALL,"trunked:1").withP25Identities(null,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
+        var learned = initial.withP25Identities(202,"101","TALKGROUP",List.of(),
+            ReceiverActivityRecords.P25Identity.ORDINARY,ReceiverActivityRecords.P25Identity.ORDINARY,202,null);
+        var other = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            ReceiverActivityRecords.Action.CALL,"trunked:2").withP25Identities(303,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.ORDINARY,ReceiverActivityRecords.P25Identity.ORDINARY,303,null);
+        var grant = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            ReceiverActivityRecords.Action.GRANT,null).withP25Identities(null,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
+        var writer = new ReceiverActivityWriter(database,30,true,16,16,0);
+        writer.start();
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("trunked:1",initial,true,false));
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("trunked:2",other,true,false));
+        writer.enqueue(grant);
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("trunked:1",learned,false,true));
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("trunked:1",learned,false,true));
+        writer.close();
+        assertEquals(0,writer.getDroppedRecords());
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        {
+            assertEquals(3,scalar(sql,"SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(202,scalar(sql,"SELECT source_observed_local_id FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("trunked:1") + "'"));
+            assertEquals(303,scalar(sql,"SELECT source_observed_local_id FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("trunked:2") + "'"));
+            assertEquals(1,scalar(sql,"SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid IS NULL AND source_observed_local_id IS NULL"));
+            assertEquals(0,scalar(sql,"SELECT coalesce(sum(logical_call_count),0) FROM trunked_logical_call_bucket"));
+            assertEquals(0,scalar(sql,"SELECT count(*) FROM conventional_activity_summary"));
+            assertEquals(0,scalar(sql,"SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    @Test void commonSourceUsesExactReferencesAndPreservesEachSitesObservedWorkingAddress() throws Exception
+    {
+        Path database = createDatabase("common-source.sqlite");
+        configure(database,CHANNEL,"TRUNKED","P25_PHASE1","P25");
+        configure(database,SECOND_CHANNEL,"TRUNKED","P25_PHASE1","P25");
+        long now = System.currentTimeMillis();
+        var source = ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00,0x111,777);
+        var first = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            ReceiverActivityRecords.Action.CALL,"site:1").withP25Identities(null,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
+        var second = new ReceiverActivityRecords.ActivityEvent(now,SECOND_CHANNEL,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,"APCO25",ReceiverActivityRecords.Action.CALL,"CALL_GROUP",
+            "5002","101","TALKGROUP",List.of(),460012500L,null,1,false,null,null,0xBEE00,0x3A9,0x293,2,2,null,
+            true,null,null,TrunkedIdentityDomain.STANDARD,ReceiverActivityRecords.P25Identity.ORDINARY,source,List.of(),
+            null,5002,null,null,null,"site:2");
+        var unrelated = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            ReceiverActivityRecords.Action.CALL,"next:1").withP25Identities(null,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
+        var resolved = new ReceiverActivityRecords.ResolvedLogicalCall(
+            new io.github.dsheirer.audio.call.LogicalCallId(91,1),now,CHANNEL,"APCO25",TrunkedIdentityDomain.STANDARD,
+            0xBEE00,0x3A9,101,"TALKGROUP",List.of(),5001,false,null,null,
+            ReceiverActivityRecords.P25Identity.ORDINARY,source,List.of(),List.of(),null,5001,null,
+            List.of(SourceCallReference.fromToken("site:1"),SourceCallReference.fromToken("site:2")));
+        var writer = new ReceiverActivityWriter(database,30,true,16,16,0);
+        writer.start();
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("site:1",first,true,false));
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("site:2",second,true,false));
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("next:1",unrelated,true,false));
+        writer.enqueue(resolved); writer.enqueue(resolved); writer.close();
+        assertEquals(0,writer.getDroppedRecords());
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        {
+            assertEquals(1,scalar(sql,"SELECT count(DISTINCT source_identity_summary_id) FROM receiver_activity_event"));
+            assertEquals(2,scalar(sql,"SELECT count(*) FROM receiver_activity_event_resolved WHERE source_identity_id=777"));
+            assertEquals(1,scalar(sql,"SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("site:1") + "' AND source_observed_local_id IS NULL AND source_observed_working_id IS NULL AND source_identity_summary_id IS NOT NULL"));
+            assertEquals(1,scalar(sql,"SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("site:2") + "' AND source_observed_local_id=5002 AND source_observed_working_id=5002"));
+            assertEquals(1,scalar(sql,"SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("next:1") + "' AND source_identity_summary_id IS NULL"));
+            assertEquals(1,scalar(sql,"SELECT sum(logical_call_count) FROM trunked_logical_call_bucket"));
+            assertEquals(0,scalar(sql,"SELECT count(*) FROM pragma_foreign_key_check"));
+            try(var plan = sql.executeQuery("EXPLAIN QUERY PLAN UPDATE receiver_activity_event SET source_identity_summary_id=1 " +
+                "WHERE source_call_uuid='" + SourceCallReference.fromToken("site:1") + "' AND action_code=1"))
+            {
+                assertTrue(plan.next());
+                assertTrue(plan.getString("detail").contains("idx_receiver_activity_event_source_call"));
+            }
+        }
+    }
+
+    @Test void unheardCallsAcceptQualifiedProofWithoutRecountingOrChangingAKnownQualifiedCaller() throws Exception
+    {
+        Path database = createDatabase("qualified-updates.sqlite");
+        configure(database,CHANNEL,"TRUNKED","P25_PHASE1","P25");
+        long now = System.currentTimeMillis();
+        var ordinary = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+            ReceiverActivityRecords.Action.CALL,"qualified:1").withP25Identities(5001,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.ORDINARY,ReceiverActivityRecords.P25Identity.ORDINARY,5001,null);
+        var proof = ordinary.withP25Identities(5001,"101","TALKGROUP",List.of(),
+            ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00,0x111,777),
+            ReceiverActivityRecords.P25Identity.ORDINARY,5001,null);
+        var conflict = ordinary.withP25Identities(5001,"101","TALKGROUP",List.of(),
+            ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00,0x111,888),
+            ReceiverActivityRecords.P25Identity.ORDINARY,5001,null);
+        var writer = new ReceiverActivityWriter(database,30,true,16,16,0);
+        writer.start();
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("qualified:1",ordinary,true,false));
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("qualified:1",proof,false,false));
+        writer.enqueue(new ReceiverActivityRecords.P25CallObservation("qualified:1",conflict,false,true));
+        for(int index = 2; index <= 3; index++)
+        {
+            String token = "qualified:" + index;
+            var unknown = activity(now + index,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
+                ReceiverActivityRecords.Action.CALL,token).withP25Identities(null,"101","TALKGROUP",List.of(),
+                    ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
+            var qualified = unknown.withP25Identities(index == 2 ? Integer.valueOf(0) : null,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00,0x111,900 + index),
+                ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
+            writer.enqueue(new ReceiverActivityRecords.P25CallObservation(token,unknown,true,false));
+            writer.enqueue(new ReceiverActivityRecords.P25CallObservation(token,qualified,false,true));
+            var otherCaller = qualified.withP25Identities(9999,"101","TALKGROUP",List.of(),
+                ReceiverActivityRecords.P25Identity.fullyQualifiedRadio(0xBEE00,0x111,9999),
+                ReceiverActivityRecords.P25Identity.ORDINARY,9999,null);
+            writer.enqueue(new ReceiverActivityRecords.P25CallObservation(token,otherCaller,false,true));
+        }
+        writer.close();
+        assertEquals(0,writer.getDroppedRecords());
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        {
+            assertEquals(3,scalar(sql,"SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(777,scalar(sql,"SELECT source_identity_id FROM receiver_activity_event_resolved WHERE id=(SELECT id FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("qualified:1") + "')"));
+            assertEquals(2,scalar(sql,"SELECT count(*) FROM receiver_activity_event_resolved WHERE source_identity_id IN (902,903) AND source_observed_local_id IS NULL"));
+            assertEquals(0,scalar(sql,"SELECT coalesce(sum(logical_call_count),0) FROM trunked_logical_call_bucket"));
+            assertEquals(0,scalar(sql,"SELECT count(*) FROM conventional_activity_summary"));
+            assertEquals(0,scalar(sql,"SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    private static long scalar(java.sql.Statement statement, String query) throws Exception
+    {
+        try(var rows = statement.executeQuery(query)) { assertTrue(rows.next()); return rows.getLong(1); }
     }
 
     @Test void completedDmrAndNxdnConventionalCallsPreserveTheirProducerReferences() throws Exception

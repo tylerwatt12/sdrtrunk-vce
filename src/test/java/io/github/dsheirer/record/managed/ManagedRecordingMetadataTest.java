@@ -40,6 +40,7 @@ import io.github.dsheirer.module.decode.lj1200.LJ1200Message;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.AuxiliaryIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
@@ -258,7 +259,7 @@ class ManagedRecordingMetadataTest
     }
 
     @Test
-    void auxiliaryFactsAreBoundedDeduplicatedAndDoNotComeFromMissingRecordingEvidence()
+    void auxiliaryFactsAreBoundedDeduplicatedAndUseTheSharedCallAttribution()
     {
         List<Identifier> identifiers = new ArrayList<>();
         identifiers.add(TaitIdentifier.createFrom("Unit A"));
@@ -272,13 +273,39 @@ class ManagedRecordingMetadataTest
         assertTrue(ManagedRecordingMetadata.auxiliaryIdentifiers(null).isEmpty());
         var missingRecordingFacts = metadata(DecoderType.NBFM,ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL,
             null,null,List.of(),new IdentifierCollection(List.of(TaitIdentifier.createFrom("snapshot-only"))),true);
-        assertTrue(missingRecordingFacts.auxiliaryIdentifiers().isEmpty(),
-            "The public snapshot cannot substitute for a missing winning recording collection");
+        assertEquals(List.of(new AuxiliaryIdentifier("TAIT1200", "radio", "source", "snapshot-only")),
+            missingRecordingFacts.auxiliaryIdentifiers());
         for(int i=0;i<100;i++) identifiers.add(TaitIdentifier.createFrom("UNIT-"+i));
         assertEquals(64,ManagedRecordingMetadata.auxiliaryIdentifiers(new IdentifierCollection(identifiers)).size());
         var metadata = metadata(DecoderType.NBFM,ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL,
             null,null,List.of(),new IdentifierCollection());
         assertTrue(metadata.auxiliaryIdentifiers().isEmpty(),"A primary analog decoder alone does not prove signalling");
+    }
+
+    @Test
+    void sourceComesFromResolvedCallEvenWhenSelectedReceiverDisagreesOrResolutionIsUnknown()
+    {
+        var known = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x321, 777);
+        var stale = APCO25RadioIdentifier.createFrom(999);
+        CallLegSource source = source(DecoderType.P25_PHASE1, TRUNKED, SITE, null);
+        for(boolean resolved: List.of(true, false))
+        {
+            var identifiers = new IdentifierCollection(resolved ? List.of(known, APCO25Talkgroup.create(1201)) :
+                List.of(APCO25Talkgroup.create(1201)));
+            AudioCallId id = new AudioCallId(1, 1, 0);
+            var snapshot = new AudioCallSnapshot(id, null, null, identifiers, Set.of(), 1_000, 2_000,
+                1, 1, 1_000, 2_000, false, true, CallEncryptionState.CLEAR, true, null, null,
+                CallLegId.from(id), source, null);
+            var leg = new CallLegSummary(snapshot.callLegId(), source, 1_000, 2_000, VoiceCallQuality.EMPTY,
+                160, false, false, true, null, stale, identifiers.getToIdentifier());
+            var call = new CompletedAudioCall(new LogicalCallId(1, 1), snapshot, List.of(new float[160]), null,
+                List.of(leg));
+            var metadata = ManagedRecordingMetadata.from(call, "shared.mp3", 5);
+
+            assertEquals(resolved ? Integer.valueOf(501) : null, metadata.sourceId());
+            assertEquals(resolved ? Integer.valueOf(777) : null, metadata.sourceHomeId());
+            assertEquals(resolved ? Integer.valueOf(0xABCDE) : null, metadata.sourceHomeWacn());
+        }
     }
 
     @Test
@@ -334,7 +361,7 @@ class ManagedRecordingMetadataTest
         for(int index = 0; index < legs.size(); index++)
             legs.set(index, legs.get(index).withActivityCallToken("metadata:" + (index + 1)));
         CompletedAudioCall call = new CompletedAudioCall(new LogicalCallId(1L, 1L), snapshot,
-            single.audioBuffers(), null, legs,missingRecordingFacts ? null : identifiers);
+            single.audioBuffers(), null, legs);
         return ManagedRecordingMetadata.from(call, "call.mp3", 5L);
     }
 

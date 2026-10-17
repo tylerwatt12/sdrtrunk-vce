@@ -64,7 +64,7 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
-import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
+import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
@@ -216,7 +216,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         DecodeEvent ordinary = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis()).build();
-        P25ConventionalCallUpdateEvent conventional = new P25ConventionalCallUpdateEvent(new P25CallStartEvent(
+        P25CallUpdateEvent conventional = new P25CallUpdateEvent(new P25CallStartEvent(
             "00000000-0000-0000-0000-000000000730", DecoderType.P25_CONVENTIONAL,
             DecodeEventType.CALL_GROUP, System.currentTimeMillis(), List.of(APCO25Talkgroup.create(1201)),
             154_875_000L, null, null, 1, false, false, null, "bounded-handoff"), true);
@@ -231,7 +231,7 @@ class ReceiverActivityServiceLifecycleTest
             for(int x = 0; x < ReceiverActivityService.OBSERVATION_QUEUE_SIZE + 16; x++)
             {
                 if(x % 2 == 0) service.getDecodeEventListener().accept(channel, ordinary);
-                else service.receiveConventionalCallUpdate(conventional);
+                else service.receiveP25CallUpdate(conventional);
             }
 
             long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
@@ -284,14 +284,14 @@ class ReceiverActivityServiceLifecycleTest
 
             List<Identifier> identified = List.of(APCO25Talkgroup.create(1201),
                 APCO25RadioIdentifier.createFrom(700_001));
-            service.receiveConventionalCallUpdate(new P25ConventionalCallUpdateEvent(new P25CallStartEvent(
+            service.receiveP25CallUpdate(new P25CallUpdateEvent(new P25CallStartEvent(
                 initial.configurationId(), initial.decoderType(), initial.eventType(), start, identified,
                 initial.frequencyHertz(), null, null, 1, false, false, null, initial.callToken()), true));
             P25CallStartEvent fresh = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
                 initial.eventType(), System.currentTimeMillis() + 1, identified, initial.frequencyHertz(),
                 null, null, 1, false, false, null, "after-resume");
             service.receiveCallStart(fresh);
-            service.receiveConventionalCallUpdate(new P25ConventionalCallUpdateEvent(fresh, true));
+            service.receiveP25CallUpdate(new P25CallUpdateEvent(fresh, true));
             assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
             awaitScalar(database, "SELECT sum(call_count) FROM conventional_activity_summary", 2);
             assertEquals(1, scalar(database, """
@@ -351,7 +351,7 @@ class ReceiverActivityServiceLifecycleTest
                 initial.eventType(), start, List.of(APCO25Talkgroup.create(1201),
                     APCO25RadioIdentifier.createFrom(700_001)), initial.frequencyHertz(), null, null, 1,
                 false, false, null, initial.callToken());
-            service.receiveConventionalCallUpdate(new P25ConventionalCallUpdateEvent(identified, true));
+            service.receiveP25CallUpdate(new P25CallUpdateEvent(identified, true));
             P25CallStartEvent fresh = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
                 initial.eventType(), System.currentTimeMillis() + 1, identified.identifiers(), initial.frequencyHertz(),
                 null, null, 1, false, false, null, "after-reset-barrier");

@@ -54,7 +54,7 @@ public class AudioCallRecorder
     public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
                              UserPreferences userPreferences) throws IOException
     {
-        write(completedAudioCall, path, recordFormat, userPreferences, completedAudioCall.recordingIdentifierCollection());
+        write(completedAudioCall, path, recordFormat, userPreferences, completedAudioCall.snapshot().identifierCollection());
     }
 
     public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
@@ -69,7 +69,7 @@ public class AudioCallRecorder
                              UserPreferences userPreferences, boolean normalizeAudio) throws IOException
     {
         write(completedAudioCall, path, recordFormat, userPreferences,
-            completedAudioCall.recordingIdentifierCollection(), normalizeAudio);
+            completedAudioCall.snapshot().identifierCollection(), normalizeAudio);
     }
 
     /** Uses the worker's captured normalization choice, independent of later preference changes. */
@@ -130,8 +130,8 @@ public class AudioCallRecorder
             try(OutputStream outputStream = Files.newOutputStream(path, StandardOpenOption.CREATE_NEW,
                 StandardOpenOption.WRITE))
             {
-                Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
-                    completedAudioCall.snapshot().aliasList());
+                Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getCapturedMetadataMap(identifierCollection,
+                    completedAudioCall.snapshot().recordingMetadata());
 
                 byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap,
                     VceRecordingMetadata.capture(completedAudioCall));
@@ -173,8 +173,8 @@ public class AudioCallRecorder
                     writer.writeData(ConversionUtils.convertToSigned16BitSamples(audioBuffer));
                 }
 
-                Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getMetadataMap(identifierCollection,
-                    completedAudioCall.snapshot().aliasList());
+                Map<AudioMetadata,String> metadataMap = AudioMetadataUtils.getCapturedMetadataMap(identifierCollection,
+                    completedAudioCall.snapshot().recordingMetadata());
 
                 ByteBuffer listChunk = AudioMetadataUtils.getLISTChunk(metadataMap);
                 byte[] id3Bytes = AudioMetadataUtils.getMP3ID3(metadataMap,

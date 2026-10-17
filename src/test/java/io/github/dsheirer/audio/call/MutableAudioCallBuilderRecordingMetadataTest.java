@@ -294,7 +294,13 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals("Frozen destination", metadata.destinationAlias());
         assertEquals("frozen matcher", metadata.destinationMatcherIdentity());
         assertTrue(metadata.destinationRecordEnabled());
-        assertSame(metadata.sourceRadioIdentity(), metadata.withResolvedUserIdentifiers(null, null).sourceRadioIdentity());
+        AudioCallRecordingMetadata unknown = metadata.withResolvedUserIdentifiers(null, null);
+        assertNull(unknown.sourceRadioIdentity());
+        assertNull(unknown.sourceValue());
+        assertNull(unknown.sourceProtocol());
+        assertNull(unknown.sourceAlias());
+        assertNull(unknown.sourceDescription());
+        assertNull(unknown.sourceGroup());
     }
 
     @Test
@@ -353,7 +359,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertNull(resolved.sourceObservedWorkingId());
         assertNull(resolved.destinationObservedWorkingId());
         assertEquals(IdentityResolutionEvidence.DIRECT, resolved.sourceRadioIdentity().evidence());
-        assertEquals("Frozen source", resolved.sourceAlias());
+        assertNull(resolved.sourceAlias(), "An alias for another canonical source must be discarded");
         assertEquals("Frozen destination", resolved.destinationAlias());
         assertEquals("frozen matcher", resolved.destinationMatcherIdentity());
     }
@@ -369,7 +375,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertEquals(metadata.sourceP25Identity(), resolved.sourceP25Identity());
         assertEquals(502, resolved.sourceObservedWorkingId());
         assertEquals(IdentityResolutionEvidence.DIRECT, resolved.sourceRadioIdentity().evidence());
-        assertEquals("501", resolved.sourceValue(), "historical recording policy values remain frozen");
+        assertEquals("502", resolved.sourceValue(), "Every output uses the accepted source address");
     }
 
     @Test

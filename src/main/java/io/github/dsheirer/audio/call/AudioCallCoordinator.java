@@ -1291,8 +1291,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 positiveTimeslot(leg.snapshot.timeslot())).withActivityCallToken(leg.snapshot.activityCallToken())).toList();
 
         return new CompletedAudioCall(new LogicalCallId(mCoordinatorId, mNextLogicalCallSequence++),
-            resolvedSnapshot, winner.audioBuffers, policy, summaries, winnerSnapshot.identifierCollection(),
-            winnerSnapshot, null);
+            resolvedSnapshot, winner.audioBuffers, policy, summaries, winnerSnapshot, null);
     }
 
     private void recordResolvedDecision(CompletedAudioCall resolvedCall, List<CompletedReceiverLeg> legs,
@@ -1780,10 +1779,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                     talkgroup.getSystem(), talkgroup.getTalkgroup()) :
                     APCO25FullyQualifiedTalkgroupIdentifier.createFrom(local, talkgroup.getWacn(),
                         talkgroup.getSystem(), talkgroup.getTalkgroup());
-            TalkgroupIdentifier observation = winnerLocal instanceof FullyQualifiedTalkgroupIdentifier winnerGroup ?
-                winnerGroup.getRecordingIdentifier() : winnerLocal instanceof TalkgroupIdentifier winnerGroup ?
-                    winnerGroup : talkgroup.getRecordingIdentifier();
-            return APCO25FullyQualifiedTalkgroupIdentifier.withRecordingIdentifier(promoted, observation);
+            return promoted;
         }
         if(exact instanceof FullyQualifiedRadioIdentifier radio)
         {
@@ -1815,10 +1811,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                     radio.getSystem(), radio.getRadio()) : APCO25FullyQualifiedRadioIdentifier.createFrom(local,
                         radio.getWacn(), radio.getSystem(), radio.getRadio());
             }
-            RadioIdentifier observation = winnerLocal instanceof FullyQualifiedRadioIdentifier winnerRadio ?
-                winnerRadio.getRecordingIdentifier() : winnerLocal instanceof RadioIdentifier winnerRadio ?
-                    winnerRadio : radio.getRecordingIdentifier();
-            return APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(promoted, observation);
+            return promoted;
         }
         return exact;
     }

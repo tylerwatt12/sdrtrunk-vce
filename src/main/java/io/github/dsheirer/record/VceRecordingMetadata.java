@@ -36,9 +36,9 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Additional recording facts projected on the recording worker from the completed audio winner's captured leg.
+ * Additional recording facts projected from resolved call attribution and selected receiver provenance.
  * These named ID3 TXXX values supplement the standard recording contract without changing it. No lookup of live
- * decoder state, aliases, or subscriber assignments is performed, and logical-call identity promotion is excluded.
+ * decoder state, aliases, or subscriber assignments is performed.
  */
 public final class VceRecordingMetadata
 {
@@ -50,7 +50,7 @@ public final class VceRecordingMetadata
         if(call == null) return Map.of();
 
         Map<String, String> fields = new LinkedHashMap<>();
-        IdentifierCollection identifiers = call.recordingIdentifierCollection();
+        IdentifierCollection identifiers = call.snapshot().identifierCollection();
         Identifier<?> source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier<?> destination = identifiers != null ? identifiers.getToIdentifier() : null;
         radio(fields, source, "VCE_P25_WUID", "VCE_P25_SUID");
@@ -115,7 +115,7 @@ public final class VceRecordingMetadata
                     if(member == null) continue;
                     if(++index > 32) break;
                     String prefix = "VCE_PATCH_RADIO_" + index;
-                    positiveInteger(fields, prefix, BasicRecordingContract.recordingIdentifier(member));
+                    positiveInteger(fields, prefix, member);
                     radio(fields, member, prefix + "_WUID", prefix + "_SUID");
                 }
             }

@@ -752,7 +752,7 @@ final class StatsWebCallService implements AutoCloseable
         CallLegSource callLegSource = snapshot.callLegSource();
         String servingSystemKey = RadioSystemKey.p25Serving(
             callLegSource != null ? callLegSource.radioSystemKey() : null,
-            callLegSource != null ? callLegSource.p25SiteIdentity() : null, call.recordingIdentifierCollection());
+            callLegSource != null ? callLegSource.p25SiteIdentity() : null, call.nativeAudioSnapshot().identifierCollection());
         CallPlaybackTarget playbackTarget = CallPlaybackTarget.from(snapshot, target);
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         putText(value, "call_id", id);
@@ -779,11 +779,7 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "decoder", callLegSource != null && callLegSource.decoderType() != null ?
             callLegSource.decoderType().name() :
             identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
-        String sourceValue = recordingMetadata != null ? recordingMetadata.sourceValue() : value(source);
-        if(sourceValue == null && source != null && source.getForm() == Form.TALKGROUP)
-        {
-            sourceValue = value(source);
-        }
+        String sourceValue = value(source);
         putText(value, "source_id", sourceValue);
         if(recordingMetadata != null && recordingMetadata.sourceP25Identity() != null)
         {

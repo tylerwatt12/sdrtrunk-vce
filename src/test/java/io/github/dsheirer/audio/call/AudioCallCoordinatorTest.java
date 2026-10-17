@@ -81,7 +81,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void compatibleCompletedCallConstructorsUseSnapshotRecordingIdentifiersAndExplicitNullIsPreserved()
+    void completedCallConstructorsHaveOneAttributionSnapshot()
     {
         AudioCallSnapshot snapshot = snapshot(leg(16, aliasList(723), 0xABCDE, 0x125, 26, 207,
             9_103, 7_779, 2_000, 5_000, GOOD_QUALITY, true, Set.of()), true);
@@ -90,16 +90,11 @@ class AudioCallCoordinatorTest
             singleLeg.resolvedPolicy());
         CompletedAudioCall compatible = new CompletedAudioCall(singleLeg.logicalCallId(), snapshot,
             singleLeg.audioBuffers(), singleLeg.resolvedPolicy(), singleLeg.callLegSummaries());
-        CompletedAudioCall missingObservations = new CompletedAudioCall(singleLeg.logicalCallId(), snapshot,
-            singleLeg.audioBuffers(), singleLeg.resolvedPolicy(), singleLeg.callLegSummaries(), null);
-
         for(CompletedAudioCall call: List.of(singleLeg, withPolicy, compatible))
         {
-            assertSame(snapshot.identifierCollection(), call.recordingIdentifierCollection());
+            assertSame(snapshot, call.snapshot());
+            assertSame(snapshot, call.nativeAudioSnapshot());
         }
-        assertNull(missingObservations.recordingIdentifierCollection(),
-            "A missing winner observation must not fall back to identities supplied by other receiver legs");
-        assertSame(snapshot, missingObservations.snapshot());
     }
 
     @Test
@@ -272,22 +267,22 @@ class AudioCallCoordinatorTest
             assertEquals(homeRadio, source.getRadio());
             assertEquals(localRadio, source.getWorkingAddress());
             assertEquals(IdentityResolutionEvidence.DIRECT, source.getResolutionEvidence());
-            assertSame(goodIdentifiers.getFromIdentifier(), source.getRecordingIdentifier(),
-                "Logical identity promotion retains the winning receiver's ordinary radio observation");
+            assertEquals(localRadio, source.getValue(),
+                "Logical identity promotion retains the winning receiver's local address");
             assertEquals("v1-g-abcde-123-9101",
                 call.snapshot().recordingMetadata().destinationIdentity());
             assertEquals(Integer.toString(localRadio), call.snapshot().recordingMetadata().sourceValue(),
                 "Winner-owned display metadata keeps the winner site's observed local address");
             assertEquals(localRadio, call.snapshot().recordingMetadata().sourceObservedWorkingId());
-            assertSame(goodIdentifiers, call.recordingIdentifierCollection(),
+            assertSame(goodIdentifiers, call.nativeAudioSnapshot().identifierCollection(),
                 "The recording retains every winner-owned configuration and user observation");
-            assertTrue(call.recordingIdentifierCollection().getToIdentifier() instanceof APCO25Talkgroup);
-            assertTrue(call.recordingIdentifierCollection().getFromIdentifier() instanceof APCO25RadioIdentifier);
+            assertTrue(call.nativeAudioSnapshot().identifierCollection().getToIdentifier() instanceof APCO25Talkgroup);
+            assertTrue(call.nativeAudioSnapshot().identifierCollection().getFromIdentifier() instanceof APCO25RadioIdentifier);
             assertEquals(Integer.toString(localRadio), AudioMetadataUtils.getMetadataMap(
-                call.recordingIdentifierCollection(), aliasList).get(AudioMetadata.ARTIST_NAME),
+                call.snapshot().identifierCollection(), aliasList).get(AudioMetadata.ARTIST_NAME),
                 "Another receiver's exact identity must not change the winner's standard recording tags");
             assertEquals(Integer.toString(talkgroup), BasicRecordingContract.targetIdentifier(
-                call.recordingIdentifierCollection().getToIdentifier()));
+                call.snapshot().identifierCollection().getToIdentifier()));
         }
         finally
         {
@@ -332,8 +327,8 @@ class AudioCallCoordinatorTest
                 assertEquals(501, source.getWorkingAddress());
                 assertEquals(IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT, source.getResolutionEvidence());
                 assertSame(observed, source.getRecordingIdentifier());
-                assertSame(identifiers, call.recordingIdentifierCollection());
-                assertEquals("9001", BasicRecordingContract.sourceIdentifier(source));
+                assertSame(identifiers, call.nativeAudioSnapshot().identifierCollection());
+                assertEquals("501", BasicRecordingContract.sourceIdentifier(source));
             }
             finally
             {
@@ -478,9 +473,9 @@ class AudioCallCoordinatorTest
                     call.snapshot().identifierCollection().getFromIdentifier();
                 assertEquals(sharedNumber, radio.getRadio());
                 assertNull(radio.getWorkingAddress());
-                assertSame(ordinaryWins ? ordinary : canonical, call.recordingIdentifierCollection());
+                assertSame(ordinaryWins ? ordinary : canonical, call.nativeAudioSnapshot().identifierCollection());
                 assertEquals("7779", AudioMetadataUtils.getMetadataMap(
-                    call.recordingIdentifierCollection(), aliasList).get(AudioMetadata.ARTIST_NAME),
+                    call.snapshot().identifierCollection(), aliasList).get(AudioMetadata.ARTIST_NAME),
                     "Standard tags must keep the elected receiver's original identifier representation");
             }
             finally
@@ -522,7 +517,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void patchRecordingIdentifiersKeepTheWinnersObservedPrimaryAndMembers() throws Exception
+    void resolvedPatchKeepsTheWinnersObservedPrimaryAndMembers() throws Exception
     {
         for(boolean ordinaryWins: List.of(true, false))
         {
@@ -559,9 +554,9 @@ class AudioCallCoordinatorTest
                 assertTrue(resolvedPatch.getValue().getPatchGroup() instanceof APCO25FullyQualifiedTalkgroupIdentifier);
                 assertEquals(List.of(APCO25Talkgroup.create(9_121)),
                     resolvedPatch.getValue().getPatchedTalkgroupIdentifiers());
-                assertSame(ordinaryWins ? ordinary : canonical, call.recordingIdentifierCollection());
+                assertSame(ordinaryWins ? ordinary : canonical, call.nativeAudioSnapshot().identifierCollection());
                 assertEquals("P:9120 [9121]",
-                    AudioMetadataUtils.getMetadataMap(call.recordingIdentifierCollection(), aliasList)
+                    AudioMetadataUtils.getMetadataMap(call.snapshot().identifierCollection(), aliasList)
                         .get(AudioMetadata.TRACK_TITLE));
             }
             finally
@@ -605,9 +600,9 @@ class AudioCallCoordinatorTest
                     assertEquals(destination, radio.getRadio());
                     assertNull(radio.getWorkingAddress());
                     assertEquals(second.callId(), resolved.getFirst().snapshot().callId());
-                    assertSame(ordinary, resolved.getFirst().recordingIdentifierCollection());
+                    assertSame(ordinary, resolved.getFirst().nativeAudioSnapshot().identifierCollection());
                     assertEquals("7779", BasicRecordingContract.targetIdentifier(
-                        resolved.getFirst().recordingIdentifierCollection().getToIdentifier()));
+                        resolved.getFirst().snapshot().identifierCollection().getToIdentifier()));
                 }
                 else
                 {

@@ -81,7 +81,7 @@ class AudioCallRecorderTest
         Path wav = mDirectory.resolve("supplied.wav");
         UserPreferences preferences = new UserPreferences();
         AudioCallRecorder.writeRendered(call, supplied, wav, RecordFormat.WAVE, preferences,
-            call.recordingIdentifierCollection(), false);
+            call.snapshot().identifierCollection(), false);
         byte[] wave = Files.readAllBytes(wav);
         ByteBuffer format = ByteBuffer.wrap(waveChunk(wave, "fmt ")).order(ByteOrder.LITTLE_ENDIAN);
         assertEquals(16000, format.getInt(4));
@@ -96,7 +96,7 @@ class AudioCallRecorderTest
             preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_16000);
             Path mp3 = mDirectory.resolve("supplied.mp3");
             AudioCallRecorder.writeRendered(call, supplied, mp3, RecordFormat.MP3, preferences,
-                call.recordingIdentifierCollection(), false);
+                call.snapshot().identifierCollection(), false);
             Mp3File recorded = new Mp3File(mp3.toString());
             assertEquals(16000, recorded.getSampleRate(), "Supplied audio must not be silently treated as 8 kHz");
             assertTrue(recorded.getLengthInMilliseconds() >= 11900 && recorded.getLengthInMilliseconds() < 12300,
@@ -107,7 +107,7 @@ class AudioCallRecorderTest
             preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_8000);
             Path constrained = mDirectory.resolve("supplied-target8k.mp3");
             AudioCallRecorder.writeRendered(call, supplied, constrained, RecordFormat.MP3, preferences,
-                call.recordingIdentifierCollection(), false);
+                call.snapshot().identifierCollection(), false);
             Mp3File downsampled = new Mp3File(constrained.toString());
             assertEquals(8000, downsampled.getSampleRate(), "Explicit destination constraints are honored");
             assertTrue(downsampled.getLengthInMilliseconds() >= 11900 && downsampled.getLengthInMilliseconds() < 12400,
@@ -195,14 +195,14 @@ class AudioCallRecorderTest
     }
 
     @Test
-    void finalMp3AndWaveTagsUseOriginalWinnerIdentifiersAfterCanonicalCallResolution() throws Exception
+    void finalMp3AndWaveTagsUseResolvedAttributionAfterCanonicalCallResolution() throws Exception
     {
         CompletedAudioCall resolved = callWithQuality();
         IdentifierCollection observed = new IdentifierCollection(List.of(
             SystemConfigurationIdentifier.create("SyntheticSystem"),
             APCO25RadioIdentifier.createFrom(501), APCO25Talkgroup.create(48530)));
-        CompletedAudioCall call = new CompletedAudioCall(resolved.logicalCallId(), resolved.snapshot(),
-            resolved.audioBuffers(), resolved.resolvedPolicy(), resolved.callLegSummaries(), observed);
+        CompletedAudioCall call = callWithContext(resolved.snapshot().callLegSource(), observed,
+            resolved.snapshot().identifierCollection(), null);
 
         for(RecordFormat format: RecordFormat.values())
         {
@@ -211,7 +211,7 @@ class AudioCallRecorderTest
             byte[] bytes = Files.readAllBytes(path);
             ID3v24Tag tag = new ID3v24Tag(format == RecordFormat.MP3 ? bytes : waveChunk(bytes, "id3 "));
             assertEquals("501", tag.getArtist());
-            assertEquals("48530", tag.getTitle());
+            assertEquals("777", tag.getTitle());
             if(format == RecordFormat.WAVE)
             {
                 String info = new String(waveChunk(bytes, "LIST"), StandardCharsets.UTF_8);
@@ -245,6 +245,7 @@ class AudioCallRecorderTest
             new P25SiteIdentity(0xABCDE, 0x456, 1, 1), TrunkedIdentityDomain.STANDARD, null, false,
             "p25:bee00:687");
         CompletedAudioCall call = callWithContext(winner, observed, observed, aliases);
+        canonical.setName("Renamed after capture");
         UserPreferences preferences = new UserPreferences();
         RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
         try
@@ -354,11 +355,17 @@ class AudioCallRecorderTest
         AudioCallSnapshot snapshot = new AudioCallSnapshot(old.callId(), old.linkedCallId(), aliases, resolved,
             old.broadcastChannels(), old.startTimestamp(), old.lastActivityTimestamp(), old.burstCount(),
             old.burstGeneration(), old.lastBurstStartTimestamp(), old.lastBurstEndTimestamp(), old.burstActive(),
-            old.complete(), old.encryptionState(), old.recordAudio(), null, old.voiceCallQuality(),
+            old.complete(), old.encryptionState(), old.recordAudio(),
+            io.github.dsheirer.audio.call.AudioCallRecordingMetadata.captureAtSnapshot(aliases, resolved), old.voiceCallQuality(),
             old.callLegId(), source, old.callEncryptionEvidence());
         CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, base.audioBuffers());
+        AudioCallSnapshot nativeSnapshot = new AudioCallSnapshot(old.callId(), old.linkedCallId(), aliases, observed,
+            old.broadcastChannels(), old.startTimestamp(), old.lastActivityTimestamp(), old.burstCount(),
+            old.burstGeneration(), old.lastBurstStartTimestamp(), old.lastBurstEndTimestamp(), old.burstActive(),
+            old.complete(), old.encryptionState(), old.recordAudio(), null, old.voiceCallQuality(),
+            old.callLegId(), source, old.callEncryptionEvidence());
         return new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, oneLeg.audioBuffers(), oneLeg.resolvedPolicy(),
-            oneLeg.callLegSummaries(), observed);
+            oneLeg.callLegSummaries(), nativeSnapshot, null);
     }
 
     private static byte[] waveChunk(byte[] bytes, String name)

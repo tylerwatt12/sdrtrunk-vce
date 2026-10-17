@@ -494,7 +494,7 @@ class StatsWebCallServiceTest
             nativeSnapshot.encryptionState(), nativeSnapshot.recordAudio(), nativeSnapshot.recordingMetadata(), nativeSnapshot.voiceCallQuality(),
             nativeSnapshot.callLegId(), nativeSnapshot.callLegSource(), nativeSnapshot.callEncryptionEvidence());
         CompletedAudioCall expanded = new CompletedAudioCall(source.logicalCallId(), logical, source.audioBuffers(), source.resolvedPolicy(),
-            source.callLegSummaries(), source.recordingIdentifierCollection(), nativeSnapshot, null);
+            source.callLegSummaries(), nativeSnapshot, null);
         CompletedToneSequence sequence = inferredTones(nativeSnapshot);
         assertFalse(sequence.matches(logical));
         var outcome = new AtomicReference<>(sequence);
@@ -805,7 +805,12 @@ class StatsWebCallServiceTest
                     APCO25Wacn.create(index == 3 ? 0xBEE00 : site.wacn()),
                     APCO25System.create(index == 3 ? 0x4A7 : site.system()))) : new IdentifierCollection();
                 CompletedAudioCall call = new CompletedAudioCall(snapshotCall.logicalCallId(), snapshotCall.snapshot(),
-                    snapshotCall.audioBuffers(), snapshotCall.resolvedPolicy(), snapshotCall.callLegSummaries(), observed);
+                    snapshotCall.audioBuffers(), snapshotCall.resolvedPolicy(), snapshotCall.callLegSummaries(),
+                    new AudioCallSnapshot(snapshotCall.snapshot().callId(), null, null, observed, Set.of(),
+                        snapshotCall.snapshot().startTimestamp(), snapshotCall.snapshot().lastActivityTimestamp(),
+                        1, 1, snapshotCall.snapshot().startTimestamp(), snapshotCall.snapshot().lastActivityTimestamp(),
+                        false, true, CallEncryptionState.CLEAR, false, null, null,
+                        snapshotCall.snapshot().callLegId(), source, null), null);
 
                 service.receive(call);
                 Map<String,Object> metadata = client.awaitCall();

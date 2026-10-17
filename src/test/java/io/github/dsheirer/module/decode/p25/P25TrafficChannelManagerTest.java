@@ -12,6 +12,7 @@
 package io.github.dsheirer.module.decode.p25;
 
 import com.google.common.eventbus.EventBus;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
@@ -274,19 +275,19 @@ class P25TrafficChannelManagerTest
             P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, VoiceServiceOptions.createUnencrypted())
                 .identifiers(identifiers).build());
         trafficTrackers(manager).put(frequency, first);
-        String selected = manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+        AudioActivityCallEvent selected = manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
             DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_100L, null);
-        assertEquals(first.getActivityCallToken(), selected);
-        assertEquals(selected, first.getEvent().getActivityCallToken(),
+        assertEquals(first.getActivityCallToken(), selected.token());
+        assertEquals(selected.token(), first.getEvent().getActivityCallToken(),
             "The decode event consumed by alerts keeps the same binding selected for P25 audio and Activity");
 
         P25TrafficChannelEventTracker replacement = new P25TrafficChannelEventTracker(
             P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 2_000L, VoiceServiceOptions.createUnencrypted())
                 .identifiers(identifiers(1301, APCO25RadioIdentifier.createFrom(700_002))).build());
         trafficTrackers(manager).put(frequency, replacement);
-        assertEquals(first.getActivityCallToken(), selected,
+        assertEquals(first.getActivityCallToken(), selected.token(),
             "The returned selection stays attached to its physical observation after a grant replacement");
-        assertFalse(replacement.getActivityCallToken().equals(selected));
+        assertFalse(replacement.getActivityCallToken().equals(selected.token()));
         assertNull(manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
             DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_200L, null));
         assertNull(manager.processP1TrafficLDU1(frequency, identifiers.getIdentifiers(), 1_200L));
@@ -368,7 +369,7 @@ class P25TrafficChannelManagerTest
         P25CallStartEvent initial = subscriber.events.getFirst();
         assertNotNull(initial.callToken());
         assertNull(initial.identifierCollection().getFromIdentifier());
-        for(P25ConventionalCallUpdateEvent update: subscriber.updates)
+        for(P25CallUpdateEvent update: subscriber.updates)
         {
             assertEquals(initial.callToken(), update.call().callToken());
             assertEquals(initial.configurationId(), update.call().configurationId());
@@ -956,143 +957,61 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
-    void phaseTwoAudioBindingRecoversLateControlSourceBeforeAndAfterCompletion() throws Exception
+    void acceptedAttributionSurvivesDecoderCleanupAndLateControlUpdates() throws Exception
     {
         RadioIdentifier source = APCO25RadioIdentifier.createFrom(700_001);
-
         for(int timeslot: List.of(TimeslotMessage.TIMESLOT_1, TimeslotMessage.TIMESLOT_2))
         {
             for(boolean phaseOneControl: List.of(false, true))
             {
                 PhaseTwoAudioCall call = phaseTwoAudioCall(timeslot, null);
-                P25TrafficChannelEventTracker bound = call.manager().getP2TrafficCallForAudio(call.frequency(),
-                    timeslot, call.audioIdentifiers(), 1_100L);
-                assertSame(call.tracker(), bound);
-
+                AudioActivityCallEvent bound = call.manager().processP2TrafficVoice(call.frequency(), timeslot, 1_100L);
+                assertNull(bound.attribution().source());
                 grantPhaseTwoCall(call.manager(), call.channel(), phaseOneControl, source, 1_300L);
-                assertEquals(source, call.manager().getP2TrafficCallSourceForAudio(bound, call.frequency(), timeslot,
-                    call.audioIdentifiers(), 1_400L));
-
+                assertEquals(source, bound.attribution().source());
                 assertTrue(call.manager().processP2TrafficEndPushToTalk(call.frequency(), timeslot, 1_500L));
-                assertEquals(source, call.manager().getP2TrafficCallSourceForAudio(bound, call.frequency(), timeslot,
-                    call.audioIdentifiers(), 1_500L));
-                assertNull(call.manager().getP2TrafficCallForAudio(call.frequency(), timeslot,
-                    call.audioIdentifiers(), 1_500L));
-                assertNull(call.audioIdentifiers().getFromIdentifier(), "The lookup must not mutate cached audio identifiers");
+                assertEquals(source, bound.attribution().source());
+                assertNull(call.audioIdentifiers().getFromIdentifier(), "Attribution never seeds decoder metadata");
             }
         }
     }
 
     @Test
-    void phaseTwoAudioBindingRejectsWrongTimingResourceAndEstablishedSource() throws Exception
+    void attributionIsBoundToOneTrackerAndRejectsOldTraffic() throws Exception
     {
-        PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_1,
-            APCO25RadioIdentifier.createFrom(700_001));
-        P25TrafficChannelManager manager = call.manager();
-        assertSame(call.tracker(), manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(),
-            call.audioIdentifiers(), 1_100L));
-
-        for(long timestamp: List.of(999L, 4_001L))
-        {
-            assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(), call.audioIdentifiers(), timestamp));
-            assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-                call.audioIdentifiers(), timestamp));
-        }
-
-        assertNull(manager.getP2TrafficCallForAudio(call.frequency() + 12_500L, call.timeslot(),
-            call.audioIdentifiers(), 1_100L));
-        assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency() + 12_500L, call.timeslot(),
-            call.audioIdentifiers(), 1_100L));
-
-        for(int timeslot: List.of(2, 3))
-        {
-            assertNull(manager.getP2TrafficCallForAudio(call.frequency(), timeslot, call.audioIdentifiers(), 1_100L));
-            assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), timeslot,
-                call.audioIdentifiers(), 1_100L));
-        }
-
-        MutableIdentifierCollection knownSource = identifiers(1201, APCO25RadioIdentifier.createFrom(700_001));
-        assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            knownSource, 1_100L));
-        MutableIdentifierCollection conflictingSource = identifiers(1201, APCO25RadioIdentifier.createFrom(700_002));
-        assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(), conflictingSource, 1_100L));
-        assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            conflictingSource, 1_100L));
+        PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_1, null);
+        AudioActivityCallEvent first = call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_100L);
+        RadioIdentifier firstSource = APCO25RadioIdentifier.createFrom(700_001);
+        RadioIdentifier secondSource = APCO25RadioIdentifier.createFrom(700_002);
+        grantPhaseTwoCall(call.manager(), call.channel(), false, firstSource, 1_200L);
+        grantPhaseTwoCall(call.manager(), call.channel(), false, secondSource, 1_300L);
+        AudioActivityCallEvent next = call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_400L);
+        assertNotSame(first.attribution(), next.attribution());
+        assertFalse(first.token().equals(next.token()));
+        assertEquals(firstSource, first.attribution().source());
+        assertEquals(secondSource, next.attribution().source());
+        assertNull(call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_200L));
+        assertNull(call.manager().processP2TrafficVoice(call.frequency() + 12_500L, call.timeslot(), 1_400L));
+        assertNull(call.manager().processP2TrafficVoice(call.frequency(), 3, 1_400L));
     }
 
     @Test
-    void phaseTwoAudioBindingRequiresCompatibleDestinationAndNac() throws Exception
+    void acceptedAttributionRejectsReservedRadioSources() throws Exception
     {
-        RadioIdentifier source = APCO25RadioIdentifier.createFrom(700_001);
-        PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_2, source);
-        P25TrafficChannelManager manager = call.manager();
-        MutableIdentifierCollection wrongDestination = identifiers(1202, null);
-        assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(), wrongDestination, 1_100L));
-        assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            wrongDestination, 1_100L));
-        assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(),
-            new MutableIdentifierCollection(), 1_100L));
-
-        MutableIdentifierCollection wrongNac = identifiers(1201, null);
-        wrongNac.update(APCO25Nac.create(0x456));
-        assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(), wrongNac, 1_100L));
-        assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            wrongNac, 1_100L));
-
-        Identifier qualifiedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2201);
-        manager.processP2TrafficCurrentUser(call.frequency(), call.timeslot(), qualifiedGroup, 1_200L);
-        assertEquals(source, manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            call.audioIdentifiers(), 1_300L));
-        MutableIdentifierCollection conflictingHome = new MutableIdentifierCollection();
-        conflictingHome.update(APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xABCDE, 0x123, 2202));
-        assertNull(manager.getP2TrafficCallForAudio(call.frequency(), call.timeslot(), conflictingHome, 1_300L));
-        assertNull(manager.getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            conflictingHome, 1_300L));
-    }
-
-    @Test
-    void phaseTwoAudioBindingNeverReadsReplacementTracker() throws Exception
-    {
-        PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_1,
-            APCO25RadioIdentifier.createFrom(700_001));
-        grantPhaseTwoCall(call.manager(), call.channel(), false, APCO25RadioIdentifier.createFrom(700_002), 1_300L);
-        assertNotSame(call.tracker(), trafficTrackers(call.manager(), call.timeslot()).get(call.frequency()));
-        assertNull(call.manager().getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-            call.audioIdentifiers(), 1_400L));
-    }
-
-    @Test
-    void phaseTwoAudioBindingRejectsReservedRadioSources() throws Exception
-    {
-        for(int source: List.of(0xFFFFFD, 0xFFFFFE, 0xFFFFFF))
+        for(int source: List.of(0, 0xFFFFFD, 0xFFFFFE, 0xFFFFFF))
         {
             PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_1,
                 APCO25RadioIdentifier.createFrom(source));
-            assertNull(call.manager().getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-                call.audioIdentifiers(), 1_100L));
+            assertNull(call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_100L).attribution().source());
         }
     }
 
     @Test
-    void phaseTwoAudioBindingRequiresStartedTraffic() throws Exception
-    {
-        RadioIdentifier source = APCO25RadioIdentifier.createFrom(700_001);
-        PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_2, source);
-        P25ChannelGrantEvent grant = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
-            .channelDescriptor(call.channel()).identifiers(identifiers(1201, source)).timeslot(call.timeslot()).build();
-        P25TrafficChannelEventTracker unstarted = new P25TrafficChannelEventTracker(grant);
-        trafficTrackers(call.manager(), call.timeslot()).put(call.frequency(), unstarted);
-        assertNull(call.manager().getP2TrafficCallForAudio(call.frequency(), call.timeslot(),
-            call.audioIdentifiers(), 1_100L));
-        assertNull(call.manager().getP2TrafficCallSourceForAudio(unstarted, call.frequency(), call.timeslot(),
-            call.audioIdentifiers(), 1_100L));
-    }
-
-    @Test
-    void phaseTwoAudioMetadataLookupDoesNotWaitForManagerLock() throws Exception
+    void audioReadsAcceptedAttributionWithoutWaitingForManagerLock() throws Exception
     {
         PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_1,
             APCO25RadioIdentifier.createFrom(700_001));
+        AudioActivityCallEvent event = call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_100L);
         ReentrantLock lock = managerLock(call.manager());
         CountDownLatch acquired = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -1113,23 +1032,17 @@ class P25TrafficChannelManagerTest
             }
         });
         holder.start();
-
         try
         {
             assertTrue(acquired.await(2, TimeUnit.SECONDS));
-            assertTimeoutPreemptively(Duration.ofMillis(250), () -> {
-                assertNull(call.manager().getP2TrafficCallForAudio(call.frequency(), call.timeslot(),
-                    call.audioIdentifiers(), 1_100L));
-                assertNull(call.manager().getP2TrafficCallSourceForAudio(call.tracker(), call.frequency(), call.timeslot(),
-                    call.audioIdentifiers(), 1_100L));
-            });
+            assertTimeoutPreemptively(Duration.ofMillis(250), () ->
+                assertEquals(APCO25RadioIdentifier.createFrom(700_001), event.attribution().source()));
         }
         finally
         {
             release.countDown();
             holder.join(2_000L);
         }
-
         assertFalse(holder.isAlive());
     }
 
@@ -1523,7 +1436,7 @@ class P25TrafficChannelManagerTest
     private static class CallStartSubscriber
     {
         private final List<P25CallStartEvent> events = new CopyOnWriteArrayList<>();
-        private final List<P25ConventionalCallUpdateEvent> updates = new CopyOnWriteArrayList<>();
+        private final List<P25CallUpdateEvent> updates = new CopyOnWriteArrayList<>();
 
         @Subscribe
         public void receive(P25CallStartEvent callStartEvent)
@@ -1532,7 +1445,7 @@ class P25TrafficChannelManagerTest
         }
 
         @Subscribe
-        public void receive(P25ConventionalCallUpdateEvent update)
+        public void receive(P25CallUpdateEvent update)
         {
             updates.add(update);
         }

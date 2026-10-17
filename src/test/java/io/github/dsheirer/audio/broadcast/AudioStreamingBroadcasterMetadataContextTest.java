@@ -4,7 +4,6 @@
  */
 package io.github.dsheirer.audio.broadcast;
 
-import io.github.dsheirer.identifier.IdentityResolutionEvidence;
 
 import io.github.dsheirer.audio.broadcast.icecast.IcecastHTTPConfiguration;
 import io.github.dsheirer.audio.call.AudioCallId;
@@ -17,18 +16,12 @@ import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Header;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.MutableIdentifierCollection;
-import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
-import io.github.dsheirer.identifier.patch.PatchGroup;
-import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
-import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
-import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import java.nio.file.Files;
@@ -43,7 +36,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AudioStreamingBroadcasterMetadataContextTest
 {
@@ -117,7 +109,8 @@ class AudioStreamingBroadcasterMetadataContextTest
         AudioCallSnapshot snapshot = completedMetadata(promoted, null).snapshot();
         CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, List.of());
         CompletedAudioCall call = new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, List.of(),
-            oneLeg.resolvedPolicy(), oneLeg.callLegSummaries(), network(0xBEE00, 0x123));
+            oneLeg.resolvedPolicy(), oneLeg.callLegSummaries(),
+            completedMetadata(network(0xBEE00, 0x123), null).snapshot(), null);
         TestBroadcaster broadcaster = new TestBroadcaster();
         broadcaster.setBroadcastState(BroadcastState.CONNECTED);
         broadcaster.receive(recording(promoted, CompletedCallBroadcastMetadata.from(call)));
@@ -141,144 +134,49 @@ class AudioStreamingBroadcasterMetadataContextTest
     }
 
     @Test
-    void observedProjectionRestoresRecordingObservationLostByQualifiedReconstruction() throws Exception
+    void resolvedSourceReachesBothStreamMetadataPathsWhenAudioWinnerHadNoSource() throws Exception
     {
-        var observedRadio = APCO25FullyQualifiedRadioIdentifier.createFrom(9_001, 0xABCDE, 0x321, 9_001);
-        var retained = APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(
-            APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(501, 0xABCDE, 0x321, 9_001,
-                Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT), observedRadio);
-        var reconstructed = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
-            501, 0xABCDE, 0x321, 9_001);
-        var observedGroup = APCO25Talkgroup.create(77);
-        var promotedGroup = APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xABCDE, 0x321, 201);
-        var streamAliases = AliasListConfigurationIdentifier.create("Stream aliases");
-        IdentifierCollection stream = new IdentifierCollection(List.of(reconstructed, promotedGroup, streamAliases));
+        var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x321, 9_001);
+        IdentifierCollection stream = new IdentifierCollection(List.of(source, APCO25Talkgroup.create(77),
+            AliasListConfigurationIdentifier.create("Stream aliases")));
         stream.setTimeslot(2);
-        IdentifierCollection original = new IdentifierCollection(List.of(retained, observedGroup,
-            AliasListConfigurationIdentifier.create("Original aliases")));
-        CompletedCallBroadcastMetadata metadata = observedMetadata(stream, original, "p25:abcde:456");
-
+        IdentifierCollection nativeIdentifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(77)));
+        AudioCallSnapshot snapshot = completedMetadata(stream, "p25:abcde:456").snapshot();
+        CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, List.of());
+        CompletedAudioCall call = new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, List.of(),
+            oneLeg.resolvedPolicy(), oneLeg.callLegSummaries(),
+            completedMetadata(nativeIdentifiers, "p25:abcde:456").snapshot(), null);
         TestBroadcaster broadcaster = new TestBroadcaster();
         broadcaster.setBroadcastState(BroadcastState.CONNECTED);
-        broadcaster.receive(recording(stream, metadata));
+        broadcaster.receive(recording(stream, CompletedCallBroadcastMetadata.from(call)));
 
         broadcaster.new RecordingQueueProcessor().run();
 
-        IdentifierCollection projected = broadcaster.mMetadataIdentifiers.getFirst();
-
-        assertSame(retained, projected.getFromIdentifier());
-        assertSame(observedGroup, projected.getToIdentifier());
-        assertSame(streamAliases, projected.getAliasListConfiguration());
-        assertEquals(2, projected.getTimeslot());
-        assertEquals("ISSI 703710.801.9001", BroadcastIdentifierFormatter.format(
-            projected.getFromIdentifier(), metadata.servingSystemKey()));
-        assertEquals("9001", BroadcastIdentifierFormatter.format(projected.getFromIdentifier(), "p25:abcde:321"));
-        assertEquals("9001", BroadcastIdentifierFormatter.format(projected.getFromIdentifier(), null));
-        assertEquals("77", BroadcastIdentifierFormatter.format(projected.getToIdentifier(), metadata.servingSystemKey()));
-        assertSame(reconstructed, stream.getFromIdentifier(), "The shared resolved collection must remain intact");
-        assertSame(promotedGroup, stream.getToIdentifier());
-        assertSame(projected, broadcaster.mAudioIdentifiers.getFirst(),
-            "Inline audio metadata must use the same observed view as the out-of-band update");
+        assertSame(stream, broadcaster.mMetadataIdentifiers.getFirst());
+        assertSame(source, broadcaster.mMetadataIdentifiers.getFirst().getFromIdentifier());
+        assertSame(stream, broadcaster.mAudioIdentifiers.getFirst());
+        assertEquals(2, broadcaster.mMetadataIdentifiers.getFirst().getTimeslot());
     }
 
     @Test
-    void projectionCannotBorrowASourceWhenTheWinnerHadNone()
+    void unknownResolvedSourceCannotBeRestoredFromTheAudioLeg() throws Exception
     {
-        IdentifierCollection stream = new IdentifierCollection(List.of(APCO25Talkgroup.create(77),
-            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x321, 9_001)));
-        IdentifierCollection original = new IdentifierCollection(List.of(APCO25Talkgroup.create(77)));
-
-        assertNull(BroadcastIdentifierFormatter.streamIdentifiers(
-            observedMetadata(stream, original, "p25:abcde:456"), stream).getFromIdentifier());
-        assertNull(BroadcastIdentifierFormatter.streamIdentifiers(
-            observedMetadata(stream, null, "p25:abcde:456"), stream).getFromIdentifier());
-        assertSame(stream, BroadcastIdentifierFormatter.streamIdentifiers(CompletedCallBroadcastMetadata.EMPTY, stream));
-        assertSame(stream, BroadcastIdentifierFormatter.streamIdentifiers(
-            completedMetadata(stream, "p25:abcde:456"), stream), "Older metadata has no raw-view contract");
-    }
-
-    @Test
-    void decomposedPatchDestinationUsesItsObservedMemberAndPreservesTheSelectedRoute()
-    {
-        var originalPatch = new PatchGroup(APCO25Talkgroup.create(77));
-        var firstMember = APCO25Talkgroup.create(201);
-        var secondMember = APCO25Talkgroup.create(202);
-        originalPatch.addPatchedTalkgroup(firstMember);
-        originalPatch.addPatchedTalkgroup(secondMember);
-        IdentifierCollection original = new IdentifierCollection(List.of(APCO25PatchGroup.create(originalPatch)));
-        IdentifierCollection selected = new IdentifierCollection(List.of(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(202, 0xABCDE, 0x321, 6_002),
-            AliasListConfigurationIdentifier.create("Selected member aliases")));
-
-        IdentifierCollection projected = BroadcastIdentifierFormatter.streamIdentifiers(
-            observedMetadata(selected, original, "p25:abcde:456"), selected);
-
-        assertSame(secondMember, projected.getToIdentifier());
-        assertEquals("202", BroadcastIdentifierFormatter.format(projected.getToIdentifier(), "p25:abcde:456"));
-        assertSame(selected.getAliasListConfiguration(), projected.getAliasListConfiguration());
-    }
-
-    @Test
-    void qualifiedPatchMemberCannotBeReplacedByAnotherHomeWithTheSameLocalNumber()
-    {
-        var member = APCO25FullyQualifiedTalkgroupIdentifier.createTo(1001, 0xABCDE, 0x321, 2002);
-        var selected = new IdentifierCollection(List.of(member));
-        for(var primary: List.of(APCO25Talkgroup.create(1001),
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(1001, 0xBEE00, 0x123, 2002)))
-        {
-            var patch = new PatchGroup(primary);
-            patch.addPatchedTalkgroup(member);
-            var original = new IdentifierCollection(List.of(APCO25PatchGroup.create(patch)));
-            assertSame(member, BroadcastIdentifierFormatter.streamIdentifiers(
-                observedMetadata(selected, original, "p25:abcde:456"), selected).getToIdentifier());
-        }
-    }
-
-    @Test
-    void wholePatchProjectionPreservesCurrentMembersAndVersion()
-    {
-        var originalPatch = new PatchGroup(APCO25Talkgroup.create(77), 3);
-        var observedMember = APCO25Talkgroup.create(201);
-        originalPatch.addPatchedTalkgroup(observedMember);
-        var currentPatch = new PatchGroup(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(77, 0xABCDE, 0x321, 6_001), 5);
-        currentPatch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createTo(201, 0xABCDE, 0x321, 6_002));
-        currentPatch.addPatchedTalkgroup(APCO25Talkgroup.create(202));
-        IdentifierCollection original = new IdentifierCollection(List.of(APCO25PatchGroup.create(originalPatch)));
-        IdentifierCollection stream = new IdentifierCollection(List.of(APCO25PatchGroup.create(currentPatch)));
-
-        var projected = (APCO25PatchGroup)BroadcastIdentifierFormatter.streamIdentifiers(
-            observedMetadata(stream, original, "p25:abcde:456"), stream).getToIdentifier();
-
-        assertEquals(5, projected.getValue().getVersion());
-        assertEquals("P:77 [201, 202]", BroadcastIdentifierFormatter.format(projected, "p25:abcde:456"));
-        assertSame(observedMember, projected.getValue().getPatchedTalkgroupIdentifiers().getFirst());
-        assertTrue(currentPatch.getPatchGroup() instanceof APCO25FullyQualifiedTalkgroupIdentifier);
-    }
-
-    @Test
-    void recordingIdentifierListIsCopiedAndConflictingRawNetworkSuppressesTheServingKey()
-    {
-        MutableIdentifierCollection original = new MutableIdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(501),
-            APCO25Wacn.create(0xABCDE), APCO25System.create(0x321)));
-        IdentifierCollection stream = new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(501)));
-        CompletedCallBroadcastMetadata metadata = observedMetadata(stream, original, "p25:abcde:456");
-        original.remove(Role.FROM);
-
-        assertNull(metadata.servingSystemKey());
-        assertEquals(3, metadata.recordingIdentifiers().size());
-        assertThrows(UnsupportedOperationException.class, () -> metadata.recordingIdentifiers().clear());
-        assertEquals("501", BroadcastIdentifierFormatter.streamIdentifiers(metadata, stream).getFromIdentifier().toString());
-    }
-
-    private static CompletedCallBroadcastMetadata observedMetadata(IdentifierCollection stream,
-                                                                   IdentifierCollection original, String nativeKey)
-    {
-        AudioCallSnapshot snapshot = completedMetadata(stream, nativeKey).snapshot();
+        IdentifierCollection stream = new IdentifierCollection(List.of(APCO25Talkgroup.create(77)));
+        AudioCallSnapshot snapshot = completedMetadata(stream, "p25:abcde:456").snapshot();
         CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, List.of());
+        IdentifierCollection nativeIdentifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(77),
+            APCO25RadioIdentifier.createFrom(501)));
         CompletedAudioCall call = new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, List.of(),
-            oneLeg.resolvedPolicy(), oneLeg.callLegSummaries(), original);
-        return CompletedCallBroadcastMetadata.from(call);
+            oneLeg.resolvedPolicy(), oneLeg.callLegSummaries(),
+            completedMetadata(nativeIdentifiers, "p25:abcde:456").snapshot(), null);
+        TestBroadcaster broadcaster = new TestBroadcaster();
+        broadcaster.setBroadcastState(BroadcastState.CONNECTED);
+        broadcaster.receive(recording(stream, CompletedCallBroadcastMetadata.from(call)));
+
+        broadcaster.new RecordingQueueProcessor().run();
+
+        assertNull(broadcaster.mMetadataIdentifiers.getFirst().getFromIdentifier());
+        assertNull(broadcaster.mAudioIdentifiers.getFirst().getFromIdentifier());
     }
 
     private AudioRecording recording(IdentifierCollection identifiers, CompletedCallBroadcastMetadata metadata)

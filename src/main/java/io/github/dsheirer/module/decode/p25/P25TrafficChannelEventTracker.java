@@ -25,6 +25,11 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierObservation;
 import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.audio.call.CallAttribution;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -34,7 +39,6 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
-import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import org.slf4j.Logger;
@@ -54,12 +58,13 @@ public class P25TrafficChannelEventTracker
     private P25ChannelGrantEvent mEvent;
     private final String mActivityCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
     private final String mRadioSystemKey;
+    private final CallAttribution mCallAttribution = new CallAttribution(mActivityCallToken);
     private long mLastObservationTimestamp;
     private boolean mStarted = false;
     private boolean mComplete = false;
-    private P25CallStartEvent mConventionalCallStart;
-    private List<Identifier> mConventionalActivityIdentifiers;
-    private boolean mConventionalCompletionPublished;
+    private P25CallStartEvent mCallStart;
+    private List<Identifier> mActivityIdentifiers;
+    private boolean mCompletionPublished;
 
     /**
      * Constructs an instance
@@ -80,6 +85,7 @@ public class P25TrafficChannelEventTracker
         mRadioSystemKey = event.captureRadioSystemKey(radioSystemKey != null ?
             RadioSystemKey.nativeFor(Protocol.APCO25, TrunkedIdentityDomain.STANDARD, radioSystemKey) : null);
         mLastObservationTimestamp = event.getTimeStart();
+        publishAttribution();
     }
 
     public String getRadioSystemKey()
@@ -89,30 +95,42 @@ public class P25TrafficChannelEventTracker
 
     public String getActivityCallToken() { return mActivityCallToken; }
 
-    /** Captured once before the conventional tracker is published to asynchronous observers. */
-    void setConventionalCallStart(P25CallStartEvent callStart)
+    void publishAttribution()
     {
-        mConventionalCallStart = callStart;
-        mConventionalActivityIdentifiers = callStart.identifiers();
+        Identifier source = getEvent().getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+        if(TrunkedIdentityEligibility.isEligibleDecodedIdentifier(Protocol.APCO25,
+            TrunkedIdentityDomain.STANDARD, source)) mCallAttribution.updateSource(source);
+    }
+
+    AudioActivityCallEvent audioCallEvent(int timeslot)
+    {
+        return new AudioActivityCallEvent(mActivityCallToken, timeslot, mCallAttribution);
+    }
+
+    /** Captured once before the tracker is published to asynchronous observers. */
+    void setCallStart(P25CallStartEvent callStart)
+    {
+        mCallStart = callStart;
+        mActivityIdentifiers = callStart.identifiers();
     }
 
     /** No database state or acknowledgement is consulted on the decoding thread. */
-    P25ConventionalCallUpdateEvent conventionalCallUpdate()
+    P25CallUpdateEvent callUpdate()
     {
-        if(mConventionalCallStart == null ||
-            (sameConventionalIdentifiers() &&
-                (!isComplete() || mConventionalCompletionPublished)))
+        if(mCallStart == null ||
+            (sameIdentifiers() &&
+                (!isComplete() || mCompletionPublished)))
         {
             return null;
         }
 
-        P25CallStartEvent snapshot = mConventionalCallStart.withIdentifiers(getEvent());
-        mConventionalActivityIdentifiers = snapshot.identifiers();
-        mConventionalCompletionPublished |= isComplete();
-        return new P25ConventionalCallUpdateEvent(snapshot, isComplete());
+        P25CallStartEvent snapshot = mCallStart.withIdentifiers(getEvent());
+        mActivityIdentifiers = snapshot.identifiers();
+        mCompletionPublished |= isComplete();
+        return new P25CallUpdateEvent(snapshot, isComplete());
     }
 
-    private boolean sameConventionalIdentifiers()
+    private boolean sameIdentifiers()
     {
         int capturedIndex = 0;
         for(Identifier identifier: getEvent().getIdentifierCollection().getIdentifiers())
@@ -121,22 +139,11 @@ public class P25TrafficChannelEventTracker
             {
                 continue;
             }
-            if(capturedIndex >= mConventionalActivityIdentifiers.size()) return false;
-            Identifier captured = mConventionalActivityIdentifiers.get(capturedIndex++);
+            if(capturedIndex >= mActivityIdentifiers.size()) return false;
+            Identifier captured = mActivityIdentifiers.get(capturedIndex++);
             if(!IdentifierObservation.same(identifier, captured)) return false;
-            //PatchGroup equality compares its primary ID; mutable membership also belongs to the captured facts.
-            if(identifier instanceof APCO25PatchGroup current && captured instanceof APCO25PatchGroup previous &&
-                current.getValue() != null && previous.getValue() != null &&
-                (current.getValue().getVersion() != previous.getValue().getVersion() ||
-                    !current.getValue().getPatchedTalkgroupIdentifiers().equals(
-                        previous.getValue().getPatchedTalkgroupIdentifiers()) ||
-                    !current.getValue().getPatchedRadioIdentifiers().equals(
-                        previous.getValue().getPatchedRadioIdentifiers())))
-            {
-                return false;
-            }
         }
-        return capturedIndex == mConventionalActivityIdentifiers.size();
+        return capturedIndex == mActivityIdentifiers.size();
     }
 
     /**

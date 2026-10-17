@@ -97,14 +97,12 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
         IdentifierCollection identifiers = snapshot.identifierCollection();
         Identifier<?> sourceIdentifier = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier<?> targetIdentifier = identifiers != null ? identifiers.getToIdentifier() : null;
-        CallLegSummary.P25IdentityObservation sourceIdentity = winner.p25SourceIdentity();
-        CallLegSummary.P25IdentityObservation targetIdentity = winner.p25DestinationIdentity();
-        Integer sourceId = sourceIdentity != null ? Integer.valueOf(sourceIdentity.observedLocalId()) :
-            number(sourceIdentifier);
-        Integer targetId = targetIdentity != null ? Integer.valueOf(targetIdentity.observedLocalId()) :
-            number(unwrapPatch(targetIdentifier));
-        Form targetForm = targetIdentity != null ? targetIdentity.form() :
-            targetIdentifier != null ? targetIdentifier.getForm() : null;
+        CallLegSummary.P25IdentityObservation sourceIdentity = CallLegSummary.p25IdentityObservation(sourceIdentifier, false);
+        CallLegSummary.P25IdentityObservation targetIdentity = CallLegSummary.p25IdentityObservation(targetIdentifier,
+            targetIdentifier instanceof PatchGroupIdentifier);
+        Integer sourceId = number(sourceIdentifier);
+        Integer targetId = number(unwrapPatch(targetIdentifier));
+        Form targetForm = targetIdentifier != null ? targetIdentifier.getForm() : null;
         int callType = switch(targetForm != null ? targetForm : Form.ANY)
         {
             case PATCH_GROUP -> ManagedRecordingCatalog.CALL_PATCH;
@@ -138,7 +136,7 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             sites.add(winningSite);
         }
 
-        String recordedSystemKey = systemKey(protocol, winner.source(), call.recordingIdentifierCollection());
+        String recordedSystemKey = systemKey(protocol, winner.source(), call.nativeAudioSnapshot().identifierCollection());
         sourceIdentity = recordingRadioOwner(sourceIdentity, sourceIdentifier, sourceId, recordedSystemKey);
         targetIdentity = recordingRadioOwner(targetIdentity, unwrapPatch(targetIdentifier), targetId, recordedSystemKey);
 
@@ -186,7 +184,7 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             integer(identifiers, Form.NETWORK_ACCESS_CODE), tone != null ? tone.kind() : null,
             tone != null ? tone.value() : null, winningSite,
             List.copyOf(sites), List.copyOf(members), call.completedToneSequence(),
-            auxiliaryIdentifiers(call.recordingIdentifierCollection()), call.sourceCallReferences());
+            auxiliaryIdentifiers(identifiers), call.sourceCallReferences());
     }
 
     /** Runs on the recording-file worker after audio is saved, not on decoder callbacks. */

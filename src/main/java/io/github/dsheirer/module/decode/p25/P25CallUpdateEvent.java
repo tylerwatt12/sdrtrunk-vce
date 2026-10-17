@@ -6,6 +6,6 @@
 package io.github.dsheirer.module.decode.p25;
 
 /** Full immutable same-tracker snapshot; a missing start notification can be recovered without recounting updates. */
-public record P25ConventionalCallUpdateEvent(P25CallStartEvent call, boolean complete)
+public record P25CallUpdateEvent(P25CallStartEvent call, boolean complete)
 {
 }

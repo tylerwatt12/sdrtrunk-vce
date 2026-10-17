@@ -25,11 +25,13 @@ import com.mpatric.mp3agic.ID3v24Tag;
 import com.mpatric.mp3agic.ID3v2FrameSet;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -80,6 +82,32 @@ public class AudioMetadataUtils
      */
     public static Map<AudioMetadata, String> getMetadataMap(IdentifierCollection identifierCollection, AliasList aliasList)
     {
+        return getMetadataMap(identifierCollection, aliasList, null);
+    }
+
+    private static List<String> aliasNames(String name)
+    {
+        return name != null && !name.isBlank() ? List.of(name) : List.of();
+    }
+
+    private static String identifierValue(Identifier<?> identifier)
+    {
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+            identifier = patch.getValue().getPatchGroup();
+        return identifier != null && identifier.getValue() != null ? identifier.getValue().toString() : null;
+    }
+
+    /** Uses the call's frozen alias decision after the call has left the decoder. */
+    public static Map<AudioMetadata, String> getCapturedMetadataMap(IdentifierCollection identifiers,
+                                                                   AudioCallRecordingMetadata metadata)
+    {
+        return getMetadataMap(identifiers, null, metadata);
+    }
+
+    private static Map<AudioMetadata, String> getMetadataMap(IdentifierCollection identifierCollection,
+                                                             AliasList aliasList,
+                                                             AudioCallRecordingMetadata captured)
+    {
         Map<AudioMetadata, String> audioMetadata = new EnumMap<>(AudioMetadata.class);
         StringBuilder comments = new StringBuilder();
         //Standard frames use the shared local-ID recording contract.
@@ -95,13 +123,16 @@ public class AudioMetadataUtils
         {
             StringBuilder sb;
 
-            Identifier to = BasicRecordingContract.recordingIdentifier(identifierCollection.getToIdentifier());
+            Identifier to = identifierCollection.getToIdentifier();
             if(to != null)
             {
                 sb = new StringBuilder();
                 sb.append(BasicRecordingContract.targetIdentifier(to));
 
-                List<Alias> toAliases = BasicRecordingContract.recordingAliases(aliasList, to);
+                List<String> toAliases = captured != null ? aliasNames(
+                    java.util.Objects.equals(captured.destinationValue(), identifierValue(identifierCollection.getToIdentifier())) ?
+                        captured.destinationAlias() : null) :
+                    BasicRecordingContract.recordingAliases(aliasList, to).stream().map(Alias::toString).toList();
 
                 if(!toAliases.isEmpty())
                 {
@@ -111,17 +142,18 @@ public class AudioMetadataUtils
                 audioMetadata.put(AudioMetadata.TRACK_TITLE, sb.toString());
             }
 
-            Identifier from = BasicRecordingContract.recordingIdentifier(identifierCollection.getFromIdentifier());
+            Identifier from = identifierCollection.getFromIdentifier();
             if(from != null)
             {
                 sb = new StringBuilder();
                 sb.append(BasicRecordingContract.sourceIdentifier(from));
 
-                List<Alias> fromAliases = BasicRecordingContract.recordingAliases(aliasList, from);
+                List<String> fromAliases = captured != null ? aliasNames(captured.sourceAlias()) :
+                    BasicRecordingContract.recordingAliases(aliasList, from).stream().map(Alias::toString).toList();
 
-                for(Alias alias: fromAliases)
+                for(String alias: fromAliases)
                 {
-                    sb.append(" ").append(alias.toString());
+                    sb.append(" ").append(alias);
                 }
 
                 audioMetadata.put(AudioMetadata.ARTIST_NAME, sb.toString());

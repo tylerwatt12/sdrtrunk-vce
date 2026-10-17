@@ -28,7 +28,7 @@ import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
-import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
+import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
@@ -87,7 +87,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Listener<ControlChannelQualitySnapshot> mQualityListener = this::receiveControlChannelQuality;
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final Map<String,Long> mRecentLogicalNotifications = new LinkedHashMap<>(1024, 0.75f, true);
-    private long mConventionalCollectionEpoch = 1;
+    private long mP25CollectionEpoch = 1;
     private volatile long mObservationCollectionStartedAt = System.currentTimeMillis();
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
     private final Map<StatsDatabaseMaintenanceRequest,BoundedMpscPairQueue<Object,Object>>
@@ -402,8 +402,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private static CompletedAudioCall withoutAudio(CompletedAudioCall call)
     {
         return call != null ? new CompletedAudioCall(call.logicalCallId(), call.snapshot(), List.of(),
-            call.resolvedPolicy(), call.callLegSummaries(), call.recordingIdentifierCollection(),
-            call.nativeAudioSnapshot(), call.completedToneSequence()) : null;
+            call.resolvedPolicy(), call.callLegSummaries(), call.nativeAudioSnapshot(), call.completedToneSequence()) : null;
     }
 
     private void processResolvedCall(CompletedAudioCall call)
@@ -1014,7 +1013,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         mGrantFactConfirmationTracker.reset();
         mRecentDedupeKeys.clear();
         mRecentLogicalNotifications.clear();
-        mConventionalCollectionEpoch++;
+        mP25CollectionEpoch++;
         mObservedTrunkedSites.clear();
     }
 
@@ -1075,9 +1074,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             if(writer != null && record != null && writer == mWriter && mCollectionEnabled && !mDisposed.get() &&
                 !mWriterTransitionActive.get() && mWorkerObservationIngress == mObservationIngress)
             {
-                if(record instanceof ReceiverActivityRecords.ConventionalCallObservation conventional)
+                if(record instanceof ReceiverActivityRecords.P25CallObservation call)
                 {
-                    record = conventional.inCollection(mConventionalCollectionEpoch, mObservationCollectionStartedAt);
+                    record = call.inCollection(mP25CollectionEpoch, mObservationCollectionStartedAt);
                 }
                 writer.enqueue(record);
             }
@@ -1115,9 +1114,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         {
             processCallStart(callStart);
         }
-        else if(observation instanceof P25ConventionalCallUpdateEvent update)
+        else if(observation instanceof P25CallUpdateEvent update)
         {
-            processConventionalCallUpdate(update);
+            processP25CallUpdate(update);
         }
         else if(observation instanceof TrunkedCallStartEvent callStart)
         {
@@ -1216,15 +1215,15 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     }
 
     @Subscribe
-    public void receiveConventionalCallUpdate(P25ConventionalCallUpdateEvent event)
+    public void receiveP25CallUpdate(P25CallUpdateEvent event)
     {
         offerObservation(event);
     }
 
-    private void processConventionalCallUpdate(P25ConventionalCallUpdateEvent event)
+    private void processP25CallUpdate(P25CallUpdateEvent event)
     {
         ReceiverActivityWriter writer = getCollectionWriter();
-        ReceiverActivityRecords.ConventionalCallObservation record = mMapper.map(event);
+        ReceiverActivityRecords.P25CallObservation record = mMapper.map(event);
         if(writer != null && record != null)
         {
             enqueueObservation(writer, record);
@@ -1523,7 +1522,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 //The writer commits all observations before this ingress barrier before executing maintenance.
                 if(resetBoundary > 0)
                 {
-                    mConventionalCollectionEpoch++;
+                    mP25CollectionEpoch++;
                     mObservationCollectionStartedAt = Math.max(mObservationCollectionStartedAt, resetBoundary);
                 }
                 writer.submitMaintenance(request);

@@ -44,8 +44,7 @@ import java.util.List;
  * <p>External importers depend on Basic filenames and existing ID3/WAV fields in every recording/export mode.
  * Qualified radio and talkgroup text uses the captured local numeric ID, including zero, independently of the
  * receiving system. Full home identities and explicit working-address facts belong in the additional ID3 fields.
- * VCE assignment enrichment must not turn an ordinary over-air radio into a qualified recording identity.
- * Call resolution must likewise retain the audio winner's original recording identifiers.</p>
+ * All recording modes consume the same resolved call attribution.</p>
  */
 public final class BasicRecordingContract
 {
@@ -55,43 +54,15 @@ public final class BasicRecordingContract
     public static String servingSystemKey(CompletedAudioCall call)
     {
         if(call == null) return null;
-        CallLegSource source = call.snapshot().callLegSource();
+        CallLegSource source = call.nativeAudioSnapshot().callLegSource();
         return RadioSystemKey.p25Serving(source != null ? source.radioSystemKey() : null,
-            source != null ? source.p25SiteIdentity() : null, call.recordingIdentifierCollection());
+            source != null ? source.p25SiteIdentity() : null, call.nativeAudioSnapshot().identifierCollection());
     }
 
     /** Only a complete over-air network broadcast can supply context when no call source is available. */
     public static String servingSystemKey(IdentifierCollection identifiers)
     {
         return RadioSystemKey.p25Broadcast(identifiers);
-    }
-
-    /** Restores the captured over-air identifier for standard recording text and Alias List lookup. */
-    public static Identifier<?> recordingIdentifier(Identifier<?> identifier)
-    {
-        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group)
-        {
-            if(group.getRecordingIdentifier() != group)
-            {
-                return recordingIdentifier(group.getRecordingIdentifier());
-            }
-            if(group.getResolutionEvidence() == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)
-            {
-                return new APCO25Talkgroup(group.getValue(), group.getRole());
-            }
-        }
-        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
-        {
-            if(radio.getRecordingIdentifier() != radio)
-            {
-                return recordingIdentifier(radio.getRecordingIdentifier());
-            }
-            if(radio.getResolutionEvidence() == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)
-            {
-                return new APCO25RadioIdentifier(radio.getValue(), radio.getRole());
-            }
-        }
-        return identifier;
     }
 
     /** Mainline qualified-radio tags match a qualified Alias only, without a local working-ID fallback. */
@@ -102,9 +73,15 @@ public final class BasicRecordingContract
 
     private static Identifier<?> aliasLookupIdentifier(Identifier<?> identifier)
     {
-        identifier = recordingIdentifier(identifier);
+        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group &&
+            group.getResolutionEvidence() == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)
+        {
+            return new APCO25Talkgroup(group.getValue(), group.getRole());
+        }
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
+            if(radio.getResolutionEvidence() == IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT)
+                return new APCO25RadioIdentifier(radio.getValue(), radio.getRole());
             //An identity-only lookup retains the exact home tuple while disabling VCE's working-address fallback.
             return new APCO25FullyQualifiedRadioIdentifier(0, radio.getWacn(), radio.getSystem(), radio.getRadio(),
                 radio.getRole());
@@ -125,7 +102,6 @@ public final class BasicRecordingContract
 
     private static String identifierText(Identifier<?> identifier)
     {
-        identifier = recordingIdentifier(identifier);
         if(identifier instanceof FullyQualifiedRadioIdentifier radio)
         {
             return Integer.toString(radio.getValue());

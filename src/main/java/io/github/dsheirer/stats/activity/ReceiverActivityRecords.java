@@ -95,26 +95,27 @@ final class ReceiverActivityRecords
     }
 
     /** Full same-call facts. Only the writer decides which call and identity credits have committed. */
-    record ConventionalCallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete,
+    record P25CallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete,
                                        long collectionEpoch, long collectionStartedAtEpochMilliseconds)
         implements ReceiverActivityRecord
     {
-        ConventionalCallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete)
+        P25CallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete)
         {
             this(callToken, activity, initial, complete, 0, 0);
         }
 
-        ConventionalCallObservation inCollection(long epoch, long startedAt)
+        P25CallObservation inCollection(long epoch, long startedAt)
         {
-            return new ConventionalCallObservation(callToken, activity, initial, complete, epoch, startedAt);
+            return new P25CallObservation(callToken, activity, initial, complete, epoch, startedAt);
         }
 
-        ConventionalCallObservation
+        P25CallObservation
         {
             if(callToken == null || callToken.isBlank() || activity == null ||
-                activity.receiverKind() != ReceiverKind.CONVENTIONAL_P25 || !activity.countedCall())
+                (activity.receiverKind() != ReceiverKind.CONVENTIONAL_P25 &&
+                    activity.receiverKind() != ReceiverKind.TRUNKED_SITE) || !activity.countedCall())
             {
-                throw new IllegalArgumentException("Conventional observation requires a P25 call token and facts");
+                throw new IllegalArgumentException("P25 observation requires a call token and facts");
             }
         }
 
@@ -179,9 +180,26 @@ final class ReceiverActivityRecords
                                List<P25PatchMemberIdentity> p25PatchMemberIdentities,
                                List<P25SiteCallObservation> p25SiteObservations,
                                String radioSystemKey,
-                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+                               Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                               List<String> sourceCallReferences)
         implements ReceiverActivityRecord
     {
+        ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String configurationId,
+                            String protocol, TrunkedIdentityDomain identityDomain, Integer wacn, Integer systemId,
+                            int destinationId, String destinationKind, List<Integer> patchMemberTalkgroupIds,
+                            Integer sourceRadioId, boolean encrypted, Integer encryptionAlgorithmId,
+                            Integer encryptionKeyId, P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                            List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                            List<P25SiteCallObservation> p25SiteObservations, String radioSystemKey,
+                            Integer sourceObservedWorkingId, Integer targetObservedWorkingId)
+        {
+            this(logicalCallId, callStartEpochMilliseconds, configurationId, protocol, identityDomain, wacn,
+                systemId, destinationId, destinationKind, patchMemberTalkgroupIds, sourceRadioId, encrypted,
+                encryptionAlgorithmId, encryptionKeyId, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, p25SiteObservations, radioSystemKey, sourceObservedWorkingId,
+                targetObservedWorkingId, List.of());
+        }
+
         ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String configurationId,
                             String protocol, TrunkedIdentityDomain identityDomain, Integer wacn, Integer systemId,
                             int destinationId, String destinationKind, List<Integer> patchMemberTalkgroupIds,
@@ -219,6 +237,9 @@ final class ReceiverActivityRecords
                 .toList();
             sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
             targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
+            sourceCallReferences = sourceCallReferences == null ? List.of() : sourceCallReferences.stream()
+                .map(io.github.dsheirer.audio.call.SourceCallReference::canonical)
+                .filter(java.util.Objects::nonNull).distinct().limit(128).toList();
         }
 
         @Override
@@ -564,7 +585,7 @@ final class ReceiverActivityRecords
         }
 
         /** Keeps observation metadata while projecting only identities accepted for this same call. */
-        ActivityEvent withConventionalIdentities(Integer source, String target, String kind, List<Integer> members,
+        ActivityEvent withP25Identities(Integer source, String target, String kind, List<Integer> members,
             P25Identity sourceIdentity, P25Identity targetIdentity, Integer sourceWorkingId, Integer targetWorkingId)
         {
             return new ActivityEvent(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action,

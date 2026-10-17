@@ -394,8 +394,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
                             {
                                 throw new IllegalArgumentException("Unsupported broadcast format [" + mBroadcastFormat + "]");
                             }
-                            mInputIdentifierCollection = BroadcastIdentifierFormatter.streamIdentifiers(
-                                nextRecording.getCompletedCallMetadata(), nextRecording.getIdentifierCollection());
+                            mInputIdentifierCollection = nextRecording.getIdentifierCollection();
                             mInputServingSystemKey = BroadcastIdentifierFormatter.servingSystemKey(
                                 nextRecording.getCompletedCallMetadata(), mInputIdentifierCollection);
 

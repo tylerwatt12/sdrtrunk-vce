@@ -25,6 +25,7 @@ import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CallAttribution;
 import io.github.dsheirer.audio.call.SiteEvidenceProcessingIncarnationEvent;
 import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
 import io.github.dsheirer.controller.channel.Channel;
@@ -32,6 +33,8 @@ import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotificat
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
@@ -49,6 +52,74 @@ class AbstractAudioModuleTest
     void defaultRolloverLengthIsOneMinuteInMilliseconds()
     {
         assertEquals(60_000L, AbstractAudioModule.DEFAULT_SEGMENT_AUDIO_LENGTH_MILLISECONDS);
+    }
+
+    @Test
+    void acceptedGrantSourceSurvivesDecoderCleanupBeforeAudioStarts()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution call = new CallAttribution("grant");
+        var source = APCO25RadioIdentifier.createFrom(501);
+        call.updateSource(source);
+        module.getIdentifierCollection().update(source);
+        module.getIdentifierCollection().remove(io.github.dsheirer.identifier.IdentifierClass.USER);
+        module.activityCallBound(new AudioActivityCallEvent(call.token(), 0, call));
+        module.appendFrame();
+        module.stop();
+        assertEquals(source, events.getFirst().snapshot().identifierCollection().getFromIdentifier());
+        assertEquals(source, events.getLast().snapshot().identifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void lateSourceBelongsOnlyToItsBoundCallAndTheNextCallCannotInheritIt()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution first = new CallAttribution("first");
+        CallAttribution second = new CallAttribution("second");
+        module.activityCallBound(new AudioActivityCallEvent(first.token(), 0, first));
+        module.appendFrame();
+        assertNull(events.getFirst().snapshot().identifierCollection().getFromIdentifier());
+        first.updateSource(APCO25RadioIdentifier.createFrom(501));
+        // Decoder cache and next-call notification are not evidence about the bound old call.
+        module.getIdentifierCollection().update(APCO25RadioIdentifier.createFrom(999));
+        module.activityCallBound(new AudioActivityCallEvent(second.token(), 0, second));
+        module.appendFrame();
+        module.stop();
+        var completions = events.stream().filter(event ->
+            event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+        assertEquals(2, completions.size());
+        assertEquals(501, completions.getFirst().snapshot().identifierCollection().getFromIdentifier().getValue());
+        assertNull(completions.getLast().snapshot().identifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void linkedSegmentsRetainTheSameAttributionAndCaptureWorkingAddressUpgrades()
+    {
+        TestAudioModule module = new TestAudioModule();
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution call = new CallAttribution("one");
+        call.updateSource(APCO25FullyQualifiedRadioIdentifier.createFrom(501, 0xABCDE, 0x123, 7001));
+        module.activityCallBound(new AudioActivityCallEvent(call.token(), 0, call));
+        module.appendFrame();
+        call.updateSource(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
+            502, 0xABCDE, 0x123, 7001));
+        module.appendFrame();
+        module.stop();
+        var completions = events.stream().filter(event ->
+            event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+        assertEquals(2, completions.size());
+        assertTrue(completions.getFirst().continuationExpected());
+        for(var event: completions)
+        {
+            assertEquals("one", event.snapshot().activityCallToken());
+            var source = (APCO25FullyQualifiedRadioIdentifier)event.snapshot().identifierCollection().getFromIdentifier();
+            assertEquals(502, source.getWorkingAddress());
+        }
     }
 
     @Test

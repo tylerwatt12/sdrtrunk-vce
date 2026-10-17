@@ -323,7 +323,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 }
 
                 //If we're tracking the call event, update the duration on it
-                mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
+                publishCallAttribution(mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp()));
             }
             //Motorola TDMA data channel.
             else if(message instanceof DatchTimeslot)
@@ -1295,6 +1295,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processPushToTalk(MacMessage message, MacStructure mac)
     {
+        getIdentifierCollection().remove(Role.FROM);
         for(Identifier identifier : mac.getIdentifiers())
         {
             //Add to the identifier collection after filtering through the patch group manager
@@ -1312,10 +1313,16 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     mac.getOpcode(), getIdentifierCollection().copyOf(), message.getTimestamp(),
                     ptt.isEncrypted() ? VoiceEncryptionDisplay.format(ptt.getEncryptionKey()) : null);
 
-            mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
+            publishCallAttribution(mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp()));
 
             broadcast(new DecoderStateEvent(this, Event.START, ptt.isEncrypted() ? State.ENCRYPTED : State.CALL, getTimeslot()));
         }
+    }
+
+    /** Publishes the exact tracker selected while processing this voice observation. */
+    private void publishCallAttribution(io.github.dsheirer.audio.call.AudioActivityCallEvent event)
+    {
+        if(event != null && hasInterModuleEventBus()) getInterModuleEventBus().post(event);
     }
 
     /**

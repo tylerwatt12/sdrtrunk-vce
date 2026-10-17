@@ -504,10 +504,10 @@ class AudioRecordingManagerTest
         List<RadioRecordingFixture> fixtures = List.of(
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
                 85610, 0xBEE00, 0x687, 85610, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT),
-                "85610", "85610 Local Unit"),
+                "85610", "85610 Canonical Unit"),
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(
                 501, 0xBEE00, 0x687, 85610, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT),
-                "501", "501 Working Unit"),
+                "501", "501 Canonical Unit"),
             new RadioRecordingFixture(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
                 85610, 0xBEE00, 0x687, 85610),
                 "85610", "85610 Canonical Unit"),

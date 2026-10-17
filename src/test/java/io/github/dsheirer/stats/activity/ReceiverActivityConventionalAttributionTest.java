@@ -10,7 +10,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
-import io.github.dsheirer.module.decode.p25.P25ConventionalCallUpdateEvent;
+import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -266,21 +266,21 @@ class ReceiverActivityConventionalAttributionTest
                 long start = System.currentTimeMillis();
                 ReceiverActivityRecords.ActivityEvent empty = observation("reserved", start, SOURCE, null,
                     true, false).activity();
-                ReceiverActivityRecords.ActivityEvent invalid = empty.withConventionalIdentities(SOURCE,
+                ReceiverActivityRecords.ActivityEvent invalid = empty.withP25Identities(SOURCE,
                     Integer.toString(reserved), kind, List.of(), ReceiverActivityRecords.P25Identity.ORDINARY,
                     ReceiverActivityRecords.P25Identity.ORDINARY, null, null);
-                ReceiverActivityRecords.ActivityEvent learned = empty.withConventionalIdentities(SOURCE,
+                ReceiverActivityRecords.ActivityEvent learned = empty.withP25Identities(SOURCE,
                     Integer.toString(valid), kind, List.of(), ReceiverActivityRecords.P25Identity.ORDINARY,
                     ReceiverActivityRecords.P25Identity.ORDINARY, null, null);
                 ReceiverActivityRecords.ActivityEvent initial = invalidInitially ? invalid : empty;
                 try(Connection connection = connection(database))
                 {
-                    var credit = ReceiverActivitySchema.recordConventionalCall(connection, initial, true);
-                    credit = ReceiverActivitySchema.enrichConventionalCall(connection, initial, invalid, credit);
+                    var credit = ReceiverActivitySchema.recordP25Call(connection, initial, true);
+                    credit = ReceiverActivitySchema.enrichP25Call(connection, initial, invalid, credit);
                     assertEquals(1, identityMetric(connection, 1, 0, "call_count"));
                     assertEquals(0, identityMetric(connection, 1, reserved, "call_count"));
-                    credit = ReceiverActivitySchema.enrichConventionalCall(connection, initial, learned, credit);
-                    ReceiverActivitySchema.enrichConventionalCall(connection, initial, learned, credit);
+                    credit = ReceiverActivitySchema.enrichP25Call(connection, initial, learned, credit);
+                    ReceiverActivitySchema.enrichP25Call(connection, initial, learned, credit);
                     assertEquals(0, identityMetric(connection, 1, 0, "call_count"));
                     assertEquals(1, identityMetric(connection, 1, valid, "call_count"));
                     assertEquals(1, scalar(connection, """
@@ -293,7 +293,7 @@ class ReceiverActivityConventionalAttributionTest
         }
     }
 
-    private ReceiverActivityRecords.ConventionalCallObservation radioObservation(String token, long start,
+    private ReceiverActivityRecords.P25CallObservation radioObservation(String token, long start,
         Integer source, Integer target, boolean initial)
     {
         List<Identifier> identifiers = new ArrayList<>();
@@ -302,11 +302,11 @@ class ReceiverActivityConventionalAttributionTest
         P25CallStartEvent call = new P25CallStartEvent(CONFIGURATION, DecoderType.P25_CONVENTIONAL,
             DecodeEventType.CALL_UNIT_TO_UNIT, start, identifiers, FREQUENCY, null, null, 1,
             false, false, null, token);
-        return assertInstanceOf(ReceiverActivityRecords.ConventionalCallObservation.class,
-            initial ? mMapper.mapCallStart(call) : mMapper.map(new P25ConventionalCallUpdateEvent(call, true)));
+        return assertInstanceOf(ReceiverActivityRecords.P25CallObservation.class,
+            initial ? mMapper.mapCallStart(call) : mMapper.map(new P25CallUpdateEvent(call, true)));
     }
 
-    private ReceiverActivityRecords.ConventionalCallObservation observation(String token, long start,
+    private ReceiverActivityRecords.P25CallObservation observation(String token, long start,
         Integer source, Integer target, boolean initial, boolean complete)
     {
         List<Identifier> identifiers = new ArrayList<>();
@@ -315,8 +315,8 @@ class ReceiverActivityConventionalAttributionTest
         P25CallStartEvent call = new P25CallStartEvent(CONFIGURATION, DecoderType.P25_CONVENTIONAL,
             DecodeEventType.CALL_GROUP, start, identifiers, FREQUENCY, null, null, 1, false, false, null, token);
         ReceiverActivityRecord record = initial ? mMapper.mapCallStart(call) :
-            mMapper.map(new P25ConventionalCallUpdateEvent(call, complete));
-        return assertInstanceOf(ReceiverActivityRecords.ConventionalCallObservation.class, record);
+            mMapper.map(new P25CallUpdateEvent(call, complete));
+        return assertInstanceOf(ReceiverActivityRecords.P25CallObservation.class, record);
     }
 
     private ReceiverActivityRecords.ConventionalCallOutput output(long start)

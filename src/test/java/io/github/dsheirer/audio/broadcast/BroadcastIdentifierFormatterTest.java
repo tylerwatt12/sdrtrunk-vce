@@ -65,15 +65,15 @@ class BroadcastIdentifierFormatterTest
     }
 
     @Test
-    void laterIdentityEnrichmentCannotExpandAnOrdinaryOverAirId()
+    void formattingUsesAcceptedIdentityInsteadOfRestoringDecoderProvenance()
     {
         var inferred = APCO25FullyQualifiedRadioIdentifier.createWithWorkingAddress(7654321, 0xBEE00, 0x123,
             1234567, Role.FROM, IdentityResolutionEvidence.CONFIRMED_ASSIGNMENT);
-        assertEquals("7654321", BroadcastIdentifierFormatter.format(inferred, FOREIGN));
+        assertEquals("ROAM 7654321(781824.291.1234567)", BroadcastIdentifierFormatter.format(inferred, FOREIGN));
         var retained = APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(
             APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x123, 1234567),
             APCO25RadioIdentifier.createFrom(7654321));
-        assertEquals("7654321", BroadcastIdentifierFormatter.format(retained, FOREIGN));
+        assertEquals("ISSI 781824.291.1234567", BroadcastIdentifierFormatter.format(retained, FOREIGN));
     }
 
     @Test

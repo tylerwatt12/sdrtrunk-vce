@@ -13,7 +13,6 @@ package io.github.dsheirer.audio.broadcast;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
-import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import java.util.List;
 
@@ -24,28 +23,19 @@ import java.util.List;
  * after encoding without retaining a second copy of the call audio in memory.</p>
  */
 public record CompletedCallBroadcastMetadata(AudioCallSnapshot snapshot, List<CallLegSummary> callLegSummaries,
-                                             String servingSystemKey, List<Identifier> recordingIdentifiers)
+                                             String servingSystemKey)
 {
     public static final CompletedCallBroadcastMetadata EMPTY = new CompletedCallBroadcastMetadata(null, List.of());
 
     public CompletedCallBroadcastMetadata(AudioCallSnapshot snapshot, List<CallLegSummary> callLegSummaries)
     {
         this(snapshot, callLegSummaries, snapshot != null ?
-            BroadcastIdentifierFormatter.servingSystemKey(snapshot.callLegSource(), null) : null, null);
-    }
-
-    /** Compatibility constructor for metadata that did not retain the winner's recording observations. */
-    public CompletedCallBroadcastMetadata(AudioCallSnapshot snapshot, List<CallLegSummary> callLegSummaries,
-                                          String servingSystemKey)
-    {
-        this(snapshot, callLegSummaries, servingSystemKey, null);
+            BroadcastIdentifierFormatter.servingSystemKey(snapshot.callLegSource(), null) : null);
     }
 
     public CompletedCallBroadcastMetadata
     {
         callLegSummaries = callLegSummaries != null ? List.copyOf(callLegSummaries) : List.of();
-        //Null distinguishes older metadata from a captured winner that had no observed identifiers.
-        recordingIdentifiers = recordingIdentifiers != null ? List.copyOf(recordingIdentifiers) : null;
     }
 
     public static CompletedCallBroadcastMetadata from(CompletedAudioCall call)
@@ -54,10 +44,9 @@ public record CompletedCallBroadcastMetadata(AudioCallSnapshot snapshot, List<Ca
         {
             return EMPTY;
         }
-        IdentifierCollection observed = call.recordingIdentifierCollection();
+        IdentifierCollection observed = call.nativeAudioSnapshot().identifierCollection();
         return new CompletedCallBroadcastMetadata(call.snapshot(), call.callLegSummaries(),
-            BroadcastIdentifierFormatter.servingSystemKey(call.snapshot().callLegSource(), observed),
-            observed != null ? observed.getIdentifiers() : List.of());
+            BroadcastIdentifierFormatter.servingSystemKey(call.nativeAudioSnapshot().callLegSource(), observed));
     }
 
     public boolean isAvailable()

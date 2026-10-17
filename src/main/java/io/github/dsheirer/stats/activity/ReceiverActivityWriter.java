@@ -101,9 +101,9 @@ class ReceiverActivityWriter implements AutoCloseable
     private ActivityToneAssociations mActivityToneAssociations = new ActivityToneAssociations();
     private final Map<ToneReceipt,Long> mCompletedToneReceipts = new LinkedHashMap<>(256, 0.75f, true);
     /* This bounded receipt cache is writer-owned. No producer treats a queue offer as committed call credit. */
-    private final Map<String,ConventionalCallState> mConventionalCalls = new LinkedHashMap<>(256, 0.75f, true);
-    private long mConventionalCallRecoveryFloor = System.currentTimeMillis();
-    private long mConventionalCollectionEpoch;
+    private final Map<String,P25CallState> mP25Calls = new LinkedHashMap<>(256, 0.75f, true);
+    private long mP25CallRecoveryFloor = System.currentTimeMillis();
+    private long mP25CollectionEpoch;
     private volatile ExecutorService mExecutorService;
     private volatile long mShutdownDrainDeadlineNanos = Long.MIN_VALUE;
     private volatile int mRetentionDays;
@@ -351,7 +351,7 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             if(record instanceof ReceiverActivityRecords.ConventionalCallOutput ||
                 record instanceof ReceiverActivityRecords.LogicalCallOutput) return CALL_OUTPUTS;
-            if(record instanceof ReceiverActivityRecords.ConventionalCallObservation ||
+            if(record instanceof ReceiverActivityRecords.P25CallObservation ||
                 record instanceof ReceiverActivityRecords.ResolvedLogicalCall ||
                 record instanceof ReceiverActivityRecords.TrunkedCallAttribution ||
                 record instanceof ReceiverActivityRecords.DmrConventionalCall ||
@@ -749,8 +749,8 @@ class ReceiverActivityWriter implements AutoCloseable
                     mResolvedLogicalCalls.clear();
                     mCompletedToneReceipts.clear();
                     mActivityToneAssociations = new ActivityToneAssociations();
-                    mConventionalCalls.clear();
-                    mConventionalCallRecoveryFloor = System.currentTimeMillis();
+                    mP25Calls.clear();
+                    mP25CallRecoveryFloor = System.currentTimeMillis();
                 }
 
                 return result;
@@ -1051,14 +1051,14 @@ class ReceiverActivityWriter implements AutoCloseable
             ActivityToneAssociations toneAssociations = mActivityToneAssociations.copy();
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
             Set<ToneReceipt> acceptedToneSequences = new LinkedHashSet<>();
-            Map<String,ConventionalCallState> acceptedConventionalCalls = new LinkedHashMap<>();
-            long conventionalEpoch = mConventionalCollectionEpoch;
-            boolean retireConventionalReceipts = false;
+            Map<String,P25CallState> acceptedP25Calls = new LinkedHashMap<>();
+            long p25Epoch = mP25CollectionEpoch;
+            boolean retireP25Receipts = false;
             List<ReceiverActivityRecords.ActivityEvent> activityEvents = new ArrayList<>();
             pruneResolvedLogicalCalls(System.currentTimeMillis());
             pruneToneReceipts(System.currentTimeMillis());
-            pruneConventionalCalls(System.currentTimeMillis());
-            long conventionalRecoveryFloor = mConventionalCallRecoveryFloor;
+            pruneP25Calls(System.currentTimeMillis());
+            long p25RecoveryFloor = mP25CallRecoveryFloor;
 
             for(ReceiverActivityRecord record: batch)
             {
@@ -1109,32 +1109,32 @@ class ReceiverActivityWriter implements AutoCloseable
                     ReceiverActivitySchema.insertControlChannelQuality(connection, quality);
                     writtenRecords++;
                 }
-                else if(record instanceof ReceiverActivityRecords.ConventionalCallObservation observation)
+                else if(record instanceof ReceiverActivityRecords.P25CallObservation observation)
                 {
-                    if(observation.collectionEpoch() < conventionalEpoch)
+                    if(observation.collectionEpoch() < p25Epoch)
                     {
                         continue;
                     }
-                    if(observation.collectionEpoch() > conventionalEpoch)
+                    if(observation.collectionEpoch() > p25Epoch)
                     {
-                        conventionalEpoch = observation.collectionEpoch();
-                        conventionalRecoveryFloor = observation.collectionStartedAtEpochMilliseconds() > 0 ?
+                        p25Epoch = observation.collectionEpoch();
+                        p25RecoveryFloor = observation.collectionStartedAtEpochMilliseconds() > 0 ?
                             Math.max(observation.collectionStartedAtEpochMilliseconds(),
                                 System.currentTimeMillis() - RESOLVED_CALL_RETENTION_MILLISECONDS) :
-                            conventionalRecoveryFloor;
-                        acceptedConventionalCalls.clear();
-                        retireConventionalReceipts = true;
+                            p25RecoveryFloor;
+                        acceptedP25Calls.clear();
+                        retireP25Receipts = true;
                     }
-                    ConventionalCallState state = acceptedConventionalCalls.get(observation.callToken());
-                    if(state == null && !retireConventionalReceipts)
+                    P25CallState state = acceptedP25Calls.get(observation.callToken());
+                    if(state == null && !retireP25Receipts)
                     {
-                        state = mConventionalCalls.get(observation.callToken());
+                        state = mP25Calls.get(observation.callToken());
                     }
-                    ConventionalCallState updated = applyConventionalCall(connection, observation, state,
-                        conventionalRecoveryFloor);
+                    P25CallState updated = applyP25Call(connection, observation, state,
+                        p25RecoveryFloor);
                     if(updated != null)
                     {
-                        acceptedConventionalCalls.put(observation.callToken(), updated);
+                        acceptedP25Calls.put(observation.callToken(), updated);
                         toneAssociations.call(connection, observation.callToken(), observation.activity().configurationId(),
                             updated.credit().detailedEventId(), System.currentTimeMillis());
                         writtenRecords++;
@@ -1220,13 +1220,13 @@ class ReceiverActivityWriter implements AutoCloseable
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
             for(ToneReceipt receipt: acceptedToneSequences) mCompletedToneReceipts.put(receipt, successfulWrite);
             pruneToneReceipts(successfulWrite);
-            if(retireConventionalReceipts)
+            if(retireP25Receipts)
             {
-                mConventionalCalls.clear();
-                mConventionalCollectionEpoch = conventionalEpoch;
-                mConventionalCallRecoveryFloor = conventionalRecoveryFloor;
+                mP25Calls.clear();
+                mP25CollectionEpoch = p25Epoch;
+                mP25CallRecoveryFloor = p25RecoveryFloor;
             }
-            rememberConventionalCalls(acceptedConventionalCalls, successfulWrite);
+            rememberP25Calls(acceptedP25Calls, successfulWrite);
             mWrittenRecords.addAndGet(writtenRecords);
             mLastSuccessfulWriteMs.set(successfulWrite);
             mLastError = null;
@@ -1282,8 +1282,8 @@ class ReceiverActivityWriter implements AutoCloseable
             mResolvedLogicalCalls.get(logicalCallId) != null);
     }
 
-    private ConventionalCallState applyConventionalCall(Connection connection,
-        ReceiverActivityRecords.ConventionalCallObservation observation, ConventionalCallState previous,
+    private P25CallState applyP25Call(Connection connection,
+        ReceiverActivityRecords.P25CallObservation observation, P25CallState previous,
         long recoveryFloor)
         throws SQLException
     {
@@ -1301,43 +1301,43 @@ class ReceiverActivityWriter implements AutoCloseable
             {
                 return null;
             }
-            ReceiverActivitySchema.ConventionalCallCredit credit = ReceiverActivitySchema.recordConventionalCall(
+            ReceiverActivitySchema.P25CallCredit credit = ReceiverActivitySchema.recordP25Call(
                 connection, activity, mDetailedEventHistoryEnabled);
-            return credit != null ? new ConventionalCallState(activity, credit, 0) : null;
+            return credit != null ? new P25CallState(activity, credit, 0) : null;
         }
-        ReceiverActivitySchema.ConventionalCallCredit credit = ReceiverActivitySchema.enrichConventionalCall(
+        ReceiverActivitySchema.P25CallCredit credit = ReceiverActivitySchema.enrichP25Call(
             connection, previous.original(), activity, previous.credit());
-        return credit != null ? new ConventionalCallState(previous.original(), credit, 0) : null;
+        return credit != null ? new P25CallState(previous.original(), credit, 0) : null;
     }
 
-    private void rememberConventionalCalls(Map<String,ConventionalCallState> accepted, long committedAt)
+    private void rememberP25Calls(Map<String,P25CallState> accepted, long committedAt)
     {
-        accepted.forEach((token, state) -> mConventionalCalls.put(token,
-            new ConventionalCallState(state.original(), state.credit(), committedAt)));
-        pruneConventionalCalls(committedAt);
+        accepted.forEach((token, state) -> mP25Calls.put(token,
+            new P25CallState(state.original(), state.credit(), committedAt)));
+        pruneP25Calls(committedAt);
     }
 
-    private void pruneConventionalCalls(long now)
+    private void pruneP25Calls(long now)
     {
-        mConventionalCallRecoveryFloor = Math.max(mConventionalCallRecoveryFloor,
+        mP25CallRecoveryFloor = Math.max(mP25CallRecoveryFloor,
             now - RESOLVED_CALL_RETENTION_MILLISECONDS);
-        var iterator = mConventionalCalls.entrySet().iterator();
+        var iterator = mP25Calls.entrySet().iterator();
         while(iterator.hasNext())
         {
-            ConventionalCallState state = iterator.next().getValue();
+            P25CallState state = iterator.next().getValue();
             if(state.committedAt() < now - RESOLVED_CALL_RETENTION_MILLISECONDS ||
-                mConventionalCalls.size() > MAXIMUM_RESOLVED_CALLS)
+                mP25Calls.size() > MAXIMUM_RESOLVED_CALLS)
             {
                 //Once receipts are evicted, old repeated completions cannot recover and recount the same call.
-                mConventionalCallRecoveryFloor = Math.max(mConventionalCallRecoveryFloor,
+                mP25CallRecoveryFloor = Math.max(mP25CallRecoveryFloor,
                     state.original().observedAtEpochMilliseconds() + 1);
                 iterator.remove();
             }
         }
     }
 
-    private record ConventionalCallState(ReceiverActivityRecords.ActivityEvent original,
-                                         ReceiverActivitySchema.ConventionalCallCredit credit, long committedAt)
+    private record P25CallState(ReceiverActivityRecords.ActivityEvent original,
+                                         ReceiverActivitySchema.P25CallCredit credit, long committedAt)
     {
     }
 

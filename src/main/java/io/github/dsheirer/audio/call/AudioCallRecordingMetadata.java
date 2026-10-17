@@ -167,16 +167,20 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
             destinationValue(destination) : destinationValue;
         String resolvedDestinationIdentity = destination != null ?
             receivedDestinationIdentity(destination) : destinationIdentity;
-        String resolvedSourceProtocol = !hasText(sourceProtocol) && source != null ?
-            protocol(source) : sourceProtocol;
-        String resolvedSourceValue = !hasText(sourceValue) && source != null ?
-            receivedSourceIdentity(source) : sourceValue;
+        String resolvedSourceProtocol = protocol(source);
+        String resolvedSourceValue = source != null && source.getValue() != null ?
+            source.getValue().toString() : null;
+        ResolvedRadioIdentity observedSource = ResolvedRadioIdentity.from(source);
+        boolean sameSource = sourceRadioIdentity != null &&
+            sourceRadioIdentity.matchesWithinScope(observedSource);
         return new AudioCallRecordingMetadata(systemName, siteName, radioResolveId, channelName,
             channelIdentity, aliasListName, resolvedDestinationProtocol, resolvedDestinationValue,
             resolvedDestinationIdentity, destinationAlias, destinationDescription, destinationGroup,
             destinationMatcherIdentity, destinationRecordEnabled, resolvedSourceProtocol,
-            resolvedSourceValue, sourceAlias, sourceDescription, sourceGroup,
-            resolvedIdentity(sourceRadioIdentity, source), resolvedIdentity(destinationRadioIdentity, destination));
+            resolvedSourceValue, sameSource ? sourceAlias : null, sameSource ? sourceDescription : null,
+            sameSource ? sourceGroup : null,
+            source != null ? resolvedIdentity(sourceRadioIdentity, source) : null,
+            resolvedIdentity(destinationRadioIdentity, destination));
     }
 
     private static ResolvedRadioIdentity resolvedIdentity(ResolvedRadioIdentity known, Identifier<?> identifier)

@@ -223,7 +223,7 @@ class AudioMetadataUtilsTest
     }
 
     @Test
-    void laterDirectCanonicalObservationUsesItsObservedScalarWithoutErasingWorkingAssignment() throws Exception
+    void laterIdentityOnlyObservationKeepsTheAcceptedWorkingAddress() throws Exception
     {
         AliasList aliases = aliasList();
         addAlias(aliases, "Working Unit", new Radio(Protocol.APCO25, 501));
@@ -234,7 +234,7 @@ class AudioMetadataUtilsTest
         identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(85610, 0xBEE00, 0x687, 85610));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases),
-            "85610 Canonical Unit", null);
+            "501 Working Unit", null);
         assertEquals(501, ((APCO25FullyQualifiedRadioIdentifier)identifiers.getFromIdentifier()).getWorkingAddress());
     }
 

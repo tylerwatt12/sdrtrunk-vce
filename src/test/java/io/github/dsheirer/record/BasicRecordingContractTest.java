@@ -207,7 +207,19 @@ class BasicRecordingContractTest
             null, null, CallLegId.from(id), source, null);
         CompletedAudioCall oneLeg = new CompletedAudioCall(snapshot, List.of());
         return new CompletedAudioCall(oneLeg.logicalCallId(), snapshot, List.of(), oneLeg.resolvedPolicy(),
-            oneLeg.callLegSummaries(), observed);
+            oneLeg.callLegSummaries(), new AudioCallSnapshot(id, null, null, observed, Set.of(),
+                1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, CallEncryptionState.CLEAR, true,
+                null, null, CallLegId.from(id), source, null), null);
+    }
+
+    @Test
+    void formattingCannotRestoreACompetingIdentifierFromDecoderProvenance()
+    {
+        var source = APCO25FullyQualifiedRadioIdentifier.withRecordingIdentifier(
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x687, 777),
+            APCO25RadioIdentifier.createFrom(999));
+        assertEquals("501", BasicRecordingContract.sourceIdentifier(source));
+        assertEquals("501", BasicRecordingContract.filenameIdentifier(source));
     }
 
     @Test
@@ -223,7 +235,7 @@ class BasicRecordingContractTest
                 assertEquals(Integer.toString(observed), BasicRecordingContract.sourceIdentifier(enriched));
                 assertEquals(Integer.toString(observed), BasicRecordingContract.targetIdentifier(enriched));
                 assertEquals(Integer.toString(observed), BasicRecordingContract.filenameIdentifier(enriched));
-                assertEquals(role, BasicRecordingContract.recordingIdentifier(enriched).getRole());
+                assertEquals(role, enriched.getRole());
                 assertEquals(85610, enriched.getRadio(), "Canonical identity remains available to the receiver");
             }
             IdentifierCollection identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(48530),
@@ -253,11 +265,11 @@ class BasicRecordingContractTest
             assertEquals("20261007_123456__TO_48530_FROM_" + observed + ".mp3",
                 BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1));
 
-            //A later direct identity observation uses its own captured scalar, not the cached working address.
+            //A later identity-only observation cannot replace the accepted local working address.
             identifiers.update(APCO25FullyQualifiedRadioIdentifier.createFrom(85610, 0xBEE00, 0x687, 85610));
-            assertEquals("20261007_123456__TO_48530_FROM_85610.mp3",
+            assertEquals("20261007_123456__TO_48530_FROM_" + observed + ".mp3",
                 BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1));
-            assertEquals("85610", BasicRecordingContract.sourceIdentifier(identifiers.getFromIdentifier()));
+            assertEquals(Integer.toString(observed), BasicRecordingContract.sourceIdentifier(identifiers.getFromIdentifier()));
         }
     }
 
