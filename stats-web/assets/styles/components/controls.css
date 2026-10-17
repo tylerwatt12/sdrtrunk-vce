@@ -101,6 +101,12 @@
     box-shadow 120ms ease;
 }
 
+.ui-button-compact {
+  min-height: var(--control-height-compact);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-meta);
+}
+
 .ui-button svg,
 .ui-choice-card-with-icon > svg,
 .ui-segmented-option-icon svg,
@@ -460,6 +466,7 @@
   line-height: 1.35;
   text-align: center;
   pointer-events: none;
+  overflow-wrap: anywhere;
 }
 
 .ui-icon-button.is-loading {

@@ -1503,6 +1503,7 @@ if (view === 'workflows') {
     previous: { enabled: offset > 0, onClick: () => { offset -= 10; update(); } },
     next: { enabled: offset < 20, onClick: () => { offset += 10; update(); } } });
   const pager = createBrowsingPager({ node });
+  pager.querySelectorAll('button').forEach(control => control.classList.add('ui-button-compact'));
   update();
   document.querySelector('[data-workflow-pager]').append(pager);
 }

@@ -82,6 +82,8 @@ async function openRecordings(page, options = {}) {
       await route.fulfill({ json: { data: { rows, has_more: false } } });
     } else if (key === '/api/v1/recordings/suggestions') {
       await route.fulfill({ json: { data: { suggestions: options.suggestions || [] } } });
+    } else if (key === '/api/v1/alerts/topics') {
+      await route.fulfill({ json: { data: { enabled: false, topics: [] } } });
     } else if (key === '/api/v1/status') {
       await route.fulfill({ json: { data: {} } });
     } else {

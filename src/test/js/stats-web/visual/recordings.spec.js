@@ -1132,7 +1132,12 @@ test('page selection selects and deselects displayed calls and reflects partial 
   await expect(callChecks).toHaveCount(25);
   await expect(pageCheck).not.toBeChecked();
   await expect(pageCheck).toBeEnabled();
+  const toolbar = page.locator('.recordings-results-toolbar');
+  await expect(toolbar.locator('.recordings-result-count')).toBeVisible();
+  await expect(toolbar.locator('.recordings-selected')).toBeHidden();
   await pageCheck.check();
+  await expect(toolbar.locator('.recordings-result-count > span').first()).toBeHidden();
+  await expect(toolbar.locator('.recordings-selected')).toBeVisible();
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
   await expect(page.locator('.recordings-selected')).toContainText('25 selected');
   await expect(pageCheck).toBeChecked();
@@ -1149,6 +1154,7 @@ test('page selection selects and deselects displayed calls and reflects partial 
   await pageCheck.uncheck();
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
   await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect(toolbar.locator('.recordings-result-count')).toBeVisible();
   await expect(page.locator('.recordings-call')).toHaveCount(25);
 });
 
@@ -1205,6 +1211,8 @@ for (const account of [{ name: 'secondary administrator', admin: true, primary: 
     await expect(page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).toHaveCount(0);
     await expect(page.locator('.recordings-call-select')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toHaveCount(0);
+    await expect(page.locator('.recordings-results-state .recordings-result-count')).toContainText('25 calls shown');
+    await expect(page.locator('.recordings-results-toolbar .recordings-pager-top')).toBeVisible();
   });
 }
 
@@ -1323,6 +1331,97 @@ for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']
     if (device === 'desktop') { expect(pickerBounds.width).toBeGreaterThanOrEqual(680); expect(pickerBounds.width).toBeLessThanOrEqual(760); }
     else { expect(pickerBounds.width).toBeGreaterThanOrEqual(370); expect(pickerBounds.width).toBeLessThanOrEqual(390); }
     await expect(picker).toHaveScreenshot(`recordings-workspace-picker-${theme}-${device}.png`, componentScreenshot);
+  });
+}
+
+test('compact results group context, filters and selection with the pager before the first call', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openRecordings(page, { calls: browsingCalls(3), paginate: true, nextCursor: 'fixture:3',
+    query: { system_key: systemKey, talkgroup_identity_key: 'v1-g-00001-001-1201' } });
+  const results = page.locator('.recordings-results-panel');
+  await expect(results.getByRole('heading', { name: 'All recordings', exact: true })).toHaveCount(0);
+  await expect(results.locator('.recordings-results-scope')).toHaveText('Past 24 hours');
+  await expect(results.locator('.recordings-results-actions').getByRole('combobox')).toHaveCount(2);
+  await expect(results.locator('.recordings-page-selection')).toHaveText('Select page');
+  const state = results.locator('.recordings-results-state');
+  await expect(state.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).toBeVisible();
+  await expect(state.locator('.recordings-result-count')).toContainText('3 calls shown · more available');
+  await expect(results.locator('.recordings-results-toolbar .recordings-pager-top')).toBeVisible();
+  const geometry = await results.evaluate(element => {
+    const rect = selector => {
+      const bounds = element.querySelector(selector).getBoundingClientRect();
+      return { x: bounds.x, y: bounds.y, right: bounds.right, bottom: bounds.bottom };
+    };
+    return { scope: rect('.recordings-results-scope'), chips: rect('.recordings-selected-filters'),
+      toolbar: rect('.recordings-results-toolbar'), date: rect('.recordings-result-date'),
+      title: rect('.recordings-call-title'), metadata: rect('.recordings-call-head'),
+      actions: rect('.recordings-call-actions'), selection: rect('.recordings-call-select') };
+  });
+  expect(geometry.chips.y).toBeGreaterThanOrEqual(geometry.scope.bottom);
+  expect(geometry.toolbar.y).toBeGreaterThanOrEqual(geometry.chips.bottom);
+  expect(geometry.date.y).toBeGreaterThanOrEqual(geometry.toolbar.bottom);
+  expect(geometry.date.y - geometry.scope.y).toBeLessThan(200);
+  expect(Math.abs(geometry.scope.x - geometry.chips.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.chips.x - geometry.toolbar.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.toolbar.x - geometry.date.x)).toBeLessThanOrEqual(1);
+  expect(geometry.metadata.y).toBeGreaterThanOrEqual(geometry.title.bottom);
+  expect(Math.abs(geometry.actions.y - geometry.title.y)).toBeLessThanOrEqual(6);
+  expect(geometry.selection.x).toBeLessThan(geometry.title.x);
+  await expect(results.locator('.recordings-call > .recordings-call-actions')).toHaveCount(3);
+  await expect(results.locator('.recordings-call > .recordings-call-select')).toHaveCount(3);
+});
+
+test('cards omit only the applied system context and preserve it through pending filter removal', async ({ page }) => {
+  const otherSystem = { ...linkedCall, id: 18, system_key: 'p25:00002:002',
+    system_name: 'County Public Safety', radio_system_entity_ref: { kind: 'radio_system', key: 'p25:00002:002' } };
+  const state = await openRecordings(page, { calls: [linkedCall, otherSystem], query: { system_key: systemKey } });
+  const first = page.locator('.recordings-call').first(), other = page.locator('.recordings-call').nth(1);
+  await expect(first).not.toContainText('Metro Public Safety');
+  await expect(first.locator('.recordings-call-head')).toContainText('Talkgroup 1201');
+  await expect(other).toContainText('County Public Safety');
+  const systemChip = page.locator('.recordings-selected-filters .recordings-filter-chip[aria-label*="System:"]');
+  await expect(systemChip.locator('.recordings-filter-chip-label')).toHaveText('Metro Public Safety');
+  await expect(systemChip).toHaveAccessibleName('Remove System: Metro Public Safety filter');
+  await systemChip.click();
+  await expect(systemChip).toHaveClass(/recordings-filter-chip-pending/);
+  await expect(first).not.toContainText('Metro Public Safety');
+  await searchNow(page, state);
+  await expect(first).toContainText('Metro Public Safety');
+  await expect(other).toContainText('County Public Safety');
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
+  test(`compact results retain long filter names, card actions and selection at ${width}px in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const transcript = 'DispatchInteroperability'.repeat(12);
+    await openRecordings(page, { call: linkedCall, theme, nextCursor: 'fixture:1', query: { transcript, system_key: systemKey } });
+    const results = page.locator('.recordings-results-panel');
+    const chip = results.getByRole('button', { name: `Remove Full text: ${transcript} filter`, exact: true });
+    await expect(chip).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    for (const selector of ['.recordings-filter-chip', '.recordings-results-actions select',
+      '.recordings-call-actions button', '.recordings-pager']) {
+      for (const control of await results.locator(selector).all()) {
+        const bounds = await control.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width, `${selector}: ${await control.getAttribute('class')}`).toBeLessThanOrEqual(width);
+      }
+    }
+    await expect(results).toHaveScreenshot(`recordings-compact-long-filter-${theme}-${width}.png`, componentScreenshot);
+    const beforeFocus = await chip.boundingBox();
+    await chip.focus();
+    await expect(chip).toBeFocused();
+    const hint = page.getByRole('tooltip');
+    await expect(hint).toContainText(`Full text: ${transcript}`);
+    const afterFocus = await chip.boundingBox(), hintBounds = await hint.boundingBox();
+    expect(afterFocus.height).toBe(beforeFocus.height);
+    expect(hintBounds.x).toBeGreaterThanOrEqual(0);
+    expect(hintBounds.x + hintBounds.width).toBeLessThanOrEqual(width);
+    await page.locator('.recordings-call-select').check();
+    await expect(results.locator('.recordings-results-toolbar .recordings-selected')).toContainText('1 selected');
+    await expect(results.locator('.recordings-result-count > span').first()).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await expect(results).toHaveScreenshot(`recordings-compact-selected-${theme}-${width}.png`, componentScreenshot);
   });
 }
 
@@ -1842,6 +1941,8 @@ test('top and bottom pagination stay synchronized and First returns to the appli
     await expect(pager.getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
     await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
     await expect(pager.locator('svg')).toHaveCount(0);
+    expect(await pager.locator('button, .ui-browse-pager-count').allTextContents())
+      .toEqual(['First', 'Previous', 'Page 1', 'Next']);
   }
   await top.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(counts).toHaveText(['Page 2', 'Page 2']);
@@ -1864,7 +1965,7 @@ test('Calls per page uses applied filters, resets pagination, and preserves play
   await expect(page.locator('.recordings-call')).toHaveCount(25);
   const size = page.getByRole('combobox', { name: 'Calls per page', exact: true });
   await expect(size).toHaveValue('25');
-  await expect(size.locator('option')).toHaveText(['25', '50']);
+  await expect(size.locator('option')).toHaveText(['25 per page', '50 per page']);
   await page.locator('.recordings-call-info').first().click();
   await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Play once', exact: true }).click();
   await page.locator('.recordings-call-info').nth(1).click();

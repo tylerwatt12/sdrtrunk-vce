@@ -13,7 +13,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/base.css?v=2") layer(reset);',
   '@import url("./styles/tokens.css?v=39") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=6") layer(components);',
-  '@import url("./styles/components/controls.css?v=37") layer(components);',
+  '@import url("./styles/components/controls.css?v=38") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=11") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=30") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=15") layer(compositions);',
@@ -50,7 +50,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=5") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=8") layer(features);',
   '@import url("./styles/features/activity.css?v=5") layer(features);',
-  '@import url("./styles/features/recordings.css?v=20") layer(features);',
+  '@import url("./styles/features/recordings.css?v=21") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=14") layer(utilities);',
 ];
 
