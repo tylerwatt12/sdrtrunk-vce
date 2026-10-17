@@ -33,7 +33,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=17';
 import { createAlertsWorkspace } from './features/alerts.js?v=11';
 import { createRecordingsFeature } from './features/recordings.js?v=48';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
@@ -30190,7 +30190,7 @@ async function renderStreaming() {
 
 function renderAdminRemoteLinks(renderContext) {
   const workspace = createRemoteLinksWorkspace({
-    node, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, createFormWorkflow,
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, createFormWorkflow,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
   });
   const close = () => workspace.close();
@@ -33709,7 +33709,7 @@ function adminSettingsGroups() {
     ] },
     { label: 'Receiver configuration', items: [
       { id: 'remote-links', label: 'Remote Links', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
+        description: 'Receive P25 feeds here or send local P25 feeds to another installation.' },
       { id: 'protocol-p25', label: 'P25 band plans', icon: 'radio-tower', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Configure P25 band plan overrides.' }
     ] },

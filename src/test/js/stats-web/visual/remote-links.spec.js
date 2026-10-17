@@ -66,6 +66,10 @@ async function openApp(page, theme = 'light', options = {}) {
   if (options.senderState) current.senders[0].state = options.senderState;
   if (options.multipleFeeds) current.senders[0].feeds.push({ ...current.senders[0].feeds[0],
     feed_id: 'south-control', display_name: 'Metro South', channel_configuration_id: 'local-channel-2' });
+  if (options.multipleSenders) current.senders.push({ ...current.senders[0],
+    sender_id: '22222222-2222-4222-8222-222222222222', display_name: 'West receiver',
+    feeds: [{ ...current.senders[0].feeds[0], feed_id: 'west-control', display_name: 'Metro West',
+      channel_configuration_id: 'local-channel-west' }] });
   let reads = 0;
   let removals = 0;
   let removalBlock = null;
@@ -116,7 +120,7 @@ async function openApp(page, theme = 'light', options = {}) {
     }
   });
   await page.goto('/app.html?view=admin&tab=remote-links');
-  await expect(page.locator('.remote-links-sender-card')).toBeVisible();
+  await expect(page.locator('.remote-links-sender-card').first()).toBeVisible();
   return {
     reads: () => reads,
     removals: () => removals,
@@ -144,41 +148,49 @@ for (const [theme, viewport] of [
   ['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]
 ]) {
-  test(`${theme} remote links cards and listener editor keep consistent spacing`, async ({ page }) => {
+  test(`${theme} remote links groups distinguish both directions and keep consistent spacing`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await openApp(page, theme);
-    const grid = page.locator('.remote-links-sender-grid');
-    const card = grid.locator('.remote-links-sender-card');
-    const gridBox = await grid.boundingBox();
+    const incoming = page.getByRole('region', { name: 'Receive here', exact: true });
+    const outbound = page.getByRole('region', { name: 'Send from here', exact: true });
+    await expect(incoming).toHaveAttribute('data-remote-direction', 'receive');
+    await expect(outbound).toHaveAttribute('data-remote-direction', 'send');
+    const card = incoming.locator('.remote-links-sender-card');
+    const gridBox = await incoming.locator('.remote-links-sender-grid').boundingBox();
     const cardBox = await card.boundingBox();
     expect(cardBox.width).toBeGreaterThan(gridBox.width * .95);
     const feedBox = await card.locator('.remote-links-feed-card').boundingBox();
-    const manageBox = await card.getByRole('button', { name: 'Manage sender' }).boundingBox();
-    expect(manageBox.y).toBeGreaterThanOrEqual(feedBox.y + feedBox.height + 8);
+    const manageBox = await card.getByRole('button', { name: 'Settings for Field receiver' }).boundingBox();
+    expect(manageBox.y).toBeLessThan(feedBox.y);
     await expect(card).toContainText('P25 Phase 1');
-    await expect(page.locator('.remote-links-overview')).not.toContainText('No optional dependency status reported.');
-    const outbound = page.locator('.remote-links-card').filter({ hasText: 'Send local P25 feeds' });
-    await expect(outbound.locator('.ui-metric-label')).toHaveText('Exported systems');
-    await expect(outbound.locator('.ui-metric strong')).toHaveText('0');
-    await expect(outbound.locator('.ui-fact dt')).toHaveText(['Authentication', 'Last connected']);
+    await expect(incoming).not.toContainText('No optional dependency status reported.');
+    await expect(outbound.locator('.ui-fact-list')).toHaveCount(0);
+    await expect(outbound).toContainText('Create a trusted sender on the destination receiver');
+    const setup = outbound.getByRole('button', { name: 'Set up sending', exact: true });
+    await expect(setup).toBeVisible();
     const outboundBox = await outbound.boundingBox();
-    const metricBox = await outbound.locator('.ui-metric').boundingBox();
-    const factBox = await outbound.locator('.ui-fact').first().boundingBox();
-    expect(metricBox.x - outboundBox.x).toBeGreaterThanOrEqual(12);
-    expect(outboundBox.x + outboundBox.width - metricBox.x - metricBox.width).toBeGreaterThanOrEqual(12);
-    expect(Math.abs(metricBox.x - factBox.x)).toBeLessThan(1);
-    await expect(page.locator('.remote-links-card-header svg')).toHaveCount(0);
+    const setupBox = await setup.boundingBox();
+    expect(setupBox.x - outboundBox.x).toBeGreaterThanOrEqual(12);
+    expect(outboundBox.x + outboundBox.width - setupBox.x - setupBox.width).toBeGreaterThanOrEqual(12);
+    await expect(incoming.locator('svg use[href="#icon-download"]')).toHaveCount(1);
+    await expect(outbound.locator('svg use[href="#icon-upload"]')).toHaveCount(1);
+    await expect(incoming.locator('svg use[href="#icon-arrow-right"]')).toHaveCount(1);
+    await expect(outbound.locator('svg use[href="#icon-arrow-right"]')).toHaveCount(1);
     await expect(card.locator('.remote-links-feed-title svg')).toHaveCount(1);
     await expect(page.locator('#icon-cloud path')).toHaveAttribute('fill', 'currentColor');
-    await expect(page.locator('.remote-links-summary')).toContainText('1 connected sender');
-    await expect(page.locator('.remote-links-summary')).not.toContainText('waiting');
+    await expect(incoming).toContainText('1 connected sender');
+    await expect(incoming).not.toContainText('waiting');
+    await expect(incoming.getByRole('button', { name: 'Add sender', exact: true })).toBeVisible();
+    await expect(outbound.getByRole('button', { name: 'Add sender', exact: true })).toHaveCount(0);
+    await expect(outbound.locator('.remote-links-sender-card, .remote-links-feed-card')).toHaveCount(0);
+    await expect(card.locator('.ui-fact')).toHaveCount(0);
     await expect(card.getByRole('button', { name: 'Manage feed' })).toBeVisible();
     await expect(card).not.toContainText('approval');
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`remote-links-page-${theme}.png`, { fullPage: true });
 
-    await page.getByRole('button', { name: 'Configure listener' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Remote listener' });
+    await page.getByRole('button', { name: 'Receive settings' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Receive settings' });
     await expect(dialog).toBeVisible();
     const dialogBox = await dialog.boundingBox();
     expect(dialogBox.width).toBeLessThanOrEqual(theme === 'light' ? 540 : 390);
@@ -190,6 +202,12 @@ for (const [theme, viewport] of [
       expect(Math.abs(addressBox.y - portBox.y)).toBeLessThan(2);
     }
     await expect(dialog).toHaveScreenshot(`remote-listener-${theme}.png`);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.setViewportSize({ width: 320, height: 844 });
+    await card.locator('.ui-disclosure-copy strong').evaluate(element => {
+      element.textContent = 'LongSenderName'.repeat(8);
+    });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 }
 
@@ -209,8 +227,8 @@ test('the sender preference and local feed stay editable without adoption fields
   page.on('request', (request) => {
     if (request.method() === 'PUT' && request.url().includes('/remote-links/senders/')) writes.push(request.postDataJSON());
   });
-  await page.getByRole('button', { name: 'Manage sender' }).click();
-  const senderDialog = page.getByRole('dialog', { name: 'Trusted sender' });
+  await page.getByRole('button', { name: 'Settings for Field receiver' }).click();
+  const senderDialog = page.getByRole('dialog', { name: 'Sender settings' });
   await expect(senderDialog.getByLabel('Preferred P25 Alias List')).toBeVisible();
   await expect(senderDialog).not.toContainText('Adopt');
   await senderDialog.getByRole('button', { name: 'Save sender' }).click();
@@ -233,8 +251,8 @@ test('the sender preference and local feed stay editable without adoption fields
 
 test('outbound system selection uses the themed checkbox', async ({ page }) => {
   await openApp(page);
-  await page.getByRole('button', { name: 'Configure sender' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Outbound remote sender' });
+  await page.getByRole('button', { name: 'Set up sending' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sending settings' });
   const system = dialog.getByRole('checkbox', { name: /Metro North/ });
   await expect(system).toHaveClass('ui-selection-check');
   await expect(system).toHaveCSS('appearance', 'none');
@@ -248,7 +266,7 @@ test('new credential is announced and guarded until its secret is copied', async
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
   });
-  await page.getByRole('button', { name: 'Add trusted sender' }).click();
+  await page.getByRole('button', { name: 'Add sender' }).click();
   await page.getByLabel('Sender name').fill('Second field receiver');
   await page.getByRole('button', { name: 'Create credential' }).click();
   const dialog = page.getByRole('dialog', { name: 'Credential created' });
@@ -264,7 +282,7 @@ test('new credential is announced and guarded until its secret is copied', async
   await expect(dialog.getByRole('status')).toHaveText('Shared secret copied.');
   await dialog.getByRole('button', { name: 'Done' }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Add trusted sender' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Add sender' })).toBeFocused();
 });
 
 for (const [theme, viewport] of [
@@ -275,8 +293,8 @@ for (const [theme, viewport] of [
   test(`sender removal confirms its channel scope, preserves cancellation, and applies its returned snapshot in ${presentation}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const app = await openApp(page, theme, { multipleFeeds: true });
-    await page.getByRole('button', { name: 'Manage sender' }).click();
-    const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+    await page.getByRole('button', { name: 'Settings for Field receiver' }).click();
+    const editor = page.getByRole('dialog', { name: 'Sender settings' });
     const name = editor.getByLabel('Sender name');
     await name.fill('Unfinished sender name');
     const remove = editor.getByRole('button', { name: 'Remove sender', exact: true });
@@ -324,8 +342,8 @@ for (const [theme, viewport] of [
     page.on('request', request => {
       if (request.method() === 'PUT' && request.url().includes('/remote-links/senders/')) writes.push(request);
     });
-    await page.getByRole('button', { name: 'Manage sender' }).click();
-    const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+    await page.getByRole('button', { name: 'Settings for Field receiver' }).click();
+    const editor = page.getByRole('dialog', { name: 'Sender settings' });
     const name = editor.getByLabel('Sender name');
     await name.fill('');
     const release = app.deferRemoval('Sender could not be removed. Try again.');
@@ -370,8 +388,8 @@ for (const [theme, viewport] of [
   test(`legacy revoked senders can be removed with their retained feeds in ${presentation}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const app = await openApp(page, theme, { senderState: 'REVOKED', multipleFeeds: true });
-    await page.getByRole('button', { name: 'Manage sender' }).click();
-    const editor = page.getByRole('dialog', { name: 'Trusted sender' });
+    await page.getByRole('button', { name: 'Settings for Field receiver' }).click();
+    const editor = page.getByRole('dialog', { name: 'Sender settings' });
     await editor.getByRole('button', { name: 'Remove sender', exact: true }).click();
     await page.getByRole('alertdialog', { name: 'Remove trusted sender', exact: true })
       .getByRole('button', { name: 'Remove sender', exact: true }).click();
@@ -385,8 +403,8 @@ for (const [theme, viewport] of [
     const app = await openApp(page, theme, { multipleFeeds: true, restartRequiredOnRemoval: true });
     const warning = page.locator('.remote-links-restart-notice');
     await expect(warning).toBeHidden();
-    await page.getByRole('button', { name: 'Manage sender', exact: true }).click();
-    const editor = page.getByRole('dialog', { name: 'Trusted sender', exact: true });
+    await page.getByRole('button', { name: 'Settings for Field receiver', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Sender settings', exact: true });
     await editor.getByLabel('Sender name').fill('Unfinished sender name');
     await editor.getByRole('button', { name: 'Remove sender', exact: true }).click();
     await page.getByRole('alertdialog', { name: 'Remove trusted sender', exact: true })
@@ -411,30 +429,66 @@ for (const [theme, viewport] of [
 
 test('polling refreshes status and restores a focused remote action', async ({ page }) => {
   const app = await openApp(page);
-  const outbound = page.locator('.remote-links-card').filter({ hasText: 'Send local P25 feeds' });
-  await expect(outbound.locator('.ui-metric strong')).toHaveText('0');
-  const action = page.getByRole('button', { name: 'Configure listener' });
+  const incoming = page.getByRole('region', { name: 'Receive here', exact: true });
+  const outbound = page.getByRole('region', { name: 'Send from here', exact: true });
+  await expect(outbound.locator('.ui-fact-list')).toHaveCount(0);
+  await expect(outbound.getByRole('button', { name: 'Set up sending', exact: true })).toBeVisible();
+  const action = page.getByRole('button', { name: 'Receive settings' });
   await action.focus();
   const handle = await action.elementHandle();
   app.updateListener({ enabled: true, state: 'LISTENING' });
-  app.updateSenderConnection({ credential_configured: true,
+  app.updateSenderConnection({ destination_host: 'remote.example.test', destination_port: 53800,
+    enabled: true, state: 'CONNECTED', credential_configured: true,
     exported_channel_configuration_ids: ['local-channel-1', 'local-channel-2'] });
-  await expect(page.locator('.remote-links-summary')).toContainText('Listening', { timeout: 7000 });
-  await expect(outbound.locator('.ui-metric strong')).toHaveText('2');
-  await expect(outbound.locator('.ui-fact dd')).toHaveText(['Credential saved', 'Never']);
+  await expect(incoming).toContainText('Listening', { timeout: 7000 });
+  await expect(outbound.locator('.ui-fact-list dt')).toHaveText([
+    'Destination', 'Selected feeds', 'Authentication', 'Last connected'
+  ]);
+  await expect(outbound.locator('.ui-fact-list dd').first()).toHaveText('remote.example.test:53800');
+  await expect(outbound.getByRole('button', { name: 'Sending settings', exact: true })).toBeVisible();
+  await expect(outbound.getByRole('button', { name: 'Set up sending', exact: true })).toHaveCount(0);
+  await expect(outbound.locator('.ui-fact-list dd').nth(1)).toContainText(/\b2\b/);
+  await expect(outbound.locator('.ui-fact-list dd').nth(2)).toHaveText('Credential saved');
+  await expect(outbound.locator('.ui-fact-list dd').nth(3)).toHaveText('Never');
   expect(await handle.evaluate((element) => element.isConnected)).toBe(false);
   await expect(action).toBeFocused();
   app.updateSenderConnection({ exported_channel_configuration_ids: [] });
-  await expect(outbound.locator('.ui-metric strong')).toHaveText('0', { timeout: 7000 });
-  await expect(outbound.locator('.ui-fact dd')).toHaveText(['Credential saved', 'Never']);
+  await expect(outbound.locator('.ui-fact-list dd').nth(1)).toContainText(/\b0\b/, { timeout: 7000 });
+  await expect(outbound.locator('.ui-fact-list dd').nth(2)).toHaveText('Credential saved');
+  await expect(outbound.locator('.ui-fact-list dd').nth(3)).toHaveText('Never');
   await action.click();
-  await expect(page.getByRole('dialog', { name: 'Remote listener' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Receive settings' })).toBeVisible();
+});
+
+test('sender disclosure choices and focus survive status polling independently', async ({ page }) => {
+  const app = await openApp(page, 'light', { multipleSenders: true });
+  const senders = page.locator('.remote-links-sender-card');
+  const firstToggle = senders.nth(0).locator('.ui-disclosure-toggle');
+  const secondToggle = senders.nth(1).locator('.ui-disclosure-toggle');
+  await expect(firstToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(secondToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(senders.nth(0).getByRole('button', { name: 'Manage feed' })).toBeVisible();
+  await expect(senders.nth(1).getByRole('button', { name: 'Manage feed' })).toBeHidden();
+  await firstToggle.click();
+  await secondToggle.click();
+  await expect(firstToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+  const before = app.reads();
+  await expect.poll(() => app.reads(), { timeout: 7000 }).toBeGreaterThan(before);
+  await expect(firstToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(senders.nth(0).getByRole('button', { name: 'Manage feed' })).toBeHidden();
+  await expect(senders.nth(1).getByRole('button', { name: 'Manage feed' })).toBeVisible();
+  await expect(secondToggle).toBeFocused();
+  await secondToggle.press('Enter');
+  await expect(secondToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(senders.nth(1).getByRole('button', { name: 'Manage feed' })).toBeHidden();
 });
 
 for (const activation of ['pointer', 'keyboard']) {
   test(`polling preserves an in-progress ${activation} activation`, async ({ page }) => {
     const app = await openApp(page);
-    const action = page.getByRole('button', { name: 'Configure listener' });
+    const action = page.getByRole('button', { name: 'Receive settings' });
     const handle = await action.elementHandle();
     if (activation === 'pointer') {
       const box = await action.boundingBox();
@@ -451,7 +505,7 @@ for (const activation of ['pointer', 'keyboard']) {
     expect(await handle.evaluate((element) => element.isConnected)).toBe(true);
     if (activation === 'pointer') await page.mouse.up();
     else await page.keyboard.up('Space');
-    await expect(page.getByRole('dialog', { name: 'Remote listener' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Receive settings' })).toBeVisible();
   });
 }
 
@@ -468,8 +522,8 @@ test('listener save shares busy guards, preserves failed drafts, and retries the
       resolve();
     }));
   });
-  await page.getByRole('button', { name: 'Configure listener' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Remote listener' });
+  await page.getByRole('button', { name: 'Receive settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Receive settings' });
   const address = dialog.getByRole('textbox', { name: /^Bind address/ });
   const save = dialog.getByRole('button', { name: 'Save listener', exact: true });
   await address.fill('127.0.0.1');
@@ -506,7 +560,7 @@ test('one-time credential transition cannot submit a second creation request', a
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
   });
-  await page.getByRole('button', { name: 'Add trusted sender' }).click();
+  await page.getByRole('button', { name: 'Add sender' }).click();
   await page.getByLabel('Sender name').fill('Additional field receiver');
   await page.getByRole('button', { name: 'Create credential' }).click();
   const dialog = page.getByRole('dialog', { name: 'Credential created' });
@@ -519,13 +573,13 @@ test('one-time credential transition cannot submit a second creation request', a
 });
 
 const editorSpacingCases = [
-  { key: 'listener', open: 'Configure listener', title: 'Remote listener', field: 'Bind address',
+  { key: 'listener', open: 'Receive settings', title: 'Receive settings', field: 'Bind address',
     value: '127.0.0.1', action: 'Save listener', endpoint: '/listener' },
-  { key: 'outbound', open: 'Configure sender', title: 'Outbound remote sender', field: 'Destination host',
+  { key: 'outbound', open: 'Set up sending', title: 'Sending settings', field: 'Destination host',
     value: 'remote.example.test', action: 'Save sender', endpoint: '/sender-connection' },
-  { key: 'create', open: 'Add trusted sender', title: 'Add trusted sender', field: 'Sender name',
+  { key: 'create', open: 'Add sender', title: 'Add sender', field: 'Sender name',
     value: 'Synthetic dispatch', action: 'Create credential', endpoint: '/senders' },
-  { key: 'sender', open: 'Manage sender', title: 'Trusted sender', field: 'Sender name',
+  { key: 'sender', open: 'Settings for Field receiver', title: 'Sender settings', field: 'Sender name',
     value: 'Updated fixture sender', action: 'Save sender', endpoint: `/senders/${senderId}` },
   { key: 'feed', open: 'Manage feed', title: 'Remote feed', field: 'Local channel name',
     value: 'Updated fixture feed', action: 'Save feed', endpoint: `/senders/${senderId}/feeds/north-control` }
@@ -572,7 +626,7 @@ for (const [theme, viewport] of [
     await page.evaluate(() => {
       Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} }, configurable: true });
     });
-    await page.getByRole('button', { name: 'Add trusted sender', exact: true }).click();
+    await page.getByRole('button', { name: 'Add sender', exact: true }).click();
     await page.getByLabel('Sender name').fill('Synthetic credential fixture');
     await page.getByRole('button', { name: 'Create credential', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Credential created', exact: true });

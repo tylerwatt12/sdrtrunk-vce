@@ -1,33 +1,35 @@
 const ROOT = '/api/v1/admin/remote-links';
 const POLL_MS = 3000;
 
-// Reuse map: data-workspace, ui-surface-heading, ui-heading-group, ui-surface, ui-facts, ui-metric, ui-status,
+// Reuse map: ui-section-title/body, ui-surface-inset, ui-record-card/section/header/body,
+// ui-disclosure-toggle/copy, ui-heading-group, ui-fact-list, ui-status, shared glyphs,
 // ui-toggle-field, ui-field, ui-select-frame, ui-notice and the shared modal lifecycle
 // provide the visual language. This feature owns only Remote Links layout geometry.
 export function createRemoteLinksWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
-    openReadOnlyModal, confirmAction, createFormWorkflow, requestJson, modalFooter, metrics, signal } = deps;
+    openReadOnlyModal, confirmAction, createFormWorkflow, requestJson, modalFooter, signal } = deps;
   const host = node('div', 'remote-links-page data-workspace');
-  const summary = node('div', 'remote-links-summary');
   const message = node('div');
   message.setAttribute('role', 'status');
+  message.hidden = true;
   const restartNotice = node('div', 'ui-notice ui-notice-warning remote-links-restart-notice',
     'Sender removed. Restart VCE to finish updating its channel list.');
   restartNotice.setAttribute('role', 'status');
   restartNotice.hidden = true;
   const overview = node('div', 'remote-links-overview');
-  const senderHeader = node('div', 'remote-links-section-header ui-surface ui-surface-heading');
+  const senderHeader = node('div', 'remote-links-section-header');
   const senderHeading = node('div', 'ui-heading-group');
-  senderHeading.append(node('h2', '', 'Trusted senders'),
-    node('p', 'muted', 'Create credentials for installations allowed to send P25 feeds to this receiver.'));
-  const addSender = button('Add trusted sender', () => openCreateSender(), true, 'add-sender');
+  const senderCount = node('p', 'muted');
+  senderHeading.append(node('h3', '', 'Senders allowed to send here'), senderCount);
+  const addSender = button('Add sender', () => openCreateSender(), true, 'add-sender');
+  addSender.prepend(iconGlyph('icon-plus'));
   senderHeader.append(senderHeading, addSender);
-  const senderHost = node('div', 'remote-links-sender-grid');
+  const senderHost = node('div', 'remote-links-sender-grid ui-record-card');
   const pageMeta = node('footer', 'remote-links-page-meta');
   const freshness = node('span', 'muted');
   pageMeta.append(freshness,
     node('span', 'muted', 'Remote channels use this receiver’s Alias Lists and depend on their sender for live traffic.'));
-  host.append(summary, message, restartNotice, overview, senderHeader, senderHost, pageMeta);
+  host.append(message, restartNotice, overview, pageMeta);
 
   let snapshot = null;
   let loading = false;
@@ -38,6 +40,9 @@ export function createRemoteLinksWorkspace(deps) {
   let pointerActivation = false;
   let keyboardActivation = '';
   let pendingSnapshot = null;
+  const expandedSenders = new Map();
+  let nextDisclosureId = 0;
+  const senderDisclosureIds = new Map();
 
   function button(label, action, primary = false, actionKey = '') {
     const control = node('button', `ui-button ui-button-${primary ? 'primary' : 'secondary'}`, label);
@@ -73,32 +78,67 @@ export function createRemoteLinksWorkspace(deps) {
   const notice = (text, tone = '') => node('div', tone ? `ui-notice ui-notice-${tone}` : 'ui-feedback', text);
   const showError = (target, error) => target.replaceChildren(notice(error?.message || 'The request failed', 'danger'));
   const pathPart = (value) => encodeURIComponent(String(value));
-  const aliasLists = () => Array.isArray(snapshot?.alias_lists) ? snapshot.alias_lists : [];
 
-  function heading(title, detail, stateValue = null) {
-    const header = node('header', 'remote-links-card-header');
-    const identity = node('div', 'remote-links-card-identity');
-    identity.append(node('h2', '', title));
-    if (detail) identity.append(node('p', 'muted', detail));
+  function heading(title, glyph, stateValue = null) {
+    const header = node('header', 'remote-links-card-header ui-section-title');
+    const identity = node('div', 'remote-links-direction-title');
+    const icon = node('span', 'ui-record-card-icon');
+    icon.append(iconGlyph(glyph));
+    identity.append(icon, node('h2', 'ui-section-heading', title));
     header.append(identity);
     if (stateValue) header.append(status(stateValue));
     return header;
   }
 
   function facts(items) {
-    const list = node('dl', 'ui-facts remote-links-facts');
+    const list = node('dl', 'ui-fact-list remote-links-facts');
     items.forEach(([label, value]) => {
-      const item = node('div', 'ui-fact');
-      item.append(node('dt', '', label), node('dd', '', value == null || value === '' ? '—' : String(value)));
-      list.append(item);
+      list.append(node('dt', '', label), node('dd', '', value == null || value === '' ? '—' : String(value)));
     });
     return list;
   }
 
+  function feedFacts(feed) {
+    const items = [feed.wacn != null ? ['WACN', feed.wacn] : null,
+      feed.system != null ? ['System ID', feed.system] : null,
+      feed.rfss != null ? ['RFSS', feed.rfss] : null, feed.site != null ? ['Site', feed.site] : null].filter(Boolean);
+    if (feed.lag_milliseconds != null) items.push(['Link delay', `${Math.max(0, Number(feed.lag_milliseconds))}ms`],
+      ['Sequence gaps', feed.sequence_gap_count || 0]);
+    return items;
+  }
+
+  function directionFlow(receive) {
+    const flow = node('div', 'remote-links-flow ui-surface-inset');
+    const endpoint = (label, detail, glyph, local = false) => {
+      const host = node('div', 'remote-links-endpoint');
+      const icon = node('span', local ? 'ui-icon-tile' : 'ui-record-card-icon');
+      icon.append(iconGlyph(glyph));
+      const copy = node('div', 'ui-heading-group');
+      copy.append(node('strong', '', label), node('small', 'muted', detail));
+      host.append(icon, copy);
+      return host;
+    };
+    const arrow = node('span', 'ui-record-card-icon');
+    arrow.append(iconGlyph('icon-arrow-right'));
+    flow.append(receive ? endpoint('Other installations', 'Send their P25 feeds', 'icon-network-visualizer') :
+      endpoint('This receiver', 'Your local P25 feeds', 'icon-radio-tower', true), arrow,
+    receive ? endpoint('This receiver', 'Receives remote feeds', 'icon-radio-tower', true) :
+      endpoint('Destination receiver', 'One other installation', 'icon-server'));
+    return flow;
+  }
+
   function drawListener(listener) {
-    const card = node('article', 'remote-links-card ui-surface');
-    card.append(heading('Receive remote feeds', listener.enabled ?
-      `${listener.bind_address || 'All interfaces'}:${listener.port}` : 'Listener disabled', listener.state));
+    const card = node('section', 'remote-links-card ui-surface');
+    card.dataset.remoteDirection = 'receive';
+    card.setAttribute('aria-label', 'Receive here');
+    card.append(heading('Receive here', 'icon-download', listener.state));
+    const body = node('div', 'ui-section-body');
+    const connection = node('div', 'remote-links-listener-controls');
+    const address = ['0.0.0.0', '::', '0:0:0:0:0:0:0:0'].includes(listener.bind_address) ?
+      'All network interfaces' : listener.bind_address || 'All network interfaces';
+    connection.append(node('span', 'muted', listener.enabled ? `${address} · Port ${listener.port}` :
+      'Receiving disabled'), button('Receive settings', openListener, false, 'listener'));
+    body.append(directionFlow(true), connection);
     const rows = Array.isArray(listener.dependencies) ? listener.dependencies : [];
     if (rows.length) {
       const dependencies = node('div', 'remote-links-dependencies');
@@ -108,49 +148,54 @@ export function createRemoteLinksWorkspace(deps) {
         if (dependency.status_message) item.append(node('small', 'muted', dependency.status_message));
         dependencies.append(item);
       });
-      card.append(dependencies);
+      body.append(dependencies);
     }
-    const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button('Configure listener', openListener, false, 'listener'));
+    body.append(senderHeader, senderHost);
     if (listener.bind_address === '127.0.0.1' || listener.bind_address === '::1') {
-      card.append(notice('This address accepts connections only from this receiver. Choose its VPN address to receive remote feeds.',
+      body.append(notice('This address accepts connections only from this receiver. Choose its VPN address to receive remote feeds.',
         'warning'));
     } else if (listener.enabled && ['0.0.0.0', '::', '0:0:0:0:0:0:0:0'].includes(listener.bind_address)) {
-      card.append(notice('Listening on every interface. Restrict access with a VPN or firewall; authentication does not encrypt traffic.',
+      body.append(notice('Restrict access with a VPN or firewall; authentication does not encrypt traffic.',
         'warning'));
     }
-    if (listener.status_message) card.append(notice(listener.status_message,
+    if (listener.status_message) body.append(notice(listener.status_message,
       stateKey(listener.state) === 'ERROR' ? 'danger' : 'warning'));
-    card.append(actions);
+    card.append(body);
     return card;
   }
 
   function drawSenderConnection(connection) {
     const selected = Array.isArray(connection.exported_channel_configuration_ids) ?
       connection.exported_channel_configuration_ids.length : 0;
-    const card = node('article', 'remote-links-card ui-surface');
+    const card = node('section', 'remote-links-card ui-surface');
+    card.dataset.remoteDirection = 'send';
+    card.setAttribute('aria-label', 'Send from here');
     const destination = connection.destination_host && connection.destination_port ?
       `${connection.destination_host}:${connection.destination_port}` : 'Not configured';
-    const counts = metrics([
-      ['Exported systems', selected, undefined, { icon: 'icon-trunked' }]
-    ]);
-    counts.classList.add('remote-links-connection-metrics');
     const details = facts([
+      ['Destination', destination],
+      ['Selected feeds', selected],
       ['Authentication', connection.credential_configured ? 'Credential saved' : 'Not configured'],
       ['Last connected', age(connection.last_connected_at_ms)]
     ]);
-    details.classList.add('remote-links-connection-facts');
-    card.append(heading('Send local P25 feeds', destination, connection.state), counts, details);
-    if (connection.status_message) card.append(notice(connection.status_message,
+    card.append(heading('Send from here', 'icon-upload', connection.state));
+    const body = node('div', 'ui-section-body');
+    body.append(directionFlow(false));
+    if (!connection.destination_host) body.append(node('p', 'ui-section-note',
+      'Create a trusted sender on the destination receiver, then enter its credentials here and choose the local P25 feeds to send.'));
+    else body.append(details);
+    if (connection.status_message) body.append(notice(connection.status_message,
       ['ERROR', 'AUTHENTICATION_FAILED'].includes(stateKey(connection.state)) ? 'danger' : 'warning'));
     const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button('Configure sender', openSenderConnection, false, 'sender-connection'));
-    card.append(actions);
+    actions.append(button(connection.destination_host ? 'Sending settings' : 'Set up sending',
+      openSenderConnection, !connection.destination_host, 'sender-connection'));
+    body.append(actions);
+    card.append(body);
     return card;
   }
 
   function drawFeed(sender, feed) {
-    const card = node('article', 'remote-links-feed-card ui-surface-inset');
+    const card = node('article', 'remote-links-feed-card ui-record-section');
     const header = node('header', 'remote-links-feed-header');
     const title = node('div', 'remote-links-feed-title');
     title.append(iconGlyph('icon-cloud'), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
@@ -158,46 +203,56 @@ export function createRemoteLinksWorkspace(deps) {
     const managed = Boolean(feed.channel_configuration_id);
     const identity = [protocolLabel(feed.protocol), frequency(feed.frequency_hz)].filter(Boolean).join(' · ');
     const catalog = [feed.system_name, feed.site_name].filter(Boolean).join(' · ');
-    const site = [feed.wacn != null ? `WACN ${feed.wacn}` : '', feed.system != null ? `System ID ${feed.system}` : '',
-      feed.rfss != null ? `RFSS ${feed.rfss}` : '', feed.site != null ? `Site ${feed.site}` : '']
-      .filter(Boolean).join(' · ');
-    const detail = node('div', 'remote-links-feed-detail');
+    const detail = node('div', 'remote-links-feed-detail muted ui-label');
     detail.append(node('span', '', identity));
     if (catalog) detail.append(node('span', '', catalog));
-    if (site) detail.append(node('span', 'muted', site));
-    detail.append(node('span', 'muted', managed ?
-      `Managed locally · ${feed.enabled ? 'enabled' : 'disabled'}` :
+    if (!managed || !feed.enabled) detail.append(node('span', 'muted', managed ? 'Managed locally · disabled' :
       stateKey(feed.state) === 'UNSUPPORTED' ? 'This feed is not supported by this version.' :
         stateKey(feed.state) === 'REMOVED' ? 'No longer advertised by the sender.' :
           'Setting up a local channel.'));
-    if (feed.lag_milliseconds != null) detail.append(node('span', 'muted',
-      `${Math.max(0, Number(feed.lag_milliseconds))}ms link delay · ${feed.sequence_gap_count || 0} sequence gaps`));
     if (feed.status_message) detail.append(node('span', statusTone(feed.state) === 'danger' ?
       'ui-status-danger' : 'muted', feed.status_message));
     card.append(header, detail);
+    const diagnostics = feedFacts(feed);
+    if (!managed && diagnostics.length) card.append(facts(diagnostics));
     if (managed) card.append(button('Manage feed', () => openFeed(sender, feed), false,
       `feed:${sender.sender_id}:${feed.feed_id}`));
     return card;
   }
 
-  function drawSender(sender) {
-    const card = node('article', 'remote-links-sender-card ui-surface');
+  function drawSender(sender, index) {
+    const card = node('article', 'remote-links-sender-card ui-record-section');
     const feeds = Array.isArray(sender.feeds) ? sender.feeds : [];
-    card.append(heading(sender.display_name || sender.sender_id, `${feeds.length} advertised feed${feeds.length === 1 ? '' : 's'}`,
-      sender.state), facts([
-      ['Sender ID', sender.sender_id],
-      ['Last seen', age(sender.last_seen_at_ms)],
-      ['Preferred P25 Alias List', aliasLists().find((item) => item.alias_list_id === sender.default_alias_list_id)?.name ||
-        'Host default']
-    ]));
-    if (sender.status_message) card.append(notice(sender.status_message,
+    const name = sender.display_name || sender.sender_id;
+    if (!expandedSenders.has(sender.sender_id)) expandedSenders.set(sender.sender_id, index === 0);
+    if (!senderDisclosureIds.has(sender.sender_id)) senderDisclosureIds.set(sender.sender_id,
+      `remote-links-sender-feeds-${++nextDisclosureId}`);
+    const header = node('header', 'remote-links-sender-header ui-record-card-header');
+    const toggle = node('button', 'ui-disclosure-toggle');
+    toggle.type = 'button';
+    toggle.dataset.remoteAction = `toggle-sender:${sender.sender_id}`;
+    toggle.setAttribute('aria-expanded', String(expandedSenders.get(sender.sender_id)));
+    const copy = node('span', 'ui-disclosure-copy');
+    copy.append(node('strong', 'remote-links-sender-name', name), node('small', '', `${feeds.length} feed${feeds.length === 1 ? '' : 's'}`));
+    toggle.append(copy);
+    const settings = button('Settings', () => openSender(sender), false, `sender:${sender.sender_id}`);
+    settings.setAttribute('aria-label', `Settings for ${name}`);
+    header.append(toggle, status(sender.state), settings);
+    const feedHost = node('div', 'remote-links-feed-grid ui-record-card-body');
+    feedHost.id = senderDisclosureIds.get(sender.sender_id);
+    feedHost.hidden = !expandedSenders.get(sender.sender_id);
+    toggle.setAttribute('aria-controls', feedHost.id);
+    toggle.addEventListener('click', () => {
+      const expanded = !expandedSenders.get(sender.sender_id);
+      expandedSenders.set(sender.sender_id, expanded);
+      toggle.setAttribute('aria-expanded', String(expanded));
+      feedHost.hidden = !expanded;
+    });
+    if (sender.status_message) feedHost.append(notice(sender.status_message,
       stateKey(sender.state) === 'ERROR' ? 'danger' : 'warning'));
-    const feedHost = node('div', 'remote-links-feed-grid');
     if (feeds.length) feedHost.append(...feeds.map((feed) => drawFeed(sender, feed)));
     else feedHost.append(node('div', 'ui-feedback', 'No feeds have been advertised by this sender.'));
-    const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button('Manage sender', () => openSender(sender), false, `sender:${sender.sender_id}`));
-    card.append(feedHost, actions);
+    card.append(header, feedHost);
     return card;
   }
 
@@ -206,17 +261,22 @@ export function createRemoteLinksWorkspace(deps) {
     restartNotice.hidden = snapshot.restart_required !== true;
     const senders = Array.isArray(snapshot.senders) ? snapshot.senders : [];
     const connectedCount = senders.filter((sender) => stateKey(sender.state) === 'CONNECTED').length;
-    summary.replaceChildren(status(snapshot.listener?.state),
-      uiStatus(`${connectedCount} connected sender${connectedCount === 1 ? '' : 's'}`, 'neutral'));
-    overview.replaceChildren(drawListener(snapshot.listener || {}),
-      drawSenderConnection(snapshot.sender_connection || {}));
+    const feedCount = senders.reduce((count, sender) => count + (Array.isArray(sender.feeds) ? sender.feeds.length : 0), 0);
+    senderCount.textContent = `${connectedCount} connected sender${connectedCount === 1 ? '' : 's'} · ` +
+      `${feedCount} feed${feedCount === 1 ? '' : 's'}`;
+    const activeIds = new Set(senders.map(sender => sender.sender_id));
+    for (const id of expandedSenders.keys()) if (!activeIds.has(id)) {
+      expandedSenders.delete(id); senderDisclosureIds.delete(id);
+    }
     if (senders.length) senderHost.replaceChildren(...senders.map(drawSender));
     else {
       const empty = node('div', 'ui-empty-state remote-links-empty');
-      empty.append(iconGlyph('icon-cloud'), node('h2', '', 'No trusted senders'),
-        node('p', '', 'Add a sender to create the ID and shared secret used by another VCE installation.'));
+      empty.append(iconGlyph('icon-network-visualizer'), node('h3', '', 'No trusted senders'),
+        node('p', '', 'Add a sender to create credentials for the installation that will send P25 feeds here.'));
       senderHost.replaceChildren(empty);
     }
+    overview.replaceChildren(drawListener(snapshot.listener || {}),
+      drawSenderConnection(snapshot.sender_connection || {}));
     freshness.textContent = 'Status updated just now';
   }
 
@@ -284,10 +344,12 @@ export function createRemoteLinksWorkspace(deps) {
         if (modalActive) pendingSnapshot = value;
         else present(value, force);
         message.replaceChildren();
+        message.hidden = true;
       }
     } catch (error) {
       if (!disposed && error?.name !== 'AbortError') {
         showError(message, error);
+        message.hidden = false;
         freshness.textContent = 'Status unavailable · retrying';
       }
     } finally { loading = false; }
@@ -379,13 +441,13 @@ export function createRemoteLinksWorkspace(deps) {
 
   function openListener() {
     const current = snapshot.listener || {};
-    const enabled = uiToggleField('Listen for remote senders', Boolean(current.enabled),
-      'Listen for remote senders', 'Accept decoded P25 feeds from trusted senders.');
+    const enabled = uiToggleField('Enable receiving', Boolean(current.enabled),
+      'Enable receiving', 'Accept decoded P25 feeds from trusted senders.');
     const address = input('text', current.bind_address || '0.0.0.0');
     address.required = true; address.maxLength = 255;
     const port = input('number', current.port || 53800);
     port.required = true; port.min = '1'; port.max = '65535'; port.step = '1';
-    submitModal('Remote listener', [enabled, formField('Bind address', address,
+    submitModal('Receive settings', [enabled, formField('Bind address', address,
       'Use a VPN address or restrict access with a firewall. 0.0.0.0 listens on every interface; authentication does not encrypt traffic.'),
     formField('Port', port)],
     'Save listener', () => write('/listener', 'PUT', { revision: snapshot.revision,
@@ -395,8 +457,8 @@ export function createRemoteLinksWorkspace(deps) {
 
   function openSenderConnection() {
     const current = snapshot.sender_connection || {};
-    const enabled = uiToggleField('Send selected P25 systems', Boolean(current.enabled),
-      'Send selected P25 systems', 'Connects this installation to one trusted host.');
+    const enabled = uiToggleField('Enable sending', Boolean(current.enabled),
+      'Enable sending', 'Send selected local P25 feeds to one destination receiver.');
     const destination = input('text', current.destination_host || '');
     destination.maxLength = 255;
     const port = input('number', current.destination_port || 53800);
@@ -407,7 +469,7 @@ export function createRemoteLinksWorkspace(deps) {
     secret.maxLength = 256; secret.autocomplete = 'new-password';
     secret.placeholder = current.credential_configured ? 'Leave blank to keep saved secret' : 'Paste host-issued secret';
     const choices = node('fieldset', 'remote-links-export-list ui-form-section');
-    choices.append(node('legend', '', 'P25 trunked systems to export'));
+    choices.append(node('legend', '', 'Local P25 feeds to send'));
     const selected = new Set(current.exported_channel_configuration_ids || []);
     const options = snapshot.export_channel_options || [];
     if (!options.length) choices.append(node('p', 'muted', 'No saved P25 trunked channels are eligible for export.'));
@@ -428,7 +490,8 @@ export function createRemoteLinksWorkspace(deps) {
     };
     senderEnabled.addEventListener('change', syncRequired);
     syncRequired();
-    submitModal('Outbound remote sender', [enabled, formField('Destination host', destination),
+    submitModal('Sending settings', [notice('On the destination receiver, open Remote Links → Receive here → Add sender. Enter the credentials it provides below.'),
+      enabled, formField('Destination host', destination),
       formField('Destination port', port), formField('Sender ID', senderId,
         'Generated by the destination host.'), formField('Shared secret', secret,
         current.credential_configured ? 'A credential is already saved. Enter a new one only to replace it.' :
@@ -442,8 +505,9 @@ export function createRemoteLinksWorkspace(deps) {
   function openCreateSender() {
     const name = input('text');
     name.required = true; name.maxLength = 120; name.placeholder = 'Example: Mountain receiver';
-    const editor = submitModal('Add trusted sender', [formField('Sender name', name,
-      'Use a name that identifies the remote installation.')], 'Create credential', async () => {
+    const editor = submitModal('Add sender', [formField('Sender name', name,
+      'Use a name that identifies the sending installation.'),
+    notice('Enter the new credentials in Remote Links → Send from here on the sending installation.')], 'Create credential', async () => {
       const result = await write('/senders', 'POST', { revision: snapshot.revision, display_name: name.value.trim() });
       editor.modal.setDirty(true);
       editor.modal.setDiscardMessage('Close this one-time credential? The shared secret will not be shown again.');
@@ -495,7 +559,9 @@ export function createRemoteLinksWorkspace(deps) {
     const alias = selectAlias(sender.default_alias_list_id, true);
     const remove = button('Remove sender');
     remove.className = 'ui-button ui-button-danger';
-    const editor = submitModal('Trusted sender', [formField('Sender name', name),
+    const editor = submitModal('Sender settings', [facts([
+      ['Sender ID', sender.sender_id], ['Last seen', age(sender.last_seen_at_ms)]
+    ]), formField('Sender name', name),
       formField('Preferred P25 Alias List', uiSelectFrame(alias),
         'Used for new feeds. If blank, this receiver chooses Default P25 or the first available P25 Alias List.')],
     'Save sender', () => write(`/senders/${pathPart(sender.sender_id)}`, 'PUT', {
@@ -541,9 +607,10 @@ export function createRemoteLinksWorkspace(deps) {
     const enabled = uiToggleField('Enable this remote channel', Boolean(feed.enabled),
       'Enable this remote channel', 'Disabled feeds remain configured but do not process traffic.');
     const path = `/senders/${pathPart(sender.sender_id)}/feeds/${pathPart(feed.feed_id)}`;
+    const identity = feedFacts(feed);
     submitModal('Remote feed', [
       notice(`${protocolLabel(feed.protocol)} · ${frequency(feed.frequency_hz)} · advertised by ${sender.display_name || sender.sender_id}`),
-      formField('Local channel name', name), formField('Alias List', uiSelectFrame(alias),
+      ...(identity.length ? [facts(identity)] : []), formField('Local channel name', name), formField('Alias List', uiSelectFrame(alias),
         'Aliases, streaming, recording, and activity use this host’s Alias List.'), enabled
     ], 'Save feed', () => write(path, 'PUT', {
       revision: snapshot.revision, display_name: name.value.trim(), alias_list_id: Number(alias.value),
