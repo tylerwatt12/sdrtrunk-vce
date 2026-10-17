@@ -278,6 +278,25 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         return mStore.find(id);
     }
 
+    /** Exact matches for a displayed Activity or alert page; no timestamp or identity matching is performed. */
+    public Map<String,List<Long>> recordingIdsBySourceCallReferences(List<String> sources, int limitPerSource)
+        throws SQLException
+    {
+        return mStore.recordingIdsBySourceCallReferences(sources, limitPerSource);
+    }
+
+    /** First retained recording parts for exact sources, bounded to one normal result page. */
+    public List<RecordingCall> findBySourceCallReferences(List<String> sources, int limit) throws SQLException
+    {
+        return mStore.findBySourceCallReferences(sources, limit);
+    }
+
+    /** Exact receiver-leg references for reverse navigation and local alert lookup. */
+    public List<String> sourceCallReferences(long recordingId) throws SQLException
+    {
+        return mStore.sourceCallReferences(recordingId);
+    }
+
     /** Returns a validated path only for a currently indexed regular file within the managed root. */
     public Path audioPath(long id) throws SQLException, IOException
     {

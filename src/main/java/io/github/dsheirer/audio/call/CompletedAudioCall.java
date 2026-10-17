@@ -19,6 +19,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.ConfigurationLongIdentifier;
 import java.util.List;
+import java.util.LinkedHashSet;
 
 /**
  * Final immutable representation of one resolved logical call.  The elected receiver leg owns the audio and
@@ -109,6 +110,21 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
         return !audioBuffers.isEmpty();
     }
 
+    /** Compact recording/related-content provenance. Invoked only by background consumers, never by decode. */
+    @JsonIgnore
+    public List<String> sourceCallReferences()
+    {
+        var references = new LinkedHashSet<String>();
+        for(CallLegSummary leg: callLegSummaries)
+        {
+            String reference = SourceCallReference.fromToken(leg.activityCallToken());
+            if(reference != null) references.add(reference);
+        }
+        String winner = SourceCallReference.fromToken(nativeAudioSnapshot.activityCallToken());
+        if(winner != null) references.add(winner);
+        return List.copyOf(references);
+    }
+
     /** Worker-only recording view; no PCM copy and no mutation of receiver or logical-call facts. */
     public CompletedAudioCall withCompletedTones(io.github.dsheirer.audio.tone.CompletedToneSequence sequence)
     {
@@ -156,7 +172,7 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
             sampleCount(audioBuffers), false, false, true, snapshot.callEncryptionEvidence(),
             identifiers != null ? identifiers.getFromIdentifier() : null,
             identifiers != null ? identifiers.getToIdentifier() : null, List.of(), frequency(identifiers),
-            snapshot.timeslot() > 0 ? snapshot.timeslot() : null));
+            snapshot.timeslot() > 0 ? snapshot.timeslot() : null).withActivityCallToken(snapshot.activityCallToken()));
     }
 
     private static long sampleCount(List<float[]> audioBuffers)

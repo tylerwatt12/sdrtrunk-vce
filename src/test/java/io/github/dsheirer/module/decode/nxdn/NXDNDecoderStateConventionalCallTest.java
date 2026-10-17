@@ -40,6 +40,10 @@ class NXDNDecoderStateConventionalCallTest
         channel.setRadioResolveId("123e4567-e89b-12d3-a456-426614174000");
         NXDNDecoderState state = new NXDNDecoderState(channel, null);
         state.receiveDecoderStateEvent(frequencyNotification(461_125_000L));
+        List<String> decodeTokens = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(event -> {
+            if(event.getEventType().isVoiceCallEvent()) decodeTokens.add(event.getActivityCallToken());
+        });
         ConventionalCallSubscriber subscriber = new ConventionalCallSubscriber();
         EventBus localBus = new EventBus();
         ActivityBindingSubscriber binding = new ActivityBindingSubscriber();
@@ -62,6 +66,9 @@ class NXDNDecoderStateConventionalCallTest
         assertEquals(1, subscriber.events.size());
         NXDNConventionalCallEvent event = subscriber.events.getFirst();
         assertNotNull(event.callToken());
+        assertFalse(decodeTokens.isEmpty());
+        assertTrue(decodeTokens.stream().allMatch(event.callToken()::equals),
+            "Initial, updated and completed alert events share the exact Activity/audio call binding");
         assertEquals(event.callToken(), binding.tokens.stream().filter(java.util.Objects::nonNull).findFirst().orElseThrow());
         assertEquals(1_000L, event.startTimestamp());
         assertEquals(2_000L, event.endTimestamp());

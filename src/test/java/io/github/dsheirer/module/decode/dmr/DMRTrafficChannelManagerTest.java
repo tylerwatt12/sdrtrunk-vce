@@ -48,6 +48,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.protocol.Protocol;
@@ -829,6 +830,8 @@ class DMRTrafficChannelManagerTest
         mapping.setNumber(12);
         mapping.setDownlinkFrequency(451_012_500L);
         channel.setTimeslotFrequency(mapping);
+        List<IDecodeEvent> decodeEvents = new CopyOnWriteArrayList<>();
+        manager.addDecodeEventListener(decodeEvents::add);
         CallStartSubscriber subscriber = new CallStartSubscriber();
         MyEventBus.getGlobalEventBus().register(subscriber);
 
@@ -836,10 +839,12 @@ class DMRTrafficChannelManagerTest
         {
             manager.processChannelGrant(channel, identifiers(101, 91),
                 Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+            assertEquals(subscriber.events.getFirst().callToken(),decodeEvents.getLast().getActivityCallToken());
             manager.processChannelGrant(channel, identifiers(102, 91),
                 Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_100L, false);
             manager.processChannelGrant(channel, identifiers(102, 92),
                 Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_200L, true);
+            assertEquals(subscriber.events.getLast().callToken(),decodeEvents.getLast().getActivityCallToken());
             manager.processChannelGrant(channel, identifiers(102, 92),
                 Opcode.STANDARD_TALKGROUP_DATA_CHANNEL_GRANT_SINGLE_ITEM, 1_300L, false);
         }
@@ -853,6 +858,11 @@ class DMRTrafficChannelManagerTest
         assertEquals(92, subscriber.events.get(1).targetId());
         assertEquals(1_000L, subscriber.events.get(0).callStartEpochMilliseconds());
         assertEquals(1_200L, subscriber.events.get(1).callStartEpochMilliseconds());
+        IDecodeEvent original = decodeEvents.getFirst();
+        String originalToken = original.getActivityCallToken();
+        manager.reset(); manager.broadcast(original);
+        assertEquals(originalToken,original.getActivityCallToken(),
+            "Late delivery after tracker cleanup cannot erase the original alert call binding");
     }
 
     @Test

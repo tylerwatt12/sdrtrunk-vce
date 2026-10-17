@@ -258,13 +258,15 @@ class NXDNTrafficChannelManagerTest
     }
 
     @Test
-    void publishesOneCallStartPerTargetWithoutTrafficTuner()
+    void publishesOneCallStartPerTargetWithoutTrafficTuner() throws Exception
     {
         Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
         DecodeConfigNXDN config = new DecodeConfigNXDN();
         config.setTrafficChannelPoolSize(0);
         parent.setDecodeConfiguration(config);
         NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        List<IDecodeEvent> decodeEvents = new CopyOnWriteArrayList<>();
+        manager.addDecodeEventListener(decodeEvents::add);
         NXDNChannel channel = channel(452_012_500L);
         EncryptionKeyIdentifier clear = EncryptionKeyIdentifier.create(Protocol.NXDN,
             NXDNEncryptionKey.create(0, 0));
@@ -275,10 +277,16 @@ class NXDNTrafficChannelManagerTest
         {
             manager.processVoiceCall(identifiers(101, 91, clear), channel, CallType.GROUP_BROADCAST, clear,
                 1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+            assertEquals(subscriber.events.getFirst().callToken(),decodeEvents.getLast().getActivityCallToken());
+            assertEquals(subscriber.events.getFirst().callToken(),manager.getActivityCallToken(channel,0,1_000L,
+                new io.github.dsheirer.identifier.IdentifierCollection(identifiers(101,91,clear))), "NXDN's display slot zero is not a distinct physical call resource");
+            assertEquals(subscriber.events.getFirst().callToken(),manager.getActivityCallToken(channel,null,1_000L,
+                new io.github.dsheirer.identifier.IdentifierCollection(identifiers(101,91,clear))));
             manager.processVoiceCall(identifiers(102, 91, clear), channel, CallType.GROUP_BROADCAST, clear,
                 1_100L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
             manager.processVoiceCall(identifiers(102, 92, clear), channel, CallType.GROUP_BROADCAST, clear,
                 1_200L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+            assertEquals(subscriber.events.getLast().callToken(),decodeEvents.getLast().getActivityCallToken());
             manager.processEndCall(channel, 1_300L);
             manager.processVoiceCall(identifiers(103, 92, clear), channel, CallType.GROUP_BROADCAST, clear,
                 1_400L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
@@ -289,6 +297,14 @@ class NXDNTrafficChannelManagerTest
         }
 
         assertEquals(3, subscriber.events.size());
+        var original = (io.github.dsheirer.module.decode.event.DecodeEvent)decodeEvents.getFirst();
+        String originalToken = original.getActivityCallToken();
+        manager.reset();
+        var broadcast = NXDNTrafficChannelManager.class.getDeclaredMethod("broadcast",
+            io.github.dsheirer.module.decode.event.DecodeEvent.class,boolean.class,long.class);
+        broadcast.setAccessible(true); broadcast.invoke(manager,original,false,5_000L);
+        assertEquals(originalToken,original.getActivityCallToken(),
+            "Late delivery after tracker cleanup cannot erase the original alert call binding");
         assertEquals(91, subscriber.events.get(0).targetId());
         assertEquals(92, subscriber.events.get(1).targetId());
         assertEquals(92, subscriber.events.get(2).targetId());

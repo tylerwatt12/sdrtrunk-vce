@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 /** Detached bounded receiver observation, evaluated only by the alert worker. */
-public record AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values, AlertAction.Context actionContext)
+public record AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values,
+                         AlertAction.Context actionContext,
+                         @com.fasterxml.jackson.annotation.JsonIgnore String sourceCallUuid)
 {
     public AlertEvent
     {
@@ -21,6 +23,12 @@ public record AlertEvent(String id, long observedAtMs, String trigger, Map<Strin
         });
         values = Map.copyOf(bounded);
         actionContext = actionContext != null ? actionContext : AlertAction.Context.EMPTY;
+        sourceCallUuid = io.github.dsheirer.audio.call.SourceCallReference.canonical(sourceCallUuid);
+    }
+    public AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values,
+                      AlertAction.Context actionContext)
+    {
+        this(id, observedAtMs, trigger, values, actionContext, null);
     }
     public AlertEvent(String id, long observedAtMs, String trigger, Map<String,List<String>> values)
     {

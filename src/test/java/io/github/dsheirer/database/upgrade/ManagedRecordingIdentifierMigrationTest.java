@@ -202,6 +202,7 @@ class ManagedRecordingIdentifierMigrationTest
             result.put(table, values);
         }
         result.putIfAbsent("recording_identifier", List.of());
+        result.putIfAbsent("recording_source", List.of());
         return result;
     }
 

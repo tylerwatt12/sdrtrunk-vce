@@ -28,6 +28,10 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public interface IDecodeEvent
 {
+    /** Exact optional producer binding for call consumers. Not an Activity row ID or browser identifier. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    default String getActivityCallToken() { return null; }
+
     /**
      * Event start time
      *

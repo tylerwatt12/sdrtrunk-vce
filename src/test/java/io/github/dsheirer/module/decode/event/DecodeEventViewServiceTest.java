@@ -222,6 +222,8 @@ class DecodeEventViewServiceTest
             .timeslot(1)
             .build();
 
+        event.setActivityCallToken("private-exact-call:1");
+
         try(DecodeEventViewService service = new DecodeEventViewService(null, null))
         {
             DecodeEventViewService.EventView initial = service.view(CONFIGURATION_ID, event);
@@ -229,6 +231,8 @@ class DecodeEventViewServiceTest
             DecodeEventViewService.EventView updated = service.view(CONFIGURATION_ID, event);
 
             assertEquals(initial.eventId(), updated.eventId());
+            assertEquals("private-exact-call:1", initial.alertFacts().activityCallToken());
+            assertFalse(new ObjectMapper().valueToTree(initial).toString().contains("private-exact-call"));
             assertEquals(250L, initial.durationMs());
             assertEquals(500L, updated.durationMs());
             assertEquals("ENCRYPTED_VOICE", updated.category());

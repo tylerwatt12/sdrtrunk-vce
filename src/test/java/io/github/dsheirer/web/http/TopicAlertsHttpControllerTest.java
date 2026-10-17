@@ -41,6 +41,48 @@ class TopicAlertsHttpControllerTest
     private static final ObjectMapper JSON = new ObjectMapper();
     @TempDir Path mDirectory;
 
+    @Test void relatedCallsUseCurrentSessionCapabilitiesWithoutGivingNotificationTokensAudioAccess() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("related-calls.sqlite")))
+        {
+            var topic = new AlertTopic("fire", "Fire", "", true, true, false);
+            f.service.saveTopic(topic, f.service.configuration().revision());
+            var store = new io.github.dsheirer.alerts.TopicAlertStore(f.database);
+            String source = "00000000-0000-4000-8000-000000000001";
+            store.publish(topic, "rule", "Rule", new io.github.dsheirer.alerts.AlertEvent("call", 1000, "call", Map.of(),
+                io.github.dsheirer.alerts.AlertAction.Context.EMPTY, source), "Call", "Body", "details", List.of(), System.currentTimeMillis());
+            @SuppressWarnings("unchecked") var items = (List<Map<String,Object>>)f.service.history(null, 100, 0).get("items");
+            String detail = "/api/v1/alerts/history/" + items.getFirst().get("id");
+            assertFalse(f.send("GET", detail, null, null, false).body().contains(source));
+            assertFalse(f.send("GET", "/api/v1/alerts/history", null, null, false).body().contains("source_call_uuid"));
+            assertEquals(401, f.send("GET", detail + "/related", null, "a".repeat(43), false).statusCode());
+            assertTrue(f.resolvedSources.isEmpty(), "A subscription token never substitutes for receiver page access");
+
+            f.access.setCapabilityTier("web-access", io.github.dsheirer.web.auth.AccessTier.PUBLIC);
+            f.access.setCapabilityTier("radio", io.github.dsheirer.web.auth.AccessTier.ADMIN);
+            f.access.setCapabilityTier("recordings", io.github.dsheirer.web.auth.AccessTier.PUBLIC);
+            var recordingsOnly = f.body(f.send("GET", detail + "/related", null, null, false));
+            assertEquals(0, recordingsOnly.path("activity_rows").size());
+            assertEquals(1, recordingsOnly.path("recordings").size());
+            assertEquals(List.of(source), f.resolvedSources);
+            assertFalse(recordingsOnly.toString().contains(source));
+
+            f.access.setCapabilityTier("radio", io.github.dsheirer.web.auth.AccessTier.PUBLIC);
+            f.access.setCapabilityTier("recordings", io.github.dsheirer.web.auth.AccessTier.ADMIN);
+            var activityOnly = f.body(f.send("GET", detail + "/related", null, null, false));
+            assertEquals(1, activityOnly.path("activity_rows").size());
+            assertEquals(0, activityOnly.path("recordings").size());
+            f.login();
+            var signedIn = f.body(f.send("GET", detail + "/related", null, null, false));
+            assertEquals(1, signedIn.path("activity_rows").size());
+            assertEquals(1, signedIn.path("recordings").size());
+            assertEquals(400, f.send("GET", detail + "/related?source_call_uuid=" + source, null, null, false).statusCode());
+            assertEquals(404, f.send("GET", "/api/v1/alerts/history/missing/related", null, null, false).statusCode());
+            f.service.saveTopic(new AlertTopic("fire", "Fire", "", false, true, false), f.service.configuration().revision());
+            assertEquals(404, f.send("GET", detail + "/related", null, null, false).statusCode());
+        }
+    }
+
     @Test void ruleTestsRequireAnAdministratorPostAndQueueTheSavedTemplatesForSubscribers() throws Exception
     {
         try(Fixture f = new Fixture(mDirectory.resolve("rule-tests.sqlite")))
@@ -361,6 +403,7 @@ class TopicAlertsHttpControllerTest
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
         final WebAccessService access; final Path database;
         final HttpClient client = HttpClient.newHttpClient(); final WebRequestSecurity security;
+        final List<String> resolvedSources = new java.util.ArrayList<>();
         boolean optionsUnavailable;
         RuntimeException optionsFailure;
         final URI origin; String cookie = "", csrf = "";
@@ -389,7 +432,11 @@ class TopicAlertsHttpControllerTest
                 if(optionsFailure != null) throw optionsFailure;
                 if(optionsUnavailable) throw new IllegalStateException("Alert source choices are temporarily unavailable");
                 return Map.of();
-            }, () -> { }, access);
+            }, () -> { }, access, security, (source, activityAllowed, recordingsAllowed) -> {
+                resolvedSources.add(source);
+                return Map.of("activity_rows", activityAllowed ? List.of(Map.of("id", 12)) : List.of(),
+                    "recordings", recordingsAllowed ? List.of(Map.of("id", 34)) : List.of());
+            });
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             new WebSessionHttpController(access, authentication, security).register(server);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, security.protectApi(WebCapability.ADMIN_SETTINGS, controller::handleAdmin));

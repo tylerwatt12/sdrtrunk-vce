@@ -4,7 +4,7 @@ package io.github.dsheirer.database.upgrade;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
-/** Populated current fixture preserving all earlier tone evidence without historical renormalization. */
+/** Populated frozen format-57 fixture preserving all earlier tone evidence without historical renormalization. */
 public final class Format57TestDatabase
 {
     private Format57TestDatabase() {}
@@ -17,7 +17,8 @@ public final class Format57TestDatabase
             new Format56To57DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 57);
             connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 57)
+                throw new IllegalStateException("Format-57 fixture was not preserved");
         }
         return database;
     }

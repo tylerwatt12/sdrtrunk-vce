@@ -21,7 +21,7 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 10;
+    public static final int CURRENT_FORMAT_VERSION = 11;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
@@ -33,8 +33,9 @@ public final class ManagedRecordingSchema
     private static final Map<String,String> FORMAT_SEVEN_DDL = formatSevenSchema();
     private static final Map<String,String> FORMAT_EIGHT_DDL = formatEightSchema();
     private static final Map<String,String> FORMAT_NINE_DDL = formatNineSchema();
-    // Format 10 extends the admitted analog nominal identities without changing their stored representation.
-    static final Map<String,String> DDL = FORMAT_NINE_DDL;
+    // Frozen format 10 extends nominal tone identities without changing their stored representation.
+    private static final Map<String,String> FORMAT_TEN_DDL = FORMAT_NINE_DDL;
+    static final Map<String,String> DDL = formatElevenSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -52,7 +53,8 @@ public final class ManagedRecordingSchema
             case 7 -> FORMAT_SEVEN_DDL;
             case 8 -> FORMAT_EIGHT_DDL;
             case 9 -> FORMAT_NINE_DDL;
-            case 10 -> DDL;
+            case 10 -> FORMAT_TEN_DDL;
+            case 11 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -95,6 +97,23 @@ public final class ManagedRecordingSchema
         schema.put("recording_tone_sequence", FORMAT_EIGHT_DDL.get("recording_tone_sequence")
             .replace("method_code IN(1,2,3)", "method_code IN(1,2,3,4)")
             .replace("method_code IN(1,3)", "method_code IN(1,3,4)"));
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    /** Exact prospective source-call relationships; no cross-database row IDs or historical guessing. */
+    private static Map<String,String> formatElevenSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_TEN_DDL);
+        schema.put("recording_source", "CREATE TABLE recording_source (" +
+            "call_id INTEGER NOT NULL REFERENCES recording_call(id) ON DELETE CASCADE," +
+            "source_call_uuid TEXT NOT NULL CHECK(length(source_call_uuid)=36 AND " +
+                "substr(source_call_uuid,9,1)='-' AND substr(source_call_uuid,14,1)='-' AND " +
+                "substr(source_call_uuid,19,1)='-' AND substr(source_call_uuid,24,1)='-' AND " +
+                "length(replace(source_call_uuid,'-',''))=32 AND " +
+                "replace(source_call_uuid,'-','') NOT GLOB '*[^0-9a-f]*')," +
+            "PRIMARY KEY(call_id,source_call_uuid)) WITHOUT ROWID, STRICT");
+        schema.put("idx_recording_source_uuid", "CREATE INDEX idx_recording_source_uuid " +
+            "ON recording_source(source_call_uuid,call_id)");
         return java.util.Collections.unmodifiableMap(schema);
     }
 

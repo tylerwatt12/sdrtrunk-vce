@@ -290,6 +290,12 @@ public final class ManagedRecordingCatalogMigrator
                     // Prospective analog nominal frequency identities expand; preserve all stored facts verbatim.
                     // The shared adjacent runner stamps format 10 so older method-4 readers refuse this catalog.
                 }
+                case 10 ->
+                {
+                    // Preserve all existing catalog facts; exact source references begin with newly saved calls.
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("recording_source"));
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("idx_recording_source_uuid"));
+                }
                 default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
             }
             stamp(statement, ++version);

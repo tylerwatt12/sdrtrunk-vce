@@ -46,7 +46,7 @@ public final class DatabaseMigrationChain
         new Format37To38DatabaseMigration(), new Format38To39DatabaseMigration(),
         new Format39To40DatabaseMigration(), new Format40To41DatabaseMigration(), new Format41To42DatabaseMigration(),
         new Format42To43DatabaseMigration(), new Format43To44DatabaseMigration(), new Format44To45DatabaseMigration(),
-        new Format45To46DatabaseMigration(), new Format46To47DatabaseMigration(), new Format47To48DatabaseMigration(), new Format48To49DatabaseMigration(), new Format49To50DatabaseMigration(), new Format50To51DatabaseMigration(), new Format51To52DatabaseMigration(), new Format52To53DatabaseMigration(), new Format53To54DatabaseMigration(), new Format54To55DatabaseMigration(), new Format55To56DatabaseMigration(), new Format56To57DatabaseMigration());
+        new Format45To46DatabaseMigration(), new Format46To47DatabaseMigration(), new Format47To48DatabaseMigration(), new Format48To49DatabaseMigration(), new Format49To50DatabaseMigration(), new Format50To51DatabaseMigration(), new Format51To52DatabaseMigration(), new Format52To53DatabaseMigration(), new Format53To54DatabaseMigration(), new Format54To55DatabaseMigration(), new Format55To56DatabaseMigration(), new Format56To57DatabaseMigration(), new Format57To58DatabaseMigration());
     private static final Map<Integer,DatabaseMigrationStep> STEPS = ORDERED_STEPS.stream().collect(
         Collectors.toUnmodifiableMap(DatabaseMigrationStep::sourceVersion, Function.identity()));
 

@@ -386,11 +386,16 @@ class P25P2AudioModuleTest
                 try(LateSourceCall call = new LateSourceCall(timeslot, phaseOneControl, 1_000L))
                 {
                     call.startPushToTalk(1_100L);
+                    String token = call.manager.getP2TrafficCallForAudio(FREQUENCY,timeslot,
+                        call.audio.getIdentifierCollection(),1_100L).getActivityCallToken();
                     call.voice(1_160L);
                     call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_200L);
                     call.endPushToTalk(1_300L);
 
                     CompletedAudioCall completed = call.completedCalls().getFirst();
+                    assertEquals(token,completed.snapshot().activityCallToken());
+                    assertEquals(List.of(io.github.dsheirer.audio.call.SourceCallReference.fromToken(token)),
+                        completed.sourceCallReferences());
                     assertTrue(completed.hasAudio());
                     assertTrue(completed.getDuration() > 0 && completed.getDuration() < 1_000L);
                     assertTrue(completed.snapshot().recordAudio());

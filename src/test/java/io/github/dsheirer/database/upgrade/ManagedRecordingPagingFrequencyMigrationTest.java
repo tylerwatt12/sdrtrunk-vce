@@ -36,7 +36,7 @@ class ManagedRecordingPagingFrequencyMigrationTest
         assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());
         try(Connection connection = open(catalog); var statement = connection.createStatement())
         {
-            ManagedRecordingSchema.validate(connection, 10);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM recording_transcript_fts WHERE recording_transcript_fts MATCH 'verbatim'"));
             statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path,size_bytes,protocol,call_type,voice_type) " +
@@ -76,7 +76,7 @@ class ManagedRecordingPagingFrequencyMigrationTest
         assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());
         try(Connection connection = open(catalog))
         {
-            ManagedRecordingSchema.validate(connection, 10);
+            ManagedRecordingSchema.validate(connection, ManagedRecordingSchema.CURRENT_FORMAT_VERSION);
             assertEquals(before, contents(connection));
             integrity(connection);
         }
@@ -126,6 +126,7 @@ class ManagedRecordingPagingFrequencyMigrationTest
             }
             Collections.sort(values); result.put(table, values);
         }
+        result.putIfAbsent("recording_source", List.of());
         return result;
     }
 

@@ -495,7 +495,7 @@ public class DecodeEventViewService implements AutoCloseable
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
             event.getProtocol() != null ? event.getProtocol().name() : null,
             from.party(), to.party(), observationEpoch, bounded(channelName), sourceFrequency, origin,
-            RadioSystemKey.p25Broadcast(identifiers), alertFacts(identifiers, origin));
+            RadioSystemKey.p25Broadcast(identifiers), alertFacts(identifiers, origin).withActivityCallToken(event.getActivityCallToken()));
     }
 
     /** Completed native-call tone projection, invoked only by an observer worker, independent of Activity demand. */
@@ -538,7 +538,8 @@ public class DecodeEventViewService implements AutoCloseable
         String siteId = site != null ? site.rfss() + ":" + site.site() :
             source.servingSiteId() != null ? source.servingSiteId() : projected.siteId();
         AlertFacts facts = new AlertFacts(List.copyOf(aliasIds), List.copyOf(tones), List.of(), siteId,
-            servingKey, projected.siteName(), io.github.dsheirer.alerts.AlertProtocolFamily.fromDecoder(source.decoderType()));
+            servingKey, projected.siteName(), io.github.dsheirer.alerts.AlertProtocolFamily.fromDecoder(source.decoderType()),
+            snapshot.activityCallToken());
         DecodeEventType type = completedCallType(sequence);
         return new EventView("completed-tone:" + sequence.callId(), source.channelConfigurationId(),
             sequence.callStartTimestamp(), Math.max(0, sequence.completedTimestamp() - sequence.callStartTimestamp()),
@@ -1123,7 +1124,7 @@ public class DecodeEventViewService implements AutoCloseable
     {
     }
 
-    public record AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName, String protocolFamily)
+    public record AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName, String protocolFamily, @JsonIgnore String activityCallToken)
     {
         private static final AlertFacts EMPTY = new AlertFacts(List.of(), List.of(), List.of(), null, null);
         public AlertFacts
@@ -1131,6 +1132,14 @@ public class DecodeEventViewService implements AutoCloseable
             aliasIds = aliasIds != null ? List.copyOf(aliasIds.stream().limit(64).toList()) : List.of();
             toneCodes = toneCodes != null ? List.copyOf(toneCodes.stream().limit(64).toList()) : List.of();
             dcsCodes = dcsCodes != null ? List.copyOf(dcsCodes.stream().limit(64).toList()) : List.of();
+        }
+        public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName, String protocolFamily)
+        {
+            this(aliasIds, toneCodes, dcsCodes, siteId, systemKey, siteName, protocolFamily, null);
+        }
+        private AlertFacts withActivityCallToken(String token)
+        {
+            return new AlertFacts(aliasIds, toneCodes, dcsCodes, siteId, systemKey, siteName, protocolFamily, token);
         }
         public AlertFacts(List<Long> aliasIds, List<String> toneCodes, List<String> dcsCodes, String siteId, String systemKey, String siteName)
         {

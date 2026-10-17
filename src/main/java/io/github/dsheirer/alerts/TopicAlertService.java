@@ -222,6 +222,11 @@ public final class TopicAlertService implements AutoCloseable
     public void completeEnrollment(AlertEnrollment enrollment, AlertDevice device) throws SQLException { mStore.completeEnrollment(enrollment, device); }
     public Map<String,Object> history(List<String> topicIds, int limit, int offset) throws SQLException { return mStore.history(topicIds, limit, offset); }
     public Optional<Map<String,Object>> historyItem(String id) throws SQLException { return mStore.historyItem(id); }
+    public Optional<String> sourceCallUuid(String id) throws SQLException { return mStore.sourceCallUuid(id); }
+    public List<Map<String,Object>> historyBySourceCallReferences(List<String> sources) throws SQLException
+    {
+        return mStore.historyBySourceCallReferences(sources);
+    }
     public Optional<AlertDelivery> delivery(long id) throws SQLException { return mStore.delivery(id); }
     public List<AlertDelivery> deliveriesForAlert(String alertId) throws SQLException { return mStore.deliveriesForAlert(alertId); }
     public Optional<AlertDelivery> deliveryForRemote(String alertId, String remoteDeviceId) throws SQLException { return mStore.deliveryForRemote(alertId, remoteDeviceId); }
@@ -291,9 +296,10 @@ public final class TopicAlertService implements AutoCloseable
             type == DecodeEventType.AFFILIATE ? "affiliation" : DecodeEventType.VOICE_CALLS.contains(type) || DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type) ? "call" :
             DecodeEventType.COMMANDS.contains(type) ? "command" : "event";
         AlertAction.Context actionContext = AlertAction.capture(view);
-        offer(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts, actionContext), view);
+        String sourceCallUuid = io.github.dsheirer.audio.call.SourceCallReference.fromToken(view.alertFacts().activityCallToken());
+        offer(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts, actionContext, sourceCallUuid), view);
         //Tone rules consume the completed native-call outcome exactly once, rather than legacy codec identifier updates.
-        if(!facts.getOrDefault("dcs", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts, actionContext), view);
+        if(!facts.getOrDefault("dcs", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts, actionContext, sourceCallUuid), view);
     }
     private static void parties(Map<String,List<String>> facts, List<DecodeEventViewService.PartyIdentifier> parties, boolean source, String servingKey)
     {
@@ -413,7 +419,8 @@ public final class TopicAlertService implements AutoCloseable
         add(facts, "protocol_family", view.alertFacts().protocolFamily());
         if(servingKey != null) facts.put("system_key", List.of(servingKey));
         return facts.get("tone").isEmpty() ? null : new AlertEvent(view.eventId(), Math.max(1, sequence.completedTimestamp()),
-            "tone", facts, AlertAction.capture(view));
+            "tone", facts, AlertAction.capture(view),
+            io.github.dsheirer.audio.call.SourceCallReference.fromToken(sequence.snapshot().activityCallToken()));
     }
 
     private void process(TopicAlertConfiguration config, AlertEvent event, long now) throws SQLException

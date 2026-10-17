@@ -111,7 +111,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     public String getActivityCallToken(IChannelDescriptor descriptor, Integer timeslot, long timestamp,
                                        IdentifierCollection identifiers)
     {
-        return mCallStartTracker.callTokenForActiveCall(descriptor, timeslot, timestamp, identifiers);
+        //NXDN decode events use slot zero as a display placeholder; the physical call has no TDMA slot.
+        return mCallStartTracker.callTokenForActiveCall(descriptor, null, timestamp, identifiers);
     }
 
     private final BooleanSupplier mVoiceDecryptionModuleLoaded;
@@ -312,6 +313,12 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
     private void broadcast(DecodeEvent decodeEvent, boolean publishActivity, long observedAt)
     {
+        if(decodeEvent.getActivityCallToken() == null && decodeEvent.getEventType() != null &&
+            decodeEvent.getEventType().isVoiceCallEvent())
+        {
+            decodeEvent.setActivityCallToken(getActivityCallToken(decodeEvent.getChannelDescriptor(),
+                null, observedAt, decodeEvent.getIdentifierCollection()));
+        }
         if(publishActivity)
         {
             publishChannelActivity(decodeEvent, observedAt);

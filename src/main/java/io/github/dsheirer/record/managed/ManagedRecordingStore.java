@@ -257,6 +257,17 @@ final class ManagedRecordingStore implements AutoCloseable
                 }
                 statement.executeBatch();
             }
+            try(PreparedStatement statement = mWriterConnection.prepareStatement(
+                "INSERT INTO recording_source(call_id,source_call_uuid) VALUES(?,?)"))
+            {
+                for(String reference: item.sourceCallReferences())
+                {
+                    statement.setLong(1, callId);
+                    statement.setString(2, reference);
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
             ManagedRecordingTones.insert(mWriterConnection, callId, item.completedTones());
             try(PreparedStatement statement = mWriterConnection.prepareStatement(
                 "UPDATE catalog_metadata SET call_count=call_count+1,total_bytes=total_bytes+? WHERE id=1"))
@@ -1283,6 +1294,74 @@ final class ManagedRecordingStore implements AutoCloseable
             {
                 return rows.next() ? mapCall(connection, rows) : null;
             }
+        }
+    }
+
+    /** One covering-index seek per requested source, with an independent bound before combining the results. */
+    Map<String,List<Long>> recordingIdsBySourceCallReferences(List<String> references, int limitPerSource)
+        throws SQLException
+    {
+        List<String> sources = ManagedRecordingSourceReferences.copy(references, ManagedRecordingCatalog.MAX_PAGE_SIZE);
+        if(sources.isEmpty()) return Map.of();
+        int limit = Math.max(1, Math.min(ManagedRecordingCatalog.MAX_PAGE_SIZE, limitPerSource));
+        Map<String,List<Long>> matches = new LinkedHashMap<>();
+        List<String> branches = new ArrayList<>();
+        for(String source: sources)
+        {
+            matches.put(source, new ArrayList<>());
+            branches.add("SELECT * FROM (SELECT source_call_uuid,call_id FROM recording_source " +
+                "WHERE source_call_uuid=? ORDER BY call_id LIMIT ?)");
+        }
+        try(Connection connection = openReader();
+            PreparedStatement statement = connection.prepareStatement(String.join(" UNION ALL ", branches)))
+        {
+            int parameter = 1;
+            for(String source: sources)
+            {
+                statement.setString(parameter++, source);
+                statement.setInt(parameter++, limit);
+            }
+            try(ResultSet rows = statement.executeQuery())
+            {
+                while(rows.next()) matches.get(rows.getString(1)).add(rows.getLong(2));
+            }
+        }
+        matches.replaceAll((source, ids) -> List.copyOf(ids));
+        return java.util.Collections.unmodifiableMap(matches);
+    }
+
+    /** Bounded exact receiver-leg references retained with one recording, independently of Activity retention. */
+    List<String> sourceCallReferences(long recordingId) throws SQLException
+    {
+        if(recordingId <= 0) return List.of();
+        try(Connection connection = openReader(); PreparedStatement statement = connection.prepareStatement(
+            "SELECT source_call_uuid FROM recording_source WHERE call_id=? ORDER BY source_call_uuid LIMIT 128"))
+        {
+            statement.setLong(1, recordingId);
+            List<String> references = new ArrayList<>();
+            try(ResultSet rows = statement.executeQuery())
+            { while(rows.next()) references.add(rows.getString(1)); }
+            return List.copyOf(references);
+        }
+    }
+
+    /** The first retained parts in recording-ID order; every candidate list is independently bounded. */
+    List<RecordingCall> findBySourceCallReferences(List<String> references, int requestedLimit) throws SQLException
+    {
+        int limit = Math.max(1, Math.min(ManagedRecordingCatalog.MAX_PAGE_SIZE, requestedLimit));
+        List<Long> ids = recordingIdsBySourceCallReferences(references, limit).values().stream()
+            .flatMap(List::stream).distinct().sorted().limit(limit).toList();
+        if(ids.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        try(Connection connection = openReader(); PreparedStatement statement = connection.prepareStatement(
+            SELECT_CALL + "WHERE c.id IN (" + placeholders + ") ORDER BY c.start_ms,c.id"))
+        {
+            int parameter = 1;
+            for(long id: ids) statement.setLong(parameter++, id);
+            List<RecordingCall> calls = new ArrayList<>();
+            try(ResultSet rows = statement.executeQuery())
+            { while(rows.next()) calls.add(mapCall(connection, rows)); }
+            return List.copyOf(calls);
         }
     }
 

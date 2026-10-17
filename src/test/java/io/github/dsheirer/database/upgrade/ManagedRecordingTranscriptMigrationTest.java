@@ -130,6 +130,7 @@ class ManagedRecordingTranscriptMigrationTest
                 if(!table.equals("catalog_metadata")||i!=2)values.add(String.valueOf(r.getObject(i)));rows.add(values.toString());}}
             Collections.sort(rows);all.put(table,rows);
         }
+        all.putIfAbsent("recording_source", List.of());
         return all;
     }
     private static Map<String,String> schema(Connection c) throws SQLException

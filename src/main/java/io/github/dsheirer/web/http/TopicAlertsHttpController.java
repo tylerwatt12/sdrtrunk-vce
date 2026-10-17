@@ -39,6 +39,8 @@ public final class TopicAlertsHttpController
     private final Supplier<Map<String,Object>> mOptions;
     private final Runnable mConfigurationChanged;
     private final WebAccessService mAccess;
+    private final WebRequestSecurity mSecurity;
+    private final RelatedContentResolver mRelatedContent;
     private final Map<String,Admission> mAdmissions = new ConcurrentHashMap<>();
 
     public TopicAlertsHttpController(TopicAlertService alerts, PushDeliveryService push,
@@ -56,7 +58,21 @@ public final class TopicAlertsHttpController
     public TopicAlertsHttpController(TopicAlertService alerts, PushDeliveryService push,
                                     Supplier<Map<String,Object>> options, Runnable configurationChanged, WebAccessService access)
     {
+        this(alerts, push, options, configurationChanged, access, null, null);
+    }
+
+    public TopicAlertsHttpController(TopicAlertService alerts, PushDeliveryService push,
+                                    Supplier<Map<String,Object>> options, Runnable configurationChanged,
+                                    WebAccessService access, WebRequestSecurity security, RelatedContentResolver relatedContent)
+    {
         mAlerts = alerts; mPush = push; mOptions = options; mConfigurationChanged = configurationChanged; mAccess = access;
+        mSecurity = security; mRelatedContent = relatedContent;
+    }
+
+    @FunctionalInterface
+    public interface RelatedContentResolver
+    {
+        Map<String,Object> resolve(String sourceCallUuid, boolean activityAllowed, boolean recordingsAllowed) throws SQLException;
     }
 
     public void handleAdmin(HttpExchange exchange) throws IOException
@@ -308,6 +324,11 @@ public final class TopicAlertsHttpController
         if(path.startsWith("/history/"))
         {
             if(!method(exchange, "GET") || !WebHttpSupport.requireNoQuery(exchange)) return;
+            if(path.endsWith("/related") && path.length() > "/history/".length() + "/related".length())
+            {
+                related(exchange, path.substring("/history/".length(), path.length() - "/related".length()));
+                return;
+            }
             var item = mAlerts.historyItem(path.substring("/history/".length()));
             if(item.isPresent()) send(exchange, publicHistoryItem(item.get())); else WebHttpSupport.notFound(exchange);
             return;
@@ -366,6 +387,30 @@ public final class TopicAlertsHttpController
                 else WebHttpSupport.notFound(exchange);
             }
         }
+    }
+
+    /** Public alert visibility never grants Activity or recording access, including notification management tokens. */
+    private void related(HttpExchange exchange, String alertId) throws Exception
+    {
+        if(mSecurity == null || mRelatedContent == null || mAlerts.historyItem(alertId).isEmpty())
+        {
+            WebHttpSupport.notFound(exchange); return;
+        }
+        mSecurity.protectAny(Set.of(WebCapability.RADIO_VIEW, WebCapability.RECORDINGS_VIEW), allowedExchange -> {
+            try
+            {
+                boolean activityAllowed = mSecurity.isRequestStillAuthorized(allowedExchange, WebCapability.RADIO_VIEW);
+                boolean recordingsAllowed = mSecurity.isRequestStillAuthorized(allowedExchange, WebCapability.RECORDINGS_VIEW);
+                var source = mAlerts.sourceCallUuid(alertId);
+                send(allowedExchange, source.isPresent() ? mRelatedContent.resolve(source.get(), activityAllowed, recordingsAllowed) :
+                    Map.of("activity_rows", List.of(), "recordings", List.of(), "alerts", List.of()));
+            }
+            catch(SQLException exception)
+            {
+                logFailure(FailureOperation.PUBLIC_HISTORY, exception);
+                ApiHttpResponse.sendError(allowedExchange, 503, "related_content_unavailable", "Related calls are temporarily unavailable. Try again later.");
+            }
+        }).handle(exchange);
     }
 
     private Map<String,Object> config() throws Exception

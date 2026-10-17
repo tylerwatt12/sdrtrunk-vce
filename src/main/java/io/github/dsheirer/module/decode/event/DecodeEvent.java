@@ -36,6 +36,14 @@ public class DecodeEvent implements IDecodeEvent
     private IdentifierCollection mIdentifierCollection;
     private IChannelDescriptor mChannelDescriptor;
     private String mDetails;
+    private volatile String mActivityCallToken;
+
+    @Override
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getActivityCallToken() { return mActivityCallToken; }
+
+    /** Producer-owned exact binding; asynchronous consumers only copy this compact reference. */
+    public void setActivityCallToken(String token) { mActivityCallToken = token; }
     private Protocol mProtocol;
     private int mTimeslot = -1;
 

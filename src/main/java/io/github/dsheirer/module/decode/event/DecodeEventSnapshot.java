@@ -18,6 +18,7 @@ public class DecodeEventSnapshot extends DecodeEvent
     {
         super(decodeEvent.getEventType(), decodeEvent.getTimeStart());
         mOriginalHashCode = decodeEvent.hashCode();
+        setActivityCallToken(decodeEvent.getActivityCallToken());
         setDetails(decodeEvent.getDetails());
         setDuration(decodeEvent.getDuration());
         setProtocol(decodeEvent.getProtocol());

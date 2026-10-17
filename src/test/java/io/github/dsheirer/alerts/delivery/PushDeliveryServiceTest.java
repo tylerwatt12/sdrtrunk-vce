@@ -35,6 +35,10 @@ class PushDeliveryServiceTest
             assertEquals(first.alertId(), original.path("client_alert_id").asText());
             assertEquals("Dispatch activity", original.path("alert_name").asText());
             assertEquals(List.of(REMOTE_A, REMOTE_B), JSON.convertValue(original.path("device_ids"), List.class));
+            assertEquals(java.util.Set.of("client_alert_id", "alert_name", "topic_id", "topic_name", "title", "body",
+                "device_ids", "expires_at_ms", "suppressed_device_ids"),
+                JSON.convertValue(original, Map.class).keySet());
+            assertFalse(original.toString().contains("00000000-0000-4000-8000-000000000001"));
             assertTrue(f.service.deliveriesForAlert(first.alertId()).stream().allMatch(d -> d.state().equals("queued")));
             f.push.updateDevice(f.tokenB, List.of());
             f.push.reconcileQueuedRelay();
@@ -293,7 +297,8 @@ class PushDeliveryServiceTest
         }
         AlertDelivery publish() throws Exception
         {
-            service.observe(new AlertEvent("call-fixture", System.currentTimeMillis(), "call", Map.of("radio", List.of("100"), "talkgroup", List.of("200"))));
+            service.observe(new AlertEvent("call-fixture", System.currentTimeMillis(), "call", Map.of("radio", List.of("100"), "talkgroup", List.of("200")),
+                AlertAction.Context.EMPTY, "00000000-0000-4000-8000-000000000001"));
             long until = System.nanoTime() + 2_000_000_000L;
             while(service.pendingDeliveries(10).isEmpty() && System.nanoTime() < until) Thread.sleep(10);
             assertEquals(2, service.pendingDeliveries(10).size()); return service.pendingDeliveries(10).getFirst();

@@ -116,6 +116,7 @@ class ManagedRecordingAnalogToneMigrationTest
             }
             Collections.sort(values); result.put(table, values);
         }
+        result.putIfAbsent("recording_source", List.of());
         return result;
     }
 

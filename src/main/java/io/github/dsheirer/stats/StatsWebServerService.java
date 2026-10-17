@@ -990,10 +990,15 @@ public class StatsWebServerService implements AutoCloseable
 
     private void registerContexts(HttpServer server, Path assetRoot, String webClientRevision)
     {
+        CallRelationsService callRelations = new CallRelationsService(mDatabase, () -> mManagedRecordingCatalog,
+            mTopicAlertService, new ManagedRecordingLabels(mUserPreferences));
+        CallRelationsHttpController relatedCalls = new CallRelationsHttpController(callRelations, mWebRequestSecurity);
+        server.createContext(CallRelationsHttpController.PATH, relatedCalls::handle);
         if(mTopicAlertService != null)
         {
             TopicAlertsHttpController alerts = new TopicAlertsHttpController(mTopicAlertService,
-                mPushDeliveryService, this::topicAlertOptions, this::reconcileTopicAlertObservation, mWebAccessService);
+                mPushDeliveryService, this::topicAlertOptions, this::reconcileTopicAlertObservation, mWebAccessService,
+                mWebRequestSecurity, callRelations::resolve);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_SETTINGS, alerts::handleAdmin));
             server.createContext(TopicAlertsHttpController.PUBLIC_PATH, alerts::handlePublic);

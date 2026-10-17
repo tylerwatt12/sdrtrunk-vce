@@ -1276,7 +1276,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             winnerSnapshot.lastBurstEndTimestamp(), false, true, winnerSnapshot.encryptionState(),
             policy.recordAudio(), recordingMetadata, measuredWinnerQuality,
             winnerSnapshot.callLegId(), winnerSnapshot.callLegSource(), winner.encryptionEvidence,
-            winnerSnapshot.analogCallAttribution());
+            winnerSnapshot.analogCallAttribution(), winnerSnapshot.activityCallToken());
 
         List<CallLegSummary> summaries = legs.stream()
             .sorted((first, second) -> compareCallLegIds(first.snapshot.callLegId(), second.snapshot.callLegId()))
@@ -1288,7 +1288,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 leg.snapshot.identifierCollection() != null ?
                     leg.snapshot.identifierCollection().getToIdentifier() : null,
                 leg.voiceFrameFingerprints, frequency(leg.snapshot.identifierCollection()),
-                positiveTimeslot(leg.snapshot.timeslot()))).toList();
+                positiveTimeslot(leg.snapshot.timeslot())).withActivityCallToken(leg.snapshot.activityCallToken())).toList();
 
         return new CompletedAudioCall(new LogicalCallId(mCoordinatorId, mNextLogicalCallSequence++),
             resolvedSnapshot, winner.audioBuffers, policy, summaries, winnerSnapshot.identifierCollection(),

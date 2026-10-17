@@ -15,6 +15,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.database.SourceCallSchema;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -210,6 +211,20 @@ public class ReceiverActivitySchema
     {
         createFormat48(connection);
         ToneActivitySchema.createCurrent(connection);
+        addSourceCallReference(connection);
+    }
+
+    /** Fresh creation and the format-57-to-58 migrator add only an optional exact source reference. */
+    public static void addSourceCallReference(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " + SourceCallSchema.COLUMN_DEFINITION);
+            statement.executeUpdate("""
+                CREATE INDEX idx_receiver_activity_event_source_call
+                ON receiver_activity_event(source_call_uuid) WHERE source_call_uuid IS NOT NULL
+                """);
+        }
     }
 
     /** Exact historical current creator retained for the adjacent migration. */
@@ -463,7 +478,7 @@ public class ReceiverActivitySchema
         exactDefinitions.addAll(List.of(
             new SqliteSchemaValidator.Definition("table", "receiver_channel", receiverChannelSql()),
             new SqliteSchemaValidator.Definition("table", "receiver_activity_event",
-                receiverActivityEventSql()),
+                currentReceiverActivityEventSql()),
             new SqliteSchemaValidator.Definition("table", "activity_event_identity_member",
                 createActivityEventIdentityMemberSql()),
             new SqliteSchemaValidator.Definition("table", "conventional_call_identity_bucket",
@@ -529,6 +544,7 @@ public class ReceiverActivitySchema
                 "timeslot", "radio_system_id", "action_code"));
         validateIndexColumns(connection, "idx_receiver_activity_event_retention",
             List.of("observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_source_call", List.of("source_call_uuid"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_time",
             List.of("radio_system_id", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_source_time",
@@ -814,6 +830,13 @@ public class ReceiverActivitySchema
             """;
     }
 
+    private static String currentReceiverActivityEventSql()
+    {
+        return receiverActivityEventSql().replace("    UNIQUE(id, radio_system_id)",
+            "    " + SourceCallSchema.COLUMN_DEFINITION + ",\n    UNIQUE(id, radio_system_id)");
+    }
+
+    /** Frozen format-50 through format-57 event definition. */
     private static String receiverActivityEventSql()
     {
         return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES, true)
@@ -1816,7 +1839,7 @@ public class ReceiverActivitySchema
             List.of(), call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null,
             null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(),
-            null);
+            null, null, null, null, null, call.activityCallToken());
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
         DmrActivitySchema.recordCompletedCall(connection, channelId, call);
@@ -1865,7 +1888,7 @@ public class ReceiverActivitySchema
             eventType, value(call.sourceRadioId()), targetId, targetKind, List.of(), call.frequencyHertz(), null, null,
             call.encrypted(), null, null, null, null, null, null, null, null, true, null, null,
             call.identityDomain(), ReceiverActivityRecords.P25Identity.UNKNOWN,
-            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null, null, null, null, null, call.activityCallToken());
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
         AliasActivityProjection.recordNxdnConventionalCall(connection, call);
@@ -3556,7 +3579,7 @@ public class ReceiverActivitySchema
             "source_identity_summary_id", "source_identity_kind_code", "target_identity_summary_id", "frequency_hz",
             "lcn_band", "lcn_number", "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id",
             "observed_nac", "observed_rfss", "observed_site", "source_observed_working_id",
-            "target_observed_working_id"),
+            "target_observed_working_id", "source_call_uuid"),
         table("activity_event_identity_member", "event_id", "radio_system_id", "identity_summary_id",
             "identity_kind_code", "observed_local_id", "channel_id"),
         table("p25_learned_site", "learned_site_id", "radio_system_id", "rfss", "site", "first_seen_ms",
@@ -3627,6 +3650,7 @@ public class ReceiverActivitySchema
     private static final List<String> INDEXES = java.util.stream.Stream.concat(List.of(
         "idx_receiver_channel_radio_system",
         "idx_receiver_activity_event_retention",
+        "idx_receiver_activity_event_source_call",
         "idx_receiver_activity_event_system_time",
         "idx_receiver_activity_event_channel_time",
         "idx_receiver_activity_event_target_time",
@@ -3957,8 +3981,8 @@ public class ReceiverActivitySchema
                 source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
                 frequency_hz, lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id,
                 observed_nac, observed_rfss, observed_site, source_observed_working_id,
-                target_observed_working_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                target_observed_working_id, source_call_uuid
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """))
         {
@@ -3985,6 +4009,8 @@ public class ReceiverActivitySchema
             setInteger(statement, 21, activity.site());
             setInteger(statement, 22, activity.sourceObservedWorkingId());
             setInteger(statement, 23, activity.targetObservedWorkingId());
+            statement.setString(24, activity.action() == ReceiverActivityRecords.Action.CALL ?
+                io.github.dsheirer.audio.call.SourceCallReference.fromToken(activity.activityCallToken()) : null);
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(resultSet.next())

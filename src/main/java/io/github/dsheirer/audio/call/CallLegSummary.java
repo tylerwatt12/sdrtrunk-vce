@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.audio.call;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.identifier.IdentityResolutionEvidence;
 
 import io.github.dsheirer.identifier.Form;
@@ -37,8 +38,28 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
                              P25IdentityObservation p25DestinationIdentity,
                              List<P25IdentityObservation> p25PatchMemberIdentities,
                              List<TimestampedVoiceFingerprint> voiceFrameFingerprints,
-                             Long frequencyHz, Integer timeslot)
+                             Long frequencyHz, Integer timeslot, @JsonIgnore String activityCallToken)
 {
+    public CallLegSummary(CallLegId callLegId, CallLegSource source, long startTimestamp, long endTimestamp,
+        VoiceCallQuality voiceCallQuality, long retainedAudioSampleCount, boolean ingressLoss,
+        boolean audioTruncated, boolean winner, CallEncryptionEvidence callEncryptionEvidence,
+        P25IdentityObservation p25SourceIdentity, P25IdentityObservation p25DestinationIdentity,
+        List<P25IdentityObservation> p25PatchMemberIdentities,
+        List<TimestampedVoiceFingerprint> voiceFrameFingerprints, Long frequencyHz, Integer timeslot)
+    {
+        this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, p25SourceIdentity,
+            p25DestinationIdentity, p25PatchMemberIdentities, voiceFrameFingerprints, frequencyHz, timeslot, null);
+    }
+
+    public CallLegSummary withActivityCallToken(String token)
+    {
+        return new CallLegSummary(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality,
+            retainedAudioSampleCount, ingressLoss, audioTruncated, winner, callEncryptionEvidence,
+            p25SourceIdentity, p25DestinationIdentity, p25PatchMemberIdentities, voiceFrameFingerprints,
+            frequencyHz, timeslot, token);
+    }
+
     public CallLegSummary(CallLegId callLegId, CallLegSource source, long startTimestamp, long endTimestamp,
                           VoiceCallQuality voiceCallQuality, long retainedAudioSampleCount,
                           boolean ingressLoss, boolean audioTruncated, boolean winner,

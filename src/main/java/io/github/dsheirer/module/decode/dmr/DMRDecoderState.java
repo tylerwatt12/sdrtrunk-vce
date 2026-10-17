@@ -264,6 +264,14 @@ public class DMRDecoderState extends TimeslotDecoderState
 
     private void broadcast(IDecodeEvent event, long observedAt)
     {
+        if(event instanceof DecodeEvent call && call.getActivityCallToken() == null && event.getEventType() != null &&
+            event.getEventType().isVoiceCallEvent())
+        {
+            call.setActivityCallToken(mTrunkingEnabled && mTrafficChannelEventManager != null ?
+                mTrafficChannelEventManager.getActivityCallToken(event.getChannelDescriptor(),
+                    event.getTimeslot(), observedAt, event.getIdentifierCollection()) :
+                event == mCurrentCallEvent ? mCurrentCallToken : null);
+        }
         super.broadcast(event);
 
         if(mTrunkingEnabled && mTrafficChannelEventManager != null &&

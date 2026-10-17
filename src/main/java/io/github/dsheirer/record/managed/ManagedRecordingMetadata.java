@@ -48,12 +48,30 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
                                 ManagedRecordingCatalog.Site winnerSite,
                                 List<ManagedRecordingCatalog.Site> observedSites,
                                 List<ManagedRecordingCatalog.Member> patchMembers,
-                                CompletedToneSequence completedTones, List<AuxiliaryIdentifier> auxiliaryIdentifiers)
+                                CompletedToneSequence completedTones, List<AuxiliaryIdentifier> auxiliaryIdentifiers,
+                                List<String> sourceCallReferences)
 {
     ManagedRecordingMetadata
     {
         auxiliaryIdentifiers = auxiliaryIdentifiers != null ? List.copyOf(auxiliaryIdentifiers) : List.of();
         if(auxiliaryIdentifiers.size() > 64) throw new IllegalArgumentException("Too many captured recording identifiers");
+        sourceCallReferences = ManagedRecordingSourceReferences.copy(sourceCallReferences, 128);
+    }
+
+    /** Compatibility constructor for callers without exact prospective source-call references. */
+    ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long sizeBytes, String relativePath,
+        String systemKey, String channelId, long aliasListId, int protocol, int callType, int voiceType,
+        Integer sourceId, Integer sourceHomeWacn, Integer sourceHomeSystem, Integer sourceHomeId,
+        Integer targetId, Integer targetHomeWacn, Integer targetHomeSystem, Integer targetHomeId,
+        Long frequencyHz, Integer timeslot, Integer nac, Integer toneKind, String tone,
+        ManagedRecordingCatalog.Site winnerSite, List<ManagedRecordingCatalog.Site> observedSites,
+        List<ManagedRecordingCatalog.Member> patchMembers, CompletedToneSequence completedTones,
+        List<AuxiliaryIdentifier> auxiliaryIdentifiers)
+    {
+        this(startMs,endMs,durationMs,sizeBytes,relativePath,systemKey,channelId,aliasListId,protocol,callType,voiceType,
+            sourceId,sourceHomeWacn,sourceHomeSystem,sourceHomeId,targetId,targetHomeWacn,targetHomeSystem,targetHomeId,
+            frequencyHz,timeslot,nac,toneKind,tone,winnerSite,observedSites,patchMembers,completedTones,
+            auxiliaryIdentifiers,List.of());
     }
 
     /** Compatibility constructor for callers that have no prospective auxiliary signalling facts. */
@@ -168,7 +186,7 @@ record ManagedRecordingMetadata(long startMs, long endMs, long durationMs, long 
             integer(identifiers, Form.NETWORK_ACCESS_CODE), tone != null ? tone.kind() : null,
             tone != null ? tone.value() : null, winningSite,
             List.copyOf(sites), List.copyOf(members), call.completedToneSequence(),
-            auxiliaryIdentifiers(call.recordingIdentifierCollection()));
+            auxiliaryIdentifiers(call.recordingIdentifierCollection()), call.sourceCallReferences());
     }
 
     /** Runs on the recording-file worker after audio is saved, not on decoder callbacks. */

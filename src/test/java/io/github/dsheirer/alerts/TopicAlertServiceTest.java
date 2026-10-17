@@ -19,6 +19,31 @@ class TopicAlertServiceTest
     private static final String CHANNEL = "00000000-0000-4000-8000-000000000001";
     private static final long START = Instant.parse("2026-10-13T12:00:00Z").toEpochMilli();
 
+    @Test void exactCallSourceSurvivesDetachedObservationAndCountAlertsOnlyKeepTheTriggeringCall() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        try(TopicAlertService service = configured(clock, rule("count", 0, 2, 5)))
+        {
+            for(int index = 1; index <= 2; index++)
+            {
+                var party = new io.github.dsheirer.module.decode.event.DecodeEventViewService.PartyIdentifier(
+                    "200", "TALKGROUP", "APCO25", null, null, List.of(), null, List.of(), false, false, null, 200);
+                var facts = new io.github.dsheirer.module.decode.event.DecodeEventViewService.AlertFacts(
+                    List.of(), List.of(), List.of(), "1:2", null, "East", "P25", "session:" + index);
+                var view = new io.github.dsheirer.module.decode.event.DecodeEventViewService.EventView(
+                    "event:" + index, CHANNEL, START, 1000, "CALL_GROUP", "Call", "calls", "", "", "", "", "",
+                    null, null, "", "APCO25", List.of(), List.of(party), 0, "Channel", null, null, null, facts);
+                service.receiveEventView(view); service.drain();
+                assertEquals(index == 2 ? 1 : 0, service.history(null, 100, 0).get("total"));
+            }
+            String alertId = service.pendingDeliveries(1).getFirst().alertId();
+            assertEquals(io.github.dsheirer.audio.call.SourceCallReference.fromToken("session:2"),
+                service.sourceCallUuid(alertId).orElseThrow());
+            assertNotEquals(io.github.dsheirer.audio.call.SourceCallReference.fromToken("session:1"),
+                service.sourceCallUuid(alertId).orElseThrow());
+        }
+    }
+
     @Test void scopedMatchingRejectsSameIdsOnAnotherReceiverAndDeduplicatesUpdates() throws Exception
     {
         AtomicLong clock = new AtomicLong(START);

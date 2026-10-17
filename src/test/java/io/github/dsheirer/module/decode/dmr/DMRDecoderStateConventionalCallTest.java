@@ -124,6 +124,8 @@ class DMRDecoderStateConventionalCallTest
         DMRConventionalCallEvent event = subscriber.event.get();
         assertNotNull(event);
         assertNotNull(event.callToken());
+        assertEquals(event.callToken(), call.getActivityCallToken(),
+            "The alert event and completed Activity call retain the same producer binding after reset");
         assertEquals(event.callToken(), binding.tokens.stream().filter(java.util.Objects::nonNull).findFirst().orElseThrow());
         assertEquals(1_000L, event.startTimestamp());
         assertTrue(event.endTimestamp() >= event.startTimestamp());

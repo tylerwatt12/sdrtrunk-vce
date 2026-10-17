@@ -76,6 +76,7 @@ public class P25TrafficChannelEventTracker
     public P25TrafficChannelEventTracker(P25ChannelGrantEvent event, String radioSystemKey)
     {
         mEvent = event;
+        mEvent.setActivityCallToken(mActivityCallToken);
         mRadioSystemKey = event.captureRadioSystemKey(radioSystemKey != null ?
             RadioSystemKey.nativeFor(Protocol.APCO25, TrunkedIdentityDomain.STANDARD, radioSystemKey) : null);
         mLastObservationTimestamp = event.getTimeStart();

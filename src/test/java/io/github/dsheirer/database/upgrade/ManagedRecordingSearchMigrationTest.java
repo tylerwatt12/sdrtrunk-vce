@@ -230,6 +230,7 @@ class ManagedRecordingSearchMigrationTest
         }
         // A forward update adds the empty child; every pre-existing fact still compares exactly.
         result.putIfAbsent("recording_identifier", List.of());
+        result.putIfAbsent("recording_source", List.of());
         return result;
     }
 

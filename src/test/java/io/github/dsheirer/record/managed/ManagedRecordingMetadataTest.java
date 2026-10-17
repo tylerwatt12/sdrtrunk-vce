@@ -23,6 +23,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.LogicalCallId;
+import io.github.dsheirer.audio.call.SourceCallReference;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -280,6 +281,19 @@ class ManagedRecordingMetadataTest
         assertTrue(metadata.auxiliaryIdentifiers().isEmpty(),"A primary analog decoder alone does not prove signalling");
     }
 
+    @Test
+    void capturesAllConfirmedSourceReferencesAcrossAudioProtocols()
+    {
+        for(DecoderType decoder: List.of(DecoderType.AM, DecoderType.NBFM, DecoderType.P25_PHASE1,
+            DecoderType.P25_PHASE2, DecoderType.DMR, DecoderType.NXDN))
+        {
+            var facts = metadata(decoder, ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL,
+                null, null, List.of(SITE));
+            assertEquals(List.of(SourceCallReference.fromToken("metadata:1"),
+                SourceCallReference.fromToken("metadata:2")), facts.sourceCallReferences(), decoder.name());
+        }
+    }
+
     private static ManagedRecordingMetadata metadata(DecoderType decoder,
                                                      ChannelConfigurationPolicy.ChannelKind kind,
                                                      P25SiteIdentity winnerSite, String existingKey,
@@ -317,6 +331,8 @@ class ManagedRecordingMetadataTest
                 source(decoder, kind, otherSites.get(index), null), 1_000L, 2_000L,
                 VoiceCallQuality.EMPTY, 0L, false, false, false, null));
         }
+        for(int index = 0; index < legs.size(); index++)
+            legs.set(index, legs.get(index).withActivityCallToken("metadata:" + (index + 1)));
         CompletedAudioCall call = new CompletedAudioCall(new LogicalCallId(1L, 1L), snapshot,
             single.audioBuffers(), null, legs,missingRecordingFacts ? null : identifiers);
         return ManagedRecordingMetadata.from(call, "call.mp3", 5L);

@@ -39,7 +39,7 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                                 CallLegId callLegId, CallLegSource callLegSource,
                                 CallEncryptionEvidence callEncryptionEvidence,
                                 AnalogCallAttribution analogCallAttribution,
-                                String activityCallToken)
+                                @com.fasterxml.jackson.annotation.JsonIgnore String activityCallToken)
 {
     /** Compatibility for snapshots captured before exact Activity call association was introduced. */
     public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,

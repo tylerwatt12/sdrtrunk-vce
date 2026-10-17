@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.alerts;
 
+import io.github.dsheirer.database.SourceCallSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -93,11 +94,13 @@ public final class TopicAlertSchema
                     expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>created_at_ms),
                     action_kind TEXT NOT NULL DEFAULT 'none' CHECK(action_kind IN ('none','live','channel','radio','talkgroup','patch_group','radio_system')),
                     action_entity_ref_json TEXT CHECK(action_entity_ref_json IS NULL OR CASE WHEN json_valid(action_entity_ref_json)
-                        THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END)
+                        THEN json_type(action_entity_ref_json)='object' AND length(action_entity_ref_json)<=2048 ELSE 0 END),
+                    %s
                 )
-                """);
+                """.formatted(SourceCallSchema.COLUMN_DEFINITION));
             statement.execute("CREATE INDEX idx_topic_alert_message_topic_time ON topic_alert_message(topic_id,created_at_ms DESC,id)");
             statement.execute("CREATE INDEX idx_topic_alert_message_time ON topic_alert_message(created_at_ms DESC,id)");
+            createSourceCallIndex(statement);
             statement.execute("""
                 CREATE TABLE topic_alert_delivery (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +126,24 @@ public final class TopicAlertSchema
                 VALUES('alert.configuration','{"revision":1,"builtin_action_button_enabled":false,"push":{"enabled":false,"mode":"proxy","site_url":"","sender_label":"VCE installation"}}',1)
                 """);
         }
+    }
+
+    /** The adjacent migration preserves old messages with no inferred call identity. */
+    public static void addSourceCallReference(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE topic_alert_message ADD COLUMN " + SourceCallSchema.COLUMN_DEFINITION);
+            createSourceCallIndex(statement);
+        }
+    }
+
+    private static void createSourceCallIndex(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX idx_topic_alert_message_source_call
+            ON topic_alert_message(source_call_uuid) WHERE source_call_uuid IS NOT NULL
+            """);
     }
 
     public static void validate(Connection connection) throws SQLException

@@ -134,6 +134,69 @@ the current schema and settings without performing migrations. Application forma
 only the admitted method-4 nominal paging identities. Their adjacent semantic migrations change no DDL or historical
 tone value; P25 Phase 1 method 3, encoded metadata, waveform DTMF, storage bounds, queries and retention are unchanged.
 
+### Exact Activity, alert and recording connections (application format 58 / catalog format 11)
+
+The site needs the exact Activity rows and saved audio that caused a call alert, and the saved audio associated with
+one Activity event. A shared talkgroup, channel or time interval cannot prove that relationship: simultaneous receiver
+copies and split recordings make it many-to-many. Existing totals, hourly buckets and normalized radio identities
+cannot identify the original call. The storage therefore retains only its exact opaque source UUID, without copying
+audio, transcripts, notification text, radio identities or process-local token strings.
+
+The main database adds one nullable `source_call_uuid` to `receiver_activity_event` and `topic_alert_message`.
+Both fields admit only canonical lowercase UUIDs. The sparse `idx_receiver_activity_event_source_call` and
+`idx_topic_alert_message_source_call` indexes contain only populated references. Unknown historical references remain
+NULL; non-call events and alerts need no invented source. The separate recording catalog adds
+`recording_source(call_id,source_call_uuid)` with that composite primary key, `WITHOUT ROWID, STRICT`, a cascading
+recording foreign key, and the reverse cover `idx_recording_source_uuid(source_call_uuid,call_id)`. A recording keeps
+at most 128 distinct source references. Duplicate inserts do not create more relationships.
+
+At R accepted detailed call rows per hour, Activity adds at most R populated fields and index entries per hour, or
+8,760 × R at the maximum 365-day retention. Existing unlinked rows are not rewritten or indexed. Alert fields follow
+the existing latest-2,000 plus at-most-2,000 protected-message bound, independently of Activity retention. At C retained
+recordings, the catalog contains at most 128 × C relationships, ordinarily only the actual receiver copies associated
+with that recording. Each reference is 36 ASCII bytes plus SQLite record and index overhead. Main rows duplicate only
+the UUID in their one sparse index; each catalog relationship repeats only the UUID and compact recording key in its
+primary key and reverse cover. Audio and transcript storage are unchanged, and no call registry, diagnostic history,
+pending-link table or reconciliation queue is added. Page occupancy, key widths and WAL determine the allocated size;
+these payload figures are not a complete database-size forecast.
+
+An isolated SQLite 3.51.0 fixture used the exact event definition and all existing event indexes with 100,000
+minimal call rows. At 20% and 100% populated references, the new field and sparse index added 1,818,624 and
+8,806,400 allocated bytes, approximately 91 and 88 bytes per linked event in those samples. The source index alone
+used 1,003,520 and 5,013,504 bytes. Twenty-one warm 100-UUID lookups had median times of 0.064 and 0.083 ms.
+One committed 100,000-row insertion measured 919 ms for the prior layout, 1,013 ms at 20% linked and 1,173 ms at
+100% linked. These are synthetic single-insertion measurements with parent foreign-key enforcement disabled;
+they exclude wide populated fields, other table writes, the receiver queue and checkpoint scheduling, and do not
+predict a production throughput percentage. UUID byte counts and relationship bounds remain the planning contract.
+
+An isolated catalog fixture with the exact format-11 source table, both key structures, 100,000 mapping rows,
+and minimal recording parents used 9,031,680 additional allocated bytes beyond the empty table/index baseline,
+approximately 90 bytes per mapping row. In SQLite 3.51.0 with WAL and NORMAL synchronization, 25 warm runs had
+median times of 0.84 ms for 100 source lookups, 14.5 ms to insert and commit 1,000 mappings, 6.1 ms to delete and
+commit 1,000 mappings, and 20.8 ms to delete 1,000 minimal recording parents with cascading mappings. These samples
+exclude full recording metadata, audio-file deletion, concurrent readers, and production checkpoint scheduling;
+they are an isolated storage/read/write check, not an application latency forecast.
+
+For a bounded displayed page, known UUIDs use equality or bounded IN seeks after normal Activity/recording filtering
+and pagination. Representative plans report `SEARCH receiver_activity_event USING COVERING INDEX
+idx_receiver_activity_event_source_call (source_call_uuid=?)`, the equivalent alert index seek, and
+`SEARCH recording_source USING COVERING INDEX idx_recording_source_uuid (source_call_uuid=?)`. Recording-to-source
+reads use the table primary key `(call_id,source_call_uuid)`. Catalog lookups accept at most 100 requested source
+references and return at most 100 recordings per reference; reverse queries return at most 128 references per
+recording. Related-content requests accept those 128 references, partition catalog reads into batches of at most
+100, and return at most 100 rows from each dataset.
+They do not scan unrelated detailed history or join the two SQLite files. Shared source references survive a restart
+because each dataset stores its own reference when it writes its existing row. Real-time receiver callbacks still do
+no SQLite work.
+
+Activity pruning, explicit clears and event deletion remove the field and sparse index entry with their existing
+parent row. Alert retention removes its own reference with the message. Recording deletion cascades its catalog
+relationships. None of those operations requires the other database to exist, and deleting one dataset never deletes
+another's surviving content. The local site applies its existing permissions when resolving destinations. Notification
+delivery credentials and proxied notifications gain no recording access. The adjacent migrations create no old links,
+preserve existing rows and allocators, and have exact-schema, populated-fixture, query-plan, constraint, rollback and
+retry coverage. Runtime startup only validates the supported current formats.
+
 ### Alias Editor large-list indexes
 
 The web Alias Editor never builds a whole-list activity snapshot. SQLite applies the selected Alias List, search, and

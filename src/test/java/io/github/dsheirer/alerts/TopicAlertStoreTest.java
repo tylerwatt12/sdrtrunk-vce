@@ -18,6 +18,32 @@ class TopicAlertStoreTest
     @TempDir Path mDirectory;
     private static final long NOW = 1_797_000_000_000L;
 
+    @Test void exactSourcePersistsWithAlertButNeverEntersPublicHistoryOrDelivery() throws Exception
+    {
+        Path path = mDirectory.resolve("source.sqlite"); TopicAlertStore store = store(path);
+        var phone = device("phone", "remote-phone", "a"); store.saveDevice(phone);
+        String source = "00000000-0000-4000-8000-000000000001";
+        var event = new AlertEvent("call", NOW, "call", Map.of(), AlertAction.Context.EMPTY, source);
+        assertTrue(store.publish(topic(), "rule", "Rule", event, "Title", "Body", "details", List.of(phone), NOW));
+        var delivery = store.pendingDeliveries(1, NOW).getFirst();
+        TopicAlertStore restored = new TopicAlertStore(path);
+        assertEquals(source, restored.sourceCallUuid(delivery.alertId()).orElseThrow());
+        assertEquals(List.of(delivery.alertId()), restored.historyBySourceCallReferences(List.of(source, source)).stream().map(item -> item.get("id")).toList());
+        assertTrue(restored.historyBySourceCallReferences(List.of("00000000-0000-4000-8000-000000000002")).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> restored.historyBySourceCallReferences(java.util.Collections.nCopies(129, source)));
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        for(Object publicValue: List.of(restored.history(null, 100, 0), restored.historyItem(delivery.alertId()).orElseThrow(), delivery, event))
+        {
+            String json = mapper.writeValueAsString(publicValue);
+            assertFalse(json.contains(source)); assertFalse(json.contains("source_call_uuid")); assertFalse(json.contains("sourceCallUuid"));
+        }
+        var config = restored.configuration();
+        restored.updateConfiguration(new TopicAlertConfiguration(config.revision(), config.push(),
+            List.of(AlertTopic.administratorAlerts(), new AlertTopic("fire", "Fire", "", false, true, false)), List.of()), config.revision());
+        assertTrue(restored.sourceCallUuid(delivery.alertId()).isEmpty(), "Hidden topics cannot resolve source content");
+        assertTrue(restored.historyBySourceCallReferences(List.of(source)).isEmpty());
+    }
+
     @Test void relayRecipientSnapshotsAndTerminalStatesSurviveDeviceChangesAndBatchRetry() throws Exception
     {
         Path path = mDirectory.resolve("alerts.sqlite"); TopicAlertStore store = store(path);

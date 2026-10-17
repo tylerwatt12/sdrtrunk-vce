@@ -25,6 +25,23 @@ class CompletedToneAlertServiceTest
     static final String CHANNEL="00000000-0000-4000-8000-000000000001";
     static final long START=Instant.parse("2026-10-13T12:00:00Z").toEpochMilli();
 
+    @Test void completedToneAlertKeepsItsExactCallWithoutActivityOrRecording() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START + 2000);
+        try(var service = configured(clock, 0, AlertRule.Schedule.always()))
+        {
+            var original = sequence(9, DecoderType.P25_PHASE1, CompletedToneSequence.Source.DECODED_AUDIO);
+            String token = "session:9";
+            var sequence = new CompletedToneSequence(snapshot(9, DecoderType.P25_PHASE1, token), START,
+                original.source(), original.method(), original.tones());
+            assertFalse(sequence.snapshot().recordAudio());
+            assertEquals(token, DecodeEventViewService.completedToneView(sequence, null).alertFacts().activityCallToken());
+            service.receiveCompletedToneSequence(sequence); service.drain();
+            String alertId = service.pendingDeliveries(1).getFirst().alertId();
+            assertEquals(io.github.dsheirer.audio.call.SourceCallReference.fromToken(token), service.sourceCallUuid(alertId).orElseThrow());
+        }
+    }
+
     @Test void completedWaveformAndEncodedTonesUseSameRulesWithoutActivityOrRecording() throws Exception
     {
         AtomicLong clock=new AtomicLong(START+2000);
@@ -197,11 +214,15 @@ class CompletedToneAlertServiceTest
     }
     static AudioCallSnapshot snapshot(long sequence,DecoderType decoder)
     {
+        return snapshot(sequence, decoder, null);
+    }
+    static AudioCallSnapshot snapshot(long sequence,DecoderType decoder,String token)
+    {
         var id=new AudioCallId(42,sequence,0);
         var identifiers=new IdentifierCollection(List.of(APCO25Talkgroup.create(200)));
         boolean p25=decoder==DecoderType.P25_PHASE1||decoder==DecoderType.P25_PHASE2;
         var source=new CallLegSource(decoder,CHANNEL,"Southwest",null,0,p25?new P25SiteIdentity(1,2,1,2):null,null,null,false,p25?"p25:00001:002":null);
         return new AudioCallSnapshot(id,null,null,identifiers,Set.of(),START,START+2000,1,0,START,START+2000,false,true,
-            CallEncryptionState.CLEAR,false,null,VoiceCallQuality.EMPTY,new CallLegId(42,sequence,0),source,null);
+            CallEncryptionState.CLEAR,false,null,VoiceCallQuality.EMPTY,new CallLegId(42,sequence,0),source,null,null,token);
     }
 }

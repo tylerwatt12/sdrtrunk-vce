@@ -5565,9 +5565,62 @@ class StatsWebDatabase
             {
                 enrichActivityEncryption(rows);
                 enrichActivityEntityReferences(rows);
+                enrichActivityCallSources(connection, rows);
             }
             return afterId != null ? forwardCursorPage(rows, limit, watermarkId) : cursorPage(rows, limit);
         });
+    }
+
+    /** Resolves only the exact persisted call association. Historical/unrelated rows have no source. */
+    String activitySourceCallReference(long activityId)
+    {
+        return read(connection -> {
+            List<Map<String,Object>> rows = queryRows(connection,
+                "SELECT source_call_uuid FROM receiver_activity_event WHERE id = ?", activityId);
+            return rows.isEmpty() ? null : (String)rows.getFirst().get("source_call_uuid");
+        });
+    }
+
+    /** Bounded direct source-index lookup; ordinary Activity paging never queries the recording catalog. */
+    List<Map<String,Object>> activityBySourceCallReferences(List<String> sourceReferences)
+    {
+        if(sourceReferences == null || sourceReferences.isEmpty()) return List.of();
+        if(sourceReferences.size() > 128) throw new IllegalArgumentException("Too many source call references");
+        List<String> sources = sourceReferences.stream()
+            .map(io.github.dsheirer.audio.call.SourceCallReference::canonical).distinct().toList();
+        if(sources.contains(null)) throw new IllegalArgumentException("Missing source call reference");
+        return read(connection -> {
+            String placeholders = String.join(",", java.util.Collections.nCopies(sources.size(), "?"));
+            String sql = ACTIVITY_PROJECTION_SQL + " FROM receiver_activity_event source_event " +
+                "INDEXED BY idx_receiver_activity_event_source_call " +
+                "JOIN receiver_activity_event_resolved activity ON activity.id = source_event.id " +
+                ACTIVITY_RELATED_JOINS_SQL + " WHERE source_event.source_call_uuid IN (" + placeholders +
+                ") ORDER BY activity.observed_at_ms DESC, activity.id DESC LIMIT 100";
+            List<Map<String,Object>> rows = queryRows(connection, sql, sources.toArray());
+            mAliasResolver.enrichActivity(connection, rows);
+            io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
+            enrichActivityEncryption(rows);
+            enrichActivityEntityReferences(rows);
+            return rows;
+        });
+    }
+
+    private static void enrichActivityCallSources(Connection connection, List<Map<String,Object>> rows)
+        throws SQLException
+    {
+        if(rows.isEmpty()) return;
+        String placeholders = String.join(",", java.util.Collections.nCopies(rows.size(), "?"));
+        java.util.Set<Long> linked = new java.util.HashSet<>();
+        for(Map<String,Object> source: queryRows(connection,
+            "SELECT id FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL AND id IN (" +
+                placeholders + ")", rows.stream().map(row -> row.get("id")).toArray()))
+        {
+            linked.add(((Number)source.get("id")).longValue());
+        }
+        for(Map<String,Object> row: rows)
+        {
+            row.put("has_call_source", linked.contains(((Number)row.get("id")).longValue()));
+        }
     }
 
     private static ActivityQuery buildActivityQuery(Connection connection, ActivityFilters filters) throws SQLException

@@ -974,6 +974,13 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     public void broadcast(IDecodeEvent decodeEvent)
     {
+        if(decodeEvent instanceof DecodeEvent call && call.getActivityCallToken() == null && decodeEvent.getEventType() != null &&
+            decodeEvent.getEventType().isVoiceCallEvent())
+        {
+            call.setActivityCallToken(getActivityCallToken(decodeEvent.getChannelDescriptor(),
+                decodeEvent.getTimeslot(), Math.max(decodeEvent.getTimeStart(), decodeEvent.getTimeEnd()),
+                decodeEvent.getIdentifierCollection()));
+        }
         publishChannelActivity(decodeEvent);
         Listener<IDecodeEvent> listener = mDecodeEventListener.get();
 

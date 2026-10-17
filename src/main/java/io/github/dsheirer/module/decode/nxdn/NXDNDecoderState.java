@@ -42,6 +42,7 @@ import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
 import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
+import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNLayer3Message;
@@ -1299,6 +1300,20 @@ public class NXDNDecoderState extends DecoderState
             mPublishedActivityCallToken = token;
             getInterModuleEventBus().post(new io.github.dsheirer.audio.call.AudioActivityCallEvent(token, 0));
         }
+    }
+
+    @Override
+    protected void broadcast(IDecodeEvent event)
+    {
+        if(event instanceof DecodeEvent call && call.getActivityCallToken() == null && event.getEventType() != null &&
+            event.getEventType().isVoiceCallEvent())
+        {
+            call.setActivityCallToken(mTrunkingEnabled && mTrafficChannelManager != null ?
+                mTrafficChannelManager.getActivityCallToken(event.getChannelDescriptor(), null,
+                    Math.max(event.getTimeStart(), event.getTimeEnd()), event.getIdentifierCollection()) :
+                event == mCurrentConventionalCallEvent ? mCurrentConventionalCallToken : null);
+        }
+        super.broadcast(event);
     }
 
     private static DecodeEventType callEventType(CallType callType, EncryptionKeyIdentifier encryption)

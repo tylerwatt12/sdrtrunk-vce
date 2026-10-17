@@ -277,6 +277,8 @@ class P25TrafficChannelManagerTest
         String selected = manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
             DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_100L, null);
         assertEquals(first.getActivityCallToken(), selected);
+        assertEquals(selected, first.getEvent().getActivityCallToken(),
+            "The decode event consumed by alerts keeps the same binding selected for P25 audio and Activity");
 
         P25TrafficChannelEventTracker replacement = new P25TrafficChannelEventTracker(
             P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 2_000L, VoiceServiceOptions.createUnencrypted())

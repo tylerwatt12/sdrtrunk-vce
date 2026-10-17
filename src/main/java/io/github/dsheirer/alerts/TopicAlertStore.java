@@ -439,12 +439,12 @@ public final class TopicAlertStore
                     }
                 }
                 String alertId = UUID.randomUUID().toString(); long expiresAt = now + 3_600_000;
-                try(PreparedStatement update = connection.prepareStatement("INSERT INTO topic_alert_message(id,rule_id,topic_id,topic_name,alert_name,title,body,click_action,event_type,created_at_ms,expires_at_ms,action_kind,action_entity_ref_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"))
+                try(PreparedStatement update = connection.prepareStatement("INSERT INTO topic_alert_message(id,rule_id,topic_id,topic_name,alert_name,title,body,click_action,event_type,created_at_ms,expires_at_ms,action_kind,action_entity_ref_json,source_call_uuid) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"))
                 {
                     update.setString(1, alertId); update.setString(2, ruleId); update.setString(3, topic.id()); update.setString(4, topic.name());
                     update.setString(5, alertName); update.setString(6, title); update.setString(7, body); update.setString(8, clickAction); update.setString(9, event.trigger());
                     update.setLong(10, now); update.setLong(11, expiresAt); update.setString(12, action.kind());
-                    update.setString(13, actionJson); update.executeUpdate();
+                    update.setString(13, actionJson); update.setString(14, event.sourceCallUuid()); update.executeUpdate();
                 }
                 try(PreparedStatement update = connection.prepareStatement("INSERT INTO topic_alert_delivery(alert_id,device_id,remote_device_id,method,state,attempts,next_at_ms,remote_id,error,updated_at_ms) SELECT ?,?,?,?,'pending',0,?,'','',? FROM topic_alert_device WHERE id=? AND subscription_expired=0"))
                 {
@@ -599,6 +599,36 @@ public final class TopicAlertStore
         {
             query.setString(1, id);
             try(ResultSet rows = query.executeQuery()) { return rows.next() ? Optional.of(historyItem(rows)) : Optional.empty(); }
+        }
+    }
+
+    /** Private exact-call reference; deliberately excluded from public history and every delivery payload. */
+    public synchronized Optional<String> sourceCallUuid(String alertId) throws SQLException
+    {
+        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT m.source_call_uuid FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id WHERE m.id=? AND t.visible=1"))
+        {
+            query.setString(1, alertId);
+            try(ResultSet rows = query.executeQuery())
+            {
+                return rows.next() ? Optional.ofNullable(rows.getString(1)) : Optional.empty();
+            }
+        }
+    }
+
+    /** Bounded exact-source lookup. Hidden and removed topics never become related-alert destinations. */
+    public synchronized List<Map<String,Object>> historyBySourceCallReferences(List<String> sources) throws SQLException
+    {
+        if(sources == null || sources.isEmpty()) return List.of();
+        if(sources.size() > 128) throw new IllegalArgumentException("Too many source call references");
+        List<String> references = sources.stream().map(io.github.dsheirer.audio.call.SourceCallReference::canonical).distinct().toList();
+        if(references.contains(null)) throw new IllegalArgumentException("A source call reference is required");
+        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(historySelect() +
+            " WHERE m.source_call_uuid IN (" + placeholders(references.size()) + ") AND t.visible=1 ORDER BY m.created_at_ms DESC,m.id LIMIT 100"))
+        {
+            for(int index = 0; index < references.size(); index++) query.setString(index + 1, references.get(index));
+            List<Map<String,Object>> items = new ArrayList<>();
+            try(ResultSet rows = query.executeQuery()) { while(rows.next()) items.add(historyItem(rows)); }
+            return List.copyOf(items);
         }
     }
 

@@ -46,7 +46,7 @@ class Format52To53DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56", "format-56-to-57"),
+            assertEquals(List.of("format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56", "format-56-to-57", "format-57-to-58"),
                 report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(3, report.steps().getFirst().effects().getLast().affectedRows());
             assertEquals(before, retainedContents(connection));
@@ -270,6 +270,8 @@ class Format52To53DatabaseMigrationTest
                     List<String> row = new ArrayList<>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
                     {
+                        if("source_call_uuid".equals(rows.getMetaData().getColumnName(column)))
+                        { assertNull(rows.getObject(column)); continue; }
                         Object value = rows.getObject(column);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }

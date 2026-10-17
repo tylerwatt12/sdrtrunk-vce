@@ -190,7 +190,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -779,6 +779,15 @@ setting, retained row, counter, relationship and allocator is preserved. This se
 fingerprint; the new global marker prevents an older reader from accepting frequencies it cannot interpret. Normal
 startup validates only, and the populated format-56 fixture remains frozen and supported.
 
+The format 57-to-58 step adds one optional `source_call_uuid` to each existing detailed Activity event and alert
+message, plus two sparse indexes for exact lookups. The reference is a canonical lowercase UUID identifying the
+original received call across its independently stored Activity, alerts and recordings. It contains no audio,
+message text, radio identity or timestamp. Existing rows remain NULL: the migration neither matches old timestamps
+nor infers connections from talkgroups, channels or frequencies. Every old row, ID, setting, delivery state,
+relationship, counter and allocator is preserved. Each dataset keeps its own retention, and no new main-database
+table, cross-database foreign key or pending-link queue is introduced. Fresh creation and migration reach the same
+exact format-58 signature; format 57 retains its populated fixture and runtime startup remains validation-only.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -812,8 +821,14 @@ tones or recording-to-alert links. Format 8 retains its frozen populated fixture
 10 extends the admitted method-4 nominal single-tone identities with QCII and Plectron frequencies without changing
 any table, field or method code. Its adjacent format-9-to-10 step preserves all prior recording and tone data without
 renormalization or backfill, changing only the format markers. Format 9 retains its exact populated fixture and DDL.
-The new marker makes older readers refuse this expanded semantic contract. The main application database is
-independently at format 57; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+The new marker makes older readers refuse this expanded semantic contract. Catalog format 11 adds the small
+`recording_source` table and a reverse lookup index. Each row connects one recording to one exact source call UUID;
+several receiver copies may belong to one saved recording, and a source call may have several recorded parts. The
+adjacent format-10-to-11 step creates an empty relationship table without guessing historical associations, preserving
+all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
+to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
+The populated format-10 fixture remains frozen and supported. The main application database is independently at
+format 58; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

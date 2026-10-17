@@ -16,6 +16,7 @@ public final class AnalogCallEvent extends DecodeEvent
     {
         super(DecodeEventType.CALL, startedAt);
         mAttribution = attribution;
+        setActivityCallToken(attribution != null ? attribution.callToken() : null);
     }
 
     public AnalogCallAttribution getAttribution()
