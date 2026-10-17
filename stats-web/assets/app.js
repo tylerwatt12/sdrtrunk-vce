@@ -35,8 +35,8 @@ import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=18';
 import { createAlertsWorkspace } from './features/alerts.js?v=16';
-import { createCallRelations } from './features/call-relations.js?v=1';
-import { createRecordingsFeature } from './features/recordings.js?v=51';
+import { createCallRelations } from './features/call-relations.js?v=2';
+import { createRecordingsFeature } from './features/recordings.js?v=52';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
@@ -34177,13 +34177,14 @@ const recordingsFeature = createRecordingsFeature({
 });
 
 const showCallRelations = createCallRelations({
-  node, table, section, sectionActionHost, openReadOnlyModal, requestJson, dateTime, anchor, href,
+  node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
+  radioIdentifierText, groupIdentifierText,
   activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
     row.source_entity_ref, true, 'source'),
   activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
   activityChannel: row => activityChannel(row),
   activityEventLabel: row => activityOptionLabel(row.event_type || row.action),
-  playRecording: row => recordingsFeature.playback.play(row, 'once'),
+  playback: recordingsFeature.playback,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
 });

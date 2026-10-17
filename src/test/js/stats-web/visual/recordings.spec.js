@@ -1657,12 +1657,140 @@ test('recording actions open exact related activity and alerts', async ({ page }
   const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await actions.getByRole('button', { name: 'Related activity and alerts', exact: true }).click();
   await expect(actions).toHaveCount(0);
-  await expect(page.getByRole('dialog', { name: 'Related call details', exact: true })).toBeVisible();
+  const related = page.getByRole('dialog', { name: 'Call details', exact: true });
+  await expect(related).toBeVisible();
+  await expect(related).toContainText('No recording available');
+  await expect(related.getByRole('table')).toHaveCount(0);
   await expect.poll(() => requests.length).toBe(1);
   expect(new URL(requests[0]).pathname).toBe('/api/v1/call-relations/recording/17');
   expect(state.requestedFilters).toHaveLength(1);
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Related call details', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toHaveCount(0);
+});
+
+test('call summary shares active playback, keeps controls open, and resumes after reopening', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await stubRecordingAudio(page);
+  await openRecordings(page, { call: linkedCall });
+  await page.route('**/api/v1/call-relations/recording/17', route => route.fulfill({ json: { data: {
+    activity_rows: [{ id: 501, observed_at_ms: call.start_ms, action: 'CALL', event_type: 'CALL_GROUP',
+      protocol: 'P25', source_radio_id: 30914, source_alias_name: 'Engine 4',
+      target_id: 1201, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch',
+      name: 'North Ridge Channel', configuration_id: channelId, frequency_hz: 851_012_500 }],
+    recordings: [linkedCall], alerts: []
+  } } }));
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.locator('.recordings-card-play').click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await page.evaluate(() => {
+    window.recordingAudio.currentTime = 12;
+    window.recordingAudio.dispatchEvent(new Event('timeupdate'));
+  });
+  const openSummary = async () => {
+    await page.locator('.recordings-call-info').click();
+    await page.getByRole('dialog', { name: 'Call actions', exact: true })
+      .getByRole('button', { name: 'Related activity and alerts', exact: true }).click();
+    return page.getByRole('dialog', { name: 'Call details', exact: true });
+  };
+  const summary = await openSummary();
+  await expect(summary.getByRole('heading', { name: 'Recording', exact: true })).toBeVisible();
+  await expect(summary.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  const seek = summary.getByRole('slider', { name: 'Recording position', exact: true });
+  await expect(seek).toHaveValue('12');
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await summary.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect(summary).toBeVisible();
+  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.recordingAudio.paused)).toBe(true);
+  await seek.focus();
+  await page.keyboard.press('End');
+  await expect.poll(() => page.evaluate(() => window.recordingAudio.currentTime)).toBe(42);
+  await page.keyboard.press('Home');
+  await expect.poll(() => page.evaluate(() => window.recordingAudio.currentTime)).toBe(0);
+  await page.keyboard.press('ArrowRight');
+  expect(await page.evaluate(() => window.recordingAudio.currentTime)).toBeGreaterThan(0);
+  const position = await page.evaluate(() => window.recordingAudio.currentTime);
+  await summary.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(summary.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.recordingAudio.currentTime)).toBe(position);
+  await page.keyboard.press('Escape');
+  await expect(summary).toHaveCount(0);
+  expect(await page.evaluate(() => window.recordingAudio.paused)).toBe(false);
+  const reopened = await openSummary();
+  await expect(reopened.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await expect(reopened.getByRole('slider', { name: 'Recording position', exact: true })).toHaveValue(String(position));
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(2);
+  await page.keyboard.press('Escape');
+  expect(pageErrors).toEqual([]);
+});
+
+test('recordings-only call summary does not reveal Activity details', async ({ page }) => {
+  await openRecordings(page, { call: linkedCall, radio: false });
+  await page.route('**/api/v1/call-relations/recording/17', route => route.fulfill({ json: { data: {
+    activity_rows: [{ id: 501, name: 'Restricted Activity channel', source_alias_name: 'Restricted Activity source' }],
+    recordings: [linkedCall], alerts: []
+  } } }));
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
+    .getByRole('button', { name: 'Related activity and alerts', exact: true }).click();
+  const summary = page.getByRole('dialog', { name: 'Call details', exact: true });
+  await expect(summary.getByRole('heading', { name: 'Recording', exact: true })).toBeVisible();
+  await expect(summary.getByRole('heading', { name: 'Activity', exact: true })).toHaveCount(0);
+  await expect(summary).not.toContainText('Restricted Activity');
+  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+});
+
+test('call summary explains blocked playback and lets Play retry without closing', async ({ page }) => {
+  await stubRecordingAudio(page);
+  await openRecordings(page, { call: linkedCall });
+  await page.route('**/api/v1/call-relations/recording/17', route => route.fulfill({ json: { data: {
+    activity_rows: [], recordings: [linkedCall], alerts: []
+  } } }));
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
+    .getByRole('button', { name: 'Related activity and alerts', exact: true }).click();
+  const summary = page.getByRole('dialog', { name: 'Call details', exact: true });
+  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const play = window.recordingAudio.play.bind(window.recordingAudio);
+    let blocked = true;
+    window.recordingAudio.play = function() {
+      if (blocked) { blocked = false; return Promise.reject(new Error('Playback blocked')); }
+      return play();
+    };
+  });
+  await summary.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(summary.getByText(/Playback could not start/)).toBeVisible();
+  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
+  await summary.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(summary.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await expect(summary.getByText(/Playback could not start/)).toHaveCount(0);
+});
+
+test('call summary explains a missing recording and allows a fresh playback attempt', async ({ page }) => {
+  await stubRecordingAudio(page);
+  await openRecordings(page, { call: linkedCall });
+  await page.route('**/api/v1/call-relations/recording/17', route => route.fulfill({ json: { data: {
+    activity_rows: [], recordings: [linkedCall], alerts: []
+  } } }));
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  await page.locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
+    .getByRole('button', { name: 'Related activity and alerts', exact: true }).click();
+  const summary = page.getByRole('dialog', { name: 'Call details', exact: true });
+  await summary.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(summary.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.evaluate(() => window.recordingAudio.dispatchEvent(new Event('error')));
+  await expect(summary.getByText(/This recording could not be played/)).toBeVisible();
+  await expect(summary).not.toContainText('Playback finished.');
+  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
+  await summary.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(summary.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await expect(summary.getByText(/This recording could not be played/)).toHaveCount(0);
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(2);
 });
 
 for (const [name, overrides, title, route] of [

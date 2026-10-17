@@ -427,6 +427,8 @@ function prettify(valueToFormat) {
   return String(valueToFormat || '').replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+export { protocolLabel as recordingProtocolLabel, prettify as recordingCallTypeLabel };
+
 function protocolLabel(protocol) {
   return ({ APCO25: 'P25 Phase 1', APCO25_PHASE2: 'P25 Phase 2',
     NBFM: 'Analog FM', AM: 'Analog AM', DMR: 'DMR', NXDN: 'NXDN', DCS: 'DCS', FLEETSYNC: 'FleetSync', MDC1200: 'MDC1200', LOJACK: 'LoJack', TAIT1200: 'Tait1200' })[protocol] || prettify(protocol);
@@ -686,7 +688,7 @@ export function createRecordingsFeature(deps) {
     audio.addEventListener('error', () => {
       if (!player?.current) return;
       player.status = 'This recording could not be played. Moving to the next call.';
-      void advance();
+      void advance({ failed: true });
     });
     return player;
   }
@@ -834,7 +836,7 @@ export function createRecordingsFeature(deps) {
     return continuation.request;
   }
 
-  async function advance({ remember = true } = {}) {
+  async function advance({ remember = true, failed = false } = {}) {
     const state = recordedPlayer();
     if (state.loading) return;
     const token = state.token;
@@ -854,7 +856,8 @@ export function createRecordingsFeature(deps) {
         state.continuation = null;
         state.audio.removeAttribute('src');
         state.audio.load();
-        if (state.status !== 'Could not load the next matching calls.') state.status = 'Playback finished.';
+        if (failed) state.status = 'This recording could not be played. Press Play to retry.';
+        else if (state.status !== 'Could not load the next matching calls.') state.status = 'Playback finished.';
         drawQueue();
         return;
       }

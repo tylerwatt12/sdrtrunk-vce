@@ -1627,23 +1627,43 @@ test('alert details open exact local related calls without notification credenti
     if (requests.length === 1) return route.fulfill({ status: 503, json: { error: { message: 'Temporarily unavailable.' } } });
     return route.fulfill({ json: { data: { activity_rows: [], recordings: requests.length > 2 ? [
       { id: 81, start_ms: 1770000000000, group_alias: 'Dispatch', talkgroup_id: 1201, channel_name: 'North Site' }
-    ] : [], alerts: [] } } });
+    ] : [], alerts: [{ id: 'alert-exact-call', topic_id: 'fire', topic_name: 'Fire activity',
+      title: 'Dispatch tones', body: 'Engine 4 dispatched.', created_at_ms: 1770000000000 }] } } });
   });
   await page.goto('/app.html?view=topics');
   await page.locator('.alerts-timeline').getByRole('button', { name: 'Dispatch tones', exact: true }).click();
   const detail = page.getByRole('dialog', { name: 'Dispatch tones', exact: true });
   await detail.getByRole('button', { name: 'Related activity and recordings', exact: true }).click();
   await expect(detail).toHaveCount(0);
-  const related = page.getByRole('dialog', { name: 'Related call details', exact: true });
+  const related = page.getByRole('dialog', { name: 'Call details', exact: true });
   await expect(related).toBeVisible();
+  await auditScreenshot(page, 'call-summary-alert-error', false);
   await related.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(related).toContainText('No related recording is available.');
+  await expect(related).toContainText('No recording available');
+  await auditScreenshot(page, 'call-summary-alert-empty', false);
   await related.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(related.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  await expect(related.getByText('Dispatch tones', { exact: true })).toHaveCount(1);
+  await expect(related).toContainText('Engine 4 dispatched.');
+  await expect(related.getByRole('heading', { name: 'Alert', exact: true })).toBeVisible();
+  await expect(related.locator('time').first()).toBeVisible();
+  await expect(related).not.toContainText('[object');
   await expect.poll(() => requests.length).toBe(3);
   expect(new URL(requests[0].url).pathname).toBe('/api/v1/alerts/history/alert-exact-call/related');
   expect(requests.every(request => request.authorization === undefined)).toBe(true);
+  await auditScreenshot(page, 'call-summary-alert-ready', false);
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Related call details', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toHaveCount(0);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('public alert details do not offer protected call details or request recordings', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page, { guest: true });
+  await page.goto('/app.html?view=topics');
+  await page.locator('.alerts-timeline').getByRole('button', { name: 'Fire Tactical is active', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Fire Tactical is active', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Related activity and recordings', exact: true })).toHaveCount(0);
+  expect(state.requests.some(request => request.p.endsWith('/related') || request.p.startsWith('/api/v1/recordings/'))).toBe(false);
   expect(fixture.pageErrors).toEqual([]);
 });

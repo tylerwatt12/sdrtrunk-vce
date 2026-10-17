@@ -131,7 +131,7 @@ function toneActivityRow(id, summary, overrides = {}) {
     paging_tone_summary: summary, ...overrides };
 }
 
-for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1440], ['dark', 390], ['light', 320]]) {
   test(`Activity opens exact related recordings and alerts on ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true,
@@ -140,34 +140,67 @@ for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
     const requests = [];
     await page.route('**/api/v1/call-relations/activity/18', route => {
       requests.push(route.request().url());
-      return route.fulfill({ json: { data: { activity_rows: [activity], recordings: [
-        { id: 71, start_ms: activity.observed_at_ms, group_alias: 'CPD D3 DISP', talkgroup_id: 56131,
+      return route.fulfill({ json: { data: { activity_rows: [activity, { ...activity, id: 19,
+        name: 'South Simulcast Control', configuration_id: '22222222-2222-4222-8222-222222222222' }], recordings: [
+        { id: 71, start_ms: activity.observed_at_ms, duration_ms: 41_400, group_alias: 'CPD D3 DISP', talkgroup_id: 56131,
           system_name: 'Metro Public Safety', channel_name: 'North Simulcast Control', source_id: 2808137, source_alias: 'Engine 12' },
-        { id: 72, start_ms: activity.observed_at_ms, talkgroup_id: 56131, system_name: 'County Safety', channel_name: 'South Site', source_id: 999 }
+        { id: 72, start_ms: activity.observed_at_ms + 41_400, duration_ms: 10_000, talkgroup_id: 56131,
+          system_name: 'County Safety', channel_name: 'South Site', source_id: 999 }
       ], alerts: [{ id: 'alert-exact-call', title: 'Dispatch tones', body: 'Engine 12 dispatched.', topic_id: 'fire', created_at_ms: activity.observed_at_ms }] } } });
     });
     await page.getByRole('button', { name: 'Related recordings and alerts', exact: true }).click();
-    const detail = page.getByRole('dialog', { name: 'Related call details', exact: true });
+    const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
     await expect(detail).toBeVisible();
     const bounds = await detail.boundingBox();
     expect(bounds.y).toBeGreaterThanOrEqual(-1);
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(page.viewportSize().height + 1);
-    await expect(detail.locator('[data-table-type="call-relations-recordings"] tbody tr')).toHaveCount(2);
+    await expect(detail.getByRole('table')).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: /column|scroll left|scroll right/i })).toHaveCount(0);
+    await expect(detail.locator('.call-summary-recording')).toHaveCount(2);
+    await expect(detail.locator('.call-summary-observation')).toHaveCount(2);
+    await expect(detail.getByRole('heading', { name: 'Recordings', exact: true })).toBeVisible();
+    await expect(detail.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
+    await expect(detail.locator('time').first()).toBeVisible();
+    await expect(detail).not.toContainText('[object');
     await expect(detail).toContainText('CPD D3 DISP');
     await expect(detail).toContainText('Talkgroup 56131');
     await expect(detail).toContainText('Metro Public Safety');
     await expect(detail).toContainText('County Safety');
     await expect(detail).toContainText('Radio 999');
+    await expect(detail).toContainText('South Simulcast Control');
+    const activityDestination = new URL(await detail.locator('.call-summary-observation').first()
+      .getByRole('link', { name: 'Open', exact: true }).getAttribute('href'), 'http://127.0.0.1');
+    expect(Object.fromEntries(activityDestination.searchParams)).toMatchObject({
+      view: 'channel', configuration_id: activity.configuration_id, tab: 'activity', activity_range: 'custom',
+      activity_from_ms: String(activity.observed_at_ms), activity_to_ms: String(activity.observed_at_ms + 1)
+    });
     await expect(detail.getByRole('link', { name: 'Dispatch tones', exact: true })).toHaveAttribute('href', /view=topics.*alert=alert-exact-call/);
     await expect(detail.getByRole('link', { name: 'View all recordings', exact: true })).toHaveAttribute('href', /recording_queue=71%2C72/);
     expect(requests).toHaveLength(1);
     expect(new URL(requests[0]).pathname).toBe('/api/v1/call-relations/activity/18');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await detail.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth + 1)).toBe(true);
     await toneScreenshot(page, `call-relations-${theme}-${width}`, false);
     await page.keyboard.press('Escape');
     await expect(detail).toHaveCount(0);
   });
 }
+
+test('Activity-only call summary keeps protected recordings out of its context and controls', async ({ page }) => {
+  const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true });
+  await openActivity(page, { rows: [activity] });
+  await page.route('**/api/v1/call-relations/activity/18', route => route.fulfill({ json: { data: {
+    activity_rows: [activity], recordings: [{ id: 71, group_alias: 'Restricted recording target',
+      source_alias: 'Restricted recording source', duration_ms: 41_400 }], alerts: []
+  } } }));
+  await page.getByRole('button', { name: 'Related recordings and alerts', exact: true }).click();
+  const summary = page.getByRole('dialog', { name: 'Call details', exact: true });
+  await expect(summary.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
+  await expect(summary.getByRole('heading', { name: /^Recordings?$/ })).toHaveCount(0);
+  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toHaveCount(0);
+  await expect(summary.getByRole('slider')).toHaveCount(0);
+  await expect(summary).not.toContainText('Restricted recording');
+});
 
 test('call tones preserve group call types and filter independently with alias context', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
