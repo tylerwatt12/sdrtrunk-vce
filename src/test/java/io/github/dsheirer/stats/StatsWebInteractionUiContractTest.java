@@ -1050,7 +1050,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure"));
         assertTrue(scanner.contains("upNextList.tabIndex = 0;"));
         assertTrue(scanner.contains("'aria-label', 'Queued calls'"));
-        assertFalse(function(source, "function arrangeScannerPlayback(bar, page, player, signal)")
+        assertFalse(function(source, "function arrangeScannerPlayback(bar, player, signal)")
             .contains("scanner-queue-trigger"));
         assertTrue(scanner.contains("scanner-workspace"));
         assertTrue(scanner.contains("uiSelectFrame(modeSelect, 'scanner-view-modes')"));
