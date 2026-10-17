@@ -1612,6 +1612,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
+            tracker.updateDurationTraffic(timestamp);
             P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
             broadcast(tracker, timestamp);
             return tracker != null ? tracker.audioCallEvent(0) : null;
