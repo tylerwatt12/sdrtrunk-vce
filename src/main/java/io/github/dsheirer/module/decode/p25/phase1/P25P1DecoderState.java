@@ -1109,8 +1109,10 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 //A new header carries no source address. Keep accepted grant attribution in its call tracker,
                 //while clearing decoder working state so a zero-source LDU cannot inherit the previous caller.
                 getIdentifierCollection().remove(Role.FROM);
-                publishCallAttribution(mTrafficChannelManager.processP1TrafficCallStart(getCurrentFrequency(), talkgroup, null,
-                        headerData.getEncryptionKey(), mCurrentServiceOptions, getCurrentChannel(), message.getTimestamp()));
+                var attribution = mTrafficChannelManager.processP1TrafficCallStart(getCurrentFrequency(), talkgroup, null,
+                    headerData.getEncryptionKey(), mCurrentServiceOptions, getCurrentChannel(), message.getTimestamp());
+                publishCallAttribution(attribution != null ?
+                    attribution.withPhysicalBoundary(message.getTimestamp()) : null);
 
                 if(headerData.isEncryptedAudio())
                 {

@@ -366,8 +366,22 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     /** Run on the audio producer before processing queued voice from a newly selected physical call. */
     protected void prepareCallAttribution()
     {
+        prepareCallAttribution(true);
+    }
+
+    /** An already-processed physical header has itself discarded the previous call's cached state. */
+    protected void prepareCallAttribution(boolean discardCachedState)
+    {
         pendingActivityCall(false);
-        if(mCallAttributionChanged.getAndSet(false)) callAttributionChanged();
+        if(mCallAttributionChanged.getAndSet(false) && discardCachedState) callAttributionChanged();
+    }
+
+    /** The accepted physical boundary stays attached to the same pending or bound call event. */
+    protected long getPhysicalCallBoundaryTimestamp()
+    {
+        var event = mPendingActivityCall.get();
+        if(event == null) event = mCurrentActivityCall;
+        return event != null ? event.physicalBoundaryTimestamp() : 0L;
     }
 
     /** Protocol modules discard undecidable cached voice and encryption sync at this exact token boundary. */

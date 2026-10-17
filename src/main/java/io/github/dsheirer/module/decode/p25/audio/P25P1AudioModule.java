@@ -79,6 +79,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
     private long mLastCarrierTimestamp = Long.MIN_VALUE;
     private long mLastAudioTimestamp = Long.MIN_VALUE;
     private long mPendingEncryptedStartTimestamp = Long.MIN_VALUE;
+    private long mLastHeaderTimestamp;
     private String mLastAudioSegmentId;
     private final P25PagingToneService.Registration mPagingToneRegistration =
         P25PagingToneService.getInstance().registerGlobalPcm();
@@ -223,6 +224,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             }
 
             resetEncryptionTracking();
+            mLastHeaderTimestamp = message.getTimestamp();
             mLastCarrierTimestamp = message.getTimestamp();
             mEncryptionState = CallEncryptionState.fromEncrypted(hdu.getHeaderData().isEncryptedAudio());
             mEncryptionSyncParameters = mEncryptionState.isEncrypted() ?
@@ -731,7 +733,12 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                 case START, CONTINUATION ->
                 {
                     mCurrentDecoderState = event.getState();
-                    prepareCallAttribution();
+                    long headerTimestamp = event.getEvent() == DecoderStateEvent.Event.START ?
+                        getPhysicalCallBoundaryTimestamp() : 0L;
+                    boolean headerAlreadyProcessed = headerTimestamp > 0 && headerTimestamp == mLastHeaderTimestamp;
+                    if(headerTimestamp > 0 && !headerAlreadyProcessed)
+                        resetEncryptionTracking();
+                    prepareCallAttribution(!headerAlreadyProcessed);
 
                     //Valid current-user LC can establish a clear call before an HDU or ESS is received.
                     if(!mEncryptionState.isKnown() && mCurrentDecoderState == State.CALL)
@@ -785,6 +792,7 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
         mLastCarrierTimestamp = Long.MIN_VALUE;
         mLastAudioTimestamp = Long.MIN_VALUE;
         mPendingEncryptedStartTimestamp = Long.MIN_VALUE;
+        mLastHeaderTimestamp = 0L;
         mLastAudioSegmentId = null;
     }
 

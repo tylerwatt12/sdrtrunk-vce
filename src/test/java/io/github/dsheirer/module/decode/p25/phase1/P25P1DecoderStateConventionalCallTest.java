@@ -285,6 +285,98 @@ class P25P1DecoderStateConventionalCallTest
     }
 
     @Test
+    void aHeaderDiscardsEarlierVoiceBeforeItsStateNotificationCanActivateAudio()
+    {
+        for(boolean previouslyClear: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline(true))
+            {
+                if(previouslyClear) pipeline.audio.receive(header(900L));
+                pipeline.audio.receive(voice(1_000L, LinkControlOpcode.GROUP_VOICE_CHANNEL_UPDATE, List.of()));
+                pipeline.receive(header(48_121L));
+                String token = pipeline.attributions.events.getLast().token();
+                pipeline.receive(voice(48_300L, 101));
+                pipeline.receive(terminator(48_500L));
+
+                assertEquals(1, pipeline.completed().size());
+                var completed = pipeline.completed().getFirst().snapshot();
+                assertEquals(token, completed.activityCallToken());
+                assertEquals(48_121L, completed.startTimestamp());
+                assertEquals(101, completed.identifierCollection().getFromIdentifier().getValue());
+                var frames = pipeline.audioEvents.stream().filter(event ->
+                    event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+                assertEquals(9, frames.size());
+                assertTrue(frames.stream().allMatch(event -> event.voiceFrameTimestamp() >= 48_140L));
+                assertEquals(48_121L, pipeline.audioEvents.stream().filter(event ->
+                    event.eventType() == AudioCallEventType.CALL_CREATED).findFirst().orElseThrow()
+                    .snapshot().startTimestamp());
+            }
+        }
+    }
+
+    @Test
+    void aHeaderCannotActivateAnEarlierDeferredEncryptionContext()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.audio.receive(header(1_000L, true, 0x1111));
+            pipeline.receive(header(48_121L, true, 0x2222));
+            pipeline.receive(voice(48_300L, 101, true));
+            pipeline.receive(terminator(48_500L));
+
+            assertEquals(1, pipeline.completed().size());
+            var completed = pipeline.completed().getFirst().snapshot();
+            assertEquals(48_121L, completed.startTimestamp());
+            assertEquals(0x2222, completed.callEncryptionEvidence().keyId());
+            assertFalse(pipeline.audioEvents.stream().anyMatch(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME));
+            assertEquals(48_121L, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.CALL_CREATED).findFirst().orElseThrow()
+                .snapshot().startTimestamp());
+        }
+    }
+
+    @Test
+    void delayedHeaderStatePreservesThatHeadersOwnQueuedVoiceAndEncryption()
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline(true))
+            {
+                var old = pipeline.manager.processP1TrafficCallStart(851_012_500L, APCO25Talkgroup.create(1201),
+                    APCO25RadioIdentifier.createFrom(909), header(1_000L).getHeaderData().getEncryptionKey(),
+                    VoiceServiceOptions.createUnencrypted(),
+                    new StandardChannel(851_012_500L), 1_000L);
+                pipeline.audio.activityCallBound(old);
+                var header = header(48_121L, encrypted, 0x2222);
+                var firstVoice = voice(48_300L, 101, encrypted);
+                pipeline.audio.receive(header);
+                pipeline.audio.receive(firstVoice);
+                pipeline.state.receive(header);
+                String token = pipeline.attributions.events.getLast().token();
+                assertNotEquals(old.token(), token);
+                pipeline.state.receive(firstVoice);
+                pipeline.receive(voice(48_480L, 101, encrypted));
+                pipeline.receive(terminator(48_500L));
+
+                assertEquals(1, pipeline.completed().size());
+                var completed = pipeline.completed().getFirst().snapshot();
+                assertEquals(token, completed.activityCallToken());
+                assertEquals(101, completed.identifierCollection().getFromIdentifier().getValue());
+                assertEquals(encrypted ? CallEncryptionState.ENCRYPTED : CallEncryptionState.CLEAR,
+                    completed.encryptionState());
+                assertEquals(encrypted ? 0 : 18, pipeline.audioEvents.stream().filter(event ->
+                    event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+                if(encrypted)
+                {
+                    assertEquals(48_121L, completed.startTimestamp());
+                    assertEquals(0x2222, completed.callEncryptionEvidence().keyId());
+                }
+            }
+        }
+    }
+
+    @Test
     void unresolvedProtectedVoiceCannotCarryIntoTheNextClearCaller()
     {
         try(Pipeline pipeline = new Pipeline(true))
@@ -536,8 +628,14 @@ class P25P1DecoderStateConventionalCallTest
 
     private static HDUMessage header(long timestamp, boolean encrypted)
     {
+        return header(timestamp, encrypted, 0);
+    }
+
+    private static HDUMessage header(long timestamp, boolean encrypted, int keyId)
+    {
         BinaryMessage bits = new BinaryMessage(120);
         bits.setInt(encrypted ? 0x84 : 0x80, IntField.length8(80));
+        bits.setInt(keyId, IntField.length16(88));
         bits.setInt(1201, IntField.length16(104));
         HeaderData data = new HeaderData(bits);
         return new HDUMessage(new CorrectedBinaryMessage(648), 0x123, timestamp)
