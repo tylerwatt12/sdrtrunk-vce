@@ -93,7 +93,7 @@ async function main() {
     'Audio & recordings', 'Alerts', 'Activity & storage', 'Receiver configuration', 'Web interface']);
   assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
     ['health', 'application-log', 'web-diagnostic-log', 'support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
-    ['alert-topics', 'alert-rules', 'push-setup'],
+    ['push-setup'],
     ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
   ]);
   const html = fs.readFileSync(path.resolve(path.dirname(process.argv[2] ||

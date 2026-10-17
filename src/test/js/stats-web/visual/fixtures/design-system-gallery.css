@@ -521,6 +521,7 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1180px, calc(100% - 32px));
 }
 
+.visual-alerts-example,
 .visual-aliases-example,
 .visual-scan-list-members-example {
   width: min(1320px, calc(100% - 32px));
@@ -655,6 +656,7 @@ body:not([data-gallery-view="radio-directory-coverage"]):not([data-gallery-view=
 body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
 body:not([data-gallery-view="tuners"]) .visual-tuners-example,
+body:not([data-gallery-view="alerts"]) .visual-alerts-example,
 body:not([data-gallery-view="aliases"]) .visual-aliases-example,
 body:not([data-gallery-view="alias-modal"]) .visual-alias-modal-example,
 body:not([data-gallery-view="alias-export"]) .visual-alias-export-example,

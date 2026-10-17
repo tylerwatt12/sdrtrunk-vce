@@ -23,6 +23,13 @@ async function revealPrimaryAction(page, action) {
   })).toBe(true);
 }
 
+async function selectManagedTopic(page, name) {
+  const mobileTopic = page.getByRole('combobox', { name: 'Topic', exact: true });
+  if (await mobileTopic.isVisible()) await mobileTopic.selectOption({ label: name });
+  else await page.getByRole('navigation', { name: 'Topics', exact: true })
+    .getByRole('link', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click();
+}
+
 async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
   const fixture = await installSiteStyleApplication(page, theme);
   const state = { revision: 1, topics: [
@@ -60,8 +67,8 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
         }));
         return;
       }
-      if (value.topic) state.topics.push(value.topic);
-      if (value.rule) state.rules.push(value.rule);
+      if (value.topic) state.topics = [...state.topics.filter(topic => topic.id !== value.topic.id), value.topic];
+      if (value.rule) state.rules = [...state.rules.filter(rule => rule.id !== value.rule.id), value.rule];
       state.revision++; return data(state);
     }
     if (p === '/api/v1/admin/alerts/config') {
@@ -143,8 +150,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     await installAlerts(page, { theme });
     const held = await holdFormWorkflowFailure(page, '**/api/v1/admin/alerts/**');
     for (const kind of ['topic', 'rule']) {
-      await page.goto(`/app.html?view=admin&tab=alert-${kind === 'topic' ? 'topics' : 'rules'}`);
-      await page.getByRole('button', { name: kind === 'topic' ? 'Create topic' : 'Create alert rule', exact: true }).click();
+      await page.goto('/app.html?view=alerts');
+      await page.getByRole('button', { name: kind === 'topic' ? 'New topic' : 'Create alert rule', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: kind === 'topic' ? 'Create topic' : 'Create alert rule', exact: true });
       const form = dialog.locator('form');
       const before = await expectFormWorkflowGeometry(form);
@@ -198,7 +205,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
         resolve();
       };
     }));
-    await page.goto('/app.html?view=admin&tab=alert-rules');
+    await page.goto('/app.html?view=alerts');
     await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
     const parent = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
     await parent.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Regional response');
@@ -319,7 +326,7 @@ test('cloud approval saves the installation name and requests approval in one ac
 
 test('rule source selection progressively scopes protocol, system, and site and skips source for health', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('North site call');
@@ -344,7 +351,7 @@ test('rule source selection progressively scopes protocol, system, and site and 
 
 test('conventional source family does not replace its decoded DCS event protocol', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Repeater DCS');
@@ -366,7 +373,7 @@ test('conventional source family does not replace its decoded DCS event protocol
 test('system scopes without observed sites omit Site and retain the optional configured channel filter', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.options.sites = [];
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await dialog.getByRole('button', { name: 'System', exact: true }).click();
@@ -380,7 +387,7 @@ test('system scopes without observed sites omit Site and retain the optional con
 
 test('activity choices reflect source capabilities without clearing an existing selection', async ({ page }) => {
   const { fixture } = await installAlerts(page);
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   const family = dialog.getByRole('combobox', { name: 'Protocol', exact: true });
@@ -487,8 +494,8 @@ test('a temporary pending enrollment outage retries the same session without an 
 test('topic save locks edits and dismissal, and a failure preserves its draft', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.holdTopic = true;
-  await page.goto('/app.html?view=admin&tab=alert-topics');
-  await page.locator('.alerts-workspace').getByRole('button', { name: 'Fire activity', exact: true }).click();
+  await page.goto('/app.html?view=alerts');
+  await page.getByRole('button', { name: 'Edit topic', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit topic', exact: true });
   const name = dialog.getByRole('textbox', { name: 'Topic name', exact: true });
   await name.fill('Fire dispatch');
@@ -811,7 +818,7 @@ test('alias child picker preserves the parent rule draft and returns a stable al
   const { state, fixture } = await installAlerts(page);
   await page.route('**/api/v1/aliases?**', route => route.fulfill({ json: { data: [{ id: 812,
     name: 'Engine 12', alias_list: 'County radios' }], meta: { total_count: 1, limit: 25, offset: 0, has_more: false, next_offset: null } } }));
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const parent = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await parent.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Engine response');
@@ -838,7 +845,7 @@ test('alias child picker preserves the parent rule draft and returns a stable al
 
 test('rule builder preserves nested conditions and uses typed tone codes', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Tactical tone');
@@ -927,7 +934,7 @@ for (const theme of ['light', 'dark']) {
     await page.goto('/app.html?view=topics');
     await expect(page.locator('.alerts-topic-card').first()).toBeVisible();
     await expectNoHorizontalOverflow(page, ['.alerts-workspace']);
-    await page.goto('/app.html?view=admin&tab=alert-rules');
+    await page.goto('/app.html?view=alerts');
     await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
     await expect(dialog).toBeVisible();
@@ -948,7 +955,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('topic catalog keeps edit, public navigation, protected built-in, and confirmed delete actions distinct', async ({ page }) => {
+test('topic management keeps selection, public navigation, built-in protection, and confirmed deletion', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.topics[0].rule_count = 2; state.topics[0].subscription_count = 18;
   await page.route('**/api/v1/admin/alerts/topics/fire', async route => {
@@ -958,27 +965,30 @@ test('topic catalog keeps edit, public navigation, protected built-in, and confi
     state.revision++;
     return route.fulfill({ json: { data: state } });
   });
-  await page.goto('/app.html?view=admin&tab=alert-topics');
-  const catalog = page.locator('.alerts-catalog');
-  const fire = catalog.locator('tbody tr[data-id="fire"]');
-  await expect(fire).toContainText('Dispatch and tactical activity.');
-  await expect(fire).toContainText('2 rules · 18 subscriptions');
-  await expect(fire.getByRole('button', { name: 'Fire activity', exact: true })).toHaveClass(/ui-button-link/);
-  await expect(fire.getByRole('link', { name: 'View public topic: Fire activity', exact: true })).toHaveAttribute('href', /view=topics.*topic=fire/);
-  const builtIn = catalog.locator('tbody tr[data-id="administrator-alerts"]');
-  await expect(builtIn).toContainText('Built-in');
-  await expect(builtIn.getByRole('button', { name: /Delete/ })).toHaveCount(0);
-  await expect(builtIn.getByRole('link')).toHaveCount(0);
-  await fire.getByRole('button', { name: 'Fire activity', exact: true }).click();
+  await page.goto('/app.html?view=alerts');
+  const rail = page.getByRole('navigation', { name: 'Topics', exact: true });
+  const main = page.locator('.alerts-management-main');
+  await expect(main).toContainText('Dispatch and tactical activity.');
+  await expect(main).toContainText('18 subscriptions');
+  await expect(main.getByRole('link', { name: 'View public topic: Fire activity', exact: true }))
+    .toHaveAttribute('href', /view=topics.*topic=fire/);
+  await selectManagedTopic(page, 'Administrator alerts');
+  await expect(main).toContainText('Built-in');
+  await expect(page.getByRole('button', { name: /Delete topic/ })).toHaveCount(0);
+  await expect(main.getByRole('link', { name: /View public topic/ })).toHaveCount(0);
+  await selectManagedTopic(page, 'Fire activity');
+  await page.getByRole('button', { name: 'Edit topic', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Edit topic', exact: true })).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
-  await fire.getByRole('button', { name: 'Delete topic: Fire activity', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete topic: Fire activity', exact: true }).click();
   const confirmation = page.getByRole('alertdialog', { name: 'Delete topic', exact: true });
+  await expect(confirmation).toContainText('Existing subscriptions to this topic will stop.');
   await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(state.writes).toHaveLength(0);
-  await fire.getByRole('button', { name: 'Delete topic: Fire activity', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete topic: Fire activity', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete topic', exact: true }).click();
-  await expect(catalog.getByRole('button', { name: 'Fire activity', exact: true })).toHaveCount(0);
+  await expect(rail.getByRole('link', { name: /Fire activity/ })).toHaveCount(0);
+  await expect(main.getByRole('heading', { name: 'Weather operations', exact: true })).toBeVisible();
   expect(state.writes[0].value.revision).toBe(1);
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -994,17 +1004,17 @@ test('rule catalog keeps linked rule names, topic context, and confirmed deletio
     state.rules = []; state.revision++;
     return route.fulfill({ json: { data: state } });
   });
-  await page.goto('/app.html?view=admin&tab=alert-rules');
-  const rule = page.locator('.alerts-catalog tbody tr[data-id="dispatch"]');
-  await expect(rule).toContainText('Call activity when an event matches.');
-  await expect(rule).toContainText('Fire activity');
+  await page.goto('/app.html?view=alerts');
+  const rule = page.locator('.alerts-management-rules tbody tr[data-id="dispatch"]');
+  await expect(rule).toContainText('Call activity');
+  await expect(page.locator('.alerts-management-main').getByRole('heading', { name: 'Fire activity', exact: true })).toBeVisible();
   await expect(rule.getByRole('button', { name: 'Dispatch activity', exact: true })).toHaveClass(/ui-button-link/);
   await rule.getByRole('button', { name: 'Dispatch activity', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Edit alert rule', exact: true })).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
   await rule.getByRole('button', { name: 'Delete rule: Dispatch activity', exact: true }).click();
   await page.getByRole('alertdialog', { name: 'Delete alert rule', exact: true }).getByRole('button', { name: 'Delete rule', exact: true }).click();
-  await expect(page.locator('.alerts-catalog')).toContainText('No alert rules yet.');
+  await expect(page.locator('.alerts-management-rules')).toContainText('No alert rules yet.');
   expect(state.writes[0].value.revision).toBe(1);
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -1018,15 +1028,15 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     const rule = { id: 'dispatch / west', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call',
       conditions: { op: 'all', items: [] }, timing: { mode: 'immediate' }, schedule: { mode: 'always' },
       cooldown_minutes: 15, repeat_key: 'rule', title_template: 'Dispatch is active', body_template: '{radio} transmitted.' };
-    state.rules = [rule, { ...rule, id: 'weather', name: 'Weather activity', topic_id: 'paused', enabled: false }];
-    await page.goto('/app.html?view=admin&tab=alert-rules');
-    const tests = page.locator('.alerts-catalog [data-alert-rule-test]');
+    state.rules = [rule, { ...rule, id: 'weather', name: 'Weather activity', topic_id: 'fire', enabled: false }];
+    await page.goto('/app.html?view=alerts');
+    const tests = page.locator('.alerts-management-rules [data-alert-rule-test]');
     const dispatch = page.getByRole('button', { name: 'Test alert rule: Dispatch activity', exact: true });
     const weather = page.getByRole('button', { name: 'Test alert rule: Weather activity', exact: true });
     await expect(tests).toHaveCount(2);
     await expect(dispatch).toHaveText('Test');
     await expect(weather).toBeEnabled();
-    await expect(page.locator('.alerts-catalog tbody tr[data-id="weather"]')).toContainText('Paused');
+    await expect(page.locator('.alerts-management-rules tbody tr[data-id="weather"]')).toContainText('Paused');
     await dispatch.click();
     const confirmation = page.getByRole('alertdialog', { name: 'Send test alert', exact: true });
     await expect(confirmation).toContainText('This will send an alert to all users subscribed to the “Fire activity” topic.');
@@ -1057,7 +1067,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     state.holdRuleTest = false;
     state.ruleTestFailure = true;
     await weather.click();
-    await expect(confirmation).toContainText('all users subscribed to the “Weather operations” topic');
+    await expect(confirmation).toContainText('all users subscribed to the “Fire activity” topic');
     await confirmation.getByRole('button', { name: 'Send test alert', exact: true }).click();
     await expect(feedback).toHaveText('Test alert could not be sent. Try the Test button again.');
     await expect(weather).toBeEnabled();
@@ -1079,27 +1089,165 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
   });
 }
 
-test('topic catalog pages the complete bounded catalog and keeps later edit actions reachable', async ({ page }) => {
+test('managed topic drilldown keeps its selection after creating, editing, and deleting rules and editing the topic', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  const baseRule = { enabled: true, trigger: 'call', conditions: { op: 'all', items: [] },
+    timing: { mode: 'immediate' }, schedule: { mode: 'always' }, cooldown_minutes: 15,
+    repeat_key: 'rule', title_template: 'Activity', body_template: '{radio} transmitted.' };
+  state.rules = [{ ...baseRule, id: 'dispatch', name: 'Dispatch activity', topic_id: 'fire' },
+    { ...baseRule, id: 'weather', name: 'Storm activity', topic_id: 'paused' }];
+  await page.goto('/app.html?view=alerts');
+  const main = page.locator('.alerts-management-main');
+  const rules = page.locator('.alerts-management-rules');
+  await expect(rules.getByRole('button', { name: 'Dispatch activity', exact: true })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Storm activity', exact: true })).toHaveCount(0);
+  await selectManagedTopic(page, 'Weather operations');
+  await expect(rules.getByRole('button', { name: 'Storm activity', exact: true })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Dispatch activity', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await expect(dialog.getByRole('combobox', { name: 'Publish to topic', exact: true })).toHaveValue('paused');
+  await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Weather warning');
+  await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes[0].value.rule.topic_id).toBe('paused');
+  await expect(main.getByRole('heading', { name: 'Weather operations', exact: true })).toBeVisible();
+  await rules.getByRole('button', { name: 'Weather warning', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Edit alert rule', exact: true });
+  await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Weather advisory');
+  await dialog.getByRole('button', { name: 'Save rule', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(main.getByRole('heading', { name: 'Weather operations', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit topic', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Edit topic', exact: true });
+  await dialog.getByRole('textbox', { name: 'Topic name', exact: true }).fill('Weather coverage');
+  await dialog.getByRole('button', { name: 'Save topic', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(main.getByRole('heading', { name: 'Weather coverage', exact: true })).toBeVisible();
+  const created = state.rules.find(rule => rule.name === 'Weather advisory');
+  await page.route('**/api/v1/admin/alerts/rules/' + encodeURIComponent(created.id), async route => {
+    state.writes.push({ p: new URL(route.request().url()).pathname, method: route.request().method(), value: route.request().postDataJSON() });
+    state.rules = state.rules.filter(rule => rule.id !== created.id);
+    state.revision++;
+    return route.fulfill({ json: { data: state } });
+  });
+  const remove = rules.getByRole('button', { name: 'Delete rule: Weather advisory', exact: true });
+  await revealPrimaryAction(page, remove);
+  await remove.click();
+  await page.getByRole('alertdialog', { name: 'Delete alert rule', exact: true }).getByRole('button', { name: 'Delete rule', exact: true }).click();
+  await expect(rules.getByRole('button', { name: 'Weather advisory', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('heading', { name: 'Weather coverage', exact: true })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Storm activity', exact: true })).toBeVisible();
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('managed rule search resolves aliases and sources across the scoped catalog before paging and combines with state', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  const baseRule = { topic_id: 'fire', enabled: true, trigger: 'call', conditions: { op: 'all', items: [] },
+    timing: { mode: 'immediate' }, schedule: { mode: 'always' }, cooldown_minutes: 15,
+    repeat_key: 'rule', title_template: 'Activity', body_template: '{radio} transmitted.' };
+  state.rules = Array.from({ length: 36 }, (_, index) => ({ ...baseRule, id: 'rule-' + index, name: 'Activity rule ' + (index + 1) }));
+  state.rules[0] = { ...state.rules[0], name: 'Dispatch activity for the regional emergency response coordination channel',
+    system_key: systemKey, conditions: { op: 'all', items: [{ field: 'alias_id', operator: 'is', value: '101' }] } };
+  state.rules[34] = { ...baseRule, id: 'paused-rule', name: 'Weather standby', enabled: false, channel_id: channelId };
+  state.rules[35] = { ...baseRule, id: 'remote', name: 'Remote response',
+    conditions: { op: 'all', items: [{ op: 'any', items: [{ field: 'alias_id', operator: 'is', value: '101' }] }] } };
+  state.rules.push({ ...state.rules[35], id: 'other-topic', name: 'Other topic response', topic_id: 'paused' });
+  await page.route('**/api/v1/aliases/101', route => route.fulfill({ json: { data: {
+    alias_id: 101, name: 'Fire Dispatch', alias_list_name: 'County Public Safety' } } }));
+  await page.goto('/app.html?view=alerts');
+  const rules = page.locator('.alerts-management-rules');
+  const search = page.getByRole('searchbox', { name: 'Find an alert rule', exact: true });
+  const stateFilter = page.getByRole('combobox', { name: 'State', exact: true });
+  await expect(rules.locator('tbody tr[data-id]')).toHaveCount(30);
+  await expect(rules.locator('tbody tr[data-id="rule-0"]')).toContainText('Fire Dispatch');
+  await auditScreenshot(page, 'manage-alerts-light-desktop', false);
+  await search.fill('Remote response');
+  await expect(rules.locator('tbody tr[data-id]')).toHaveCount(1);
+  await expect(rules.getByRole('button', { name: 'Remote response', exact: true })).toBeVisible();
+  await search.fill('Fire Dispatch');
+  await expect(rules.getByRole('button', { name: 'Remote response', exact: true })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Other topic response', exact: true })).toHaveCount(0);
+  await stateFilter.selectOption({ label: 'Paused' });
+  await expect(rules).toContainText('No matching alert rules. Try another search or state.');
+  await search.fill('County Dispatch');
+  await expect(rules.getByRole('button', { name: 'Weather standby', exact: true })).toBeVisible();
+  await stateFilter.selectOption({ label: 'Enabled' });
+  await expect(rules).toContainText('No matching alert rules. Try another search or state.');
+  await search.clear();
+  await expect(rules.getByRole('button', { name: 'Weather standby', exact: true })).toHaveCount(0);
+  await expect(rules.locator('tbody tr[data-id]')).toHaveCount(30);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('an empty managed catalog creates and selects its first topic before adding a rule', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.topics = [];
+  await page.goto('/app.html?view=alerts');
+  await page.getByRole('button', { name: 'New topic', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create topic', exact: true });
+  await dialog.getByRole('textbox', { name: 'Topic name', exact: true }).fill('Regional operations');
+  await dialog.getByRole('textbox', { name: 'Description', exact: true }).fill('Regional dispatch activity.');
+  await dialog.getByRole('button', { name: 'Create topic', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.alerts-management-main').getByRole('heading', { name: 'Regional operations', exact: true })).toBeVisible();
+  const createdTopic = state.writes[0].value.topic;
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const ruleDialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await expect(ruleDialog.getByRole('combobox', { name: 'Publish to topic', exact: true })).toHaveValue(createdTopic.id);
+  await ruleDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`managed alerts use the topic selector without overflow on a 320px phone in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 700 });
+    const { state, fixture } = await installAlerts(page, { theme });
+    state.rules = [{ id: 'weather-mobile', name: 'Regional weather dispatch activity', topic_id: 'paused', enabled: false,
+      trigger: 'call', system_key: systemKey, channel_id: channelId, conditions: { op: 'all', items: [] },
+      timing: { mode: 'immediate' }, schedule: { mode: 'always' } }];
+    await page.goto('/app.html?view=alerts');
+    const selector = page.getByRole('combobox', { name: 'Topic', exact: true });
+    await expect(selector).toBeVisible();
+    await expect(selector).toHaveValue('fire');
+    await expect(page.getByRole('navigation', { name: 'Topics', exact: true })).toBeHidden();
+    await selector.selectOption('paused');
+    await expect(page.locator('.alerts-management-main').getByRole('heading', { name: 'Weather operations', exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace', '.alerts-management-main']);
+    await auditScreenshot(page, 'manage-alerts-' + theme + '-phone');
+    await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+    await expect(dialog.getByRole('combobox', { name: 'Publish to topic', exact: true })).toHaveValue('paused');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(selector).toHaveValue('paused');
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
+test('topic search reaches the complete bounded catalog and keeps later edit actions reachable', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.topics = Array.from({ length: 65 }, (_, index) => ({ id: 'topic-' + index, name: 'Topic ' + (index + 1),
     description: 'Activity alerts.', visible: true, enabled: true, rule_count: 0, subscription_count: 0 }));
-  await page.goto('/app.html?view=admin&tab=alert-topics');
-  const pager = page.getByRole('navigation', { name: 'Topics pages', exact: true });
-  await expect(page.locator('.alerts-catalog tbody tr')).toHaveCount(30);
-  await expect(pager).toContainText('Topics 1–30 of 65');
-  await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pager).toContainText('Topics 31–60 of 65');
-  await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pager).toContainText('Topics 61–65 of 65');
-  await expect(pager.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
-  await page.locator('.alerts-catalog').getByRole('button', { name: 'Topic 65', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Edit topic', exact: true }).getByRole('textbox', { name: 'Topic name', exact: true })).toHaveValue('Topic 65');
+  await page.goto('/app.html?view=alerts');
+  const rail = page.getByRole('navigation', { name: 'Topics', exact: true });
+  await page.getByRole('searchbox', { name: 'Find a topic', exact: true }).fill('Topic 65');
+  await expect(rail.getByRole('link')).toHaveCount(1);
+  await selectManagedTopic(page, 'Topic 65');
+  await page.getByRole('button', { name: 'Edit topic', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit topic', exact: true });
+  await expect(dialog.getByRole('textbox', { name: 'Topic name', exact: true })).toHaveValue('Topic 65');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Find a topic', exact: true }).fill('No such topic');
+  await expect(rail.getByRole('link')).toHaveCount(0);
+  await expect(page.locator('.alerts-management-main').getByRole('heading', { name: 'Topic 65', exact: true })).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Find a topic', exact: true }).clear();
+  await expect(rail.getByRole('link')).toHaveCount(65);
   expect(fixture.pageErrors).toEqual([]);
 });
 
 test('rule action toggle previews the activity destination and saves an explicit choice', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
-  await page.goto('/app.html?view=admin&tab=alert-rules');
+  await page.goto('/app.html?view=alerts');
   await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Dispatch popup action');
@@ -1121,7 +1269,7 @@ test('rule action toggle previews the activity destination and saves an explicit
   await expect(dialog).toBeHidden();
   expect(state.writes[0].value.rule.action_button_enabled).toBe(true);
   expect(state.writes[0].value.rule.trigger).toBe('health');
-  await page.locator('.alerts-catalog').getByRole('button', { name: 'Dispatch popup action', exact: true }).click();
+  await page.locator('.alerts-management-rules').getByRole('button', { name: 'Dispatch popup action', exact: true }).click();
   const edit = page.getByRole('dialog', { name: 'Edit alert rule', exact: true });
   await edit.getByRole('button', { name: 'Notification', exact: true }).click();
   const editToggle = edit.getByRole('checkbox', { name: 'Show action button', exact: true });
@@ -1137,8 +1285,9 @@ test('rule action toggle previews the activity destination and saves an explicit
 test('built-in topic saves its independent action flag and confirms new public visibility', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.builtin_action_button_enabled = false;
-  await page.goto('/app.html?view=admin&tab=alert-topics');
-  await page.locator('.alerts-catalog').getByRole('button', { name: 'Administrator alerts', exact: true }).click();
+  await page.goto('/app.html?view=alerts');
+  await selectManagedTopic(page, 'Administrator alerts');
+  await page.getByRole('button', { name: 'Edit topic', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit topic', exact: true });
   await expect(dialog.getByRole('textbox', { name: 'Topic name', exact: true })).toBeDisabled();
   const actionToggle = dialog.getByRole('checkbox', { name: 'Show action button', exact: true });
@@ -1156,7 +1305,8 @@ test('built-in topic saves its independent action flag and confirms new public v
   expect(state.writes[0].value.builtin_action_button_enabled).toBe(true);
   expect(state.writes[0].value.topic.visible).toBe(true);
   expect(state.writes[0].value.topic.name).toBe('Administrator alerts');
-  await page.locator('.alerts-catalog').getByRole('button', { name: 'Fire activity', exact: true }).click();
+  await selectManagedTopic(page, 'Fire activity');
+  await page.getByRole('button', { name: 'Edit topic', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('checkbox', { name: 'Show action button', exact: true })).toHaveCount(0);
   await page.getByRole('dialog').getByRole('button', { name: 'Save topic', exact: true }).click();
   expect(state.writes[1].value).not.toHaveProperty('builtin_action_button_enabled');

@@ -1,5 +1,5 @@
 import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS, ALERT_TEMPLATE_FIELDS, cloneAlert,
-  newAlertRule, newAlertCondition, alertRuleDescription, describeAlertConditions,
+  newAlertRule, newAlertCondition, alertRuleDescription,
   alertSourceChoices, alertActivityChoices, alertActionLabel, alertPopupAction,
   visibleAlertTopics, availableAlertTopics, visibleAlertHistory, validAlertSiteUrl,
   directPushSupport, vapidKeyBytes } from './alerts-model.js?v=3';
@@ -18,7 +18,7 @@ export function createAlertsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
-    identityPicker, createId, signal, view = 'topics', selectedTopic = '', selectedAlert = '' } = deps;
+    identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected } = deps;
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');
   feedback.setAttribute('role', 'status');
@@ -34,6 +34,15 @@ export function createAlertsWorkspace(deps) {
   let openedLinkedAlert = false;
   let directConnection = { state: 'none' };
   let ruleTestBusy = false;
+  let activeTopic = selectedTopic;
+  let topicQuery = '';
+  let ruleQuery = '';
+  let ruleState = 'all';
+  let ruleOffset = 0;
+  let refreshManagementRules = null;
+  const aliasNames = new Map();
+  const requestedAliases = new Set();
+  const managementTableController = {};
   let device = readAlertDevice(window.localStorage);
   const originalManifest = document.querySelector('link[rel="manifest"]')?.getAttribute('href');
 
@@ -99,44 +108,6 @@ export function createAlertsWorkspace(deps) {
     return control;
   }
   function paragraph(text) { return node('p', 'muted', text); }
-  function catalogPanel(title, rows, columns, emptyText, type, action) {
-    const actions = sectionActionHost(action);
-    const panel = section(title, null, actions);
-    const contents = node('div');
-    const controller = {};
-    let offset = 0;
-    const renderPage = () => {
-      const visible = rows.slice(offset, offset + PAGE_SIZE);
-      contents.replaceChildren(table(visible, columns, emptyText, {
-        type, controller, layoutMenuHost: actions, rowKey: row => row.id,
-        recordList: true, sortable: false, tableClass: 'ui-record-list-compact alerts-catalog',
-        layoutMenuLabels: { trigger: 'Displayed fields', title: 'Displayed fields', item: 'field',
-          description: 'Show and arrange catalog details.', reset: 'Reset displayed fields' }
-      }));
-      if (rows.length > PAGE_SIZE) contents.append(browsingWorkflows.createBrowsingPager({ node,
-        ariaLabel: title + ' pages', countText: browsingWorkflows.pageRangeText({
-          offset, visible: visible.length, total: rows.length, label: title }),
-        previous: { enabled: offset > 0, onClick: () => { offset -= PAGE_SIZE; renderPage(); } },
-        next: { enabled: offset + visible.length < rows.length,
-          onClick: () => { offset += PAGE_SIZE; renderPage(); } }
-      }));
-    };
-    renderPage();
-    panel.append(contents);
-    return panel;
-  }
-
-  function catalogName(name, description, action, builtIn = false) {
-    const copy = node('div', 'ui-heading-group alerts-catalog-copy');
-    const title = node('div', 'ui-record-title alerts-catalog-heading');
-    const nameLink = button(name, action);
-    nameLink.className = 'ui-button ui-button-link';
-    title.append(nameLink);
-    if (builtIn) title.append(uiStatus('Built-in', 'neutral'));
-    copy.append(title);
-    if (description) copy.append(paragraph(description));
-    return copy;
-  }
   function catalogDelete(label, action) {
     const control = iconButton('icon-trash', label, 'ui-button ui-button-secondary ui-icon-button ui-button-danger-quiet');
     control.addEventListener('click', action);
@@ -148,7 +119,9 @@ export function createAlertsWorkspace(deps) {
     test.setAttribute('data-alert-rule-test', '');
     test.disabled = ruleTestBusy;
     const actions = node('div', 'alerts-catalog-action-row');
-    actions.append(test, catalogDelete('Delete rule: ' + rule.name, () => void deleteRule(rule)));
+    const edit = iconButton('icon-edit', 'Edit alert rule: ' + rule.name);
+    edit.addEventListener('click', () => void editRule(rule));
+    actions.append(edit, test, catalogDelete('Delete rule: ' + rule.name, () => void deleteRule(rule)));
     return actions;
   }
   function catalogPublicTopic(topic) {
@@ -160,9 +133,12 @@ export function createAlertsWorkspace(deps) {
     control.append(iconGlyph('icon-open-details'));
     return control;
   }
-  function replaceSnapshot(value) {
+  function replaceSnapshot(value, preferredTopic = activeTopic) {
     snapshot = value;
+    if (activeTopic !== preferredTopic) onTopicSelected?.(preferredTopic);
+    activeTopic = preferredTopic;
     renderCatalog();
+    void loadAliasNames();
   }
 
   async function load() {
@@ -177,47 +153,228 @@ export function createAlertsWorkspace(deps) {
           value => write(PUBLIC + '/subscriptions/me/refresh', 'POST', value, { headers: authorize(), csrf: false }));
         await renderPublic();
       }
-      else renderCatalog();
+      else { renderCatalog(); void loadAliasNames(); }
     } catch (error) { showError(error); }
   }
 
-  function renderCatalog() {
-    body.replaceChildren();
-    if (view === 'rules') {
-      const add = button('Create alert rule', () => void editRule(), true);
-      add.disabled = !snapshot.topics?.length;
-      body.append(catalogPanel('Alert rules', snapshot.rules || [], [
-        { id: 'name', label: 'Rule', essential: true, className: 'alerts-catalog-title',
-          render: rule => catalogName(rule.name, alertRuleDescription(rule), () => void editRule(rule)) },
-        { id: 'topic', label: 'Topic', render: rule => topicName(rule.topic_id) },
-        { id: 'enabled', label: 'State', render: rule => uiStatus(rule.enabled ? 'Enabled' : 'Paused', 'neutral') },
-        { id: 'actions', label: 'Actions', essential: true, className: 'ui-record-action alerts-catalog-actions',
-          render: catalogRuleActions }
-      ], 'No alert rules yet. Create a rule to publish activity to a topic.', 'alert-rules', add));
-    } else {
-      body.append(catalogPanel('Topics', snapshot.topics || [], [
-        { id: 'name', label: 'Topic', essential: true, className: 'alerts-catalog-title',
-          render: topic => catalogName(topic.name, topic.description, () => void editTopic(topic), topic.built_in) },
-        { id: 'visibility', label: 'Availability', render: topic => {
-          const status = node('div', 'alerts-catalog-status');
-          status.append(uiStatus(topic.visible ? 'Available to listeners' : 'Hidden from listeners', 'neutral'));
-          if (!topic.enabled) status.append(uiStatus('Paused', 'neutral'));
-          return status;
-        } },
-        { id: 'following', label: 'Following', render: topic => {
-          const rules = Number(topic.rule_count || 0).toLocaleString();
-          const subscriptions = Number(topic.subscription_count || 0).toLocaleString();
-          return `${rules} ${Number(topic.rule_count || 0) === 1 ? 'rule' : 'rules'} · ${subscriptions} ${Number(topic.subscription_count || 0) === 1 ? 'subscription' : 'subscriptions'}`;
-        } },
-        { id: 'actions', label: 'Actions', essential: true, className: 'ui-record-action alerts-catalog-actions', render: topic => {
-          const actions = node('div', 'alerts-catalog-action-row');
-          if (topic.visible) actions.append(catalogPublicTopic(topic));
-          if (!topic.built_in) actions.append(catalogDelete('Delete topic: ' + topic.name, () => void deleteTopic(topic)));
-          return actions;
-        } }
-      ], 'No topics yet. Create one for listeners to follow.', 'alert-topics',
-      button('Create topic', () => void editTopic(), true)));
+  const countLabel = (count, singular, plural = singular + 's') =>
+    `${Number(count || 0).toLocaleString()} ${Number(count || 0) === 1 ? singular : plural}`;
+  const topicRules = id => (snapshot.rules || []).filter(rule => rule.topic_id === id);
+  function selectTopic(id) {
+    activeTopic = id;
+    ruleQuery = ''; ruleState = 'all'; ruleOffset = 0;
+    onTopicSelected?.(id);
+    renderCatalog();
+  }
+  function sourceLabel(rule) {
+    const system = options('systems').find(entry => entry.value === rule.system_key);
+    const channel = options('channels').find(entry => entry.value === rule.channel_id);
+    const systemKey = rule.system_key || channel?.system_key;
+    const site = options('sites').find(entry => entry.value === rule.site_id &&
+      (!systemKey || entry.system_key === systemKey) && (!rule.channel_id || entry.channel_id === rule.channel_id));
+    return [system?.label || rule.system_key, channel?.label || rule.channel_id,
+      site?.label || rule.site_id].filter(Boolean).join(' · ') || 'All sources';
+  }
+  function conditionLabel(condition) {
+    if (!condition) return 'Any matching event';
+    if (condition.op && Array.isArray(condition.items)) {
+      if (!condition.items.length) return 'Any matching event';
+      const labels = condition.items.map(conditionLabel);
+      return condition.op === 'all' && labels.length === 1 ? labels[0] :
+        `${({ all: 'All', any: 'Any', none: 'None' })[condition.op] || 'All'} of (${labels.join('; ')})`;
     }
+    const field = ALERT_FIELDS.find(([id]) => id === condition.field)?.[1] || condition.field;
+    const operator = ALERT_OPERATORS.find(([id]) => id === condition.operator)?.[1] || condition.operator;
+    if (condition.operator === 'exists') return `${field} ${operator}`;
+    const values = String(condition.value ?? '').split(',').map(value => value.trim());
+    const label = values.map(value => {
+      if (condition.field === 'alias_id' && ['is', 'not', 'in'].includes(condition.operator)) {
+        const alias = aliasNames.get(value);
+        return alias ? `${alias} · Alias ${value}` : value;
+      }
+      const key = ({ channel_id: 'channels', system_key: 'systems' })[condition.field];
+      return key ? options(key).find(entry => entry.value === value)?.label || value : value;
+    }).join(', ');
+    return `${field} ${operator} ${label}`;
+  }
+  async function loadAliasNames() {
+    if (view === 'public' || view === 'setup' || disposed) return;
+    const ids = new Set();
+    const visit = condition => {
+      if (Array.isArray(condition?.items)) condition.items.forEach(visit);
+      else if (condition?.field === 'alias_id' && ['is', 'not', 'in'].includes(condition.operator)) {
+        String(condition.value ?? '').split(',').map(value => value.trim())
+          .filter(value => /^[1-9][0-9]*$/.test(value)).forEach(value => ids.add(value));
+      }
+    };
+    (snapshot.rules || []).forEach(rule => visit(rule.conditions));
+    const queue = [...ids].filter(id => !requestedAliases.has(id));
+    queue.forEach(id => requestedAliases.add(id));
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+      while (queue.length && !disposed) {
+        const id = queue.shift();
+        try {
+          const alias = await read('/api/v1/aliases/' + encodeURIComponent(id));
+          if (disposed) return;
+          const name = alias?.name || alias?.alias_name;
+          if (name) aliasNames.set(id, [name, alias.alias_list_name].filter(Boolean).join(' · '));
+        } catch (error) {
+          // Deleted or inaccessible aliases retain their exact ID. A later reload retries the lookup.
+          if (disposed || error?.name === 'AbortError') return;
+        }
+      }
+    }));
+    if (queue.length === 0 && !disposed) refreshManagementRules?.();
+  }
+  function timingLabel(rule) {
+    const timing = rule.timing || {};
+    if (timing.mode === 'quiet') return `After ${timing.minutes} quiet minutes`;
+    if (timing.mode === 'count') return `After ${timing.count} matches in ${timing.window_minutes} minutes`;
+    if (timing.mode === 'sustained') return `After ${timing.minutes} minutes`;
+    return 'Immediate';
+  }
+  function renderCatalog() {
+    refreshManagementRules = null;
+    body.replaceChildren();
+    const topics = snapshot.topics || [];
+    if (!topics.some(topic => topic.id === activeTopic)) {
+      activeTopic = topics[0]?.id || '';
+      ruleQuery = ''; ruleState = 'all'; ruleOffset = 0;
+      onTopicSelected?.(activeTopic);
+    }
+    const topic = topics.find(entry => entry.id === activeTopic);
+    const layout = node('div', 'ui-catalog-workspace');
+    const rail = node('aside', 'ui-catalog-rail ui-surface');
+    rail.setAttribute('aria-label', 'Topic management');
+    const railHeader = node('header', 'ui-catalog-rail-header');
+    const createTopic = button('New topic', () => void editTopic(), true); createTopic.id = 'alerts-topic-create';
+    railHeader.append(node('strong', '', 'Topics'), createTopic);
+    const search = input(topicQuery, 'search');
+    search.classList.add('ui-catalog-search'); search.placeholder = 'Find a topic';
+    search.setAttribute('aria-label', 'Find a topic');
+    const items = node('nav', 'ui-catalog-items'); items.setAttribute('aria-label', 'Topics');
+    const renderTopics = () => {
+      items.replaceChildren();
+      const query = topicQuery.trim().toLocaleLowerCase();
+      const matches = topics.filter(entry => [entry.name, entry.description].join(' ').toLocaleLowerCase().includes(query));
+      matches.forEach(entry => {
+        const control = node('a', 'ui-catalog-item');
+        control.dataset.uiHint = entry.name;
+        control.href = href('alerts', { topic: entry.id });
+        if (entry.id === activeTopic) control.setAttribute('aria-current', 'true');
+        const heading = node('span', 'ui-catalog-item-heading');
+        heading.append(node('span', 'ui-catalog-item-name', entry.name));
+        if (entry.built_in) heading.append(uiStatus('Built-in', 'neutral'));
+        const counts = node('span', 'ui-catalog-item-detail');
+        counts.append(node('span', '', countLabel(topicRules(entry.id).length, 'rule')),
+          node('span', '', countLabel(entry.subscription_count, 'subscription')));
+        control.append(heading, counts, node('span', 'ui-catalog-item-meta', !entry.enabled ? 'Paused' :
+          entry.visible ? 'Available to listeners' : 'Hidden from listeners'));
+        control.addEventListener('click', event => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault(); selectTopic(entry.id);
+          const current = rail.isConnected ? items.querySelector('[aria-current]') :
+            body.querySelector('.ui-catalog-item[aria-current]');
+          current?.focus({ preventScroll: true });
+        });
+        items.append(control);
+      });
+      if (!matches.length) items.append(node('p', 'ui-section-note', topics.length ?
+        'No matching topics. Try another name.' : 'No topics yet.'));
+    };
+    search.addEventListener('input', () => { topicQuery = search.value; renderTopics(); });
+    renderTopics();
+    const mobile = node('div', 'ui-catalog-mobile');
+    const picker = selectField('Topic', topics.map(entry => [entry.id, entry.name]), activeTopic, value => {
+      selectTopic(value);
+      body.querySelector('.ui-catalog-mobile select')?.focus({ preventScroll: true });
+    });
+    picker.control.disabled = !topics.length;
+    const createTopicMobile = button('New topic', () => void editTopic(), true); createTopicMobile.id = 'alerts-topic-create-mobile';
+    mobile.append(picker.element, createTopicMobile);
+    const footer = node('footer', 'ui-catalog-rail-footer ui-action-row ui-action-row-start');
+    if (topic) {
+      const edit = button('Edit topic', () => void editTopic(topic)); edit.id = 'alerts-topic-edit'; edit.prepend(iconGlyph('icon-edit'));
+      footer.append(edit);
+      if (!topic.built_in) footer.append(catalogDelete('Delete topic: ' + topic.name, () => void deleteTopic(topic)));
+    } else footer.hidden = true;
+    rail.append(railHeader, search, items, mobile, footer);
+    const main = node('div', 'alerts-management-main');
+    layout.append(rail, main); body.append(layout);
+    if (!topic) {
+      const empty = node('section', 'ui-surface ui-empty-state');
+      empty.append(node('h2', '', 'Create your first topic'), paragraph('Add a topic, then create alert rules for it.'),
+        button('Create topic', () => void editTopic(), true));
+      main.append(empty); return;
+    }
+    const summary = node('section', 'ui-surface ui-surface-heading alerts-management-summary');
+    summary.setAttribute('aria-label', 'Selected topic');
+    const copy = node('div', 'ui-heading-group');
+    copy.append(node('h2', '', topic.name));
+    if (topic.description) copy.append(paragraph(topic.description));
+    const status = node('div', 'alerts-catalog-status');
+    status.append(uiStatus(topic.visible ? 'Available to listeners' : 'Hidden from listeners', 'neutral'));
+    if (!topic.enabled) status.append(uiStatus('Paused', 'neutral'));
+    if (topic.built_in) status.append(uiStatus('Built-in', 'neutral'));
+    copy.append(status, paragraph(`${countLabel(topicRules(topic.id).length, 'rule')} · ${countLabel(topic.subscription_count, 'subscription')}`));
+    summary.append(copy);
+    if (topic.visible) summary.append(actionRow(catalogPublicTopic(topic)));
+    main.append(summary);
+    if (!topic.enabled) main.append(notice('This topic is paused. Its rules will publish alerts when the topic is enabled.'));
+    if (topic.built_in) main.append(notice('Receives the existing tuner and system health alerts.'));
+    const createRule = button('Create alert rule', () => void editRule(), true); createRule.id = 'alerts-rule-create';
+    const actions = sectionActionHost(createRule);
+    const rulesPanel = section('Alert rules', null, actions);
+    const toolbar = node('div', 'ui-section-body alerts-management-toolbar');
+    const ruleSearch = input(ruleQuery, 'search');
+    ruleSearch.placeholder = 'Rule name, activity, source, or alias';
+    const state = selectField('State', [['all', 'All states'], ['enabled', 'Enabled'], ['paused', 'Paused']], ruleState,
+      value => { ruleState = value; ruleOffset = 0; renderRules(); });
+    toolbar.append(formField('Find an alert rule', ruleSearch), state.element);
+    rulesPanel.append(toolbar);
+    const contents = node('div'); const count = node('div');
+    const controller = managementTableController;
+    const renderRules = () => {
+      if (!contents.isConnected) return;
+      const all = topicRules(topic.id);
+      const query = ruleQuery.trim().toLocaleLowerCase();
+      const rows = all.filter(rule => (!query || [rule.name, alertRuleDescription(rule), sourceLabel(rule),
+        conditionLabel(rule.conditions)].join(' ').toLocaleLowerCase().includes(query)) &&
+        (ruleState === 'all' || Boolean(rule.enabled) === (ruleState === 'enabled')));
+      ruleOffset = Math.min(ruleOffset, Math.max(0, Math.ceil(rows.length / PAGE_SIZE) - 1) * PAGE_SIZE);
+      const visible = rows.slice(ruleOffset, ruleOffset + PAGE_SIZE);
+      const empty = all.length ? 'No matching alert rules. Try another search or state.' :
+        'No alert rules yet. Create a rule to publish activity to a topic.';
+      contents.replaceChildren(table(visible, [
+        { id: 'name', label: 'Alert rule', essential: true, render: rule => {
+          const heading = node('div', 'ui-heading-group ui-heading-group-quiet alerts-catalog-copy');
+          const edit = button(rule.name, () => void editRule(rule)); edit.className = 'ui-button ui-button-link';
+          heading.append(edit, paragraph(conditionLabel(rule.conditions)), paragraph(sourceLabel(rule))); return heading;
+        } },
+        { id: 'activity', label: 'Activity', render: rule => ALERT_TRIGGERS.find(([id]) => id === rule.trigger)?.[1] || rule.trigger },
+        { id: 'timing', label: 'Timing', render: rule => {
+          const copy = node('div', 'ui-heading-group'); copy.append(node('span', '', timingLabel(rule)));
+          const schedule = rule.schedule;
+          const days = (schedule?.days || []).map(day => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day]).filter(Boolean);
+          copy.append(paragraph(!schedule || schedule.mode === 'always' ? 'Any time' :
+            `${days.length === 7 ? 'Every day' : days.join(', ')} · ${schedule.start}–${schedule.end} · ${schedule.time_zone}`)); return copy;
+        } },
+        { id: 'enabled', label: 'State', render: rule => uiStatus(rule.enabled ? 'Enabled' : 'Paused', 'neutral') },
+        { id: 'actions', label: 'Actions', essential: true, className: 'ui-record-action', render: catalogRuleActions }
+      ], empty, { type: 'alerts-manage-rules', controller, layoutMenuHost: actions, rowKey: rule => rule.id,
+        sortable: false, mobileCards: true, tableClass: 'alerts-management-rules' }));
+      count.replaceChildren(browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Alert rule pages',
+        countText: browsingWorkflows.pageRangeText({ offset: ruleOffset, visible: visible.length,
+          total: rows.length, label: 'Alert rules' }),
+        previous: { enabled: ruleOffset > 0, onClick: () => { ruleOffset -= PAGE_SIZE; renderRules(); } },
+        next: { enabled: ruleOffset + visible.length < rows.length,
+          onClick: () => { ruleOffset += PAGE_SIZE; renderRules(); } }
+      }));
+    };
+    ruleSearch.addEventListener('input', () => { ruleQuery = ruleSearch.value; ruleOffset = 0; renderRules(); });
+    rulesPanel.append(contents, count); main.append(rulesPanel);
+    refreshManagementRules = renderRules;
+    renderRules();
   }
 
   async function deleteTopic(topic) {
@@ -277,7 +434,8 @@ export function createAlertsWorkspace(deps) {
       toggle('Show action button', builtinActionEnabled, value => { builtinActionEnabled = value; }, 'Opens Live for tuner and system alerts.').element);
     form.append(status, modalFooter(cancel, save));
     modal = openReadOnlyModal(existing ? 'Edit topic' : 'Create topic', form,
-      { id: 'alert-topic-editor', className: 'modal-size-small' });
+      { id: 'alert-topic-editor', className: 'modal-size-small', returnFocusSelector: existing ? '#alerts-topic-edit' :
+        window.matchMedia('(max-width: 900px)').matches ? '#alerts-topic-create-mobile' : '#alerts-topic-create' });
     const localModal = modal;
     await localModal.ready;
     const workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal });
@@ -293,7 +451,10 @@ export function createAlertsWorkspace(deps) {
           visible: draft.visible, enabled: draft.enabled, built_in: draft.built_in };
         return write(ADMIN + '/topics', existing ? 'PUT' : 'POST', { revision, topic,
           ...(draft.built_in ? { builtin_action_button_enabled: builtinActionEnabled } : {}) });
-      }, { onSuccess: value => { replaceSnapshot(value); localModal.setDirty(false); localModal.close(); } });
+      }, { onSuccess: value => {
+        if (!existing) { topicQuery = ''; ruleQuery = ''; ruleState = 'all'; ruleOffset = 0; }
+        replaceSnapshot(value, draft.id); localModal.setDirty(false); localModal.close();
+      } });
       })();
     });
     localModal.focus(name.disabled ? description : name);
@@ -357,7 +518,7 @@ export function createAlertsWorkspace(deps) {
   async function editRule(existing = null) {
     const draft = existing ? cloneAlert(existing) : newAlertRule(timeZone());
     if (!draft.id) draft.id = createId();
-    if (!draft.topic_id) draft.topic_id = snapshot.topics[0]?.id || '';
+    if (!draft.topic_id) draft.topic_id = activeTopic || snapshot.topics[0]?.id || '';
     const revision = snapshot.revision;
     const form = node('form', 'alerts-form');
     const status = node('div');
@@ -685,7 +846,8 @@ export function createAlertsWorkspace(deps) {
     tabScroll.append(tabs);
     form.append(tabScroll, ...panels.values(), status, modalFooter(cancel, save));
     modal = openReadOnlyModal(existing ? 'Edit alert rule' : 'Create alert rule', form,
-      { id: 'alert-rule-editor', className: 'modal-size-medium', cleanup: () => identityPickers.forEach(picker => picker.close()) });
+      { id: 'alert-rule-editor', className: 'modal-size-medium', returnFocusSelector: '#alerts-rule-create',
+        cleanup: () => identityPickers.forEach(picker => picker.close()) });
     const localModal = modal;
     await localModal.ready;
     workflow = createFormWorkflow({ form, submit: save, feedback: status, modal: localModal });
@@ -703,7 +865,10 @@ export function createAlertsWorkspace(deps) {
         }
         if (draft.schedule.mode === 'custom' && !draft.schedule.days.length) throw new Error('Choose at least one active day.');
         return write(ADMIN + '/rules', existing ? 'PUT' : 'POST', { revision, rule: draft });
-      }, { onSuccess: value => { replaceSnapshot(value); localModal.setDirty(false); localModal.close(); } });
+      }, { onSuccess: value => {
+        if (!existing || activeTopic !== draft.topic_id) { ruleQuery = ''; ruleState = 'all'; ruleOffset = 0; }
+        replaceSnapshot(value, draft.topic_id); localModal.setDirty(false); localModal.close();
+      } });
     });
     localModal.focus(name);
   }
@@ -1281,6 +1446,7 @@ export function createAlertsWorkspace(deps) {
 
   function close() {
     disposed = true;
+    managementTableController.widthObserver?.disconnect();
     clearTimeout(pollTimer);
     if (view === 'public' && originalManifest != null) document.querySelector('link[rel="manifest"]')?.setAttribute('href', originalManifest);
   }

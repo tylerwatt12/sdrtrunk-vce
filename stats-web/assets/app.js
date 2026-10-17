@@ -1,9 +1,9 @@
-import * as routeFoundation from './core/routes.js?v=10';
+import * as routeFoundation from './core/routes.js?v=11';
 import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=18';
+import * as tableDefaults from './core/table-defaults.js?v=19';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -34,7 +34,7 @@ import { openRadioReferenceConnect } from './features/radioreference-connect.js?
 import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=17';
-import { createAlertsWorkspace } from './features/alerts.js?v=11';
+import { createAlertsWorkspace } from './features/alerts.js?v=12';
 import { createRecordingsFeature } from './features/recordings.js?v=48';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
@@ -770,6 +770,9 @@ function routeDefinitionAllowed(definition) {
   }
   if (definition.access === 'admin-channels') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
+  }
+  if (definition.access === 'admin-settings') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS);
   }
   if (definition.access === 'admin') {
     return accessSession.tier === 'ADMIN' &&
@@ -30204,7 +30207,12 @@ function alertsWorkspace(renderContext, view) {
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
     createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
     identityPicker: activityIdentityPicker, createId: randomLiveClientId, signal: renderContext.signal, view,
-    selectedTopic: route.get('topic') || '', selectedAlert: route.get('alert') || ''
+    selectedTopic: route.get('topic') || '', selectedAlert: route.get('alert') || '',
+    onTopicSelected: view === 'manage' ? (id) => {
+      if (id) route.set('topic', String(id));
+      else route.delete('topic');
+      window.history.replaceState({}, '', currentHref());
+    } : undefined
   });
 }
 
@@ -30212,6 +30220,17 @@ function renderPublicAlertTopics() {
   const renderContext = captureRenderContext();
   const workspace = alertsWorkspace(renderContext, 'public');
   if (!beginPage(renderContext, pageHeader('Topics', 'Follow alerts published by this VCE installation'), workspace.element)) {
+    workspace.close();
+    return;
+  }
+  pageConnections.add(workspace);
+}
+
+function renderAlertManagement() {
+  const renderContext = captureRenderContext();
+  const workspace = alertsWorkspace(renderContext, 'manage');
+  if (!beginPage(renderContext, pageHeader('Alerts',
+    'Create topics and choose the activity that publishes alerts.'), workspace.element)) {
     workspace.close();
     return;
   }
@@ -33694,10 +33713,6 @@ function adminSettingsGroups() {
         description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
     { label: 'Alerts', items: [
-      { id: 'alert-topics', label: 'Alert topics', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Create topics and choose which alerts are available to listeners.' },
-      { id: 'alert-rules', label: 'Alert rules', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Choose the activity, conditions, and timing that publish alerts to each topic.' },
       { id: 'push-setup', label: 'Push setup', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Connect notification delivery for devices subscribed to this VCE installation.' }
     ] },
@@ -33800,8 +33815,8 @@ async function renderAdmin() {
     }
   }
   else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
-  else if (['alert-topics', 'alert-rules', 'push-setup'].includes(active)) {
-    const workspace = alertsWorkspace(renderContext, ({ 'alert-topics': 'topics', 'alert-rules': 'rules', 'push-setup': 'setup' })[active]);
+  else if (active === 'push-setup') {
+    const workspace = alertsWorkspace(renderContext, 'setup');
     content.append(workspace.element);
     pageConnections.add(workspace);
   }
@@ -34075,7 +34090,7 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'topics', 'recordings', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'streaming',
+      !['live', 'topics', 'recordings', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'alerts', 'streaming',
         'tuners', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
@@ -34099,6 +34114,7 @@ applicationRoutes = routeFoundation.createRegistry({
   aliases: renderAliases,
   'scan-lists': renderAdminScanLists,
   radioreference: renderAdminRadioReferenceSettings,
+  alerts: renderAlertManagement,
   streaming: renderStreaming,
   tuners: renderTuners,
   admin: renderAdmin,
@@ -34149,10 +34165,20 @@ function pendingDetailPageTitle(view, parameters = route) {
   return '';
 }
 
+function normalizeLegacyAlertRoute() {
+  if (routeFoundation.requestedView(route) !== 'admin' ||
+      !['alert-topics', 'alert-rules'].includes(route.get('tab'))) return false;
+  route.set('view', 'alerts');
+  route.delete('tab');
+  window.history.replaceState({}, '', currentHref());
+  return true;
+}
+
 async function render() {
   setNavigationOpen(false);
   if (!capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)) recordingsFeature.playback.reset();
   audioDock.synchronize();
+  normalizeLegacyAlertRoute();
   const view = routeFoundation.requestedView(route);
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal(false, false, (closed) => { if (closed) void render(); })) return;

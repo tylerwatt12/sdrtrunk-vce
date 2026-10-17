@@ -7,7 +7,7 @@ const galleryViews = [
   'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls',
   'dashboard-activity', 'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'radio-directory-coverage',
-  'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases',
+  'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alerts',
   'alias-modal', 'alias-export', 'scan-list-members', 'channels', 'radio-directory', 'entity-details',
   'live-notice', 'live-filter', 'tuner-frequency-popover', 'spectrum-discovery', 'spectrum-search',
   'control-states', 'table-overflow', 'setup-guide', 'call-matching', 'receiving-windows', 'section-body'

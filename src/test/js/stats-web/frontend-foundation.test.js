@@ -1819,6 +1819,37 @@ async function main() {
   assert.equal(registry['radio-system'].parent, 'dashboard');
   assert.equal(registry.channel.parent, 'dashboard');
   assert.equal(registry['channel-setup'].allowed(), true);
+  assert.equal(registry.alerts.access, 'admin-settings');
+  assert.equal(registry.topics.access, undefined, 'Listener topics remain publicly reachable.');
+  const alertAccess = { accessSession: { tier: 'ADMIN' }, ACCESS_CAPABILITIES: { ADMIN_SETTINGS: 'admin-settings' },
+    capabilityAllowed: (capability) => capability === 'admin-settings' };
+  const routeAllowed = vm.runInNewContext(
+    `(function(definition) ${functionBinding(appSource, 'routeDefinitionAllowed')})`, alertAccess);
+  assert.equal(routeAllowed(registry.alerts), true);
+  alertAccess.accessSession.tier = 'USER';
+  assert.equal(routeAllowed(registry.alerts), false, 'A topic subscriber cannot open alert management.');
+  alertAccess.accessSession.tier = 'ADMIN';
+  alertAccess.capabilityAllowed = () => false;
+  assert.equal(routeAllowed(registry.alerts), false, 'Alert management requires the settings capability.');
+  assert.match(indexSource,
+    /data-nav-group="configuration"[\s\S]*?data-view="alerts" href="\/\?view=alerts"[\s\S]*?<\/details>/);
+  for (const tab of ['alert-topics', 'alert-rules']) {
+    const parameters = new URLSearchParams({ view: 'admin', tab, topic: 'topic-2', alert: 'alert-3' });
+    const replacements = [];
+    const normalize = vm.runInNewContext(
+      `(function() ${functionBinding(appSource, 'normalizeLegacyAlertRoute')})`, {
+        route: parameters, routeFoundation: routes,
+        currentHref: () => `/?${parameters.toString()}`,
+        window: { history: { replaceState: (_state, _title, target) => replacements.push(target) } }
+      });
+    assert.equal(normalize(), true);
+    assert.equal(parameters.get('view'), 'alerts');
+    assert.equal(parameters.has('tab'), false);
+    assert.equal(parameters.get('topic'), 'topic-2');
+    assert.equal(parameters.get('alert'), 'alert-3');
+    assert.deepEqual(replacements, ['/?view=alerts&topic=topic-2&alert=alert-3']);
+    assert.equal(normalize(), false, 'The redirect must settle on the new route.');
+  }
   ['radio-systems', 'channels', 'configuration', 'hardware'].forEach((id) => {
     assert.equal(registry[id], undefined, `${id} must not remain as a compatibility route`);
     assert.equal(routes.resolve(registry, `?view=${id}`), null);

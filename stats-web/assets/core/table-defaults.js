@@ -53,6 +53,10 @@ const RETAINED_BANDS = {
 };
 
 const TABLE_DEFAULTS = Object.freeze({
+  'alerts-manage-rules': {
+    widths: { name: 290, activity: 170, timing: 155, enabled: 95, actions: 180 },
+    grow: ['name', 'activity', 'timing']
+  },
   'issi-current-assignments': {
     widths: { radio: 220, 'home-system': 230, 'working-id': 120, confirmed: 180,
       expires: 185, evidence: 130, 'observed-on': 260 },

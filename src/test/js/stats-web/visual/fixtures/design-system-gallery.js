@@ -413,7 +413,7 @@ const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'wo
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results', 'radioreference-connect',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
-  'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
+  'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alerts', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'call-matching', 'receiving-windows', 'live-notice', 'live-filter', 'tuner-frequency-popover',
   'spectrum-discovery', 'spectrum-search', 'setup-guide'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';

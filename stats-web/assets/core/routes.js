@@ -17,6 +17,7 @@
     { id: 'aliases', label: 'Aliases', title: 'Aliases', parent: 'aliases', access: 'admin-aliases', databaseNotice: true },
     { id: 'scan-lists', label: 'Scan Lists', title: 'Scan Lists', parent: 'scan-lists', access: 'admin-configuration', databaseNotice: false },
     { id: 'radioreference', label: 'RadioReference', title: 'RadioReference', parent: 'radioreference', access: 'admin-configuration', databaseNotice: false },
+    { id: 'alerts', label: 'Alerts', title: 'Alerts', parent: 'alerts', access: 'admin-settings', databaseNotice: false },
     { id: 'streaming', label: 'Streaming', title: 'Streaming', parent: 'streaming', access: 'admin-streaming', databaseNotice: false },
     { id: 'tuners', label: 'Tuners', title: 'Tuners', parent: 'tuners', access: 'admin-tuner', databaseNotice: false },
     { id: 'admin', label: 'Administration', title: 'Administration', parent: 'admin', access: 'admin', databaseNotice: false },

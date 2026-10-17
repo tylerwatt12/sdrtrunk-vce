@@ -67,7 +67,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
     requests.push(pathname);
     const data = (value) => route.fulfill({ json: { data: value } });
     if (pathname === '/api/v1/auth/session') {
-      await data({ configured: true, authenticated: true, username: 'admin', tier: 'admin',
+      await data({ configured: true, authenticated: true, username: 'admin', tier: options.tier || 'admin',
         primary: true, capabilities });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
@@ -115,6 +115,11 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         writes.push({ field: 'p25-bandplan-overrides', profiles: p25.profiles });
       }
       await route.fulfill({ json: p25 });
+    } else if (pathname === '/api/v1/admin/alerts/topics') {
+      await data({ revision: 1, topics: [
+        { id: 'fire', name: 'Fire activity', enabled: true, visible: true },
+        { id: 'administrator-alerts', name: 'Administrator alerts', enabled: true, visible: false, built_in: true }
+      ], rules: [], options: {} });
     } else if (pathname === '/api/v1/admin/streaming') {
       await data({ destinations: [{ configuration_id: 'county-calls',
         name: 'County Calls', provider: 'BROADCASTIFY_CALL', provider_label: 'Broadcastify Calls',
@@ -149,9 +154,9 @@ test('desktop administration navigation includes every grouped page and its icon
   const links = navigation.getByRole('link');
   await expect(links).toHaveText(['Receiver status', 'Application log', 'Web server log', 'Report a problem',
     'Call matching', 'Tuner allocation', 'Recording settings', 'Audio quality', 'Transcription',
-    'Alert topics', 'Alert rules', 'Push setup', 'Activity settings', 'Saved data cleanup',
+    'Push setup', 'Activity settings', 'Saved data cleanup',
     'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(19);
+  await expect(links.locator('svg')).toHaveCount(17);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const label of ['Status & support', 'Decisions engine', 'Audio & recordings', 'Alerts', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {
@@ -160,6 +165,32 @@ test('desktop administration navigation includes every grouped page and its icon
   await expect(navigation.getByRole('link', { name: 'Audio quality', exact: true }))
     .toHaveAttribute('aria-current', 'page');
   await expect(navigation.getByRole('link', { name: 'Call output & activity' })).toHaveCount(0);
+});
+
+test('alert management opens under Manage and legacy links keep the selected topic', async ({ page }) => {
+  const app = await openAdmin(page, null, [], { view: 'alerts' });
+  await expect(page.getByRole('heading', { level: 1, name: 'Alerts', exact: true })).toBeVisible();
+  await expect(page.locator('.primary-nav [data-nav-group="configuration"] a[data-view="alerts"]'))
+    .toHaveAttribute('href', '/?view=alerts');
+  await expect(page.getByRole('navigation', { name: 'Topics', exact: true })
+    .getByRole('link', { name: /Fire activity/ })).toHaveAttribute('aria-current', 'true');
+  for (const tab of ['alert-topics', 'alert-rules']) {
+    await page.goto(`/app.html?view=admin&tab=${tab}&topic=administrator-alerts`);
+    await expect(page).toHaveURL(/\?view=alerts&topic=administrator-alerts$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Alerts', exact: true })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Topics', exact: true })
+      .getByRole('link', { name: /Administrator alerts/ })).toHaveAttribute('aria-current', 'true');
+  }
+  expect(app.requests).toContain('/api/v1/admin/alerts/topics');
+});
+
+test('alert management requires an administrator with settings access', async ({ page }) => {
+  for (const [tier, denied] of [['user', []], ['admin', ['admin-settings']]]) {
+    const app = await openAdmin(page, null, denied, { view: 'alerts', tier });
+    await expect(page.locator('body')).toHaveAttribute('data-view', 'access-denied');
+    await expect(page.locator('.access-denied-card')).toBeVisible();
+    expect(app.requests).not.toContain('/api/v1/admin/alerts/topics');
+  }
 });
 
 test('audio quality retains MP3 choices, draft fields, and revision saves without enhancement controls', async ({ page }) => {

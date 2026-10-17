@@ -84,6 +84,11 @@
   --audio-empty-state-height: 160px;
   --audio-transport-volume-width: 220px;
   --content-idle-opacity: .6;
+  --catalog-rail-width: 280px;
+  --catalog-rail-header-offset: 64px;
+  --catalog-item-padding-block: 10px;
+  --catalog-item-padding-inline: 11px;
+  --catalog-focus-width: 2px;
   --audio-burst-width: 76px;
   color-scheme: light;
   --bg: #edf1f4;
