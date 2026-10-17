@@ -7,6 +7,7 @@ package io.github.dsheirer.audio.broadcast.rdioscanner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static io.github.dsheirer.audio.broadcast.TalkerAliasOwnershipFixtures.recording;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -14,6 +15,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.AudioRecording;
 import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
+import io.github.dsheirer.audio.broadcast.TalkerAliasOwnershipFixtures;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -34,6 +36,26 @@ class RdioScannerBroadcasterTest
 
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void canonicalRadioNameCannotBeAttachedToAnUnknownNumericSource()
+    {
+        var sample = TalkerAliasOwnershipFixtures.canonicalWithoutNumericSource();
+        assertEquals("", RdioScannerBroadcaster.getTalkerAlias(recording(sample.source(), sample.owned())));
+    }
+
+    @Test
+    void uploadAliasRequiresTheCurrentRadioOwnerAcrossProtocols()
+    {
+        for(var sample: TalkerAliasOwnershipFixtures.samples())
+        {
+            assertEquals(sample.raw().getValue(),
+                RdioScannerBroadcaster.getTalkerAlias(recording(sample.source(), sample.owned())));
+            assertEquals("", RdioScannerBroadcaster.getTalkerAlias(recording(sample.other(), sample.owned())));
+            assertEquals("", RdioScannerBroadcaster.getTalkerAlias(recording(sample.source(), sample.raw())));
+            assertEquals("", RdioScannerBroadcaster.getTalkerAlias(recording(sample.owned())));
+        }
+    }
 
     @Test
     void usesCompatibleUserAgentForConnectionTestAndCallUpload() throws Exception

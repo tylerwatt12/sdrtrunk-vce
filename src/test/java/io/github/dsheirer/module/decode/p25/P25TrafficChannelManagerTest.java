@@ -16,9 +16,14 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.TimeslotMessage;
@@ -527,7 +532,7 @@ class P25TrafficChannelManagerTest
     }
 
     @Test
-    void appliesHarrisTalkerAliasBeforeRadioIdentifierIsKnown() throws Exception
+    void waitsForKnownRadioBeforeAcceptingHarrisTalkerAlias() throws Exception
     {
         long frequency = 851_012_500L;
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
@@ -542,7 +547,11 @@ class P25TrafficChannelManagerTest
 
         manager.processP1HarrisTalkerAlias(frequency, null, alias, identifiers, 1_100L);
 
-        assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
+        RadioIdentifier radio = APCO25RadioIdentifier.createFrom(101);
+        identifiers.update(radio);
+        manager.processP1HarrisTalkerAlias(frequency, radio, alias, identifiers, 1_200L);
+        assertOwnedAlias(alias, event.getIdentifierCollection());
     }
 
     @Test
@@ -575,11 +584,11 @@ class P25TrafficChannelManagerTest
         assertFalse(manager.getTalkerAliasManager().hasAlias(subscriber));
         assertFalse(manager.getTalkerAliasManager().hasAlias(console));
         assertEquals(subscriber, event.getIdentifierCollection().getFromIdentifier());
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
-    void doesNotAttachAliasToDifferentTrackedCall() throws Exception
+    void rejectsHarrisAliasForADifferentTrackedCall() throws Exception
     {
         long frequency = 851_012_500L;
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
@@ -594,9 +603,9 @@ class P25TrafficChannelManagerTest
         manager.processP1HarrisTalkerAlias(frequency, observedRadio, alias,
             identifiers(56_106, observedRadio), 1_100L);
 
-        assertTrue(manager.getTalkerAliasManager().hasAlias(observedRadio));
+        assertFalse(manager.getTalkerAliasManager().hasAlias(observedRadio));
         assertFalse(manager.getTalkerAliasManager().hasAlias(trackedRadio));
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
@@ -620,7 +629,7 @@ class P25TrafficChannelManagerTest
             identifiers(talkgroup, firstRadio), 1_100L);
 
         assertTrue(manager.getTalkerAliasManager().hasAlias(firstRadio));
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
@@ -643,7 +652,7 @@ class P25TrafficChannelManagerTest
         manager.processP1MotorolaTalkerAlias(frequency, fullyQualifiedRadio, APCO25Talkgroup.create(talkgroup), alias,
             identifiers(talkgroup, fullyQualifiedRadio), 1_100L);
 
-        assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+        assertOwnedAlias(alias, event.getIdentifierCollection());
     }
 
     @Test
@@ -666,7 +675,7 @@ class P25TrafficChannelManagerTest
         manager.processP1MotorolaTalkerAlias(frequency, identityOnlyRadio, APCO25Talkgroup.create(talkgroup), alias,
             identifiers(talkgroup, identityOnlyRadio), 1_100L);
 
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
@@ -709,7 +718,7 @@ class P25TrafficChannelManagerTest
             {
                 MyEventBus.getGlobalEventBus().unregister(subscriber);
             }
-            assertTrue(event.getIdentifierCollection().hasIdentifier(alias));
+            assertOwnedAlias(alias, event.getIdentifierCollection());
             assertSame(canonical, event.getIdentifierCollection().getFromIdentifier());
             assertNull(canonical.getWorkingAddress());
             assertNotNull(subscriber.event.get());
@@ -754,7 +763,7 @@ class P25TrafficChannelManagerTest
             {
                 MyEventBus.getGlobalEventBus().unregister(subscriber);
             }
-            assertFalse(event.getIdentifierCollection().hasIdentifier(alias), rejection);
+            assertNull(talkerAlias(event.getIdentifierCollection()), rejection);
             assertSame(local, event.getIdentifierCollection().getFromIdentifier(), rejection);
             assertNull(subscriber.event.get(), rejection);
         }
@@ -781,7 +790,7 @@ class P25TrafficChannelManagerTest
         manager.processP1MotorolaTalkerAlias(frequency, observedRadio, APCO25Talkgroup.create(talkgroup), alias,
             identifiers(talkgroup, observedRadio), 1_100L);
 
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
@@ -805,7 +814,7 @@ class P25TrafficChannelManagerTest
         manager.processP1MotorolaTalkerAlias(frequency, observedRadio, APCO25Talkgroup.create(talkgroup), alias,
             identifiers(talkgroup, observedRadio), 1_100L);
 
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
@@ -829,7 +838,7 @@ class P25TrafficChannelManagerTest
             APCO25Talkgroup.create(talkgroup), alias, identifiers(talkgroup, firstRadio), 1_100L);
 
         assertTrue(manager.getTalkerAliasManager().hasAlias(firstRadio));
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
     }
 
     @Test
@@ -846,12 +855,54 @@ class P25TrafficChannelManagerTest
             new P25TrafficChannelEventTracker(event));
         P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("CDP #0997");
 
-        manager.processP2HarrisTalkerAlias(frequency, TimeslotMessage.TIMESLOT_2, observedRadio, alias,
-            identifiers(56_132, observedRadio), 1_100L);
+        assertFalse(manager.processP2HarrisTalkerAlias(frequency, TimeslotMessage.TIMESLOT_2, observedRadio, alias,
+            identifiers(56_132, observedRadio), 1_100L));
 
         assertFalse(manager.getTalkerAliasManager().hasAlias(trackedRadio));
         assertFalse(manager.getTalkerAliasManager().hasAlias(observedRadio));
-        assertFalse(event.getIdentifierCollection().hasIdentifier(alias));
+        assertNull(talkerAlias(event.getIdentifierCollection()));
+    }
+
+    @Test
+    void rejectsAlreadyOwnedHarrisAliasForAnotherRadioWithoutATracker()
+    {
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        RadioIdentifier currentRadio = APCO25RadioIdentifier.createFrom(101);
+        RadioIdentifier otherRadio = APCO25RadioIdentifier.createFrom(202);
+        TalkerAliasIdentifier wrongOwner = P25TalkerAliasIdentifier.create("UNIT 202").bindTo(otherRadio);
+
+        assertFalse(manager.processP2HarrisTalkerAlias(851_012_500L, TimeslotMessage.TIMESLOT_2,
+            currentRadio, wrongOwner, identifiers(1201, currentRadio), 1_100L));
+
+        assertFalse(manager.getTalkerAliasManager().hasAlias(currentRadio));
+        assertFalse(manager.getTalkerAliasManager().hasAlias(otherRadio));
+    }
+
+    @Test
+    void phaseTwoHarrisAliasRequiresTheMatchingOpenCall() throws Exception
+    {
+        for(String state: List.of("absent", "complete", "stale", "early", "other-talkgroup", "active"))
+        {
+            long frequency = 851_012_500L;
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+            RadioIdentifier radio = APCO25RadioIdentifier.createFrom(101);
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+                .identifiers(identifiers(1201, radio)).build();
+            P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+            tracker.updateDurationTraffic(1_050);
+            if(state.equals("complete")) tracker.completeTraffic(1_075);
+            if(!state.equals("absent")) trafficTrackers(manager, TimeslotMessage.TIMESLOT_2).put(frequency, tracker);
+            P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("UNIT 101");
+
+            boolean accepted = manager.processP2HarrisTalkerAlias(frequency, TimeslotMessage.TIMESLOT_2, radio,
+                alias, identifiers(state.equals("other-talkgroup") ? 1202 : 1201, radio),
+                state.equals("early") ? 999 : state.equals("stale") ? 5_000 : 1_100);
+
+            assertEquals(state.equals("active"), accepted, state);
+            if(accepted) assertOwnedAlias(alias, event.getIdentifierCollection());
+            else assertNull(talkerAlias(event.getIdentifierCollection()), state);
+            assertEquals(accepted, manager.getTalkerAliasManager().hasAlias(radio, "p25:bee00:123"), state);
+        }
     }
 
     @Test
@@ -1416,6 +1467,20 @@ class P25TrafficChannelManagerTest
         }
 
         return identifiers;
+    }
+
+    private static TalkerAliasIdentifier talkerAlias(IdentifierCollection identifiers)
+    {
+        return (TalkerAliasIdentifier)identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+    }
+
+    private static void assertOwnedAlias(TalkerAliasIdentifier expected, IdentifierCollection identifiers)
+    {
+        TalkerAliasIdentifier observed = talkerAlias(identifiers);
+        assertNotNull(observed);
+        assertEquals(expected.getValue(), observed.getValue());
+        assertTrue(observed.isBound());
+        assertTrue(observed.matchesContext(identifiers));
     }
 
     private static class TestP25TrafficChannelManager extends P25TrafficChannelManager

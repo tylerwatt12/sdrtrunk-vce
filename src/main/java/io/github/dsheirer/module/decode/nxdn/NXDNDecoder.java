@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.nxdn;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
@@ -68,6 +70,7 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
     private IRealFilter mPulseShapingFilter;
     private IDemodulator mDemodulator;
     private final PowerMonitor mPowerMonitor = new PowerMonitor();
+    private String mAliasRadioSystemKey;
 
     @Override
     public DecoderType getDecoderType()
@@ -281,6 +284,27 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
     {
         super.stop();
         mSymbolProcessor.dispose();
+        mMessageProcessor.reset();
+    }
+
+    @Override
+    public void reset()
+    {
+        super.reset();
+        mMessageProcessor.reset();
+    }
+
+    @Subscribe
+    public void receiveAliasRadioSystemKey(RadioSystemKeyEvent event)
+    {
+        if(event == null || event.isCallActivation()) return;
+        String key = event.radioSystemKey();
+        if(key != null && RadioSystemKey.isChannelScoped(key)) key = null;
+        if(!java.util.Objects.equals(mAliasRadioSystemKey, key))
+        {
+            mAliasRadioSystemKey = key;
+            mMessageProcessor.reset();
+        }
     }
 
     /**
@@ -291,6 +315,9 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
         switch(sourceEvent.getEvent())
         {
             case NOTIFICATION_FREQUENCY_CHANGE:
+                mMessageProcessor.reset();
+                mSymbolProcessor.resetBalance();
+                break;
             case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 mSymbolProcessor.resetBalance();
                 break;

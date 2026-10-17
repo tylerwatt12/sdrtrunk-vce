@@ -23,6 +23,7 @@ import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
@@ -36,6 +37,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
@@ -49,7 +51,6 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelFake;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
-import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.DataCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCall;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignment;
@@ -63,6 +64,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.decode.traffic.CallSystemIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
@@ -176,6 +178,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     {
         if(!Objects.equals(mNativeRadioSystemKey, radioSystemKey))
         {
+            mTalkerAliasManager.clear();
             mNativeRadioSystemKey = radioSystemKey;
             EventBus eventBus = getInterModuleEventBus();
 
@@ -429,7 +432,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             {
                 NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(channel.getDownlinkFrequency(), timestamp);
                 MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
-                mTalkerAliasManager.enrichMutable(ic);
+                mTalkerAliasManager.enrichMutable(ic, mNativeRadioSystemKey);
                 if(tracker != null)
                 {
                     if(tracker.isSameCallCheckingToAndFrom(ic, timestamp))
@@ -556,7 +559,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      * @param talkerAlias to add or update
      * @param timestamp for the talker alias message
      */
-    public void processTalkerAlias(IChannelDescriptor channel, NXDNTalkerAliasIdentifier talkerAlias,
+    public void processTalkerAlias(IChannelDescriptor channel, TalkerAliasIdentifier talkerAlias,
                                    RadioIdentifier radio, long timestamp)
     {
         if(talkerAlias == null || talkerAlias.getValue() == null ||
@@ -565,37 +568,45 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             return;
         }
 
+        talkerAlias = talkerAlias.bindTo(radio);
+        if(talkerAlias == null) return;
         mLock.lock();
 
         try
         {
             long frequency = channel != null ? channel.getDownlinkFrequency() : 0;
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
-            IdentifierCollection context = new IdentifierCollection(List.of(radio, talkerAlias));
-
             Identifier trackedRadio = tracker != null ? tracker.getEvent().getIdentifierCollection()
                 .getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) : null;
-            if(tracker != null && (trackedRadio == null || trackedRadio.equals(radio)))
+            boolean matchesTracker = tracker != null && (trackedRadio == null || trackedRadio.equals(radio));
+            MutableIdentifierCollection context = matchesTracker ?
+                new MutableIdentifierCollection(tracker.getEvent().getIdentifierCollection().getIdentifiers()) :
+                new MutableIdentifierCollection();
+            context.update(radio);
+            long observedAt = timestamp > 0 ? timestamp : System.currentTimeMillis();
+            CallSystemIdentity callIdentity = mTrunkingEnabled ?
+                mCallStartTracker.identityForActiveCall(mParentChannel, Protocol.NXDN, channel, null, context,
+                    observedAt) : null;
+            String callKey = callIdentity != null ? callIdentity.radioSystemKey() : null;
+            String servingKey = callKey != null && !RadioSystemKey.isChannelScoped(callKey) ?
+                callKey : mNativeRadioSystemKey;
+            talkerAlias = talkerAlias.bindTo(radio, servingKey, ChannelConfigurationKey.configured(mParentChannel));
+            if(talkerAlias == null) return;
+            context.update(talkerAlias);
+
+            if(matchesTracker)
             {
                 tracker.mergeIdentifiers(context);
-                context = new IdentifierCollection(tracker.getEvent().getIdentifierCollection().getIdentifiers());
                 broadcast(tracker.getEvent(), true, timestamp);
             }
 
-            getTalkerAliasManager().update(radio, talkerAlias);
+            getTalkerAliasManager().update(radio, talkerAlias, servingKey);
 
-            if(mTrunkingEnabled)
+            if(mTrunkingEnabled && callIdentity != null && callIdentity.radioSystemKey() != null)
             {
                 TrunkedIdentityDomain identityDomain = talkerAliasIdentityDomain(radio);
-                long observedAt = timestamp > 0 ? timestamp : System.currentTimeMillis();
-                CallSystemIdentity callIdentity = mCallStartTracker.identityForActiveCall(mParentChannel,
-                    Protocol.NXDN, channel, null, context, observedAt);
-
-                if(callIdentity != null && callIdentity.radioSystemKey() != null)
-                {
-                    MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.NXDN,
-                        radio, talkerAlias, context, identityDomain, observedAt, callIdentity));
-                }
+                MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.NXDN,
+                    radio, talkerAlias, context, identityDomain, observedAt, callIdentity));
             }
         }
         finally
@@ -724,11 +735,12 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
             MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
-            mTalkerAliasManager.enrichMutable(ic);
+            String servingKey = mNativeRadioSystemKey;
+            mTalkerAliasManager.enrichMutable(ic, servingKey);
             DecodeEventType eventType = getType(callType, encryption);
             TrunkedCallStartTracker.ObservationResult callObservation = isLogicalVoiceChannel(channel) ?
                 mCallStartTracker.observeWithAttribution(mParentChannel, Protocol.NXDN, channel, null, ic,
-                    eventType, timestamp, mNativeRadioSystemKey) :
+                    eventType, timestamp, servingKey) :
                 new TrunkedCallStartTracker.ObservationResult(null, null);
             TrunkedCallStartEvent callStart = callObservation.callStart();
 
@@ -970,6 +982,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     public void reset()
     {
         mCallStartTracker.clear();
+        mTalkerAliasManager.clear();
         updateNativeRadioSystemKey(null);
     }
 
@@ -988,6 +1001,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             mAvailableTrafficChannelQueue.clear();
             mCallStartTracker.clear();
+            mTalkerAliasManager.clear();
             updateNativeRadioSystemKey(null);
 
             List<Channel> channels = new ArrayList<>(mAllocatedTrafficChannelMap.values());

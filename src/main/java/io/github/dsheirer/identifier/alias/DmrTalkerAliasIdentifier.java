@@ -38,7 +38,7 @@ public class DmrTalkerAliasIdentifier extends TalkerAliasIdentifier
     @Override
     public boolean isValid()
     {
-        return getValue() != null && !getValue().isEmpty();
+        return super.isValid();
     }
 
     @Override

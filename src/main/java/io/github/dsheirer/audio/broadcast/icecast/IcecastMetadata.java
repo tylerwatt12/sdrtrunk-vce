@@ -103,9 +103,13 @@ public class IcecastMetadata
             {
                 List<Identifier> fromIdentifiers = identifierCollection.getIdentifiers(Role.FROM);
 
-                if(!fromIdentifiers.isEmpty())
+                for(Identifier candidate: fromIdentifiers)
                 {
-                    from = fromIdentifiers.get(0);
+                    if(candidate.getForm() != Form.TALKER_ALIAS)
+                    {
+                        from = candidate;
+                        break;
+                    }
                 }
             }
 

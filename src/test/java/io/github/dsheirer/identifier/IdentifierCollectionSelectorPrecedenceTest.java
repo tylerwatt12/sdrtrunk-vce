@@ -29,6 +29,7 @@ class IdentifierCollectionSelectorPrecedenceTest
         var telephone = text(Form.TELEPHONE_NUMBER, Role.TO, "123");
         assertSame(telephone, collection(first, second, telephone).getFromIdentifier());
         assertSame(first, collection(first, second).getFromIdentifier());
+        assertNull(collection(second).getFromIdentifier(), "An OTA name alone is never a source identity");
         assertNull(collection(text(Form.SYSTEM, Role.ANY, "System")).getFromIdentifier());
     }
 

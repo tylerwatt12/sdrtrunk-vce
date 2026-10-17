@@ -89,6 +89,14 @@ import org.slf4j.LoggerFactory;
      private long mConnectionAttemptInterval = 5000; //Every 5 seconds
      private AliasModel mAliasModel;
 
+     static String getTalkerAlias(AudioRecording audioRecording)
+     {
+         Identifier<?> source = audioRecording.getIdentifierCollection().getFromIdentifier();
+         String alias = source instanceof RadioIdentifier radio && radio.getValue() > 0 ?
+             TalkerAliasIdentifier.valueFor(audioRecording.getIdentifierCollection()) : null;
+         return alias != null ? alias : "";
+     }
+
      /**
       * Constructs an instance of the broadcaster
       * @param config to use
@@ -399,27 +407,6 @@ import org.slf4j.LoggerFactory;
              }
 
              return "0";
-         }
-
-         /**
-          * Creates a formatted string with talkerAlias identifier.
-          */
-         private String getTalkerAlias(AudioRecording audioRecording)
-         {
-             for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-             {
-                 if(identifier instanceof TalkerAliasIdentifier)
-                 {
-                     TalkerAliasIdentifier talkerID = (TalkerAliasIdentifier)identifier;
-
-                     if(talkerID.isValid())
-                     {
-                         return talkerID.getValue();
-                     }
-                 }
-             }
-
-             return "";
          }
 
          private byte[] loadAudioBytes(AudioRecording audioRecording)

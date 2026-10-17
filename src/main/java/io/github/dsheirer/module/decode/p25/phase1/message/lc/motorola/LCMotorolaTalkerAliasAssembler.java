@@ -42,6 +42,7 @@ public class LCMotorolaTalkerAliasAssembler
     private Map<Integer, LCMotorolaTalkerAliasDataBlock> mDataBlocks = new HashMap<>();
     private int mSequence = -1;
     private long mMostRecentTimestamp;
+    private long mHeaderTimestamp;
 
     /**
      * Clears any partial alias assembled from a previous RF source.
@@ -52,6 +53,7 @@ public class LCMotorolaTalkerAliasAssembler
         mDataBlocks.clear();
         mSequence = -1;
         mMostRecentTimestamp = 0;
+        mHeaderTimestamp = 0;
     }
 
     /**
@@ -65,28 +67,22 @@ public class LCMotorolaTalkerAliasAssembler
         {
             case LCMotorolaTalkerAliasHeader header:
             {
-                mMostRecentTimestamp = timestamp;
-
-                if(mSequence != header.getSequence())
-                {
-                    mDataBlocks.clear();
-                    mSequence = header.getSequence();
-                }
-
+                //The sequence nibble wraps. A header always starts a new fragment lifetime.
+                reset();
                 mHeader = header;
+                mSequence = header.getSequence();
+                mHeaderTimestamp = timestamp;
+                mMostRecentTimestamp = timestamp;
                 break;
             }
             case LCMotorolaTalkerAliasDataBlock block:
             {
-                mMostRecentTimestamp = timestamp;
-
-                if(block.getSequence() != mSequence)
+                if(mHeader == null || block.getSequence() != mSequence || timestamp < mHeaderTimestamp ||
+                    block.getBlockNumber() < 1 || block.getBlockNumber() > mHeader.getBlockCount())
                 {
-                    mHeader = null;
-                    mDataBlocks.clear();
-                    mSequence = block.getSequence();
+                    return false;
                 }
-
+                mMostRecentTimestamp = Math.max(mMostRecentTimestamp, timestamp);
                 mDataBlocks.put(block.getBlockNumber(), block);
                 break;
             }
@@ -159,8 +155,7 @@ public class LCMotorolaTalkerAliasAssembler
         //   - c = CRC-16/GSM of the previous bytes
         complete.setValid(CRC16.check(reassembled));
 
-        mHeader = null;
-        mDataBlocks.clear();
+        reset();
         return complete;
     }
 

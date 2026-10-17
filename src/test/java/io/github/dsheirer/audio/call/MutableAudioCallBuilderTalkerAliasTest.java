@@ -28,7 +28,7 @@ class MutableAudioCallBuilderTalkerAliasTest
     {
         MutableAudioCallBuilder builder = builder();
         var previousRadio = APCO25RadioIdentifier.createFrom(120001);
-        var previousAlias = P25TalkerAliasIdentifier.create("UNIT ONE");
+        var previousAlias = P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(previousRadio);
         builder.addIdentifier(previousRadio);
         builder.addIdentifier(previousAlias);
 
@@ -39,7 +39,7 @@ class MutableAudioCallBuilderTalkerAliasTest
 
         assertEquals(120002, builder.getIdentifierCollection().getFromIdentifier().getValue());
         assertNull(talkerAlias(builder));
-        var nextAlias = P25TalkerAliasIdentifier.create("UNIT TWO");
+        var nextAlias = P25TalkerAliasIdentifier.create("UNIT TWO").bindTo(builder.getIdentifierCollection());
         builder.addIdentifier(nextAlias);
         assertSame(nextAlias, talkerAlias(builder));
     }
@@ -49,7 +49,7 @@ class MutableAudioCallBuilderTalkerAliasTest
     {
         MutableAudioCallBuilder builder = builder();
         var radio = APCO25RadioIdentifier.createFrom(120001);
-        var alias = P25TalkerAliasIdentifier.create("UNIT ONE");
+        var alias = P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(radio);
         builder.addIdentifier(radio);
         builder.addIdentifier(alias);
 
@@ -66,7 +66,7 @@ class MutableAudioCallBuilderTalkerAliasTest
     {
         MutableAudioCallBuilder builder = builder();
         var radio = APCO25RadioIdentifier.createFrom(120001);
-        var alias = P25TalkerAliasIdentifier.create("UNIT ONE");
+        var alias = P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(radio);
         builder.addIdentifier(radio);
         builder.addIdentifier(alias);
         builder.addIdentifier(APCO25RadioIdentifier.createFrom(120001));
@@ -77,7 +77,7 @@ class MutableAudioCallBuilderTalkerAliasTest
 
         builder.addIdentifier(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120001,
             0x12345, 0x123, 900001));
-        assertSame(alias, talkerAlias(builder));
+        assertEquals(alias.getValue(), talkerAlias(builder).getValue());
     }
 
     @Test
@@ -86,7 +86,7 @@ class MutableAudioCallBuilderTalkerAliasTest
         MutableAudioCallBuilder builder = builder();
         builder.addIdentifier(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120001,
             0x12345, 0x123, 900001));
-        builder.addIdentifier(P25TalkerAliasIdentifier.create("UNIT ONE"));
+        builder.addIdentifier(P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(builder.getIdentifierCollection()));
         builder.addIdentifier(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120001,
             0x12345, 0x123, 900002));
 
@@ -100,12 +100,12 @@ class MutableAudioCallBuilderTalkerAliasTest
         builder.addIdentifier(APCO25Wacn.create(0x12345));
         builder.addIdentifier(APCO25System.create(0x123));
         builder.addIdentifier(APCO25RadioIdentifier.createFrom(120001));
-        var alias = P25TalkerAliasIdentifier.create("UNIT ONE");
+        var alias = P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(builder.getIdentifierCollection());
         builder.addIdentifier(alias);
         builder.addIdentifier(APCO25FullyQualifiedRadioIdentifier.createFrom(120001, 0x12345, 0x123,
             120001));
 
-        assertSame(alias, talkerAlias(builder));
+        assertEquals(alias.getValue(), talkerAlias(builder).getValue());
     }
 
     @Test
@@ -114,12 +114,12 @@ class MutableAudioCallBuilderTalkerAliasTest
         MutableAudioCallBuilder builder = builder();
         builder.addIdentifier(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120001,
             0x12345, 0x123, 900001));
-        var alias = P25TalkerAliasIdentifier.create("UNIT ONE");
+        var alias = P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(builder.getIdentifierCollection());
         builder.addIdentifier(alias);
         builder.addIdentifier(APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(120002,
             0x12345, 0x123, 900001));
 
-        assertSame(alias, talkerAlias(builder));
+        assertEquals(alias.getValue(), talkerAlias(builder).getValue());
     }
 
     @Test
@@ -127,7 +127,7 @@ class MutableAudioCallBuilderTalkerAliasTest
     {
         MutableAudioCallBuilder builder = builder();
         builder.addIdentifier(APCO25RadioIdentifier.createFrom(120001));
-        var alias = P25TalkerAliasIdentifier.create("UNIT ONE");
+        var alias = P25TalkerAliasIdentifier.create("UNIT ONE").bindTo(builder.getIdentifierCollection());
         builder.addIdentifier(alias);
         builder.receive(new IdentifierUpdateNotification(APCO25RadioIdentifier.createFrom(120002),
             IdentifierUpdateNotification.Operation.ADD, 2));

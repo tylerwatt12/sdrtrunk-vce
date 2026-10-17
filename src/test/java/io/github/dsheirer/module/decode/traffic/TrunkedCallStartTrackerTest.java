@@ -525,6 +525,44 @@ class TrunkedCallStartTrackerTest
         assertEquals(fallback, fallbackNext.callStart().radioSystemKey());
     }
 
+    @Test
+    void aPositiveNativeNetworkChangeStartsANewCallWhileLearningTheFirstKeyOnlyEnriches()
+    {
+        for(Protocol protocol: new Protocol[]{Protocol.DMR, Protocol.NXDN})
+        {
+            for(boolean initiallyKnown: new boolean[]{false, true})
+            {
+                TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(3_000);
+                Channel parent = new Channel("Native scope", Channel.ChannelType.STANDARD);
+                parent.setDecodeConfiguration(protocol == Protocol.DMR ? new DecodeConfigDMR() : new DecodeConfigNXDN());
+                IChannelDescriptor resource = protocol == Protocol.DMR ? channel(451_012_500L, 1) :
+                    new NXDNChannelLookup(12);
+                Integer slot = protocol == Protocol.DMR ? 1 : null;
+                String firstKey = protocol == Protocol.DMR ? "dmr:tier3:small:41" : "nxdn-c:local:303";
+                String secondKey = protocol == Protocol.DMR ? "dmr:tier3:small:42" : "nxdn-c:local:304";
+                MutableIdentifierCollection unknownSource = protocol == Protocol.DMR ? identifiers(0, 91) :
+                    identifiers(NXDNTalkgroupIdentifier.createTo(91));
+                MutableIdentifierCollection knownSource = protocol == Protocol.DMR ? identifiers(101, 91) :
+                    identifiers(NXDNRadioIdentifier.createFrom(101), NXDNTalkgroupIdentifier.createTo(91));
+                var initial = tracker.observeWithAttribution(parent, protocol, resource, slot, unknownSource,
+                    DecodeEventType.CALL_GROUP, 1_000, initiallyKnown ? firstKey : null);
+                var enriched = tracker.observeWithAttribution(parent, protocol, resource, slot, knownSource,
+                    DecodeEventType.CALL_GROUP, 1_100, firstKey);
+                assertNull(enriched.callStart(), "learning the first native key does not split a physical call");
+                assertEquals(initial.callStart().radioSystemKey(), enriched.attribution().radioSystemKey());
+                assertEquals(initial.callStart().radioSystemKey(), tracker.identityForActiveCall(parent, protocol,
+                    resource, slot, knownSource, 1_150).radioSystemKey());
+
+                var changed = tracker.observeWithAttribution(parent, protocol, resource, slot, knownSource,
+                    DecodeEventType.CALL_GROUP, 1_200, secondKey);
+
+                assertNotNull(changed.callStart(), "equal numeric participants cannot join two proven networks");
+                assertEquals(secondKey, changed.callStart().radioSystemKey());
+                assertEquals(1_200, changed.callStart().callStartEpochMilliseconds());
+            }
+        }
+    }
+
     private static MutableIdentifierCollection identifiers(int radio, int talkgroup)
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();

@@ -305,6 +305,8 @@ public class IdentifierCollection
         Identifier fallback = null;
         for(Identifier identifier: mIdentifiers)
         {
+            //A name describes an identified radio; it can never stand in for an unknown source identity.
+            if(identifier.getForm() == Form.TALKER_ALIAS) continue;
             if(identifier.getForm() == Form.TELEPHONE_NUMBER)
             {
                 return identifier;

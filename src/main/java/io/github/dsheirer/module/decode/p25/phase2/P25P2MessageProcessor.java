@@ -34,6 +34,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.EncryptionSynchroniza
 import io.github.dsheirer.module.decode.p25.phase2.message.P25P2Message;
 import io.github.dsheirer.module.decode.p25.phase2.message.SuperFrameFragment;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacPduType;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MacStructureMultiFragment;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.MultiFragmentContinuationMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NetworkStatusBroadcastExplicit;
@@ -69,6 +70,9 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     private final boolean mControlNACGuardEnabled;
     private final P25NACAuthority mControlNACAuthority = new P25NACAuthority();
     private Predicate<ScrambleParameters> mScrambleParametersListener;
+    private long mReceptionGeneration;
+    private long mReceiveGeneration;
+    private int mReceiveDepth;
 
     //Map of up to 16 band identifiers per RFSS.  These identifier update messages are inserted into any message that
     // conveys channel information so that the uplink/downlink frequencies can be calculated
@@ -104,6 +108,33 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     @Override
     public synchronized void receive(IMessage message)
     {
+        //A listener may reset and reenter this processor. Its nested work still belongs to the retired callback.
+        if(mReceiveDepth == 0) mReceiveGeneration = mReceptionGeneration;
+        mReceiveDepth++;
+        try
+        {
+            if(isCurrentReception()) process(message);
+        }
+        finally
+        {
+            mReceiveDepth--;
+        }
+    }
+
+    private boolean isCurrentReception()
+    {
+        return mReceiveGeneration == mReceptionGeneration;
+    }
+
+    private boolean dispatch(IMessage message)
+    {
+        if(!isCurrentReception()) return false;
+        if(mMessageListener != null) mMessageListener.receive(message);
+        return isCurrentReception();
+    }
+
+    private void process(IMessage message)
+    {
         if(mMessageListener != null)
         {
             if(message instanceof SuperFrameFragment)
@@ -114,6 +145,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                 if(mControlNACGuardEnabled)
                 {
                     ControlPrepassResult prepass = preAuthorizeControl(timeslots);
+                    if(!isCurrentReception()) return;
 
                     if(prepass == ControlPrepassResult.REJECTED)
                     {
@@ -129,14 +161,14 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                     }
                 }
 
-                mMessageListener.receive(sff.getIISCH1());
-                mMessageListener.receive(sff.getIISCH2());
+                if(!dispatch(sff.getIISCH1())) return;
+                if(!dispatch(sff.getIISCH2())) return;
 
                 for(Timeslot timeslot: timeslots)
                 {
                     if(timeslot instanceof DatchTimeslot)
                     {
-                        mMessageListener.receive(timeslot);
+                        if(!dispatch(timeslot)) return;
                     }
                     else if(timeslot instanceof AbstractSignalingTimeslot)
                     {
@@ -144,6 +176,11 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
                         for(MacMessage macMessage: ast.getMacMessages())
                         {
+                            if(!macMessage.isValid() || macMessage.getMacPduType() == MacPduType.MAC_1_PTT)
+                            {
+                                resetMotorolaTalkerAlias(macMessage.getTimeslot());
+                            }
+
                             switch(macMessage.getMacPduType())
                             {
                                 case MAC_1_PTT:
@@ -217,7 +254,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                                     {
                                         mMacStructureMultiFragment1.addContinuationMessage(mfcm);
                                         //Re-broadcast the original timeslot 1 mac message with the updated structure
-                                        mMessageListener.receive(mMacMessageWithMultiFragment1);
+                                        if(!dispatch(mMacMessageWithMultiFragment1)) return;
 
                                         //Cleanup if we're now complete
                                         if(mMacStructureMultiFragment1.isComplete())
@@ -260,7 +297,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                             }
 
                             //Send the message to the listener
-                            mMessageListener.receive(macMessage);
+                            if(!dispatch(macMessage)) return;
 
                             /**
                              * We reassemble Motorola talker alias messages here so that we can send the assembled
@@ -269,22 +306,22 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                             if(macMessage.getMacStructure() instanceof MotorolaTalkerAliasHeader ||
                                macMessage.getMacStructure() instanceof MotorolaTalkerAliasDataBlock)
                             {
-                                if(macMessage.getTimeslot() == P25P2Message.TIMESLOT_1 &&
+                                if(macMessage.isValid() && macMessage.getTimeslot() == P25P2Message.TIMESLOT_1 &&
                                    mMotorolaTalkerAliasAssembler1.add(macMessage.getMacStructure(), macMessage.getTimestamp()))
                                 {
-                                    mMessageListener.receive(mMotorolaTalkerAliasAssembler1.assemble());
+                                    if(!dispatch(mMotorolaTalkerAliasAssembler1.assemble())) return;
                                 }
-                                else if(macMessage.getTimeslot() == P25P2Message.TIMESLOT_2 &&
+                                else if(macMessage.isValid() && macMessage.getTimeslot() == P25P2Message.TIMESLOT_2 &&
                                         mMotorolaTalkerAliasAssembler2.add(macMessage.getMacStructure(), macMessage.getTimestamp()))
                                 {
-                                    mMessageListener.receive(mMotorolaTalkerAliasAssembler2.assemble());
+                                    if(!dispatch(mMotorolaTalkerAliasAssembler2.assemble())) return;
                                 }
                             }
                         }
                     }
                     else if(timeslot instanceof AbstractVoiceTimeslot)
                     {
-                        mMessageListener.receive(timeslot);
+                        if(!dispatch(timeslot)) return;
 
                         if(timeslot.getTimeslot() == P25P2Message.TIMESLOT_1)
                         {
@@ -296,7 +333,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
                                 if(ess != null)
                                 {
-                                    mMessageListener.receive(ess);
+                                    if(!dispatch(ess)) return;
                                 }
 
                                 mESSProcessor1.reset();
@@ -312,7 +349,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
                                 if(ess != null)
                                 {
-                                    mMessageListener.receive(ess);
+                                    if(!dispatch(ess)) return;
                                 }
 
                                 mESSProcessor2.reset();
@@ -322,14 +359,27 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                     }
                     else
                     {
-                        mMessageListener.receive(timeslot);
+                        if(!dispatch(timeslot)) return;
                     }
                 }
             }
             else if(message instanceof SyncLossMessage)
             {
-                mMessageListener.receive(message);
+                resetMotorolaTalkerAlias(message.getTimeslot());
+                dispatch(message);
             }
+        }
+    }
+
+    private void resetMotorolaTalkerAlias(int timeslot)
+    {
+        if(timeslot == 0 || timeslot == P25P2Message.TIMESLOT_1)
+        {
+            mMotorolaTalkerAliasAssembler1.reset();
+        }
+        if(timeslot == 0 || timeslot == P25P2Message.TIMESLOT_2)
+        {
+            mMotorolaTalkerAliasAssembler2.reset();
         }
     }
 
@@ -489,6 +539,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
      */
     public synchronized void resetForSourceFrequencyChange()
     {
+        mReceptionGeneration++;
         mControlNACAuthority.reset();
         clearDecodedSourceState();
     }

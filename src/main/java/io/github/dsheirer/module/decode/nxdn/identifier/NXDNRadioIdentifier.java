@@ -83,6 +83,19 @@ public class NXDNRadioIdentifier extends RadioIdentifier
         mTypeD = typeD;
     }
 
+    /** Type-C and Type-D numeric addresses belong to different radio identity domains. */
+    @Override
+    public boolean equals(Object other)
+    {
+        return super.equals(other) && mTypeD == ((NXDNRadioIdentifier)other).mTypeD;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return 31 * super.hashCode() + Boolean.hashCode(mTypeD);
+    }
+
     @Override
     public String toString()
     {

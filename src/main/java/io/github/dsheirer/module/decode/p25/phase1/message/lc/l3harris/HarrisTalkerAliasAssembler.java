@@ -59,31 +59,29 @@ public class HarrisTalkerAliasAssembler
                 case L3HARRIS_TALKER_ALIAS_BLOCK_1:
                     if(lcw instanceof LCHarrisTalkerAliasBlock1 block1)
                     {
-                        if(mComplete)
-                        {
-                            reset();
-                        }
-
+                        //No sequence or radio is carried in these fragments. Only block 1 establishes a new
+                        //assembly; a prior continuation must never complete the next alias's first block.
+                        reset();
                         mBlock1 = block1;
                         return assemble();
                     }
                     break;
                 case L3HARRIS_TALKER_ALIAS_BLOCK_2:
-                    if(lcw instanceof LCHarrisTalkerAliasBlock2 block2)
+                    if(mBlock1 != null && !mComplete && lcw instanceof LCHarrisTalkerAliasBlock2 block2)
                     {
                         mBlock2 = block2;
                         return assemble();
                     }
                     break;
                 case L3HARRIS_TALKER_ALIAS_BLOCK_3:
-                    if(lcw instanceof LCHarrisTalkerAliasBlock3 block3)
+                    if(mBlock1 != null && !mComplete && lcw instanceof LCHarrisTalkerAliasBlock3 block3)
                     {
                         mBlock3 = block3;
                         return assemble();
                     }
                     break;
                 case L3HARRIS_TALKER_ALIAS_BLOCK_4:
-                    if(lcw instanceof LCHarrisTalkerAliasBlock4 block4)
+                    if(mBlock1 != null && !mComplete && lcw instanceof LCHarrisTalkerAliasBlock4 block4)
                     {
                         mBlock4 = block4;
                         return assemble();

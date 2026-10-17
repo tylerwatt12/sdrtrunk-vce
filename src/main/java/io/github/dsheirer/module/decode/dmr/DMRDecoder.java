@@ -19,6 +19,10 @@
 
 package io.github.dsheirer.module.decode.dmr;
 
+import com.google.common.eventbus.Subscribe;
+
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
@@ -96,6 +100,7 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
     private IRealFilter mRRCFilterI;
     private IRealFilter mRRCFilterQ;
     private final PowerMonitor mPowerMonitor = new PowerMonitor();
+    private String mAliasRadioSystemKey;
     /**
      * Constructs an instance
      * @param config for the DMR decoder
@@ -301,6 +306,27 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
     {
         super.stop();
         mMessageFramer.stop();
+        mMessageProcessor.reset();
+    }
+
+    @Override
+    public void reset()
+    {
+        super.reset();
+        mMessageProcessor.reset();
+    }
+
+    @Subscribe
+    public void receiveAliasRadioSystemKey(RadioSystemKeyEvent event)
+    {
+        if(event == null || event.isCallActivation()) return;
+        String key = event.radioSystemKey();
+        if(key != null && RadioSystemKey.isChannelScoped(key)) key = null;
+        if(!java.util.Objects.equals(mAliasRadioSystemKey, key))
+        {
+            mAliasRadioSystemKey = key;
+            mMessageProcessor.reset();
+        }
     }
 
     /**
@@ -312,6 +338,9 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         {
             switch(sourceEvent.getEvent())
             {
+                case NOTIFICATION_FREQUENCY_CHANGE:
+                    mMessageProcessor.reset();
+                    break;
                 case NOTIFICATION_SAMPLE_RATE_CHANGE:
                     setSampleRate(sourceEvent.getValue().doubleValue());
                     break;

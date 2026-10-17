@@ -33,7 +33,7 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
-import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
 import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
@@ -197,6 +197,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private P25TrafficChannelManager mTrafficChannelManager;
     private int mEndPttOnFacchCounter = 0;
     private volatile long mSourceFrequency;
+    private volatile long mTalkerAliasReceptionGeneration;
 
     /**
      * Constructs an APCO-25 decoder state instance for a traffic or control channel.
@@ -265,6 +266,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     protected void resetState()
     {
+        mTalkerAliasReceptionGeneration++;
         super.resetState();
         mTrafficChannelManager.processP2TrafficCallEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis());
         mEndPttOnFacchCounter = 0;
@@ -1927,12 +1929,17 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac instanceof L3HarrisTalkerAlias talkerAlias)
         {
-            P25TalkerAliasIdentifier alias = talkerAlias.getAlias();
-            getIdentifierCollection().update(alias);
+            long generation = mTalkerAliasReceptionGeneration;
             Identifier from = getIdentifierCollection().getFromIdentifier();
             RadioIdentifier radio = from instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
-            mTrafficChannelManager.processP2HarrisTalkerAlias(getCurrentFrequency(), getTimeslot(), radio, alias,
-                getIdentifierCollection(), message.getTimestamp());
+            TalkerAliasIdentifier alias = talkerAlias.getAlias().bindTo(getIdentifierCollection());
+            if(alias == null) return;
+            if(mTrafficChannelManager.processP2HarrisTalkerAlias(getCurrentFrequency(), getTimeslot(), radio, alias,
+                getIdentifierCollection(), message.getTimestamp()) && generation == mTalkerAliasReceptionGeneration)
+            {
+                //Manager observers may reset or change this state before returning. Retain the accepted owner.
+                getIdentifierCollection().update(alias);
+            }
         }
     }
 
@@ -2139,6 +2146,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
                     if(mSourceFrequency != frequency)
                     {
+                        mTalkerAliasReceptionGeneration++;
                         mSourceFrequency = frequency;
 
                         if(mChannel.isStandardChannel())

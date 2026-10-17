@@ -312,7 +312,7 @@ class ChannelActivityModelTest
         AliasListDefinition definition = p25AliasList("County", 1);
         var source = APCO25RadioIdentifier.createFrom(1_201);
         var target = APCO25Talkgroup.create(4_400);
-        var talker = P25TalkerAliasIdentifier.create("Portable 12");
+        var talker = P25TalkerAliasIdentifier.create("Portable 12").bindTo(source);
         Alias sourceAlias = alias("Car 12", 11, definition, new Radio(Protocol.APCO25, 1_201));
         Alias targetAlias = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
         AliasModel aliasModel = new AliasModel();
@@ -401,7 +401,7 @@ class ChannelActivityModelTest
         assertTrue(row.getSourceAliases().isEmpty());
         Alias sourceAlias = alias("Car 12", 11, definition, new Radio(Protocol.APCO25, 1_201));
         aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(sourceAlias));
-        var talker = P25TalkerAliasIdentifier.create("Portable 12");
+        var talker = P25TalkerAliasIdentifier.create("Portable 12").bindTo(source);
         run(model, () -> {
             metadata.receive(new IdentifierUpdateNotification(talker, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
@@ -431,7 +431,7 @@ class ChannelActivityModelTest
         AliasListDefinition definition = p25AliasList("County", 1);
         var source = APCO25RadioIdentifier.createFrom(1_201);
         var target = APCO25Talkgroup.create(4_400);
-        var talker = P25TalkerAliasIdentifier.create("Portable 12");
+        var talker = P25TalkerAliasIdentifier.create("Portable 12").bindTo(source);
         Alias sourceAlias = alias("Car 12", 11, definition, new Radio(Protocol.APCO25, 1_201));
         Alias targetAlias = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
         AliasModel aliasModel = new AliasModel();
@@ -479,7 +479,7 @@ class ChannelActivityModelTest
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         var firstSource = APCO25RadioIdentifier.createFrom(1_201);
         var firstTarget = APCO25Talkgroup.create(4_400);
-        var firstTalker = P25TalkerAliasIdentifier.create("Portable 12");
+        var firstTalker = P25TalkerAliasIdentifier.create("Portable 12").bindTo(firstSource);
         Alias firstSourceAlias = new Alias("Car 12");
         Alias firstTargetAlias = new Alias("Dispatch");
 
@@ -518,7 +518,7 @@ class ChannelActivityModelTest
 
         var secondSource = APCO25RadioIdentifier.createFrom(1_202);
         var secondTarget = APCO25Talkgroup.create(4_401);
-        var secondTalker = P25TalkerAliasIdentifier.create("Portable 13");
+        var secondTalker = P25TalkerAliasIdentifier.create("Portable 13").bindTo(secondSource);
         run(model, () -> {
             metadata.receive(new IdentifierUpdateNotification(secondSource, Operation.ADD, 1));
             metadata.receive(new IdentifierUpdateNotification(secondTarget, Operation.ADD, 1));

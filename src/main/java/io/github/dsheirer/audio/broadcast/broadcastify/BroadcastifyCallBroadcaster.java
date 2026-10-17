@@ -255,15 +255,9 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
      */
     static String getFromAlias(AudioRecording audioRecording)
     {
-        for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-        {
-            if(identifier instanceof TalkerAliasIdentifier talkerAliasIdentifier && talkerAliasIdentifier.isValid())
-            {
-                return talkerAliasIdentifier.getValue();
-            }
-        }
-
-        return null;
+        Identifier<?> source = audioRecording.getIdentifierCollection().getFromIdentifier();
+        return source instanceof RadioIdentifier radio && radio.getValue() > 0 ?
+            TalkerAliasIdentifier.valueFor(audioRecording.getIdentifierCollection()) : null;
     }
 
     /**

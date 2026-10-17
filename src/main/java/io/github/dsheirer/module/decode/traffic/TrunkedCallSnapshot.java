@@ -108,18 +108,7 @@ final class TrunkedCallSnapshot
 
     static String talkerAlias(IdentifierCollection identifiers)
     {
-        if(identifiers == null)
-        {
-            return null;
-        }
-
-        List<Identifier> matches = identifiers.getIdentifiers(Form.TALKER_ALIAS);
-        if(matches.isEmpty() || !(matches.getFirst() instanceof TalkerAliasIdentifier alias))
-        {
-            return null;
-        }
-
-        return alias.getValue();
+        return TalkerAliasIdentifier.valueFor(identifiers);
     }
 
     private static Integer identityId(Identifier identifier)

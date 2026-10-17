@@ -597,16 +597,7 @@ public record RadioResolveCallEnvelope(int schemaVersion, String submissionId, l
             metadata.destinationDescription(), metadata.destinationGroup())) : null;
         LabelObservation source = metadata != null ? useful(new LabelObservation(metadata.sourceAlias(),
             metadata.sourceDescription(), metadata.sourceGroup())) : null;
-        String talkerAlias = null;
-
-        for(Identifier<?> identifier : identifiers.getIdentifiers(Role.FROM))
-        {
-            if(identifier instanceof TalkerAliasIdentifier alias && alias.isValid())
-            {
-                talkerAlias = normalize(alias.getValue());
-                break;
-            }
-        }
+        String talkerAlias = normalize(TalkerAliasIdentifier.valueFor(identifiers));
 
         MetadataObservations result = new MetadataObservations(configuredChannel, destination, source, talkerAlias);
         return result.isEmpty() ? null : result;

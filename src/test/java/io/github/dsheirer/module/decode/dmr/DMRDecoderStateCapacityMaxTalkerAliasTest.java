@@ -33,6 +33,30 @@ import org.junit.jupiter.api.Test;
 class DMRDecoderStateCapacityMaxTalkerAliasTest
 {
     @Test
+    void observerResetDuringAliasMetadataCannotPublishOldNameIntoTheNewSameRadioCache()
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        state.receive(groupVoice(101, 91, 1_000));
+        boolean[] reset = {false};
+        state.addDecodeEventListener(event ->
+        {
+            if(!reset[0] && TalkerAliasIdentifier.find(event.getIdentifierCollection()) != null)
+            {
+                reset[0] = true;
+                state.reset();
+                state.receive(groupVoice(101, 91, 2_000));
+            }
+        });
+        state.receive(capacityMaxAlias("OLD", 1_100));
+        assertEquals(List.of(), manager.mAliases);
+        assertNull(TalkerAliasIdentifier.find(state.getIdentifierCollection()));
+        state.receive(capacityMaxAlias("NEW", 2_100));
+        assertEquals(List.of("NEW"), manager.mAliases);
+    }
+
+    @Test
     void convertedCapacityPlusChannelKeepsTrafficAndAliasReportingWithoutGrantManager() throws Exception
     {
         Channel standardChannel = channel("Capacity Plus Rest", Channel.ChannelType.STANDARD);
@@ -252,6 +276,116 @@ class DMRDecoderStateCapacityMaxTalkerAliasTest
         state.receive(capacityMaxAlias("ENGINE", 2_200L));
         assertEquals(List.of("ENGINE"), manager.mAliases);
         assertEquals(List.of(101), manager.mAliasRadios);
+    }
+
+    @Test
+    void completedSequenceCannotBeRewrittenByALateContinuationOrLeakIntoTheNextBase()
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        state.getIdentifierCollection().update(DMRRadio.createFrom(101));
+        state.receive(capacityMaxBase("ABCDEF", 9, 1_000));
+        state.receive(capacityMaxContinuation("ONE", 1_100));
+        state.receive(capacityMaxContinuation("OLD", 1_200));
+        state.receive(capacityMaxBase("NEWNEW", 9, 1_300));
+        assertEquals(List.of("ABCDEFONE"), manager.mAliases);
+        state.receive(capacityMaxContinuation("TWO", 1_400));
+        assertEquals(List.of("ABCDEFONE", "NEWNEWTWO"), manager.mAliases);
+    }
+
+    @Test
+    void syncLossDiscardsPartialCapacityMaxAlias()
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        state.getIdentifierCollection().update(DMRRadio.createFrom(101));
+        state.receive(capacityMaxBase("ABCDEF", 9, 1_000));
+        state.receive(new io.github.dsheirer.message.SyncLossMessage(1_100, 1_000,
+            io.github.dsheirer.protocol.Protocol.DMR));
+        state.receive(capacityMaxContinuation("OLD", 1_200));
+        assertEquals(List.of(), manager.mAliases);
+    }
+
+    @Test
+    void replacementPreloadedCallCannotInheritCapacityMaxFragments()
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        state.getIdentifierCollection().update(DMRRadio.createFrom(101));
+        state.receive(capacityMaxBase("ABCDEF", 9, 1_000));
+        state.setCurrentCallEvent(DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_100)
+            .identifiers(state.getIdentifierCollection().copyOf()).timeslot(1).build());
+        state.receive(capacityMaxContinuation("OLD", 1_200));
+        assertEquals(List.of(), manager.mAliases);
+    }
+
+    @Test
+    void newDestinationWithMissingRadioCannotAssignAliasToThePreviousTalker() throws Exception
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        processLinkControl(state, groupVoice(101, 91, 1_000));
+        state.receive(capacityMaxAlias("OLD", 1_100));
+        processLinkControl(state, groupVoice(0, 92, 2_000));
+        state.receive(capacityMaxAlias("NEW", 2_100));
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        assertEquals(List.of("OLD"), manager.mAliases);
+        processLinkControl(state, groupVoice(202, 92, 2_200));
+        assertEquals(List.of("OLD", "NEW"), manager.mAliases);
+        assertEquals(List.of(101, 202), manager.mAliasRadios);
+    }
+
+    @Test
+    void syncLossRequiresFreshCallContextAndDefersAnonymousAliasUntilItsFirstRadio() throws Exception
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        processLinkControl(state, groupVoice(101, 91, 1_000));
+        state.receive(capacityMaxAlias("OLD", 1_100));
+        state.receive(new io.github.dsheirer.message.SyncLossMessage(1_200, 1_000,
+            io.github.dsheirer.protocol.Protocol.DMR));
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        state.receive(capacityMaxAlias("ORPHAN", 1_300));
+        CorrectedBinaryMessage standardAlias = new CorrectedBinaryMessage(42);
+        for(int x = 0; x < "ORPHAN".length(); x++) standardAlias.load(x * 7, 7, "ORPHAN".charAt(x));
+        state.receive(new io.github.dsheirer.module.decode.dmr.message.data.lc.full.TalkerAliasComplete(
+            standardAlias, io.github.dsheirer.module.decode.dmr.message.type.TalkerAliasDataFormat.BIT_7,
+            6, 1_350, 1));
+        assertEquals(List.of("OLD"), manager.mAliases);
+        processLinkControl(state, groupVoice(0, 91, 1_400));
+        state.receive(capacityMaxAlias("DEFER", 1_500));
+        assertEquals(List.of("OLD"), manager.mAliases);
+        processLinkControl(state, groupVoice(202, 91, 1_600));
+        assertEquals(List.of("OLD", "DEFER"), manager.mAliases);
+        assertEquals(List.of(101, 202), manager.mAliasRadios);
+        state.receive(capacityMaxAlias("DEFER", 1_700));
+        assertEquals(List.of("OLD", "DEFER"), manager.mAliases);
+    }
+
+    @Test
+    void receiverNativeSystemChangeClearsSourceAndAliasButOldCallActivationDoesNotRewind() throws Exception
+    {
+        Channel channel = channel("Capacity Max", Channel.ChannelType.STANDARD);
+        RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(channel);
+        DMRDecoderState state = new DMRDecoderState(channel, 1, manager);
+        state.receiveAliasRadioSystemKey(new io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent("dmr:tier3:small:42"));
+        processLinkControl(state, groupVoice(101, 91, 1_000));
+        state.receive(capacityMaxAlias("OLD", 1_100));
+        state.receiveAliasRadioSystemKey(new io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent("dmr:tier3:small:43"));
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        state.receive(capacityMaxAlias("ORPHAN", 1_200));
+        assertEquals(List.of("OLD"), manager.mAliases);
+        processLinkControl(state, groupVoice(202, 91, 2_000));
+        state.receiveAliasRadioSystemKey(new io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent(
+            "dmr:tier3:small:42", 1_000, 1));
+        assertEquals(202, state.getIdentifierCollection().getFromIdentifier().getValue());
+        state.receive(capacityMaxAlias("NEW", 2_100));
+        assertEquals(List.of("OLD", "NEW"), manager.mAliases);
     }
 
     private static Channel channel(String name, Channel.ChannelType type)

@@ -22,6 +22,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager.RemoteTrafficOpenResult;
@@ -456,34 +457,42 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * Records a Phase 2 Harris alias against the traffic-channel source that accompanied it.  Unlike Motorola's
      * complete alias message, the Harris message does not carry an independently verifiable radio and talkgroup.
      */
-    public void processP2HarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+    public boolean processP2HarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
                                            TalkerAliasIdentifier alias, IdentifierCollection identifiers,
                                            long timestamp)
     {
-        processHarrisTalkerAlias(frequency, timeslot, radio, alias, identifiers, timestamp);
+        return processHarrisTalkerAlias(frequency, timeslot, radio, alias, identifiers, timestamp);
     }
 
     /**
      * Harris alias messages contain text but no embedded radio identity.  Reject a conflicting traffic/grant source
      * instead of guessing which radio owns the alias.
      */
-    private void processHarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+    private boolean processHarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
                                           TalkerAliasIdentifier alias, IdentifierCollection identifiers,
                                           long timestamp)
     {
-        if(!isUsableTalkerAlias(alias))
+        if(!isUsableTalkerAlias(alias) || radio == null || radio.getRole() != Role.FROM || !radio.isValid())
         {
-            return;
+            return false;
         }
+        alias = alias.bindTo(radio);
+        if(alias == null) return false;
 
         mLock.lock();
 
         try
         {
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
-            boolean matchesTrackedCall = tracker != null && identifiers != null &&
+            boolean matchesTrackedCall = tracker != null && !tracker.isComplete() &&
+                identifiers != null &&
                 timestamp >= tracker.getEvent().getTimeStart() &&
                 tracker.isSameCallCheckingToOnly(identifiers, timestamp);
+            if(!matchesTrackedCall) return false;
+
+            TalkerAliasIdentifier owned = alias.bindTo(radio, tracker.getRadioSystemKey(),
+                ChannelConfigurationKey.configured(mParentChannel));
+            if(owned == null) return false;
 
             if(matchesTrackedCall)
             {
@@ -492,7 +501,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 if(trackedSource instanceof RadioIdentifier trackedRadio && radio != null &&
                     !radioMatches(radio, trackedRadio, tracker.getRadioSystemKey()))
                 {
-                    return;
+                    return false;
                 }
 
                 if(trackedSource == null || radio instanceof FullyQualifiedRadioIdentifier)
@@ -501,16 +510,17 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 }
             }
 
-            observeTalkerAlias(radio, alias, identifiers, timestamp,
+            observeTalkerAlias(radio, owned, identifiers, timestamp,
                 matchesTrackedCall ? new CallSystemIdentity(tracker.getEvent().getTimeStart(),
                     tracker.getRadioSystemKey()) : null);
 
             if(matchesTrackedCall)
             {
-                tracker.addIdentifierIfMissing(alias);
+                tracker.addIdentifierIfMissing(owned);
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker, timestamp);
             }
+            return true;
         }
         finally
         {
@@ -549,7 +559,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 {
                     tracker.addIdentifierIfMissing(radio);
                 }
-                tracker.addIdentifierIfMissing(alias);
+                TalkerAliasIdentifier owned = alias.bindTo(radio, tracker.getRadioSystemKey());
+                if(owned == null) return;
+                tracker.addIdentifierIfMissing(owned);
                 tracker.updateDurationTraffic(timestamp);
                 broadcast(tracker, timestamp);
             }
@@ -591,6 +603,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
+        alias = alias.bindTo(radio, callIdentity != null ? callIdentity.radioSystemKey() : null,
+            ChannelConfigurationKey.configured(mParentChannel));
+        if(alias == null) return;
         mTalkerAliasManager.update(radio, alias, callIdentity != null ? callIdentity.radioSystemKey() : null);
         IdentifierCollection context = identifiers != null ?
             new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();

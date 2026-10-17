@@ -19,6 +19,8 @@
 
 package io.github.dsheirer.module.decode.nxdn;
 
+import com.google.common.eventbus.Subscribe;
+
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -33,6 +35,7 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
@@ -84,6 +87,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasCompl
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
@@ -108,6 +112,13 @@ public class NXDNDecoderState extends DecoderState
     private boolean mEncryptedCall = false;
     private int mDisconnectResponseCount = 0;
     private int mIdleDuringCallCount = IDLE_DURING_CALL_MAX_COUNT;
+    private final java.util.concurrent.atomic.AtomicLong mAliasReceptionGeneration = new java.util.concurrent.atomic.AtomicLong();
+    private volatile boolean mTalkerAliasContextFresh = true;
+    private TalkerAliasIdentifier mPendingTalkerAlias;
+    private Identifier mPendingTalkerAliasTarget;
+    private String mAliasRadioSystemKey;
+    private int mAliasRan = -1;
+    private long mAliasRanObservedAt;
 
     /**
      * Constructs an instance
@@ -163,15 +174,19 @@ public class NXDNDecoderState extends DecoderState
     @Override
     public void reset()
     {
+        mAliasReceptionGeneration.incrementAndGet();
         mNetworkConfigurationMonitor.reset();
+        clearStandardReceiverAliasCache();
+        mAliasRan = -1;
+        mAliasRanObservedAt = 0;
         if(mChannel != null && mChannel.isStandardChannel() && mTrafficChannelManager != null)
         {
             mTrafficChannelManager.updateNativeRadioSystemKey(null);
         }
 
+        resetState();
         if(!mTrunkingEnabled)
         {
-            resetState();
             setCurrentFrequency(0);
         }
 
@@ -181,6 +196,7 @@ public class NXDNDecoderState extends DecoderState
     @Override
     protected void resetState()
     {
+        invalidateTalkerAliasContext();
         if(!mTrunkingEnabled)
         {
             closeCurrentConventionalCall(System.currentTimeMillis(), true);
@@ -227,7 +243,12 @@ public class NXDNDecoderState extends DecoderState
                 if(!mTrunkingEnabled && mChannel.isStandardChannel() &&
                     getCurrentFrequency() != event.getFrequency())
                 {
+                    invalidateTalkerAliasContext();
                     closeCurrentConventionalCall(System.currentTimeMillis(), true);
+                    getIdentifierCollection().remove(IdentifierClass.USER);
+                    clearStandardReceiverAliasCache();
+                    mAliasRan = -1;
+                    mAliasRanObservedAt = 0;
                     setCurrentChannel(null);
                 }
 
@@ -247,11 +268,21 @@ public class NXDNDecoderState extends DecoderState
     @Override
     public void receive(IMessage iMessage)
     {
+        long generation = mAliasReceptionGeneration.get();
+        if(iMessage instanceof io.github.dsheirer.message.SyncLossMessage)
+        {
+            invalidateTalkerAliasContext();
+            getIdentifierCollection().remove(Role.FROM);
+            return;
+        }
         if(iMessage instanceof NXDNMessage nxdn && nxdn.isValid())
         {
+            if(generation != mAliasReceptionGeneration.get() || !observeAliasRan(nxdn)) return;
+            //A RAN transition establishes this message's new reception context.
+            generation = mAliasReceptionGeneration.get();
             if(nxdn instanceof NXDNLayer3Message layer3)
             {
-                processLayer3(layer3);
+                processLayer3(layer3, generation);
             }
             else if(nxdn instanceof Audio audio)
             {
@@ -278,7 +309,8 @@ public class NXDNDecoderState extends DecoderState
 
         if(hasTrafficChannelManager())
         {
-            mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+            mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic,
+                mTrafficChannelManager.getNativeRadioSystemKey());
         }
 
         broadcast(NXDNDecodeEvent.builder(decodeEventType, timestamp)
@@ -322,12 +354,14 @@ public class NXDNDecoderState extends DecoderState
      * Process layer 3 messages
      * @param layer3 message to process
      */
-    private void processLayer3(NXDNLayer3Message layer3)
+    private void processLayer3(NXDNLayer3Message layer3, long generation)
     {
+        var messageType = layer3.getMessageType();
+        if(generation != mAliasReceptionGeneration.get()) return;
         State state = mTrunkingEnabled && layer3.getMessageType().isControl() ? State.CONTROL : State.ACTIVE;
         DecoderStateEvent.Event event = DecoderStateEvent.Event.DECODE;
 
-        switch(layer3.getMessageType())
+        switch(messageType)
         {
             case CONTROL_OUT_01_CC_VOICE_CALL_RESPONSE:
             case TYPE_D_OUT_00_CC_CALL_RESPONSE:
@@ -361,17 +395,23 @@ public class NXDNDecoderState extends DecoderState
                         //A new target cannot inherit the previous call's source or alias, including group/private
                         //transitions. Incomplete repeated headers retain participants already known for this call.
                         getIdentifierCollection().remove(IdentifierClass.USER);
+                        clearPendingTalkerAlias();
                     }
 
+                    Identifier previousSource = getIdentifierCollection().getIdentifier(
+                        IdentifierClass.USER, Form.RADIO, Role.FROM);
                     if(vc.getSource().isValid() && !vc.getSource().equals(getIdentifierCollection().getIdentifier(
                         IdentifierClass.USER, Form.RADIO, Role.FROM)))
                     {
                         getIdentifierCollection().remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+                        if(previousSource != null) clearPendingTalkerAlias();
                     }
+                    mTalkerAliasContextFresh = vc.getSource().isValid() || vc.getDestination().isValid();
                     getIdentifierCollection().update(vc.getIdentifiers());
                     if(hasTrafficChannelManager())
                     {
-                        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection());
+                        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(getIdentifierCollection(),
+                            mTrafficChannelManager.getNativeRadioSystemKey());
                     }
                     mEncryptedCallStateDetermined = true;
                     boolean encrypted = vc.getEncryptionKeyIdentifier().isEncrypted();
@@ -393,6 +433,7 @@ public class NXDNDecoderState extends DecoderState
                         event = started ? DecoderStateEvent.Event.START : DecoderStateEvent.Event.CONTINUATION;
                     }
 
+                    publishPendingTalkerAlias(vc.getTimestamp(), generation);
                     state = mEncryptedCall ? State.ENCRYPTED : State.CALL;
                 }
                 break;
@@ -477,6 +518,7 @@ public class NXDNDecoderState extends DecoderState
                 mIdleDuringCallCount = IDLE_DURING_CALL_MAX_COUNT;
                 //Only remove the FROM identifier, anticipating a continuation call for the same talkgroup
                 getIdentifierCollection().remove(Role.FROM);
+                invalidateTalkerAliasContext();
                 break;
             case CONTROL_OUT_09_CC_DATA_CALL_RESPONSE:
                 if(layer3 instanceof DataCallResponse dcr)
@@ -578,6 +620,7 @@ public class NXDNDecoderState extends DecoderState
                 mEncryptedCallStateDetermined = false;
                 mEncryptedCall = false;
                 getIdentifierCollection().remove(IdentifierClass.USER);
+                invalidateTalkerAliasContext();
                 mDisconnectResponseCount++;
 
                 //Delay channel teardown until after we receive at least 2x disconnect responses
@@ -840,21 +883,17 @@ public class NXDNDecoderState extends DecoderState
                 {
                     state = State.CALL;
                     event = DecoderStateEvent.Event.CONTINUATION;
-                    var radio = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-
-                    if(radio instanceof RadioIdentifier ri && tac.getTalkerAlias() != null &&
-                        tac.getTalkerAlias().getValue() != null && !tac.getTalkerAlias().getValue().isBlank())
+                    if(generation == mAliasReceptionGeneration.get() && mTalkerAliasContextFresh && tac.getTalkerAlias() != null &&
+                        tac.getTalkerAlias().isValid())
                     {
-                        getIdentifierCollection().update(tac.getTalkerAlias());
-                        if(hasTrafficChannelManager())
+                        Identifier source = getIdentifierCollection().getIdentifier(
+                            IdentifierClass.USER, Form.RADIO, Role.FROM);
+                        Identifier target = getIdentifierCollection().getToIdentifier();
+                        if(source instanceof RadioIdentifier || target != null && target.isValid())
                         {
-                            mTrafficChannelManager.processTalkerAlias(getCurrentChannel(), tac.getTalkerAlias(), ri,
-                                tac.getTimestamp());
-                        }
-
-                        if(!mTrunkingEnabled)
-                        {
-                            updateConventionalCallProgress(tac.getTimestamp());
+                            mPendingTalkerAlias = tac.getTalkerAlias();
+                            mPendingTalkerAliasTarget = target;
+                            publishPendingTalkerAlias(tac.getTimestamp(), generation);
                         }
                     }
                 }
@@ -967,8 +1006,9 @@ public class NXDNDecoderState extends DecoderState
     {
         if(mChannel != null && mChannel.isStandardChannel())
         {
-            updateNativeRadioSystemKeyValue(mTrafficChannelManager,
-                mNetworkConfigurationMonitor.getTypeCRadioSystemKey());
+            String next = mNetworkConfigurationMonitor.getTypeCRadioSystemKey();
+            observeAliasRadioSystemKey(next);
+            updateNativeRadioSystemKeyValue(mTrafficChannelManager, next);
         }
     }
 
@@ -1070,6 +1110,93 @@ public class NXDNDecoderState extends DecoderState
             mCurrentConventionalCallEvent.end(timestamp);
             broadcast(mCurrentConventionalCallEvent);
         }
+    }
+
+    /** Template changes belong to the receiver generation; older call activation keys cannot rewind it. */
+    @Subscribe
+    public void receiveAliasRadioSystemKey(RadioSystemKeyEvent event)
+    {
+        if(event != null && !event.isCallActivation()) observeAliasRadioSystemKey(event.radioSystemKey());
+    }
+
+    private void observeAliasRadioSystemKey(String key)
+    {
+        if(key != null && RadioSystemKey.isChannelScoped(key)) key = null;
+        if(!java.util.Objects.equals(key, mAliasRadioSystemKey))
+        {
+            mAliasRadioSystemKey = key;
+            invalidateTalkerAliasContext();
+            getIdentifierCollection().remove(Role.FROM);
+        }
+    }
+
+    private boolean observeAliasRan(NXDNMessage message)
+    {
+        if(!message.hasRAN()) return true;
+        int ran = message.getRAN();
+        if(mAliasRan >= 0 && mAliasRan != ran)
+        {
+            if(message.getTimestamp() <= mAliasRanObservedAt) return false;
+            invalidateTalkerAliasContext();
+            getIdentifierCollection().remove(Role.FROM);
+            if(hasTrafficChannelManager()) mTrafficChannelManager.getTalkerAliasManager().clear();
+        }
+        mAliasRan = ran;
+        mAliasRanObservedAt = Math.max(mAliasRanObservedAt, message.getTimestamp());
+        return true;
+    }
+
+    private void clearStandardReceiverAliasCache()
+    {
+        if(hasTrafficChannelManager() && mChannel != null && mChannel.isStandardChannel())
+            mTrafficChannelManager.getTalkerAliasManager().clear();
+    }
+
+    @Override
+    public void stop()
+    {
+        invalidateTalkerAliasContext();
+        clearStandardReceiverAliasCache();
+        getIdentifierCollection().remove(Role.FROM);
+        super.stop();
+    }
+
+    private void invalidateTalkerAliasContext()
+    {
+        mAliasReceptionGeneration.incrementAndGet();
+        mTalkerAliasContextFresh = false;
+        clearPendingTalkerAlias();
+    }
+
+    private void clearPendingTalkerAlias()
+    {
+        mPendingTalkerAlias = null;
+        mPendingTalkerAliasTarget = null;
+    }
+
+    /** An anonymous complete name can wait only inside this fresh call context for its first valid source. */
+    private void publishPendingTalkerAlias(long timestamp, long generation)
+    {
+        if(generation != mAliasReceptionGeneration.get() || !mTalkerAliasContextFresh || mPendingTalkerAlias == null) return;
+        Identifier source = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
+        Identifier target = getIdentifierCollection().getToIdentifier();
+        if(mPendingTalkerAliasTarget != null && !mPendingTalkerAliasTarget.equals(target))
+        {
+            clearPendingTalkerAlias();
+            return;
+        }
+        if(!(source instanceof RadioIdentifier radio) || !radio.isValid()) return;
+        TalkerAliasIdentifier bound = mPendingTalkerAlias.bindTo(getIdentifierCollection());
+        if(bound != null && hasTrafficChannelManager())
+            bound = bound.bindTo(radio, mTrafficChannelManager.getNativeRadioSystemKey());
+        if(generation != mAliasReceptionGeneration.get()) return;
+        clearPendingTalkerAlias();
+        if(bound == null) return;
+        getIdentifierCollection().update(bound);
+        if(generation != mAliasReceptionGeneration.get()) return;
+        if(hasTrafficChannelManager())
+            mTrafficChannelManager.processTalkerAlias(getCurrentChannel(), bound, radio, timestamp);
+        if(!mTrunkingEnabled) updateConventionalCallProgress(timestamp);
     }
 
     /**

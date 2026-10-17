@@ -22,6 +22,7 @@ import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
@@ -196,24 +197,28 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        mTalkerAliasManager.update(radio, alias);
+        IdentifierCollection context = identifiers != null ?
+            new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
+        context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
+        long observedAt = timestamp > 0 ? timestamp : System.currentTimeMillis();
+        Integer timeslot = identifiers != null && identifiers.getTimeslot() > 0 ?
+            identifiers.getTimeslot() : channel instanceof DMRChannel dmr ? dmr.getTimeslot() : null;
+        CallSystemIdentity callIdentity = mTrunkingEnabled ?
+            mCallStartTracker.identityForActiveCall(mParentChannel, Protocol.DMR,
+                channel, timeslot, context, observedAt) : null;
+        String callKey = callIdentity != null ? callIdentity.radioSystemKey() : null;
+        String servingKey = callKey != null && !RadioSystemKey.isChannelScoped(callKey) ?
+            callKey : mNativeRadioSystemKey;
+        alias = identifiers != null ? alias.bindTo(identifiers) : alias.bindTo(radio);
+        if(alias == null) return;
+        alias = alias.bindTo(radio, servingKey, ChannelConfigurationKey.configured(mParentChannel));
+        if(alias == null) return;
+        mTalkerAliasManager.update(radio, alias, servingKey);
 
-        if(mTrunkingEnabled)
+        if(mTrunkingEnabled && callIdentity != null && callIdentity.radioSystemKey() != null)
         {
-            IdentifierCollection context = identifiers != null ?
-                new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
-            context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
-            long observedAt = timestamp > 0 ? timestamp : System.currentTimeMillis();
-            Integer timeslot = identifiers != null && identifiers.getTimeslot() > 0 ?
-                identifiers.getTimeslot() : channel instanceof DMRChannel dmr ? dmr.getTimeslot() : null;
-            CallSystemIdentity callIdentity = mCallStartTracker.identityForActiveCall(mParentChannel, Protocol.DMR,
-                channel, timeslot, context, observedAt);
-
-            if(callIdentity != null && callIdentity.radioSystemKey() != null)
-            {
-                MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.DMR, radio,
-                    alias, context, TrunkedIdentityDomain.STANDARD, observedAt, callIdentity));
-            }
+            MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.DMR, radio,
+                alias, context, TrunkedIdentityDomain.STANDARD, observedAt, callIdentity));
         }
     }
 
@@ -522,6 +527,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     void resetNetworkConfigurationIdentity()
     {
         mLatestNetworkConfigurationSnapshot = null;
+        mTalkerAliasManager.clear();
         updateNativeRadioSystemKey(null);
     }
 
@@ -529,6 +535,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     {
         if(!Objects.equals(mNativeRadioSystemKey, radioSystemKey))
         {
+            mTalkerAliasManager.clear();
             mNativeRadioSystemKey = radioSystemKey;
             EventBus eventBus = getInterModuleEventBus();
 

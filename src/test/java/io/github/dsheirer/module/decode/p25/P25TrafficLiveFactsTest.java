@@ -17,6 +17,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
@@ -192,7 +193,7 @@ class P25TrafficLiveFactsTest
             }
 
             MutableIdentifierCollection currentUser = identifiers(101);
-            currentUser.update(P25TalkerAliasIdentifier.create("Portable 101"));
+            currentUser.update(P25TalkerAliasIdentifier.create("Portable 101").bindTo(currentUser));
             if(phaseTwo)
             {
                 manager.processP2TrafficCurrentUser(carrier.getDownlinkFrequency(), timeslot, carrier,
@@ -209,6 +210,8 @@ class P25TrafficLiveFactsTest
             assertEquals(101, events.getLast().getIdentifierCollection().getFromIdentifier().getValue());
             assertEquals(101, row.getSource().getValue(), "Live must receive ordinary late traffic identifiers");
             assertEquals("Portable 101", row.getTalkerAlias().getValue());
+            assertTrue(((TalkerAliasIdentifier)row.getTalkerAlias()).matchesSource(row.getSource()),
+                "Live must display the name accepted for this exact source");
             assertEquals(phaseTwo ? timeslot : null, row.getTimeslot());
             if(phaseTwo)
             {

@@ -86,6 +86,50 @@ import org.junit.jupiter.api.io.TempDir;
 class StatsWebCallServiceTest
 {
     @Test
+    void aNameWithoutItsRadioCannotBecomeAListeningSourceId() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            CompletedAudioCall template = call();
+            List<Identifier> identifiers = new ArrayList<>(template.snapshot().identifierCollection().getIdentifiers());
+            identifiers.removeIf(identifier -> identifier.getRole() == Role.FROM);
+            identifiers.add(P25TalkerAliasIdentifier.create("ORPHAN NAME"));
+            service.receive(withIdentifiers(template, new IdentifierCollection(identifiers), null));
+            Map<String,Object> metadata = client.awaitCall();
+            assertFalse(metadata.containsKey("source_id"));
+            assertFalse(metadata.containsKey("talker_alias"));
+            assertEquals("4400", metadata.get("target_id"));
+        }
+    }
+
+    @Test
+    void looseOrMismatchedTalkerNamesCannotRelabelTheListeningCall() throws Exception
+    {
+        try(StatsWebCallService service = started(new StatsWebCallService());
+            FeedClient client = listen(service, Set.of()))
+        {
+            CompletedAudioCall template = call();
+            service.receive(template);
+            Map<String,Object> original = client.awaitCall();
+            byte[] originalWave = service.get(String.valueOf(original.get("call_id"))).wave().clone();
+            for(var alias: List.of(P25TalkerAliasIdentifier.create("LOOSE NAME"),
+                P25TalkerAliasIdentifier.create("OTHER RADIO").bindTo(APCO25RadioIdentifier.createFrom(9002))))
+            {
+                List<Identifier> identifiers = new ArrayList<>(template.snapshot().identifierCollection().getIdentifiers());
+                identifiers.removeIf(identifier -> identifier.getForm() == Form.TALKER_ALIAS);
+                identifiers.add(alias);
+                service.receive(withIdentifiers(template, new IdentifierCollection(identifiers), null));
+                Map<String,Object> metadata = client.awaitCall();
+                assertFalse(metadata.containsKey("talker_alias"));
+                assertEquals("9001", metadata.get("source_id"));
+                assertEquals(original.get("playback_target"), metadata.get("playback_target"));
+                assertArrayEquals(originalWave, service.get(String.valueOf(metadata.get("call_id"))).wave());
+            }
+        }
+    }
+
+    @Test
     void suppliedAudioFormatIsUsedWithoutChangingNativeCallOrCachedOutput() throws Exception
     {
         var rate = new java.util.concurrent.atomic.AtomicInteger(8000);
@@ -1714,7 +1758,8 @@ class StatsWebCallServiceTest
         identifiers.add(ChannelConfigurationIdentifier.create("00000000-0000-0000-0000-000000000737"));
         identifiers.add(FrequencyConfigurationIdentifier.create(854_187_500L));
         identifiers.add(APCO25RadioIdentifier.createFrom(9001));
-        identifiers.add(P25TalkerAliasIdentifier.create("CAR 9001"));
+        identifiers.add(P25TalkerAliasIdentifier.create("CAR 9001").bindTo(APCO25RadioIdentifier.createFrom(9001),
+            "p25:bee00:4a7"));
         identifiers.add(APCO25Wacn.create(0xBEE00));
         identifiers.add(APCO25System.create(0x4A7));
         identifiers.add(APCO25Nac.create(0x4A1));

@@ -18,9 +18,12 @@
  */
 package io.github.dsheirer.module.decode.nxdn;
 
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelInformation;
+import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer2.SACCHAssembler;
 import io.github.dsheirer.module.decode.nxdn.layer2.SACCHFragment;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.IChannelInformationReceiver;
@@ -29,7 +32,9 @@ import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.SiteInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.Disconnect;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.IPacketHeader;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.ShortDataInitializationVector;
+import io.github.dsheirer.module.decode.nxdn.layer3.call.TransmissionRelease;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.UserData;
+import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCall;
 import io.github.dsheirer.module.decode.nxdn.layer3.data.PacketSequenceAssembler;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAlias;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasAssembler;
@@ -38,6 +43,7 @@ import io.github.dsheirer.sample.Listener;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,6 +60,12 @@ public class NXDNMessageProcessor implements Listener<IMessage>
     private final PacketSequenceAssembler mPacketSequenceAssembler = new PacketSequenceAssembler();
     private final SACCHAssembler mSACCHAssembler = new SACCHAssembler();
     private final TalkerAliasAssembler mTalkerAliasAssembler;
+    private Identifier mAliasSource;
+    private Identifier mAliasTarget;
+    private int mAliasRan = -1;
+    private LICH mAliasLich;
+    private final AtomicLong mReceptionGeneration = new AtomicLong();
+    private volatile boolean mAliasContextFresh;
 
     /**
      * Sets channel preload information.  This is used to preload a traffic channel with system channel information
@@ -104,6 +116,13 @@ public class NXDNMessageProcessor implements Listener<IMessage>
     @Override
     public void receive(IMessage message)
     {
+        if(message instanceof SyncLossMessage) reset();
+        receive(message, mReceptionGeneration.get());
+    }
+
+    private void receive(IMessage message, long generation)
+    {
+        if(generation != mReceptionGeneration.get()) return;
         List<NXDNMessage> additionalMessagesToDispatch = null;
 
         if(message != null && message.isValid())
@@ -120,27 +139,61 @@ public class NXDNMessageProcessor implements Listener<IMessage>
                 receiver.receive(mChannelAccessInformation, mChannelFrequencyMap);
             }
 
+            if(generation != mReceptionGeneration.get()) return;
+
             //SACCH fragments are either standalone 4/4, or a sequence of 4 in a superframe. Reassemble them.
             if(message instanceof SACCHFragment fragment)
             {
-                dispatch(message);
+                dispatch(message, generation);
+                if(generation != mReceptionGeneration.get()) return;
                 message = null;
                 //Publish the completed SACCH message to this method so that it can be processed correctly and dispatch
                 //the original fragment and nullify the message to ensure correct sequencing where fragment 4 is
                 //dispatched first, and then the assembled SACCH message.
-                receive(mSACCHAssembler.process(fragment));
+                receive(mSACCHAssembler.process(fragment), generation);
+                if(generation != mReceptionGeneration.get()) return;
+            }
+
+            if(message instanceof VoiceCall call)
+            {
+                Identifier source = call.getSource().isValid() ? call.getSource() : null;
+                Identifier target = call.getDestination().isValid() ? call.getDestination() : null;
+                if((mAliasRan >= 0 && mAliasRan != call.getRAN()) ||
+                    (mAliasLich != null && (mAliasLich.getRFChannel() != call.getLICH().getRFChannel() ||
+                        mAliasLich.getDirection() != call.getLICH().getDirection())) ||
+                    (source != null && mAliasSource != null && !source.equals(mAliasSource)) ||
+                    (target != null && mAliasTarget != null && !target.equals(mAliasTarget)))
+                {
+                    resetTalkerAlias();
+                }
+                if(source != null) mAliasSource = source;
+                if(target != null) mAliasTarget = target;
+                mAliasRan = call.getRAN();
+                mAliasLich = call.getLICH();
+                mAliasContextFresh = source != null || target != null;
             }
 
             if(message instanceof TalkerAlias fragment)
             {
-                dispatch(message);
+                dispatch(message, generation);
+                if(generation != mReceptionGeneration.get()) return;
                 //Assign the completed alias to the message to dispatch below, to ensure proper message output sequence
-                message = mTalkerAliasAssembler.process(fragment);
+                if(!mAliasContextFresh || (mAliasRan >= 0 && (fragment.getRAN() != mAliasRan ||
+                    mAliasLich.getRFChannel() != fragment.getLICH().getRFChannel() ||
+                    mAliasLich.getDirection() != fragment.getLICH().getDirection())))
+                {
+                    mTalkerAliasAssembler.reset();
+                    message = null;
+                }
+                else
+                {
+                    message = mTalkerAliasAssembler.process(fragment);
+                }
             }
-            else if(message instanceof Idle || message instanceof Disconnect)
+            else if(message instanceof Idle || message instanceof Disconnect || message instanceof TransmissionRelease)
             {
                 //Clear any captured talker alias fragments at the end of the call or idle mode
-                mTalkerAliasAssembler.reset();
+                resetTalkerAlias();
             }
             else if(message instanceof IPacketHeader header)
             {
@@ -156,24 +209,42 @@ public class NXDNMessageProcessor implements Listener<IMessage>
             }
         }
 
-        dispatch(message);
+        dispatch(message, generation);
 
         if(additionalMessagesToDispatch != null)
         {
             for(NXDNMessage additional: additionalMessagesToDispatch)
             {
-                dispatch(additional);
+                dispatch(additional, generation);
             }
         }
+    }
+
+    private void resetTalkerAlias()
+    {
+        mTalkerAliasAssembler.reset();
+        mAliasSource = null;
+        mAliasTarget = null;
+        mAliasRan = -1;
+        mAliasLich = null;
+        mAliasContextFresh = false;
+    }
+
+    /** Clears fragment ownership before this decoder is reused on another reception. */
+    public void reset()
+    {
+        mReceptionGeneration.incrementAndGet();
+        resetTalkerAlias();
+        mSACCHAssembler.reset();
     }
 
     /**
      * Post-process the message for frequency band details.
      * @param message to post process and dispatch
      */
-    private void dispatch(IMessage message)
+    private void dispatch(IMessage message, long generation)
     {
-        if(message != null && mMessageListener != null)
+        if(generation == mReceptionGeneration.get() && message != null && mMessageListener != null)
         {
             mMessageListener.receive(message);
         }
@@ -184,6 +255,7 @@ public class NXDNMessageProcessor implements Listener<IMessage>
      */
     public void dispose()
     {
+        reset();
         mMessageListener = null;
     }
 

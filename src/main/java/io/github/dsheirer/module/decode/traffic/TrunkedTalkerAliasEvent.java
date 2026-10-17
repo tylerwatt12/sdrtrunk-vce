@@ -46,7 +46,9 @@ public record TrunkedTalkerAliasEvent(String configurationId, DecoderType decode
                                    CallSystemIdentity callIdentity)
     {
         this(ChannelConfigurationKey.configured(channel), decoderType(channel), protocol, radio,
-            alias != null ? alias.getValue() : null,
+            alias != null && alias.matchesSource(radio, callIdentity != null ? callIdentity.radioSystemKey() : null,
+                ChannelConfigurationKey.configured(channel)) ?
+                alias.getValue() : null,
             identifiers != null ? identifiers.getIdentifiers() : List.of(), identityDomain,
             observedAtEpochMilliseconds, callIdentity != null ? callIdentity.callStartEpochMilliseconds() : 0,
             callIdentity != null ? callIdentity.radioSystemKey() : null);

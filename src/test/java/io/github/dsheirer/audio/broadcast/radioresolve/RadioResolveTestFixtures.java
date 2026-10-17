@@ -26,6 +26,7 @@ import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -78,7 +79,7 @@ final class RadioResolveTestFixtures
         identifierList.add(destination);
         identifierList.add(source);
         identifierList.add(FrequencyConfigurationIdentifier.create(FREQUENCY));
-        identifierList.add(P25TalkerAliasIdentifier.create("OTA UNIT 7"));
+        identifierList.add(P25TalkerAliasIdentifier.create("OTA UNIT 7").bindTo((RadioIdentifier)source));
         IdentifierCollection identifiers = new IdentifierCollection(identifierList);
         CallLegSource winningSource = source(17L, 3L);
         AudioCallId callId = new AudioCallId(10L, 20L, 2);
@@ -161,7 +162,8 @@ final class RadioResolveTestFixtures
         if(p25)
         {
             identifierList.add(APCO25Nac.create(0x293));
-            identifierList.add(P25TalkerAliasIdentifier.create("CONVENTIONAL UNIT 7"));
+            if(source instanceof RadioIdentifier radio)
+                identifierList.add(P25TalkerAliasIdentifier.create("CONVENTIONAL UNIT 7").bindTo(radio));
         }
 
         IdentifierCollection identifiers = new IdentifierCollection(identifierList);

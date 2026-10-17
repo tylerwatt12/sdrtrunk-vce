@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.audio.broadcast.TalkerAliasOwnershipFixtures;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
@@ -13,6 +14,23 @@ import org.junit.jupiter.api.Test;
 
 class ShoutcastV1BroadcastMetadataUpdaterTest
 {
+    @Test
+    void unattachedTalkerNamesCannotBecomeTheSongSource()
+    {
+        var aliases = new AliasModel()
+        {
+            @Override public AliasList getAliasList(IdentifierCollection collection) { return AliasList.empty("test"); }
+        };
+        var updater = new ShoutcastV1BroadcastMetadataUpdater(new ShoutcastV1Configuration(), aliases);
+        for(var sample: TalkerAliasOwnershipFixtures.samples())
+        {
+            assertEquals("TO:UNKNOWN FROM:101", updater.getSong(
+                new IdentifierCollection(List.of(sample.source(), sample.raw())), null));
+            assertEquals("TO:UNKNOWN FROM:UNKNOWN", updater.getSong(
+                new IdentifierCollection(List.of(sample.raw())), null));
+        }
+    }
+
     @Test
     void songMetadataUsesTheSameCompatibilityRuleWithoutSendingANetworkRequest()
     {

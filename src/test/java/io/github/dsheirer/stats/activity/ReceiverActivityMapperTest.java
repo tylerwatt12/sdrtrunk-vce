@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
@@ -37,6 +39,7 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
+import io.github.dsheirer.module.decode.traffic.CallSystemIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
@@ -48,6 +51,63 @@ import org.junit.jupiter.api.Test;
 class ReceiverActivityMapperTest
 {
     private static final String CONFIGURATION_ID = "223e4567-e89b-42d3-a456-426614174000";
+
+    @Test
+    void activityFactsRejectNamesWithoutTheObservedRadioOwner()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        var source = APCO25RadioIdentifier.createFrom(101);
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        for(var alias: List.of(P25TalkerAliasIdentifier.create("UNBOUND"),
+            P25TalkerAliasIdentifier.create("OTHER RADIO").bindTo(APCO25RadioIdentifier.createFrom(202))))
+        {
+            DecodeEvent event = new DecodeEvent(DecodeEventType.CALL_GROUP, 1_000L);
+            event.setProtocol(Protocol.APCO25);
+            event.setIdentifierCollection(new IdentifierCollection(List.of(source, APCO25Talkgroup.create(91), alias)));
+            var mapped = mapper.map(channel, event);
+            assertEquals("101", mapped.sourceRadioId());
+            assertNull(mapped.talkerAlias());
+        }
+    }
+
+    @Test
+    void aliasObservationEventsRequireAnAliasBoundToTheirExplicitRadio()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        var source = APCO25RadioIdentifier.createFrom(101);
+        var context = new IdentifierCollection(List.of(source));
+        var call = new CallSystemIdentity(1_000L, "p25:bee00:123");
+        ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        for(var alias: List.of(P25TalkerAliasIdentifier.create("UNBOUND"),
+            P25TalkerAliasIdentifier.create("OTHER RADIO").bindTo(APCO25RadioIdentifier.createFrom(202))))
+        {
+            assertNull(mapper.map(new TrunkedTalkerAliasEvent(channel, Protocol.APCO25, source, alias,
+                context, TrunkedIdentityDomain.STANDARD, 1_100L, call)));
+        }
+        var matching = P25TalkerAliasIdentifier.create("CURRENT RADIO").bindTo(source, call.radioSystemKey());
+        assertEquals("CURRENT RADIO", mapper.map(new TrunkedTalkerAliasEvent(channel, Protocol.APCO25, source,
+            matching, context, TrunkedIdentityDomain.STANDARD, 1_100L, call)).talkerAlias());
+    }
+
+    @Test
+    void equalRadioNumbersCannotCarryAnAliasAcrossSavedChannelOwners()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        var source = APCO25RadioIdentifier.createFrom(101);
+        var context = new IdentifierCollection(List.of(source));
+        var call = new CallSystemIdentity(1_000L, "p25:bee00:123");
+        var alias = P25TalkerAliasIdentifier.create("OTHER RECEIVER").bindTo(source, null,
+            "223e4567-e89b-42d3-a456-426614174999");
+
+        assertNull(new ReceiverActivityMapper().map(new TrunkedTalkerAliasEvent(channel, Protocol.APCO25,
+            source, alias, context, TrunkedIdentityDomain.STANDARD, 1_100L, call)));
+    }
 
     @Test
     void mapsDmrCompletionUsingOnlyTheSavedConfigurationId()

@@ -50,14 +50,14 @@ class ChannelActivityIngressQueueSnapshotTest
         var queue = new ChannelActivityIngressQueue(4, 1);
         var source = DMRRadio.createFrom(101);
         var target = DMRTalkgroup.create(91);
-        var talker = DmrTalkerAliasIdentifier.create("First talker");
+        var talker = DmrTalkerAliasIdentifier.create("First talker").bindTo(source);
         var encryption = EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 7));
         var identifiers = new MutableIdentifierCollection(List.of(source, target, talker, encryption));
         assertTrue(offer(queue, identifiers, 1_000L, 1_200L));
 
         identifiers.update(DMRRadio.createFrom(202));
         identifiers.update(DMRTalkgroup.create(92));
-        identifiers.update(DmrTalkerAliasIdentifier.create("Next talker"));
+        identifiers.update(DmrTalkerAliasIdentifier.create("Next talker").bindTo(DMRRadio.createFrom(202)));
         identifiers.update(EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x80, 0)));
 
         var accepted = queue.poll();
@@ -140,7 +140,7 @@ class ChannelActivityIngressQueueSnapshotTest
         assertTrue(offer(queue, new IdentifierCollection(List.of(talker)), 1_000L, 1_200L));
         var aliasOnly = queue.poll();
         assertNull(aliasOnly.metadataSource());
-        assertSame(talker, aliasOnly.metadataTalkerAlias());
+        assertNull(aliasOnly.metadataTalkerAlias(), "An alias with no observed radio owner is not an activity fact");
         assertTrue(offer(queue, new IdentifierCollection(List.of(DMRRadio.createFrom(0), DMRTalkgroup.create(0))),
             1_000L, 1_200L));
         var invalid = queue.poll();

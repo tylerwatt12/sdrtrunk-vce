@@ -192,7 +192,10 @@ public class TrunkedCallStartTracker
             observedEncryption.isKnown();
         boolean targetChanged = previous != null && previous.target().isKnown() && target.isKnown() &&
             !previous.target().sameIdentity(target);
-        boolean newCall = previous == null || targetChanged ||
+        String observedNativeKey = RadioSystemKey.isChannelScoped(radioSystemKey) ? null : radioSystemKey;
+        boolean nativeSystemChanged = previous != null && previous.lastObservedNativeKey() != null &&
+            observedNativeKey != null && !previous.lastObservedNativeKey().equals(observedNativeKey);
+        boolean newCall = previous == null || targetChanged || nativeSystemChanged ||
             timestamp - previous.lastObservedAtMilliseconds() > mContinuationThresholdMilliseconds;
 
         if(newCall)
@@ -203,11 +206,11 @@ public class TrunkedCallStartTracker
             }
 
             String effectiveRadioSystemKey = effectiveRadioSystemKey(parentChannel, protocol, identityDomain,
-                radioSystemKey);
+                observedNativeKey);
             String callToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
             putObservation(resourceKey, new ActiveCall(target, source, encrypted,
                 observedEncryption.algorithmId(), observedEncryption.keyId(), timestamp, timestamp,
-                effectiveRadioSystemKey, callToken, protocol, identityDomain));
+                effectiveRadioSystemKey, observedNativeKey, callToken, protocol, identityDomain));
             enforceMaximumSize(mObservations);
             return new ObservationResult(new TrunkedCallStartEvent(parentChannel, protocol, channelSnapshot,
                 effectiveTimeslot, identifiers, eventType, timestamp, effectiveRadioSystemKey, callToken), null);
@@ -229,7 +232,8 @@ public class TrunkedCallStartTracker
         IdentifierCollection mergedIdentifiers = mergedIdentifiers(identifiers, updatedTarget, updatedSource);
         putObservation(resourceKey, new ActiveCall(updatedTarget, updatedSource,
             previous.encrypted() || encrypted, updatedEncryptionAlgorithm, updatedEncryptionKey,
-            previous.callStartEpochMilliseconds(), timestamp, previous.radioSystemKey(), previous.callToken(),
+            previous.callStartEpochMilliseconds(), timestamp, previous.radioSystemKey(),
+            observedNativeKey != null ? observedNativeKey : previous.lastObservedNativeKey(), previous.callToken(),
             previous.protocol(), previous.identityDomain()));
         enforceMaximumSize(mObservations);
 
@@ -337,7 +341,8 @@ public class TrunkedCallStartTracker
         {
             putObservation(key, new ActiveCall(current.target(), current.source(), current.encrypted(),
                 current.encryptionAlgorithmId(), current.encryptionKeyId(),
-                current.callStartEpochMilliseconds(), timestamp, current.radioSystemKey(), current.callToken(),
+                current.callStartEpochMilliseconds(), timestamp, current.radioSystemKey(),
+                current.lastObservedNativeKey(), current.callToken(),
                 current.protocol(), current.identityDomain()));
         }
     }
@@ -512,7 +517,7 @@ public class TrunkedCallStartTracker
     private record ActiveCall(TargetIdentity target, TargetIdentity source, boolean encrypted,
                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
                               long callStartEpochMilliseconds, long lastObservedAtMilliseconds,
-                              String radioSystemKey, String callToken, Protocol protocol,
+                              String radioSystemKey, String lastObservedNativeKey, String callToken, Protocol protocol,
                               TrunkedIdentityDomain identityDomain)
     {
     }

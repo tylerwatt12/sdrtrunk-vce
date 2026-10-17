@@ -12,6 +12,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataField;
@@ -107,8 +108,7 @@ final class ChannelActivityIngressQueue
             source : null;
         Identifier<?> target = identifiers != null ? identifiers.getToIdentifier() : null;
         cell.mMetadataTarget = target != null && target.isValid() ? target : null;
-        cell.mMetadataTalkerAlias = identifiers != null ?
-            identifiers.getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM) : null;
+        cell.mMetadataTalkerAlias = TalkerAliasIdentifier.find(identifiers);
         cell.mMetadataEncryption = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
         cell.mServingSite = parent != null && parent.getDecodeConfiguration() instanceof DecodeConfigP25 ?
             parent.getP25SiteIdentity() : null;

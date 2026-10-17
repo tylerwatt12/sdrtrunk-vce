@@ -89,11 +89,17 @@ public class SACCHAssembler
             layer3 = NXDNMessageFactory.get(type, message, mFragment4.getTimestamp(), mFragment4.getRAN(), mFragment4.getLICH());
         }
 
+        reset();
+
+        return layer3;
+    }
+    /** Discards partial link control when reception is reset or changes to another call context. */
+    public void reset()
+    {
         mFragment1 = null;
         mFragment2 = null;
         mFragment3 = null;
         mFragment4 = null;
-
-        return layer3;
     }
+
 }

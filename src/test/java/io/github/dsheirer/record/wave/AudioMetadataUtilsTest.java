@@ -36,6 +36,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
@@ -79,6 +80,30 @@ class AudioMetadataUtilsTest
             APCO25Talkgroup.create(100), APCO25RadioIdentifier.createFrom(200)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases), "200 Unit", "100\"Dispatch\"");
+    }
+
+    @Test
+    void unattributedOverTheAirTextCannotRelabelRecordedRadioOrDestination() throws Exception
+    {
+        AliasList aliases = aliasList();
+        addAlias(aliases, "Dispatch", new Talkgroup(Protocol.APCO25, 100));
+        addAlias(aliases, "Unit", new Radio(Protocol.APCO25, 200));
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(
+            APCO25Talkgroup.create(100), APCO25RadioIdentifier.createFrom(200),
+            P25TalkerAliasIdentifier.create("ANOTHER RADIO")));
+
+        assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases), "200 Unit", "100\"Dispatch\"");
+    }
+
+    @Test
+    void anAliasWithoutItsSourceCannotBecomeTheRecordedArtist() throws Exception
+    {
+        var raw = P25TalkerAliasIdentifier.create("ORPHAN NAME");
+        for(var alias: List.of(raw, raw.bindTo(APCO25RadioIdentifier.createFrom(200))))
+        {
+            assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(alias)),
+                aliasList()), null, null);
+        }
     }
 
     @Test

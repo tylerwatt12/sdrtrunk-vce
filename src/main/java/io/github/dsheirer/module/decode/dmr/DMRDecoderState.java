@@ -35,6 +35,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
@@ -98,6 +99,8 @@ import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncry
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedParameters;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
@@ -144,6 +147,10 @@ public class DMRDecoderState extends TimeslotDecoderState
     private String mCapacityMaxAliasContinuation;
     private int mCapacityMaxAliasLength;
     private DmrTalkerAliasIdentifier mPendingTalkerAlias;
+    private boolean mCapacityMaxAliasSequenceComplete;
+    private final java.util.concurrent.atomic.AtomicLong mAliasReceptionGeneration = new java.util.concurrent.atomic.AtomicLong();
+    private volatile boolean mTalkerAliasContextFresh = true;
+    private String mAliasRadioSystemKey;
     private DmrTalkerAliasIdentifier mReportedTalkerAlias;
     private RadioIdentifier mReportedTalkerAliasRadio;
     private boolean mIgnoreCRCChecksums;
@@ -283,6 +290,14 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     public void setCurrentCallEvent(DecodeEvent decodeEvent)
     {
+        if(decodeEvent != mCurrentCallEvent)
+        {
+            clearTalkerAliasState();
+            IdentifierCollection identifiers = decodeEvent != null ? decodeEvent.getIdentifierCollection() : null;
+            Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
+            Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
+            mTalkerAliasContextFresh = source != null && source.isValid() || target != null && target.isValid();
+        }
         if(decodeEvent != mCurrentCallEvent && !mTrunkingEnabled)
         {
             mCurrentCallToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
@@ -369,6 +384,8 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     public void reset()
     {
+        mAliasReceptionGeneration.incrementAndGet();
+        clearStandardReceiverAliasCache();
         OperationalMode operationalMode = mOperationalMode.updateAndGet(
             OperationalMode::withoutNetworkConfigurationSnapshot);
         DMRNetworkConfigurationMonitor monitor = operationalMode.networkConfigurationMonitor();
@@ -395,7 +412,9 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     protected void resetState()
     {
+        mAliasReceptionGeneration.incrementAndGet();
         super.resetState();
+        mTalkerAliasContextFresh = false;
         closeCurrentCallEvent(System.currentTimeMillis());
     }
 
@@ -405,8 +424,16 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     public void receive(IMessage message)
     {
+        long generation = mAliasReceptionGeneration.get();
         OperationalMode operationalMode = mOperationalMode.get();
+        if(message instanceof io.github.dsheirer.message.SyncLossMessage &&
+            (message.getTimeslot() == 0 || message.getTimeslot() == getTimeslot()))
+        {
+            invalidateAliasSource();
+            generation = mAliasReceptionGeneration.get();
+        }
 
+        if(generation != mAliasReceptionGeneration.get()) return;
         if(message.getTimeslot() == getTimeslot())
         {
             if(message instanceof VoiceMessage voice)
@@ -415,11 +442,11 @@ public class DMRDecoderState extends TimeslotDecoderState
             }
             else if(message instanceof DataMessage data)
             {
-                processData(data, operationalMode);
+                processData(data, operationalMode, generation);
             }
             else if(isValid(message) && message instanceof LCMessage lcMessage)
             {
-                processLinkControl(lcMessage, false, operationalMode);
+                processLinkControl(lcMessage, false, operationalMode, generation);
             }
             else if(isValid(message) && message instanceof DMRPacketMessage packet)
             {
@@ -441,7 +468,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         //SLCO messages on timeslot 0 to catch capacity plus rest channel events
         else if(isValid(message) && message.getTimeslot() == 0 && message instanceof LCMessage lcMessage)
         {
-            processLinkControl(lcMessage, false, operationalMode);
+            processLinkControl(lcMessage, false, operationalMode, generation);
         }
 
         //Pass the message to the network configuration monitor, if this decoder state has a non-null instance
@@ -480,7 +507,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     try
                     {
-                        updated.allocationManager().updateNetworkConfigurationSnapshot(snapshot);
+                        updateAliasNetworkSnapshot(updated.allocationManager(), snapshot);
                     }
                     finally
                     {
@@ -578,7 +605,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     {
                         try
                         {
-                            updated.allocationManager().updateNetworkConfigurationSnapshot(preloadData.getSnapshot());
+                            updateAliasNetworkSnapshot(updated.allocationManager(), preloadData.getSnapshot());
                         }
                         finally
                         {
@@ -969,7 +996,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     /**
      * Processes a voice header message
      */
-    private void processHeader(HeaderMessage header, OperationalMode operationalMode)
+    private void processHeader(HeaderMessage header, OperationalMode operationalMode, long generation)
     {
         switch(header.getSlotType().getDataType())
         {
@@ -989,7 +1016,7 @@ public class DMRDecoderState extends TimeslotDecoderState
 
         if(isValid(lc))
         {
-            processLinkControl(lc, false, operationalMode);
+            processLinkControl(lc, false, operationalMode, generation);
         }
     }
 
@@ -999,7 +1026,7 @@ public class DMRDecoderState extends TimeslotDecoderState
      * Note: invalid messages are allowed to pass to this method.  Messages are selectively checked for isValid()
      * to overcome RAS implementation in certain systems.
      */
-    private void processData(DataMessage message, OperationalMode operationalMode)
+    private void processData(DataMessage message, OperationalMode operationalMode, long generation)
     {
         switch(message.getSlotType().getDataType())
         {
@@ -1012,7 +1039,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case VOICE_HEADER:
                 if(message instanceof HeaderMessage header)
                 {
-                    processVoiceHeader(header, operationalMode);
+                    processVoiceHeader(header, operationalMode, generation);
                 }
                 break;
             case USB_DATA:
@@ -1021,11 +1048,12 @@ public class DMRDecoderState extends TimeslotDecoderState
                 CHANNEL_CONTROL_ENC_HEADER:
                 if(message instanceof HeaderMessage header)
                 {
-                    processHeader(header, operationalMode);
+                    processHeader(header, operationalMode, generation);
                 }
                 break;
             case SLOT_IDLE:
                 closeCurrentCallEvent(message.getTimestamp());
+                mTalkerAliasContextFresh = false;
                 getIdentifierCollection().remove(IdentifierClass.USER);
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
                 DMRNetworkConfigurationMonitor networkConfigurationMonitor =
@@ -1039,7 +1067,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case TLC:
                 if(message instanceof Terminator terminator)
                 {
-                    processTerminator(terminator, operationalMode);
+                    processTerminator(terminator, operationalMode, generation);
                 }
                 break;
             case RATE_1_OF_2_DATA, RATE_3_OF_4_DATA, RATE_1_DATA:
@@ -1057,19 +1085,21 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void processTerminator(Terminator terminator)
     {
-        processTerminator(terminator, mOperationalMode.get());
+        processTerminator(terminator, mOperationalMode.get(), mAliasReceptionGeneration.get());
     }
 
-    private void processTerminator(Terminator terminator, OperationalMode operationalMode)
+    private void processTerminator(Terminator terminator, OperationalMode operationalMode, long generation)
     {
         LCMessage lcMessage = terminator.getLCMessage();
 
         if(isValid(lcMessage))
         {
-            processLinkControl(lcMessage, true, operationalMode);
+            processLinkControl(lcMessage, true, operationalMode, generation);
         }
 
+        if(generation != mAliasReceptionGeneration.get()) return;
         closeCurrentCallEvent(terminator.getTimestamp());
+        mTalkerAliasContextFresh = false;
         getIdentifierCollection().remove(Role.FROM);
         broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
     }
@@ -1077,13 +1107,13 @@ public class DMRDecoderState extends TimeslotDecoderState
     /**
      * Process a voice header message
      */
-    private void processVoiceHeader(HeaderMessage voiceHeader, OperationalMode operationalMode)
+    private void processVoiceHeader(HeaderMessage voiceHeader, OperationalMode operationalMode, long generation)
     {
         LCMessage lcMessage = voiceHeader.getLCMessage();
 
         if(isValid(lcMessage))
         {
-            processLinkControl(lcMessage, false, operationalMode);
+            processLinkControl(lcMessage, false, operationalMode, generation);
         }
     }
 
@@ -1581,12 +1611,16 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void processLinkControl(LCMessage message, boolean isTerminator)
     {
-        processLinkControl(message, isTerminator, mOperationalMode.get());
+        processLinkControl(message, isTerminator, mOperationalMode.get(), mAliasReceptionGeneration.get());
     }
 
-    private void processLinkControl(LCMessage message, boolean isTerminator, OperationalMode operationalMode)
+    private void processLinkControl(LCMessage message, boolean isTerminator, OperationalMode operationalMode, long generation)
     {
-        switch(message.getOpcode())
+        if(generation != mAliasReceptionGeneration.get()) return;
+        if(!isTerminator) prepareVoiceCallParticipants(message, generation);
+        var opcode = message.getOpcode();
+        if(generation != mAliasReceptionGeneration.get()) return;
+        switch(opcode)
         {
             case FULL_ENCRYPTION_PARAMETERS:
                 if(message instanceof io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters ep &&
@@ -1655,28 +1689,33 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case FULL_CAPACITY_MAX_TALKER_ALIAS:
-                if(message instanceof CapacityMaxTalkerAlias alias)
+                if(message instanceof CapacityMaxTalkerAlias alias && mTalkerAliasContextFresh)
                 {
                     if(alias.getLength() > 0 && alias.getLength() <= 13)
                     {
                         String base = alias.getAliasFragment();
+                        if(generation != mAliasReceptionGeneration.get()) return;
                         if(mCapacityMaxAliasBase != null && (!mCapacityMaxAliasBase.equals(base) ||
                             mCapacityMaxAliasLength != alias.getLength()))
                         {
                             mCapacityMaxAliasContinuation = null;
                             mPendingTalkerAlias = null;
                         }
+                        mCapacityMaxAliasSequenceComplete = false;
                         mCapacityMaxAliasBase = base;
                         mCapacityMaxAliasLength = alias.getLength();
-                        completeCapacityMaxAlias(message.getTimestamp());
+                        completeCapacityMaxAlias(message.getTimestamp(), generation);
                     }
                 }
                 break;
             case FULL_CAPACITY_MAX_TALKER_ALIAS_CONTINUATION:
-                if(message instanceof CapacityMaxTalkerAliasContinuation alias)
+                if(message instanceof CapacityMaxTalkerAliasContinuation alias && mTalkerAliasContextFresh &&
+                    !mCapacityMaxAliasSequenceComplete)
                 {
-                    mCapacityMaxAliasContinuation = alias.getAliasFragment();
-                    completeCapacityMaxAlias(message.getTimestamp());
+                    String continuation = alias.getAliasFragment();
+                    if(generation != mAliasReceptionGeneration.get()) return;
+                    mCapacityMaxAliasContinuation = continuation;
+                    completeCapacityMaxAlias(message.getTimestamp(), generation);
                 }
                 break;
             case FULL_CAPACITY_PLUS_WIDE_AREA_VOICE_CHANNEL_USER:
@@ -1785,7 +1824,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case FULL_STANDARD_TALKER_ALIAS_COMPLETE:
                 if(message instanceof TalkerAliasComplete tac && tac.hasTalkerAliasIdentifier())
                 {
-                    completeTalkerAlias(tac.getTalkerAliasIdentifier(), message.getTimestamp());
+                    completeTalkerAlias(tac.getTalkerAliasIdentifier(), message.getTimestamp(), generation);
                 }
                 break;
             default:
@@ -1793,24 +1832,62 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
     }
 
-    private void completeCapacityMaxAlias(long timestamp)
+    /** A new known destination cannot borrow the preceding call's radio when its header omits the source. */
+    private void prepareVoiceCallParticipants(LCMessage message, long generation)
     {
-        if(mCapacityMaxAliasBase != null && (mCapacityMaxAliasLength <= 6 ||
+        boolean voice = switch(message.getOpcode())
+        {
+            case FULL_STANDARD_GROUP_VOICE_CHANNEL_USER, FULL_STANDARD_UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                FULL_HYTERA_GROUP_VOICE_CHANNEL_USER, FULL_HYTERA_UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                FULL_MOTOROLA_GROUP_VOICE_CHANNEL_USER, FULL_CAPACITY_PLUS_WIDE_AREA_VOICE_CHANNEL_USER,
+                FULL_CAPACITY_MAX_GROUP_VOICE_CHANNEL_USER, FULL_CAPACITY_PLUS_ENCRYPTED_VOICE_CHANNEL_USER -> true;
+            default -> false;
+        };
+        if(!voice) return;
+        List<Identifier> identifiers = message.getIdentifiers();
+        if(generation != mAliasReceptionGeneration.get()) return;
+        for(Identifier identifier: identifiers)
+        {
+            if(identifier.isValid() && (identifier.getRole() == Role.FROM || identifier.getRole() == Role.TO))
+                mTalkerAliasContextFresh = true;
+        }
+        Identifier previous = getIdentifierCollection().getToIdentifier();
+        if(previous == null) return;
+        for(Identifier identifier: message.getIdentifiers())
+        {
+            if(identifier.getRole() == Role.TO && identifier.isValid() && !previous.equals(identifier))
+            {
+                getIdentifierCollection().remove(IdentifierClass.USER);
+                clearTalkerAliasState();
+                return;
+            }
+        }
+    }
+
+    private void completeCapacityMaxAlias(long timestamp, long generation)
+    {
+        if(generation == mAliasReceptionGeneration.get() && mCapacityMaxAliasBase != null && (mCapacityMaxAliasLength <= 6 ||
             mCapacityMaxAliasContinuation != null))
         {
             String assembled = mCapacityMaxAliasBase +
                 (mCapacityMaxAliasContinuation != null ? mCapacityMaxAliasContinuation : "");
             if(assembled.length() >= mCapacityMaxAliasLength)
             {
-                completeTalkerAlias(DmrTalkerAliasIdentifier.create(
-                    assembled.substring(0, mCapacityMaxAliasLength).trim()), timestamp);
+                DmrTalkerAliasIdentifier alias = DmrTalkerAliasIdentifier.create(
+                    assembled.substring(0, mCapacityMaxAliasLength).trim());
+                mCapacityMaxAliasBase = null;
+                mCapacityMaxAliasContinuation = null;
+                mCapacityMaxAliasLength = 0;
+                mCapacityMaxAliasSequenceComplete = true;
+                completeTalkerAlias(alias, timestamp, generation);
             }
         }
     }
 
     /** Keeps only a complete alias; a same-call radio learned later can finish its attribution. */
-    private void completeTalkerAlias(DmrTalkerAliasIdentifier alias, long timestamp)
+    private void completeTalkerAlias(DmrTalkerAliasIdentifier alias, long timestamp, long generation)
     {
+        if(generation != mAliasReceptionGeneration.get() || !mTalkerAliasContextFresh) return;
         Identifier source = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
         if(mCurrentCallEvent == null &&
             (!(source instanceof RadioIdentifier radio) || positive(radio.getValue()) == null))
@@ -1824,25 +1901,35 @@ public class DMRDecoderState extends TimeslotDecoderState
             return;
         }
 
-        getIdentifierCollection().update(alias);
         mPendingTalkerAlias = alias;
-        if(mCurrentCallEvent != null)
-        {
-            mCurrentCallEvent.setIdentifierCollection(getIdentifierCollection().copyOf());
-            broadcast(mCurrentCallEvent, timestamp);
-        }
-        reportPendingTalkerAlias(timestamp);
+        reportPendingTalkerAlias(timestamp, generation);
     }
 
-    private void reportPendingTalkerAlias(long timestamp)
+    private void reportPendingTalkerAlias(long timestamp, long generation)
     {
         Identifier from = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
 
-        if(mPendingTalkerAlias != null && mTrafficChannelEventManager != null &&
+        if(generation == mAliasReceptionGeneration.get() && mTalkerAliasContextFresh && mPendingTalkerAlias != null &&
             from instanceof RadioIdentifier radio && positive(radio.getValue()) != null)
         {
-            mTrafficChannelEventManager.processTalkerAlias(getCurrentChannel(), mPendingTalkerAlias, radio,
-                getIdentifierCollection().copyOf(), timestamp);
+            TalkerAliasIdentifier bound = mPendingTalkerAlias.bindTo(getIdentifierCollection());
+            if(bound != null && mTrafficChannelEventManager != null)
+                bound = bound.bindTo(radio, mTrafficChannelEventManager.getNativeRadioSystemKey());
+            if(bound == null || generation != mAliasReceptionGeneration.get()) return;
+            getIdentifierCollection().update(bound);
+            if(generation != mAliasReceptionGeneration.get()) return;
+            if(mCurrentCallEvent != null)
+            {
+                mCurrentCallEvent.setIdentifierCollection(getIdentifierCollection().copyOf());
+                broadcast(mCurrentCallEvent, timestamp);
+            }
+            if(generation != mAliasReceptionGeneration.get()) return;
+            if(mTrafficChannelEventManager != null)
+            {
+                mTrafficChannelEventManager.processTalkerAlias(getCurrentChannel(), bound, radio,
+                    getIdentifierCollection().copyOf(), timestamp);
+            }
+            if(generation != mAliasReceptionGeneration.get()) return;
             mReportedTalkerAlias = mPendingTalkerAlias;
             mReportedTalkerAliasRadio = radio;
             mPendingTalkerAlias = null;
@@ -1902,6 +1989,7 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void updateCurrentCall(DecodeEventType type, String details, long timestamp)
     {
+        long generation = mAliasReceptionGeneration.get();
         if(mCurrentCallEvent != null &&
             callIdentityChanged(mCurrentCallEvent.getIdentifierCollection(), getIdentifierCollection()))
         {
@@ -1944,7 +2032,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
 
         broadcast(mCurrentCallEvent);
-        reportPendingTalkerAlias(timestamp);
+        reportPendingTalkerAlias(timestamp, generation);
 
         if(type == DecodeEventType.CALL_GROUP_ENCRYPTED || type == DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED)
         {
@@ -2010,11 +2098,65 @@ public class DMRDecoderState extends TimeslotDecoderState
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TONE, Role.FROM);
     }
 
+    private void updateAliasNetworkSnapshot(DMRTrafficChannelManager manager,
+                                             DMRNetworkConfigurationSnapshot snapshot)
+    {
+        String key = snapshot != null && "TIER_III".equals(snapshot.variant()) ?
+            RadioSystemKey.dmrTier3(snapshot.model(), snapshot.network()) : null;
+        observeAliasRadioSystemKey(key);
+        manager.updateNetworkConfigurationSnapshot(snapshot);
+    }
+
+    @Subscribe
+    public void receiveAliasRadioSystemKey(RadioSystemKeyEvent event)
+    {
+        if(event != null && !event.isCallActivation()) observeAliasRadioSystemKey(event.radioSystemKey());
+    }
+
+    private void observeAliasRadioSystemKey(String key)
+    {
+        if(key != null && RadioSystemKey.isChannelScoped(key)) key = null;
+        if(!java.util.Objects.equals(key, mAliasRadioSystemKey))
+        {
+            mAliasRadioSystemKey = key;
+            invalidateAliasSource();
+            if(mSisterDecoderState != null)
+            {
+                mSisterDecoderState.mAliasRadioSystemKey = key;
+                mSisterDecoderState.invalidateAliasSource();
+            }
+        }
+    }
+
+    private void invalidateAliasSource()
+    {
+        mAliasReceptionGeneration.incrementAndGet();
+        clearTalkerAliasState();
+        mTalkerAliasContextFresh = false;
+        getIdentifierCollection().remove(Role.FROM);
+    }
+
+    private void clearStandardReceiverAliasCache()
+    {
+        Channel channel = mOperationalMode.get().channel();
+        if(channel != null && channel.isStandardChannel() && mTrafficChannelEventManager != null)
+            mTrafficChannelEventManager.getTalkerAliasManager().clear();
+    }
+
+    @Override
+    public void stop()
+    {
+        invalidateAliasSource();
+        clearStandardReceiverAliasCache();
+        super.stop();
+    }
+
     private void clearTalkerAliasState()
     {
         mCapacityMaxAliasBase = null;
         mCapacityMaxAliasContinuation = null;
         mCapacityMaxAliasLength = 0;
+        mCapacityMaxAliasSequenceComplete = false;
         mPendingTalkerAlias = null;
         mReportedTalkerAlias = null;
         mReportedTalkerAliasRadio = null;
@@ -2158,7 +2300,10 @@ public class DMRDecoderState extends TimeslotDecoderState
                 if(!mTrunkingEnabled && channel.isStandardChannel() &&
                     getCurrentFrequency() != event.getFrequency())
                 {
+                    invalidateAliasSource();
                     closeCurrentCallEvent(System.currentTimeMillis());
+                    getIdentifierCollection().remove(IdentifierClass.USER);
+                    clearStandardReceiverAliasCache();
                     setCurrentChannel(null);
                 }
 

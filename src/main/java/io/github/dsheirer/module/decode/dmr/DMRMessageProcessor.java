@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,6 +74,9 @@ public class DMRMessageProcessor implements Listener<IMessage>
     private final PacketSequenceAssembler mPacketSequenceAssembler;
     private final SLCAssembler mSLCAssembler = new SLCAssembler();
     private final TalkerAliasAssembler mTalkerAliasAssembler = new TalkerAliasAssembler();
+    private final AtomicLong mReceptionGeneration = new AtomicLong();
+    private volatile boolean mTalkerAliasContextFreshTs1;
+    private volatile boolean mTalkerAliasContextFreshTs2;
     private Listener<IMessage> mMessageListener;
     private final Map<Integer,TimeslotFrequency> mTimeslotFrequencyMap = new TreeMap<>();
     private final DMRCrcMaskManager mCrcMaskManager;
@@ -115,16 +119,15 @@ public class DMRMessageProcessor implements Listener<IMessage>
     @Override
     public void receive(IMessage message)
     {
-        if(message == null)
+        if(message instanceof SyncLossMessage) reset();
+        receive(message, mReceptionGeneration.get());
+    }
+
+    private void receive(IMessage message, long generation)
+    {
+        if(generation != mReceptionGeneration.get() || message == null)
         {
             return;
-        }
-
-        if(message instanceof SyncLossMessage)
-        {
-            mSLCAssembler.reset();
-            mFLCAssemblerTimeslot1.reset();
-            mFLCAssemblerTimeslot2.reset();
         }
 
         //Detect and correct messages employing an alternate CRC mask pattern (ie RAS) when ignore CRC is disabled
@@ -137,6 +140,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
 
         if(message instanceof FullLCMessage flc)
         {
+            if(isValid(flc)) observeAliasCall(flc);
             if(flc.getTimeslot() == 1)
             {
                 mSuperFrameProcessor1.process(flc);
@@ -173,13 +177,20 @@ public class DMRMessageProcessor implements Listener<IMessage>
         if(message instanceof DataMessageWithLinkControl linkControlCarrier)
         {
             enrich(linkControlCarrier.getLCMessage());
+            if(isValid(message) && linkControlCarrier.getLCMessage() instanceof FullLCMessage flc && isValid(flc))
+            {
+                observeAliasCall(flc);
+            }
         }
 
         //Enrich messages that carry DMR Logical Channel Numbers with LCN to frequency mappings
         enrich(message);
 
+        if(generation != mReceptionGeneration.get()) return;
+
         //Now that the message has been (potentially) enriched, dispatch it to the modules
-        dispatch(message);
+        dispatch(message, generation);
+        if(generation != mReceptionGeneration.get()) return;
 
         //Extract the Full Link Control message fragment from the Voice with embedded signalling message
         if(message instanceof VoiceEMBMessage voice)
@@ -188,20 +199,21 @@ public class DMRMessageProcessor implements Listener<IMessage>
             {
                 FullLCMessage flco = mFLCAssemblerTimeslot1.process(voice.getEMB().getLCSS(),
                     voice.getFLCFragment(), message.getTimestamp());
-                receive(flco);
+                receive(flco, generation);
             }
             else
             {
                 FullLCMessage flco = mFLCAssemblerTimeslot2.process(voice.getEMB().getLCSS(),
                     voice.getFLCFragment(), message.getTimestamp());
-                receive(flco);
+                receive(flco, generation);
             }
 
+            if(generation != mReceptionGeneration.get()) return;
             if(voice.hasCACH())
             {
                 CACH cach = voice.getCACH();
                 ShortLCMessage slco = mSLCAssembler.process(cach.getLCSS(), cach.getPayload(), message.getTimestamp());
-                receive(slco);
+                receive(slco, generation);
             }
         }
         //Extract the Short Link Control message fragment from the DMR burst message when it has one
@@ -211,7 +223,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
             {
                 CACH cach = dmrBurst.getCACH();
                 ShortLCMessage slco = mSLCAssembler.process(cach.getLCSS(), cach.getPayload(), message.getTimestamp());
-                receive(slco);
+                receive(slco, generation);
             }
 
             //Multi-Block CSBK Reassembly
@@ -222,7 +234,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
             else if(message instanceof MBCContinuationBlock)
             {
                 //Returns either a fully reassembled MultiCSBK or null
-                receive(mMBCAssembler.process((MBCContinuationBlock)message));
+                receive(mMBCAssembler.process((MBCContinuationBlock)message), generation);
             }
             else
             {
@@ -260,14 +272,33 @@ public class DMRMessageProcessor implements Listener<IMessage>
             if(isValid(message) && (message instanceof IDLEMessage || message instanceof Terminator))
             {
                 mTalkerAliasAssembler.reset(message.getTimeslot());
+                setAliasContextFresh(message.getTimeslot(), false);
             }
         }
+
+        if(generation != mReceptionGeneration.get()) return;
 
         //Assemble Talker Alias from FLC message fragments (header & blocks 1-3)
         if(message instanceof FullLCMessage flc && flc.getOpcode().isTalkerAliasOpcode() && isValid(message))
         {
-            dispatch(mTalkerAliasAssembler.process(flc));
+            if((message.getTimeslot() == 1 || message.getTimeslot() == 2) &&
+                (message.getTimeslot() == 1 ? mTalkerAliasContextFreshTs1 : mTalkerAliasContextFreshTs2))
+            {
+                dispatch(mTalkerAliasAssembler.process(flc), generation);
+            }
         }
+    }
+
+    private void observeAliasCall(FullLCMessage message)
+    {
+        if(mTalkerAliasAssembler.observeCall(message))
+            setAliasContextFresh(message.getTimeslot(), true);
+    }
+
+    private void setAliasContextFresh(int timeslot, boolean fresh)
+    {
+        if(timeslot == 1) mTalkerAliasContextFreshTs1 = fresh;
+        else if(timeslot == 2) mTalkerAliasContextFreshTs2 = fresh;
     }
 
     /**
@@ -300,9 +331,9 @@ public class DMRMessageProcessor implements Listener<IMessage>
     /**
      * Dispatches the non-null message to the registered listener
      */
-    private void dispatch(IMessage message)
+    private void dispatch(IMessage message, long generation)
     {
-        if(mMessageListener != null && message != null)
+        if(generation == mReceptionGeneration.get() && mMessageListener != null && message != null)
         {
             //Configure compressed talkgroups for the DMR talkgroup identifiers in the message.
             if(mConfigDMR.isUseCompressedTalkgroups())
@@ -324,8 +355,21 @@ public class DMRMessageProcessor implements Listener<IMessage>
                 }
             }
 
-            mMessageListener.receive(message);
+            if(generation == mReceptionGeneration.get()) mMessageListener.receive(message);
         }
+    }
+
+    /** Clears per-reception fragments when this decoder is reset or retuned. */
+    public void reset()
+    {
+        mReceptionGeneration.incrementAndGet();
+        mSLCAssembler.reset();
+        mFLCAssemblerTimeslot1.reset();
+        mFLCAssemblerTimeslot2.reset();
+        mTalkerAliasAssembler.reset(1);
+        mTalkerAliasAssembler.reset(2);
+        mTalkerAliasContextFreshTs1 = false;
+        mTalkerAliasContextFreshTs2 = false;
     }
 
     /**
@@ -333,6 +377,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
      */
     public void dispose()
     {
+        reset();
         mMessageListener = null;
     }
 

@@ -21,6 +21,8 @@ import io.github.dsheirer.identifier.IdentityResolutionEvidence;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
@@ -67,13 +69,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ChannelActivityCallFactsTest
 {
     @Test
+    void mismatchedOwnerCannotLabelTheCurrentRadioAcrossProtocols() throws Exception
+    {
+        eachProtocol(f -> {
+            f.observe(1, 1_000, 1_000, false, f.radio(202), f.group(91),
+                f.talker("OTHER RADIO", f.radio(101)));
+            assertEquals(202, f.row(1).getSource().getValue());
+            assertNull(f.row(1).getTalkerAlias());
+            f.observe(1, 1_000, 1_100, false, f.radio(202), f.group(91),
+                f.talker("CURRENT RADIO", f.radio(202)));
+            assertEquals("CURRENT RADIO", f.row(1).getTalkerAlias().getValue());
+        });
+    }
+
+    @Test
     void lateSourceAndTargetFillTheCurrentCallAcrossProtocols() throws Exception
     {
         eachProtocol(f -> {
             f.observe(1, 1_000, 1_000, false);
             assertNull(f.row(1).getSource());
             assertNull(f.row(1).getTarget());
-            f.observe(1, 1_000, 1_100, false, f.radio(101), f.group(91), f.talker("Portable 101"));
+            f.observe(1, 1_000, 1_100, false, f.radio(101), f.group(91), f.talker("Portable 101", f.radio(101)));
             assertEquals(101, f.row(1).getSource().getValue());
             assertEquals(91, f.row(1).getTarget().getValue());
             assertEquals("Portable 101", f.row(1).getTalkerAlias().getValue());
@@ -86,10 +102,10 @@ class ChannelActivityCallFactsTest
     void changedTalkerOnTheSameGroupClearsOldNameAndEncryptionAcrossProtocols() throws Exception
     {
         eachProtocol(f -> {
-            f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("Portable 101"), f.encryption());
+            f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("Portable 101", f.radio(101)), f.encryption());
             assertEquals(State.ENCRYPTED, f.row(1).getState());
             assertNotNull(f.row(1).getEncryptionDetails());
-            f.observe(1, 1_000, 1_100, false, f.radio(202), f.group(91), f.talker("Portable 202"));
+            f.observe(1, 1_000, 1_100, false, f.radio(202), f.group(91), f.talker("Portable 202", f.radio(202)));
             assertEquals(202, f.row(1).getSource().getValue());
             assertEquals("Portable 202", f.row(1).getTalkerAlias().getValue());
             assertEquals("Unit 202", f.row(1).getSourceAliases().getFirst().getName());
@@ -102,11 +118,11 @@ class ChannelActivityCallFactsTest
     void currentConfiguredNamesAndOtaNameRefreshAcrossProtocols() throws Exception
     {
         eachProtocol(f -> {
-            f.observe(1, 1_000, 1_000, false, f.radio(101), f.group(91), f.talker("Portable"));
+            f.observe(1, 1_000, 1_000, false, f.radio(101), f.group(91), f.talker("Portable", f.radio(101)));
             f.aliases.replaceCommittedConfiguration(List.of(f.definition), List.of(
                 f.alias("Renamed unit", 11, new Radio(f.variant.protocol, 101)),
                 f.alias("Renamed dispatch", 12, new Talkgroup(f.variant.protocol, 91))));
-            f.observe(1, 1_000, 1_100, false, f.radio(101), f.group(91), f.talker("Updated portable"));
+            f.observe(1, 1_000, 1_100, false, f.radio(101), f.group(91), f.talker("Updated portable", f.radio(101)));
             assertEquals("Renamed unit", f.row(1).getSourceAliases().getFirst().getName());
             assertEquals("Renamed dispatch", f.row(1).getTargetAliases().getFirst().getName());
             assertEquals("Updated portable", f.row(1).getTalkerAlias().getValue());
@@ -119,7 +135,7 @@ class ChannelActivityCallFactsTest
         eachProtocol(f -> {
             Identifier<?> source = f.radio(101);
             Identifier<?> target = f.group(91);
-            Identifier<?> talker = f.talker("Portable 101");
+            Identifier<?> talker = f.talker("Portable 101", f.radio(101));
             f.observe(1, 1_000, 1_000, true, source, target, talker, f.encryption());
             String encryption = f.row(1).getEncryptionDetails();
             f.observe(1, 0, 1_100, false);
@@ -137,7 +153,7 @@ class ChannelActivityCallFactsTest
     void newCallFromTheSameRadioDoesNotInheritOldCallDetailsAcrossProtocols() throws Exception
     {
         eachProtocol(f -> {
-            f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("Old portable"), f.encryption());
+            f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("Old portable", f.radio(101)), f.encryption());
             f.observe(1, 1_200, 1_200, false, f.radio(101), f.group(91));
             assertEquals(101, f.row(1).getSource().getValue());
             assertEquals(91, f.row(1).getTarget().getValue());
@@ -152,9 +168,9 @@ class ChannelActivityCallFactsTest
     {
         eachProtocol(f -> {
             f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.encryption());
-            f.observe(1, 2_000, 2_100, false, f.radio(202), f.group(91), f.talker("Current portable"));
-            f.observe(1, 1_000, 2_200, true, f.radio(101), f.group(92), f.talker("Old call"), f.encryption());
-            f.observe(1, 2_000, 2_050, true, f.radio(303), f.group(93), f.talker("Old observation"), f.encryption());
+            f.observe(1, 2_000, 2_100, false, f.radio(202), f.group(91), f.talker("Current portable", f.radio(202)));
+            f.observe(1, 1_000, 2_200, true, f.radio(101), f.group(92), f.talker("Old call", f.radio(101)), f.encryption());
+            f.observe(1, 2_000, 2_050, true, f.radio(303), f.group(93), f.talker("Old observation", f.radio(303)), f.encryption());
             f.observe(1, 0, 2_050, true, f.radio(404), f.group(94), f.encryption());
             assertEquals(202, f.row(1).getSource().getValue());
             assertEquals(91, f.row(1).getTarget().getValue());
@@ -171,8 +187,8 @@ class ChannelActivityCallFactsTest
         {
             try(Fixture f = new Fixture(variant))
             {
-                f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("First slot"), f.encryption());
-                f.observe(2, 1_000, 1_000, false, f.radio(202), f.group(92), f.talker("Second slot"));
+                f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("First slot", f.radio(101)), f.encryption());
+                f.observe(2, 1_000, 1_000, false, f.radio(202), f.group(92), f.talker("Second slot", f.radio(202)));
                 f.observe(1, 2_000, 2_000, false, f.radio(303), f.group(93));
                 f.observe(1, 1_000, 2_100, true, f.radio(101), f.group(91), f.encryption());
                 assertEquals(303, f.row(1).getSource().getValue());
@@ -192,7 +208,7 @@ class ChannelActivityCallFactsTest
         {
             try(Fixture f = new Fixture(variant))
             {
-                f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("Home portable"), f.encryption());
+                f.observe(1, 1_000, 1_000, true, f.radio(101), f.group(91), f.talker("Home portable", f.radio(101)), f.encryption());
                 var home = APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x123, 101);
                 f.observe(1, 1_000, 1_100, false, home, f.group(91));
                 assertSame(home, f.row(1).getSource());
@@ -201,7 +217,7 @@ class ChannelActivityCallFactsTest
                 assertEquals(State.ENCRYPTED, f.row(1).getState());
 
                 var first = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(500, 0xBEE00, 0x123, 101);
-                f.observe(1, 2_000, 2_000, true, first, f.group(91), f.talker("First home"), f.encryption());
+                f.observe(1, 2_000, 2_000, true, first, f.group(91), f.talker("First home", first), f.encryption());
                 var foreign = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(500, 0xBEE01, 0x124, 101);
                 f.observe(1, 2_000, 2_100, false, foreign, f.group(91));
                 assertSame(foreign, f.row(1).getSource(), "Equal working numbers must not merge conflicting homes");
@@ -226,7 +242,7 @@ class ChannelActivityCallFactsTest
                     f.alias("Roaming target", 14, new P25Subscriber(0xBEE01, 0x124, 901))));
                 var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(101, 0xBEE01, 0x124, 900);
                 var target = APCO25FullyQualifiedRadioIdentifier.createToWithWorkingAddress(202, 0xBEE01, 0x124, 901);
-                Identifier<?> talker = f.talker("Roaming portable");
+                Identifier<?> talker = f.talker("Roaming portable", source);
                 f.observe(1, 1_000, 1_000, true, source, target, talker, f.encryption());
 
                 f.observe(1, 1_000, 1_100, false, f.radio(101), APCO25RadioIdentifier.createTo(202));
@@ -444,14 +460,16 @@ class ChannelActivityCallFactsTest
             };
         }
 
-        Identifier<?> talker(String text)
+        TalkerAliasIdentifier talker(String text, Identifier<?> source)
         {
-            return switch(variant)
+            TalkerAliasIdentifier alias = switch(variant)
             {
                 case P25_PHASE1, P25_PHASE2 -> P25TalkerAliasIdentifier.create(text);
                 case DMR -> DmrTalkerAliasIdentifier.create(text);
                 case NXDN -> new NXDNTalkerAliasIdentifier(text);
             };
+            return alias.bindTo((RadioIdentifier)source,
+                variant.family == AliasListFamily.P25 ? "p25:bee00:123" : null);
         }
 
         Identifier<?> encryption()

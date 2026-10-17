@@ -56,6 +56,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -1638,7 +1639,7 @@ class ReceiverActivityMapper
                 intValue(first(identifiers, Form.NETWORK_ACCESS_CODE)),
                 intValue(first(identifiers, Form.RF_SUBSYSTEM)), intValue(first(identifiers, Form.SITE)),
                 value(first(identifiers, Form.UNIQUE_ID)), value(first(identifiers, Form.DECODER_TYPE)),
-                value(first(identifiers, Form.TALKER_ALIAS)), timeslot);
+                TalkerAliasIdentifier.valueFor(identifiers), timeslot);
         }
 
         boolean hasTrunkedSiteIdentity()

@@ -84,6 +84,14 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
     private long mConnectionAttemptInterval = 5000; //Every 5 seconds
     private AliasModel mAliasModel;
 
+    static String getTalkerAlias(AudioRecording audioRecording)
+    {
+        Identifier<?> source = audioRecording.getIdentifierCollection().getFromIdentifier();
+        String alias = source instanceof RadioIdentifier radio && radio.getValue() > 0 ?
+            TalkerAliasIdentifier.valueFor(audioRecording.getIdentifierCollection()) : null;
+        return alias != null ? alias : "";
+    }
+
     /**
      * Constructs an instance of the broadcaster
      * @param config to use
@@ -345,24 +353,6 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
             }
 
             return "0";
-        }
-
-        private String getTalkerAlias(AudioRecording audioRecording)
-        {
-            for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-            {
-                if(identifier instanceof TalkerAliasIdentifier)
-                {
-                    TalkerAliasIdentifier talkerID = (TalkerAliasIdentifier)identifier;
-
-                    if(talkerID.isValid())
-                    {
-                        return talkerID.getValue();
-                    }
-                }
-            }
-
-            return "";
         }
 
         /**

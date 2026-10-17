@@ -28,6 +28,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.P25IdentityFormatter;
@@ -802,8 +803,7 @@ final class StatsWebCallService implements AutoCloseable
         putText(value, "source_group", recordingMetadata != null ? recordingMetadata.sourceGroup() : null,
             MAXIMUM_ALIAS_METADATA_TEXT_CHARACTERS);
         putText(value, "source_form", form(source));
-        putText(value, "talker_alias", identifierValue(identifiers, IdentifierClass.USER, Form.TALKER_ALIAS,
-            Role.FROM));
+        putText(value, "talker_alias", TalkerAliasIdentifier.valueFor(identifiers));
         putText(value, "target_id", recordingMetadata != null ? recordingMetadata.destinationValue() : value(target));
         if(recordingMetadata != null && recordingMetadata.destinationP25Identity() != null)
         {

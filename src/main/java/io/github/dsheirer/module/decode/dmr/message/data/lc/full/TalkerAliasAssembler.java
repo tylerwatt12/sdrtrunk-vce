@@ -20,150 +20,104 @@
 package io.github.dsheirer.module.decode.dmr.message.data.lc.full;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.Role;
 
 /**
  * Aggregates a sequence of talker alias full link control messages to reconstruct the talker alias.
  */
 public class TalkerAliasAssembler
 {
-    //Timeslot 1 fragments
-    private TalkerAliasHeader mHeaderTs1;
-    private TalkerAliasBlock1 mBlock1Ts1;
-    private TalkerAliasBlock2 mBlock2Ts1;
-    private TalkerAliasBlock3 mBlock3Ts1;
+    private final Assembly[] mAssemblies = {new Assembly(), new Assembly()};
 
-    //Timeslot 2 fragments
-    private TalkerAliasHeader mHeaderTs2;
-    private TalkerAliasBlock1 mBlock1Ts2;
-    private TalkerAliasBlock2 mBlock2Ts2;
-    private TalkerAliasBlock3 mBlock3Ts2;
-
-    //Flags indicating if we have any non-null fragments for the specified timeslot to support resetting.
-    private boolean mEmptyTs1 = true;
-    private boolean mEmptyTs2 = true;
-
-    /**
-     * Resets the contents of either timeslot 1 or 2 when a terminator or idle message is received.
-     * @param timeslot 1 or 2
-     */
+    /** Clears both the fragments and the known call participants for this timeslot. */
     public void reset(int timeslot)
     {
-        if(timeslot == 1 && !mEmptyTs1)
+        if(timeslot == 1 || timeslot == 2)
         {
-            mHeaderTs1 = null;
-            mBlock1Ts1 = null;
-            mBlock2Ts1 = null;
-            mBlock3Ts1 = null;
-            mEmptyTs1 = true;
-        }
-        else if(timeslot == 2 && !mEmptyTs2)
-        {
-            mHeaderTs2 = null;
-            mBlock1Ts2 = null;
-            mBlock2Ts2 = null;
-            mBlock3Ts2 = null;
-            mEmptyTs2 = true;
+            Assembly assembly = mAssemblies[timeslot - 1];
+            assembly.clearFragments();
+            assembly.source = null;
+            assembly.target = null;
         }
     }
 
     /**
-     * Processes the FLC talker alias header or block and returns a fully assembled alias when all fragments are received.
-     * @param message containing FLC talker alias header or blocks 1-3
-     * @return fully assembled talker alias, if available, or null.
+     * Voice link control is independent of the alias fragments. A changed known participant starts a new assembly
+     * lifetime; repeated headers with an omitted participant retain the same known call context.
+     */
+    public boolean observeCall(FullLCMessage message)
+    {
+        if(message.getTimeslot() != 1 && message.getTimeslot() != 2) return false;
+        boolean voice = switch(message.getOpcode())
+        {
+            case FULL_STANDARD_GROUP_VOICE_CHANNEL_USER, FULL_STANDARD_UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                FULL_HYTERA_GROUP_VOICE_CHANNEL_USER, FULL_HYTERA_UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                FULL_MOTOROLA_GROUP_VOICE_CHANNEL_USER, FULL_CAPACITY_PLUS_WIDE_AREA_VOICE_CHANNEL_USER,
+                FULL_CAPACITY_MAX_GROUP_VOICE_CHANNEL_USER, FULL_CAPACITY_PLUS_ENCRYPTED_VOICE_CHANNEL_USER -> true;
+            default -> false;
+        };
+        if(!voice) return false;
+        Identifier source = null;
+        Identifier target = null;
+        for(Identifier identifier: message.getIdentifiers())
+        {
+            if(identifier.isValid() && identifier.getRole() == Role.FROM) source = identifier;
+            if(identifier.isValid() && identifier.getRole() == Role.TO) target = identifier;
+        }
+        Assembly assembly = mAssemblies[message.getTimeslot() - 1];
+        if((source != null && assembly.source != null && !source.equals(assembly.source)) ||
+            (target != null && assembly.target != null && !target.equals(assembly.target)))
+        {
+            assembly.clearFragments();
+        }
+        if(source != null) assembly.source = source;
+        if(target != null) assembly.target = target;
+        return source != null || target != null;
+    }
+
+    /**
+     * Each header begins one alias sequence. Blocks may arrive in any order after that header, but a block without a
+     * header cannot be saved for a future radio or future alias. Completed fragments are consumed exactly once.
      */
     public TalkerAliasComplete process(FullLCMessage message)
     {
-        switch(message.getOpcode())
+        if(message.getTimeslot() != 1 && message.getTimeslot() != 2) return null;
+        Assembly assembly = mAssemblies[message.getTimeslot() - 1];
+        if(message instanceof TalkerAliasHeader header)
         {
-            case FULL_STANDARD_TALKER_ALIAS_HEADER, FULL_HYTERA_TALKER_ALIAS_HEADER:
-                if(message instanceof TalkerAliasHeader tah)
-                {
-                    if(message.getTimeslot() == 1)
-                    {
-                        mHeaderTs1 = tah;
-                        mEmptyTs1 = false;
-                        return assemble(1);
-                    }
-                    else
-                    {
-                        mHeaderTs2 = tah;
-                        mEmptyTs2 = false;
-                        return assemble(2);
-                    }
-                }
-                break;
-            case FULL_STANDARD_TALKER_ALIAS_BLOCK_1, FULL_HYTERA_TALKER_ALIAS_BLOCK_1:
-                if(message instanceof TalkerAliasBlock1 tab1)
-                {
-                    if(message.getTimeslot() == 1)
-                    {
-                        mBlock1Ts1 = tab1;
-                        mEmptyTs1 = false;
-                        return assemble(1);
-                    }
-                    else
-                    {
-                        mBlock1Ts2 = tab1;
-                        mEmptyTs2 = false;
-                        return assemble(2);
-                    }
-                }
-                break;
-            case FULL_STANDARD_TALKER_ALIAS_BLOCK_2, FULL_HYTERA_TALKER_ALIAS_BLOCK_2:
-                if(message instanceof TalkerAliasBlock2 tab2)
-                {
-                    if(message.getTimeslot() == 1)
-                    {
-                        mBlock2Ts1 = tab2;
-                        mEmptyTs1 = false;
-                        return assemble(1);
-                    }
-                    else
-                    {
-                        mBlock2Ts2 = tab2;
-                        mEmptyTs2 = false;
-                        return assemble(2);
-                    }
-                }
-                break;
-            case FULL_STANDARD_TALKER_ALIAS_BLOCK_3, FULL_HYTERA_TALKER_ALIAS_BLOCK_3:
-                if(message instanceof TalkerAliasBlock3 tab3)
-                {
-                    if(message.getTimeslot() == 1)
-                    {
-                        mBlock3Ts1 = tab3;
-                        mEmptyTs1 = false;
-                        return assemble(1);
-                    }
-                    else
-                    {
-                        mBlock3Ts2 = tab3;
-                        mEmptyTs2 = false;
-                        return assemble(2);
-                    }
-                }
-                break;
-            default:
-                break;
+            assembly.clearFragments();
+            assembly.header = header;
         }
+        else if(assembly.header == null || message.getTimestamp() < assembly.header.getTimestamp())
+        {
+            return null;
+        }
+        else if(message instanceof TalkerAliasBlock1 block) assembly.block1 = block;
+        else if(message instanceof TalkerAliasBlock2 block) assembly.block2 = block;
+        else if(message instanceof TalkerAliasBlock3 block) assembly.block3 = block;
+        else return null;
 
-        return null;
+        TalkerAliasComplete complete = assemble(assembly.header, assembly.block1, assembly.block2, assembly.block3);
+        if(complete != null) assembly.clearFragments();
+        return complete;
     }
 
-    /**
-     * Assembles the complete alias.
-     * @param timeslot to assemble.
-     * @return assembled alias or null.
-     */
-    private TalkerAliasComplete assemble(int timeslot)
+    private static class Assembly
     {
-        if(timeslot == 1)
+        private Identifier source;
+        private Identifier target;
+        private TalkerAliasHeader header;
+        private TalkerAliasBlock1 block1;
+        private TalkerAliasBlock2 block2;
+        private TalkerAliasBlock3 block3;
+
+        private void clearFragments()
         {
-            return assemble(mHeaderTs1, mBlock1Ts1, mBlock2Ts1, mBlock3Ts1);
-        }
-        else
-        {
-            return assemble(mHeaderTs2, mBlock1Ts2, mBlock2Ts2, mBlock3Ts2);
+            header = null;
+            block1 = null;
+            block2 = null;
+            block3 = null;
         }
     }
 

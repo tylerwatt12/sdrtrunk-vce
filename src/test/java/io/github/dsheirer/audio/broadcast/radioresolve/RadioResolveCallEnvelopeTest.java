@@ -30,6 +30,8 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -46,6 +48,26 @@ import org.junit.jupiter.api.Test;
 
 class RadioResolveCallEnvelopeTest
 {
+    @Test
+    void unboundOrWrongOwnerTalkerAliasIsExcludedFromCallObservations()
+    {
+        AudioRecording original = RadioResolveTestFixtures.recording(Path.of("call.mp3"));
+        JsonObject originalCall = RadioResolveJson.GSON.toJsonTree(RadioResolveCallEnvelope.create(original,
+            RadioResolveTestFixtures.SUBMISSION_ID).envelope()).getAsJsonObject().getAsJsonObject("call");
+        for(var alias: List.of(P25TalkerAliasIdentifier.create("UNBOUND"),
+            P25TalkerAliasIdentifier.create("OTHER RADIO").bindTo(
+                APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(700_002,
+                    RadioResolveTestFixtures.WACN, RadioResolveTestFixtures.SYSTEM, 900_002))))
+        {
+            AudioRecording recording = withTalkerAlias(original, alias);
+            var result = RadioResolveCallEnvelope.create(recording, RadioResolveTestFixtures.SUBMISSION_ID);
+            assertTrue(result.accepted());
+            JsonObject root = RadioResolveJson.GSON.toJsonTree(result.envelope()).getAsJsonObject();
+            assertFalse(root.getAsJsonObject("observations").has("talker_alias"));
+            assertEquals(originalCall, root.getAsJsonObject("call"));
+        }
+    }
+
     @Test
     void callAndOneReceptionUseStableSnakeCaseFacts()
     {
@@ -626,6 +648,25 @@ class RadioResolveCallEnvelopeTest
         return new AudioRecording(base.getPath(), base.getBroadcastChannels(), base.getIdentifierCollection(),
             base.getStartTime(), base.getRecordingLength(), base.getDeliveryEvidence(),
             new CompletedCallBroadcastMetadata(metadata.snapshot(), summaries));
+    }
+
+    private static AudioRecording withTalkerAlias(AudioRecording base, TalkerAliasIdentifier alias)
+    {
+        CompletedCallBroadcastMetadata metadata = base.getCompletedCallMetadata();
+        AudioCallSnapshot prior = metadata.snapshot();
+        List<Identifier> values = new ArrayList<>(prior.identifierCollection().getIdentifiers());
+        values.removeIf(identifier -> identifier.getForm() == Form.TALKER_ALIAS);
+        values.add(alias);
+        IdentifierCollection identifiers = new IdentifierCollection(values);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(prior.callId(), prior.linkedCallId(), prior.aliasList(),
+            identifiers, prior.broadcastChannels(), prior.startTimestamp(), prior.lastActivityTimestamp(),
+            prior.burstCount(), prior.burstGeneration(), prior.lastBurstStartTimestamp(), prior.lastBurstEndTimestamp(),
+            prior.burstActive(), prior.complete(), prior.encryptionState(), prior.recordAudio(),
+            prior.recordingMetadata(), prior.voiceCallQuality(), prior.callLegId(), prior.callLegSource(),
+            prior.callEncryptionEvidence());
+        return new AudioRecording(base.getPath(), base.getBroadcastChannels(), identifiers, base.getStartTime(),
+            base.getRecordingLength(), base.getDeliveryEvidence(),
+            new CompletedCallBroadcastMetadata(snapshot, metadata.callLegSummaries()));
     }
 
     private static AudioRecording recordingWithSource(Identifier<?> source, boolean retainSummaryObservation)

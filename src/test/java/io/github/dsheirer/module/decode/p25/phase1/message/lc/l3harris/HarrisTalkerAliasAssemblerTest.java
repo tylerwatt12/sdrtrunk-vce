@@ -36,6 +36,49 @@ class HarrisTalkerAliasAssemblerTest
         assertNotNull(assembler.process(block2("33A4414C4941532020"), 3_500L));
     }
 
+    @Test
+    void orphanContinuationsCannotCompleteTheNextFirstBlock()
+    {
+        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
+        assertNull(assembler.process(block2("33A433312020202020"), 1_000L));
+        assertNull(assembler.process(block3("34A443445020233032"), 1_100L));
+        assertNull(assembler.process(block4("35A433312020202020"), 1_200L));
+        assertNull(assembler.process(block1("32A44E455720202020"), 2_000L));
+
+        LCHarrisTalkerAliasComplete complete = assembler.process(block2("33A4414C4941532020"), 2_100L);
+
+        assertNotNull(complete);
+        assertEquals("NEWALIAS", complete.getTalkerAlias().getValue());
+    }
+
+    @Test
+    void repeatedFirstBlockStartsANewAssemblyWithoutOldOptionalBlocks()
+    {
+        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
+        assertNull(assembler.process(block1("32A443445020233032"), 1_000L));
+        assertNull(assembler.process(block3("34A443445020233032"), 1_100L));
+        assertNull(assembler.process(block1("32A44E455720202020"), 2_000L));
+
+        LCHarrisTalkerAliasComplete complete = assembler.process(block2("33A4414C4941532020"), 2_100L);
+
+        assertNotNull(complete);
+        assertEquals("NEWALIAS", complete.getTalkerAlias().getValue());
+        assertNull(assembler.process(block2("33A4414C4941532020"), 2_200L));
+    }
+
+    @Test
+    void explicitResetDiscardsIncompleteAndCompletedAliases()
+    {
+        HarrisTalkerAliasAssembler assembler = new HarrisTalkerAliasAssembler();
+        assembler.process(block1("32A443445020233032"), 1_000L);
+        assembler.reset();
+        assertNull(assembler.process(block2("33A433312020202020"), 1_100L));
+        assertNull(assembler.process(block1("32A44E455720202020"), 2_000L));
+        assertNotNull(assembler.process(block2("33A4414C4941532020"), 2_100L));
+        assembler.reset();
+        assertNull(assembler.process(block2("33A4414C4941532020"), 2_200L));
+    }
+
     private static LCHarrisTalkerAliasBlock1 block1(String hex)
     {
         LCHarrisTalkerAliasBlock1 block = new LCHarrisTalkerAliasBlock1(CorrectedBinaryMessage.loadHex(hex));

@@ -29,6 +29,7 @@ import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -44,7 +45,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class TalkerAliasManager
 {
-    private final Map<AliasKey,TalkerAliasIdentifier> mAliasMap = new ConcurrentHashMap<>();
+    private volatile Map<AliasKey,TalkerAliasIdentifier> mAliasMap = new ConcurrentHashMap<>();
+
+    /** O(1) retirement of a reception/system generation; retained immutable call snapshots remain valid. */
+    public void clear()
+    {
+        mAliasMap = new ConcurrentHashMap<>();
+    }
 
     /**
      * Updates the alias for the
@@ -59,11 +66,16 @@ public class TalkerAliasManager
     /** Captures a native P25 address in the transmitting call's serving scope, never a numeric roaming shortcut. */
     public void update(RadioIdentifier identifier, TalkerAliasIdentifier alias, String servingSystemKey)
     {
-        AliasKey key = aliasKey(identifier, servingSystemKey);
-        if(identifier != null && identifier.getRole() == Role.FROM && alias != null && key != null)
-        {
-            mAliasMap.put(key, alias);
-        }
+        //An in-flight observation may finish after clear(). It belongs only to the generation it entered.
+        Map<AliasKey,TalkerAliasIdentifier> generation = mAliasMap;
+        if(RadioSystemKey.isChannelScoped(servingSystemKey)) servingSystemKey = null;
+        if(identifier == null || identifier.getRole() != Role.FROM || alias == null) return;
+        TalkerAliasIdentifier owned = alias.bindTo(identifier, servingSystemKey);
+        if(owned == null) return;
+        //Omitted caller scope cannot turn a previously scoped observation into an unscoped cache entry.
+        AliasKey key = servingSystemKey != null ? aliasKey(identifier, servingSystemKey) :
+            aliasKey(identifier, owned.servingWacn(), owned.servingSystem(), owned.nativeSystemKey());
+        if(key != null) generation.put(key, owned);
     }
 
     /**
@@ -111,7 +123,7 @@ public class TalkerAliasManager
 
         if(alias != null)
         {
-            enrichedIC.update(alias);
+            enrichedIC.update(alias.bindTo((RadioIdentifier)fromRadio, servingSystemKey));
         }
 
         return enrichedIC;
@@ -131,23 +143,30 @@ public class TalkerAliasManager
     {
         enrichMutable(mic, RadioSystemKey.isP25Native(servingSystemKey) ?
             Integer.parseInt(servingSystemKey, 4, 9, 16) : -1, RadioSystemKey.isP25Native(servingSystemKey) ?
-            Integer.parseInt(servingSystemKey, 10, 13, 16) : -1);
+            Integer.parseInt(servingSystemKey, 10, 13, 16) : -1, servingSystemKey);
     }
 
     /** Avoids key formatting on decoder callbacks that already have validated serving-system fields. */
     public void enrichMutable(MutableIdentifierCollection mic, int servingWacn, int servingSystem)
+    {
+        enrichMutable(mic, servingWacn, servingSystem, null);
+    }
+
+    private void enrichMutable(MutableIdentifierCollection mic, int servingWacn, int servingSystem,
+                               String nativeSystemKey)
     {
         Identifier fromRadio = mic.getFromIdentifier();
         mic.remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
 
         if(fromRadio instanceof RadioIdentifier rid)
         {
-            AliasKey key = aliasKey(rid, servingWacn, servingSystem);
+            AliasKey key = aliasKey(rid, servingWacn, servingSystem, nativeSystemKey);
             TalkerAliasIdentifier alias = key != null ? mAliasMap.get(key) : null;
 
             if(alias != null)
             {
-                mic.update(alias);
+                mic.update(rid.getProtocol() == Protocol.APCO25 || rid.getProtocol() == Protocol.APCO25_PHASE2 ?
+                    alias.bindTo(rid, servingWacn, servingSystem) : alias.bindTo(rid, nativeSystemKey));
             }
         }
     }
@@ -191,13 +210,15 @@ public class TalkerAliasManager
     /** One cache key for a home-system subscriber and its native address; visiting subscriber tuples remain exact. */
     private static AliasKey aliasKey(RadioIdentifier radio, String servingSystemKey)
     {
+        if(RadioSystemKey.isChannelScoped(servingSystemKey)) servingSystemKey = null;
         boolean scoped = RadioSystemKey.isP25Native(servingSystemKey);
         return aliasKey(radio, scoped ? Integer.parseInt(servingSystemKey, 4, 9, 16) : -1,
-            scoped ? Integer.parseInt(servingSystemKey, 10, 13, 16) : -1);
+            scoped ? Integer.parseInt(servingSystemKey, 10, 13, 16) : -1, servingSystemKey);
     }
 
-    private static AliasKey aliasKey(RadioIdentifier radio, int servingWacn, int servingSystem)
+    private static AliasKey aliasKey(RadioIdentifier radio, int servingWacn, int servingSystem, String nativeSystemKey)
     {
+        if(RadioSystemKey.isChannelScoped(nativeSystemKey)) nativeSystemKey = null;
         if(radio == null || radio.getProtocol() == null || !radio.isValid()) return null;
         Protocol protocol = radio.getProtocol() == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : radio.getProtocol();
         if(protocol == Protocol.APCO25)
@@ -205,19 +226,20 @@ public class TalkerAliasManager
             if(radio instanceof FullyQualifiedRadioIdentifier)
             {
                 P25SubscriberIdentity subscriber = P25SubscriberIdentity.from(radio);
-                return subscriber != null ? new AliasKey(protocol, subscriber.homeWacn(),
+                return subscriber != null ? new AliasKey(protocol, null, 0, subscriber.homeWacn(),
                     subscriber.homeSystemId(), subscriber.subscriberId()) : null;
             }
             if(radio.getValue() < 1 || radio.getValue() > 0xFFFFFC) return null;
             if(servingWacn >= 0 && servingWacn <= 0xFFFFF && servingSystem >= 0 && servingSystem <= 0xFFF)
             {
-                return new AliasKey(protocol, servingWacn, servingSystem, radio.getValue());
+                return new AliasKey(protocol, null, 0, servingWacn, servingSystem, radio.getValue());
             }
         }
-        return new AliasKey(protocol, -1, -1, radio.getValue());
+        return new AliasKey(protocol, protocol == Protocol.APCO25 ? null : nativeSystemKey, radio instanceof NXDNRadioIdentifier nxdn && nxdn.isTypeD() ? 1 : 0,
+            -1, -1, radio.getValue());
     }
 
-    private record AliasKey(Protocol protocol, int homeWacn, int homeSystem, int radio)
+    private record AliasKey(Protocol protocol, String nativeSystemKey, int addressDomain, int homeWacn, int homeSystem, int radio)
     {
         @Override
         public String toString()

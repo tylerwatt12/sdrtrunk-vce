@@ -27,6 +27,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
@@ -245,7 +246,8 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
      */
     public Identifier<?> getTalkerAliasIdentifier()
     {
-        return mTalkerAliasIdentifier;
+        return mTalkerAliasIdentifier instanceof TalkerAliasIdentifier alias && alias.matchesSource(mFromIdentifier) ?
+            alias : null;
     }
 
     /**
@@ -253,7 +255,7 @@ public class ChannelMetadata implements Listener<IdentifierUpdateNotification>, 
      */
     public boolean hasTalkerAliasIdentifier()
     {
-        return mTalkerAliasIdentifier != null;
+        return getTalkerAliasIdentifier() != null;
     }
 
     /**

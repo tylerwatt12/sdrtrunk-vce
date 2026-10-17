@@ -1088,6 +1088,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(message.isValid() && message instanceof HDUMessage hdu)
         {
+            resetHarrisTalkerAliasSource();
             HeaderData headerData = hdu.getHeaderData();
 
             if(headerData.isValid())
@@ -2519,6 +2520,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
                 if(mSourceFrequency != frequency)
                 {
+                    resetHarrisTalkerAliasSource();
                     mSourceFrequency = frequency;
 
                     if(mSiteMetadataEnabled)
@@ -2546,6 +2548,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     public synchronized void reset()
     {
         super.reset();
+        resetHarrisTalkerAliasSource();
         clearControlNAC();
 
         if(isTrunkedControlChannel())

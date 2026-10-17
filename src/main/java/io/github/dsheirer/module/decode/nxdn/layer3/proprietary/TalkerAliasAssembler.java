@@ -30,7 +30,7 @@ public class TalkerAliasAssembler
     private TalkerAlias mFragment2;
     private TalkerAlias mFragment3;
     private TalkerAlias mFragment4;
-    private Encoding mEncoding;
+    private final Encoding mEncoding;
 
     /**
      * Constructs an instance
@@ -48,6 +48,16 @@ public class TalkerAliasAssembler
      */
     public TalkerAliasComplete process(TalkerAlias fragment)
     {
+        if(fragment.getFragmentNumber() != 1 && (mFragment1 == null ||
+            fragment.getRAN() != mFragment1.getRAN() ||
+            fragment.getLICH().getRFChannel() != mFragment1.getLICH().getRFChannel() ||
+            fragment.getLICH().getDirection() != mFragment1.getLICH().getDirection() ||
+            fragment.getTimestamp() < mFragment1.getTimestamp()))
+        {
+            reset();
+            return null;
+        }
+
         switch(fragment.getFragmentNumber())
         {
             case 1:
@@ -73,7 +83,10 @@ public class TalkerAliasAssembler
             message.load(64, mFragment3.getFragment());
             message.load(96, mFragment4.getFragment());
             String alias = new String(message.getSubMessage(0, 112).getBytes(), mEncoding.getCharset()).trim();
-            return new TalkerAliasComplete(alias, mFragment1.getTimestamp(), mFragment1.getRAN(), mFragment1.getLICH());
+            TalkerAliasComplete complete = new TalkerAliasComplete(alias, mFragment1.getTimestamp(),
+                mFragment1.getRAN(), mFragment1.getLICH());
+            reset();
+            return complete;
         }
 
         return null;

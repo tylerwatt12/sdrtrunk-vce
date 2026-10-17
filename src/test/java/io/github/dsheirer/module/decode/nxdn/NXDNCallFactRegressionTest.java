@@ -50,6 +50,31 @@ import org.junit.jupiter.api.Test;
 class NXDNCallFactRegressionTest
 {
     @Test
+    void observerResetDuringAliasMetadataCannotPublishOldNameIntoTheNewSameRadioCache()
+    {
+        Channel parent = parent(true, false);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        NXDNDecoderState state = new NXDNDecoderState(parent, manager);
+        state.receive(voice(101, 91, 1_000));
+        boolean[] reset = {false};
+        state.setIdentifierUpdateListener(notification ->
+        {
+            if(!reset[0] && notification.getIdentifier().getForm() == Form.TALKER_ALIAS &&
+                notification.getOperation() == IdentifierUpdateNotification.Operation.ADD)
+            {
+                reset[0] = true;
+                state.reset();
+                state.receive(voice(101, 91, 2_000));
+            }
+        });
+        state.receive(new TalkerAliasComplete("OLD", 1_100, 3, LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertNull(alias(state.getIdentifierCollection()));
+        assertFalse(manager.getTalkerAliasManager().hasAlias(NXDNRadioIdentifier.createFrom(101)));
+        state.receive(new TalkerAliasComplete("NEW", 2_100, 3, LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertEquals("NEW", alias(state.getIdentifierCollection()).getValue());
+    }
+
+    @Test
     void lateSourceAndEncryptionEnrichOneCallWithoutLosingItsDomainOrEndBoundary()
     {
         verifyLateCallFacts(false);
@@ -227,7 +252,27 @@ class NXDNCallFactRegressionTest
     }
 
     @Test
-    void unknownSourceAndBlankAliasesStayUnassignedAndANewTargetCannotInheritTheSource()
+    void trunkedDecoderResetDoesNotRetainThePreviousSourceOrAlias()
+    {
+        Channel parent = parent(false, false);
+        NXDNDecoderState state = new NXDNDecoderState(parent, new NXDNTrafficChannelManager(parent));
+        state.setCurrentChannel(channel());
+        state.receive(voice(101, 91, 1_000));
+        state.receive(new TalkerAliasComplete("PREVIOUS RADIO", 1_100, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertNotNull(alias(state.getIdentifierCollection()));
+        state.reset();
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        assertNull(alias(state.getIdentifierCollection()));
+        state.receive(voice(0, 91, 2_000));
+        state.receive(new TalkerAliasComplete("UNKNOWN RADIO", 2_100, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        assertNull(alias(state.getIdentifierCollection()));
+    }
+
+    @Test
+    void anonymousAliasWaitsForItsFirstSourceAndANewTargetCannotInheritTheSource()
     {
         Channel parent = parent(false, false);
         NXDNDecoderState state = new NXDNDecoderState(parent, new NXDNTrafficChannelManager(parent));
@@ -238,10 +283,40 @@ class NXDNCallFactRegressionTest
         assertNull(alias(state.getIdentifierCollection()));
         state.receive(voice(101, 91, 1_200L));
         state.receive(new TalkerAliasComplete(" ", 1_300L, 3, LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
-        assertNull(alias(state.getIdentifierCollection()));
+        assertEquals("UNASSIGNED", alias(state.getIdentifierCollection()).getValue());
         state.receive(voice(0, 92, 1_400L));
         assertNull(state.getIdentifierCollection().getFromIdentifier());
         assertEquals(92, state.getIdentifierCollection().getToIdentifier().getValue());
+    }
+
+    @Test
+    void syncLossRejectsAliasesWithoutAFreshHeaderAndAllowsFreshCallPendingOwnership()
+    {
+        Channel parent = parent(false, false);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        NXDNDecoderState state = new NXDNDecoderState(parent, manager);
+        state.setCurrentChannel(channel());
+        state.receive(voice(101, 91, 1_000));
+        state.receive(new TalkerAliasComplete("OLD RADIO", 1_100, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        state.receive(new io.github.dsheirer.message.SyncLossMessage(1_200, 1_000, Protocol.NXDN));
+        state.receive(new TalkerAliasComplete("ORPHAN RADIO", 1_300, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        assertNull(alias(state.getIdentifierCollection()));
+        var oldContext = new IdentifierCollection(List.of(NXDNRadioIdentifier.createFrom(101)));
+        assertEquals("OLD RADIO", alias(manager.getTalkerAliasManager().enrich(oldContext)).getValue());
+        state.receive(voice(0, 91, 1_400));
+        state.receive(new TalkerAliasComplete("NEW RADIO", 1_500, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertNull(alias(state.getIdentifierCollection()));
+        state.receive(voice(202, 91, 1_600));
+        assertEquals("NEW RADIO", alias(state.getIdentifierCollection()).getValue());
+        assertTrue(((io.github.dsheirer.identifier.alias.TalkerAliasIdentifier)alias(state.getIdentifierCollection()))
+            .matchesSource(NXDNRadioIdentifier.createFrom(202)));
+        state.receive(new TalkerAliasComplete("NEW RADIO", 1_700, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertEquals("NEW RADIO", alias(state.getIdentifierCollection()).getValue());
     }
 
     @Test
@@ -260,6 +335,89 @@ class NXDNCallFactRegressionTest
         assertEquals(101, state.getIdentifierCollection().getFromIdentifier().getValue());
         assertEquals("UNIT 101", alias(state.getIdentifierCollection()).getValue());
         assertEquals("UNIT 101", alias(events.getLast().getIdentifierCollection()).getValue());
+    }
+
+    @Test
+    void retuneOrRanChangeCannotReuseAnOldAliasForTheSameNumericRadio()
+    {
+        for(boolean retune: List.of(true, false))
+        {
+            Channel parent = parent(true, false);
+            NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+            NXDNDecoderState state = new NXDNDecoderState(parent, manager);
+            state.setCurrentFrequency(451_012_500L);
+            state.receive(voice(101, 91, 1_000));
+            state.receive(new TalkerAliasComplete("OLD SYSTEM", 1_100, 3,
+                LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+            assertTrue(manager.getTalkerAliasManager().hasAlias(NXDNRadioIdentifier.createFrom(101)));
+            if(retune)
+            {
+                state.receiveDecoderStateEvent(new io.github.dsheirer.channel.state.DecoderStateEvent(this,
+                    io.github.dsheirer.channel.state.DecoderStateEvent.Event.NOTIFICATION_SOURCE_FREQUENCY,
+                    io.github.dsheirer.channel.state.State.IDLE, 452_012_500L));
+                //An anonymous complete name cannot revive the preceding source before a fresh voice header.
+                state.receive(new TalkerAliasComplete("ORPHAN", 1_900, 3,
+                    LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+                assertNull(alias(state.getIdentifierCollection()));
+                assertFalse(manager.getTalkerAliasManager().hasAlias(NXDNRadioIdentifier.createFrom(101)));
+                state.receive(voice(101, 91, 2_000));
+            }
+            else
+            {
+                //The first new-RAN message may itself be an anonymous completed name.
+                state.receive(new TalkerAliasComplete("ORPHAN", 1_900, 4,
+                    LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+                assertNull(alias(state.getIdentifierCollection()));
+                assertFalse(manager.getTalkerAliasManager().hasAlias(NXDNRadioIdentifier.createFrom(101)));
+                VoiceCall header = voice(101, 91, 2_000);
+                state.receive(new VoiceCall(header.getMessage(), header.getTimestamp(), header.getMessageType(), 4,
+                    header.getLICH()));
+            }
+            assertNull(alias(state.getIdentifierCollection()));
+            assertFalse(manager.getTalkerAliasManager().hasAlias(NXDNRadioIdentifier.createFrom(101)));
+        }
+    }
+
+    @Test
+    void standardReceiverResetAndStopDiscardCacheButOrdinarySameSystemHeadersKeepIt()
+    {
+        for(boolean stop: List.of(true, false))
+        {
+            Channel parent = parent(true, false);
+            NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+            NXDNDecoderState state = new NXDNDecoderState(parent, manager);
+            state.receive(voice(101, 91, 1_000));
+            state.receive(new TalkerAliasComplete("SAME SYSTEM", 1_100, 3,
+                LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+            state.receive(voice(101, 91, 1_200));
+            assertEquals("SAME SYSTEM", alias(state.getIdentifierCollection()).getValue());
+            if(stop) state.stop();
+            else state.reset();
+            assertFalse(manager.getTalkerAliasManager().hasAlias(NXDNRadioIdentifier.createFrom(101)));
+            state.receive(voice(101, 91, 2_000));
+            assertNull(alias(state.getIdentifierCollection()));
+        }
+    }
+
+    @Test
+    void receiverNativeSystemChangeClearsLiveIdentityButOldCallActivationCannotRewindIt()
+    {
+        Channel parent = parent(true, false);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        NXDNDecoderState state = new NXDNDecoderState(parent, manager);
+        state.setCurrentChannel(channel());
+        state.receiveAliasRadioSystemKey(new io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent("nxdn-c:local:303"));
+        state.receive(voice(101, 91, 1_000));
+        state.receive(new TalkerAliasComplete("OLD SYSTEM", 1_100, 3,
+            LICH.RDCH_OUTBOUND_SUPER_FACCH1_FACCH1));
+        assertNotNull(alias(state.getIdentifierCollection()));
+        state.receiveAliasRadioSystemKey(new io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent("nxdn-c:local:304"));
+        assertNull(state.getIdentifierCollection().getFromIdentifier());
+        assertNull(alias(state.getIdentifierCollection()));
+        state.receive(voice(202, 91, 2_000));
+        state.receiveAliasRadioSystemKey(new io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent(
+            "nxdn-c:local:303", 1_000, null));
+        assertEquals(202, state.getIdentifierCollection().getFromIdentifier().getValue());
     }
 
     private static void observe(NXDNTrafficChannelManager manager, NXDNChannelLookup channel, int source,

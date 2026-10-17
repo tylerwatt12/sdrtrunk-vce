@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.identifier;
 
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -192,7 +193,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      */
     public void update(Identifier identifier)
     {
-        if(identifier != null && identifier.isValid())
+        if(identifier != null && identifier.isValid() && acceptsAlias(identifier))
         {
             Identifier existing = getIdentifier(identifier.getIdentifierClass(),
                 identifier.getForm(), identifier.getRole());
@@ -215,6 +216,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
             {
                 add(identifier);
             }
+            discardMismatchedAlias(false);
         }
     }
 
@@ -227,7 +229,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      */
     public void silentUpdate(Identifier identifier)
     {
-        if(identifier != null && identifier.isValid())
+        if(identifier != null && identifier.isValid() && acceptsAlias(identifier))
         {
             Identifier existing = getIdentifier(identifier.getIdentifierClass(), identifier.getForm(), identifier.getRole());
 
@@ -243,6 +245,35 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
             else
             {
                 silentAdd(identifier);
+            }
+            discardMismatchedAlias(true);
+        }
+    }
+
+    private boolean acceptsAlias(Identifier identifier)
+    {
+        if(!(identifier instanceof TalkerAliasIdentifier alias)) return identifier.getForm() != Form.TALKER_ALIAS;
+        //A snapshot may arrive alias-first. Preserve its explicit owner, but never invent one from loose text.
+        return alias.isBound() && (getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) == null ||
+            alias.matchesContext(this));
+    }
+
+    private void discardMismatchedAlias(boolean silent)
+    {
+        if(getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) == null) return;
+        Identifier existing = getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+        if(existing instanceof TalkerAliasIdentifier alias)
+        {
+            TalkerAliasIdentifier refined = alias.bindTo(this);
+            if(refined == null || !refined.equals(alias))
+            {
+                if(silent) silentRemove(alias);
+                else remove(alias);
+                if(refined != null)
+                {
+                    if(silent) silentAdd(refined);
+                    else add(refined);
+                }
             }
         }
     }
@@ -263,7 +294,7 @@ public class MutableIdentifierCollection extends IdentifierCollection implements
      */
     public void clear()
     {
-        List<Identifier> identifiers = new ArrayList<>();
+        List<Identifier> identifiers = new ArrayList<>(mIdentifiers);
 
         for(Identifier identifier: identifiers)
         {
