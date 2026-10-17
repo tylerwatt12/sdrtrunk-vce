@@ -378,17 +378,6 @@ body[data-view="scanner"] .content {
 }
 
 @media (max-width: 680px), (max-height: 500px) and (pointer: coarse) {
-  .scanner-page {
-    padding-bottom: calc(var(--scanner-playback-height, var(--scanner-playback-reserve)) + var(--scanner-playback-gap));
-  }
-
-  .scanner-transport-host > .scanner-playback-transport {
-    position: fixed;
-    inset-inline: 0;
-    bottom: var(--scanner-viewport-offset, 0px);
-    z-index: var(--audio-dock-layer);
-  }
-
   .scanner-queue-disclosure:not([open]) .scanner-up-next-heading {
     display: grid;
     align-content: center;

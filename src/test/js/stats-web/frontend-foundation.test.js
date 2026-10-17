@@ -1476,6 +1476,8 @@ async function main() {
   assert.match(scannerRenderer, /scanner-now-playing/);
   assert.match(scannerRenderer, /consoleMain\.append\(nowPlaying, upNext\)/,
     'Scanner must pair its listening stage with the browser queue');
+  assert.match(scannerRenderer, /chassis\.append\(playerHost, consoleMain\)/,
+    'Scanner controls must precede its call stage and queue in reading and keyboard order');
   assert.match(scannerRenderer, /const calls = state\.queue;/,
     'The listening stage must render the complete scheduled browser queue');
   assert.doesNotMatch(scannerRenderer, /state\.queue\.slice\(/,
@@ -1513,11 +1515,10 @@ async function main() {
     'Scanner transport must leave queued calls in the listening stage');
   assert.doesNotMatch(scannerPlayback, /document\.getElementById\('playback-|marker\.replaceWith|scanner-expanded/,
     'Scanner must own its controls without moving global player elements');
-  assert.match(scannerPlayback, /window\.visualViewport/, 'The mobile controls must follow the visible viewport');
-  assert.match(scannerPlayback, /ResizeObserver\(updateViewport\)/,
-    'The page must reserve the actual mobile bar height');
-  assert.match(scannerPlayback, /observer\.disconnect\(\)[\s\S]*unsubscribe\(\)/,
-    'Leaving Scanner must release viewport and player subscriptions');
+  assert.doesNotMatch(scannerPlayback, /visualViewport|ResizeObserver|scanner-playback-height/,
+    'Scanner controls must remain in normal page flow without viewport tracking or reserved space');
+  assert.match(scannerPlayback, /addEventListener\('abort', unsubscribe, \{ once: true \}\)/,
+    'Leaving Scanner must release its player subscription');
   const scannerCallRenderer = functionBinding(appSource, 'renderScannerCall');
   assert.match(scannerCallRenderer,
     /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*scanner-audio-wave/,

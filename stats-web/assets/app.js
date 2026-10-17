@@ -10981,7 +10981,7 @@ function placePlaybackBar() {
   if (controlMenu) controlMenu.open = !navigationUsesDrawer();
 }
 
-function arrangeScannerPlayback(bar, page, player, signal) {
+function arrangeScannerPlayback(bar, player, signal) {
   const controls = node('div', 'scanner-playback-controls');
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Playback controls');
@@ -11072,21 +11072,7 @@ function arrangeScannerPlayback(bar, page, player, signal) {
     output.textContent = `${percentage}%`;
   };
   const unsubscribe = player.subscribeState(draw);
-  const updateViewport = () => {
-    const viewport = window.visualViewport;
-    const offset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
-    bar.style.setProperty('--scanner-viewport-offset', `${Math.round(offset)}px`);
-    page.style.setProperty('--scanner-playback-height', `${bar.offsetHeight}px`);
-  };
-  const observer = new ResizeObserver(updateViewport);
-  observer.observe(bar);
-  window.visualViewport?.addEventListener('resize', updateViewport, { signal });
-  window.visualViewport?.addEventListener('scroll', updateViewport, { signal });
-  updateViewport();
-  signal?.addEventListener('abort', () => {
-    observer.disconnect();
-    unsubscribe();
-  }, { once: true });
+  signal?.addEventListener('abort', unsubscribe, { once: true });
 }
 
 function initializePlaybackHeader() {
@@ -11824,12 +11810,7 @@ function renderScanner() {
   const updateQueueDisclosure = () => { queueDisclosure.open = queueViewport.matches ? phoneQueueOpen : true; };
   queueDisclosure.addEventListener('toggle', () => {
     if (!queueViewport.matches) return;
-    const opening = queueDisclosure.open && !phoneQueueOpen;
     phoneQueueOpen = queueDisclosure.open;
-    if (opening) {
-      const overflow = queueDisclosure.getBoundingClientRect().bottom - transport.getBoundingClientRect().top;
-      if (overflow > 0) window.scrollBy(0, Math.ceil(overflow));
-    }
   }, { signal: renderContext.signal });
   queueViewport.addEventListener('change', updateQueueDisclosure, { signal: renderContext.signal });
   updateQueueDisclosure();
@@ -11872,7 +11853,7 @@ function renderScanner() {
   bindAnchoredDropdown(scanTrigger, scanPanel, renderContext.signal);
 
   consoleMain.append(nowPlaying, upNext);
-  chassis.append(consoleMain, playerHost);
+  chassis.append(playerHost, consoleMain);
   page.append(chassis);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
@@ -11885,7 +11866,7 @@ function renderScanner() {
   const host = node('div', 'scanner-page-host');
   host.append(page);
   if (!beginPage(renderContext, heading, host)) return;
-  arrangeScannerPlayback(transport, page, player, renderContext.signal);
+  arrangeScannerPlayback(transport, player, renderContext.signal);
 
   let latestState = player.viewState();
   let currentConfigurationId = '';

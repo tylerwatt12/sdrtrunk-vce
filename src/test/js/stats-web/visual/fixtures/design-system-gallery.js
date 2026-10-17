@@ -1198,9 +1198,6 @@ if (view === 'activity-filters' || view === 'scanner') {
       volume.setAttribute('aria-valuetext', `${percent} percent`);
       volumeOutput.textContent = `${percent}%`;
     });
-    const reserveControls = () => scannerPage.style.setProperty('--scanner-playback-height', `${scannerBar.offsetHeight}px`);
-    new ResizeObserver(reserveControls).observe(scannerBar);
-    reserveControls();
     if (parameters.get('state') === 'idle') {
       const display = scannerPage.querySelector('.scanner-display');
       const height = display.getBoundingClientRect().height;

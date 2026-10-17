@@ -983,6 +983,23 @@
     <div class="scanner-page-host">
       <div class="scanner-page" data-scanner-mode="normal">
         <section class="scanner-workspace scanner-console ui-surface ui-listening-stage" data-scanner-mode="normal">
+          <div class="scanner-transport-host">
+            <div id="scanner-playback-bar" class="ui-scanner-transport scanner-playback-transport" role="group" aria-label="Browser scanner and call playback">
+              <div class="scanner-playback-controls" role="group" aria-label="Playback controls">
+                <button id="scanner-play" class="ui-button ui-button-primary ui-icon-button scanner-playback-primary" type="button" aria-label="Pause audio and keep collecting calls (queue is limited)" title="Pause audio and keep collecting calls (queue is limited)"><svg aria-hidden="true"><use href="#visual-icon-pause"></use></svg></button>
+                <button id="scanner-skip" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#visual-icon-skip"></use></svg></button>
+                <button id="scanner-replay" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Replay last call" title="Replay last call"><svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button>
+                <button id="scanner-hold" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Hold the current target in this browser" title="Hold the current target in this browser" aria-pressed="false">H</button>
+              </div>
+              <div class="scanner-playback-secondary" role="group" aria-label="Target and queue actions">
+                <button id="scanner-stop" class="ui-button ui-button-secondary" type="button" aria-label="Stop browser call audio" title="Stop browser call audio">Stop</button>
+                <button id="scanner-avoid" class="ui-button ui-button-secondary" type="button" aria-label="Avoid current target" title="Avoid current target">Avoid</button>
+                <button id="scanner-avoid-list" class="ui-button ui-button-secondary" type="button" aria-label="View 0 browser avoid(s)" title="View 0 browser avoid(s)">Avoids</button>
+                <button id="scanner-clear-queue" class="ui-button ui-button-secondary" type="button" aria-label="Clear 8 queued browser call(s)" title="Clear 8 queued browser call(s)">Clear</button>
+              </div>
+              <label class="ui-audio-volume-control" title="Browser playback volume"><span class="ui-audio-volume-label" aria-hidden="true">Volume</span><input id="scanner-volume" class="ui-range ui-audio-range" type="range" min="0" max="1" step="0.05" value="0.75" aria-label="Browser playback volume" aria-valuetext="75 percent"><output class="ui-audio-volume-output" for="scanner-volume" aria-hidden="true">75%</output></label>
+            </div>
+          </div>
           <div class="scanner-console-main">
             <section class="scanner-now-playing ui-listening-stage-main" aria-label="Now playing">
               <div class="scanner-status-bar ui-listening-status"><div class="scanner-status-copy"><span class="visually-hidden scanner-section-label">Now playing</span><strong class="ui-pill scanner-live-status ui-pill-success">Listening</strong></div><output class="ui-label ui-muted scanner-relative-age">Just now</output></div>
@@ -1006,23 +1023,6 @@
               </div></div>
             </section>
             <aside class="scanner-up-next ui-listening-queue" aria-label="Up next"><details class="ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure" open><summary class="ui-section-summary scanner-up-next-summary"><div class="scanner-up-next-heading"><h3 class="ui-section-heading">Up next</h3><span class="ui-label ui-muted scanner-up-next-count">8 queued</span></div><div class="ui-heading-group scanner-up-next-preview"><strong class="ui-text-truncate">County Fire Dispatch</strong><span class="ui-label ui-muted ui-text-truncate">Engine 43 · 8.0s</span></div></summary><ol class="scanner-up-next-list" tabindex="0" aria-label="Queued calls"><li class="scanner-up-next-item ui-listening-queue-item" title="County Fire Dispatch · Engine 43"><span class="ui-listening-order" aria-hidden="true">1</span><div class="ui-heading-group"><strong>County Fire Dispatch</strong><span class="ui-label ui-muted">Engine 43 · 8.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="EMS Dispatch · Medic 2"><span class="ui-listening-order" aria-hidden="true">2</span><div class="ui-heading-group"><strong>EMS Dispatch</strong><span class="ui-label ui-muted">Medic 2 · 12.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="County Operations · Operations 1"><span class="ui-listening-order" aria-hidden="true">3</span><div class="ui-heading-group"><strong>County Operations</strong><span class="ui-label ui-muted">Operations 1 · 24.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="Law Dispatch · Unit 21"><span class="ui-listening-order" aria-hidden="true">4</span><div class="ui-heading-group"><strong>Law Dispatch</strong><span class="ui-label ui-muted">Unit 21 · 9.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="Utilities · Service 2"><span class="ui-listening-order" aria-hidden="true">5</span><div class="ui-heading-group"><strong>Utilities</strong><span class="ui-label ui-muted">Service 2 · 14.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="Airport · Ground 6"><span class="ui-listening-order" aria-hidden="true">6</span><div class="ui-heading-group"><strong>Airport</strong><span class="ui-label ui-muted">Ground 6 · 6.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="Regional Interop · Command 1"><span class="ui-listening-order" aria-hidden="true">7</span><div class="ui-heading-group"><strong>Regional Interop</strong><span class="ui-label ui-muted">Command 1 · 11.0s</span></div></li><li class="scanner-up-next-item ui-listening-queue-item" title="Public Service · Crew 3"><span class="ui-listening-order" aria-hidden="true">8</span><div class="ui-heading-group"><strong>Public Service</strong><span class="ui-label ui-muted">Crew 3 · 18.0s</span></div></li></ol><span class="ui-label ui-muted scanner-up-next-note">Fire &amp; EMS · Law Dispatch</span></details></aside>
-          </div>
-          <div class="scanner-transport-host">
-            <div id="scanner-playback-bar" class="ui-scanner-transport scanner-playback-transport" role="group" aria-label="Browser scanner and call playback">
-              <div class="scanner-playback-controls" role="group" aria-label="Playback controls">
-                <button id="scanner-play" class="ui-button ui-button-primary ui-icon-button scanner-playback-primary" type="button" aria-label="Pause audio and keep collecting calls (queue is limited)" title="Pause audio and keep collecting calls (queue is limited)"><svg aria-hidden="true"><use href="#visual-icon-pause"></use></svg></button>
-                <button id="scanner-skip" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#visual-icon-skip"></use></svg></button>
-                <button id="scanner-replay" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Replay last call" title="Replay last call"><svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button>
-                <button id="scanner-hold" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Hold the current target in this browser" title="Hold the current target in this browser" aria-pressed="false">H</button>
-              </div>
-              <div class="scanner-playback-secondary" role="group" aria-label="Target and queue actions">
-                <button id="scanner-stop" class="ui-button ui-button-secondary" type="button" aria-label="Stop browser call audio" title="Stop browser call audio">Stop</button>
-                <button id="scanner-avoid" class="ui-button ui-button-secondary" type="button" aria-label="Avoid current target" title="Avoid current target">Avoid</button>
-                <button id="scanner-avoid-list" class="ui-button ui-button-secondary" type="button" aria-label="View 0 browser avoid(s)" title="View 0 browser avoid(s)">Avoids</button>
-                <button id="scanner-clear-queue" class="ui-button ui-button-secondary" type="button" aria-label="Clear 8 queued browser call(s)" title="Clear 8 queued browser call(s)">Clear</button>
-              </div>
-              <label class="ui-audio-volume-control" title="Browser playback volume"><span class="ui-audio-volume-label" aria-hidden="true">Volume</span><input id="scanner-volume" class="ui-range ui-audio-range" type="range" min="0" max="1" step="0.05" value="0.75" aria-label="Browser playback volume" aria-valuetext="75 percent"><output class="ui-audio-volume-output" for="scanner-volume" aria-hidden="true">75%</output></label>
-            </div>
           </div>
         </section>
       </div>

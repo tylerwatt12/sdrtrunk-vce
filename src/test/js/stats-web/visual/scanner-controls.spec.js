@@ -7,6 +7,7 @@ const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs')
 const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
 
 async function expectFullWidthScannerActions(page) {
+  await page.locator('#scanner-playback-bar').scrollIntoViewIfNeeded();
   const bar = await page.locator('#scanner-playback-bar').boundingBox();
   const padding = await page.locator('#scanner-playback-bar').evaluate(element => {
     const style = getComputedStyle(element);
@@ -56,7 +57,7 @@ async function expectCompactDesktopScannerActions(page) {
   expect(volume.width).toBe(220);
   const display = await page.locator('.scanner-display').boundingBox();
   const transport = await page.locator('.scanner-playback-transport').boundingBox();
-  expect(transport.y).toBeGreaterThanOrEqual(display.y + display.height);
+  expect(transport.y + transport.height).toBeLessThanOrEqual(display.y);
   const barHeight = await page.locator('#scanner-playback-bar').evaluate(element => {
     const style = getComputedStyle(element);
     return { height: element.getBoundingClientRect().height, chrome: parseFloat(style.paddingTop) +
@@ -105,10 +106,11 @@ async function expectQueueTailReachable(list, calls) {
 }
 
 async function expectPhoneQueueFits(page, list) {
+  await list.scrollIntoViewIfNeeded();
   await expect.poll(async () => {
     const bounds = await list.boundingBox();
-    const transport = await page.locator('#scanner-playback-bar').boundingBox();
-    return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= transport.y + 1);
+    const viewportHeight = await page.evaluate(() => window.innerHeight);
+    return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewportHeight + 1);
   }).toBe(true);
 }
 
@@ -305,6 +307,10 @@ for (const [theme, viewport] of [
     await expect(page.locator('.scanner-playback-more-trigger')).toHaveCount(0);
     await expect(page.locator('#desktop-playback-slot #playback-volume')).toHaveCount(1);
     await expect(page.locator('#desktop-playback-slot #playback-skip')).toHaveCount(1);
+    const transport = await page.locator('#scanner-playback-bar').boundingBox();
+    const callStage = await page.locator('.scanner-console-main').boundingBox();
+    expect(transport.y + transport.height).toBeLessThanOrEqual(callStage.y);
+    expect(await page.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('static');
     if (viewport.width >= 1181) await expectCompactDesktopScannerActions(page);
     await page.screenshot({ path: test.info().outputPath(`scanner-${theme}-${viewport.width}.png`), fullPage: true });
     await expect(page.locator('.scanner-scan-rail')).toHaveCount(0);
@@ -366,31 +372,9 @@ for (const [theme, viewport] of [
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollY);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
     if (viewport.width <= 680) {
-      const bar = await page.locator('#scanner-playback-bar').boundingBox();
-      expect(bar.y + bar.height).toBe(viewport.height);
       await expectFullWidthScannerActions(page);
-      const reserve = await page.locator('.scanner-page').evaluate(element =>
-        parseFloat(getComputedStyle(element).paddingBottom));
-      expect(reserve).toBeGreaterThan(bar.height);
-      await page.evaluate(() => {
-        Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: window.innerHeight - 200 });
-        window.visualViewport.dispatchEvent(new Event('resize'));
-      });
-      await expect.poll(async () => {
-        const keyboardBar = await page.locator('#scanner-playback-bar').boundingBox();
-        return keyboardBar.y + keyboardBar.height;
-      }).toBe(viewport.height - 200);
-      await expectFullWidthScannerActions(page);
-      await page.evaluate(() => {
-        delete window.visualViewport.height;
-        window.visualViewport.dispatchEvent(new Event('resize'));
-      });
-      const scannerStyles = await page.evaluate(async () => (await Promise.all([
-        '/assets/styles/compositions/app-chrome.css', '/assets/styles/features/scanner.css'
-      ].map(url => fetch(url).then(response => response.text())))).join('\n'));
-      await page.addStyleTag({ content: scannerStyles.replaceAll('env(safe-area-inset-bottom)', '20px') });
-      expect(await page.locator('#scanner-playback-bar').evaluate(element =>
-        parseFloat(getComputedStyle(element).paddingBottom))).toBeGreaterThan(20);
+      expect(await page.locator('.scanner-page').evaluate(element =>
+        parseFloat(getComputedStyle(element).paddingBottom))).toBe(0);
     }
     const globalSkip = await page.locator('#playback-skip').elementHandle();
     await page.locator('.brand').click();
@@ -493,14 +477,15 @@ for (const theme of ['light', 'dark']) {
 
 test.describe('Landscape phone playback', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 844, height: 390 } });
-  test('keeps the transport at the bottom in a short coarse-pointer viewport', async ({ page }) => {
+  test('keeps the transport above the call in a short coarse-pointer viewport', async ({ page }) => {
     await installSiteStyleApplication(page, 'dark');
     await page.goto('/app.html?view=scanner');
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
     await expect(page.locator('.scanner-playback-primary')).toBeVisible();
     const bar = await page.locator('#scanner-playback-bar').boundingBox();
-    expect(bar.y + bar.height).toBe(390);
-    expect(await page.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('fixed');
+    const callStage = await page.locator('.scanner-console-main').boundingBox();
+    expect(bar.y + bar.height).toBeLessThanOrEqual(callStage.y);
+    expect(await page.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('static');
     await expectFullWidthScannerActions(page);
     await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
     const disclosure = page.locator('.scanner-queue-disclosure');
@@ -518,9 +503,8 @@ test.describe('Landscape phone playback', () => {
     await summary.press('Space');
     await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(false);
     await expect(queueList).toBeHidden();
-    const reserve = await page.locator('.scanner-page').evaluate(element =>
-      parseFloat(getComputedStyle(element).paddingBottom));
-    expect(reserve).toBeGreaterThan(bar.height);
+    expect(await page.locator('.scanner-page').evaluate(element =>
+      parseFloat(getComputedStyle(element).paddingBottom))).toBe(0);
     await page.screenshot({ path: test.info().outputPath('scanner-coarse-landscape.png') });
   });
 });

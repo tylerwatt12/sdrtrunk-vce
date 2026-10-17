@@ -979,7 +979,7 @@ test('scanner-light-desktop', async ({ page }) => {
   await expect(scanner.locator('.scanner-audio-wave > i')).toHaveCount(64);
   expect(await scanner.locator('.scanner-console > *').evaluateAll((elements) =>
     elements.map((element) => element.className))).toEqual([
-    'scanner-console-main', 'scanner-transport-host'
+    'scanner-transport-host', 'scanner-console-main'
   ]);
   await expect(scanner.locator('.scanner-now-playing > .scanner-status-bar')).toHaveCount(1);
   await expect(scanner.locator('.scanner-console')).toHaveClass(/ui-listening-stage/);
@@ -1021,7 +1021,8 @@ test('scanner-dark-mobile', async ({ page }) => {
   const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
   expect(nowPlaying).not.toBeNull();
   const player = await scanner.locator('#scanner-playback-bar').boundingBox();
-  expect(player.y + player.height).toBe(844);
+  expect(player.y + player.height).toBeLessThanOrEqual(nowPlaying.y);
+  expect(await scanner.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('static');
   await expect(scanner.locator('.scanner-scan-trigger')).toBeVisible();
   await expect(scanner.locator('.scanner-scan-button')).toHaveCount(6);
   await expect(scanner.locator('.scanner-playback-controls > button')).toHaveCount(4);
