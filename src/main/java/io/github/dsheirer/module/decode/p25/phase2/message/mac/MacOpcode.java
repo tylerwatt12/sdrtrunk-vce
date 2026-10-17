@@ -327,6 +327,20 @@ public enum MacOpcode
                 NETWORK_STATUS.contains(this) || VOICE_GRANTS.contains(this);
     }
 
+    /** Actual user of this voice channel, rather than a grant for another channel or talkgroup. */
+    public boolean isVoiceChannelUser()
+    {
+        return switch(this)
+        {
+            case TDMA_01_GROUP_VOICE_CHANNEL_USER_ABBREVIATED, TDMA_02_UNIT_TO_UNIT_VOICE_CHANNEL_USER_ABBREVIATED,
+                TDMA_03_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER, TDMA_21_GROUP_VOICE_CHANNEL_USER_EXTENDED,
+                TDMA_22_UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED, PHASE1_90_GROUP_REGROUP_VOICE_CHANNEL_USER_ABBREVIATED,
+                MOTOROLA_80_GROUP_REGROUP_VOICE_CHANNEL_USER_ABBREVIATED,
+                MOTOROLA_A0_GROUP_REGROUP_VOICE_CHANNEL_USER_EXTENDED -> true;
+            default -> false;
+        };
+    }
+
     @Override
     public String toString()
     {

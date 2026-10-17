@@ -22,15 +22,45 @@ class IdentifierCollectionSelectorPrecedenceTest
     }
 
     @Test
-    void legacyTelephonePrecedenceAndFirstFromFallbackStayUnchanged()
+    void sourceTelephonePrecedenceAndLegitimateFromFallbackStayUnchanged()
     {
         var first = text(Form.USER_STATUS, Role.FROM, "Status");
         var second = text(Form.TALKER_ALIAS, Role.FROM, "Alias");
-        var telephone = text(Form.TELEPHONE_NUMBER, Role.TO, "123");
+        var telephone = text(Form.TELEPHONE_NUMBER, Role.FROM, "123");
         assertSame(telephone, collection(first, second, telephone).getFromIdentifier());
         assertSame(first, collection(first, second).getFromIdentifier());
         assertNull(collection(second).getFromIdentifier(), "An OTA name alone is never a source identity");
         assertNull(collection(text(Form.SYSTEM, Role.ANY, "System")).getFromIdentifier());
+    }
+
+    @Test
+    void auxiliaryFactsAndOtherRoleTelephoneNumbersCannotIdentifyTheSource()
+    {
+        var group = new APCO25Talkgroup(91, Role.FROM);
+        for(Identifier<?> auxiliary: List.of(text(Form.TONE, Role.FROM, "DTMF 1"),
+            text(Form.TALKER_ALIAS, Role.FROM, "Name"),
+            text(Form.TELEPHONE_NUMBER, Role.TO, "123"),
+            text(Form.TELEPHONE_NUMBER, Role.ANY, "123")))
+        {
+            assertNull(collection(auxiliary).getFromIdentifier());
+            assertSame(group, collection(auxiliary, group).getFromIdentifier());
+        }
+    }
+
+    @Test
+    void sourceRequiresAValidUserEntityButCanonicalIdentityDoesNotRequireALocalAddress()
+    {
+        var invalidRadio = APCO25RadioIdentifier.createFrom(0);
+        var configuration = new Identifier<>("Not a caller", IdentifierClass.CONFIGURATION, Form.RADIO, Role.FROM)
+        {
+            @Override public Protocol getProtocol() { return Protocol.APCO25; }
+        };
+        var radio = APCO25RadioIdentifier.createFrom(101);
+        var canonical = io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier
+            .createFrom(0, 0xBEE00, 0x123, 101);
+        assertNull(collection(invalidRadio, configuration).getFromIdentifier());
+        assertSame(radio, collection(invalidRadio, configuration, radio).getFromIdentifier());
+        assertSame(canonical, collection(invalidRadio, canonical).getFromIdentifier());
     }
 
     @Test

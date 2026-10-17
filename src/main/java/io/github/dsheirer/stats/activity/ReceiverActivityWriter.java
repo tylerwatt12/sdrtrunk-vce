@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.LongSupplier;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -112,10 +113,10 @@ class ReceiverActivityWriter implements AutoCloseable
     private volatile ReceiverActivityStatus.State mState = ReceiverActivityStatus.State.STOPPED;
     private volatile String mLastError;
     private BooleanSupplier mLiveActivityDemand = () -> false;
-    private Runnable mAfterCommit = () -> {};
+    private Consumer<Boolean> mAfterCommit = ignored -> {};
 
     /** Installed before start; the callback only signals the independent saved-activity reader. */
-    void setLiveActivityObserver(BooleanSupplier demand, Runnable afterCommit)
+    void setLiveActivityObserver(BooleanSupplier demand, Consumer<Boolean> afterCommit)
     {
         mLiveActivityDemand = java.util.Objects.requireNonNull(demand);
         mAfterCommit = java.util.Objects.requireNonNull(afterCommit);
@@ -1048,6 +1049,7 @@ class ReceiverActivityWriter implements AutoCloseable
         try
         {
             int writtenRecords = 0;
+            boolean[] historyChanged = {false};
             ActivityToneAssociations toneAssociations = mActivityToneAssociations.copy();
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
             Set<ToneReceipt> acceptedToneSequences = new LinkedHashSet<>();
@@ -1134,6 +1136,8 @@ class ReceiverActivityWriter implements AutoCloseable
                         p25RecoveryFloor);
                     if(updated != null)
                     {
+                        historyChanged[0] |= state != null && updated.credit().detailedEventId() != null &&
+                            !state.credit().equals(updated.credit());
                         acceptedP25Calls.put(observation.callToken(), updated);
                         toneAssociations.call(connection, observation.callToken(), observation.activity().configurationId(),
                             updated.credit().detailedEventId(), System.currentTimeMillis());
@@ -1151,7 +1155,8 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     LogicalCallId logicalCallId = logicalCall.logicalCallId();
                     if(!hasResolvedLogicalCall(logicalCallId, acceptedLogicalCalls) &&
-                        ReceiverActivitySchema.recordResolvedLogicalCall(connection, logicalCall))
+                        ReceiverActivitySchema.recordResolvedLogicalCall(connection, logicalCall,
+                            () -> historyChanged[0] = true))
                     {
                         acceptedLogicalCalls.add(logicalCallId);
                         writtenRecords++;
@@ -1232,7 +1237,7 @@ class ReceiverActivityWriter implements AutoCloseable
             mLastError = null;
             try
             {
-                mAfterCommit.run();
+                mAfterCommit.accept(historyChanged[0]);
             }
             catch(RuntimeException exception)
             {

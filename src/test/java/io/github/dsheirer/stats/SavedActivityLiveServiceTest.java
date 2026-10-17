@@ -94,6 +94,27 @@ class SavedActivityLiveServiceTest
     }
 
     @Test
+    void committedHistoryEnrichmentUsesTheExistingReloadBoundaryAndStillDeliversNewRows() throws Exception
+    {
+        FakeSource source = new FakeSource(10);
+        try(var service = new SavedActivityLiveService(source, ignored -> {}, () -> 1000, () -> true);
+            var subscription = service.subscribe())
+        {
+            awaitInitialized(service);
+            source.maximum.set(11);
+            service.signalCommit(true);
+            var reset = subscription.poll(2, TimeUnit.SECONDS);
+            assertNotNull(reset);
+            assertEquals("live_gap", reset.name());
+            assertEquals(Map.of("reason", "history_reset"), reset.data());
+            assertEquals(11, rowId(subscription.poll(2, TimeUnit.SECONDS)),
+                "An update and an append in one commit must both reach the browser");
+            service.signalCommit(false);
+            assertNull(subscription.poll(100, TimeUnit.MILLISECONDS), "A no-op commit is not a reload boundary");
+        }
+    }
+
+    @Test
     void unchangedClockDoesNotCreateSourceChangesAndSettingsRefreshWithoutDatabaseReads() throws Exception
     {
         FakeSource source = new FakeSource(10);

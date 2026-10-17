@@ -112,7 +112,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final WriterFactory mWriterFactory;
     private volatile ReceiverActivityWriter mWriter;
     private final AtomicBoolean mLiveActivityDemand = new AtomicBoolean();
-    private final AtomicReference<Runnable> mSavedActivityCommitSignal = new AtomicReference<>(() -> {});
+    private final AtomicReference<java.util.function.Consumer<Boolean>> mSavedActivityCommitSignal =
+        new AtomicReference<>(ignored -> {});
 
     private volatile boolean mCollectionEnabled;
     private volatile boolean mObservationWorkerStarted;
@@ -127,9 +128,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     }
 
     /** The supplied signal must be nonblocking and must not read, project, or fan out activity. */
-    public void setSavedActivityCommitSignal(Runnable signal)
+    public void setSavedActivityCommitSignal(java.util.function.Consumer<Boolean> signal)
     {
-        mSavedActivityCommitSignal.set(signal != null ? signal : () -> {});
+        mSavedActivityCommitSignal.set(signal != null ? signal : ignored -> {});
     }
 
     public ReceiverActivityService(UserPreferences userPreferences)
@@ -849,7 +850,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         try
         {
             writer.setObservationDropProviders(mObservationDrops::get, mLastObservationDropMs::get);
-            writer.setLiveActivityObserver(mLiveActivityDemand::get, () -> mSavedActivityCommitSignal.get().run());
+            writer.setLiveActivityObserver(mLiveActivityDemand::get,
+                historyChanged -> mSavedActivityCommitSignal.get().accept(historyChanged));
             writer.start();
             return writer;
         }

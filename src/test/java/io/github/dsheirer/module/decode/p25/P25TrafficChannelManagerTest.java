@@ -970,6 +970,7 @@ class P25TrafficChannelManagerTest
                 grantPhaseTwoCall(call.manager(), call.channel(), phaseOneControl, source, 1_300L);
                 assertEquals(source, bound.attribution().source());
                 assertTrue(call.manager().processP2TrafficEndPushToTalk(call.frequency(), timeslot, 1_500L));
+                assertTrue(bound.attribution().isComplete());
                 assertEquals(source, bound.attribution().source());
                 assertNull(call.audioIdentifiers().getFromIdentifier(), "Attribution never seeds decoder metadata");
             }
@@ -987,12 +988,23 @@ class P25TrafficChannelManagerTest
         grantPhaseTwoCall(call.manager(), call.channel(), false, secondSource, 1_300L);
         AudioActivityCallEvent next = call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_400L);
         assertNotSame(first.attribution(), next.attribution());
+        assertTrue(first.attribution().isComplete());
         assertFalse(first.token().equals(next.token()));
         assertEquals(firstSource, first.attribution().source());
         assertEquals(secondSource, next.attribution().source());
         assertNull(call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_200L));
         assertNull(call.manager().processP2TrafficVoice(call.frequency() + 12_500L, call.timeslot(), 1_400L));
         assertNull(call.manager().processP2TrafficVoice(call.frequency(), 3, 1_400L));
+    }
+
+    @Test
+    void controlSourceResetExpiresPendingCallAttribution() throws Exception
+    {
+        PhaseTwoAudioCall call = phaseTwoAudioCall(TimeslotMessage.TIMESLOT_1, null);
+        AudioActivityCallEvent event = call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_100L);
+        call.manager().resetControlSourceState();
+        assertTrue(event.attribution().isComplete());
+        assertNull(call.manager().processP2TrafficVoice(call.frequency(), call.timeslot(), 1_200L));
     }
 
     @Test

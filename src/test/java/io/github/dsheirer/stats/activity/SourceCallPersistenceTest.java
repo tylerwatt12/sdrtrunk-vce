@@ -2,9 +2,26 @@
 package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.SourceCallReference;
+import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -18,6 +35,75 @@ class SourceCallPersistenceTest
     private static final String CHANNEL = "123e4567-e89b-42d3-a456-426614174000";
     private static final String SECOND_CHANNEL = "123e4567-e89b-42d3-a456-426614174001";
     @TempDir Path directory;
+
+    @Test void repeatedP25PushToTalkBeforeVoiceDoesNotCreateAdditionalActivityRows() throws Exception
+    {
+        Path database = createDatabase("repeated-ptt.sqlite");
+        configure(database,CHANNEL,"TRUNKED","P25_PHASE2","P25");
+        Channel parent = new Channel("Test site");
+        parent.setConfigurationId(CHANNEL);
+        parent.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        parent.setSourceConfiguration(new SourceConfigRemote());
+        parent.setP25SiteIdentity(new P25SiteIdentity(0xBEE00,0x3A9,1,1));
+        var manager = new P25TrafficChannelManager(parent);
+        var band = new P25FrequencyBand(0,460012500L,0,12500L,12500,2);
+        manager.processFrequencyBand(band); manager.processFrequencyBand(band);
+        var observations = new P25Observations();
+        long now = System.currentTimeMillis();
+        MyEventBus.getGlobalEventBus().register(observations);
+        try
+        {
+            for(int timeslot: List.of(1,2))
+            {
+                APCO25Channel channel = APCO25Channel.create(0,timeslot - 1);
+                channel.setFrequencyBand(band);
+                for(int call = 0; call < 2; call++)
+                {
+                    long start = now + call * 1000L;
+                    CorrectedBinaryMessage bits = new CorrectedBinaryMessage(156);
+                    bits.setInt(1,IntField.length3(0));
+                    bits.setInt(0x80,IntField.length8(80));
+                    bits.setInt(101 + call,IntField.length24(104));
+                    bits.setInt(1201,IntField.length16(128));
+                    PushToTalk ptt = new PushToTalk(bits);
+                    MutableIdentifierCollection identifiers = new MutableIdentifierCollection(ptt.getIdentifiers());
+                    identifiers.update(APCO25Wacn.create(0xBEE00));
+                    identifiers.update(APCO25System.create(0x3A9));
+                    var first = manager.processP2TrafficPushToTalk(channel.getDownlinkFrequency(),timeslot,
+                        channel,identifiers,ptt,start);
+                    var repeated = manager.processP2TrafficPushToTalk(channel.getDownlinkFrequency(),timeslot,
+                        channel,identifiers,ptt,start + 60);
+                    assertEquals(first.token(),repeated.token());
+                    manager.processP2TrafficVoice(channel.getDownlinkFrequency(),timeslot,start + 120);
+                    manager.processP2TrafficEndPushToTalk(channel.getDownlinkFrequency(),timeslot,start + 200);
+                }
+            }
+        }
+        finally { MyEventBus.getGlobalEventBus().unregister(observations); }
+        var writer = new ReceiverActivityWriter(database,30,true,64,1,0);
+        writer.start(); observations.records.forEach(writer::enqueue); writer.close();
+        assertEquals(0,writer.getDroppedRecords());
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        {
+            assertEquals(4,scalar(sql,"SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(4,scalar(sql,"SELECT count(DISTINCT source_call_uuid) FROM receiver_activity_event"));
+            assertEquals(0,scalar(sql,"SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    private static final class P25Observations
+    {
+        final ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+        final List<ReceiverActivityRecord> records = new ArrayList<>();
+        @Subscribe public void started(P25CallStartEvent event)
+        {
+            if(CHANNEL.equals(event.configurationId())) records.add(mapper.mapCallStart(event));
+        }
+        @Subscribe public void updated(P25CallUpdateEvent event)
+        {
+            if(CHANNEL.equals(event.call().configurationId())) records.add(mapper.map(event));
+        }
+    }
 
     @Test void writerStoresOnlyExactCallReferencesAndNeverTheTransientToken() throws Exception
     {

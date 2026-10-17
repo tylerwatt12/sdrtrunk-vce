@@ -42,9 +42,6 @@ import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.identifier.Form;
-import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.IdentifierUpdateProvider;
 import io.github.dsheirer.identifier.Role;
@@ -56,6 +53,7 @@ import io.github.dsheirer.identifier.tone.ToneIdentifierMessage;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageProvider;
+import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.phase2.message.EncryptionSynchronizationSequence;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacPduType;
@@ -163,17 +161,10 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     @Override
     public void reset()
     {
+        closeCurrentAudioSegment();
+        discardCallAttribution();
         mToneObservationRegistration.resetUnfinishedCall();
         mToneFrameSnapshot = null;
-        MutableAudioCallBuilder currentAudioCall = getCurrentAudioCall();
-
-        if(currentAudioCall != null)
-        {
-            mLog.warn("TS{} reset with open audio segment:{} buffers:{} complete:{} encryptedStateEstablished:{} encrypted:{} queued:{}",
-                getTimeslot(), formatSegment(currentAudioCall), currentAudioCall.getAudioBufferCount(),
-                currentAudioCall.isComplete(), mEncryptionState.isKnown(), mEncryptionState.isEncrypted(),
-                mQueuedAudioTimeslots.size());
-        }
 
         //Explicitly clear FROM identifiers to ensure previous call TONE identifiers are cleared.
         mIdentifierCollection.remove(Role.FROM);
@@ -194,6 +185,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     public void stop()
     {
         closeCurrentAudioSegment();
+        discardCallAttribution();
     }
 
     /**
@@ -210,9 +202,13 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
     {
         if(message.getTimeslot() == getTimeslot())
         {
+            prepareCallAttribution();
+
             if(getCurrentAudioCall() != null && shouldTouchSegment(message))
             {
-                touchCurrentAudioSegment(message.getTimestamp());
+                long firstFrame = message instanceof AbstractVoiceTimeslot voice ?
+                    firstVoiceFrameTimestamp(message.getTimestamp(), voice.getVoiceFrames().size()) : message.getTimestamp();
+                touchCurrentAudioSegment(message.getTimestamp(), firstFrame);
             }
 
             if(message instanceof AbstractVoiceTimeslot abstractVoiceTimeslot)
@@ -220,6 +216,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 if(mEncryptionState.isKnown())
                 {
+                    setCurrentCallEncryptionState(mEncryptionState, message.getTimestamp());
                     if(mEncryptionState.isClear())
                     {
                         processAudio(abstractVoiceTimeslot.getVoiceFrames(), message.getTimestamp());
@@ -246,13 +243,6 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 if(macStructure instanceof PushToTalk pushToTalk)
                 {
-                    //A valid PTT is a strong new-call boundary.  Complete an old segment whose End PTT was missed
-                    //before applying the new call's encryption state and evidence.
-                    if(getCurrentAudioCall() != null)
-                    {
-                        closeCurrentAudioSegment(message.getTimestamp());
-                    }
-
                     mToneMetadataProcessor.reset();
                     clearPendingVoiceTimeslots();
                     resetEncryptionTracking();
@@ -294,6 +284,20 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     clearPendingVoiceTimeslots();
                     resetEncryptionTracking();
                 }
+                else if(macStructure.getOpcode().isVoiceChannelUser() &&
+                    macStructure instanceof IServiceOptionsProvider options)
+                {
+                    CallEncryptionState encryptionState =
+                        CallEncryptionState.fromEncrypted(options.getServiceOptions().isEncrypted());
+                    if(encryptionState != mEncryptionState)
+                    {
+                        mEncryptionSyncParameters = null;
+                        mVoiceFrameDecryptor = null;
+                    }
+                    mEncryptionState = encryptionState;
+                    if(getCurrentAudioCall() != null)
+                        setCurrentCallEncryptionState(mEncryptionState, message.getTimestamp());
+                }
             }
             else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())
             {
@@ -334,6 +338,16 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 }
             }
         }
+    }
+
+    @Override
+    protected void callAttributionChanged()
+    {
+        mQueuedAudioTimeslots.clear();
+        mToneMetadataProcessor.reset();
+        mEncryptionSyncParameters = null;
+        mVoiceFrameDecryptor = null;
+        mEncryptionState = CallEncryptionState.UNKNOWN;
     }
 
     /**
@@ -393,17 +407,6 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         mEncryptionState = CallEncryptionState.UNKNOWN;
         mEncryptionSyncParameters = null;
         mVoiceFrameDecryptor = null;
-    }
-
-    private String formatSegment(MutableAudioCallBuilder audioCall)
-    {
-        if(audioCall == null)
-        {
-            return "null";
-        }
-
-        return audioCall.getTimeslot() + ":" + audioCall.getStartTimestamp() + ":" +
-            System.identityHashCode(audioCall);
     }
 
     /**

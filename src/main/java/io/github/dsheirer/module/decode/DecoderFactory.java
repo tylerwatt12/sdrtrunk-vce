@@ -181,7 +181,8 @@ public class DecoderFactory
                     channelDescriptor, channelActivityModel);
                 break;
             case P25_CONVENTIONAL:
-                processP25Conventional(channel, userPreferences, modules, aliasList, initialSourceSampleRate);
+                processP25Conventional(channel, userPreferences, modules, aliasList, initialSourceSampleRate,
+                    channelActivityModel);
                 break;
             case P25_PHASE1:
                 processP25Phase1(channel, userPreferences, modules, aliasList, trafficChannelManager, channelDescriptor,
@@ -308,14 +309,17 @@ public class DecoderFactory
      * Creates decoder modules for APCO-25 conventional Phase 1 decoder.
      */
     private static void processP25Conventional(Channel channel, UserPreferences userPreferences, List<Module> modules,
-                                               AliasList aliasList, double initialSourceSampleRate)
+                                               AliasList aliasList, double initialSourceSampleRate,
+                                               ChannelActivityModel channelActivityModel)
     {
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Conventional conventional)
         {
             addP25Phase1Decoder(modules, conventional.getModulation(), initialSourceSampleRate, false);
         }
 
-        modules.add(new P25P1DecoderState(channel, null));
+        P25P1DecoderState state = new P25P1DecoderState(channel, null);
+        state.setChannelActivityModel(channelActivityModel);
+        modules.add(state);
         modules.add(new P25P1AudioModule(userPreferences, aliasList, createCallLegSource(channel, aliasList)));
     }
 

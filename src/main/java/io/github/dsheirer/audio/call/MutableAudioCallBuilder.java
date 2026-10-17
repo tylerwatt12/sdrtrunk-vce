@@ -445,7 +445,9 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
         if(AudioCallRecordingMetadata.isSource(identifier))
         {
-            mRecordingSource = AudioCallRecordingMetadata.captureSource(mAliasList, identifier);
+            Identifier<?> source = mIdentifierCollection.getFromIdentifier();
+            if(source != null && source.getForm() == identifier.getForm())
+                mRecordingSource = AudioCallRecordingMetadata.captureSource(mAliasList, source);
         }
 
         mRecordingMetadata = null;

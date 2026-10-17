@@ -20,7 +20,6 @@ package io.github.dsheirer.channel.metadata.activity;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.audio.call.AudioCallEvent;
-import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallLegId;
@@ -122,6 +121,9 @@ public class ChannelActivityRow
     private long mControlSyncLossBits;
     private long mControlDroppedBits;
     private long mControlLastValidDecodeMs;
+    private String mSourceCallToken;
+    private boolean mSourceCallManaged;
+    private boolean mSourceCallComplete;
     private AudioCallId mVoiceCallId;
     private VoiceCallQuality mVoiceCallQuality;
     private long mQualityObservedAt;
@@ -525,6 +527,28 @@ public class ChannelActivityRow
         return mCallLegId;
     }
 
+    String getSourceCallToken()
+    {
+        return mSourceCallToken;
+    }
+
+    boolean isSourceCallManaged()
+    {
+        return mSourceCallManaged;
+    }
+
+    boolean isSourceCallComplete()
+    {
+        return mSourceCallComplete;
+    }
+
+    void observeSourceCall(String token, boolean complete)
+    {
+        mSourceCallManaged = true;
+        mSourceCallToken = token;
+        mSourceCallComplete = complete;
+    }
+
     public TransmissionState getTransmissionState()
     {
         return mTransmissionState;
@@ -822,6 +846,9 @@ public class ChannelActivityRow
         copy.mControlSyncLossBits = mControlSyncLossBits;
         copy.mControlDroppedBits = mControlDroppedBits;
         copy.mControlLastValidDecodeMs = mControlLastValidDecodeMs;
+        copy.mSourceCallToken = mSourceCallToken;
+        copy.mSourceCallManaged = mSourceCallManaged;
+        copy.mSourceCallComplete = mSourceCallComplete;
         copy.mVoiceCallId = mVoiceCallId;
         copy.mVoiceCallQuality = mVoiceCallQuality;
         copy.mQualityObservedAt = mQualityObservedAt;

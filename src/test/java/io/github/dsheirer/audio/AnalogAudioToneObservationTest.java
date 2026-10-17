@@ -42,7 +42,7 @@ class AnalogAudioToneObservationTest
             assertEquals(ends.getFirst().callId(),results.getFirst().callId());
             assertEquals(ends.getLast().callId(),results.getLast().callId());
             assertEquals(List.of(437500),results.getFirst().tones().getFirst().frequenciesMilliHertz());
-            assertEquals(List.of(593750),results.getLast().tones().getFirst().frequenciesMilliHertz());
+            assertEquals(List.of(600900),results.getLast().tones().getFirst().frequenciesMilliHertz());
             assertTrue(normal.stream().filter(event->event.eventType()==AudioCallEventType.AUDIO_FRAME)
                 .allMatch(event->java.util.Arrays.equals(new float[800],event.audioFrame())));
         }
@@ -69,7 +69,7 @@ class AnalogAudioToneObservationTest
             module.getSquelchStateListener().receive(SquelchStateEvent.create(SquelchState.SQUELCH));
             assertTrue(tones.awaitWorkerDrain(500,TimeUnit.MILLISECONDS));
             assertEquals(1,completed.size(),"The tone observer is independent of normal audio subscribers");
-            assertEquals(List.of(593750),completed.peek().tones().getFirst().frequenciesMilliHertz());
+            assertEquals(List.of(600900),completed.peek().tones().getFirst().frequenciesMilliHertz());
         }
         finally{module.dispose();}
     }

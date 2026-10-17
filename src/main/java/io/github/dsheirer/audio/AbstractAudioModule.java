@@ -98,13 +98,22 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         new AtomicReference<>();
     private volatile io.github.dsheirer.audio.call.AudioActivityCallEvent mCurrentActivityCall;
     private io.github.dsheirer.audio.call.AudioActivityCallEvent mPreviousActivityCall;
+    private volatile boolean mUsesCallAttribution;
+    private final AtomicBoolean mCallAttributionChanged = new AtomicBoolean();
 
     @Subscribe
     public void activityCallBound(io.github.dsheirer.audio.call.AudioActivityCallEvent event)
     {
-        if(event.timeslot() == getTimeslot() && event.token() != null &&
-            (mCurrentActivityCall == null || !event.token().equals(mCurrentActivityCall.token())))
-            mPendingActivityCall.set(event);
+        if(event.timeslot() == getTimeslot() && event.token() != null)
+        {
+            mUsesCallAttribution |= event.attribution() != null;
+            if(mCurrentActivityCall == null || !event.token().equals(mCurrentActivityCall.token()))
+            {
+                var previous = mPendingActivityCall.getAndSet(event);
+                if(mCurrentActivityCall != null || previous != null && !event.token().equals(previous.token()))
+                    mCallAttributionChanged.set(true);
+            }
+        }
     }
 
     /**
@@ -147,7 +156,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 if(mCurrentAudioCall != null)
                 {
                     //Apply this identifier and its alias policy before publishing the corresponding snapshot.
-                    if(mCurrentActivityCall == null || mCurrentActivityCall.attribution() == null ||
+                    if(!mUsesCallAttribution ||
                         !AudioCallRecordingMetadata.isSource(notification.getIdentifier()))
                         mCurrentAudioCall.receive(notification);
                     emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
@@ -315,14 +324,65 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     public void stop()
     {
         closeAudioSegment();
+        discardCallAttribution();
+    }
+
+    /** A real producer stop/reset cannot leave an unconsumed call binding for the next activation. */
+    protected void discardCallAttribution()
+    {
         mPendingActivityCall.set(null);
         mPreviousActivityCall = null;
+        mCallAttributionChanged.set(false);
     }
+
+    private io.github.dsheirer.audio.call.AudioActivityCallEvent pendingActivityCall(boolean consume)
+    {
+        var pending = consume ? mPendingActivityCall.getAndSet(null) : mPendingActivityCall.get();
+        if(pending != null && pending.attribution() != null && pending.attribution().isComplete())
+        {
+            mPendingActivityCall.compareAndSet(pending, null);
+            mCallAttributionChanged.set(true);
+            return null;
+        }
+        return pending;
+    }
+
+    /** The same exact call boundary applies to metadata-only activity and committed PCM. */
+    private synchronized void admitCallAttribution(long timestamp)
+    {
+        prepareCallAttribution();
+        var pending = pendingActivityCall(false);
+        if(mCurrentAudioCall != null && pending != null &&
+            (mCurrentActivityCall == null || !pending.token().equals(mCurrentActivityCall.token())))
+        {
+            boolean burstActive = mCurrentAudioCall.isBurstActive();
+            mLinkNextAudioCallToPrevious = false;
+            closeAudioSegment(timestamp);
+            var next = getAudioCall(timestamp);
+            if(burstActive) next.beginBurst(timestamp);
+        }
+    }
+
+    /** Run on the audio producer before processing queued voice from a newly selected physical call. */
+    protected void prepareCallAttribution()
+    {
+        pendingActivityCall(false);
+        if(mCallAttributionChanged.getAndSet(false)) callAttributionChanged();
+    }
+
+    /** Protocol modules discard undecidable cached voice and encryption sync at this exact token boundary. */
+    protected void callAttributionChanged() { }
 
     /**
      * Gets the current mutable producer-side audio call, creating it as necessary.
      */
     protected MutableAudioCallBuilder getAudioCall()
+    {
+        return getAudioCall(System.currentTimeMillis());
+    }
+
+    /** Pins the producer's carrier time before publishing the first immutable call snapshot. */
+    private MutableAudioCallBuilder getAudioCall(long timestamp)
     {
         synchronized(this)
         {
@@ -332,11 +392,12 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             if(mCurrentAudioCall == null)
             {
                 mCurrentAudioCall = new MutableAudioCallBuilder(mAliasList, getTimeslot());
+                mCurrentAudioCall.begin(timestamp);
                 mLastPublishedAudioCallSnapshot = null;
                 mCurrentAudioCallId = new AudioCallId(mProducerId, mNextAudioCallSequence++, getTimeslot());
                 boolean linkedContinuation = mLinkNextAudioCallToPrevious;
                 mCurrentActivityCall = linkedContinuation ? mPreviousActivityCall :
-                    mPendingActivityCall.getAndSet(null);
+                    pendingActivityCall(true);
                 mCurrentLinkedAudioCallId = linkedContinuation ? mPreviousAudioCallId : null;
                 mCurrentCallLegId = linkedContinuation && mPreviousCallLegId != null ? mPreviousCallLegId :
                     new CallLegId(mProducerId, mCurrentAudioCallId.sequence(), getTimeslot());
@@ -349,7 +410,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 applyPendingSiteEvidenceGeneration();
                 mLinkNextAudioCallToPrevious = false;
                 mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()).stream()
-                    .filter(identifier -> mCurrentActivityCall == null || mCurrentActivityCall.attribution() == null ||
+                    .filter(identifier -> !mUsesCallAttribution ||
                         !AudioCallRecordingMetadata.isSource(identifier)).toList());
                 if(mRecordAudioOverride)
                 {
@@ -388,9 +449,16 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
      */
     protected void touchCurrentAudioSegment(long timestamp)
     {
+        touchCurrentAudioSegment(timestamp, timestamp);
+    }
+
+    /** Carrier time can describe the final frame while a new call begins at its first frame. */
+    protected void touchCurrentAudioSegment(long timestamp, long firstFrameTimestamp)
+    {
         synchronized(this)
         {
             applyPendingCallSystemKey();
+            admitCallAttribution(firstFrameTimestamp);
 
             if(mCurrentAudioCall != null)
             {
@@ -416,7 +484,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
-            MutableAudioCallBuilder audioCall = getAudioCall();
+            admitCallAttribution(timestamp);
+            MutableAudioCallBuilder audioCall = getAudioCall(timestamp);
             audioCall.begin(timestamp);
             updateCurrentCallStartTimestamp(audioCall.getStartTimestamp());
             mLastPublishedAudioCallSnapshot = null;
@@ -440,7 +509,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         synchronized(this)
         {
-            MutableAudioCallBuilder audioCall = getAudioCall();
+            admitCallAttribution(timestamp);
+            MutableAudioCallBuilder audioCall = getAudioCall(timestamp);
             audioCall.beginBurst(timestamp);
             emitAudioCallEvent(AudioCallEventType.BURST_STARTED, null);
             return audioCall;
@@ -487,7 +557,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         synchronized(this)
         {
             applyPendingCallSystemKey();
-            MutableAudioCallBuilder audioCall = getAudioCall();
+            admitCallAttribution(timestamp);
+            MutableAudioCallBuilder audioCall = getAudioCall(timestamp);
             boolean changed = false;
 
             if(encryptionKey != null)
@@ -522,7 +593,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         synchronized(this)
         {
             applyPendingCallSystemKey();
-            MutableAudioCallBuilder audioCall = getAudioCall();
+            admitCallAttribution(timestamp);
+            MutableAudioCallBuilder audioCall = getAudioCall(timestamp);
             boolean changed = audioCall.observeEncryptionState(encryptionState);
             audioCall.touch(timestamp);
 
@@ -594,15 +666,9 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                           long voiceFrameFingerprint, long correctedVoiceFrameFingerprint, float[] rawAudio)
     {
         long carrierTimestamp = timestamp > 0L ? timestamp : System.currentTimeMillis();
-        var pendingCall = mPendingActivityCall.get();
-        if(mCurrentAudioCall != null && pendingCall != null &&
-            (mCurrentActivityCall == null || !pendingCall.token().equals(mCurrentActivityCall.token())))
-        {
-            // A decoder can identify the next physical call before carrier/squelch closes the old audio.
-            mLinkNextAudioCallToPrevious = false;
-            closeAudioSegment(carrierTimestamp);
-        }
-        MutableAudioCallBuilder audioCall = getAudioCall();
+        long frameStartTimestamp = Math.max(1L, carrierTimestamp - 20L);
+        admitCallAttribution(frameStartTimestamp);
+        MutableAudioCallBuilder audioCall = getAudioCall(frameStartTimestamp);
 
         //If the current segment exceeds the max samples length, close it so that a new segment gets generated
         //and then link the segments together
@@ -610,7 +676,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         {
             mLinkNextAudioCallToPrevious = true;
             closeAudioSegment(carrierTimestamp);
-            audioCall = getAudioCall();
+            audioCall = getAudioCall(frameStartTimestamp);
         }
 
         try

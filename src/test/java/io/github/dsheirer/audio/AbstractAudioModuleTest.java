@@ -73,6 +73,95 @@ class AbstractAudioModuleTest
     }
 
     @Test
+    void endedUnconsumedBindingCannotFallBackToTheOldDecoderSource()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution ended = new CallAttribution("ended");
+        ended.updateSource(APCO25RadioIdentifier.createFrom(101));
+        module.getIdentifierCollection().update(ended.source());
+        module.activityCallBound(new AudioActivityCallEvent(ended.token(), 0, ended));
+        ended.complete();
+        module.closeAt(1_100L); //No audio builder exists yet.
+        module.beginAt(1_200L);
+        module.appendFrameAt(1_380L, 0);
+        module.stop();
+
+        var completed = events.getLast().snapshot();
+        assertNull(completed.activityCallToken());
+        assertNull(completed.identifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void metadataOnlyActivityAdmitsTheNextExactCallAtItsFirstCarrierFrame()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution first = new CallAttribution("first"), second = new CallAttribution("second");
+        first.updateSource(APCO25RadioIdentifier.createFrom(101));
+        second.updateSource(APCO25RadioIdentifier.createFrom(202));
+        module.activityCallBound(new AudioActivityCallEvent(first.token(), 0, first));
+        module.beginAt(1_000L);
+        module.beginBurstAt(1_000L);
+        module.markEncryptedAt(1_000L);
+        first.complete();
+        module.activityCallBound(new AudioActivityCallEvent(second.token(), 0, second));
+        module.touchAt(1_360L, 1_200L);
+        module.markEncryptedAt(1_360L);
+        module.closeAt(1_400L);
+
+        var completed = events.stream().filter(event ->
+            event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+        assertEquals(2, completed.size());
+        assertEquals("first", completed.getFirst().snapshot().activityCallToken());
+        assertEquals(101, completed.getFirst().snapshot().identifierCollection().getFromIdentifier().getValue());
+        assertEquals("second", completed.getLast().snapshot().activityCallToken());
+        assertEquals(202, completed.getLast().snapshot().identifierCollection().getFromIdentifier().getValue());
+        assertEquals(1_200L, completed.getLast().snapshot().startTimestamp());
+        assertEquals(CallEncryptionState.ENCRYPTED, completed.getLast().snapshot().encryptionState());
+    }
+
+    @Test
+    void closingTheOldCallPreservesAnAlreadyQueuedNewCall()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution first = new CallAttribution("first"), second = new CallAttribution("second");
+        first.updateSource(APCO25RadioIdentifier.createFrom(101));
+        second.updateSource(APCO25RadioIdentifier.createFrom(202));
+        module.activityCallBound(new AudioActivityCallEvent(first.token(), 0, first));
+        module.beginAt(1_000L);
+        module.activityCallBound(new AudioActivityCallEvent(second.token(), 0, second));
+        first.complete();
+        module.closeAt(1_100L);
+        module.beginAt(1_200L);
+        module.stop();
+
+        assertEquals("second", events.getLast().snapshot().activityCallToken());
+        assertEquals(202, events.getLast().snapshot().identifierCollection().getFromIdentifier().getValue());
+    }
+
+    @Test
+    void stoppingBeforeAudioCreationDiscardsThePendingBinding()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        CallAttribution previous = new CallAttribution("previous");
+        previous.updateSource(APCO25RadioIdentifier.createFrom(101));
+        module.getIdentifierCollection().update(previous.source());
+        module.activityCallBound(new AudioActivityCallEvent(previous.token(), 0, previous));
+        module.stop();
+        module.beginAt(1_200L);
+        module.stop();
+        assertNull(events.getLast().snapshot().activityCallToken());
+        assertNull(events.getLast().snapshot().identifierCollection().getFromIdentifier());
+    }
+
+    @Test
     void lateSourceBelongsOnlyToItsBoundCallAndTheNextCallCannotInheritIt()
     {
         TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
@@ -309,11 +398,26 @@ class AbstractAudioModuleTest
         assertEquals(0x1234ABCDL, frame.voiceFrameFingerprint());
         assertEquals(0L, frame.correctedVoiceFrameFingerprint());
         assertEquals(source, completion.snapshot().callLegSource());
+        assertEquals(1_000, events.getFirst().snapshot().startTimestamp());
         assertEquals(1_000, completion.snapshot().startTimestamp());
         assertEquals(1_400, completion.snapshot().lastActivityTimestamp());
         assertEquals(1_010, completion.snapshot().lastBurstStartTimestamp());
         assertEquals(1_400, completion.snapshot().lastBurstEndTimestamp());
         assertEquals(CallEncryptionState.CLEAR, completion.snapshot().encryptionState());
+    }
+
+    @Test
+    void firstFramePinsTheCallBeforeItsCreationSnapshot()
+    {
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 60_000L);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        module.appendFrameAt(1_200L, 0L);
+        module.closeAt(1_300L);
+
+        assertEquals(AudioCallEventType.CALL_CREATED, events.getFirst().eventType());
+        assertEquals(1_180L, events.getFirst().snapshot().startTimestamp());
+        assertEquals(1_180L, events.getLast().snapshot().startTimestamp());
     }
 
     @Test
@@ -631,6 +735,11 @@ class AbstractAudioModuleTest
         private void closeAt(long timestamp)
         {
             closeAudioSegment(timestamp);
+        }
+
+        private void touchAt(long timestamp, long firstFrameTimestamp)
+        {
+            touchCurrentAudioSegment(timestamp, firstFrameTimestamp);
         }
 
         private void markEncryptedAt(long timestamp)

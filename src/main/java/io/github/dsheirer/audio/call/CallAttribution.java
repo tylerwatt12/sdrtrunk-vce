@@ -10,6 +10,7 @@ public final class CallAttribution
 {
     private final String mToken;
     private volatile Identifier<?> mSource;
+    private volatile boolean mComplete;
 
     public CallAttribution(String token)
     {
@@ -18,6 +19,8 @@ public final class CallAttribution
 
     public String token() { return mToken; }
     public Identifier<?> source() { return mSource; }
+    public boolean isComplete() { return mComplete; }
+    public void complete() { mComplete = true; }
 
     /** The call tracker publishes accepted evidence; absent observations do not withdraw a known caller. */
     public void updateSource(Identifier<?> source)

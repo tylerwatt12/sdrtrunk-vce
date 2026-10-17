@@ -28,7 +28,10 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.audio.call.CallAttribution;
+import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
@@ -62,6 +65,9 @@ public class P25TrafficChannelEventTracker
     private long mLastObservationTimestamp;
     private boolean mStarted = false;
     private boolean mComplete = false;
+    private boolean mVoiceObserved;
+    private EncryptionKeyIdentifier mPushToTalkKey;
+    private CallEncryptionEvidence mPushToTalkEncryption;
     private P25CallStartEvent mCallStart;
     private List<Identifier> mActivityIdentifiers;
     private boolean mCompletionPublished;
@@ -106,6 +112,30 @@ public class P25TrafficChannelEventTracker
     {
         return new AudioActivityCallEvent(mActivityCallToken, timeslot, mCallAttribution);
     }
+
+    /** Repeated start signalling before the first voice timeslot belongs to this same physical call. */
+    boolean acceptsPushToTalk(IdentifierCollection identifiers, IEncryptionSyncParameters parameters, long timestamp)
+    {
+        CallEncryptionEvidence encryption = CallEncryptionEvidence.capture(parameters);
+        return !mVoiceObserved && isSameCallCheckingToAndFrom(identifiers, timestamp) &&
+            (mPushToTalkKey == null || parameters == null || mPushToTalkKey.equals(parameters.getEncryptionKey())) &&
+            (mPushToTalkEncryption == null || encryption == null || !mPushToTalkEncryption.hasMessageIndicator() ||
+                !encryption.hasMessageIndicator() || mPushToTalkEncryption.hasMatchingMessageIndicator(encryption));
+    }
+
+    void observePushToTalk(IEncryptionSyncParameters parameters)
+    {
+        if(parameters != null)
+        {
+            mPushToTalkKey = parameters.getEncryptionKey();
+            mPushToTalkEncryption = CallEncryptionEvidence.capture(parameters);
+        }
+    }
+
+    void observeVoice() { mVoiceObserved = true; }
+
+    /** Map retirement expires attribution without inventing a new RF end timestamp. */
+    void completeAttribution() { mCallAttribution.complete(); }
 
     /** Captured once before the tracker is published to asynchronous observers. */
     void setCallStart(P25CallStartEvent callStart)
@@ -447,6 +477,7 @@ public class P25TrafficChannelEventTracker
         if(!isComplete())
         {
             mComplete = true;
+            completeAttribution();
             observe(timestamp);
             getEvent().end(timestamp);
             return true;

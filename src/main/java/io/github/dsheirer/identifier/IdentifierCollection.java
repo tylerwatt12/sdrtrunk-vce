@@ -295,33 +295,24 @@ public class IdentifierCollection
      */
     public Identifier getFromIdentifier()
     {
-        Identifier from = getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-
-        if(from != null)
-        {
-            return from;
-        }
-
         Identifier fallback = null;
         for(Identifier identifier: mIdentifiers)
         {
-            //A name describes an identified radio; it can never stand in for an unknown source identity.
-            if(identifier.getForm() == Form.TALKER_ALIAS) continue;
-            if(identifier.getForm() == Form.TELEPHONE_NUMBER)
-            {
-                return identifier;
-            }
-            if(fallback == null && identifier.getRole() == Role.FROM)
-            {
+            if(!isSourceIdentifier(identifier)) continue;
+            if(identifier.getForm() == Form.RADIO) return identifier;
+            if(fallback == null || identifier.getForm() == Form.TELEPHONE_NUMBER &&
+                fallback.getForm() != Form.TELEPHONE_NUMBER)
                 fallback = identifier;
-            }
         }
-        if(fallback != null)
-        {
-            return fallback;
-        }
+        return fallback;
+    }
 
-        return null;
+    /** Auxiliary tones and names describe a call; only a valid FROM entity can identify its caller. */
+    public static boolean isSourceIdentifier(Identifier<?> identifier)
+    {
+        return identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER &&
+            identifier.getRole() == Role.FROM && identifier.isValid() &&
+            identifier.getForm() != Form.TONE && identifier.getForm() != Form.TALKER_ALIAS;
     }
 
     /**

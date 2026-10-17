@@ -20,6 +20,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -304,6 +305,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     public P25P1DecoderState(Channel channel)
     {
         this(channel, null);
+    }
+
+    /** Connects the privately owned conventional tracker to the shared bounded Live activity ingress. */
+    public void setChannelActivityModel(ChannelActivityModel model)
+    {
+        mTrafficChannelManager.setChannelActivityModel(model);
     }
 
     /**
@@ -591,10 +598,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     /**
      * Creates a decode event type from the link control word
      */
-    private DecodeEventType getLCDecodeEventType(LinkControlWord lcw)
+    private DecodeEventType getLCDecodeEventType(LinkControlWord lcw, boolean encrypted)
     {
-        boolean encrypted = lcw.isEncrypted();
-
         switch(lcw.getOpcode())
         {
             case GROUP_VOICE_CHANNEL_USER:
@@ -616,9 +621,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processLCChannelUser(LinkControlWord lcw, long timestamp)
     {
         getIdentifierCollection().update(mPatchGroupManager.update(lcw.getIdentifiers(), timestamp));
-        DecodeEventType decodeEventType = getLCDecodeEventType(lcw);
-
-        ServiceOptions serviceOptions = null;
+        ServiceOptions serviceOptions;
 
         if(lcw instanceof IServiceOptionsProvider sop)
         {
@@ -633,6 +636,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             serviceOptions = VoiceServiceOptions.createUnencrypted();
         }
 
+        DecodeEventType decodeEventType = getLCDecodeEventType(lcw, serviceOptions.isEncrypted());
         mTrafficChannelManager.enrichMutableIdentifiers(getIdentifierCollection(), timestamp);
         MutableIdentifierCollection mic = getMutableIdentifierCollection(getIdentifierCollection().getIdentifiers(), timestamp);
         publishCallAttribution(mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), getCurrentChannel(), decodeEventType,
@@ -2555,6 +2559,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         {
             mTrafficChannelManager.resetControlSourceState();
         }
+    }
+
+    @Override
+    protected void resetState()
+    {
+        super.resetState();
+        mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), TimeslotMessage.TIMESLOT_1,
+            System.currentTimeMillis());
     }
 
     @Override

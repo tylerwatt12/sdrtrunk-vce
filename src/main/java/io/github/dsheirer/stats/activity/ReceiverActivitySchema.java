@@ -1271,6 +1271,12 @@ public class ReceiverActivitySchema
     static boolean recordResolvedLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call)
         throws SQLException
     {
+        return recordResolvedLogicalCall(connection, call, () -> {});
+    }
+
+    static boolean recordResolvedLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call,
+        Runnable historyChanged) throws SQLException
+    {
         if(call == null)
         {
             return false;
@@ -1326,23 +1332,25 @@ public class ReceiverActivitySchema
             }
         }
 
-        enrichResolvedCallSource(connection, radioSystem, call);
+        if(enrichResolvedCallSource(connection, radioSystem, call)) historyChanged.run();
         AliasActivityProjection.recordResolvedLogicalCall(connection, call);
 
         return true;
     }
 
     /** Shared call identity enriches only exact receiver calls; their observed RF addresses remain evidence. */
-    private static void enrichResolvedCallSource(Connection connection, RadioSystemSchema.RadioSystem system,
+    private static boolean enrichResolvedCallSource(Connection connection, RadioSystemSchema.RadioSystem system,
         ReceiverActivityRecords.ResolvedLogicalCall call) throws SQLException
     {
         RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, system,
             IDENTITY_KIND_RADIO, call.sourceRadioId(), call.p25SourceIdentity(), call.callStartEpochMilliseconds());
-        if(source == null || call.sourceCallReferences().isEmpty()) return;
+        if(source == null || call.sourceCallReferences().isEmpty()) return false;
+        boolean changed = false;
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE receiver_activity_event SET radio_system_id = ?, source_identity_summary_id = ?
             WHERE source_call_uuid = ? AND action_code = ?
               AND (radio_system_id IS NULL OR radio_system_id = ?)
+              AND (radio_system_id IS NULL OR source_identity_summary_id IS NOT ?)
             """))
         {
             for(String reference: call.sourceCallReferences())
@@ -1352,10 +1360,11 @@ public class ReceiverActivitySchema
                 statement.setString(3, reference);
                 statement.setInt(4, actionCode(ReceiverActivityRecords.Action.CALL));
                 statement.setLong(5, system.radioSystemId());
-                statement.addBatch();
+                statement.setLong(6, source.summaryId());
+                changed |= statement.executeUpdate() > 0;
             }
-            statement.executeBatch();
         }
+        return changed;
     }
 
     static boolean applyLogicalCallOutput(Connection connection, ReceiverActivityRecords.LogicalCallOutput output)

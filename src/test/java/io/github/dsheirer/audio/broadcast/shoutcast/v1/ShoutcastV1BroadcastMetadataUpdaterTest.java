@@ -32,6 +32,25 @@ class ShoutcastV1BroadcastMetadataUpdaterTest
     }
 
     @Test
+    void auxiliaryAndDestinationFactsCannotBecomeTheSongSource()
+    {
+        var aliases = new AliasModel()
+        {
+            @Override public AliasList getAliasList(IdentifierCollection collection) { return AliasList.empty("test"); }
+        };
+        var updater = new ShoutcastV1BroadcastMetadataUpdater(new ShoutcastV1Configuration(), aliases);
+        var tone = io.github.dsheirer.identifier.tone.P25ToneIdentifier.create(
+            new io.github.dsheirer.identifier.tone.ToneSequence(List.of(
+                new io.github.dsheirer.identifier.tone.Tone(io.github.dsheirer.identifier.tone.AmbeTone.DTMF_1, 5))));
+        for(var auxiliary: List.of(tone,
+            io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber.createTo("123")))
+        {
+            org.junit.jupiter.api.Assertions.assertTrue(updater.getSong(
+                new IdentifierCollection(List.of(auxiliary)), null).endsWith("FROM:UNKNOWN"));
+        }
+    }
+
+    @Test
     void songMetadataUsesTheSameCompatibilityRuleWithoutSendingANetworkRequest()
     {
         var identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(1001),

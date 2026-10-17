@@ -52,6 +52,7 @@ final class SavedActivityLiveService implements AutoCloseable
     private final BooleanSupplier mCollectionEnabled;
     private final StatsLiveEventHub mHub;
     private final AtomicLong mCommitRevision = new AtomicLong();
+    private final AtomicBoolean mHistoryInvalidated = new AtomicBoolean();
     private final AtomicBoolean mWakeupPending = new AtomicBoolean();
     private final Semaphore mWakeup = new Semaphore(0);
     private volatile boolean mClosed;
@@ -85,6 +86,7 @@ final class SavedActivityLiveService implements AutoCloseable
         {
             mActive = true;
             mEpoch++;
+            mHistoryInvalidated.set(false);
             mState = new State(mState.revision() + 1, false, 0, 0, 0, false);
             mDemand.accept(true);
         }
@@ -111,8 +113,14 @@ final class SavedActivityLiveService implements AutoCloseable
     /** Constant, nonblocking post-commit notification; no row projection or subscriber work. */
     void signalCommit()
     {
+        signalCommit(false);
+    }
+
+    void signalCommit(boolean historyChanged)
+    {
         if(mActive && !mClosed)
         {
+            if(historyChanged) mHistoryInvalidated.set(true);
             mCommitRevision.incrementAndGet();
             wakeup();
         }
@@ -161,6 +169,11 @@ final class SavedActivityLiveService implements AutoCloseable
                 synchronized(this)
                 {
                     if(!current(epoch)) continue;
+                    if(mHistoryInvalidated.getAndSet(false))
+                    {
+                        mHub.publish("live_gap", Map.of("reason", "history_reset"));
+                        updateState(mState.watermarkId(), true);
+                    }
                     updateState(mState.watermarkId(), false);
                 }
                 long requestedCommit = mCommitRevision.get();

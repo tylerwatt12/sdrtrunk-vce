@@ -44,6 +44,23 @@ import org.junit.jupiter.api.Test;
 class MutableAudioCallBuilderRecordingMetadataTest
 {
     @Test
+    void incrementalSourceMetadataFollowsTheSharedSelectorPriority()
+    {
+        var builder = new MutableAudioCallBuilder(AliasList.empty("test"), 0);
+        builder.addIdentifier(APCO25RadioIdentifier.createFrom(0));
+        assertNull(builder.getRecordingMetadata().sourceValue());
+        var telephone = io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber
+            .createFrom("123");
+        builder.addIdentifier(telephone);
+        assertEquals("123", builder.getRecordingMetadata().sourceValue());
+        builder.addIdentifier(APCO25RadioIdentifier.createFrom(101));
+        builder.addIdentifier(io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber
+            .createFrom("456"));
+        assertEquals("101", builder.getRecordingMetadata().sourceValue());
+        assertEquals(APCO25RadioIdentifier.createFrom(101), builder.getIdentifierCollection().getFromIdentifier());
+    }
+
+    @Test
     void keepsRadioResolveIdSeparateFromDisplayNames()
     {
         String radioResolveId = "11111111-2222-4333-8444-555555555555";

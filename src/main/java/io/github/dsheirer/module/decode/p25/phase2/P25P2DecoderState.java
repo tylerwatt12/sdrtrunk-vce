@@ -150,7 +150,6 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.motorol
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractVoiceTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.DatchTimeslot;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
-import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
 import java.util.List;
@@ -268,7 +267,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         mTalkerAliasReceptionGeneration++;
         super.resetState();
-        mTrafficChannelManager.processP2TrafficCallEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis());
+        mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis());
         mEndPttOnFacchCounter = 0;
     }
 
@@ -423,13 +422,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 break;
             case TDMA_00_NULL_INFORMATION_MESSAGE:
                 processNullInformation(message);
-                break;
-            case TDMA_01_GROUP_VOICE_CHANNEL_USER_ABBREVIATED:
-            case TDMA_02_UNIT_TO_UNIT_VOICE_CHANNEL_USER_ABBREVIATED:
-            case TDMA_03_TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER:
-            case TDMA_21_GROUP_VOICE_CHANNEL_USER_EXTENDED:
-            case TDMA_22_UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
-                processChannelUser(message, mac);
                 break;
             case TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT:
             case TDMA_25_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_EXPLICIT:
@@ -711,6 +703,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 break;
             case UNKNOWN:
             default:
+                if(mac.getOpcode().isVoiceChannelUser()) processChannelUser(message, mac);
                 break;
         }
     }
@@ -1261,13 +1254,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         {
             if(mac instanceof IServiceOptionsProvider sop)
             {
-                IChannelDescriptor currentChannel = mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(),
+                var selected = mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(),
                         getTimeslot(), getCurrentChannel(), sop.getServiceOptions(), mac.getOpcode(),
                         getIdentifierCollection().copyOf(), message.getTimestamp(), null);
 
-                if(getCurrentChannel() == null)
+                if(selected != null)
                 {
-                    setCurrentChannel(currentChannel);
+                    if(getCurrentChannel() == null) setCurrentChannel(selected.channel());
+                    publishCallAttribution(selected.attribution());
                 }
 
                 if(sop.getServiceOptions().isEncrypted())
@@ -1306,14 +1300,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
         if(mac instanceof PushToTalk ptt)
         {
-            VoiceServiceOptions vso = ptt.isEncrypted() ? VoiceServiceOptions.createEncrypted() : VoiceServiceOptions.createUnencrypted();
-
-            //First TCM call creates the tracked event and second call starts the call and updates the duration
-            mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), getCurrentChannel(), vso,
-                    mac.getOpcode(), getIdentifierCollection().copyOf(), message.getTimestamp(),
-                    ptt.isEncrypted() ? VoiceEncryptionDisplay.format(ptt.getEncryptionKey()) : null);
-
-            publishCallAttribution(mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp()));
+            publishCallAttribution(mTrafficChannelManager.processP2TrafficPushToTalk(getCurrentFrequency(), getTimeslot(),
+                getCurrentChannel(), getIdentifierCollection().copyOf(), ptt, message.getTimestamp()));
 
             broadcast(new DecoderStateEvent(this, Event.START, ptt.isEncrypted() ? State.ENCRYPTED : State.CALL, getTimeslot()));
         }
@@ -1728,7 +1716,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac instanceof MacRelease mr)
         {
-            mTrafficChannelManager.processP2TrafficCallEnd(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
+            mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
             getIdentifierCollection().remove(IdentifierClass.USER);
             broadcast(message, mac, DecodeEventType.COMMAND,
                     (mr.isForcedPreemption() ? "FORCED " : "") + "CALL PREEMPTION" +

@@ -62,6 +62,50 @@ class BasicRecordingContractTest
     @TempDir Path mDirectory;
 
     @Test
+    void sourceLessAuxiliaryFactsStayUnknownInFilenamesTagsAndStreamTitles()
+    {
+        var aliasModel = new io.github.dsheirer.alias.AliasModel()
+        {
+            @Override public io.github.dsheirer.alias.AliasList getAliasList(IdentifierCollection identifiers)
+            {
+                return io.github.dsheirer.alias.AliasList.empty("test");
+            }
+        };
+        for(var auxiliary: List.of(P25ToneIdentifier.create(new ToneSequence(List.of(new Tone(AmbeTone.DTMF_1, 5)))),
+            io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier.create("Name"),
+            APCO25RadioIdentifier.createFrom(0),
+            io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber.createTo("123"),
+            io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber.createAny("123")))
+        {
+            var identifiers = new IdentifierCollection(List.of(auxiliary));
+            assertNull(io.github.dsheirer.audio.call.AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers)
+                .sourceValue());
+            assertFalse(BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1)
+                .contains("_FROM_"));
+            assertNull(io.github.dsheirer.record.wave.AudioMetadataUtils.getCapturedMetadataMap(identifiers,
+                io.github.dsheirer.audio.call.AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers))
+                .get(io.github.dsheirer.record.wave.AudioMetadata.ARTIST_NAME));
+            assertTrue(io.github.dsheirer.audio.broadcast.icecast.IcecastMetadata.getTitle(identifiers, aliasModel)
+                .endsWith("FROM:UNKNOWN"));
+        }
+    }
+
+    @Test
+    void sourceTelephoneMatchesCapturedMetadataFilenameAndTags()
+    {
+        var telephone = io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber
+            .createFrom("123");
+        var identifiers = new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(0), telephone));
+        var captured = io.github.dsheirer.audio.call.AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers);
+        assertEquals("123", captured.sourceValue());
+        assertTrue(BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1)
+            .contains("_FROM_123"));
+        assertEquals("123", io.github.dsheirer.record.wave.AudioMetadataUtils
+            .getCapturedMetadataMap(identifiers, captured)
+            .get(io.github.dsheirer.record.wave.AudioMetadata.ARTIST_NAME));
+    }
+
+    @Test
     void plainProtocolsAndNxdnSpecialAddressesRetainTheirUpstreamRepresentation()
     {
         assertEquals("70001", BasicRecordingContract.sourceIdentifier(APCO25RadioIdentifier.createFrom(70001)));

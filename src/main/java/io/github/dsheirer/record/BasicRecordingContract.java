@@ -20,7 +20,6 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.tone.Tone;
@@ -184,14 +183,7 @@ public final class BasicRecordingContract
                 if(!targets.isEmpty()) target = targets.getFirst();
             }
             if(target != null) body.append("_TO_").append(filenameIdentifier(target));
-            Identifier<?> source = identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-            if(source == null)
-            {
-                for(Identifier<?> candidate: identifiers.getIdentifiers(Role.FROM))
-                {
-                    if(candidate.getForm() != Form.TONE) { source = candidate; break; }
-                }
-            }
+            Identifier<?> source = identifiers.getFromIdentifier();
             if(source != null) body.append("_FROM_").append(filenameIdentifier(source));
             List<Identifier> tones = identifiers.getIdentifiers(IdentifierClass.USER, Form.TONE);
             if(!tones.isEmpty() && tones.getFirst() instanceof ToneIdentifier tone && tone.getValue() != null &&

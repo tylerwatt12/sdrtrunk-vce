@@ -40,6 +40,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierObservation;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
@@ -62,6 +63,7 @@ import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSna
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
@@ -110,6 +112,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private static final int TRUNKED_TRAFFIC = 9;
     private static final int TRUNKED_CURRENT_CONTROL = 10;
     private static final int CONFIGURATION_CHANGED = 13;
+    private static final int CONVENTIONAL_CALL = 14;
 
     private final AliasModel mAliasModel;
     private final NowPlayingPreference mNowPlayingPreference;
@@ -607,7 +610,21 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
+        boolean newerUnboundCall = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL &&
+            row.isSourceCallComplete() && snapshot.activityCallToken() == null &&
+            !snapshot.callLegId().equals(row.getCallLegId()) && row.startsNewTrafficCall(snapshot.startTimestamp());
         boolean transmissionChanged = row.observeTransmission(event);
+        if(newerUnboundCall && transmissionChanged)
+        {
+            row.clearCallDetails();
+            row.observeSourceCall(null, false);
+            row.observeTrafficCall(snapshot.startTimestamp(), 0);
+        }
+        else if(row.isSourceCallManaged() && row.getSourceCallToken() == null && completed &&
+            transmissionChanged && !event.continuationExpected())
+        {
+            row.observeSourceCall(null, true);
+        }
         boolean servingContextChanged = false;
         if(transmissionChanged && snapshot.callLegId() != null && snapshot.callLegId().equals(row.getCallLegId()))
         {
@@ -956,6 +973,45 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
     }
 
+    /** Conventional P25 uses the same accepted tracker facts before and after an audio builder exists. */
+    public void p25ConventionalCall(Channel channel, P25CallStartEvent call, boolean complete)
+    {
+        if(channel != null && call != null && call.callToken() != null)
+        {
+            offer(CONVENTIONAL_CALL, channel, call, null, null, null, null, complete ? 1 : 0);
+        }
+    }
+
+    private void processConventionalCall(Channel channel, P25CallStartEvent call, boolean complete)
+    {
+        Integer timeslot = call.timeslot() != null && call.timeslot() > 0 ? call.timeslot() : null;
+        for(ChannelActivityRow row: mConventionalTable.getRows())
+        {
+            if(row.getChannel() != channel ||
+                !matchesVoiceChannel(row, call.frequencyHertz() != null ? call.frequencyHertz() : 0, timeslot) ||
+                row.isOlderTrafficObservation(call.startedAtEpochMilliseconds(), 0))
+            {
+                continue;
+            }
+            if(!call.callToken().equals(row.getSourceCallToken()))
+            {
+                row.clearCallDetails();
+                row.clearVoiceQuality();
+            }
+            row.observeSourceCall(call.callToken(), complete);
+            row.observeTrafficCall(call.startedAtEpochMilliseconds(), 0);
+            row.captureServingSystemKey(call.radioSystemKey(), false);
+            IdentifierCollection identifiers = call.identifierCollection();
+            Identifier<?> source = identifiers.getFromIdentifier();
+            row.setSource(source);
+            row.setSourceAliases(getAliases(source, null, channel));
+            row.setTalkerAlias(TalkerAliasIdentifier.find(identifiers));
+            updateCallDetails(row, null, identifiers.getToIdentifier(), null, identifiers.getEncryptionIdentifier(), channel);
+            row.setState(complete ? State.IDLE : getState(call.eventType()));
+            mConventionalTable.refresh(row);
+        }
+    }
+
     /**
      * Publishes a DMR or NXDN trunked call event into the shared Systems activity model. DMR requires explicit trunked
      * configuration; NXDN can still be promoted by positively identified metadata or traffic-manager activity.
@@ -1176,7 +1232,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         boolean newCall = state != State.IDLE && (row.getState() == State.IDLE || targetChanged);
         boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
 
-        if(newCall)
+        if(newCall && !row.isSourceCallManaged())
         {
             row.clearCallDetails();
             row.clearVoiceQuality();
@@ -1189,7 +1245,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         boolean preserveIdleDetails = displayState == State.IDLE;
         ChannelMetadataField field = observation.field();
         boolean fullObservation = field == null || field == ChannelMetadataField.DECODER_STATE;
-        boolean sourceObserved = fullObservation || field == ChannelMetadataField.USER_FROM;
+        boolean sourceObserved = !row.isSourceCallManaged() &&
+            (fullObservation || field == ChannelMetadataField.USER_FROM);
         boolean targetObserved = fullObservation || field == ChannelMetadataField.USER_TO;
         boolean encryptionObserved = fullObservation || field == ChannelMetadataField.USER_ENCRYPTION;
         Identifier<?> source = observation.source();
@@ -2322,6 +2379,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             case TRUNKED_TRAFFIC -> processTrunkedTrafficEvent(entry);
             case TRUNKED_CURRENT_CONTROL -> processTrunkedCurrentControl((Channel)entry.first(), entry.value());
             case CONFIGURATION_CHANGED -> processChannelConfigurationChanged((Channel)entry.first());
+            case CONVENTIONAL_CALL -> processConventionalCall((Channel)entry.first(),
+                (P25CallStartEvent)entry.second(), entry.value() != 0);
             default -> mLog.warn("Ignoring unknown channel activity operation [{}]", entry.operation());
         }
     }

@@ -233,21 +233,7 @@ public class ShoutcastV1BroadcastMetadataUpdater implements IBroadcastMetadataUp
                 sb.append("TO:UNKNOWN");
             }
 
-            Identifier from = identifierCollection.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM);
-
-            if(from == null)
-            {
-                List<Identifier> fromIdentifiers = identifierCollection.getIdentifiers(Role.FROM);
-
-                for(Identifier candidate: fromIdentifiers)
-                {
-                    if(candidate.getForm() != Form.TALKER_ALIAS)
-                    {
-                        from = candidate;
-                        break;
-                    }
-                }
-            }
+            Identifier from = identifierCollection.getFromIdentifier();
 
             if(from != null)
             {

@@ -14,6 +14,16 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.audio.call.LogicalCallId;
+import io.github.dsheirer.audio.call.SourceCallReference;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
@@ -22,6 +32,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -320,7 +331,7 @@ class ReceiverActivityWriterTest
         var visibleRows = new java.util.concurrent.atomic.AtomicLong(-1);
         var notifications = new java.util.concurrent.atomic.AtomicInteger();
         ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 10, 10_000);
-        writer.setLiveActivityObserver(() -> true, () -> {
+        writer.setLiveActivityObserver(() -> true, historyChanged -> {
             try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
             {
                 visibleRows.set(scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
@@ -344,6 +355,90 @@ class ReceiverActivityWriterTest
             ReceiverActivityWriter.collectionDeadline(50, 10_000, true));
         assertEquals(TimeUnit.MILLISECONDS.toNanos(100) + 50,
             ReceiverActivityWriter.collectionDeadline(50, 100, true), "Existing shorter deadlines are preserved");
+    }
+
+    @Test
+    void p25SourceEnrichmentInvalidatesVisibleHistoryEvenWhenNewRowsCommitTogether() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("live-source-enrichment.sqlite"));
+        insertConfiguredChannel(database);
+        var writer = new ReceiverActivityWriter(database, 30, true);
+        List<Boolean> invalidations = new ArrayList<>();
+        List<Long> visibleRows = new ArrayList<>();
+        writer.setLiveActivityObserver(() -> true, changed -> {
+            invalidations.add(changed);
+            try(Connection visible = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                visibleRows.add(scalar(visible, "SELECT count(*) FROM receiver_activity_event"));
+            }
+            catch(Exception exception) { throw new IllegalStateException(exception); }
+        });
+        long now = System.currentTimeMillis();
+        var initial = p25Call("late", now, null);
+        var known = p25Call("late", now, 202);
+        var update = new ReceiverActivityRecords.P25CallObservation("late", known.activity(), false, false);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            writeBatch(writer, connection, List.of(initial));
+            writeBatch(writer, connection, List.of(update, activity(ReceiverActivityRecords.Action.REGISTER, now + 1)));
+            assertEquals(202, scalar(connection,
+                "SELECT source_observed_local_id FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL"));
+            writeBatch(writer, connection, List.of(update));
+        }
+        assertEquals(List.of(false, true, false), invalidations,
+            "Insert-only and unchanged snapshots append normally; an enriched retained row requires a reload");
+        assertEquals(List.of(1L, 2L, 2L), visibleRows, "Every signal follows a visible durable transaction");
+    }
+
+    @Test
+    void resolvedExactReferenceInvalidatesOnlyWhenItsSavedSourceActuallyChanges() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("live-resolved-source.sqlite"));
+        insertConfiguredChannel(database);
+        var writer = new ReceiverActivityWriter(database, 30, true);
+        List<Boolean> invalidations = new ArrayList<>();
+        writer.setLiveActivityObserver(() -> true, invalidations::add);
+        long now = System.currentTimeMillis();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            writeBatch(writer, connection, List.of(p25Call("exact", now, null)));
+            writeBatch(writer, connection, List.of(resolved(1, now, "exact")));
+            assertEquals(202, scalar(connection, """
+                SELECT identity.identity_id FROM receiver_activity_event event
+                JOIN radio_system_identity_summary identity ON identity.id = event.source_identity_summary_id
+                """));
+            writeBatch(writer, connection, List.of(resolved(2, now, "exact")));
+            writeBatch(writer, connection, List.of(resolved(3, now, "unrelated")));
+        }
+        assertEquals(List.of(false, true, false, false), invalidations,
+            "Unchanged exact references and references without a retained row must not trigger reloads");
+    }
+
+    private static ReceiverActivityRecords.ResolvedLogicalCall resolved(long sequence, long timestamp, String token)
+    {
+        return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(1, sequence), timestamp,
+            CONFIGURATION_ID, "APCO25", TrunkedIdentityDomain.STANDARD, 0xBEE00, 0x3A9,
+            56138, "TALKGROUP", List.of(), 202, false, null, null,
+            ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
+            List.of(), List.of(), "p25:bee00:3a9", null, null, List.of(SourceCallReference.fromToken(token)));
+    }
+
+    private static ReceiverActivityRecords.P25CallObservation p25Call(String token, long timestamp, Integer source)
+    {
+        List<Identifier> identifiers = new ArrayList<>(List.of(APCO25Talkgroup.create(56138),
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x3A9)));
+        if(source != null) identifiers.add(APCO25RadioIdentifier.createFrom(source));
+        return (ReceiverActivityRecords.P25CallObservation)new ReceiverActivityMapper().mapCallStart(
+            new P25CallStartEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1, DecodeEventType.CALL_GROUP,
+                timestamp, identifiers, 854_187_500L, 0, 509, 1, false, false, "p25:bee00:3a9", token));
+    }
+
+    private static void writeBatch(ReceiverActivityWriter writer, Connection connection,
+                                    List<ReceiverActivityRecord> records) throws Exception
+    {
+        var method = ReceiverActivityWriter.class.getDeclaredMethod("writeBatch", Connection.class, List.class);
+        method.setAccessible(true);
+        method.invoke(writer, connection, records);
     }
 
     @Test

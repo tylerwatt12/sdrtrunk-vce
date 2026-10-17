@@ -23,16 +23,21 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWordFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
+import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU2Message;
+import io.github.dsheirer.module.decode.p25.phase1.message.ldu.EncryptionSyncParameters;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HeaderData;
 import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDULCMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 
@@ -54,9 +59,14 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.channel.state.DecoderStateEvent;
+import io.github.dsheirer.channel.state.State;
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import jmbe.iface.IAudioCodec;
+import jmbe.iface.IAudioWithMetadata;
 import org.junit.jupiter.api.Test;
 
 class P25P1DecoderStateConventionalCallTest
@@ -162,6 +172,169 @@ class P25P1DecoderStateConventionalCallTest
     }
 
     @Test
+    void metadataOnlySourceTransitionsUseTheSameBoundariesAsDecodedAudio()
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline())
+            {
+                pipeline.receive(header(1_000L, encrypted));
+                pipeline.receive(voice(1_180L, 101, encrypted));
+                pipeline.receive(voice(1_360L, 202, encrypted));
+                pipeline.receive(terminator(1_400L));
+                var completed = pipeline.completed();
+                assertEquals(2, completed.size());
+                assertNotEquals(completed.getFirst().snapshot().activityCallToken(),
+                    completed.getLast().snapshot().activityCallToken());
+                assertEquals(101, completed.getFirst().snapshot().identifierCollection().getFromIdentifier().getValue());
+                assertEquals(202, completed.getLast().snapshot().identifierCollection().getFromIdentifier().getValue());
+                assertEquals(1_200L, completed.getLast().snapshot().startTimestamp());
+                assertEquals(encrypted ? CallEncryptionState.ENCRYPTED : CallEncryptionState.CLEAR,
+                    completed.getLast().snapshot().encryptionState());
+            }
+        }
+    }
+
+    @Test
+    void callEndingBeforeEncryptionIsKnownCannotLabelTheNextUnknownCall()
+    {
+        for(boolean linkControl: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline(true))
+            {
+                pipeline.receive(voice(1_000L, 101, true));
+                pipeline.receive(linkControl ? terminator(1_100L) :
+                    new TDUMessage(new CorrectedBinaryMessage(28), 0x123, 1_100L));
+                pipeline.receive(voice(1_200L, LinkControlOpcode.GROUP_VOICE_CHANNEL_UPDATE, List.of()));
+                pipeline.receive(clearLdu2(1_380L));
+                pipeline.receive(terminator(1_500L));
+
+                var completed = pipeline.completed();
+                assertEquals(1, completed.size());
+                assertNull(completed.getFirst().snapshot().activityCallToken());
+                assertNull(completed.getFirst().snapshot().identifierCollection().getFromIdentifier());
+                assertEquals(18, pipeline.audioEvents.stream().filter(event ->
+                    event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+            }
+        }
+    }
+
+    @Test
+    void actualDecoderResetRetiresPendingCallBeforeTheNextEncryptionObservation()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.receive(voice(1_000L, 101, true));
+            var reset = new DecoderStateEvent(this, DecoderStateEvent.Event.REQUEST_RESET, State.RESET);
+            pipeline.state.receiveDecoderStateEvent(reset);
+            pipeline.audio.getDecoderStateListener().receive(reset);
+            pipeline.receive(clearLdu2(1_380L));
+            pipeline.receive(terminator(1_500L));
+
+            assertEquals(1, pipeline.completed().size());
+            assertNull(pipeline.completed().getFirst().snapshot().activityCallToken());
+            assertNull(pipeline.completed().getFirst().snapshot().identifierCollection().getFromIdentifier());
+        }
+    }
+
+    @Test
+    void missedHeadersRetainEachCallersClearVoice()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.receive(voice(1_000L, 101));
+            pipeline.receive(voice(1_180L, 202));
+            pipeline.receive(clearLdu2(1_360L));
+            pipeline.receive(terminator(1_400L));
+
+            assertEquals(2, pipeline.completed().size());
+            assertEquals(101, pipeline.completed().getFirst().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            var completed = pipeline.completed().getFirst();
+            assertEquals(840L, completed.snapshot().startTimestamp());
+            assertEquals(202, pipeline.completed().getLast().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(27, pipeline.audioEvents.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+            assertEquals(9, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME &&
+                    event.snapshot().identifierCollection().getFromIdentifier().getValue().equals(101)).count());
+            assertEquals(18, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME &&
+                    event.snapshot().identifierCollection().getFromIdentifier().getValue().equals(202)).count());
+        }
+    }
+
+    @Test
+    void lateClearUserRetainsVoiceQueuedBeforeItsFirstSource()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.receive(voice(1_000L, LinkControlOpcode.GROUP_VOICE_CHANNEL_UPDATE, List.of()));
+            pipeline.receive(voice(1_180L, 101));
+            pipeline.receive(clearLdu2(1_360L));
+            pipeline.receive(terminator(1_400L));
+
+            assertEquals(1, pipeline.completed().size());
+            assertEquals(840L, pipeline.completed().getFirst().snapshot().startTimestamp());
+            assertEquals(101, pipeline.completed().getFirst().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(27, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+        }
+    }
+
+    @Test
+    void unresolvedProtectedVoiceCannotCarryIntoTheNextClearCaller()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.receive(voice(1_000L, 101, true));
+            pipeline.receive(voice(1_180L, 202));
+            pipeline.receive(clearLdu2(1_360L));
+            pipeline.receive(terminator(1_400L));
+
+            assertEquals(1, pipeline.completed().size());
+            assertEquals(202, pipeline.completed().getFirst().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(18, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+            assertTrue(pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME).allMatch(event ->
+                    event.voiceFrameTimestamp() >= 1_020L));
+        }
+    }
+
+    @Test
+    void aSourceBoundaryUsesItsOwnLinkControlEncryptionState()
+    {
+        for(boolean firstEncrypted: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline(true))
+            {
+                pipeline.receive(header(1_000L, firstEncrypted));
+                pipeline.receive(voice(1_180L, 101, firstEncrypted));
+                pipeline.receive(voice(1_360L, 202, !firstEncrypted));
+                pipeline.receive(terminator(1_400L));
+
+                var completed = pipeline.completed();
+                assertEquals(2, completed.size());
+                assertEquals(firstEncrypted ? CallEncryptionState.ENCRYPTED : CallEncryptionState.CLEAR,
+                    completed.getFirst().snapshot().encryptionState());
+                assertEquals(firstEncrypted ? CallEncryptionState.CLEAR : CallEncryptionState.ENCRYPTED,
+                    completed.getLast().snapshot().encryptionState());
+                assertEquals(firstEncrypted ? DecodeEventType.CALL_GROUP : DecodeEventType.CALL_GROUP_ENCRYPTED,
+                    pipeline.attributions.starts.getLast().eventType());
+                var frames = pipeline.audioEvents.stream().filter(event ->
+                    event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+                assertEquals(9, frames.size());
+                assertTrue(frames.stream().allMatch(event -> event.snapshot().identifierCollection()
+                    .getFromIdentifier().getValue().equals(firstEncrypted ? 202 : 101)));
+            }
+        }
+    }
+
+    @Test
     void freshConventionalHeaderStartsUnknownUntilItsOwnSourceArrives() throws Exception
     {
         Channel channel = new Channel("Conventional");
@@ -206,18 +379,25 @@ class P25P1DecoderStateConventionalCallTest
 
     private static LDU1Message voice(long timestamp, int source)
     {
-        return voice(timestamp, LinkControlOpcode.GROUP_VOICE_CHANNEL_USER,
-            List.of(APCO25Talkgroup.create(1201), APCO25RadioIdentifier.createFrom(source)));
+        return voice(timestamp, source, false);
+    }
+
+    private static LDU1Message voice(long timestamp, int source, boolean encrypted)
+    {
+        return ldu(timestamp, user(timestamp, source, encrypted, false));
     }
 
     private static LDU1Message voice(long timestamp, LinkControlOpcode opcode, List<Identifier> identifiers)
     {
-        LinkControlWord lc = new LinkControlWord(new CorrectedBinaryMessage(72))
-        {
-            @Override public LinkControlOpcode getOpcode() { return opcode; }
-            @Override public List<Identifier> getIdentifiers() { return identifiers; }
-        };
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(72);
+        bits.setInt(opcode.getCode(), IntField.length6(2));
+        LinkControlWord lc = LinkControlWordFactory.create(bits, timestamp, false);
         lc.setValid(true);
+        return ldu(timestamp, lc);
+    }
+
+    private static LDU1Message ldu(long timestamp, LinkControlWord lc)
+    {
         return new LDU1Message(new CorrectedBinaryMessage(1568), 0x123, timestamp)
         {
             @Override public LinkControlWord getLinkControlWord() { return lc; }
@@ -267,31 +447,56 @@ class P25P1DecoderStateConventionalCallTest
 
     private static TDULCMessage terminator(long timestamp)
     {
-        LinkControlWord lc = new LinkControlWord(new CorrectedBinaryMessage(72))
-        {
-            @Override public LinkControlOpcode getOpcode() { return LinkControlOpcode.GROUP_VOICE_CHANNEL_USER; }
-            @Override public List<Identifier> getIdentifiers() { return List.of(APCO25RadioIdentifier.createFrom(0)); }
-        };
-        lc.setValid(true);
+        LinkControlWord lc = user(timestamp, 0, false, true);
         return new TDULCMessage(new CorrectedBinaryMessage(288), 0x123, timestamp)
         {
             @Override public LinkControlWord getLinkControlWord() { return lc; }
         };
     }
 
+    private static LinkControlWord user(long timestamp, int source, boolean encrypted, boolean terminator)
+    {
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(72);
+        bits.setInt(encrypted ? 0x40 : 0, IntField.length8(16));
+        bits.setInt(1201, IntField.length16(32));
+        bits.setInt(source, IntField.length24(48));
+        LinkControlWord lc = LinkControlWordFactory.create(bits, timestamp, terminator);
+        lc.setValid(true);
+        return lc;
+    }
+
+    private static LDU2Message clearLdu2(long timestamp)
+    {
+        BinaryMessage bits = new BinaryMessage(96);
+        bits.setInt(0x80, IntField.length8(72));
+        EncryptionSyncParameters parameters = new EncryptionSyncParameters(bits);
+        return new LDU2Message(new CorrectedBinaryMessage(1568), 0x123, timestamp)
+        {
+            @Override public EncryptionSyncParameters getEncryptionSyncParameters() { return parameters; }
+        };
+    }
+
     private static final class Pipeline implements AutoCloseable
     {
+        private final boolean mHasCodec;
         private final P25TrafficChannelManager manager = controlManager();
         private final Attributions attributions = new Attributions();
         private final List<AudioCallEvent> audioEvents = new CopyOnWriteArrayList<>();
         private final P25P1DecoderState state;
         private final P25P1AudioModule audio = new P25P1AudioModule(new UserPreferences(), AliasList.empty("test"))
         {
-            @Override protected boolean hasAudioCodec() { return false; }
+            @Override protected boolean hasAudioCodec() { return mHasCodec; }
+            @Override public IAudioCodec getAudioCodec() { return CODEC; }
         };
 
         private Pipeline()
         {
+            this(false);
+        }
+
+        private Pipeline(boolean hasCodec)
+        {
+            mHasCodec = hasCodec;
             Channel traffic = new Channel("Traffic", ChannelType.TRAFFIC);
             traffic.setDecodeConfiguration(new DecodeConfigP25Phase1());
             state = new P25P1DecoderState(traffic, manager);
@@ -312,6 +517,11 @@ class P25P1DecoderStateConventionalCallTest
             audio.receive(message);
         }
 
+        private List<AudioCallEvent> completed()
+        {
+            return audioEvents.stream().filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).toList();
+        }
+
         @Override public void close()
         {
             MyEventBus.getGlobalEventBus().unregister(attributions);
@@ -321,8 +531,13 @@ class P25P1DecoderStateConventionalCallTest
 
     private static HDUMessage header(long timestamp)
     {
+        return header(timestamp, false);
+    }
+
+    private static HDUMessage header(long timestamp, boolean encrypted)
+    {
         BinaryMessage bits = new BinaryMessage(120);
-        bits.setInt(0x80, IntField.length8(80));
+        bits.setInt(encrypted ? 0x84 : 0x80, IntField.length8(80));
         bits.setInt(1201, IntField.length16(104));
         HeaderData data = new HeaderData(bits);
         return new HDUMessage(new CorrectedBinaryMessage(648), 0x123, timestamp)
@@ -330,6 +545,22 @@ class P25P1DecoderStateConventionalCallTest
             @Override public HeaderData getHeaderData() { return data; }
         };
     }
+
+    private static final IAudioCodec CODEC = new IAudioCodec()
+    {
+        @Override public String getCodecName() { return "TEST IMBE"; }
+        @Override public float[] getAudio(byte[] frame) { return new float[160]; }
+        @Override public IAudioWithMetadata getAudioWithMetadata(byte[] frame)
+        {
+            return new IAudioWithMetadata()
+            {
+                @Override public float[] getAudio() { return new float[160]; }
+                @Override public boolean hasMetadata() { return false; }
+                @Override public Map<String,String> getMetadata() { return Map.of(); }
+            };
+        }
+        @Override public void reset() { }
+    };
 
     private static P25TrafficChannelManager trafficChannelManager(P25P1DecoderState decoderState) throws Exception
     {

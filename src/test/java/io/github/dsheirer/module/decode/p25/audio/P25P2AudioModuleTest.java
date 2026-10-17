@@ -64,6 +64,7 @@ import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.EndPushToTalk;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.GroupVoiceChannelUserAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NullInformation;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Voice2Timeslot;
@@ -86,7 +87,7 @@ import org.junit.jupiter.api.Test;
 
 class P25P2AudioModuleTest
 {
-    private static final int TIMESLOT = 0;
+    private static final int TIMESLOT = 1;
     private static final long FREQUENCY = 851_012_500L;
     private static final IntField NAC = IntField.length12(12);
     private static final IntField SOURCE = IntField.length24(104);
@@ -180,6 +181,7 @@ class P25P2AudioModuleTest
 
         decoderState.receive(message);
 
+        assertEquals(1, events.size());
         assertEquals("AES256 K:BEEF", events.getLast().getDetails());
         PushToTalk pushToTalk = (PushToTalk)message.getMacStructure();
         assertEquals("ENCRYPTION:AES-256 KEY:48879", pushToTalk.getEncryptionKey().toString());
@@ -217,18 +219,16 @@ class P25P2AudioModuleTest
     }
 
     @Test
-    void newPushToTalkCompletesOldCallWhenTerminatorWasMissed()
+    void repeatedPushToTalkWithoutVoiceRetainsTheOriginalAudioCall()
     {
         mAudioModule.receive(pushToTalk(1_000L));
         mAudioModule.receive(pushToTalk(2_000L));
         mAudioModule.receive(endPushToTalk(3_000L));
 
         List<AudioCallEvent> completed = completedEvents();
-        assertEquals(2, completed.size());
-        assertEquals(2_000L, completed.getFirst().snapshot().lastActivityTimestamp());
-        assertEquals(2_000L, completed.getLast().snapshot().startTimestamp());
-        assertNotEquals(completed.getFirst().callId(), completed.getLast().callId());
-        assertNotEquals(completed.getFirst().snapshot().callLegId(), completed.getLast().snapshot().callLegId());
+        assertEquals(1, completed.size());
+        assertEquals(1_000L, completed.getFirst().snapshot().startTimestamp());
+        assertEquals(3_000L, completed.getFirst().snapshot().lastActivityTimestamp());
     }
 
     @Test
@@ -487,6 +487,139 @@ class P25P2AudioModuleTest
     }
 
     @Test
+    void repeatedPushToTalkBeforeVoiceKeepsOneTokenAndOneCompletedCall()
+    {
+        for(int timeslot: List.of(1, 2))
+        {
+            try(LateSourceCall call = new LateSourceCall(timeslot, false, 1_000L))
+            {
+                call.startPushToTalk(1_100L, 700_001);
+                String token = call.events.getLast().snapshot().activityCallToken();
+                call.startPushToTalk(1_160L, 700_001);
+                assertTrue(call.completedCalls().isEmpty());
+                assertEquals(token, call.events.getLast().snapshot().activityCallToken());
+                call.voice(1_220L);
+                call.endPushToTalk(1_300L, 0xFFFFFF);
+                assertEquals(1, call.completedCalls().size());
+                assertEquals("700001", call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
+                assertTrue(call.completedCalls().getFirst().hasAudio());
+            }
+        }
+    }
+
+    @Test
+    void changedPushToTalkIdentityOrEncryptionBeforeVoiceStartsANewCall()
+    {
+        for(int conflict = 0; conflict < 5; conflict++)
+        {
+            try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+            {
+                call.startPushToTalk(1_100L, 700_001, LateSourceCall.TALKGROUP, 0x84, 7, 1);
+                String token = call.events.getLast().snapshot().activityCallToken();
+                call.startPushToTalk(1_160L, conflict == 0 ? 700_002 : 700_001,
+                    conflict == 1 ? LateSourceCall.TALKGROUP + 1 : LateSourceCall.TALKGROUP,
+                    conflict == 2 ? 0x80 : 0x84, conflict == 3 ? 8 : 7, conflict == 4 ? 2 : 1);
+                assertNotEquals(token, call.events.getLast().snapshot().activityCallToken());
+                call.endPushToTalk(1_300L);
+                assertEquals(2, call.completedCalls().size());
+            }
+        }
+    }
+
+    @Test
+    void repeatedEncryptedPushToTalkRetainsOneMetadataCallBeforeVoice()
+    {
+        try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+        {
+            call.startPushToTalk(1_100L, 700_001, LateSourceCall.TALKGROUP, 0x84, 7, 1);
+            String token = call.events.getLast().snapshot().activityCallToken();
+            call.startPushToTalk(1_160L, 700_001, LateSourceCall.TALKGROUP, 0x84, 7, 1);
+            assertEquals(token, call.events.getLast().snapshot().activityCallToken());
+            assertTrue(call.completedCalls().isEmpty());
+            call.endPushToTalk(1_300L);
+            assertEquals(1, call.completedCalls().size());
+            assertFalse(call.completedCalls().getFirst().hasAudio());
+            assertEquals(CallEncryptionState.ENCRYPTED, call.completedCalls().getFirst().snapshot().encryptionState());
+        }
+    }
+
+    @Test
+    void acceptedCurrentUserChangesMetadataAttributionWithoutAnyVoiceCallbacks()
+    {
+        try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+        {
+            call.startPushToTalk(1_100L, 700_001);
+            call.currentUser(1_160L, 700_002);
+            call.endPushToTalk(1_300L);
+            var completed = call.completedCalls();
+            assertEquals(List.of("700001", "700002"), completed.stream()
+                .map(value -> value.snapshot().recordingMetadata().sourceValue()).toList());
+            assertTrue(completed.stream().noneMatch(CompletedAudioCall::hasAudio));
+            assertNotEquals(completed.getFirst().snapshot().activityCallToken(),
+                completed.getLast().snapshot().activityCallToken());
+        }
+    }
+
+    @Test
+    void acceptedCurrentUserChangeDiscardsUndecidedVoiceFromThePreviousCaller()
+    {
+        try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+        {
+            call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_100L);
+            call.voice(1_160L);
+            call.currentUser(1_220L, 700_002);
+            call.clearEss(1_280L);
+            call.voice(1_340L);
+            call.endPushToTalk(1_400L);
+
+            assertEquals(1, call.completedCalls().size());
+            assertEquals("700002", call.completedCalls().getFirst().snapshot().recordingMetadata().sourceValue());
+            assertEquals(2L, call.events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+        }
+    }
+
+    @Test
+    void currentUserEncryptionOptionsReplaceThePreviousCallModeWhenPushToTalkWasMissed()
+    {
+        for(boolean firstEncrypted: List.of(false, true))
+        {
+            try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+            {
+                call.startPushToTalk(1_100L, 700_001, LateSourceCall.TALKGROUP,
+                    firstEncrypted ? 0x84 : 0x80, 7, 1);
+                call.voice(1_160L);
+                call.currentUser(1_220L, 700_002, !firstEncrypted);
+                call.voice(1_280L);
+                call.endPushToTalk(1_400L);
+
+                var completed = call.completedCalls();
+                assertEquals(2, completed.size());
+                assertEquals(List.of("700001", "700002"), completed.stream()
+                    .map(value -> value.snapshot().recordingMetadata().sourceValue()).toList());
+                assertEquals(firstEncrypted ? CallEncryptionState.CLEAR : CallEncryptionState.ENCRYPTED,
+                    completed.getLast().snapshot().encryptionState());
+                assertEquals(firstEncrypted, completed.getLast().hasAudio());
+            }
+        }
+    }
+
+    @Test
+    void samePushToTalkAfterAValidEndStartsANewTokenEvenWithoutVoice()
+    {
+        try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+        {
+            call.startPushToTalk(1_100L, 700_001);
+            call.endPushToTalk(1_160L);
+            call.startPushToTalk(1_220L, 700_001);
+            call.endPushToTalk(1_300L);
+            assertEquals(2, call.completedCalls().size());
+            assertNotEquals(call.completedCalls().getFirst().snapshot().activityCallToken(),
+                call.completedCalls().getLast().snapshot().activityCallToken());
+        }
+    }
+
+    @Test
     void preloadedGrantSourceSurvivesZeroSourcePushToTalk()
     {
         try(LateSourceCall call = new LateSourceCall(2, false, 1_000L))
@@ -737,16 +870,39 @@ class P25P2AudioModuleTest
 
         private void startPushToTalk(long timestamp, int source)
         {
+            startPushToTalk(timestamp, source, TALKGROUP, 0x80, 0, 0);
+        }
+
+        private void startPushToTalk(long timestamp, int source, int target, int algorithm, int key, int mi)
+        {
             CorrectedBinaryMessage bits = messageBits(1);
-            bits.setInt(0x80, IntField.length8(80));
+            bits.setInt(algorithm, IntField.length8(80));
+            bits.setInt(key, IntField.length16(88));
+            bits.setInt(mi, IntField.length8(8));
             bits.setInt(source, SOURCE);
-            bits.setInt(TALKGROUP, GROUP);
+            bits.setInt(target, GROUP);
             send(new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new PushToTalk(bits)));
         }
 
         private void voice(long timestamp)
         {
             send(new Voice2Timeslot(new CorrectedBinaryMessage(320), new BinaryMessage(320), timeslot, timestamp));
+        }
+
+        private void currentUser(long timestamp, int source)
+        {
+            currentUser(timestamp, source, false);
+        }
+
+        private void currentUser(long timestamp, int source, boolean encrypted)
+        {
+            CorrectedBinaryMessage bits = messageBits(0);
+            bits.setInt(1, IntField.length8(8));
+            bits.setInt(encrypted ? 0x40 : 0, IntField.length8(16));
+            bits.setInt(TALKGROUP, IntField.length16(24));
+            bits.setInt(source, IntField.length24(40));
+            send(new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp,
+                new GroupVoiceChannelUserAbbreviated(bits, 8)));
         }
 
         private void clearEss(long timestamp)
@@ -758,8 +914,14 @@ class P25P2AudioModuleTest
 
         private void endPushToTalk(long timestamp)
         {
+            endPushToTalk(timestamp, 0);
+        }
+
+        private void endPushToTalk(long timestamp, int source)
+        {
             CorrectedBinaryMessage bits = messageBits(2);
             bits.setInt(0x123, NAC);
+            bits.setInt(source, SOURCE);
             bits.setInt(TALKGROUP, GROUP);
             send(new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new EndPushToTalk(bits)));
         }

@@ -127,7 +127,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
                                                                IdentifierCollection identifiers)
     {
         return capture(identifiers, captureDestination(aliasList, destinationIdentifier(identifiers)),
-            captureSource(aliasList, sourceIdentifier(identifiers)));
+            captureSource(aliasList, identifiers != null ? identifiers.getFromIdentifier() : null));
     }
 
     public static AudioCallRecordingMetadata capture(IdentifierCollection identifiers,
@@ -206,8 +206,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
 
     public static boolean isSource(Identifier<?> identifier)
     {
-        return identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER &&
-            identifier.getRole() == Role.FROM && identifier.getForm() == Form.RADIO;
+        return IdentifierCollection.isSourceIdentifier(identifier);
     }
 
     public static DestinationDecision captureDestination(AliasList aliasList, Identifier<?> destination)
@@ -304,7 +303,7 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
 
     public static SourceDecision captureSource(AliasList aliasList, Identifier<?> source)
     {
-        if(source == null)
+        if(!isSource(source))
         {
             return SourceDecision.empty();
         }
@@ -432,12 +431,6 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
         }
         return destination != null ? destination :
             identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.TO);
-    }
-
-    private static Identifier<?> sourceIdentifier(IdentifierCollection identifiers)
-    {
-        return identifiers != null ?
-            identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO, Role.FROM) : null;
     }
 
     private static String destinationValue(Identifier<?> destination)
