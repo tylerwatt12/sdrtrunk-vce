@@ -290,18 +290,40 @@ class P25TrafficChannelManagerTest
         assertFalse(replacement.getActivityCallToken().equals(selected.token()));
         assertNull(manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
             DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_200L, null));
-        assertNull(manager.processP1TrafficLDU1(frequency, identifiers.getIdentifiers(), 1_200L));
+        assertNull(manager.processP1TrafficVoice(frequency, 1_200L));
         assertNull(manager.processP1TrafficCallStart(frequency, APCO25Talkgroup.create(1201), null,
             EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x80, 0)),
             VoiceServiceOptions.createUnencrypted(), new StandardChannel(frequency), 1_200L));
         manager.processP1TrafficCurrentUser(frequency, APCO25RadioIdentifier.createFrom(700_001), 1_200L);
-        assertNull(manager.processP1TrafficLDU1(frequency, identifiers.getIdentifiers(), 2_100L),
-            "A matching carrier and later timestamp do not make a conflicting destination the same call");
         assertNull(manager.processP1TrafficCallStart(frequency, APCO25Talkgroup.create(1201), null,
             EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x80, 0)),
             VoiceServiceOptions.createUnencrypted(), new StandardChannel(frequency), 2_100L));
+        assertEquals(replacement.getActivityCallToken(), manager.processP1TrafficVoice(frequency, 2_100L).token(),
+            "Voice activity selects the accepted call without replaying old cached identities");
         assertSame(replacement, trafficTrackers(manager).get(frequency));
         assertEquals(APCO25Talkgroup.create(1301), replacement.getEvent().getIdentifierCollection().getToIdentifier());
+        assertEquals(APCO25RadioIdentifier.createFrom(700_002),
+            replacement.getEvent().getIdentifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void phaseOneVoiceActivityCannotCreateReviveOrKeepAStaleCall() throws Exception
+    {
+        long frequency = 851_012_500L;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        assertNull(manager.processP1TrafficVoice(frequency, 1_000L));
+        MutableIdentifierCollection identifiers = identifiers(1201, APCO25RadioIdentifier.createFrom(700_001));
+        AudioActivityCallEvent selected = manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+            DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_100L, null);
+        assertEquals(selected.token(), manager.processP1TrafficVoice(frequency, 1_200L).token());
+        assertTrue(manager.processP1TrafficCallEnd(frequency, 1_300L));
+        assertNull(manager.processP1TrafficVoice(frequency, 1_400L));
+
+        selected = manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+            DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_500L, null);
+        assertNull(manager.processP1TrafficVoice(frequency, 5_000L));
+        assertTrue(selected.attribution().isComplete());
+        assertFalse(trafficTrackers(manager).containsKey(frequency));
     }
 
     @Test
@@ -555,6 +577,43 @@ class P25TrafficChannelManagerTest
         identifiers.update(radio);
         manager.processP1HarrisTalkerAlias(frequency, radio, alias, identifiers, 1_200L);
         assertOwnedAlias(alias, event.getIdentifierCollection());
+    }
+
+    @Test
+    void harrisTextCannotSupplyANumericSourceFromTheDecoderCache() throws Exception
+    {
+        for(int timeslot: List.of(TimeslotMessage.TIMESLOT_1, TimeslotMessage.TIMESLOT_2))
+        for(boolean known: List.of(false, true))
+        for(RadioIdentifier radio: List.of(APCO25RadioIdentifier.createFrom(101),
+            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(0, 0xBEE00, 0x123, 7001)))
+        {
+            long frequency = 851_012_500L;
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
+                .identifiers(identifiers(1201, known ? radio : null)).build();
+            P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+            tracker.updateDurationTraffic(1_050L);
+            trafficTrackers(manager, timeslot).put(frequency, tracker);
+            P25TalkerAliasIdentifier alias = P25TalkerAliasIdentifier.create("UNIT");
+
+            if(timeslot == TimeslotMessage.TIMESLOT_1)
+                manager.processP1HarrisTalkerAlias(frequency, radio, alias, identifiers(1201, radio), 1_100L);
+            else
+                assertEquals(known, manager.processP2HarrisTalkerAlias(frequency, timeslot, radio, alias,
+                    identifiers(1201, radio), 1_100L));
+
+            if(known)
+            {
+                assertSame(radio, event.getIdentifierCollection().getFromIdentifier());
+                assertOwnedAlias(alias, event.getIdentifierCollection());
+            }
+            else
+            {
+                assertNull(event.getIdentifierCollection().getFromIdentifier());
+                assertNull(talkerAlias(event.getIdentifierCollection()));
+                assertFalse(manager.getTalkerAliasManager().hasAlias(radio, "p25:bee00:123"));
+            }
+        }
     }
 
     @Test

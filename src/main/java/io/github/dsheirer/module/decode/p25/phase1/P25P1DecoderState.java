@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
@@ -50,6 +51,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
+import io.github.dsheirer.module.decode.dmr.identifier.P25Location;
 import io.github.dsheirer.module.decode.ip.IPacket;
 import io.github.dsheirer.module.decode.ip.UnknownPacket;
 import io.github.dsheirer.module.decode.ip.cellocator.MCGPPacket;
@@ -620,7 +622,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processLCChannelUser(LinkControlWord lcw, long timestamp)
     {
-        getIdentifierCollection().update(mPatchGroupManager.update(lcw.getIdentifiers(), timestamp));
         ServiceOptions serviceOptions;
 
         if(lcw instanceof IServiceOptionsProvider sop)
@@ -637,8 +638,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
 
         DecodeEventType decodeEventType = getLCDecodeEventType(lcw, serviceOptions.isEncrypted());
-        mTrafficChannelManager.enrichMutableIdentifiers(getIdentifierCollection(), timestamp);
-        MutableIdentifierCollection mic = getMutableIdentifierCollection(getIdentifierCollection().getIdentifiers(), timestamp);
+        MutableIdentifierCollection mic = getMutableIdentifierCollection(lcw.getIdentifiers(), timestamp);
+        mTrafficChannelManager.enrichMutableIdentifiers(mic, timestamp);
+        getIdentifierCollection().update(mic.getIdentifiers());
         publishCallAttribution(mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), getCurrentChannel(), decodeEventType,
                 serviceOptions, mic, timestamp, null));
 
@@ -1142,8 +1144,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             if(lcw != null && lcw.isValid())
             {
                 processLC(lcw, message.getTimestamp(), false);
-                publishCallAttribution(mTrafficChannelManager.processP1TrafficLDU1(getCurrentFrequency(),
-                        getIdentifierCollection().getIdentifiers(), message.getTimestamp()));
+                publishCallAttribution(mTrafficChannelManager.processP1TrafficVoice(getCurrentFrequency(),
+                    message.getTimestamp()));
             }
         }
         else if(message instanceof LDU2Message ldu2)
@@ -1183,6 +1185,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         resetHarrisTalkerAliasSource();
         mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
         broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
+        getIdentifierCollection().remove(IdentifierClass.USER);
     }
 
     /**
@@ -1227,7 +1230,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 List<Identifier> resolved = mPatchGroupManager.update(lcw.getIdentifiers(), timestamp);
                 List<Identifier> recovered = mTrafficChannelManager.recoverP25TrafficEndFrameIdentifiers(
                     getCurrentFrequency(), TimeslotMessage.TIMESLOT_1, Protocol.APCO25,
-                    getIdentifierCollection(), resolved, timestamp);
+                    resolved, timestamp);
                 getIdentifierCollection().update(recovered);
                 break;
             default:
@@ -2463,46 +2466,28 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case MOTOROLA_UNIT_GPS:
                 if(lcw instanceof LCMotorolaUnitGPS gps)
                 {
-                    mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), gps.getLocation(), timestamp);
-
-                    //We want to preserve the current TO/FROM and any other identifiers for the GPS event and add the GPS location
-                    MutableIdentifierCollection mic = new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
-                    mic.update(gps.getIdentifiers());
-
-                    PlottableDecodeEvent event = PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, timestamp)
-                            .location(gps.getGeoPosition())
-                            .channel(getCurrentChannel())
-                            .details(gps.getLocation().toString())
-                            .end(timestamp)
-                            .protocol(Protocol.APCO25)
-                            .identifiers(mic)
-                            .build();
-                    broadcast(event);
+                    broadcastTrafficGPS(gps.getLocation(), gps.getGeoPosition(), timestamp);
                 }
                 break;
             case L3HARRIS_TALKER_GPS_COMPLETE:
                 if(lcw instanceof LCHarrisTalkerGPSComplete gps)
                 {
-                    mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), gps.getLocation(), timestamp);
-
-                    //We want to preserve the current TO/FROM and any other identifiers for the GPS event and add the GPS location
-                    MutableIdentifierCollection mic = new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
-                    mic.update(gps.getIdentifiers());
-
-                    PlottableDecodeEvent event = PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, timestamp)
-                            .location(gps.getGeoPosition())
-                            .channel(getCurrentChannel())
-                            .details(gps.getLocation().toString())
-                            .end(timestamp)
-                            .protocol(Protocol.APCO25)
-                            .identifiers(mic)
-                            .build();
-                    broadcast(event);
+                    broadcastTrafficGPS(gps.getLocation(), gps.getGeoPosition(), timestamp);
                 }
                 break;
             default:
                 break;
         }
+    }
+
+    private void broadcastTrafficGPS(P25Location location, GeoPosition position, long timestamp)
+    {
+        var binding = mTrafficChannelManager.processP1TrafficCurrentUser(getCurrentFrequency(), location, timestamp);
+        var identifiers = AudioActivityCallEvent.projectAcceptedSource(binding, getIdentifierCollection());
+        identifiers.update(location);
+        broadcast(PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, timestamp)
+            .location(position).channel(getCurrentChannel()).details(location.toString()).end(timestamp)
+            .protocol(Protocol.APCO25).identifiers(identifiers).build());
     }
 
     @Override

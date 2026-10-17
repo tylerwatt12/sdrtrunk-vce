@@ -359,7 +359,7 @@ public class P25TrafficChannelEventTracker
      * Match those representations by their observed local address only when one home identity is unavailable. Two
      * known home identities remain authoritative, and patch/non-P25 identifiers retain their existing equality.
      */
-    private boolean matchesCallIdentifier(Identifier first, Identifier second)
+    boolean matchesCallIdentifier(Identifier first, Identifier second)
     {
         if(first == null || second == null)
         {

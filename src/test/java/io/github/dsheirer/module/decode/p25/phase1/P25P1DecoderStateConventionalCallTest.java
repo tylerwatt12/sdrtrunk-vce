@@ -28,9 +28,16 @@ import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWordFactory;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.motorola.LCMotorolaUnitGPS;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSBlock1;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSBlock2;
+import io.github.dsheirer.module.decode.p25.phase1.message.lc.l3harris.LCHarrisTalkerGPSComplete;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU2Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.EncryptionSyncParameters;
@@ -46,6 +53,7 @@ import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
@@ -215,6 +223,179 @@ class P25P1DecoderStateConventionalCallTest
                 assertNull(completed.getFirst().snapshot().identifierCollection().getFromIdentifier());
                 assertEquals(18, pipeline.audioEvents.stream().filter(event ->
                     event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+            }
+        }
+    }
+
+    @Test
+    void plainTerminatorCannotTeachThePreviousCallerToANewSourceFreeGrant()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.receive(header(1_000L));
+            pipeline.receive(voice(1_180L, 101));
+            String firstToken = pipeline.attributions.events.getLast().token();
+            TDUMessage end = new TDUMessage(new CorrectedBinaryMessage(28), 0x123, 1_220L);
+            assertTrue(end.isValid());
+            pipeline.receive(end);
+            pipeline.receive(voice(1_400L, LinkControlOpcode.GROUP_VOICE_CHANNEL_UPDATE, List.of()));
+
+            MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+            identifiers.update(APCO25Talkgroup.create(1201));
+            pipeline.manager.processP1ControlAnnouncedTrafficUpdate(controlChannel(pipeline.manager),
+                VoiceServiceOptions.createUnencrypted(), identifiers,
+                Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE, 1_580L);
+            var grant = pipeline.attributions.starts.getLast();
+            assertNotEquals(firstToken, grant.callToken());
+            assertNull(grant.identifierCollection().getFromIdentifier());
+
+            pipeline.receive(voice(1_580L, 0));
+            var second = pipeline.attributions.events.getLast();
+            assertEquals(grant.callToken(), second.token());
+            assertNull(second.attribution().source());
+            assertNull(pipeline.audioEvents.getLast().snapshot().identifierCollection().getFromIdentifier());
+            pipeline.receive(voice(1_760L, 202));
+            assertEquals(second.token(), pipeline.attributions.events.getLast().token());
+            pipeline.receive(terminator(1_900L));
+
+            assertEquals(2, pipeline.completed().size());
+            assertEquals(2, pipeline.attributions.starts.size());
+            assertEquals(101, pipeline.completed().getFirst().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(202, pipeline.completed().getLast().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(27, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME &&
+                    second.token().equals(event.snapshot().activityCallToken())).count());
+        }
+    }
+
+    @Test
+    void preHeaderPlainTerminatorAndSameCallZeroSourceVoicePreserveTheAcceptedGrant()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            grant(pipeline.manager, 101);
+            String token = pipeline.attributions.starts.getFirst().callToken();
+            pipeline.receive(new TDUMessage(new CorrectedBinaryMessage(28), 0x123, 950L));
+            pipeline.receive(header(1_000L));
+            pipeline.receive(voice(1_180L, 0));
+            pipeline.receive(terminator(1_400L));
+
+            assertEquals(1, pipeline.completed().size());
+            assertEquals(token, pipeline.completed().getFirst().snapshot().activityCallToken());
+            assertEquals(101, pipeline.completed().getFirst().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(9, pipeline.audioEvents.stream().filter(event ->
+                event.eventType() == AudioCallEventType.AUDIO_FRAME).count());
+        }
+    }
+
+    @Test
+    void sourceFreeNewTalkgroupCannotInheritThePreviousCallsWorkingSource()
+    {
+        for(boolean grantUpdate: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline(true))
+            {
+                pipeline.receive(header(1_000L));
+                pipeline.receive(voice(1_180L, 101));
+                String firstToken = pipeline.attributions.events.getLast().token();
+                if(grantUpdate)
+                {
+                    MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+                    identifiers.update(APCO25Talkgroup.create(1202));
+                    pipeline.manager.processP1ControlAnnouncedTrafficUpdate(controlChannel(pipeline.manager),
+                        VoiceServiceOptions.createUnencrypted(), identifiers,
+                        Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT_UPDATE, 1_360L);
+                    assertNull(pipeline.attributions.starts.getLast().identifierCollection().getFromIdentifier());
+                }
+
+                pipeline.receive(ldu(1_360L, user(1_360L, 0, false, false, 1202)));
+                var second = pipeline.attributions.events.getLast();
+                assertNotEquals(firstToken, second.token());
+                assertNull(second.attribution().source());
+                assertNull(pipeline.audioEvents.getLast().snapshot().identifierCollection().getFromIdentifier());
+                pipeline.receive(ldu(1_540L, user(1_540L, 202, false, false, 1202)));
+                assertEquals(second.token(), pipeline.attributions.events.getLast().token());
+                pipeline.receive(new TDUMessage(new CorrectedBinaryMessage(28), 0x123, 1_700L));
+
+                assertEquals(2, pipeline.completed().size());
+                assertEquals(101, pipeline.completed().getFirst().snapshot().identifierCollection()
+                    .getFromIdentifier().getValue());
+                assertEquals(202, pipeline.completed().getLast().snapshot().identifierCollection()
+                    .getFromIdentifier().getValue());
+                assertEquals(18, pipeline.audioEvents.stream().filter(event ->
+                    event.eventType() == AudioCallEventType.AUDIO_FRAME &&
+                        second.token().equals(event.snapshot().activityCallToken())).count());
+            }
+        }
+    }
+
+    @Test
+    void validEndSourceRecoversTheNewCallDespiteTheOldDecoderSource()
+    {
+        try(Pipeline pipeline = new Pipeline(true))
+        {
+            pipeline.receive(header(1_000L));
+            pipeline.receive(voice(1_180L, 101));
+            pipeline.receive(ldu(1_360L, user(1_360L, 0, false, false, 1202)));
+            var second = pipeline.attributions.events.getLast();
+            assertNull(second.attribution().source());
+            pipeline.receive(terminator(1_540L, 202, 1202));
+
+            assertEquals(2, pipeline.completed().size());
+            assertEquals(101, pipeline.completed().getFirst().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+            assertEquals(second.token(), pipeline.completed().getLast().snapshot().activityCallToken());
+            assertEquals(202, pipeline.completed().getLast().snapshot().identifierCollection()
+                .getFromIdentifier().getValue());
+        }
+    }
+
+    @Test
+    void gpsUsesAcceptedCallSourceAndPreservesItsParsedLocation()
+    {
+        for(boolean harris: List.of(false, true))
+        for(boolean newTarget: List.of(false, true))
+        {
+            try(Pipeline pipeline = new Pipeline())
+            {
+                List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+                pipeline.state.addDecodeEventListener(events::add);
+                pipeline.receive(header(1_000L));
+                pipeline.receive(voice(1_180L, 101));
+                if(newTarget) pipeline.receive(ldu(1_360L, user(1_360L, 0, false, false, 1202)));
+                else pipeline.state.getIdentifierCollection().remove(IdentifierClass.USER, Form.RADIO, Role.FROM);
+
+                LinkControlWord gps;
+                if(harris)
+                {
+                    gps = LCHarrisTalkerGPSComplete.create(
+                        new LCHarrisTalkerGPSBlock1(new CorrectedBinaryMessage(72)),
+                        new LCHarrisTalkerGPSBlock2(new CorrectedBinaryMessage(72)), 1_450L);
+                }
+                else
+                {
+                    CorrectedBinaryMessage bits = new CorrectedBinaryMessage(72);
+                    bits.setInt(LinkControlOpcode.MOTOROLA_UNIT_GPS.getCode(), IntField.length6(2));
+                    bits.setInt(0x90, IntField.length8(8));
+                    bits.setInt(1_234_567, IntField.range(25, 47));
+                    bits.setInt(2_345_678, IntField.range(49, 71));
+                    gps = new LCMotorolaUnitGPS(bits);
+                }
+                gps.setValid(true);
+                pipeline.receive(gps instanceof IMessage message ? message : ldu(1_450L, gps));
+                var event = (PlottableDecodeEvent)events.stream().filter(value ->
+                    value.getEventType() == DecodeEventType.GPS).findFirst().orElseThrow();
+                var location = harris ? ((LCHarrisTalkerGPSComplete)gps).getLocation() :
+                    ((LCMotorolaUnitGPS)gps).getLocation();
+                var position = harris ? ((LCHarrisTalkerGPSComplete)gps).getGeoPosition() :
+                    ((LCMotorolaUnitGPS)gps).getGeoPosition();
+                assertEquals(position, event.getLocation());
+                assertTrue(event.getIdentifierCollection().hasIdentifier(location));
+                if(newTarget) assertNull(event.getIdentifierCollection().getFromIdentifier());
+                else assertEquals(101, event.getIdentifierCollection().getFromIdentifier().getValue());
             }
         }
     }
@@ -525,11 +706,7 @@ class P25P1DecoderStateConventionalCallTest
 
     private static void grant(P25TrafficChannelManager manager, Integer source)
     {
-        P25FrequencyBand band = new P25FrequencyBand(0, 851_012_500L, -45_000_000L, 12_500L, 12_500, 1);
-        manager.processFrequencyBand(band);
-        manager.processFrequencyBand(band);
-        APCO25Channel channel = APCO25Channel.create(0, 0);
-        channel.setFrequencyBand(band);
+        APCO25Channel channel = controlChannel(manager);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Talkgroup.create(1201));
         if(source != null) identifiers.update(APCO25RadioIdentifier.createFrom(source));
@@ -537,9 +714,24 @@ class P25P1DecoderStateConventionalCallTest
             Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 900L);
     }
 
+    private static APCO25Channel controlChannel(P25TrafficChannelManager manager)
+    {
+        P25FrequencyBand band = new P25FrequencyBand(0, 851_012_500L, -45_000_000L, 12_500L, 12_500, 1);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        APCO25Channel channel = APCO25Channel.create(0, 0);
+        channel.setFrequencyBand(band);
+        return channel;
+    }
+
     private static TDULCMessage terminator(long timestamp)
     {
-        LinkControlWord lc = user(timestamp, 0, false, true);
+        return terminator(timestamp, 0, 1201);
+    }
+
+    private static TDULCMessage terminator(long timestamp, int source, int target)
+    {
+        LinkControlWord lc = user(timestamp, source, false, true, target);
         return new TDULCMessage(new CorrectedBinaryMessage(288), 0x123, timestamp)
         {
             @Override public LinkControlWord getLinkControlWord() { return lc; }
@@ -548,9 +740,14 @@ class P25P1DecoderStateConventionalCallTest
 
     private static LinkControlWord user(long timestamp, int source, boolean encrypted, boolean terminator)
     {
+        return user(timestamp, source, encrypted, terminator, 1201);
+    }
+
+    private static LinkControlWord user(long timestamp, int source, boolean encrypted, boolean terminator, int target)
+    {
         CorrectedBinaryMessage bits = new CorrectedBinaryMessage(72);
         bits.setInt(encrypted ? 0x40 : 0, IntField.length8(16));
-        bits.setInt(1201, IntField.length16(32));
+        bits.setInt(target, IntField.length16(32));
         bits.setInt(source, IntField.length24(48));
         LinkControlWord lc = LinkControlWordFactory.create(bits, timestamp, terminator);
         lc.setValid(true);

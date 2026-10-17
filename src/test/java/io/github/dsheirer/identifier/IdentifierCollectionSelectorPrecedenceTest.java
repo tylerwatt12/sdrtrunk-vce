@@ -3,6 +3,9 @@ package io.github.dsheirer.identifier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.audio.call.CallAttribution;
+import io.github.dsheirer.module.decode.dmr.identifier.P25Location;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -45,6 +48,28 @@ class IdentifierCollectionSelectorPrecedenceTest
             assertNull(collection(auxiliary).getFromIdentifier());
             assertSame(group, collection(auxiliary, group).getFromIdentifier());
         }
+    }
+
+    @Test
+    void acceptedSourceProjectionPreservesLocationWithoutTreatingItAsACaller()
+    {
+        var location = P25Location.createFrom(1.25, 2.5);
+        assertNull(collection(location).getFromIdentifier());
+        var cached = APCO25RadioIdentifier.createFrom(999);
+        var context = collection(cached, location);
+        var unbound = AudioActivityCallEvent.projectAcceptedSource(null, context);
+        assertNull(unbound.getFromIdentifier());
+        assertTrue(unbound.hasIdentifier(location));
+        CallAttribution attribution = new CallAttribution("accepted");
+        var canonical = io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier
+            .createFrom(0, 0xBEE00, 0x123, 101);
+        attribution.updateSource(canonical);
+        attribution.complete(); //The exact selected update remains valid if completion races its projection.
+        var projected = AudioActivityCallEvent.projectAcceptedSource(
+            new AudioActivityCallEvent(attribution.token(), 1, attribution), context);
+        assertSame(canonical, projected.getFromIdentifier());
+        assertTrue(projected.hasIdentifier(location));
+        assertSame(cached, context.getFromIdentifier());
     }
 
     @Test

@@ -47,6 +47,8 @@ import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
@@ -67,6 +69,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.EndPush
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.GroupVoiceChannelUserAbbreviated;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.NullInformation;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harris.L3HarrisTalkerGpsLocation;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Voice2Timeslot;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.preference.UserPreferences;
@@ -561,6 +564,120 @@ class P25P2AudioModuleTest
     }
 
     @Test
+    void zeroSourceCurrentUserCannotCreditThePreviousCallerToANewTalkgroup()
+    {
+        for(int timeslot: List.of(1, 2))
+        {
+            for(boolean sourceFreeGrant: List.of(false, true))
+            {
+                try(LateSourceCall call = new LateSourceCall(timeslot, false, 1_000L))
+                {
+                    call.startPushToTalk(1_100L, 700_001);
+                    call.voice(1_160L);
+                    int nextTalkgroup = LateSourceCall.TALKGROUP + 1;
+                    if(sourceFreeGrant) call.grant(null, 1_220L, nextTalkgroup);
+                    call.currentUser(1_260L, 0, nextTalkgroup, false);
+                    call.voice(1_320L);
+                    call.endPushToTalk(1_400L, 0, nextTalkgroup);
+
+                    var completed = call.completedCalls();
+                    assertEquals(2, completed.size());
+                    assertEquals("700001", completed.getFirst().snapshot().recordingMetadata().sourceValue());
+                    assertNull(completed.getLast().snapshot().recordingMetadata().sourceValue());
+                    assertEquals(Integer.toString(nextTalkgroup),
+                        completed.getLast().snapshot().recordingMetadata().destinationValue());
+                    assertNotEquals(completed.getFirst().snapshot().activityCallToken(),
+                        completed.getLast().snapshot().activityCallToken());
+                    assertEquals(List.of(2, 2), completed.stream().map(value -> value.audioBuffers().size()).toList());
+                }
+            }
+        }
+    }
+
+    @Test
+    void zeroSourceCurrentUserPreservesTheSameCallsAcceptedGrantOrPushToTalkSource()
+    {
+        for(boolean grantSource: List.of(false, true))
+        {
+            try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+            {
+                if(grantSource) call.grant(APCO25RadioIdentifier.createFrom(700_001), 1_050L);
+                call.startPushToTalk(1_100L, grantSource ? 0 : 700_001);
+                String token = call.events.getLast().snapshot().activityCallToken();
+                call.voice(1_160L);
+                call.currentUser(1_220L, 0);
+                call.voice(1_280L);
+                call.endPushToTalk(1_400L);
+
+                var completed = call.completedCalls();
+                assertEquals(1, completed.size());
+                assertEquals("700001", completed.getFirst().snapshot().recordingMetadata().sourceValue());
+                assertEquals(token, completed.getFirst().snapshot().activityCallToken());
+                assertEquals(4, completed.getFirst().audioBuffers().size());
+            }
+        }
+    }
+
+    @Test
+    void endPushToTalkRecoversTheNewCallsSourceDespiteAnOldWorkingIdentifier()
+    {
+        try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+        {
+            call.startPushToTalk(1_100L, 700_001);
+            call.voice(1_160L);
+            int nextTalkgroup = LateSourceCall.TALKGROUP + 1;
+            call.currentUser(1_220L, 0, nextTalkgroup, false);
+            call.voice(1_280L);
+            call.endPushToTalk(1_400L, 700_002, nextTalkgroup);
+
+            var completed = call.completedCalls();
+            assertEquals(2, completed.size());
+            assertEquals(List.of("700001", "700002"), completed.stream()
+                .map(value -> value.snapshot().recordingMetadata().sourceValue()).toList());
+            assertNotEquals(completed.getFirst().snapshot().activityCallToken(),
+                completed.getLast().snapshot().activityCallToken());
+            assertEquals(List.of(2, 2), completed.stream().map(value -> value.audioBuffers().size()).toList());
+        }
+    }
+
+    @Test
+    void gpsActivityUsesTheAcceptedCallSourceInsteadOfWorkingIdentifiers()
+    {
+        for(boolean newCall: List.of(false, true))
+        {
+            try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
+            {
+                List<IDecodeEvent> decoded = new ArrayList<>();
+                call.state.addDecodeEventListener(decoded::add);
+                call.startPushToTalk(1_100L, 700_001);
+                if(newCall)
+                {
+                    call.voice(1_160L);
+                    call.currentUser(1_220L, 0, LateSourceCall.TALKGROUP + 1, false);
+                    assertEquals(APCO25RadioIdentifier.createFrom(700_001),
+                        call.state.getIdentifierCollection().getFromIdentifier());
+                }
+                else
+                {
+                    call.startPushToTalk(1_160L, 0);
+                    assertNull(call.state.getIdentifierCollection().getFromIdentifier());
+                }
+                MacMessage message = call.gps(1_280L);
+                var gps = (L3HarrisTalkerGpsLocation)message.getMacStructure();
+                var events = decoded.stream().filter(event -> event.getEventType() == DecodeEventType.GPS).toList();
+                assertEquals(1, events.size());
+                var event = (PlottableDecodeEvent)events.getFirst();
+                if(newCall) assertNull(event.getIdentifierCollection().getFromIdentifier());
+                else assertEquals(APCO25RadioIdentifier.createFrom(700_001),
+                    event.getIdentifierCollection().getFromIdentifier());
+                assertTrue(event.getIdentifierCollection().hasIdentifier(gps.getLocation()));
+                assertEquals(10.0, event.getLocation().getLatitude(), 0.000_001);
+                assertEquals(20.0, event.getLocation().getLongitude(), 0.000_001);
+            }
+        }
+    }
+
+    @Test
     void acceptedCurrentUserChangeDiscardsUndecidedVoiceFromThePreviousCaller()
     {
         try(LateSourceCall call = new LateSourceCall(1, false, 1_000L))
@@ -842,8 +959,13 @@ class P25P2AudioModuleTest
 
         private void grant(RadioIdentifier source, long timestamp)
         {
+            grant(source, timestamp, TALKGROUP);
+        }
+
+        private void grant(RadioIdentifier source, long timestamp, int talkgroup)
+        {
             MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
-            identifiers.update(APCO25Talkgroup.create(TALKGROUP));
+            identifiers.update(APCO25Talkgroup.create(talkgroup));
             identifiers.update(source);
             if(phaseOneControl)
             {
@@ -896,10 +1018,15 @@ class P25P2AudioModuleTest
 
         private void currentUser(long timestamp, int source, boolean encrypted)
         {
+            currentUser(timestamp, source, TALKGROUP, encrypted);
+        }
+
+        private void currentUser(long timestamp, int source, int talkgroup, boolean encrypted)
+        {
             CorrectedBinaryMessage bits = messageBits(0);
             bits.setInt(1, IntField.length8(8));
             bits.setInt(encrypted ? 0x40 : 0, IntField.length8(16));
-            bits.setInt(TALKGROUP, IntField.length16(24));
+            bits.setInt(talkgroup, IntField.length16(24));
             bits.setInt(source, IntField.length24(40));
             send(new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp,
                 new GroupVoiceChannelUserAbbreviated(bits, 8)));
@@ -912,6 +1039,20 @@ class P25P2AudioModuleTest
             send(new EncryptionSynchronizationSequence(bits, timeslot, timestamp));
         }
 
+        private MacMessage gps(long timestamp)
+        {
+            CorrectedBinaryMessage bits = messageBits(4);
+            bits.setInt(0xAA, IntField.length8(8));
+            bits.setInt(0xA4, IntField.length8(16));
+            bits.setInt(17, IntField.range(26, 31));
+            bits.setInt(10, IntField.length8(56));
+            bits.setInt(20, IntField.length8(88));
+            MacMessage message = new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp,
+                new L3HarrisTalkerGpsLocation(bits, 8));
+            send(message);
+            return message;
+        }
+
         private void endPushToTalk(long timestamp)
         {
             endPushToTalk(timestamp, 0);
@@ -919,10 +1060,15 @@ class P25P2AudioModuleTest
 
         private void endPushToTalk(long timestamp, int source)
         {
+            endPushToTalk(timestamp, source, TALKGROUP);
+        }
+
+        private void endPushToTalk(long timestamp, int source, int talkgroup)
+        {
             CorrectedBinaryMessage bits = messageBits(2);
             bits.setInt(0x123, NAC);
             bits.setInt(source, SOURCE);
-            bits.setInt(TALKGROUP, GROUP);
+            bits.setInt(talkgroup, GROUP);
             send(new MacMessage(timeslot, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new EndPushToTalk(bits)));
         }
 

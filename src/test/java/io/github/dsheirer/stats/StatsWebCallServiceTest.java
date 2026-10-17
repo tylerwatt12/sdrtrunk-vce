@@ -701,7 +701,8 @@ class StatsWebCallServiceTest
         var call = capturedP25Call(APCO25FullyQualifiedTalkgroupIdentifier.createFromWithLocalAddress(
             91, 0xABCDF, 0x124, 701), APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
             3101, 0xABCDE, 0x123, 501), new P25SiteIdentity(0xBEE00, 0x4A7, 1, 21), false);
-        assertNull(call.snapshot().recordingMetadata().sourceValue(), "Source alias capture remains radio-only");
+        assertEquals("91", call.snapshot().recordingMetadata().sourceValue(),
+            "Recording and listening use the same source; radio alias matching remains separate");
         try(StatsWebCallService service = started(new StatsWebCallService());
             FeedClient client = listen(service, Set.of()))
         {

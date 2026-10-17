@@ -35,6 +35,7 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlOpcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
 import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDULCMessage;
@@ -89,8 +90,8 @@ class P25P1DecoderStateTerminatorRecoveryTest
         P25ChannelGrantEvent call = startCall(manager, TALKGROUP, establishedSource, 1_000L);
 
         List<Identifier> recovered = manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY,
-            TimeslotMessage.TIMESLOT_1, Protocol.APCO25, new MutableIdentifierCollection(),
-            List.of(APCO25Talkgroup.create(TALKGROUP + 1), APCO25RadioIdentifier.createFrom(1_880_998)), 1_300L);
+            TimeslotMessage.TIMESLOT_1, Protocol.APCO25,
+            List.of(APCO25Talkgroup.create(TALKGROUP), APCO25RadioIdentifier.createFrom(1_880_998)), 1_300L);
 
         assertTrue(recovered.isEmpty());
         assertEquals(APCO25Talkgroup.create(TALKGROUP), call.getIdentifierCollection().getToIdentifier());
@@ -98,7 +99,7 @@ class P25P1DecoderStateTerminatorRecoveryTest
     }
 
     @Test
-    void decoderConflictDoesNotPopulateMissingTrackerSource()
+    void staleDecoderSourceCannotVetoValidTrackedCallRecovery()
     {
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));
         P25ChannelGrantEvent call = startCall(manager, TALKGROUP, null, 1_000L);
@@ -108,7 +109,20 @@ class P25P1DecoderStateTerminatorRecoveryTest
         decoderState.receive(tdulc(1_300L, APCO25Talkgroup.create(TALKGROUP),
             APCO25RadioIdentifier.createFrom(1_880_998)));
 
+        assertEquals(APCO25RadioIdentifier.createFrom(1_880_998), call.getIdentifierCollection().getFromIdentifier());
+    }
+
+    @Test
+    void conflictingTargetRejectsTheWholeEndFrameBeforeMissingSourceIsCommitted()
+    {
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));
+        P25ChannelGrantEvent call = startCall(manager, TALKGROUP, null, 1_000L);
+
+        assertTrue(manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY, TimeslotMessage.TIMESLOT_1,
+            Protocol.APCO25, List.of(APCO25RadioIdentifier.createFrom(1_880_998),
+                APCO25Talkgroup.create(TALKGROUP + 1)), 1_300L).isEmpty());
         assertNull(call.getIdentifierCollection().getFromIdentifier());
+        assertEquals(APCO25Talkgroup.create(TALKGROUP), call.getIdentifierCollection().getToIdentifier());
     }
 
     @Test
@@ -134,31 +148,35 @@ class P25P1DecoderStateTerminatorRecoveryTest
         P25ChannelGrantEvent call = startCall(manager, TALKGROUP, null, 2_000L);
 
         assertTrue(manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY, TimeslotMessage.TIMESLOT_1,
-            Protocol.APCO25, new MutableIdentifierCollection(),
+            Protocol.APCO25,
             List.of(APCO25RadioIdentifier.createFrom(1_880_997)), 1_999L).isEmpty());
         assertNull(call.getIdentifierCollection().getFromIdentifier());
     }
 
     @Test
-    void recoversValidNacAndPreservesDecoderConflict()
+    void recoversValidNacAndPreservesTrackedConflict()
     {
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));
         P25ChannelGrantEvent call = startCall(manager, TALKGROUP, null, 1_000L);
         Identifier nac = APCO25Nac.create(0x123);
 
         assertEquals(List.of(nac), manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY,
-            TimeslotMessage.TIMESLOT_1, Protocol.APCO25_PHASE2, new MutableIdentifierCollection(), List.of(nac),
+            TimeslotMessage.TIMESLOT_1, Protocol.APCO25_PHASE2, List.of(nac),
             1_300L));
         assertTrue(call.getIdentifierCollection().hasIdentifier(nac));
 
         P25TrafficChannelManager conflictManager = new P25TrafficChannelManager(new Channel("Conflict"));
         P25ChannelGrantEvent conflictCall = startCall(conflictManager, TALKGROUP, null, 2_000L);
-        MutableIdentifierCollection decoderIdentifiers = new MutableIdentifierCollection();
-        decoderIdentifiers.update(APCO25Nac.create(0x456));
+        MutableIdentifierCollection tracked = new MutableIdentifierCollection(
+            conflictCall.getIdentifierCollection().getIdentifiers());
+        tracked.update(APCO25Nac.create(0x456));
+        conflictCall.setIdentifierCollection(tracked);
 
         assertTrue(conflictManager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY,
-            TimeslotMessage.TIMESLOT_1, Protocol.APCO25_PHASE2, decoderIdentifiers, List.of(nac), 2_300L).isEmpty());
+            TimeslotMessage.TIMESLOT_1, Protocol.APCO25_PHASE2,
+            List.of(APCO25RadioIdentifier.createFrom(1_880_998), nac), 2_300L).isEmpty());
         assertFalse(conflictCall.getIdentifierCollection().hasIdentifier(nac));
+        assertNull(conflictCall.getIdentifierCollection().getFromIdentifier());
     }
 
     @Test
@@ -169,13 +187,48 @@ class P25P1DecoderStateTerminatorRecoveryTest
         Identifier reservedSource = APCO25RadioIdentifier.createFrom(0xFFFFFD);
 
         assertTrue(manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY, TimeslotMessage.TIMESLOT_1,
-            Protocol.APCO25, new MutableIdentifierCollection(), List.of(reservedSource), 1_300L).isEmpty());
+            Protocol.APCO25, List.of(reservedSource), 1_300L).isEmpty());
         assertFalse(call.getIdentifierCollection().hasIdentifier(reservedSource));
 
         P25TrafficChannelManager emptyManager = new P25TrafficChannelManager(new Channel("Empty"));
         assertTrue(emptyManager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY, TimeslotMessage.TIMESLOT_1,
-            Protocol.APCO25, new MutableIdentifierCollection(), List.of(APCO25Talkgroup.create(TALKGROUP),
+            Protocol.APCO25, List.of(APCO25Talkgroup.create(TALKGROUP),
                 APCO25RadioIdentifier.createFrom(1_880_997)), 1_300L).isEmpty());
+    }
+
+    @Test
+    void abbreviatedEndTargetRetainsQualifiedIdentityAndRecoversItsFirstSource()
+    {
+        for(Protocol protocol: List.of(Protocol.APCO25, Protocol.APCO25_PHASE2))
+        for(boolean sourceFirst: List.of(false, true))
+        for(boolean conflict: List.of(false, true))
+        {
+            P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));
+            Identifier target = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(TALKGROUP,
+                0xBEE00, 0x123, 1_201);
+            P25ChannelGrantEvent call = startCall(manager, target, null, 1_000L);
+            Identifier source = APCO25RadioIdentifier.createFrom(1_880_998);
+            Identifier local = APCO25Talkgroup.create(TALKGROUP + (conflict ? 1 : 0));
+            Identifier nac = APCO25Nac.create(0x123);
+            List<Identifier> candidates = sourceFirst ? List.of(source, local, nac) : List.of(local, source, nac);
+
+            List<Identifier> recovered = manager.recoverP25TrafficEndFrameIdentifiers(FREQUENCY,
+                TimeslotMessage.TIMESLOT_1, protocol, candidates, 1_300L);
+
+            assertSame(target, call.getIdentifierCollection().getToIdentifier());
+            if(conflict)
+            {
+                assertTrue(recovered.isEmpty());
+                assertNull(call.getIdentifierCollection().getFromIdentifier());
+                assertFalse(call.getIdentifierCollection().hasIdentifier(nac));
+            }
+            else
+            {
+                assertTrue(recovered.contains(source));
+                assertSame(source, call.getIdentifierCollection().getFromIdentifier());
+                assertTrue(call.getIdentifierCollection().hasIdentifier(nac));
+            }
+        }
     }
 
     private static P25P1DecoderState decoderState(P25TrafficChannelManager manager)
@@ -190,10 +243,16 @@ class P25P1DecoderStateTerminatorRecoveryTest
     private static P25ChannelGrantEvent startCall(P25TrafficChannelManager manager, int talkgroup,
                                                    RadioIdentifier source, long timestamp)
     {
+        return startCall(manager, APCO25Talkgroup.create(talkgroup), source, timestamp);
+    }
+
+    private static P25ChannelGrantEvent startCall(P25TrafficChannelManager manager, Identifier target,
+                                                 RadioIdentifier source, long timestamp)
+    {
         AtomicReference<P25ChannelGrantEvent> event = new AtomicReference<>();
         manager.addDecodeEventListener(decodeEvent -> event.set((P25ChannelGrantEvent)decodeEvent));
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
-        identifiers.update(APCO25Talkgroup.create(talkgroup));
+        identifiers.update(target);
         identifiers.update(source);
         StandardChannel channel = new StandardChannel(FREQUENCY);
 

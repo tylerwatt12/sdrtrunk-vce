@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase2;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -1256,7 +1257,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             {
                 var selected = mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(),
                         getTimeslot(), getCurrentChannel(), sop.getServiceOptions(), mac.getOpcode(),
-                        getIdentifierCollection().copyOf(), message.getTimestamp(), null);
+                        getIdentifierCollectionForUsers(mac.getIdentifiers(), message.getTimestamp()),
+                        message.getTimestamp(), null);
 
                 if(selected != null)
                 {
@@ -1379,7 +1381,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 endPushToTalk.getNAC());
 
             List<Identifier> recovered = mTrafficChannelManager.recoverP25TrafficEndFrameIdentifiers(
-                getCurrentFrequency(), getTimeslot(), Protocol.APCO25_PHASE2, getIdentifierCollection(), candidates,
+                getCurrentFrequency(), getTimeslot(), Protocol.APCO25_PHASE2, candidates,
                 message.getTimestamp());
             getIdentifierCollection().update(recovered);
 
@@ -1670,15 +1672,10 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(structure instanceof L3HarrisTalkerGpsLocation gps)
         {
-            MutableIdentifierCollection collection = getUpdatedMutableIdentifierCollection(gps,
-                message.getTimestamp());
-
-            //Since the L3Harris GPS doesn't have the source radio re-add it here
-            Identifier fromRadio = getIdentifierCollection().getFromIdentifier();
-            if(fromRadio != null)
-            {
-                collection.update(fromRadio);
-            }
+            var binding = mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(),
+                gps.getLocation(), message.getTimestamp());
+            MutableIdentifierCollection collection = AudioActivityCallEvent.projectAcceptedSource(binding,
+                getUpdatedMutableIdentifierCollection(gps, message.getTimestamp()));
 
             DecodeEvent decodeEvent = PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, message.getTimestamp())
                     .protocol(Protocol.APCO25)
@@ -1688,8 +1685,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     .build();
             broadcast(decodeEvent);
             mTrafficChannelManager.broadcast(decodeEvent);
-            mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), gps.getLocation(),
-                    message.getTimestamp());
         }
     }
 

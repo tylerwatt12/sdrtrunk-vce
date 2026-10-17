@@ -307,12 +307,13 @@ public class IdentifierCollection
         return fallback;
     }
 
-    /** Auxiliary tones and names describe a call; only a valid FROM entity can identify its caller. */
+    /** Auxiliary tones, names and locations describe a call; only a valid FROM entity identifies its caller. */
     public static boolean isSourceIdentifier(Identifier<?> identifier)
     {
         return identifier != null && identifier.getIdentifierClass() == IdentifierClass.USER &&
             identifier.getRole() == Role.FROM && identifier.isValid() &&
-            identifier.getForm() != Form.TONE && identifier.getForm() != Form.TALKER_ALIAS;
+            identifier.getForm() != Form.TONE && identifier.getForm() != Form.TALKER_ALIAS &&
+            identifier.getForm() != Form.LOCATION;
     }
 
     /**
