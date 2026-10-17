@@ -359,6 +359,53 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void channelActivityToneFilterIsAcceptedAndAppliedBeforePagination() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event (
+                    id, channel_id, radio_system_id, observed_at_ms, action_code, event_type_code
+                ) VALUES (990001, 2, 2, 1000, 4, 7)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone_sequence (
+                    event_id, source_code, method_code, phase, call_started_at_ms,
+                    first_voice_sample_at_ms, completed_at_ms, tone_count
+                ) VALUES (990001, 1, 3, 1, 500, 500, 1500, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone (
+                    event_id, ordinal, frequency_1_millihz, offset_ms, duration_ms, confidence_ppm
+                ) VALUES (990001, 0, 437500, 0, 500, 990000)
+                """);
+        }
+
+        String base = StatsApiV1.ACTIVITY +
+            "?configuration_id=4b75217f-2555-4c38-aafc-5d17bc0faf71";
+        HttpResponse<String> tonesResponse = get(base + "&has_tones=true&limit=1");
+        assertEquals(200, tonesResponse.statusCode(), tonesResponse.body());
+        JsonNode tones = OBJECT_MAPPER.readTree(tonesResponse.body()).path("data");
+        assertEquals(1, tones.size(), tonesResponse.body());
+        assertEquals(990001, tones.get(0).path("id").longValue(), tonesResponse.body());
+        assertEquals("call", tones.get(0).path("action").textValue(), tonesResponse.body());
+        assertEquals("call_group", tones.get(0).path("event_type").textValue(), tonesResponse.body());
+        assertTrue(tones.get(0).path("paging_tone_summary").isObject(), tonesResponse.body());
+
+        HttpResponse<String> allResponse = get(base + "&has_tones=false&limit=25");
+        assertEquals(200, allResponse.statusCode(), allResponse.body());
+        JsonNode all = OBJECT_MAPPER.readTree(allResponse.body()).path("data");
+        assertEquals(2, all.size(), allResponse.body());
+        assertEquals("grant", all.get(0).path("action").textValue(), allResponse.body());
+        assertEquals(990001, all.get(1).path("id").longValue(), allResponse.body());
+        assertStructuredError(get(base + "&has_tones=maybe"), 400, "invalid_parameter", "has_tones");
+        assertStructuredError(get(base + "&has_tones=true&surprise=true"),
+            400, "unknown_parameter", "surprise");
+    }
+
+    @Test
     void staticIndexPublishesItsWebClientRevisionWithoutExpandingTheApi() throws Exception
     {
         HttpResponse<String> response = send(HttpRequest.newBuilder(mOrigin)

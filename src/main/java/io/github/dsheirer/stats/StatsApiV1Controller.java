@@ -140,7 +140,7 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "after_id", "watermark_id", "group_identity_key", "radio_identity_key",
-                    "radio_system_key", "configuration_id", "hide_grants", "limit", "from_ms", "to_ms",
+                    "radio_system_key", "configuration_id", "hide_grants", "has_tones", "limit", "from_ms", "to_ms",
                     "action", "actions", "event_type", "encryption", "radio_role", "group_match", "source_identity_key",
                     "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
                     "timeslot", "projection");
