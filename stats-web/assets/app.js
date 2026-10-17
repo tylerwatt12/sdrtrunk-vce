@@ -27,11 +27,11 @@ import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=7';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=29';
+} from './features/alias-list-create.js?v=8';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=30';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
-import { createStreamingWorkspace } from './features/streaming.js?v=11';
+import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
 import { createAlertsWorkspace } from './features/alerts.js?v=11';
@@ -4940,15 +4940,6 @@ function aliasListPopupTrigger(options) {
   return buildAliasListPopupTrigger({ node, iconGlyph, uiPill, requestJson, openReadOnlyModal }, options);
 }
 
-async function currentAliasListRevision() {
-  const catalog = await requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false });
-  const revision = Number(catalog?.revision);
-  if (!Number.isSafeInteger(revision) || revision < 0) {
-    throw new Error('The current Alias List revision is unavailable. Reload and try again.');
-  }
-  return revision;
-}
-
 function aliasConflictSummary(row) {
   const wrapper = node('li', 'alias-conflict-item');
   const id = Number(row?.alias_id);
@@ -5086,7 +5077,7 @@ function openAliasListCreateModal() {
     event.preventDefault();
     await workflow.save(async () => {
       const result = await createAliasList(requestJson, {
-        revision: Number(aliasEditorContext?.revision ?? 0), name: name.value.trim(), family: family.value
+        name: name.value.trim(), family: family.value
       });
       await finishAliasMutation(modal, result, { list: result.alias_list_id, aliasTab: 'configure' });
     });
@@ -5559,8 +5550,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     if ((editing || cloning) && Number(source.alias_list_id) !== effectiveListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
-    const revision = Number(recordResponse?.revision ?? options?.revision ??
-      aliasEditorContext?.revision ?? 0);
+    const editRevision = recordResponse?.edit_revision;
     const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
       effectiveListId) || aliasEditorContext?.selectedList;
     const family = aliasListFamily(currentList);
@@ -5747,7 +5737,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
         if (!modal.dialog.isConnected) return;
         modal.setDirty(false);
         closeReadOnlyModal(true);
-        openAliasDeleteModal(id, source.name, revision);
+        openAliasDeleteModal(id, source.name, editRevision);
       });
     }
     form.append(tabBar, basics, identifier, audio, usage, errorHost,
@@ -5769,7 +5759,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       await workflow.save(async () => {
         const payload = aliasEditorPayload(form, options);
         const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
-          method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }
+          method: editing ? 'PUT' : 'POST',
+          body: editing ? { edit_revision: editRevision, alias: payload } : { alias: payload }
         });
         savedPayloadKey = aliasEditorPayloadKey(payload);
         await finishAliasMutation(modal, result, { list: payload.alias_list_id });
@@ -5788,7 +5779,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
   }
 }
 
-function openAliasDeleteModal(id, name, revision) {
+function openAliasDeleteModal(id, name, editRevision) {
   const body = node('div', 'alias-confirmation');
   body.append(node('p', '', `Delete ${name || `Alias ${id}`} from this alias list?`),
     node('p', 'muted', 'This removes its identifier, scan-list membership, recording, and streaming settings.'));
@@ -5809,7 +5800,7 @@ function openAliasDeleteModal(id, name, revision) {
     modal.setBusy(true);
     try {
       const result = await requestJson(`/api/v1/admin/aliases/${id}`, {
-        method: 'DELETE', body: { revision }
+        method: 'DELETE', body: { edit_revision: editRevision }
       });
       await finishAliasMutation(modal, result);
     } catch (error) {
@@ -6138,7 +6129,8 @@ function openAliasBulkModal(kind) {
       if (kind === 'scan-lists') {
         result = await requestJson(`/api/v1/admin/scan-lists/${change.scan_list_id}/members`, {
           method: 'PUT', body: {
-            revision: payload.revision,
+            edit_revision: (options.scan_lists || []).find((row) =>
+              Number(row.id) === change.scan_list_id)?.edit_revision,
             operation: change.operation,
             alias_ids: ids
           }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
@@ -6184,6 +6176,7 @@ function scanListMemberBulkBar(scanList, onClear) {
 function openScanListMemberRemoveModal(scanList) {
   const ids = aliasMutationSelectionIds();
   if (!ids?.length) return;
+  const editRevision = scanList.edit_revision;
   const body = node('div', 'admin-confirmation');
   body.append(node('p', '', `Remove ${number(ids.length)} selected aliases from ${scanList.name}?`),
     node('p', 'muted', 'The aliases and their other scan-list memberships will be preserved.'));
@@ -6208,7 +6201,7 @@ function openScanListMemberRemoveModal(scanList) {
     try {
       const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
         method: 'PUT', body: {
-          revision: Number(aliasEditorContext?.revision ?? 0), operation: 'remove', alias_ids: ids
+          edit_revision: editRevision, operation: 'remove', alias_ids: ids
         }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
       });
       await finishAliasMutation(modal, result);
@@ -6225,10 +6218,10 @@ function openScanListMemberRemoveModal(scanList) {
   modal.focus?.(remove);
 }
 
-function fullScanListMembershipRequest(revision, operation, aliasListId = null) {
+function fullScanListMembershipRequest(editRevision, operation, aliasListId = null) {
   const id = Number(aliasListId);
   return {
-    revision: Number(revision),
+    edit_revision: editRevision,
     operation,
     alias_scope: Number.isInteger(id) && id > 0 ? { alias_list_id: id } : {}
   };
@@ -6236,6 +6229,7 @@ function fullScanListMembershipRequest(revision, operation, aliasListId = null) 
 
 function openFullScanListMembershipModal(scanList, operation) {
   const adding = operation === 'add';
+  const editRevision = scanList.edit_revision;
   const form = node('form', 'alias-editor-form alias-full-membership-form editor-workspace');
   let aliasList = null;
   if (adding) {
@@ -6281,7 +6275,7 @@ function openFullScanListMembershipModal(scanList, operation) {
     message.textContent = adding ? 'Adding aliases…' : 'Removing memberships…';
     try {
       const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
-        method: 'PUT', body: fullScanListMembershipRequest(aliasEditorContext?.revision ?? 0, operation,
+        method: 'PUT', body: fullScanListMembershipRequest(editRevision, operation,
           selectedAliasListId)
       });
       await finishAliasMutation(modal, result);
@@ -6929,6 +6923,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listId = aliasListId(selectedList);
   const options = aliasEditorContext?.options || {};
+  const defaults = options.alias_list || {};
   const form = node('form', 'alias-editor-form alias-policy-form editor-workspace');
   form.append(node('p', 'modal-introduction',
     'Set how this Alias List handles unknown traffic and how future Aliases begin.'));
@@ -6973,8 +6968,8 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     return { panel, record, streams };
   };
 
-  const unknown = behaviorPanel('unknown', selectedList?.unknown_alias_behavior ||
-    selectedList?.unmatched_talkgroup_policy || {},
+  const unknown = behaviorPanel('unknown', defaults.unknown_alias_behavior ||
+    defaults.unmatched_talkgroup_policy || {},
     'Applies when a destination talkgroup or patch group has no exact Alias or covering talkgroup range in this list.',
     'Records completed calls whose talkgroup identity is not covered by an Alias.',
     'Routes unmatched calls to the selected Scan Lists for browser playback.',
@@ -6984,7 +6979,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       'individually reviewed, including sensitive traffic. If a selected streaming destination sends to ' +
       'Broadcastify or another third-party provider, leave catch-all Streaming disabled and configure approved ' +
       'talkgroups individually.'));
-  const newAliases = behaviorPanel('newAlias', selectedList?.new_alias_behavior || {},
+  const newAliases = behaviorPanel('newAlias', defaults.new_alias_behavior || {},
     'Applies only when a new Alias is manually created or imported from RadioReference. Changes here do not alter ' +
     'existing Aliases, and RadioReference updates preserve each existing Alias\'s local handling settings.',
     'New Aliases begin with recording enabled or disabled as selected here.',
@@ -7049,7 +7044,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       const payload = readPayload();
       const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/defaults`, {
         method: 'PUT', body: {
-          revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
+          edit_revision: options.edit_revision,
           ...payload
         }
       });
@@ -7785,14 +7780,7 @@ async function renderAliases() {
   aliasEditorContext.options = options;
   if (options?.alias_list && options?.revision !== undefined &&
       aliasListId(options.alias_list) === aliasListId(selectedList)) {
-    const unmatchedPolicy = selectedList.unmatched_talkgroup_policy ||
-      options.alias_list.unmatched_talkgroup_policy;
-    const unknownBehavior = selectedList.unknown_alias_behavior || options.alias_list.unknown_alias_behavior;
-    const newAliasBehavior = selectedList.new_alias_behavior || options.alias_list.new_alias_behavior;
-    selectedList = { ...selectedList, ...options.alias_list,
-      ...(unmatchedPolicy ? { unmatched_talkgroup_policy: unmatchedPolicy } : {}),
-      ...(unknownBehavior ? { unknown_alias_behavior: unknownBehavior } : {}),
-      ...(newAliasBehavior ? { new_alias_behavior: newAliasBehavior } : {}) };
+    selectedList = { ...selectedList, ...options.alias_list };
     const selectedIndex = lists.findIndex((row) => aliasListId(row) === aliasListId(selectedList));
     if (selectedIndex >= 0) lists[selectedIndex] = selectedList;
     aliasEditorContext.selectedList = selectedList;
@@ -25831,7 +25819,6 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             const aliasListCreator = aliasListPopupTrigger({
               select: control,
               family: profile.alias_family,
-              getRevision: currentAliasListRevision,
               triggerLabel: 'New list',
               submitLabel: 'Create and use',
               helperText: 'The list is created immediately and selected for this channel.',
@@ -26027,27 +26014,28 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         errors.replaceChildren();
         await workflow.save(async () => {
           const payload = channelEditorPayload(form, editorProfile, channel);
+          const confirmRestart = () => confirmAction('Save these settings and restart the running channel?', {
+            title: 'Restart running channel', confirmLabel: 'Save and restart', cancelLabel: 'Keep editing', tone: 'primary'
+          });
+          let allowRestart = false;
           if (editing && entry.processing_state === 'RUNNING') {
-            if (!await confirmAction('Save these settings and restart the running channel?', {
-              title: 'Restart running channel', confirmLabel: 'Save and restart', cancelLabel: 'Keep editing', tone: 'primary'
-            })) {
-              throw new DOMException('Restart cancelled', 'AbortError');
-            }
+            if (!await confirmRestart()) throw new DOMException('Restart cancelled', 'AbortError');
+            allowRestart = true;
           }
           if (!modal.dialog.isConnected) throw new DOMException('Editor closed', 'AbortError');
           const submit = () => requestJson(editing ?
             `/api/v1/admin/channels/${encodeURIComponent(configurationId)}` : '/api/v1/admin/channels', {
-            method: editing ? 'PUT' : 'POST', body: { revision, ...payload }, timeoutMs: 30_000
+            method: editing ? 'PUT' : 'POST', body: { ...payload, ...(editing ? {
+              edit_revision: entry.edit_revision, original: baselineChannel, allow_restart: allowRestart
+            } : {}) }, timeoutMs: 30_000
           });
           let result;
           try {
             result = await submit();
           } catch (error) {
-            if (editing || error.status !== 409 || error.code !== 'stale_revision') throw error;
-            // A stale create saves nothing. Retry the same new entry against current settings;
-            // the server revalidates it without overwriting an existing channel.
-            const current = await requestJson('/api/v1/admin/channels/options', { csrf: false });
-            revision = Number(current.revision);
+            if (!editing || allowRestart || error.status !== 409 || error.code !== 'restart_required') throw error;
+            if (!await confirmRestart()) throw new DOMException('Restart cancelled', 'AbortError');
+            allowRestart = true;
             result = await submit();
           }
           revision = Number(result.revision);
@@ -26058,15 +26046,13 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           },
           onError: (error) => {
             if (error.name === 'AbortError') { errors.replaceChildren(); return; }
-            if (!editing && error.status === 409 && error.code === 'stale_revision') {
+            if (editing && error.status === 409 && error.code === 'stale_channel') {
               errors.replaceChildren(node('div', 'ui-notice ui-notice-danger',
-                'Channel settings changed again. Your entry is still here. Choose Create channel to try again.'));
+                'This channel has conflicting changes. Your entry is still here. Review the current channel settings before trying again.'),
+                externalAnchor('View current channel', href('channel', { configuration_id: configurationId }),
+                  'ui-button ui-button-secondary'));
             } else {
-              aliasMutationError(errors, error, editing ? () => {
-                modal.setDirty(false);
-                closeReadOnlyModal(true);
-                openChannelEditorModal(mode, configurationId);
-              } : null);
+              aliasMutationError(errors, error);
             }
             errors.scrollIntoView({ block: 'nearest' });
             errors.focus({ preventScroll: true });
@@ -27149,8 +27135,9 @@ function scanListAdminPayload(controls) {
   };
 }
 
-function openScanListAdminModal(scanList, revision) {
+function openScanListAdminModal(scanList) {
   const editing = Boolean(scanList);
+  const editRevision = scanList?.edit_revision;
   const form = node('form', 'admin-form scan-list-admin-form');
   const name = node('input');
   name.required = true;
@@ -27214,7 +27201,8 @@ function openScanListAdminModal(scanList, revision) {
       const path = editing ? `/api/v1/admin/scan-lists/${scanList.id}` : '/api/v1/admin/scan-lists';
       const result = await requestJson(path, {
         method: editing ? 'PUT' : 'POST',
-        body: { revision, scan_list: scanListAdminPayload(controls) }
+        body: { ...(editing ? { edit_revision: editRevision } : {}),
+          scan_list: scanListAdminPayload(controls) }
       });
       original = JSON.stringify(scanListAdminPayload(controls));
       return result;
@@ -27239,8 +27227,9 @@ function openScanListAdminModal(scanList, revision) {
   modal.focus?.(name);
 }
 
-function openDeleteScanListAdminModal(scanList, revision) {
+function openDeleteScanListAdminModal(scanList) {
   if (scanList.default === true) return;
+  const editRevision = scanList.edit_revision;
   const body = node('div', 'admin-confirmation');
   const aliasCount = Number(scanList.alias_count || 0);
   const unmatchedAliasListCount = Number(scanList.unmatched_alias_list_count || 0);
@@ -27271,7 +27260,7 @@ function openDeleteScanListAdminModal(scanList, revision) {
     message.textContent = 'Deleting scan list…';
     try {
       await requestJson(`/api/v1/admin/scan-lists/${scanList.id}`, {
-        method: 'DELETE', body: { revision }
+        method: 'DELETE', body: { edit_revision: editRevision }
       });
       const deletedSelected = selectedAdminScanListId === Number(scanList.id);
       if (deletedSelected) selectedAdminScanListId = null;
@@ -27291,7 +27280,7 @@ function openDeleteScanListAdminModal(scanList, revision) {
   modal.focus?.(cancel);
 }
 
-function adminScanListActions(scanList, revision) {
+function adminScanListActions(scanList) {
   const actions = node('div', 'admin-row-actions scan-list-detail-actions');
   const members = anchor('Manage aliases', href('aliases', {
     scanListId: scanList.id, aliasTab: 'configure'
@@ -27301,7 +27290,7 @@ function adminScanListActions(scanList, revision) {
   members.setAttribute('aria-label',
     `Manage ${number(count)} ${count === 1 ? 'alias' : 'aliases'} for ${scanList.name}`);
   const edit = uiActionButton('Edit details', 'icon-edit',
-    () => openScanListAdminModal(scanList, revision),
+    () => openScanListAdminModal(scanList),
     'ui-button ui-button-secondary admin-scan-list-edit');
   edit.setAttribute('aria-label', `Edit ${scanList.name} details`);
   edit.dataset.scanListId = String(scanList.id);
@@ -27314,7 +27303,7 @@ function adminScanListActions(scanList, revision) {
     remove.setAttribute('aria-description', reason);
     remove.title = reason;
   } else {
-    remove.addEventListener('click', () => openDeleteScanListAdminModal(scanList, revision));
+    remove.addEventListener('click', () => openDeleteScanListAdminModal(scanList));
   }
   actions.append(members, edit, remove);
   return actions;
@@ -27353,7 +27342,7 @@ function adminScanListSelector(scanList) {
   return selector;
 }
 
-function adminScanListDetail(scanList, revision) {
+function adminScanListDetail(scanList) {
   const name = String(scanList?.name || 'Unnamed Scan List');
   const detail = node('section', 'scan-list-detail ui-surface');
   detail.id = 'admin-scan-list-detail';
@@ -27394,7 +27383,7 @@ function adminScanListDetail(scanList, revision) {
   const routeLinks = node('div', 'scan-list-detail-route-links');
   routeLinks.append(adminScanListUnmatchedAliasLists(scanList));
   routes.append(routeLinks);
-  detail.append(facts, routes, adminScanListActions(scanList, revision));
+  detail.append(facts, routes, adminScanListActions(scanList));
   return detail;
 }
 
@@ -27402,12 +27391,11 @@ async function renderAdminScanLists() {
   const renderContext = captureRenderContext();
   const response = await requestJson('/api/v1/admin/scan-lists', { csrf: false });
   if (!renderIsCurrent(renderContext)) return;
-  const revision = Number(response?.revision ?? 0);
   const scanLists = Array.isArray(response?.scan_lists) ? response.scan_lists : [];
   const heading = pageHeader('Scan Lists', 'Choose which calls listeners can hear together');
   heading.classList.add('scan-list-page-header');
   const create = uiActionButton('Create scan list', 'icon-plus', () =>
-    openScanListAdminModal(null, revision), 'ui-button ui-button-primary');
+    openScanListAdminModal(null), 'ui-button ui-button-primary');
   create.id = 'admin-create-scan-list';
   const actions = node('div', 'scan-list-heading-actions ui-section-actions');
   actions.append(create);
@@ -27452,7 +27440,7 @@ async function renderAdminScanLists() {
       selector.setAttribute('aria-pressed', String(selected));
       selector.tabIndex = selected ? 0 : -1;
     });
-    detailHost.replaceChildren(adminScanListDetail(scanList, revision));
+    detailHost.replaceChildren(adminScanListDetail(scanList));
     detailHost.hidden = false;
   };
   entries.forEach(({ scanList, selector }) => {

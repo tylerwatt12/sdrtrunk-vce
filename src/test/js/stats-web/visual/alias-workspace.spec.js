@@ -40,7 +40,7 @@ async function installEditor(page, query = 'list=1&aliasTab=configure') {
     if (request.method() !== 'GET' && path.startsWith('/api/v1/admin/aliases')) {
       const body = request.postDataJSON();
       writes.push({ path, method: request.method(), body });
-      if (body.revision !== revision) return route.fulfill({ status: 409,
+      if (request.method() !== 'POST' && body.edit_revision !== `alias-${path.split('/').at(-1)}-${revision}`) return route.fulfill({ status: 409,
         json: { error: { code: 'stale_revision', message: 'Reload current values.' } } });
       if (request.method() === 'DELETE') {
         const index = aliases.findIndex((row) => row.alias_id === Number(path.split('/').at(-1)));
@@ -64,7 +64,7 @@ async function installEditor(page, query = 'list=1&aliasTab=configure') {
           .map((row) => row.group))], matchers: [{ type: 'talkgroup', protocol: 'p25', variant: 'phase_1',
           label: 'P25 Talkgroup', fields: ['value'], minimum: 1, maximum: 65534 }] });
     }
-    if (/\/api\/v1\/admin\/aliases\/\d+$/.test(path)) return send({ revision,
+    if (/\/api\/v1\/admin\/aliases\/\d+$/.test(path)) return send({ revision, edit_revision: `alias-${path.split('/').at(-1)}-${revision}`,
       alias: aliases.find((row) => row.alias_id === Number(path.split('/').at(-1))) });
     if (/\/api\/v1\/aliases\/\d+$/.test(path)) return send({ breakdown: [] });
     if (path === '/api/v1/aliases/ids') return send({ alias_ids: [101, 102, 103], count: 3 });
@@ -264,6 +264,6 @@ test('Saving an alias from a later page clears selection and refreshes the route
   await nextEditor.getByRole('textbox', { name: /^Alias name/ }).fill('A Medic Updated');
   await nextEditor.getByRole('button', { name: 'Save Changes', exact: true }).click();
   await expect(nextEditor).toHaveCount(0);
-  expect(fixture.writes.map((write) => write.body.revision)).toEqual([1, 2]);
+  expect(fixture.writes.map((write) => write.body.edit_revision)).toEqual(['alias-103-1', 'alias-103-2']);
   await expectStableWorkspace(page, fixture);
 });

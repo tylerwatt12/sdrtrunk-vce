@@ -11,12 +11,12 @@ function familyLabel(value) {
   return family === 'NBFM' ? 'Conventional Analog (AM/NBFM)' : family;
 }
 
-export async function createAliasList(requestJson, { name, family, revision }) {
+export async function createAliasList(requestJson, { name, family }) {
   const normalizedName = String(name || '').trim();
   const normalized = normalizedFamily(family);
   const result = await requestJson('/api/v1/admin/alias-lists', {
     method: 'POST', body: {
-      revision: Number(revision ?? 0), name: normalizedName, family: normalized.toLowerCase()
+      name: normalizedName, family: normalized.toLowerCase()
     }
   });
   const id = Number(result?.alias_list_id);
@@ -30,7 +30,7 @@ export async function createAliasList(requestJson, { name, family, revision }) {
 export function createAliasListPopupTrigger(dependencies, options) {
   const { node, iconGlyph, uiPill, requestJson, openReadOnlyModal } = dependencies;
   const {
-    select, family, getRevision, onCreated, getInitialName, triggerLabel = 'New list', submitLabel = 'Create and use',
+    select, family, onCreated, getInitialName, triggerLabel = 'New list', submitLabel = 'Create and use',
     helperText = 'The list is created immediately and selected for this workflow.'
   } = options;
   const normalized = normalizedFamily(family);
@@ -88,8 +88,7 @@ export function createAliasListPopupTrigger(dependencies, options) {
       submit.disabled = true;
       try {
         if (!createdResult) {
-          const revision = await getRevision();
-          createdResult = await createAliasList(requestJson, { name: listName, family: normalized, revision });
+          createdResult = await createAliasList(requestJson, { name: listName, family: normalized });
         }
         await onCreated(createdResult);
         modal.setBusy(false);

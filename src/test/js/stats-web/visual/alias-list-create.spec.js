@@ -67,7 +67,6 @@ async function installCreatorHarness(page, selectionFailsOnce = false) {
       }, {
         select,
         family: 'P25',
-        getRevision: async () => 5,
         onCreated: ({ aliasList }) => {
           if (failNextSelection) {
             failNextSelection = false;
@@ -118,7 +117,7 @@ test('Alias List creation uses a child dialog and preserves the channel draft', 
   expect(await page.evaluate(() => window.inlineAliasSubmitted)).toBe(1);
   expect(await page.evaluate(() => window.inlineAliasRequests[0])).toMatchObject({
     path: '/api/v1/admin/alias-lists',
-    options: { method: 'POST', body: { revision: 5, name: 'County Public Safety', family: 'p25' } }
+    options: { method: 'POST', body: { name: 'County Public Safety', family: 'p25' } }
   });
 
   await page.evaluate(() => window.failInlineAliasCreate());

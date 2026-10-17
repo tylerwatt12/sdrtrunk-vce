@@ -116,7 +116,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
       }
       await route.fulfill({ json: p25 });
     } else if (pathname === '/api/v1/admin/streaming') {
-      await data({ revision: '1:1:1', destinations: [{ configuration_id: 'county-calls',
+      await data({ destinations: [{ configuration_id: 'county-calls',
         name: 'County Calls', provider: 'BROADCASTIFY_CALL', provider_label: 'Broadcastify Calls',
         enabled: true, state: 'CONNECTED', state_label: 'Connected', queued: 3, sent: 128,
         aged_off: 4, errors: 2, last_error: null, attention: false }] });

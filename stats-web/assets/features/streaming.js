@@ -132,7 +132,7 @@ export function createStreamingWorkspace(deps) {
     workflowBody.append(feedback('Loading destination…', 'loading'));
     content.append(workflowBody);
     const abort = new AbortController();
-    let alive = true, busy = false, settingsDirty = false, assignmentDirty = false, revision, options, definition;
+    let alive = true, busy = false, settingsDirty = false, assignmentDirty = false, editRevision, assignmentRevision, options, definition;
     let tabs = null, statusTimer = null;
     let activeTab = initialTab, aliasLoaded = false, aliasOffset = 0, aliasTotal = 0, aliasSequence = 0;
     const changedAliases = new Map(), aliasOriginal = new Map(), controls = new Map();
@@ -382,7 +382,8 @@ export function createStreamingWorkspace(deps) {
         const query = new URLSearchParams({ q: aliasSearch.value, assigned: assignedOnly.value, offset: aliasOffset, limit: 50 });
         const result = await read(`/${id}/aliases?${query}`, requestOptions);
         if (!alive || sequence !== aliasSequence) return;
-        if (revision !== result.revision) throw Object.assign(new Error('Configuration changed. Reload before changing assignments.'), { code: 'stale_revision' });
+        if (assignmentDirty && assignmentRevision !== result.revision) throw Object.assign(new Error('Assignments changed. Your edits are still here. Reload current values before saving.'), { code: 'stale_revision' });
+        assignmentRevision = result.revision;
         aliasLoaded = true; aliasTotal = result.total;
         visibleAliases = result.items;
         aliasRows.replaceChildren(table(result.items, [
@@ -439,17 +440,18 @@ export function createStreamingWorkspace(deps) {
       await run(async () => {
         let result;
         if (activeTab === 'aliases') {
-          result = await write(`/${id}/aliases`, 'POST', { revision,
+          result = await write(`/${id}/aliases`, 'POST', { revision: assignmentRevision,
             add: [...changedAliases].filter(([, value]) => value).map(([key]) => key),
             remove: [...changedAliases].filter(([, value]) => !value).map(([key]) => key) }, requestOptions);
-          revision = result.revision; changedAliases.clear(); assignmentDirty = false; aliasLoaded = false;
+          aliasSequence += 1;
+          assignmentRevision = result.revision; changedAliases.clear(); assignmentDirty = false; aliasLoaded = false;
         } else {
           const settings = readChanges();
-          result = await write(id ? `/${id}` : '', id ? 'PUT' : 'POST', { revision, provider: definition.provider, settings }, requestOptions);
-          id = result.configuration_id; revision = result.revision; settingsDirty = false;
+          result = await write(id ? `/${id}` : '', id ? 'PUT' : 'POST', { ...(id ? { edit_revision: editRevision } : {}), provider: definition.provider, settings }, requestOptions);
+          id = result.configuration_id; editRevision = result.edit_revision;
           const current = await read(`/${id}`, requestOptions);
           if (!alive) return;
-          definition = current.destination; renderFields();
+          definition = current.destination; editRevision = current.edit_revision; renderFields();
           providerControl.disabled = true;
           if (tabs) tabs.querySelectorAll('button').forEach(control => { control.disabled = false; });
         }
@@ -474,7 +476,7 @@ export function createStreamingWorkspace(deps) {
         if (!await confirmAction(`Delete ${definition.settings.name}? This removes its saved connection settings.`, {
           title: 'Delete streaming destination', confirmLabel: 'Delete destination'
         }) || !alive) return;
-        await write(`/${id}`, 'DELETE', { revision }, requestOptions);
+        await write(`/${id}`, 'DELETE', { edit_revision: editRevision }, requestOptions);
         modal.setDirty(false); settingsDirty = assignmentDirty = false;
         modal.setBusy(false); modal.close();
       });
@@ -483,7 +485,7 @@ export function createStreamingWorkspace(deps) {
       options = await read('/options', requestOptions);
       const existing = id ? await read(`/${id}`, requestOptions) : null;
       definition = existing?.destination || await read('/templates/BROADCASTIFY_CALL', requestOptions);
-      revision = existing?.revision || options.revision;
+      editRevision = existing?.edit_revision;
       if (!alive) return;
       providerControl.replaceChildren(...options.providers.map(provider => {
         const option = node('option', '', provider.label); option.value = provider.id; return option;
@@ -553,8 +555,6 @@ export function createStreamingWorkspace(deps) {
         if (configuration?.account?.state !== 'VALID_PREMIUM') { showConnect(); return; }
         const result = await write('/feeds/refresh', 'POST', {}, { signal: abort.signal, page: false });
         if (!current()) return;
-        const options = await read('/options', { signal: abort.signal, page: false });
-        if (!current()) return;
         const rows = result.items || [];
         const introduction = node('div', 'streaming-feed-introduction');
         const introductionText = node('div');
@@ -591,7 +591,7 @@ export function createStreamingWorkspace(deps) {
             });
             cardMessage.replaceChildren();
             try {
-              const saved = await write('/feeds', 'POST', { feed_id: row.id, revision: options.revision },
+              const saved = await write('/feeds', 'POST', { feed_id: row.id },
                 { signal: abort.signal, page: false });
               if (alive) { modal.setBusy(false); modal.close(); void openEditor(saved.configuration_id); }
             } catch (error) {

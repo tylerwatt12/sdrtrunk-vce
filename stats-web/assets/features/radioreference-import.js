@@ -290,7 +290,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const state = {
     configuration: null,
     aliasLists: [],
-    aliasListRevision: 0,
     countries: [],
     initialized: false,
     initializing: false,
@@ -410,15 +409,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     populateAliasSelect(control, family, selectedId, useDefault);
     return control;
   };
-  const currentAliasListRevision = async () => {
-    const documentValue = await requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false });
-    const revision = Number(documentValue?.revision);
-    if (!Number.isSafeInteger(revision) || revision < 0) {
-      throw new Error('The current Alias List revision is unavailable. Reload and try again.');
-    }
-    state.aliasListRevision = revision;
-    return revision;
-  };
   const aliasListField = (label, control, family, helperText, getInitialName) => {
     control.setAttribute('aria-label', label);
     const field = node('div', 'admin-form-field ui-field');
@@ -426,18 +416,15 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       createAliasListPopupTrigger({
         select: control,
         family: normalizedAliasFamily(family),
-        getRevision: currentAliasListRevision,
         getInitialName,
         triggerLabel: 'New list',
         submitLabel: 'Create and use',
         helperText,
-        onCreated: ({ aliasList, revision }) => {
+        onCreated: ({ aliasList }) => {
           const id = aliasListId(aliasList);
           if (!id) return;
           state.aliasLists = state.aliasLists.filter((value) => aliasListId(value) !== id);
           state.aliasLists.push(aliasList);
-          const nextRevision = Number(revision);
-          if (Number.isSafeInteger(nextRevision) && nextRevision >= 0) state.aliasListRevision = nextRevision;
           populateAliasSelect(control, family, id);
           control.dispatchEvent(new Event('change', { bubbles: true }));
         }
@@ -1979,9 +1966,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           state.configuration?.account?.state !== 'VALID_PREMIUM') return;
       state.aliasLists = Array.isArray(aliasesDocument?.alias_lists) ? aliasesDocument.alias_lists :
         rows(aliasesDocument);
-      const aliasListRevision = Number(aliasesDocument?.revision);
-      state.aliasListRevision = Number.isSafeInteger(aliasListRevision) && aliasListRevision >= 0 ?
-        aliasListRevision : 0;
       state.countries = sortRadioReferenceCountries(rows(countriesDocument));
       state.bookmarks = rows(bookmarksDocument).map(normalizeBookmark);
       state.preferenceLoadError = preferencesResult.error?.message || '';

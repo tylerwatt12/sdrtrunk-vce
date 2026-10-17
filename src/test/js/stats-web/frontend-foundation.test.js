@@ -1010,13 +1010,10 @@ async function main() {
   assert.match(radioReferenceImportSource, /href\('channel-setup', \{ channel: configurationId \}\)/);
   assert.match(radioReferenceImportSource, /catalog_id: state\.talkgroupCatalogId/);
   assert.match(radioReferenceImportSource, /preferredAliasListId/);
-  assert.match(radioReferenceImportSource, /aliasListRevision: 0/);
-  assert.match(radioReferenceImportSource, /getRevision: currentAliasListRevision/);
+  assert.doesNotMatch(radioReferenceImportSource, /aliasListRevision|currentAliasListRevision|getRevision:/,
+    'Creating a new Alias List validates current state without a catalog refresh prerequisite');
   assert.match(radioReferenceImportSource,
-    /currentAliasListRevision[\s\S]+admin\/alias-lists\?include_counts=false/,
-    'Alias List creation must refresh the revision after other import mutations');
-  assert.match(radioReferenceImportSource,
-    /onCreated: \(\{ aliasList, revision \}\)[\s\S]+dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
+    /onCreated: \(\{ aliasList \}\)[\s\S]+dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
   assert.equal((radioReferenceImportSource.match(/aliasListField\('/g) || []).length, 3,
     'RadioReference imports should define one shared Alias List field and use it for sites, talkgroups, and conventional channels');
   assert.match(radioReferenceImportSource, /return normalized === 'NBFM' \? 'Default Analog' : `Default \$\{normalized\}`/);

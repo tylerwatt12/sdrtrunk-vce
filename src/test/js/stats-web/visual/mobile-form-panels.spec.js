@@ -95,17 +95,17 @@ async function mockApplication(page, theme) {
       has_more: false, next_offset: null };
     else if (p === '/api/v1/admin/aliases/options') data = { revision: 1, alias_list: list,
       streams: streamNames.map((name, i) => ({ configuration_id: `stream-${i}`, name })) };
-    else if (p === '/api/v1/admin/streaming') data = { revision: '1:1:1', destinations: [stream] };
-    else if (p === '/api/v1/admin/streaming/options') data = { revision: '1:1:1', sites: [], providers: [
+    else if (p === '/api/v1/admin/streaming') data = { destinations: [stream] };
+    else if (p === '/api/v1/admin/streaming/options') data = { sites: [], providers: [
       { id: 'BROADCASTIFY_CALL', label: 'Broadcastify Calls', fields: [
         { key: 'name', label: 'Name', type: 'text', maximum: 1024 },
         { key: 'enabled', label: 'Enabled', type: 'boolean' }] }] };
-    else if (p === '/api/v1/admin/streaming/destination') data = { revision: '1:1:1', status: stream,
+    else if (p === '/api/v1/admin/streaming/destination') data = { edit_revision: 'destination-edit-1', status: stream,
       destination: { configuration_id: 'destination', provider: 'BROADCASTIFY_CALL',
         settings: { name: stream.name, enabled: true }, configured_credentials: [] }, references: { aliases: 0 } };
     else if (p === '/api/v1/admin/streaming/destination/aliases') {
       const offset = Number(url.searchParams.get('offset')) || 0;
-      data = { revision: '1:1:1', total: 51, limit: 50, items: assignments.slice(offset, offset + 50) };
+      data = { revision: 'assignments-1', total: 51, limit: 50, items: assignments.slice(offset, offset + 50) };
     } else if (p === '/api/v1/activity') data = {
       rows: Number(url.searchParams.get('after_id')) > 0 ? [] : activity,
       watermark_id: 16, next_after_id: 16, has_more: false };

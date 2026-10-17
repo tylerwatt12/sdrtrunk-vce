@@ -302,8 +302,8 @@ assert.match(channelModal, /modal\.isDirty\(\)/,
   'Start and Stop must not discard unsaved channel settings');
 assert.match(channelModal, /aliasListPopupTrigger\(\{/,
   'Channel setup must offer the shared Alias List creator');
-assert.match(channelModal, /getRevision: currentAliasListRevision/,
-  'Inline Alias List creation must use the Alias configuration revision');
+assert.doesNotMatch(channelModal, /getRevision: currentAliasListRevision/,
+  'Creating an Alias List must not depend on a collection-wide revision');
 assert.match(channelModal, /control\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/,
   'A newly created Alias List must follow the normal channel-field change path');
 const stickyAssignments = [];

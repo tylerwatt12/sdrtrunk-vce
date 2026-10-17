@@ -24,7 +24,7 @@ async function openEditor(page, processingState = 'RUNNING', mode = 'edit') {
       { path: 'settings.ignore_encrypted_calls', label: 'Skip encrypted traffic channels (performance)',
         type: 'boolean', default: false }
     ] }] };
-  const state = { revision: 4, processingState, pending: [], writes: [], optionsReads: [], templateReads: 0, channel: {
+  const state = { revision: 4, editRevision: 'channel-v4', processingState, pending: [], writes: [], optionsReads: [], templateReads: 0, channel: {
     configuration_id: id, protocol_id: 'dmr', name: 'County Dispatch', system: 'County', site: 'North',
     alias_list_id: 1, source: { frequencies_hz: [451012500] }, settings: { ignore_encrypted_calls: true },
     frequency_map: [], event_logs: [], recorders: [], auxiliary_decoders: [] } };
@@ -75,7 +75,7 @@ async function openEditor(page, processingState = 'RUNNING', mode = 'edit') {
       }));
       return;
     }
-    if (pathname === `/api/v1/admin/channels/${id}`) return data({ revision: state.revision,
+    if (pathname === `/api/v1/admin/channels/${id}`) return data({ revision: state.revision, edit_revision: state.editRevision,
       channel: state.channel, processing_state: state.processingState });
     return route.fulfill({ status: 404, json: { error: { message: 'Unavailable in this browser fixture' } } });
   });
@@ -92,7 +92,7 @@ async function openEditor(page, processingState = 'RUNNING', mode = 'edit') {
   });
   await expect(dialog.getByRole('textbox', { name: 'Name', exact: true }))
     .toHaveValue(mode === 'create' ? 'DMR Channel' : 'County Dispatch');
-  return { state, dialog, release: async (status = 200, code = status === 409 ? 'stale_revision' : null) =>
+  return { state, dialog, release: async (status = 200, code = status === 409 ? 'stale_channel' : null) =>
     state.pending.shift()(status, code) };
 }
 
@@ -131,42 +131,29 @@ async function expectMutationLocked(page, dialog) {
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
 }
 
-test('creating a channel refreshes a stale revision once and resubmits the unchanged draft', async ({ page }) => {
+test('creating a channel ignores unrelated configuration changes and submits once without a catalog revision', async ({ page }) => {
   const app = await openEditor(page, 'STOPPED', 'create');
   const { dialog, state } = app;
   await fillCreateDraft(dialog);
-  const oldForm = await dialog.locator('form').elementHandle();
   const optionsReads = state.optionsReads.length;
+  state.revision = 20;
   await dialog.getByRole('button', { name: 'Create channel', exact: true }).click();
   await expect.poll(() => state.pending.length).toBe(1);
   await expectMutationLocked(page, dialog);
-  state.revision = 5;
-  await app.release(409);
-  await expect.poll(() => state.pending.length).toBe(1);
-  expect(state.optionsReads.slice(optionsReads)).toEqual([5]);
-  expect(state.templateReads).toBe(1);
-  expect(state.writes).toHaveLength(2);
-  expect(state.writes.map(write => [write.pathname, write.method, write.body.revision])).toEqual([
-    ['/api/v1/admin/channels', 'POST', 4], ['/api/v1/admin/channels', 'POST', 5]
-  ]);
-  const { revision, ...draft } = state.writes[0].body;
-  expect(draft).toMatchObject({
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0].body).toMatchObject({
     protocol_id: 'dmr', name: 'County South Dispatch', system: 'County Radio', site: 'South Ridge',
     alias_list_id: '2', source: { frequencies_hz: [452125000, 453250000] },
     settings: { ignore_encrypted_calls: true }
   });
-  expect(state.writes[1].body).toEqual({ revision: 5, ...draft });
-  expect(await oldForm.evaluate(form => form.isConnected)).toBe(true);
-  await expectMutationLocked(page, dialog);
-  await dialog.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
-  expect(state.writes).toHaveLength(2);
+  expect(state.writes[0].body).not.toHaveProperty('revision');
+  expect(state.writes[0].body).not.toHaveProperty('edit_revision');
+  expect(state.optionsReads).toHaveLength(optionsReads);
   await app.release();
   await expect(dialog).toHaveCount(0);
-  expect(state.writes).toHaveLength(2);
 });
 
-test('repeated create conflicts preserve the dirty draft and allow another bounded retry', async ({ page }, testInfo) => {
-  await page.emulateMedia({ colorScheme: 'dark' });
+test('a failed create retains every field and dirty-dismiss protection for a user retry', async ({ page }, testInfo) => {
   const app = await openEditor(page, 'STOPPED', 'create');
   const { dialog, state } = app;
   await fillCreateDraft(dialog);
@@ -175,59 +162,45 @@ test('repeated create conflicts preserve the dirty draft and allow another bound
   const optionsReads = state.optionsReads.length;
   await create.click();
   await expect.poll(() => state.pending.length).toBe(1);
-  state.revision = 5;
-  await app.release(409);
-  await expect.poll(() => state.pending.length).toBe(1);
-  state.revision = 6;
-  await app.release(409);
-  await expect(dialog.getByRole('alert')).toContainText('Your entry is still here.');
-  await expect(dialog.getByRole('alert')).toContainText('Choose Create channel to try again.');
-  await expect(dialog.getByRole('button', { name: 'Reload current values', exact: true })).toHaveCount(0);
-  await expect(create).toBeEnabled();
-  await expect(dialog).not.toHaveAttribute('aria-busy', 'true');
+  await app.release(503);
+  await expect(dialog.getByRole('alert')).toHaveText('Channel request failed. Try again.');
   await expectCreateDraft(dialog);
+  await expect(create).toBeEnabled();
   expect(await oldForm.evaluate(form => form.isConnected)).toBe(true);
-  expect(state.writes).toHaveLength(2);
-  expect(state.pending).toHaveLength(0);
-  expect(state.optionsReads.slice(optionsReads)).toEqual([5]);
-  expect(state.templateReads).toBe(1);
-  await page.screenshot({ path: testInfo.outputPath('create-conflict.png'), fullPage: true });
-
+  expect(state.writes).toHaveLength(1);
+  await page.screenshot({ path: testInfo.outputPath('create-failure.png'), fullPage: true });
   await page.keyboard.press('Escape');
   const discard = page.getByRole('alertdialog', { name: 'Discard unsaved changes', exact: true });
   await expect(discard).toBeVisible();
   await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
   await expectCreateDraft(dialog);
+  state.revision = 30;
   await create.click();
   await expect.poll(() => state.pending.length).toBe(1);
-  await app.release(409);
-  await expect.poll(() => state.pending.length).toBe(1);
-  expect(state.optionsReads.slice(optionsReads)).toEqual([5, 6]);
-  expect(state.writes.map(write => write.body.revision)).toEqual([4, 5, 5, 6]);
-  const { revision, ...draft } = state.writes[0].body;
-  for (const write of state.writes) {
-    const { revision: savedRevision, ...savedDraft } = write.body;
-    expect(savedDraft).toEqual(draft);
-  }
+  expect(state.writes[1].body).toEqual(state.writes[0].body);
+  expect(state.optionsReads).toHaveLength(optionsReads);
   await app.release();
   await expect(dialog).toHaveCount(0);
-  expect(state.writes).toHaveLength(4);
 });
 
-test('creating a channel does not retry a conflict without a stale revision code', async ({ page }) => {
-  const app = await openEditor(page, 'STOPPED', 'create');
+test('a channel that starts after opening requires restart consent without refreshing the draft', async ({ page }) => {
+  const app = await openEditor(page, 'STOPPED');
   const { dialog, state } = app;
-  await fillCreateDraft(dialog);
-  const optionsReads = state.optionsReads.length;
-  await dialog.getByRole('button', { name: 'Create channel', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Updated Dispatch');
+  const save = dialog.getByRole('button', { name: 'Save changes', exact: true });
+  await save.click();
   await expect.poll(() => state.pending.length).toBe(1);
-  await app.release(409, 'invalid_channel');
-  await expect(dialog.getByRole('alert')).toHaveText('Channel request failed. Try again.');
-  await expectCreateDraft(dialog);
-  await expect(dialog.getByRole('button', { name: 'Create channel', exact: true })).toBeEnabled();
-  expect(state.writes).toHaveLength(1);
-  expect(state.pending).toHaveLength(0);
-  expect(state.optionsReads).toHaveLength(optionsReads);
+  expect(state.writes[0].body.allow_restart).toBe(false);
+  state.processingState = 'RUNNING';
+  await app.release(409, 'restart_required');
+  const confirmation = page.getByRole('alertdialog', { name: 'Restart running channel', exact: true });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', { name: 'Save and restart', exact: true }).click();
+  await expect.poll(() => state.pending.length).toBe(1);
+  expect(state.writes[1].body).toEqual({ ...state.writes[0].body, allow_restart: true });
+  await expectMutationLocked(page, dialog);
+  await app.release();
+  await expect(dialog).toHaveCount(0);
 });
 
 test('channel save validates and locks dismissal, reset, edits and duplicate submits while preserving failed drafts', async ({ page }) => {
@@ -263,7 +236,7 @@ test('channel save validates and locks dismissal, reset, edits and duplicate sub
   await expect.poll(() => state.pending.length).toBe(1);
   await app.release();
   await expect(dialog).toHaveCount(0);
-  expect(state.writes.map(write => write.body.revision)).toEqual([4, 4]);
+  expect(state.writes.map(write => write.body.edit_revision)).toEqual(['channel-v4', 'channel-v4']);
   for (const write of state.writes) {
     expect(write.body.name).toBe('Updated Dispatch');
     expect(write.body.settings.ignore_encrypted_calls).toBe(true);
@@ -290,27 +263,30 @@ test('declining a running-channel restart keeps the draft dirty and restores con
   expect(state.writes).toHaveLength(0);
 });
 
-test('a stale channel save keeps its draft until reloading the latest revision', async ({ page }) => {
+test('a conflicting channel edit retains the original baseline and every draft field', async ({ page }) => {
   const app = await openEditor(page, 'STOPPED');
   const { dialog, state } = app;
   const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
-  await name.fill('Stale draft');
+  const original = structuredClone(state.channel);
+  await name.fill('My Dispatch');
   await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect.poll(() => state.pending.length).toBe(1);
-  state.revision = 5;
+  state.editRevision = 'channel-v5';
+  state.channel.name = 'Their Dispatch';
   await app.release(409);
-  await expect(dialog.getByRole('alert')).toContainText('No changes were saved.');
-  await expect(name).toHaveValue('Stale draft');
-  const oldForm = await dialog.locator('form').elementHandle();
-  await dialog.getByRole('button', { name: 'Reload current values', exact: true }).click();
-  await expect(name).toHaveValue('County Dispatch');
-  expect(await oldForm.evaluate(form => form.isConnected)).toBe(false);
-  await name.fill('Current draft');
-  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect.poll(() => state.pending.length).toBe(1);
-  expect(state.writes[1].body.revision).toBe(5);
-  await app.release();
-  await expect(dialog).toHaveCount(0);
+  await expect(dialog.getByRole('alert')).toContainText('Your entry is still here.');
+  await expect(name).toHaveValue('My Dispatch');
+  await expect(dialog.getByRole('button', { name: 'Reload current values', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('link', { name: 'View current channel', exact: true })).toHaveAttribute('target', '_blank');
+  expect(state.writes[0].body.edit_revision).toBe('channel-v4');
+  expect(state.writes[0].body.original).toEqual(original);
+  expect(state.writes[0].body).not.toHaveProperty('revision');
+  expect(state.writes).toHaveLength(1);
+  await page.keyboard.press('Escape');
+  const discard = page.getByRole('alertdialog', { name: 'Discard unsaved changes', exact: true });
+  await expect(discard).toBeVisible();
+  await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(name).toHaveValue('My Dispatch');
 });
 
 test('channel Start holds all form controls and blocks concurrent Save, then restores locks after failure and retry', async ({ page }) => {

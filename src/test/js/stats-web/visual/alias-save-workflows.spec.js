@@ -32,7 +32,7 @@ async function openAliasForm(page, editing) {
     if (pathname === '/api/v1/aliases') return data({ rows: [alias], total_count: 1, limit: 50, offset: 0, has_more: false });
     if (pathname === '/api/v1/admin/aliases/options') return data({ revision, alias_list: list,
       matchers: [{ type: 'talkgroup', protocol: 'APCO25', label: 'Talkgroup', fields: ['value'], minimum: 1, maximum: 65535 }] });
-    if (pathname === '/api/v1/admin/aliases/101') return data({ revision, alias });
+    if (pathname === '/api/v1/admin/aliases/101') return data({ revision, edit_revision: 'alias-101-v1', alias });
     return route.fulfill({ status: 404, json: { error: { message: 'Unavailable in this fixture' } } });
   });
   await page.goto(`/app.html?view=aliases&list=1${editing ? '&alias=101' : ''}`);
@@ -102,7 +102,9 @@ for (const editing of [false, true]) {
     await expect.poll(() => pending.length).toBe(1);
     await pending.shift()(200);
     await expect(dialog).toHaveCount(0);
-    expect(writes.map(write => write.body.revision)).toEqual([1, 1]);
+    expect(writes.map(write => write.body.edit_revision)).toEqual(editing ?
+      ['alias-101-v1', 'alias-101-v1'] : [undefined, undefined]);
+    expect(writes.every(write => !Object.hasOwn(write.body, 'revision'))).toBe(true);
     if (editing) expect(writes[1].body.alias).toMatchObject({ name: 'County Dispatch',
       alias_list_id: 1, recordable: true, matcher: { type: 'talkgroup', protocol: 'APCO25', value: 1201 } });
     else expect(writes[1].body).toMatchObject({ name: 'County Dispatch', family: 'p25' });

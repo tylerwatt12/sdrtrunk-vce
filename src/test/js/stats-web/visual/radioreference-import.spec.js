@@ -194,7 +194,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       const trigger = node('button', 'ui-button ui-button-secondary', options.triggerLabel);
       trigger.type = 'button';
       trigger.addEventListener('click', async () => {
-        const beforeRevision = await options.getRevision();
+        const beforeRevision = aliasRevision;
         const family = String(options.family || '').toUpperCase();
         const aliasList = {
           id: nextAliasListId++, name: family === 'NBFM' ? 'New Analog List' : `New ${family} List`,

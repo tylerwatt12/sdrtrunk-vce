@@ -104,7 +104,7 @@ vm.runInContext(`
   ${functionSource('function aliasTransferExportIsReady(cookieHeader, token)')}
   ${functionSource("function exportCsvFileName(response, fallback = 'export.csv')")}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
-  ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
+  ${functionSource('function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)')}
   ${functionSource('function protocol(value)')}
   ${functionSource('function protocolFamily(row)')}
   ${functionSource('function isP25(row)')}
@@ -536,11 +536,11 @@ assert.deepEqual(Array.from(context.reorderTones(tones, 1, 1), (row) => row.tone
 assert.deepEqual(Array.from(context.reorderTones(tones, 0, -1), (row) => row.tone), ['A', 'B', 'C']);
 assert.deepEqual(tones.map((row) => row.tone), ['A', 'B', 'C'], 'Reordering must not mutate the input array.');
 
-assert.deepEqual(JSON.parse(JSON.stringify(context.fullMembershipRequest(7, 'add', 42))), {
-  revision: 7, operation: 'add', alias_scope: { alias_list_id: 42 }
+assert.deepEqual(JSON.parse(JSON.stringify(context.fullMembershipRequest('scan-version-7', 'add', 42))), {
+  edit_revision: 'scan-version-7', operation: 'add', alias_scope: { alias_list_id: 42 }
 });
-assert.deepEqual(JSON.parse(JSON.stringify(context.fullMembershipRequest(8, 'remove'))), {
-  revision: 8, operation: 'remove', alias_scope: {}
+assert.deepEqual(JSON.parse(JSON.stringify(context.fullMembershipRequest('scan-version-8', 'remove'))), {
+  edit_revision: 'scan-version-8', operation: 'remove', alias_scope: {}
 });
 assert.equal(context.matcherSummary({ type: 'talkgroup_range', protocol: 'P25', minimum: 10, maximum: 20 }),
   'Talkgroup Range · P25 · 10–20');
@@ -741,10 +741,44 @@ async function verifyAsyncSelectionLifecycle() {
   assert.deepEqual(messages, [], 'A stale Select All response must not announce success or failure.');
 }
 
+async function verifyScanListDialogVersionSnapshot() {
+  for (const removeAll of [false, true]) {
+    const elements = [];
+    const writes = [];
+    const element = (tag, _className = '', textContent = '') => {
+      const value = { tag, textContent, disabled: false, handlers: {},
+        append() {}, replaceChildren() {}, setAttribute() {},
+        addEventListener(type, handler) { this.handlers[type] = handler; } };
+      elements.push(value);
+      return value;
+    };
+    const probe = { node: element, number: String, aliasMutationSelectionIds: () => [11, 12],
+      aliasModalFooter: (...controls) => ({ controls }), ALIAS_BULK_REQUEST_TIMEOUT_MS: 60_000,
+      openReadOnlyModal: () => ({ close() {}, setBusy() {}, focus() {} }),
+      finishAliasMutation: async () => {},
+      requestJson: async (url, options) => { writes.push({ url, body: options.body }); return {}; } };
+    vm.createContext(probe);
+    vm.runInContext(`${functionSource('function openScanListMemberRemoveModal(scanList)')}
+      ${functionSource('function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)')}
+      ${functionSource('function openFullScanListMembershipModal(scanList, operation)')}`, probe);
+    const scanList = { id: 7, name: 'County', alias_count: 2, edit_revision: 'opened-memberships' };
+    if (removeAll) probe.openFullScanListMembershipModal(scanList, 'remove');
+    else probe.openScanListMemberRemoveModal(scanList);
+    Object.assign(scanList, { alias_count: 3, edit_revision: 'refreshed-behind-dialog' });
+    const trigger = elements.find((value) => removeAll ? value.tag === 'form' :
+      value.tag === 'button' && value.textContent === 'Remove 2 Aliases');
+    await trigger.handlers[removeAll ? 'submit' : 'click']({ preventDefault() {} });
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.edit_revision, 'opened-memberships',
+      'A background refresh must not advance an open membership confirmation to an unreviewed version');
+  }
+}
+
 async function verifyAdditionalAliasLifecycles() {
   await verifyAsyncSelectionLifecycle();
   await verifySharedFormWorkflowLifecycle();
   await verifyAliasSaveLifecycle();
+  await verifyScanListDialogVersionSnapshot();
   const result = await context.runMutationRefreshProbe(selectionScope);
   assert.deepEqual(Array.from(result.refreshedSelection), [],
     'An in-place mutation refresh must see a cleared selection before it redraws the toolbar.');
@@ -896,7 +930,7 @@ async function verifyAliasSaveLifecycle() {
     aliasEditorSelectionScope: 'test', resetAliasEditorSelection() {},
     route: new URLSearchParams('view=aliases&list=7&alias=101'), ALIAS_CREATE_ROUTE_KEYS: [],
     aliasListId: (row) => row?.alias_list_id,
-    revision: 1, currentHref: () => '/?view=aliases&list=7',
+    editRevision: 'alias-version-1', currentHref: () => '/?view=aliases&list=7',
     closeReadOnlyModal: () => { saveContext.closed = true; },
     window: { history: { replaceState() {} } },
     requestJson: (url, options) => {

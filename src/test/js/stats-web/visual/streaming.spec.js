@@ -127,7 +127,8 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       {key:'system_id',label:'System ID',type:'number',minimum:1,maximum:2147483647},
       {key:'maximum_recording_age',label:'Maximum recording age (ms)',type:'number',minimum:0,maximum:86400000,advanced:true}
     ];
-    let revision='1:1:1';
+    let otherName='Regional Archive';
+    let editRevision='destination-edit-1', assignmentRevision='assignments-1';
     let definition={configuration_id:'destination',provider:'BROADCASTIFY_CALL',settings:{name:'County Calls',enabled:true,
       host:'https://example.com/calls',system_id:42,maximum_recording_age:600000},configured_credentials:['api_key']};
     const status={configuration_id:'destination',name:'County Calls',provider:'BROADCASTIFY_CALL',provider_label:'Broadcastify Calls',
@@ -135,7 +136,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
-    window.streamingTest={calls,status,fail:false,stale:false,holdWrite:false,releaseWrite:null,holdOptions:false,releaseOptions:null,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,accountState:'VALID_PREMIUM',connectCount:0,feeds:[
+    window.streamingTest={calls,status,changeOther:()=>{otherName='Updated archive';},changeDestination:()=>{editRevision='destination-edit-remote';},changeAssignments:()=>{assignmentRevision='assignments-remote';},fail:false,stale:false,holdAliasRead:false,releaseAliasRead:null,releaseAliasReadOnSave:false,holdWrite:false,releaseWrite:null,holdOptions:false,releaseOptions:null,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,accountState:'VALID_PREMIUM',connectCount:0,feeds:[
       {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
       {id:2087,name:'County Fire and EMS',configured:true},
       {id:3194,name:'Citywide Events',configured:false}
@@ -152,31 +153,49 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       if(options.method&&window.streamingTest.holdWrite) await new Promise(resolve=>{window.streamingTest.releaseWrite=resolve;});
       if(suffix==='/options'&&window.streamingTest.holdOptions) await new Promise(resolve=>{window.streamingTest.releaseOptions=resolve;});
       if(window.streamingTest.fail) throw new Error('Connection unavailable');
-      if(options.method && window.streamingTest.stale) throw Object.assign(new Error('Configuration changed. Reload this editor before saving'),{code:'stale_revision'});
+      if(options.method && window.streamingTest.stale) throw Object.assign(new Error('This destination changed. Your edits are still here. Reload current values before saving'),{code:'stale_revision'});
+      if(suffix==='/destination'&&(options.method==='PUT'||options.method==='DELETE')&&options.body.edit_revision!==editRevision)
+        throw Object.assign(new Error('This destination changed. Your edits are still here. Reload current values before saving'),{code:'stale_revision'});
       if(suffix==='/feeds/refresh'&&options.method==='POST') {
         if(window.streamingTest.feedDelay) await new Promise(resolve=>setTimeout(resolve,window.streamingTest.feedDelay));
         if(window.streamingTest.feedMode==='error') throw new Error('Available feeds could not be loaded');
         return {items:window.streamingTest.feedMode==='empty'?[]:structuredClone(window.streamingTest.feeds)};
       }
-      if(suffix==='/feeds'&&options.method==='POST') return {revision:'2:1:1',configuration_id:'destination'};
-      if(suffix==='/options') return {revision,providers:[{id:'BROADCASTIFY_CALL',label:'Broadcastify Calls',connection_test:true,fields}],sites:[]};
+      if(suffix==='/feeds'&&options.method==='POST') return {configuration_id:'destination'};
+      if(suffix==='/options') return {providers:[{id:'BROADCASTIFY_CALL',label:'Broadcastify Calls',connection_test:true,fields}],sites:[]};
       if(suffix.startsWith('/templates/')) return {...structuredClone(definition),settings:{...definition.settings,name:'',enabled:false},configured_credentials:[]};
       if(suffix==='/test') return {success:true,message:'Connection accepted'};
       if(suffix==='/destination'&&options.method==='DELETE') {
-        empty=true; return {revision:'2:1:1'};
+        empty=true; return {};
       }
       if(suffix==='/destination/aliases') {
-        if(options.method==='POST') { options.body.add.forEach(id=>assignments.add(id)); options.body.remove.forEach(id=>assignments.delete(id)); revision='2:2:2'; return {revision,configuration_id:'destination'}; }
+        if(options.method==='POST') {
+          if(options.body.revision!==assignmentRevision) throw Object.assign(new Error('Assignments changed. Your edits are still here. Reload current values before saving'),{code:'stale_revision'});
+          options.body.add.forEach(id=>assignments.add(id)); options.body.remove.forEach(id=>assignments.delete(id));
+          assignmentRevision='assignments-2';
+          return {get revision() {
+            if(window.streamingTest.releaseAliasReadOnSave) {
+              window.streamingTest.releaseAliasReadOnSave=false;
+              window.streamingTest.releaseAliasRead();
+            }
+            return assignmentRevision;
+          },configuration_id:'destination'};
+        }
         const filtered=aliases.filter(row=>(!url.searchParams.get('q')||row.name.includes(url.searchParams.get('q')))&&(url.searchParams.get('assigned')!=='true'||assignments.has(row.id)));
         const offset=Number(url.searchParams.get('offset'))||0;
-        return {revision,total:filtered.length,limit:50,items:filtered.slice(offset,offset+50).map(row=>({...row,assigned:assignments.has(row.id)}))};
+        const result={revision:assignmentRevision,total:filtered.length,limit:50,items:filtered.slice(offset,offset+50).map(row=>({...row,assigned:assignments.has(row.id)}))};
+        if(window.streamingTest.holdAliasRead) {
+          window.streamingTest.holdAliasRead=false;
+          await new Promise(resolve=>{window.streamingTest.releaseAliasRead=resolve;});
+        }
+        return result;
       }
       if(options.method==='POST'||options.method==='PUT') {
-        definition.settings={...definition.settings,...options.body.settings}; revision='2:1:1'; empty=false;
-        return {revision,configuration_id:'destination'};
+        definition.settings={...definition.settings,...options.body.settings}; editRevision='destination-edit-2'; empty=false;
+        return {edit_revision:editRevision,configuration_id:'destination'};
       }
-      if(suffix==='/destination') return {revision,destination:structuredClone(definition),status,references:structuredClone(window.streamingTest.references)};
-      return {revision,destinations:empty?[]:[status,{...status,configuration_id:'other',name:'Regional Archive',provider_label:'RadioResolve',state:'ERROR',state_label:'Network unavailable',queued:12,sent:842,errors:1,last_error:'Network unavailable',attention:true}]};
+      if(suffix==='/destination') return {edit_revision:editRevision,destination:structuredClone(definition),status,references:structuredClone(window.streamingTest.references)};
+      return {destinations:empty?[]:[status,{...status,configuration_id:'other',name:otherName,provider_label:'RadioResolve',state:'ERROR',state_label:'Network unavailable',queued:12,sent:842,errors:1,last_error:'Network unavailable',attention:true}]};
     };
     const shell=node('main','content');
     const header=node('header','page-header ui-page-header');
@@ -312,7 +331,7 @@ test('partial settings preserve saved credentials and stale edits remain reviewa
   await expect(modal.locator('.streaming-editor')).not.toHaveClass(/is-dirty/);
   await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([,options])=>options.method==='PUT'));
-  expect(writes.at(-1)[1].body.settings).toEqual({name:'Renamed calls'});
+  expect(writes.at(-1)[1].body).toEqual({edit_revision:'destination-edit-1',provider:'BROADCASTIFY_CALL',settings:{name:'Renamed calls'}});
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
   await modal.getByLabel('Name',{exact:true}).fill('Edited again');
   await expect(modal.locator('.streaming-editor')).toHaveClass(/is-dirty/);
@@ -421,7 +440,7 @@ test('alias changes survive paging and save only explicit selections',async({pag
   await expect(modal.locator('.ui-form-submit')).toBeHidden();
   await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
-  expect(writes[0][1].body).toEqual({revision:'1:1:1',add:[52],remove:[1]});
+  expect(writes[0][1].body).toEqual({revision:'assignments-1',add:[52],remove:[1]});
   await modal.getByRole('button',{name:'Settings',exact:true}).click();
   await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('Unsaved destination name');
   await expect(modal.getByRole('button',{name:'Save and reconnect'})).toBeVisible();
@@ -429,6 +448,89 @@ test('alias changes survive paging and save only explicit selections',async({pag
   await modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true}).check();
   await expect(modal.locator('.ui-form-state')).toHaveText('Unsaved changes');
   await expect(modal.getByRole('button',{name:'Save assignments'})).toBeVisible();
+});
+
+test('unrelated configuration changes leave settings and assignment edits saveable',async({page})=>{
+  await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByLabel('Name',{exact:true}).fill('Updated calls');
+  await page.evaluate(()=>window.streamingTest.changeOther());
+  await modal.getByRole('button',{name:'Save and reconnect'}).click();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('Updated calls');
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  await modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true}).uncheck();
+  await page.evaluate(()=>window.streamingTest.changeOther());
+  await modal.getByRole('button',{name:'Next',exact:true}).click();
+  await modal.getByRole('checkbox',{name:'Send Dispatch 52 to this destination',exact:true}).check();
+  await modal.getByRole('button',{name:'Save assignments',exact:true}).click();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([,options])=>options.method==='PUT'));
+  expect(writes).toHaveLength(1);
+  expect(writes[0][1].body.edit_revision).toBe('destination-edit-1');
+});
+
+test('same destination changes retain the draft and never refresh the baseline silently',async({page})=>{
+  await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByLabel('Name',{exact:true}).fill('My pending name');
+  await modal.getByLabel('API key',{exact:true}).fill('pending-fixture-credential');
+  await page.evaluate(()=>window.streamingTest.changeDestination());
+  await modal.getByRole('button',{name:'Status',exact:true}).click();
+  await modal.getByRole('button',{name:'Refresh status',exact:true}).click();
+  await modal.getByRole('button',{name:'Settings',exact:true}).click();
+  await modal.getByRole('button',{name:'Save and reconnect'}).click();
+  await expect(modal.getByRole('button',{name:'Reload current values'})).toBeVisible();
+  await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('My pending name');
+  await expect(modal.getByLabel('API key',{exact:true})).toHaveValue('pending-fixture-credential');
+  await modal.getByRole('button',{name:'Save and reconnect'}).click();
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([,options])=>options.method==='PUT'));
+  expect(writes).toHaveLength(2);
+  expect(writes.every(([,options])=>options.body.edit_revision==='destination-edit-1')).toBe(true);
+  await expect(modal.locator('.streaming-editor')).toHaveClass(/is-dirty/);
+});
+
+test('assignment paging preserves pending choices when destination routing changes',async({page})=>{
+  await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  await modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true}).uncheck();
+  await page.evaluate(()=>window.streamingTest.changeAssignments());
+  await modal.getByRole('button',{name:'Next',exact:true}).click();
+  await expect(modal.getByRole('button',{name:'Reload current values'})).toBeVisible();
+  await expect(modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true})).not.toBeChecked();
+  await modal.getByRole('button',{name:'Save assignments',exact:true}).click();
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
+  expect(writes).toHaveLength(1);
+  expect(writes[0][1].body).toEqual({revision:'assignments-1',add:[],remove:[1]});
+  await expect(modal.locator('.streaming-editor')).toHaveClass(/is-dirty/);
+});
+
+test('a pre-save alias response cannot replace assignments after a successful save',async({page})=>{
+  await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  const dispatch=modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true});
+  await expect(dispatch).toBeChecked();
+  await page.evaluate(()=>{
+    window.streamingTest.holdAliasRead=true;
+    window.streamingTest.releaseAliasReadOnSave=true;
+  });
+  await modal.getByRole('button',{name:'Search',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>typeof window.streamingTest.releaseAliasRead)).toBe('function');
+  await dispatch.uncheck();
+  await modal.getByRole('button',{name:'Save assignments',exact:true}).click();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  await expect(dispatch).not.toBeChecked();
+  await expect.poll(()=>page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>
+    path.includes('/destination/aliases?')&&!options.method).length)).toBe(3);
+  await modal.getByRole('checkbox',{name:'Send Dispatch 2 to this destination',exact:true}).check();
+  await modal.getByRole('button',{name:'Save assignments',exact:true}).click();
+  await expect(modal.locator('.ui-form-submit')).toBeHidden();
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
+  expect(writes).toHaveLength(2);
+  expect(writes[0][1].body).toEqual({revision:'assignments-1',add:[],remove:[1]});
+  expect(writes[1][1].body).toEqual({revision:'assignments-2',add:[2],remove:[]});
 });
 
 test('alias column header toggles only the visible page and tracks partial assignments',async({page})=>{
@@ -462,7 +564,7 @@ test('alias column header toggles only the visible page and tracks partial assig
   expect(await rows.evaluateAll(controls=>controls.every(control=>!control.checked))).toBe(true);
   await modal.getByRole('button',{name:'Save assignments'}).click();
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
-  expect(writes[0][1].body).toMatchObject({revision:'1:1:1',add:[]});
+  expect(writes[0][1].body).toMatchObject({revision:'assignments-1',add:[]});
   expect([...writes[0][1].body.remove].sort((left,right)=>left-right)).toEqual([1,51]);
 });
 
@@ -489,6 +591,10 @@ test('new destinations enable assignment tabs only after saving',async({page})=>
   await expect(modal.getByText('Changes saved.',{exact:true})).toHaveCount(0);
   await expect(modal.getByRole('button',{name:'Aliases',exact:true})).toBeEnabled();
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/streaming')&&options.method==='POST'));
+  expect(writes).toHaveLength(1);
+  expect(writes[0][1].body).not.toHaveProperty('revision');
+  expect(writes[0][1].body).not.toHaveProperty('edit_revision');
 });
 
 for(const scenario of [
@@ -533,7 +639,7 @@ test('available Broadcastify feed opens its destination editor',async({page})=>{
   await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('County Calls');
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/feeds')&&options.method==='POST'));
   expect(writes).toHaveLength(1);
-  expect(writes[0][1].body).toEqual({feed_id:1042,revision:'1:1:1'});
+  expect(writes[0][1].body).toEqual({feed_id:1042});
 });
 
 for(const theme of ['light','dark']) test(`shared labeled mobile table ${theme}`,async({page})=>{
