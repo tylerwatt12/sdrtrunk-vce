@@ -1322,36 +1322,18 @@ class StatsWebDatabase
         return response;
     }
 
-    /** Streams the exact Alias table selection from one read-only SQLite snapshot in bounded batches. */
-    void forEachFilteredAliasBatch(StatsRequest request, int batchSize,
-                                   StatsAliasCatalog.AliasBatchConsumer consumer)
-    {
-        readSnapshot(connection -> {
-            mAliasCatalog.forEachFilteredAliasBatch(connection, request, batchSize, consumer);
-            return null;
-        });
-    }
-
     /** Prepares one complete, importable Alias List CSV without materializing the selection in memory. */
     AliasTransferExport.Prepared aliasTransferExport(StatsRequest request)
     {
         String scope = request.requiredText("scope");
-        boolean filtered;
 
-        if("all".equals(scope))
+        if(!"all".equals(scope))
         {
-            request.requireOnly("scope", "list", "export_token");
-            filtered = false;
-        }
-        else if("filtered".equals(scope))
-        {
-            filtered = true;
-        }
-        else
-        {
-            throw new StatsApiException(400, "invalid_parameter", "scope must be all or filtered", "scope");
+            throw new StatsApiException(400, "invalid_parameter",
+                "Importable configuration exports require the entire Alias List", "scope");
         }
 
+        request.requireOnly("scope", "list", "export_token");
         String list = request.requiredText("list");
         long aliasListId;
 
@@ -1371,7 +1353,7 @@ class StatsWebDatabase
 
         try
         {
-            return AliasTransferExport.prepare(aliasListId, filtered, consumer ->
+            return AliasTransferExport.prepare(aliasListId, consumer ->
                 readSnapshot(connection ->
                 {
                     if(queryRows(connection, "SELECT id FROM alias_list WHERE id=?", aliasListId).isEmpty())
@@ -1379,16 +1361,8 @@ class StatsWebDatabase
                         throw new StatsApiException(404, "Alias List was not found");
                     }
 
-                    if(filtered)
-                    {
-                        mAliasCatalog.forEachFilteredAliasBatch(connection, request, AliasTransferExport.BATCH_SIZE,
-                            consumer::accept);
-                    }
-                    else
-                    {
-                        mAliasCatalog.forEachAliasConfigurationBatch(connection, aliasListId,
-                            AliasTransferExport.BATCH_SIZE, consumer::accept);
-                    }
+                    mAliasCatalog.forEachAliasConfigurationBatch(connection, aliasListId,
+                        AliasTransferExport.BATCH_SIZE, consumer::accept);
                     return null;
                 }));
         }

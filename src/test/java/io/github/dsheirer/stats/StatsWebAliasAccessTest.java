@@ -17,6 +17,7 @@ import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.http.WebSessionHttpController;
+import java.io.StringReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -32,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -129,8 +132,40 @@ class StatsWebAliasAccessTest
             assertEquals("SAMEORIGIN", missingTransfer.headers().firstValue("X-Frame-Options").orElseThrow());
             assertFalse(missingTransfer.headers().firstValue("Set-Cookie").isPresent());
             assertEquals(200, get(client, origin, StatsApiV1.EXPORTS + "/aliases.csv", admin).statusCode());
+            HttpResponse<String> filteredReport = get(client, origin,
+                StatsApiV1.EXPORTS + "/aliases.csv?list=1&q=dispatch", admin);
+            assertEquals(200, filteredReport.statusCode(), filteredReport.body());
+            assertTrue(filteredReport.body().startsWith("\uFEFF"));
+            try(CSVParser csv = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+                .parse(new StringReader(filteredReport.body().substring(1))))
+            {
+                var rows = csv.getRecords();
+                assertEquals(1, rows.size());
+                assertEquals("Dispatch", rows.getFirst().get("name"));
+            }
+            HttpResponse<String> emptyReport = get(client, origin,
+                StatsApiV1.EXPORTS + "/aliases.csv?list=1&q=unmatched", admin);
+            assertEquals(200, emptyReport.statusCode(), emptyReport.body());
+            assertTrue(emptyReport.body().startsWith("\uFEFF"));
+            try(CSVParser csv = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+                .parse(new StringReader(emptyReport.body().substring(1))))
+            {
+                assertEquals(0, csv.getRecords().size());
+            }
+            HttpResponse<String> filteredTransfer = get(client, origin,
+                StatsApiV1.EXPORTS + "/alias-list.csv?list=1&scope=filtered&export_token=" +
+                    EXPORT_TOKEN, admin);
+            assertEquals(400, filteredTransfer.statusCode(), filteredTransfer.body());
+            assertEquals("invalid_parameter",
+                OBJECT_MAPPER.readTree(filteredTransfer.body()).at("/error/code").asText());
+            assertFalse(filteredTransfer.headers().firstValue("Set-Cookie").isPresent());
+            HttpResponse<String> configurationFilter = get(client, origin,
+                StatsApiV1.EXPORTS + "/alias-list.csv?list=1&scope=all&q=dispatch&export_token=" +
+                    EXPORT_TOKEN, admin);
+            assertEquals(400, configurationFilter.statusCode(), configurationFilter.body());
+            assertFalse(configurationFilter.headers().firstValue("Set-Cookie").isPresent());
             HttpResponse<String> transfer = get(client, origin,
-                StatsApiV1.EXPORTS + "/alias-list.csv?list=1&scope=filtered&q=dispatch&export_token=" +
+                StatsApiV1.EXPORTS + "/alias-list.csv?list=1&scope=all&export_token=" +
                     EXPORT_TOKEN, admin);
             assertEquals(200, transfer.statusCode(), transfer.body());
             assertEquals("1", transfer.headers().firstValue("X-Export-Row-Count").orElseThrow());

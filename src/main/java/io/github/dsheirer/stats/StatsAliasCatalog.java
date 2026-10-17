@@ -286,8 +286,8 @@ final class StatsAliasCatalog
     }
 
     /**
-     * Returns a bounded set of alias identifiers for interactive browser bulk actions.  Complete CSV exports use the
-     * streaming iterators and are intentionally not subject to this selection safety limit.
+     * Returns a bounded set of alias identifiers for interactive browser bulk actions.  Complete configuration CSV
+     * exports use the streaming iterator and are intentionally not subject to this selection safety limit.
      */
     List<Long> matchingAliasIds(Connection connection, StatsRequest request) throws SQLException
     {
@@ -424,58 +424,6 @@ final class StatsAliasCatalog
                         row.put(metadata.getColumnLabel(column), resultSet.getObject(column));
                     }
 
-                    batch.add(row);
-
-                    if(batch.size() == batchSize)
-                    {
-                        prepareExportRows(connection, batch);
-                        consumer.accept(List.copyOf(batch));
-                        batch.clear();
-                    }
-                }
-
-                if(!batch.isEmpty())
-                {
-                    prepareExportRows(connection, batch);
-                    consumer.accept(List.copyOf(batch));
-                }
-            }
-        }
-    }
-
-    /**
-     * Iterates one stable filtered/sorted selection in bounded pages.  The caller owns the read transaction, which
-     * keeps export ordering stable without a server-side cache or a whole-result Java collection.
-     */
-    void forEachFilteredAliasBatch(Connection connection, StatsRequest request, int batchSize,
-                                   AliasBatchConsumer consumer) throws SQLException
-    {
-        if(batchSize < 1 || batchSize > 1_000)
-        {
-            throw new IllegalArgumentException("Alias export batch size must be between 1 and 1000");
-        }
-
-        //CSV exports intentionally use one canonical order.  Still build and validate the complete request so an
-        //invalid UI sort cannot be silently accepted, but do not make export ordering depend on presentation state.
-        ActivityQuery query = buildActivityQuery(request, null, false, 0, 0, true);
-        try(PreparedStatement statement = connection.prepareStatement(query.sql()))
-        {
-            for(int index = 0; index < query.parameters().size(); index++)
-            {
-                statement.setObject(index + 1, query.parameters().get(index));
-            }
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                ResultSetMetaData metadata = resultSet.getMetaData();
-                int columnCount = metadata.getColumnCount();
-                List<Map<String,Object>> batch = new ArrayList<>(batchSize);
-                while(resultSet.next())
-                {
-                    Map<String,Object> row = new LinkedHashMap<>();
-                    for(int column = 1; column <= columnCount; column++)
-                    {
-                        row.put(metadata.getColumnLabel(column), resultSet.getObject(column));
-                    }
                     batch.add(row);
 
                     if(batch.size() == batchSize)

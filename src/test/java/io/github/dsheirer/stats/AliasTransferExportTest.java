@@ -68,7 +68,7 @@ class AliasTransferExportTest
         int expected = 100_001;
         AtomicInteger largestBatch = new AtomicInteger();
         AtomicInteger batchCount = new AtomicInteger();
-        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17, true, consumer ->
+        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17, consumer ->
         {
             for(int start = 1; start <= expected; start += AliasTransferExport.BATCH_SIZE)
             {
@@ -90,7 +90,7 @@ class AliasTransferExportTest
         {
             assertEquals(expected, export.rowCount());
             assertEquals(Files.size(export.path()), export.byteCount());
-            assertEquals("vce-alias-list-17-filtered.csv", export.fileName());
+            assertEquals("vce-alias-list-17.csv", export.fileName());
             assertEquals(AliasTransferExport.BATCH_SIZE, largestBatch.get());
             assertEquals(101, batchCount.get(), "The export source must retain only fixed 1,000-row batches");
 
@@ -146,7 +146,7 @@ class AliasTransferExportTest
         source.put("stream_as_talkgroup", 16_777_215L);
         source.put("scan_lists", List.of("Dispatch", "Fire"));
         source.put("broadcast_channels", List.of("Provider 2", "Provider 1"));
-        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17, false,
+        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17,
             consumer -> consumer.accept(List.of(source)));
 
         try
@@ -176,7 +176,7 @@ class AliasTransferExportTest
         source.put("home_wacn", 0xBEE00L);
         source.put("home_system_id", 0x348L);
         source.put("subscriber_id", 9_601_699L);
-        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17, false,
+        AliasTransferExport.Prepared export = AliasTransferExport.prepare(mTemporaryFolder, 17,
             consumer -> consumer.accept(List.of(source)));
 
         try
@@ -203,13 +203,13 @@ class AliasTransferExportTest
     @Test
     void duplicateMatchersArePreservedAndSourceFailuresLeaveNoPartialDownload() throws Exception
     {
-        AliasTransferExport.Prepared duplicate = AliasTransferExport.prepare(mTemporaryFolder, 17, false,
+        AliasTransferExport.Prepared duplicate = AliasTransferExport.prepare(mTemporaryFolder, 17,
             consumer -> consumer.accept(List.of(row(1), row(1))));
         assertEquals(2, duplicate.rowCount());
         duplicate.close();
         assertEquals(0, regularFileCount());
 
-        assertThrows(SQLException.class, () -> AliasTransferExport.prepare(mTemporaryFolder, 17, false,
+        assertThrows(SQLException.class, () -> AliasTransferExport.prepare(mTemporaryFolder, 17,
             consumer ->
             {
                 consumer.accept(List.of(row(1)));
@@ -228,13 +228,13 @@ class AliasTransferExportTest
             oversized.add(row(value));
         }
 
-        assertThrows(SQLException.class, () -> AliasTransferExport.prepare(mTemporaryFolder, 17, false,
+        assertThrows(SQLException.class, () -> AliasTransferExport.prepare(mTemporaryFolder, 17,
             consumer -> consumer.accept(oversized)));
         assertEquals(0, regularFileCount());
     }
 
     @Test
-    void databaseExportsUseDurableIdOrderForAllAndFilteredSelections() throws Exception
+    void databaseConfigurationExportsUseDurableIdOrderAndRejectFilteredSelections() throws Exception
     {
         Path databasePath = mTemporaryFolder.resolve("ordered.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(databasePath);
@@ -261,12 +261,14 @@ class AliasTransferExportTest
             assertEquals(expected, exportedNames(all.path()));
         }
 
-        try(AliasTransferExport.Prepared filtered = database.aliasTransferExport(new StatsRequest(Map.of(
-            "list", "1", "scope", "filtered", "sort", "name", "direction", "desc"))))
-        {
-            assertEquals(expected, exportedNames(filtered.path()),
-                "Presentation sorting must not change importable duplicate precedence");
-        }
+        StatsApiException filtered = assertThrows(StatsApiException.class, () ->
+            database.aliasTransferExport(new StatsRequest(Map.of("list", "1", "scope", "filtered"))));
+        assertEquals(400, filtered.status());
+        assertEquals("invalid_parameter", filtered.code());
+
+        StatsApiException presentationFilter = assertThrows(StatsApiException.class, () ->
+            database.aliasTransferExport(new StatsRequest(Map.of("list", "1", "scope", "all", "q", "Alpha"))));
+        assertEquals(400, presentationFilter.status(), "Configuration exports must reject presentation filters");
 
         StatsApiException missing = assertThrows(StatsApiException.class, () -> database.aliasTransferExport(
             new StatsRequest(Map.of("list", "999999", "scope", "all"))));
@@ -428,24 +430,12 @@ class AliasTransferExportTest
             }
             long repeatedMilliseconds = elapsedMilliseconds(repeatedStart);
 
-            long filteredStart = System.nanoTime();
-            long filteredRows;
-            try(AliasTransferExport.Prepared export = database.aliasTransferExport(new StatsRequest(Map.of(
-                "list", Long.toString(fixture.aliasListId()), "scope", "filtered", "group", "Dispatch"))))
-            {
-                filteredRows = export.rowCount();
-                assertEquals(25_000, filteredRows,
-                    "Filtered export must include every match beyond the old 10k limit");
-            }
-            long filteredMilliseconds = elapsedMilliseconds(filteredStart);
             System.out.printf("Representative Alias CSV: cold_headers=%dms cold_complete=%dms " +
-                    "repeated_prepare=%dms filtered_prepare=%dms rows=%d filteredRows=%d bytes=%d%n",
-                coldHeadersMilliseconds, coldDownloadMilliseconds, repeatedMilliseconds, filteredMilliseconds,
-                fixture.aliasCount(), filteredRows, coldBytes);
+                    "repeated_prepare=%dms rows=%d bytes=%d%n",
+                coldHeadersMilliseconds, coldDownloadMilliseconds, repeatedMilliseconds,
+                fixture.aliasCount(), coldBytes);
             assertTrue(repeatedMilliseconds < 2_000,
                 "Repeated 100,000-Alias preparation took " + repeatedMilliseconds + " ms");
-            assertTrue(filteredMilliseconds < 2_000,
-                "Filtered 25,000-Alias preparation took " + filteredMilliseconds + " ms");
         }
         finally
         {
@@ -461,7 +451,7 @@ class AliasTransferExportTest
         Map<String,Object> invalid = row(1);
         invalid.put("record_enabled", 2);
         assertThrows(IllegalArgumentException.class, () -> AliasTransferExport.prepare(mTemporaryFolder, 17,
-            false, consumer -> consumer.accept(List.of(invalid))));
+            consumer -> consumer.accept(List.of(invalid))));
         assertFalse(Files.exists(mTemporaryFolder.resolve("vce-alias-list-17.csv")));
     }
 

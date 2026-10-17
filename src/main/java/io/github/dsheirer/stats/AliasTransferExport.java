@@ -58,12 +58,12 @@ final class AliasTransferExport
         void forEach(BatchConsumer consumer) throws SQLException;
     }
 
-    static Prepared prepare(long aliasListId, boolean filtered, BatchSource source) throws IOException, SQLException
+    static Prepared prepare(long aliasListId, BatchSource source) throws IOException, SQLException
     {
-        return prepare(null, aliasListId, filtered, source);
+        return prepare(null, aliasListId, source);
     }
 
-    static Prepared prepare(Path directory, long aliasListId, boolean filtered, BatchSource source)
+    static Prepared prepare(Path directory, long aliasListId, BatchSource source)
         throws IOException, SQLException
     {
         if(aliasListId < 1)
@@ -112,7 +112,7 @@ final class AliasTransferExport
             }
 
             return new Prepared(temporary,
-                "vce-alias-list-" + aliasListId + (filtered ? "-filtered" : "") + ".csv",
+                "vce-alias-list-" + aliasListId + ".csv",
                 rowCount[0], Files.size(temporary));
         }
         catch(IOException | SQLException | RuntimeException exception)

@@ -719,9 +719,7 @@ final class StatsApiV1Controller
             case "aliases" -> request.requireOnly("family", "type", "matcher", "list", "group",
                 "scan_list_id", "record", "stream", "q", "sort", "direction", "evidence", "use",
                 "last_activity_after", "last_activity_before");
-            case "alias-list" -> request.requireOnly("scope", "family", "type", "matcher", "list", "group",
-                "scan_list_id", "record", "stream", "q", "sort", "direction", "evidence", "use",
-                "last_activity_after", "last_activity_before", "export_token");
+            case "alias-list" -> request.requireOnly("scope", "list", "export_token");
             default -> throw invalidExport();
         }
     }
