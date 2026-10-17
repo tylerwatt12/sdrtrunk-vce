@@ -8,11 +8,14 @@ package io.github.dsheirer.audio.broadcast.broadcastify;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.broadcast.AudioRecording;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -43,5 +46,19 @@ class BroadcastifyCallBroadcasterTest
 
         assertNull(BroadcastifyCallBroadcaster.getFromAlias(missing));
         assertNull(BroadcastifyCallBroadcaster.getFromAlias(invalid));
+    }
+
+    @Test
+    void sourceChangeOmitsPreviousRadioAliasFromUploadMetadata()
+    {
+        MutableAudioCallBuilder builder = new MutableAudioCallBuilder(AliasList.empty("test"), 1);
+        builder.addIdentifier(APCO25RadioIdentifier.createFrom(120001));
+        builder.addIdentifier(P25TalkerAliasIdentifier.create("UNIT ONE"));
+        builder.addIdentifier(APCO25RadioIdentifier.createFrom(120002));
+        AudioRecording recording = new AudioRecording(null, List.of(),
+            builder.getIdentifierCollection(), 0, 0);
+
+        assertEquals(120002, recording.getIdentifierCollection().getFromIdentifier().getValue());
+        assertNull(BroadcastifyCallBroadcaster.getFromAlias(recording));
     }
 }

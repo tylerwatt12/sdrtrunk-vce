@@ -23,10 +23,15 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.sample.Listener;
 import java.util.Collection;
 import java.util.Collections;
@@ -423,6 +428,19 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
     public void addIdentifier(Identifier<?> identifier)
     {
+        if(AudioCallRecordingMetadata.isSource(identifier) && identifier.isValid())
+        {
+            ResolvedRadioIdentity previous = ResolvedRadioIdentity.from(mIdentifierCollection.getFromIdentifier());
+            ResolvedRadioIdentity next = ResolvedRadioIdentity.from(identifier);
+
+            if(previous != null && next != null && !previous.matchesWithinScope(next) &&
+                !previous.matchesWithinScope(next, RadioSystemKey.p25Serving(null, null, mIdentifierCollection)))
+            {
+                //Terminal removals intentionally retain the completed call's identifiers. A different talker can
+                //join this builder before its completion event, however, and must not inherit the prior OTA alias.
+                mIdentifierCollection.remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+            }
+        }
         if(AudioCallRecordingMetadata.isDestination(identifier))
         {
             //A destination can be promoted between a talkgroup and a patch group, and patch updates can keep the same
