@@ -26035,10 +26035,21 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             }
           }
           if (!modal.dialog.isConnected) throw new DOMException('Editor closed', 'AbortError');
-          const result = await requestJson(editing ?
+          const submit = () => requestJson(editing ?
             `/api/v1/admin/channels/${encodeURIComponent(configurationId)}` : '/api/v1/admin/channels', {
             method: editing ? 'PUT' : 'POST', body: { revision, ...payload }, timeoutMs: 30_000
           });
+          let result;
+          try {
+            result = await submit();
+          } catch (error) {
+            if (editing || error.status !== 409 || error.code !== 'stale_revision') throw error;
+            // A stale create saves nothing. Retry the same new entry against current settings;
+            // the server revalidates it without overwriting an existing channel.
+            const current = await requestJson('/api/v1/admin/channels/options', { csrf: false });
+            revision = Number(current.revision);
+            result = await submit();
+          }
           revision = Number(result.revision);
         }, {
           onSuccess: async () => {
@@ -26047,11 +26058,16 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           },
           onError: (error) => {
             if (error.name === 'AbortError') { errors.replaceChildren(); return; }
-            aliasMutationError(errors, error, () => {
-              modal.setDirty(false);
-              closeReadOnlyModal(true);
-              openChannelEditorModal(mode, configurationId);
-            });
+            if (!editing && error.status === 409 && error.code === 'stale_revision') {
+              errors.replaceChildren(node('div', 'ui-notice ui-notice-danger',
+                'Channel settings changed again. Your entry is still here. Choose Create channel to try again.'));
+            } else {
+              aliasMutationError(errors, error, editing ? () => {
+                modal.setDirty(false);
+                closeReadOnlyModal(true);
+                openChannelEditorModal(mode, configurationId);
+              } : null);
+            }
             errors.scrollIntoView({ block: 'nearest' });
             errors.focus({ preventScroll: true });
           }
