@@ -199,7 +199,8 @@ export function createRemoteLinksWorkspace(deps) {
     const header = node('header', 'remote-links-feed-header');
     const title = node('div', 'remote-links-feed-title');
     title.append(iconGlyph('icon-cloud'), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
-    header.append(title, status(feed.state));
+    header.append(title);
+    if (stateKey(feed.state) !== 'CONNECTED') header.append(status(feed.state));
     const managed = Boolean(feed.channel_configuration_id);
     const identity = [protocolLabel(feed.protocol), frequency(feed.frequency_hz)].filter(Boolean).join(' · ');
     const catalog = [feed.system_name, feed.site_name].filter(Boolean).join(' · ');

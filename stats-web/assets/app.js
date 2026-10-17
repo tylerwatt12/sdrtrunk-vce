@@ -33,7 +33,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=17';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=18';
 import { createAlertsWorkspace } from './features/alerts.js?v=13';
 import { createRecordingsFeature } from './features/recordings.js?v=48';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
