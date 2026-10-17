@@ -207,7 +207,33 @@ java {
     }
 }
 
+def radioSystemCatalogInput = providers.gradleProperty('radioSystemCatalogFile')
+def radioSystemCatalogOutput = layout.buildDirectory.file('generated/radio-system-names/dsdplus.networks')
+tasks.register('prepareRadioSystemCatalog', Exec) {
+    group = 'build'
+    description = 'Fetches one immutable DSDPlus network-name snapshot, or validates an explicit local snapshot.'
+    inputs.file('tools/build/fetch_dsdplus_networks.py')
+    inputs.property('catalogSource', radioSystemCatalogInput.orElse('latest-public-wiki'))
+    if(radioSystemCatalogInput.isPresent()) inputs.file(radioSystemCatalogInput.map { file(it) })
+    outputs.file(radioSystemCatalogOutput)
+    // A new build without an explicit snapshot checks the current source once, rather than reusing yesterday's data.
+    outputs.upToDateWhen { radioSystemCatalogInput.isPresent() }
+    doFirst {
+        def python = providers.gradleProperty('catalogPython').getOrElse(
+            org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ?
+                'python' : 'python3')
+        def arguments = [python, file('tools/build/fetch_dsdplus_networks.py').absolutePath,
+            '--output', radioSystemCatalogOutput.get().asFile.absolutePath]
+        if(radioSystemCatalogInput.isPresent()) arguments += ['--source-file', file(radioSystemCatalogInput.get()).absolutePath]
+        commandLine(arguments)
+    }
+}
+
 processResources {
+    dependsOn('prepareRadioSystemCatalog')
+    from(radioSystemCatalogOutput) {
+        into 'radio-systems'
+    }
     from('LICENSE') {
         rename 'LICENSE', 'GPL-3.0.txt'
     }

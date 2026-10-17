@@ -1,4 +1,4 @@
-import { systemLabel, systemName } from './system-labels.js?v=1';
+import { systemLabel, systemName, homeSystemName } from './system-labels.js?v=2';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
@@ -677,8 +677,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       const row = { ...member, serving_system_key: p25ServingSystemKey(call) };
       const facts = p25IdentityFacts(row, '', kind);
       const identity = facts ? p25IdentifierText(row, id, { kind,
-        homeSystemName: member.home_system_name || systemName(member.home_system) ||
-          systemName(facts.homeSystemKey) }) || id : id;
+        homeSystemName: homeSystemName(member, '', facts.homeSystemKey) }) || id : id;
       const alias = member.alias || member.name || member.ota_alias;
       if (identity === undefined || identity === null || identity === '') {
         if (!alias) return;

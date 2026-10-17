@@ -73,7 +73,14 @@ class StatsWebDatabase
         catch(StatsApiException unavailable)
         {
             //Health, Map, recordings and cached calls remain usable while the statistics database is unavailable.
-            return value;
+            try
+            {
+                return new StatsSystemNameResolver(null).enrich(value);
+            }
+            catch(SQLException impossible)
+            {
+                throw new IllegalStateException("Catalog-only name lookup cannot access SQLite", impossible);
+            }
         }
     }
 
@@ -311,7 +318,7 @@ class StatsWebDatabase
         ORDER BY logical_call_count DESC, last_active_ms DESC, protocol_code, channel_kind,
             identity_kind_code, native_id
         LIMIT ?
-        """.formatted(StatsSystemNameResolver.configuredNameSql("system"),
+        """.formatted(StatsSystemNameResolver.displayNameSql("system"),
             IDENTITY_KEY_SQL.formatted("summary"));
     private static final List<ActivityAction> DASHBOARD_ACTIVITY_ACTIONS = List.of(
         new ActivityAction("ACKNOWLEDGE", 1, "acknowledge_count"),
@@ -1664,7 +1671,7 @@ class StatsWebDatabase
                       AND config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR'
                 ) SELECT observed.*, count(*) OVER () AS result_total_count
                 FROM observed WHERE 1 = 1
-                """.formatted(StatsSystemNameResolver.configuredNameSql("system"), protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
+                """.formatted(StatsSystemNameResolver.displayNameSql("system"), protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
                     IDENTITY_KEY_SQL.formatted("identity"), protocolCode, protocolCode,
                     protocolCode, protocolCode, decoderPredicate, protocolCode));
             List<Object> parameters = new ArrayList<>(List.of(
@@ -4433,7 +4440,7 @@ class StatsWebDatabase
             .append("SELECT grouped.*, ")
             .append(CHANNEL_ALIAS_PROJECTION).append(" FROM grouped ").append(aliasJoin)
             .append(") SELECT * FROM presented");
-        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)");
+        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)", true);
         sql.append(" ORDER BY ").append(requestedOrder)
             .append(", group_identity_kind_code ASC, native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
@@ -6214,7 +6221,8 @@ class StatsWebDatabase
         }
         if(request.search() != null)
         {
-            sql.append(" AND lower(coalesce(configured.system_name, '') || ' ' || " +
+            sql.append(" AND lower(coalesce(nullif(trim(configured.system_name), ''), " +
+                StatsSystemNameResolver.nameForKeySql("configured.radio_system_key") + ") || ' ' || " +
                 "coalesce(configured.site_name, '') || ' ' || " +
                 "coalesce(configured.name, '') || ' ' || " +
                 "coalesce(configured.alias_list_name, '') || ' ' || " +
@@ -6412,7 +6420,7 @@ class StatsWebDatabase
         parameters.add(configured.addressDomainCode());
         parameters.add(configured.aliasListName());
         parameters.add(configured.aliasListId());
-        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)");
+        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)", true);
         sql.append(" ORDER BY ").append(requestedOrder).append(", native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -6800,7 +6808,7 @@ class StatsWebDatabase
                                  config.configuration_id = system.configuration_id) > 8
                     THEN 1 ELSE 0 END AS channel_names_truncated
             FROM radio_system system
-            """.formatted(StatsSystemNameResolver.configuredNameSql("system"));
+            """.formatted(StatsSystemNameResolver.displayNameSql("system"));
     }
 
     private static Map<String,Object> requireRadioSystem(Connection connection, String systemKey) throws SQLException
@@ -6941,7 +6949,8 @@ class StatsWebDatabase
         if(request.search() != null)
         {
             sql.append(" AND lower(config.configuration_id || ' ' || coalesce(config.name, '') || ' ' || " +
-                "coalesce(config.site_name, '') || ' ' || coalesce(config.system_name, '')) LIKE ?");
+                "coalesce(config.site_name, '') || ' ' || coalesce(" +
+                StatsSystemNameResolver.displayNameSql("system") + ",'')) LIKE ?");
             parameters.add(like(request.search()));
         }
 
@@ -8088,6 +8097,7 @@ class StatsWebDatabase
             statement.execute("PRAGMA query_only=ON");
         }
 
+        StatsSystemNameResolver.installCatalog(connection);
         return connection;
     }
 
@@ -8257,6 +8267,12 @@ class StatsWebDatabase
     private static void addChannelIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
                                                   String identifierColumn)
     {
+        addChannelIdentitySearch(sql, parameters, search, identifierColumn, false);
+    }
+
+    private static void addChannelIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
+                                                  String identifierColumn, boolean qualifiedHome)
+    {
         if(search == null)
         {
             return;
@@ -8270,12 +8286,16 @@ class StatsWebDatabase
         sql.append(" WHERE (CAST(").append(identifierColumn).append(" AS TEXT) LIKE ?")
             .append(" OR lower(coalesce(matched_alias_name, '')) LIKE ?")
             .append(" OR lower(coalesce(matched_alias_description, '')) LIKE ?")
-            .append(" OR lower(coalesce(matched_alias_group, '')) LIKE ?)");
+            .append(" OR lower(coalesce(matched_alias_group, '')) LIKE ?");
+        if(qualifiedHome) sql.append(" OR lower(coalesce(")
+            .append(StatsSystemNameResolver.identityHomeNameSql("identity_key")).append(",'')) LIKE ?");
+        sql.append(')');
         String like = like(search);
         parameters.add(like);
         parameters.add(like);
         parameters.add(like);
         parameters.add(like);
+        if(qualifiedHome) parameters.add(like);
     }
 
     /**

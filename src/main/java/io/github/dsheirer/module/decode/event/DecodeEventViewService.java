@@ -38,6 +38,7 @@ import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -52,6 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Predicate;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +71,7 @@ public class DecodeEventViewService implements AutoCloseable
     private static final int TEXT_MAXIMUM_LENGTH = 512;
     private static final long DEFAULT_CLOSE_TIMEOUT_MILLISECONDS = 2_000;
     private static final FilterCatalog FILTER_CATALOG = createFilterCatalog();
+    private static final Function<String,String> BUNDLED_NAMES = RadioSystemNameCatalog.bundled()::nameFor;
     private final ChannelProcessingManager mChannelProcessingManager;
     private final AliasModel mAliasModel;
     private final Broadcaster<EventView> mBroadcaster = new Broadcaster<>();
@@ -89,6 +92,7 @@ public class DecodeEventViewService implements AutoCloseable
     private final BiConsumer<DecodeEventSource,IDecodeEvent> mBoundDecodeEventListener = this::receive;
     private final Predicate<DecodeEventSource> mSourceValidator;
     private final long mCloseTimeoutMilliseconds;
+    private final Function<String,String> mCatalogNames;
 
     public DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel)
     {
@@ -111,12 +115,20 @@ public class DecodeEventViewService implements AutoCloseable
     private DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel,
                                    long closeTimeout, TimeUnit unit, Predicate<DecodeEventSource> sourceValidator)
     {
+        this(channelProcessingManager, aliasModel, closeTimeout, unit, sourceValidator, BUNDLED_NAMES);
+    }
+
+    DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel,
+                           long closeTimeout, TimeUnit unit, Predicate<DecodeEventSource> sourceValidator,
+                           Function<String,String> catalogNames)
+    {
         mChannelProcessingManager = channelProcessingManager;
         mAliasModel = aliasModel;
         mSourceValidator = sourceValidator != null ? sourceValidator : source -> mChannelProcessingManager == null ||
             mChannelProcessingManager.getProcessingChain(source.channel()) == source.processingChain();
         java.util.Objects.requireNonNull(unit, "unit cannot be null");
         mCloseTimeoutMilliseconds = Math.max(0, unit.toMillis(closeTimeout));
+        mCatalogNames = java.util.Objects.requireNonNull(catalogNames);
         mWorker.execute(this::runWorker);
     }
 
@@ -612,10 +624,16 @@ public class DecodeEventViewService implements AutoCloseable
 
     private Parties parties(IdentifierCollection collection, Role role, String servingKey)
     {
-        return parties(collection, role, servingKey, mAliasModel);
+        return parties(collection, role, servingKey, mAliasModel, mCatalogNames);
     }
 
     private static Parties parties(IdentifierCollection collection, Role role, String servingKey, AliasModel aliasModel)
+    {
+        return parties(collection, role, servingKey, aliasModel, BUNDLED_NAMES);
+    }
+
+    private static Parties parties(IdentifierCollection collection, Role role, String servingKey, AliasModel aliasModel,
+                                   Function<String,String> catalogNames)
     {
         if(collection == null)
         {
@@ -650,7 +668,7 @@ public class DecodeEventViewService implements AutoCloseable
 
             String text = bounded(identifier.toString());
             values.add(text);
-            party.putIfAbsent(text, partyIdentifier(identifier, text, radioMembers(identifier)));
+            party.putIfAbsent(text, partyIdentifier(identifier, text, radioMembers(identifier, catalogNames), catalogNames));
 
             if(aliasList != null)
             {
@@ -714,7 +732,7 @@ public class DecodeEventViewService implements AutoCloseable
     }
 
     private static PartyIdentifier partyIdentifier(Identifier<?> identifier, String text,
-                                                    List<PartyIdentifier> radioMembers)
+                                                    List<PartyIdentifier> radioMembers, Function<String,String> catalogNames)
     {
         P25SubscriberIdentity subscriber = P25SubscriberIdentity.from(identifier);
         PatchGroupIdentifier patch = identifier instanceof PatchGroupIdentifier value && value.getValue() != null ?
@@ -732,15 +750,16 @@ public class DecodeEventViewService implements AutoCloseable
             identifier instanceof FullyQualifiedRadioIdentifier radio ? radio.getWorkingAddress() : null,
             radioMembers, patch != null && patch.getValue().getPatchGroup() != null ?
                 bounded(patch.getValue().getPatchGroup().toString()) : null,
-            talkgroupMembers(identifier), patch != null &&
+            talkgroupMembers(identifier, catalogNames), patch != null &&
                 patch.getValue().getPatchedTalkgroupIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS,
             patch != null && patch.getValue().getPatchedRadioIdentifiers().size() > PARTY_MAXIMUM_IDENTIFIERS,
             group != null ? new CanonicalGroupIdentity(group.homeWacn(), group.homeSystemId(), group.talkgroupId()) : null,
-            local);
+            local, subscriber != null ? catalogNames.apply(RadioSystemKey.p25(subscriber.homeWacn(), subscriber.homeSystemId())) :
+                group != null ? catalogNames.apply(RadioSystemKey.p25(group.homeWacn(), group.homeSystemId())) : null);
     }
 
     /** Patch text embeds real radio identifiers; detach only its direct, bounded radio members. */
-    private static List<PartyIdentifier> radioMembers(Identifier<?> identifier)
+    private static List<PartyIdentifier> radioMembers(Identifier<?> identifier, Function<String,String> catalogNames)
     {
         if(!(identifier instanceof PatchGroupIdentifier patch) || patch.getValue() == null)
         {
@@ -760,12 +779,12 @@ public class DecodeEventViewService implements AutoCloseable
                 break;
             }
             String text = bounded(radio.toString());
-            members.putIfAbsent(text, partyIdentifier(radio, text, List.of()));
+            members.putIfAbsent(text, partyIdentifier(radio, text, List.of(), catalogNames));
         }
         return List.copyOf(members.values());
     }
 
-    private static List<PartyIdentifier> talkgroupMembers(Identifier<?> identifier)
+    private static List<PartyIdentifier> talkgroupMembers(Identifier<?> identifier, Function<String,String> catalogNames)
     {
         if(!(identifier instanceof PatchGroupIdentifier patch) || patch.getValue() == null)
         {
@@ -785,7 +804,7 @@ public class DecodeEventViewService implements AutoCloseable
                 break;
             }
             String text = bounded(talkgroup.toString());
-            members.putIfAbsent(text, partyIdentifier(talkgroup, text, List.of()));
+            members.putIfAbsent(text, partyIdentifier(talkgroup, text, List.of(), catalogNames));
         }
         return List.copyOf(members.values());
     }
@@ -1049,7 +1068,7 @@ public class DecodeEventViewService implements AutoCloseable
                                   List<PartyIdentifier> radioMembers, String patchGroup,
                                   List<PartyIdentifier> talkgroupMembers, boolean talkgroupMembersTruncated,
                                   boolean radioMembersTruncated, CanonicalGroupIdentity canonicalGroupIdentity,
-                                  Integer observedLocalId)
+                                  Integer observedLocalId, String catalogName)
     {
         public PartyIdentifier
         {
@@ -1060,6 +1079,18 @@ public class DecodeEventViewService implements AutoCloseable
                 .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
             talkgroupMembers = talkgroupMembers != null ? List.copyOf(talkgroupMembers.stream()
                 .limit(PARTY_MAXIMUM_IDENTIFIERS).toList()) : List.of();
+        }
+
+        public PartyIdentifier(String text, String form, String protocol,
+                               CanonicalRadioIdentity canonicalIdentity, Integer observedWorkingId,
+                               List<PartyIdentifier> radioMembers, String patchGroup,
+                               List<PartyIdentifier> talkgroupMembers, boolean talkgroupMembersTruncated,
+                               boolean radioMembersTruncated, CanonicalGroupIdentity canonicalGroupIdentity,
+                               Integer observedLocalId)
+        {
+            this(text, form, protocol, canonicalIdentity, observedWorkingId, radioMembers, patchGroup,
+                talkgroupMembers, talkgroupMembersTruncated, radioMembersTruncated, canonicalGroupIdentity,
+                observedLocalId, null);
         }
 
         public PartyIdentifier(String text, String form, String protocol,

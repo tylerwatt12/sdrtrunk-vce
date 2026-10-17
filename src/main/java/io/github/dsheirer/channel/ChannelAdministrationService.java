@@ -17,6 +17,7 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
@@ -32,6 +33,7 @@ import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.TrunkedDiscoveryEvidence;
 import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
@@ -58,6 +60,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import javafx.application.Platform;
 
 /**
@@ -75,6 +78,7 @@ public final class ChannelAdministrationService
     private final ChannelProtocolRegistry mProtocolRegistry;
     private final ChannelDefinitionCodec mCodec;
     private final boolean mUseDesktopThread;
+    private final Function<String,String> mDiscoverySystemNames;
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
@@ -86,10 +90,17 @@ public final class ChannelAdministrationService
     ChannelAdministrationService(ConfigurationManager configurationManager, ChannelProtocolRegistry protocolRegistry,
                                  boolean useDesktopThread)
     {
+        this(configurationManager, protocolRegistry, useDesktopThread, RadioSystemNameCatalog.bundled()::nameFor);
+    }
+
+    ChannelAdministrationService(ConfigurationManager configurationManager, ChannelProtocolRegistry protocolRegistry,
+                                 boolean useDesktopThread, Function<String,String> discoverySystemNames)
+    {
         mConfigurationManager = Objects.requireNonNull(configurationManager);
         mProtocolRegistry = Objects.requireNonNull(protocolRegistry);
         mCodec = new ChannelDefinitionCodec(mProtocolRegistry);
         mUseDesktopThread = useDesktopThread;
+        mDiscoverySystemNames = Objects.requireNonNull(discoverySystemNames);
     }
 
     public ChannelProtocolRegistry protocolRegistry()
@@ -312,7 +323,7 @@ public final class ChannelAdministrationService
             ChannelProtocolRegistry.Profile profile = discoveryProfile(protocolId);
             List<DiscoveryAliasList> lists = discoveryAliasLists(profile, identity);
             Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
-            String system = identity != null ? String.format("P25 %05X-%03X", identity.wacn(), identity.system()) : null;
+            String system = null;
             String site = identity != null ? String.format("Site %02X-%02X", identity.rfss(), identity.site()) : null;
             if(identity != null)
             {
@@ -321,7 +332,10 @@ public final class ChannelAdministrationService
                         channel.getP25SiteIdentity().wacn() == identity.wacn() &&
                         channel.getP25SiteIdentity().system() == identity.system()).toList();
                 system = known.stream().map(Channel::getSystem).filter(value -> value != null && !value.isBlank())
-                    .findFirst().orElse(lists.size() == 1 ? lists.getFirst().name() : system);
+                    .findFirst().orElse(lists.size() == 1 ? lists.getFirst().name() : null);
+                if(system == null || system.isBlank())
+                    system = discoverySystemName(RadioSystemKey.p25(identity),
+                        String.format("P25 %05X-%03X", identity.wacn(), identity.system()));
                 site = known.stream().filter(channel -> identity.equals(channel.getP25SiteIdentity()))
                     .map(Channel::getSite).filter(value -> value != null && !value.isBlank()).findFirst().orElse(site);
             }
@@ -369,7 +383,10 @@ public final class ChannelAdministrationService
             Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
             List<Channel> known = knownTrunkedChannels(evidence, false, mConfigurationManager.getChannelModel().getChannels());
             String system = known.stream().map(Channel::getSystem)
-                .filter(value -> value != null && !value.isBlank()).findFirst().orElse(evidence.systemName());
+                .filter(value -> value != null && !value.isBlank()).findFirst()
+                .orElse(lists.size() == 1 ? lists.getFirst().name() : null);
+            if(system == null || system.isBlank())
+                system = discoverySystemName(evidence.identity().radioSystemKey(), evidence.systemName());
             String site = knownTrunkedChannels(evidence, true, mConfigurationManager.getChannelModel().getChannels()).stream().map(Channel::getSite)
                 .filter(value -> value != null && !value.isBlank()).findFirst().orElse(evidence.siteName());
             ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site, site, null,
@@ -383,6 +400,13 @@ public final class ChannelAdministrationService
                 String.format(java.util.Locale.ROOT, "%s %.6f", profile.label(), frequencyHz / 1_000_000.0));
             return new DiscoveryReview(revision(), template, lists, suggested, newListName);
         });
+    }
+
+    /** Catalog names are new-channel suggestions only; saved labels remain authoritative. */
+    private String discoverySystemName(String radioSystemKey, String fallback)
+    {
+        String name = radioSystemKey != null ? mDiscoverySystemNames.apply(radioSystemKey) : null;
+        return name != null && !name.isBlank() ? name : fallback;
     }
 
     /** Confirmed native DMR/NXDN identity belongs to the saved channel, independently of activity history. */

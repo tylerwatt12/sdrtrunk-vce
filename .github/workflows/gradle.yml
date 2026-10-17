@@ -5,6 +5,12 @@ on:
     branches: [ main ]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      radio_system_catalog_artifact:
+        description: Exact prepared network-name snapshot to test with the candidate
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -50,11 +56,24 @@ jobs:
       - name: Check packaged database smoke contracts
         run: python -m unittest discover -s tools/release -p 'test_*.py'
 
+      - name: Check radio-system catalog extraction
+        run: python -m unittest discover -s tools/build -p 'test_*.py'
+
+      - name: Download the prepared radio-system catalog
+        if: ${{ inputs.radio_system_catalog_artifact != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.radio_system_catalog_artifact }}
+          path: ${{ runner.temp }}/radio-system-catalog
+
       - name: Run full check
         shell: bash
+        env:
+          RADIO_SYSTEM_CATALOG_FILE: ${{ inputs.radio_system_catalog_artifact != '' && format('{0}/radio-system-catalog/dsdplus.networks', runner.temp) || 'src/test/resources/radio-systems/dsdplus-fixture.networks' }}
         run: >-
           ./gradlew --no-configuration-cache clean check
           -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+          -PradioSystemCatalogFile="$RADIO_SYSTEM_CATALOG_FILE"
       - name: Save Gradle failure reports
         if: failure()
         uses: actions/upload-artifact@v7

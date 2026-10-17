@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '../../../..');
 const labelsSource = fs.readFileSync(path.join(root, 'stats-web/assets/core/system-labels.js'), 'utf8');
 const labels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, '') +
-  '\n({systemName, systemLabel, systemIdentity, knownSystemNameForKey, rememberSystemNames});');
+  '\n({systemName, homeSystemName, systemLabel, systemIdentity, knownSystemNameForKey, rememberSystemNames});');
 
 const marcs = { protocol: 'P25', radio_system_key: 'p25:bee00:348', wacn: 0xbee00, system_id: 0x348,
   system_name: 'Ohio MARCS-IP: Multi-Agency Radio Communications', channel_names: 'MARCS-CuyCoSimul' };
@@ -36,6 +36,34 @@ assert.equal(labels.systemLabel({ radio_system_key: 'dmr:tier3:large:348' }),
 labels.rememberSystemNames({ radio_system_key: marcs.radio_system_key, system_name: null });
 assert.equal(labels.systemLabel({ radio_system_key: marcs.radio_system_key }), 'BEE00-348',
   'A removed configured name must not survive in the cache');
+
+const catalog = { radio_system_key: marcs.radio_system_key,
+  system_name: 'Community one / Community two', system_name_source: 'catalog' };
+labels.rememberSystemNames(catalog);
+assert.equal(labels.systemLabel(catalog), catalog.system_name);
+labels.rememberSystemNames(marcs);
+labels.rememberSystemNames(catalog);
+assert.equal(labels.systemLabel(catalog), marcs.system_name,
+  'Catalog responses cannot replace a known configured name');
+assert.equal(labels.knownSystemNameForKey(marcs.radio_system_key), marcs.system_name);
+assert.equal(labels.systemName({ ...marcs, system_name: 'P25 BEE00-348' }), 'P25 BEE00-348',
+  'Raw-looking configured text remains an intentional name');
+
+const catalogHome = { source_home_system_name: catalog.system_name, source_home_system_name_source: 'catalog',
+  source_home_system: catalog };
+assert.equal(labels.homeSystemName(catalogHome, 'source'), marcs.system_name,
+  'An authoritative cached home label wins over a catalog field and its nested catalog identity.');
+assert.equal(labels.homeSystemName({ ...catalogHome, source_home_system_name: 'Saved home',
+  source_home_system_name_source: undefined }, 'source'), 'Saved home',
+  'Different supplied text remains authoritative even when nested catalog metadata is present.');
+assert.equal(labels.homeSystemName({ home_system_name: 'P25 BEE00-348' }, '', marcs.radio_system_key),
+  'P25 BEE00-348');
+assert.equal(labels.homeSystemName({ home_catalog_name: 'Live fallback' }, '', 'p25:abcde:123'), 'Live fallback');
+assert.equal(labels.homeSystemName({ target_home_catalog_name: 'Target fallback' }, 'target', 'p25:abcde:124'),
+  'Target fallback');
+assert.equal(labels.homeSystemName({ home_system: { key: 'p25:abcde:125', name: 'Saved nested' } }), 'Saved nested');
+assert.equal(labels.homeSystemName({ home_system: { ...catalog, radio_system_key: 'p25:abcde:126' } }),
+  catalog.system_name, 'An unmatched home keeps its catalog suggestion.');
 
 const app = fs.readFileSync(path.join(root, 'stats-web/assets/app.js'), 'utf8');
 function declaration(name) {

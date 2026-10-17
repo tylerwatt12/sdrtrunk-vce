@@ -6,6 +6,7 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -16,6 +17,7 @@ import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
@@ -71,7 +73,7 @@ class StatsSystemNameResolverTest
                   ('00000000-0000-0000-0000-000000000006',6)
                 """);
         }
-        mNames = new StatsSystemNameResolver(mConnection);
+        mNames = new StatsSystemNameResolver(mConnection, RadioSystemNameCatalog.parse(""));
     }
 
     @AfterEach
@@ -302,6 +304,83 @@ class StatsSystemNameResolverTest
     }
 
     @Test
+    void bundledFallbackNamesRemoteSystemsWithoutInventingLocalNavigation() throws Exception
+    {
+        RadioSystemNameCatalog catalog = RadioSystemNameCatalog.parse(
+            "P25, ABCDE.123, \"Remote county / Alternate county\"\n");
+        StatsSystemNameResolver names = new StatsSystemNameResolver(mConnection, catalog);
+        JsonNode row = names.enrich(Map.of("home_wacn", 0xABCDE, "home_system_id", 0x123));
+        assertEquals("Remote county / Alternate county", row.path("home_system_name").asText());
+        assertEquals("catalog", row.path("home_system").path("system_name_source").asText());
+        assertFalse(row.path("home_system").has("entity_ref"));
+        assertEquals(0xABCDE, row.path("home_system").path("wacn").asInt());
+        assertFalse(names.enrich(Map.of("home_wacn", 0xABCDF, "home_system_id", 0x123))
+            .has("home_system_name"));
+    }
+
+    @Test
+    void canonicalPartyAndRelationshipHomesUseTheSameFallbackWithoutDatabase() throws Exception
+    {
+        StatsSystemNameResolver names = new StatsSystemNameResolver(null, RadioSystemNameCatalog.parse(
+            "P25, ABCDE.123, \"Remote county\"\n"));
+        JsonNode row = names.enrich(Map.of(
+            "source_canonical_identity", Map.of("wacn", 0xABCDE, "system_id", 0x123, "subscriber_id", 42),
+            "affiliated_talkgroup_identity_key", "v1-g-abcde-123-12"));
+        assertEquals("Remote county", row.path("source_home_system_name").asText());
+        assertEquals("Remote county", row.path("affiliated_talkgroup_home_system_name").asText());
+    }
+
+    @Test
+    void existingNamesAndRawLookingSavedTextWinOverCatalog() throws Exception
+    {
+        StatsSystemNameResolver names = new StatsSystemNameResolver(mConnection, RadioSystemNameCatalog.parse(
+            "P25, BEE00.49F, \"Community name\"\nP25, ABCDE.123, \"Remote name\"\n"));
+        assertEquals("GCRCN", names.enrich(Map.of("radio_system_key", GCRCN)).path("system_name").asText());
+        JsonNode saved = names.enrich(Map.of("radio_system_key", "p25:abcde:123",
+            "system_name", "P25 ABCDE-123", "home_wacn", 0xABCDE, "home_system_id", 0x123,
+            "home_system_name", "Saved remote name"));
+        assertEquals("P25 ABCDE-123", saved.path("system_name").asText());
+        assertEquals("P25 ABCDE-123", saved.path("system_identity").path("system_name").asText());
+        assertEquals("Saved remote name", saved.path("home_system_name").asText());
+    }
+
+    @Test
+    void sqlFallbackIsSearchableBeforePaginationAndPreservesConfiguredNames() throws Exception
+    {
+        StatsSystemNameResolver.installCatalog(mConnection, RadioSystemNameCatalog.parse(
+            "P25, ABCDE.123, \"Remote county / Alternate county\"\nP25, BEE00.49F, \"Community\"\n" +
+                "P25, 00000.000, \"Explicit zero identity\"\n"));
+        String expression = StatsSystemNameResolver.p25NameSql("0xABCDE", "0x123");
+        assertEquals("Remote county / Alternate county", StatsSqlRows.queryRows(mConnection,
+            "SELECT " + expression + " AS label WHERE lower(" + expression + ") LIKE ? LIMIT 1",
+            "%alternate%").getFirst().get("label"));
+        assertEquals("GCRCN", StatsSqlRows.queryRows(mConnection,
+            "SELECT " + StatsSystemNameResolver.displayNameSql("system") +
+                " AS label FROM radio_system system WHERE id=1").getFirst().get("label"));
+        assertEquals("Explicit zero identity", StatsSqlRows.queryRows(mConnection,
+            "SELECT " + StatsSystemNameResolver.p25NameSql("0", "0") + " AS label").getFirst().get("label"));
+        for(String[] fields: List.of(new String[]{"NULL", "0"}, new String[]{"0", "NULL"},
+            new String[]{"-1", "0"}, new String[]{"0", "4096"}))
+            assertNull(StatsSqlRows.queryRows(mConnection,
+                "SELECT " + StatsSystemNameResolver.p25NameSql(fields[0], fields[1]) +
+                    " AS label").getFirst().get("label"));
+    }
+
+    @Test
+    void catalogFallbackStillWorksAfterTheRequestLookupCacheFills() throws Exception
+    {
+        StatsSystemNameResolver names = new StatsSystemNameResolver(null, RadioSystemNameCatalog.parse(
+            "P25, ABCDE.123, \"Remote county\"\n"));
+        for(int index = 0; index < 300; index++)
+            names.enrich(Map.of("radio_system_key", String.format("p25:%05x:001", index)));
+        JsonNode row = names.enrich(Map.of("radio_system_key", "p25:abcde:123",
+            "source_home_wacn", 0xABCDE, "source_home_system_id", 0x123));
+        assertEquals("Remote county", row.path("system_name").asText());
+        assertEquals("Remote county", row.path("source_home_system_name").asText());
+        assertFalse(row.path("system_identity").has("entity_ref"));
+    }
+
+    @Test
     void unknownIdentityRetainsExactFactsAndDoesNotInventNameOrLink() throws Exception
     {
         JsonNode row = mNames.enrich(Map.of("wacn", 1, "system_id", 24));
@@ -319,8 +398,8 @@ class StatsSystemNameResolverTest
         JsonNode generated = mNames.enrich(Map.of("identity", identity,
             "system_name", "P25 BEE00-49F", "site_name", "RFSS 1 · Site 1",
             "name", "P25 BEE00-49F · RFSS 1 · Site 1"));
-        assertEquals("GCRCN", generated.path("system_name").asText());
-        assertEquals("GCRCN · RFSS 1 · Site 1", generated.path("name").asText());
+        assertEquals("P25 BEE00-49F", generated.path("system_name").asText());
+        assertEquals("P25 BEE00-49F · RFSS 1 · Site 1", generated.path("name").asText());
         JsonNode custom = mNames.enrich(Map.of("identity", identity,
             "system_name", "My system", "site_name", "Downtown", "name", "My control channel"));
         assertEquals("My system", custom.path("system_name").asText());

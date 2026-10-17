@@ -38,6 +38,79 @@ import org.junit.jupiter.api.Test;
 class StatsLiveServiceTest
 {
     @Test
+    void catalogNamesUseCapturedSystemsAndNeverReplaceSavedLabels() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        Map<String,String> names = Map.of("p25:bee00:349", "Serving catalog", "p25:abcde:123", "Radio home",
+            "p25:abcde:124", "Group home");
+        AtomicReference<Thread> lookupThread = new AtomicReference<>();
+        Thread producer = Thread.currentThread();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null, RemoteOriginLookup.EMPTY,
+            key -> { lookupThread.set(Thread.currentThread()); return names.get(key); });
+        service.start();
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
+        {
+            source.publish(namedDigitalActivity("", "p25:bee00:349"));
+            StatsLiveEventHub.LiveEvent published = subscription.poll(1, TimeUnit.SECONDS);
+            assertNotNull(published);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> table = (Map<String,Object>)((Map<?,?>)published.data()).get("table");
+            assertEquals("Serving catalog", table.get("system_name"));
+            assertEquals("catalog", table.get("system_name_source"));
+            @SuppressWarnings("unchecked")
+            Map<String,Object> row = ((List<Map<String,Object>>)table.get("rows")).getFirst();
+            assertEquals("Serving catalog", row.get("system_name"));
+            assertEquals("p25:bee00:349", row.get("serving_system_key"));
+            assertEquals("p25:bee00:349", row.get("radio_system_key"));
+            assertEquals("Radio home", row.get("source_home_catalog_name"));
+            assertEquals("Group home", row.get("target_home_catalog_name"));
+            assertEquals("501", row.get("source_id"));
+            assertEquals("77", row.get("target_id"));
+            assertFalse(row.containsKey("source_home_system_name"), "Catalog fallback cannot claim a configured name");
+            assertFalse(producer == lookupThread.get(), "Catalog projection belongs to the observer worker");
+
+            String saved = "P25 BEE00-349";
+            source.publish(namedDigitalActivity(saved, "p25:bee00:349"));
+            waitUntil(() -> saved.equals(tables(service).getFirst().get("system_name")));
+            table = tables(service).getFirst();
+            assertFalse(table.containsKey("system_name_source"));
+            @SuppressWarnings("unchecked")
+            Map<String,Object> savedRow = ((List<Map<String,Object>>)table.get("rows")).getFirst();
+            assertEquals(saved, savedRow.get("system_name"), "Even protocol-looking saved text remains authoritative");
+
+            source.publish(namedDigitalActivity(saved, null));
+            waitUntil(() -> {
+                @SuppressWarnings("unchecked")
+                var rows = (List<Map<String,Object>>)tables(service).getFirst().get("rows");
+                return rows.getFirst().containsKey("serving_system_key") && rows.getFirst().get("serving_system_key") == null;
+            });
+            @SuppressWarnings("unchecked")
+            var unknown = ((List<Map<String,Object>>)tables(service).getFirst().get("rows")).getFirst();
+            assertFalse(unknown.containsKey("system_name"), "Configured routing cannot fill absent serving proof");
+            assertFalse(unknown.containsKey("radio_system_key"));
+            assertEquals("Radio home", unknown.get("source_home_catalog_name"));
+        }
+        finally { service.close(); }
+    }
+
+    private static ChannelActivityEvent namedDigitalActivity(String systemName, String servingKey)
+    {
+        String id = "00000000-0000-0000-0000-000000000017";
+        var navigation = new ChannelActivitySnapshot.Navigation(id, null, null, "p25", List.of(),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 501,
+                "v1-r-abcde-123-42", 501), List.of(),
+            new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 77,
+                "v1-g-abcde-124-7001"));
+        var row = new ChannelActivitySnapshot.Row("traffic:851012500:1", null, id, "CALL", List.of("VOICE"),
+            17L, null, 851_012_500L, null, null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, 1,
+            "501", "RADIO", null, null, null, null, "77", "TALKGROUP", null, null,
+            "P25 Phase 1", null, navigation, "TRAFFIC", null, null, servingKey);
+        var snapshot = new ChannelActivitySnapshot("catalog-site", "Control", systemName, "North", "Control", id,
+            false, true, List.of(), List.of(row), new ChannelActivitySnapshot.Site(0xBEE00, 0x349, 1, 2, null));
+        return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+    }
+
+    @Test
     void browserSubscribersDoNotOwnReceiverActivityLifetime() throws Exception
     {
         ChannelProcessingManager manager = managerForManualActivityEvents();

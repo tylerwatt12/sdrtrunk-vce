@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.util.List;
@@ -17,6 +18,33 @@ class ManagedRecordingEntityDiscoveryTest
     private static final String A="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     private static final String B="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     private static final String C="cccccccc-cccc-cccc-cccc-cccccccccccc";
+
+    @Test
+    void catalogNamesSearchAllRecordedSystemsAndIdentitiesBeforePagingWithoutAMainDatabase() throws Exception
+    {
+        Path catalogPath = directory.resolve("catalog-only.sqlite");
+        try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(catalogPath, directory.resolve("catalog-audio"));
+            var connection = DriverManager.getConnection("jdbc:sqlite:" + catalogPath);
+            var statement = connection.createStatement())
+        {
+            statement.execute("INSERT INTO recording_system(id,system_key) VALUES(1,'p25:00001:001'),(2,'p25:00002:002')");
+            statement.execute("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path,size_bytes," +
+                "system_id,protocol,call_type,voice_type,target_id) VALUES" +
+                "(1000,2000,1000,'first.mp3',5,1,1,1,1,1201),(2000,3000,1000,'second.mp3',5,2,1,1,1,1202)");
+            var names = RadioSystemNameCatalog.parse("P25, 00002.002, \"Needle catalog network\"");
+            var labels = new ManagedRecordingLabels(directory.resolve("absent.sqlite"), names);
+            var systems = rows(labels.entities(catalogPath, "system", "Needle", null, 0L, 10000L, 0, 1, "name"));
+            assertEquals(1, systems.size());
+            assertEquals("p25:00002:002", systems.getFirst().get("id"));
+            assertEquals("Needle catalog network", systems.getFirst().get("label"));
+            var groups = rows(labels.identities(catalogPath, "talkgroup", "Needle", null,
+                0L, 10000L, 0, 1, "any", "name"));
+            assertEquals(1, groups.size());
+            assertEquals(1202, groups.getFirst().get("id"));
+            assertEquals("p25:00002:002", groups.getFirst().get("system_key"));
+            assertEquals("Needle catalog network", groups.getFirst().get("system_name"));
+        }
+    }
 
     @Test
     void browsersUseActualCallsSortBeforePagingAndRetainHeardAtAndChannelSiteSemantics() throws Exception

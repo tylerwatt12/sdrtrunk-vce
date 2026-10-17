@@ -1,4 +1,4 @@
-import { systemName, systemIdentity } from '../core/system-labels.js?v=1';
+import { systemName, systemIdentity } from '../core/system-labels.js?v=2';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './discovery-radioreference.js?v=8';

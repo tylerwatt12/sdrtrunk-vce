@@ -1,4 +1,4 @@
-import { systemLabel, systemName } from '../core/system-labels.js?v=1';
+import { systemLabel, systemName, homeSystemName } from '../core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
 import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
@@ -228,7 +228,7 @@ function recordingRadioId(row, prefix, id) {
         Number(identity.system_id).toString(16).padStart(3, '0')}` : '');
   return formatP25RadioIdentifier(identity, {
     servingSystemKey: p25ServingSystemKey(row),
-    homeSystemName: row?.[`${prefix}_home_system_name`] || systemName(home) || systemName(homeKey),
+    homeSystemName: homeSystemName(row, prefix, homeKey),
     workingId: id
   }) || id;
 }
@@ -239,10 +239,8 @@ function recordingGroupId(row, prefix, id) {
     [`${prefix}_observed_local_id`]: Object.prototype.hasOwnProperty.call(row, `${prefix}_observed_local_id`) ?
       row[`${prefix}_observed_local_id`] : id };
   const facts = p25IdentityFacts(observedRow, prefix, 'talkgroup');
-  const home = row?.[`${prefix}_home_system`];
   return p25IdentifierText(observedRow, id, { prefix, kind: 'talkgroup',
-    homeSystemName: row?.[`${prefix}_home_system_name`] || systemName(home) ||
-      (facts ? systemName(facts.homeSystemKey) : '') }) || id;
+    homeSystemName: homeSystemName(row, prefix, facts?.homeSystemKey || '') }) || id;
 }
 
 function recordingMemberId(row, member, id) {
@@ -251,7 +249,7 @@ function recordingMemberId(row, member, id) {
   const observed = { ...member, serving_system_key: p25ServingSystemKey(row) };
   const identity = p25IdentityFacts(observed, '', kind);
   return identity ? p25IdentifierText(observed, id, { kind,
-    homeSystemName: member.home_system_name || systemName(member.home_system) || systemName(identity.homeSystemKey) }) || id : id;
+    homeSystemName: homeSystemName(member, '', identity.homeSystemKey) }) || id : id;
 }
 
 function label(row) {
@@ -1158,12 +1156,12 @@ export function createRecordingsFeature(deps) {
         ['System key', value(row, 'system_key')], ['Channel ID', value(row, 'channel_id'), 'channel_entity_ref'],
         ['Alias List ID', value(row, 'alias_list_id'), 'alias_list_entity_ref'],
         ['Raw target ID', value(row, 'target_id'), 'target_entity_ref'],
-        ['Source home system name', value(row, 'source_home_system_name') || systemName(row?.source_home_system),
+        ['Source home system name', homeSystemName(row, 'source'),
           row?.source_home_system?.entity_ref],
         ['Source home WACN', formatHexDecimal(value(row, 'source_home_wacn'), 5)],
         ['Source home system', formatHexDecimal(value(row, 'source_home_system_id'), 3)],
         ['Source home identity', value(row, 'source_home_id'), 'source_entity_ref'],
-        ['Target home system name', value(row, 'target_home_system_name') || systemName(row?.target_home_system),
+        ['Target home system name', homeSystemName(row, 'target'),
           row?.target_home_system?.entity_ref],
         ['Target home WACN', formatHexDecimal(value(row, 'target_home_wacn'), 5)],
         ['Target home system', formatHexDecimal(value(row, 'target_home_system_id'), 3)],
@@ -1197,7 +1195,7 @@ export function createRecordingsFeature(deps) {
       return [[`${prefix} kind`, prettify(value(member, 'kind'))],
         [`${prefix} ID`, recordingMemberId(row, member, value(member, 'id', 'talkgroup_id')), member.entity_ref],
         [`${prefix} alias`, value(member, 'alias', 'name', 'ota_alias'), member.entity_ref],
-        [`${prefix} home system name`, value(member, 'home_system_name') || systemName(member.home_system),
+        [`${prefix} home system name`, homeSystemName(member),
           member.home_system?.entity_ref],
         [`${prefix} home WACN`, formatHexDecimal(value(member, 'home_wacn'), 5)],
         [`${prefix} home system`, formatHexDecimal(value(member, 'home_system_id'), 3)],

@@ -44,7 +44,7 @@ assert.ok(!source.includes('liveEventCaptured'), 'Live capture needs no passthro
 const labelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/system-labels.js'), 'utf8');
 const systemLabels = vm.runInNewContext(labelsSource.replace(/^export .*;$/m, '') +
-  '\n({systemName, systemLabel, systemIdentity, rememberSystemNames});');
+  '\n({systemName, homeSystemName, systemLabel, systemIdentity, rememberSystemNames});');
 const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
@@ -817,3 +817,43 @@ const groupSuggestion = behavior.activityIdentitySuggestion({ protocol: 'P25', n
   { radioSystemKey: 'p25:00001:047' });
 assert.equal(groupSuggestion.label, 'Talkgroup 7001 · Dispatch');
 assert.equal(groupSuggestion.key, 'v1-g-bee00-348-7001', 'Group filters preserve the complete canonical key.');
+
+const catalogEvent = { protocol: 'P25', serving_system_key: 'p25:bee00:349', details: 'Unchanged decoder detail',
+  from_identifiers: 'ROAM 501(703710.291.42)', from_party: [{ form: 'RADIO', protocol: 'APCO25',
+    text: 'ROAM 501(703710.291.42)', canonical_identity: { wacn: 0xABCDE, system_id: 0x123, subscriber_id: 42 },
+    observed_working_id: 501, catalog_name: 'Catalog Radio / Other Radio' }],
+  to_party: [{ form: 'PATCH_GROUP', text: 'raw patch', patch_group: '77',
+    canonical_group_identity: { wacn: 0xABCDE, system_id: 0x124, talkgroup_id: 7001 },
+    observed_local_id: 77, catalog_name: 'Catalog Group', radio_members: [], talkgroup_members: [{
+      form: 'TALKGROUP', text: 'raw group',
+      canonical_group_identity: { wacn: 0xABCDE, system_id: 0x125, talkgroup_id: 7002 },
+      observed_local_id: 78, catalog_name: 'Catalog Member' }] }] };
+const rawCatalogEvent = JSON.stringify(catalogEvent);
+assert.equal(behavior.liveEventPartyText(catalogEvent, 'from'),
+  'Catalog Radio / Other Radio · 42 (Working ID 501)');
+assert.equal(behavior.liveEventPartyText(catalogEvent, 'to'),
+  'P:Catalog Group · 7001 (Local TG ID 77) [Catalog Member · 7002 (Local TG ID 78)]');
+assert.equal(behavior.liveEventPartyText({ ...catalogEvent, serving_system_key: null }, 'from'),
+  '42 (Working ID 501)', 'A catalog home name does not establish the serving system.');
+assert.equal(JSON.stringify(catalogEvent), rawCatalogEvent, 'Catalog formatting does not rewrite decoder fields.');
+systemLabels.rememberSystemNames({ radio_system_key: 'p25:abcde:123', system_name: 'P25 ABCDE-123' });
+assert.equal(behavior.liveEventPartyText(catalogEvent, 'from'), 'P25 ABCDE-123 · 42 (Working ID 501)',
+  'Every saved label, including protocol-looking text, takes precedence over catalog suggestions.');
+const catalogRestRow = { protocol: 'P25', serving_system_key: 'p25:bee00:349', source_id: 501,
+  source_canonical_identity: catalogEvent.from_party[0].canonical_identity, source_observed_working_id: 501,
+  source_home_system_name: 'Catalog Radio / Other Radio', source_home_system_name_source: 'catalog',
+  source_home_system: { radio_system_key: 'p25:abcde:123', system_name: 'Catalog Radio / Other Radio',
+    system_name_source: 'catalog' } };
+assert.equal(behavior.radioIdentifierText(catalogRestRow, 501, 'source'), 'P25 ABCDE-123 · 42 (Working ID 501)',
+  'A REST fallback field cannot override an already known configured home name.');
+assert.equal(behavior.liveIdentityFacts({ ...catalogRestRow, source_form: 'RADIO' }, 'source').values
+  .find(([label]) => label === 'Home System')[1].primary, 'P25 ABCDE-123');
+assert.equal(behavior.liveEventIdentifierText(catalogEvent, { ...catalogEvent.from_party[0],
+  home_system_name: 'Explicit saved label' }), 'Explicit saved label · 42 (Working ID 501)');
+const catalogLiveRow = { protocol: 'P25', serving_system_key: 'p25:bee00:349', target_id: 77,
+  target_form: 'TALKGROUP', target_canonical_group_identity: catalogEvent.to_party[0].canonical_group_identity,
+  target_observed_local_id: 77, target_home_catalog_name: 'Catalog Group' };
+assert.equal(behavior.groupIdentifierText(catalogLiveRow, 77, 'target'),
+  'Catalog Group · 7001 (Local TG ID 77)');
+assert.equal(behavior.liveIdentityFacts(catalogLiveRow, 'target').values
+  .find(([label]) => label === 'Home System')[1].primary, 'Catalog Group');

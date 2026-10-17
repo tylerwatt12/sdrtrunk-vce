@@ -1,0 +1,5 @@
+; Synthetic build/test fixture. This is not an upstream network list.
+; DSD+ networks file
+P25, 12345.001, "Example County Services"
+P25, 12345.002, "Example Transit / Example Utilities" ; Combined source labels
+TIIIStd, L1, "Example Standard DMR"

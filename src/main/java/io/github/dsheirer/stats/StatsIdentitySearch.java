@@ -40,12 +40,10 @@ final class StatsIdentitySearch
         parameters.add(pattern);
         parameters.add(pattern);
         sql.append(" OR system.id IN (SELECT named_system.id FROM radio_system named_system WHERE ")
-            .append("lower(coalesce(").append(StatsSystemNameResolver.configuredNameSql("named_system"))
-            .append(",'')) LIKE ? ESCAPE '\\') OR printf('p25:%05x:%03x', ")
-            .append("summary.home_wacn,summary.home_system_id) IN (SELECT named_system.system_key ")
-            .append("FROM radio_system named_system WHERE lower(coalesce(")
-            .append(StatsSystemNameResolver.configuredNameSql("named_system"))
-            .append(",'')) LIKE ? ESCAPE '\\')");
+            .append("lower(coalesce(").append(StatsSystemNameResolver.displayNameSql("named_system"))
+            .append(",'')) LIKE ? ESCAPE '\\') OR lower(coalesce(")
+            .append(StatsSystemNameResolver.p25NameSql("summary.home_wacn", "summary.home_system_id"))
+            .append(",'')) LIKE ? ESCAPE '\\'");
         parameters.add(pattern);
         parameters.add(pattern);
         if(includeTalkerAlias)
@@ -142,11 +140,9 @@ final class StatsIdentitySearch
     private static void appendP25SystemName(StringBuilder sql, List<Object> parameters, String pattern,
         String wacn, String systemId)
     {
-        sql.append(" OR EXISTS (SELECT 1 FROM radio_system home_system WHERE ")
-            .append("home_system.system_key=printf('p25:%05x:%03x',").append(wacn).append(',')
-            .append(systemId).append(") AND lower(coalesce(")
-            .append(StatsSystemNameResolver.configuredNameSql("home_system"))
-            .append(",'')) LIKE ? ESCAPE '\\')");
+        sql.append(" OR lower(coalesce(")
+            .append(StatsSystemNameResolver.p25NameSql(wacn, systemId))
+            .append(",'')) LIKE ? ESCAPE '\\'");
         parameters.add(pattern);
     }
 

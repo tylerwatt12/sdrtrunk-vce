@@ -31,7 +31,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(labels.replace(/export\s*\{[^}]+\};?\s*$/, '') +
-  '\nglobalThis.systemLabels = { systemName, systemIdentity, rememberSystemNames };', context);
+  '\nglobalThis.systemLabels = { systemName, homeSystemName, systemIdentity, rememberSystemNames };', context);
 context.radioSystemLabel = context.systemLabels.systemIdentity;
 const identityLabels = fs.readFileSync(path.join(assets, 'core/radio-labels.js'), 'utf8');
 vm.runInContext(identityLabels.replace(/^export .*;$/m, ''), context);

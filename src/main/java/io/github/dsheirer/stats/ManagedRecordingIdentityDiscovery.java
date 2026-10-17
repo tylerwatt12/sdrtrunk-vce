@@ -5,6 +5,7 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -27,10 +28,17 @@ import org.sqlite.ProgressHandler;
 final class ManagedRecordingIdentityDiscovery
 {
     private final Path mMainDatabase;
+    private final RadioSystemNameCatalog mSystemNames;
 
     ManagedRecordingIdentityDiscovery(Path mainDatabase)
     {
+        this(mainDatabase, RadioSystemNameCatalog.bundled());
+    }
+
+    ManagedRecordingIdentityDiscovery(Path mainDatabase, RadioSystemNameCatalog systemNames)
+    {
         mMainDatabase = mainDatabase;
+        mSystemNames = java.util.Objects.requireNonNull(systemNames);
     }
 
     Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
@@ -97,16 +105,16 @@ final class ManagedRecordingIdentityDiscovery
                     aliases.enrichActivity(connection, candidates.subList(start, Math.min(start + 500,
                         candidates.size())));
                 }
-                StatsSystemNameResolver names = new StatsSystemNameResolver(connection);
-                Map<String,String> systemNames = new LinkedHashMap<>();
-                for(Map<String,Object> candidate: candidates)
-                {
-                    String key = (String)candidate.get("system_key");
-                    if(key == null) continue;
-                    if(!systemNames.containsKey(key))
-                        systemNames.put(key, (String)names.enrichMap(Map.of("system_key", key)).get("system_name"));
-                    if(systemNames.get(key) != null) candidate.put("system_name", systemNames.get(key));
-                }
+            }
+            StatsSystemNameResolver names = new StatsSystemNameResolver(labelsAvailable ? connection : null, mSystemNames);
+            Map<String,String> systemNames = new LinkedHashMap<>();
+            for(Map<String,Object> candidate: candidates)
+            {
+                String key = (String)candidate.get("system_key");
+                if(key == null) continue;
+                if(!systemNames.containsKey(key))
+                    systemNames.put(key, (String)names.enrichMap(Map.of("system_key", key)).get("system_name"));
+                if(systemNames.get(key) != null) candidate.put("system_name", systemNames.get(key));
             }
             Map<SelectionKey,Aggregate> combined = new LinkedHashMap<>();
             for(Map<String,Object> candidate: candidates)

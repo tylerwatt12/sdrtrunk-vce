@@ -1,4 +1,4 @@
-import { systemLabel, systemName } from './core/system-labels.js?v=1';
+import { systemLabel, systemName, homeSystemName } from './core/system-labels.js?v=2';
 import { p25IdentityFacts, p25IdentifierText } from './core/radio-labels.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 
@@ -1172,7 +1172,7 @@ export class WebCallPlayer {
       call?.[`${prefix}_canonical_identity`] ? 'radio' : 'talkgroup';
     const facts = p25IdentityFacts(call, prefix, kind);
     return facts ? p25IdentifierText(call, call?.[`${prefix}_id`], { prefix, kind,
-      homeSystemName: call?.[`${prefix}_home_system_name`] || systemName(facts.homeSystemKey) }) : '';
+      homeSystemName: homeSystemName(call, prefix, facts.homeSystemKey) }) : '';
   }
 
   callLabel(call) {

@@ -294,6 +294,37 @@ function verifyRollingPublicationWiring() {
   assert.match(step(cleanupStep), /UPLOADED_ASSETS: \$\{\{ steps\.release\.outputs\.assets \}\}/);
 }
 
+function verifyImmutableRadioSystemCatalogWiring() {
+  function job(name) {
+    const marker = `\n  ${name}:\n`;
+    const start = workflow.indexOf(marker);
+    assert.notEqual(start, -1, `Missing workflow job: ${name}`);
+    const remaining = workflow.slice(start + marker.length);
+    const next = /\n  [a-z][a-z_-]+:\n/.exec(remaining);
+    return workflow.slice(start, next ? start + marker.length + next.index : undefined);
+  }
+  const catalog = job('catalog');
+  assert.match(catalog, /if: \$\{\{ inputs\.mode == 'prepare' \}\}/);
+  assert.equal((workflow.match(/python tools\/build\/fetch_dsdplus_networks\.py/g) || []).length, 1,
+    'Preparation must fetch the public list once for every tested and packaged platform.');
+  assert.match(job('ci'), /needs: \[validate, catalog\]/);
+  assert.match(job('ci'), /radio_system_catalog_artifact: radio-system-catalog-\$\{\{ github\.run_id \}\}/);
+  assert.match(step('Save the exact radio-system catalog for testing and packaging'),
+    /name: radio-system-catalog-\$\{\{ github\.run_id \}\}/);
+  assert.match(step('Download the tested radio-system catalog'),
+    /name: radio-system-catalog-\$\{\{ github\.run_id \}\}/);
+  assert.match(step('Build and verify all six packages'),
+    /-PradioSystemCatalogFile="\$\{\{ runner\.temp \}\}\/radio-system-catalog\/dsdplus\.networks"/);
+  assert.doesNotMatch(job('publish'), /fetch_dsdplus_networks|prepareRadioSystemCatalog|runtimeZipAll/,
+    'Publication must promote the tested bytes without fetching or rebuilding a catalog.');
+  const reusable = fs.readFileSync(path.join(path.dirname(process.argv[2] || '.github/workflows/nightly.yml'),
+    'gradle.yml'), 'utf8');
+  assert.match(reusable, /name: \$\{\{ inputs\.radio_system_catalog_artifact \}\}/);
+  assert.match(reusable, /-PradioSystemCatalogFile="\$RADIO_SYSTEM_CATALOG_FILE"/);
+  assert.match(reusable, /src\/test\/resources\/radio-systems\/dsdplus-fixture\.networks/,
+    'Ordinary CI must use the committed synthetic fixture instead of depending on the public wiki.');
+}
+
 async function main() {
   assert.deepEqual(await evaluate(fixture()), { 'artifact-id': 501 });
   for (const id of ['-1', '0', 'NaN', '9007199254740992']) {
@@ -348,6 +379,7 @@ async function main() {
   verifyStagedDownloads();
   await verifyGuardedCleanup();
   verifyRollingPublicationWiring();
+  verifyImmutableRadioSystemCatalogWiring();
   console.log('Nightly authorization, candidate verification, stable download staging and guarded rolling asset cleanup checks passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; })

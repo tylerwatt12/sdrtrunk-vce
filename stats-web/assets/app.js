@@ -7,7 +7,7 @@ import * as tableDefaults from './core/table-defaults.js?v=18';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
-import * as systemLabels from './core/system-labels.js?v=1';
+import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=5';
@@ -21,7 +21,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=10';
+import { createListenMap } from './features/listen-map.js?v=11';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
@@ -31,22 +31,22 @@ import {
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=29';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=10';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=10';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
 import { createAlertsWorkspace } from './features/alerts.js?v=11';
-import { createRecordingsFeature } from './features/recordings.js?v=47';
+import { createRecordingsFeature } from './features/recordings.js?v=48';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=28';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=29';
 import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=25';
+import { createAudioDock } from './core/audio-dock.js?v=26';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=5';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
-import { WebCallPlayer } from './web-call-player.js?v=18';
+import { WebCallPlayer } from './web-call-player.js?v=19';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -1669,8 +1669,7 @@ function radioIdentifierText(row, value, prefix = radioIdentityPrefix(row, value
   if (!isP25(row)) return identityNumber(row, value);
   const facts = p25IdentityFacts(row, prefix, 'radio');
   return p25IdentifierText(row, value, { prefix, kind: 'radio',
-    homeSystemName: facts && (row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
-      systemLabels.systemName(facts.homeSystemKey)) }) || identityNumber(row, value);
+    homeSystemName: facts && systemLabels.homeSystemName(row, prefix, facts.homeSystemKey) }) || identityNumber(row, value);
 }
 
 function groupIdentityPrefix(row, value) {
@@ -1686,8 +1685,7 @@ function groupIdentifierText(row, value, prefix = groupIdentityPrefix(row, value
   if (!isP25(row)) return identityNumber(row, value);
   const facts = p25IdentityFacts(row, prefix, 'talkgroup');
   return p25IdentifierText(row, value, { prefix, kind: 'talkgroup',
-    homeSystemName: facts && (row?.[prefix ? `${prefix}_home_system_name` : 'home_system_name'] ||
-      systemLabels.systemName(facts.homeSystemKey)) }) || identityNumber(row, value);
+    homeSystemName: facts && systemLabels.homeSystemName(row, prefix, facts.homeSystemKey) }) || identityNumber(row, value);
 }
 
 function partyIdentifierText(row, value, prefix) {
@@ -13011,7 +13009,9 @@ function liveEventRadioRow(event, identifier) {
   if (String(identifier?.form || '').toUpperCase() !== 'RADIO') return null;
   const row = { protocol: identifier.protocol || event?.protocol,
     radio_system_key: p25ServingSystemKey(event), canonical_identity: identifier.canonical_identity,
-    observed_working_id: identifier.observed_working_id };
+    observed_working_id: identifier.observed_working_id, home_system_name: identifier.home_system_name,
+    home_system: identifier.home_system, home_system_name_source: identifier.home_system_name_source,
+    home_catalog_name: identifier.catalog_name };
   return p25CanonicalSubscriber(row) ? row : null;
 }
 
@@ -13039,7 +13039,8 @@ function liveEventIdentifierText(event, identifier) {
   const form = String(identifier?.form || '').toUpperCase();
   const groupFacts = ['TALKGROUP', 'PATCH_GROUP'].includes(form) && p25IdentityFacts(identifier, '', 'talkgroup');
   const groupText = groupFacts ? groupIdentifierText({ ...identifier, protocol: 'P25',
-    serving_system_key: p25ServingSystemKey(event) }, groupFacts.canonical.talkgroup_id) : '';
+    serving_system_key: p25ServingSystemKey(event), home_catalog_name: identifier.catalog_name },
+    groupFacts.canonical.talkgroup_id) : '';
   if (form === 'PATCH_GROUP' && identifier.patch_group &&
       Array.isArray(identifier.talkgroup_members) && Array.isArray(identifier.radio_members)) {
     const groups = identifier.talkgroup_members.map((member) => typeof member === 'object' ?
@@ -18561,7 +18562,7 @@ function liveIdentityFacts(row, kind) {
   const canonical = typed?.canonical;
   const homeKey = typed?.homeSystemKey || '';
   const homeIdentity = canonical ? `${hex(canonical.wacn, 5)}.${hex(canonical.system_id, 3)}` : '';
-  const homeName = row?.[`${kind}_home_system_name`] || systemLabels.systemName(homeKey) || homeIdentity;
+  const homeName = systemLabels.homeSystemName(row, kind, homeKey) || homeIdentity;
   const homeReference = row?.[`${kind}_home_system_entity_ref`];
   const homeTarget = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(homeReference) : '';
   const observed = radio ? workingSubscriberId(row, kind) : typed?.observedId;
@@ -18748,10 +18749,12 @@ const LIVE_IDLE_CALL_FIELDS = [
   'source_id', 'source_form', 'source_alias', 'source_alias_description', 'source_alias_display',
   'source_aliases', 'source_entity_ref', 'source_canonical_identity', 'source_working_subscriber_id',
   'source_canonical_group_identity', 'source_observed_local_id', 'source_identity_key', 'source_matcher',
-  'source_home_system_name', 'source_home_system_entity_ref', 'source_observed_working_id', 'source_identity_source',
+  'source_home_system_name', 'source_home_system_name_source', 'source_home_system', 'source_home_catalog_name',
+  'source_home_system_entity_ref', 'source_observed_working_id', 'source_identity_source',
   'talker_alias', 'target_id', 'target_form', 'target_alias', 'target_canonical_identity',
   'target_canonical_group_identity', 'target_observed_local_id', 'target_identity_key', 'target_matcher',
-  'target_home_system_name', 'target_home_system_entity_ref', 'serving_system_key',
+  'target_home_system_name', 'target_home_system_name_source', 'target_home_system', 'target_home_catalog_name',
+  'target_home_system_entity_ref', 'serving_system_key',
   'target_working_subscriber_id', 'target_observed_working_id', 'target_identity_source',
   'target_alias_description', 'target_aliases', 'target_entity_ref', 'encryption_details'
 ];
@@ -18773,7 +18776,8 @@ function liveIdentityRenderKey(row, kind) {
       Object.prototype.hasOwnProperty.call(row, `${kind}_observed_local_id`)),
     row?.[`${kind}_observed_working_id`], row?.[`${kind}_identity_source`],
     row?.serving_system_key, Boolean(row && Object.prototype.hasOwnProperty.call(row, 'serving_system_key')),
-    p25ServingSystemKey(row, kind), row?.[`${kind}_home_system_name`], row?.[`${kind}_home_system_entity_ref`],
+    p25ServingSystemKey(row, kind), row?.[`${kind}_home_system_name`], row?.[`${kind}_home_catalog_name`],
+    row?.[`${kind}_home_system_name_source`], row?.[`${kind}_home_system`], row?.[`${kind}_home_system_entity_ref`],
     row?.decoder, row?.tags, row?.entity_ref, row?.channel_kind, row?.channel_name
   ]);
 }
@@ -19533,7 +19537,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=44');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=45');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -20436,7 +20440,7 @@ function issiSubscriberCell(row) {
 function issiHomeSystemCell(row) {
   if (row.invalidation_scope) return '—';
   const reference = row.home_system_entity_ref || row.foreign_system_entity_ref;
-  const label = row.home_system_name || row.foreign_system_name ||
+  const label = systemLabels.homeSystemName(row) || systemLabels.systemName(row.foreign_system) || row.foreign_system_name ||
     systemLabels.systemName(row.home_radio_system_key || reference?.radio_system_key) || issiHomeSystemText(row);
   const identity = issiHomeSystemText(row);
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(reference) : '';
@@ -20533,7 +20537,7 @@ function issiGroupAssociationColumns() {
     { id: 'home-system', label: 'Home System', render: row => {
       const facts = p25IdentityFacts(row, '', 'talkgroup');
       const identity = facts ? `${hex(facts.canonical.wacn, 5)}.${hex(facts.canonical.system_id, 3)}` : '';
-      const name = row.home_system_name || systemLabels.systemName(facts?.homeSystemKey) || identity;
+      const name = systemLabels.homeSystemName(row, '', facts?.homeSystemKey || '') || identity;
       return identitySummaryValue(name, name === identity ? '' : identity,
         entityRefHref(row.home_system_entity_ref));
     } },
@@ -20954,7 +20958,7 @@ async function renderGroupIdentity() {
       ['Description', groupIdentity.alias_description],
       ['Group', groupIdentity.alias_group],
       ['Home System', groupIdentity.home_system_entity_ref ? identitySummaryValue(
-        groupIdentity.home_system_name || systemLabels.systemName(groupIdentity.home_system_key) ||
+        systemLabels.homeSystemName(groupIdentity) ||
           groupIdentity.home_system_key, '', entityRefHref(groupIdentity.home_system_entity_ref)) : '']
     ])), section('Logical Call Activity', metrics([
       ['Logical Calls', groupIdentity.logical_call_count],
@@ -31828,7 +31832,7 @@ function callMatchingIdentitySystem(identity, destination = true) {
   if (!destination && identity?.home_system) return identity.home_system;
   const qualifiedSource = !destination && /^v1-r-([0-9a-f]{5})-([0-9a-f]{3})-\d+$/i.exec(
     String(identity?.source_value || ''));
-  if (qualifiedSource) return { system_name: identity.home_system_name,
+  if (qualifiedSource) return { system_name: systemLabels.homeSystemName(identity),
     radio_system_key: identity.home_radio_system_key ||
       `p25:${qualifiedSource[1].toLowerCase()}:${qualifiedSource[2].toLowerCase()}`,
     radio_system_entity_ref: identity.home_radio_system_entity_ref };
@@ -31850,8 +31854,8 @@ function callMatchingIdentitySummary(identity, destination = true) {
       target_canonical_group_identity: identity.destination_canonical_group_identity,
       target_observed_working_id: identity.destination_observed_working_id,
       target_observed_local_id: identity.destination_observed_local_id } : {}),
-    [`${role}_home_system_name`]: identity[`${role}_home_system_name`] ||
-      (!destination ? identity.home_system?.system_name || identity.home_system_name : ''),
+    [`${role}_home_system_name`]: systemLabels.homeSystemName(identity, role) ||
+      (!destination ? systemLabels.homeSystemName(identity) : ''),
     [`${role}_identity_key`]:
     identity[`${role}_identity_key`] || key };
   const identifier = kind === 'radio' || kind === 'individual' ?

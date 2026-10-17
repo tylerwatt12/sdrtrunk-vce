@@ -34,7 +34,7 @@ async function main() {
   const source = fs.readFileSync(playerPath, 'utf8');
   const { WebCallPlayer } = await import(pathToFileURL(playerPath).href);
   const { rememberSystemNames } = await import(pathToFileURL(path.join(path.dirname(playerPath),
-    'core/system-labels.js')).href + '?v=1');
+    'core/system-labels.js')).href + '?v=2');
 
   let now = 0;
   let nextTimerId = 1;

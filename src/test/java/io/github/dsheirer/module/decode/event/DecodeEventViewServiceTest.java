@@ -55,6 +55,53 @@ class DecodeEventViewServiceTest
     private static final long FREQUENCY = 851_012_500L;
 
     @Test
+    void catalogNamesAreDetachedOnObserverForTypedPartiesAndPatchMembers() throws Exception
+    {
+        var homeRadio = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xABCDE, 0x123, 42);
+        var homeGroup = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(77, 0xABCDE, 0x124, 7001);
+        PatchGroup patch = new PatchGroup(homeGroup);
+        patch.addPatchedRadio(homeRadio);
+        patch.addPatchedTalkgroup(APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(
+            78, 0xABCDE, 0x125, 7002));
+        var patchIdentifier = APCO25PatchGroup.create(patch);
+        String rawPatch = patchIdentifier.toString();
+        var event = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L).protocol(Protocol.APCO25)
+            .identifiers(new IdentifierCollection(List.of(homeRadio, patchIdentifier)))
+            .details("PATCH " + rawPatch).build();
+        var names = java.util.Map.of("p25:abcde:123", "Radio catalog", "p25:abcde:124", "Group catalog",
+            "p25:abcde:125", "Member catalog");
+        AtomicReference<Thread> lookupThread = new AtomicReference<>();
+        AtomicReference<DecodeEventViewService.EventView> published = new AtomicReference<>();
+        CountDownLatch delivered = new CountDownLatch(1);
+        Thread producer = Thread.currentThread();
+        try(var service = new DecodeEventViewService(null, null, 2_000, TimeUnit.MILLISECONDS, null,
+            key -> { lookupThread.set(Thread.currentThread()); return names.get(key); }))
+        {
+            service.addListener(view -> { published.set(view); delivered.countDown(); });
+            service.receive(new Channel("Catalog test"), event);
+            assertTrue(delivered.await(2, TimeUnit.SECONDS));
+            var view = published.get();
+            assertFalse(producer == lookupThread.get());
+            assertEquals("Radio catalog", view.fromParty().getFirst().catalogName());
+            var projectedPatch = view.toParty().getFirst();
+            assertEquals("Group catalog", projectedPatch.catalogName());
+            assertEquals("Radio catalog", projectedPatch.radioMembers().getFirst().catalogName());
+            assertEquals("Member catalog", projectedPatch.talkgroupMembers().getFirst().catalogName());
+            assertEquals(rawPatch, projectedPatch.text());
+            assertEquals(rawPatch, view.toIdentifiers());
+            assertEquals("PATCH " + rawPatch, view.details());
+            assertNull(view.servingSystemKey(), "Home catalog matches cannot supply missing serving proof");
+            assertEquals(42, view.fromParty().getFirst().canonicalIdentity().subscriberId());
+            assertEquals(501, view.fromParty().getFirst().observedWorkingId());
+            assertEquals(77, projectedPatch.observedLocalId());
+            var json = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .valueToTree(view);
+            assertEquals("Member catalog", json.path("to_party").get(0).path("talkgroup_members").get(0)
+                .path("catalog_name").asText());
+        }
+    }
+
+    @Test
     void alertAliasIdsUseObservedLocalNamespaceAndExistingTypedToneCodes() throws Exception
     {
         var definition = new io.github.dsheirer.alias.AliasListDefinition("Alerts", io.github.dsheirer.alias.AliasListFamily.P25);

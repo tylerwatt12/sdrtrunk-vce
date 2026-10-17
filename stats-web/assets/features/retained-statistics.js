@@ -1,4 +1,4 @@
-import { systemName, systemLabel, systemIdentity } from '../core/system-labels.js?v=1';
+import { systemName, systemLabel, systemIdentity } from '../core/system-labels.js?v=2';
 
 const ROOT = '/api/v1/admin/retained-statistics';
 const PAGE_SIZE = 25;

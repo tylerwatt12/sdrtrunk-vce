@@ -11,7 +11,7 @@ function systemKey(row) {
 }
 
 function knownSystemNameForKey(key) {
-  return names.get(text(key).toLowerCase()) || '';
+  return names.get(text(key).toLowerCase())?.name || '';
 }
 
 function configuredSystemName(row) {
@@ -33,7 +33,28 @@ function configuredSystemName(row) {
 
 function systemName(row) {
   if (typeof row === 'string') return knownSystemNameForKey(row);
-  return configuredSystemName(row) || knownSystemNameForKey(systemKey(row));
+  const cached = names.get(systemKey(row).toLowerCase());
+  if (row?.system_name_source === 'catalog' && cached && !cached.catalog) return cached.name;
+  return configuredSystemName(row) || cached?.name || '';
+}
+
+// A catalog hint cannot outrank an explicit label or a configured home name already returned by the receiver.
+function homeSystemName(row, prefix = '', key = '') {
+  const base = prefix ? `${prefix}_` : '';
+  const direct = text(row?.[`${base}home_system_name`]);
+  const home = row?.[`${base}home_system`];
+  const homeKey = text(key) || systemKey(home) || text(row?.[`${base}home_radio_system_key`]) ||
+    text(row?.[`${base}home_system_key`]);
+  const source = text(row?.[`${base}home_system_name_source`]);
+  const catalog = source === 'catalog' || !source && home?.system_name_source === 'catalog' &&
+    (!direct || direct === configuredSystemName(home));
+  if (direct && !catalog) return direct;
+  const nested = configuredSystemName(home);
+  if (nested && home?.system_name_source !== 'catalog') return nested;
+  const cached = names.get(homeKey.toLowerCase());
+  if (cached && !cached.catalog) return cached.name;
+  return direct || systemName(home) || cached?.name || text(row?.[`${base}home_catalog_name`]) ||
+    (!prefix ? text(row?.catalog_name) : '');
 }
 
 function hex(value, width) {
@@ -88,9 +109,12 @@ function rememberSystemNames(value) {
     if (key) {
       const name = configuredSystemName(row);
       if (name) {
-        names.delete(key);
-        names.set(key, name);
-        if (names.size > MAX_NAMES) names.delete(names.keys().next().value);
+        const catalog = row.system_name_source === 'catalog';
+        if (!catalog || !names.has(key) || names.get(key).catalog) {
+          names.delete(key);
+          names.set(key, { name, catalog });
+          if (names.size > MAX_NAMES) names.delete(names.keys().next().value);
+        }
       } else if (Object.hasOwn(row, 'system_name')) names.delete(key);
     }
     Object.values(row).forEach((child) => {
@@ -100,4 +124,4 @@ function rememberSystemNames(value) {
   return value;
 }
 
-export { systemName, systemLabel, systemIdentity, knownSystemNameForKey, rememberSystemNames };
+export { systemName, homeSystemName, systemLabel, systemIdentity, knownSystemNameForKey, rememberSystemNames };

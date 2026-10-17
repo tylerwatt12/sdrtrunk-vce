@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -28,6 +29,7 @@ class StatsIdentitySearchTest
     void setUp() throws Exception
     {
         mConnection = DriverManager.getConnection("jdbc:sqlite::memory:");
+        StatsSystemNameResolver.installCatalog(mConnection, RadioSystemNameCatalog.parse(""));
         try(Statement statement = mConnection.createStatement())
         {
             for(String ddl: List.of(

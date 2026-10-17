@@ -51,11 +51,40 @@ jobs:
             test -z "$CANDIDATE_RUN_ID"
           fi
 
+  catalog:
+    name: Prepare radio-system catalog
+    if: ${{ inputs.mode == 'prepare' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python for the network-list snapshot
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Fetch the latest public network list once
+        run: >-
+          python tools/build/fetch_dsdplus_networks.py
+          --output "${{ runner.temp }}/radio-system-catalog/dsdplus.networks"
+      - name: Save the exact radio-system catalog for testing and packaging
+        uses: actions/upload-artifact@v7
+        with:
+          name: radio-system-catalog-${{ github.run_id }}
+          path: ${{ runner.temp }}/radio-system-catalog/dsdplus.networks
+          if-no-files-found: error
+          retention-days: 30
+
   ci:
     name: Test candidate
     if: ${{ inputs.mode == 'prepare' }}
-    needs: validate
+    needs: [validate, catalog]
     uses: ./.github/workflows/gradle.yml
+    with:
+      radio_system_catalog_artifact: radio-system-catalog-${{ github.run_id }}
 
   package:
     name: Package candidate
@@ -79,10 +108,20 @@ jobs:
           java-package: jdk+fx
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
+      - name: Set up Python for the bundled network list
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Download the tested radio-system catalog
+        uses: actions/download-artifact@v8
+        with:
+          name: radio-system-catalog-${{ github.run_id }}
+          path: ${{ runner.temp }}/radio-system-catalog
       - name: Build and verify all six packages
         run: >-
           ./gradlew --no-configuration-cache clean runtimeZipAll
           -PprojectVersion=nightly -PupdateTrack=nightly -PupdateBuild=${UPDATE_BUILD}
+          -PradioSystemCatalogFile="${{ runner.temp }}/radio-system-catalog/dsdplus.networks"
       - name: Record the exact candidate and file checksums
         shell: bash
         run: |
@@ -95,11 +134,13 @@ jobs:
             'https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly' \
             > build/image/update.properties
           python3 - <<'PY'
-          import json, os, pathlib
+          import hashlib, json, os, pathlib
+          catalog = pathlib.Path(os.environ['RUNNER_TEMP']) / 'radio-system-catalog/dsdplus.networks'
           pathlib.Path('build/image/candidate.json').write_text(json.dumps({
               'format': 1, 'purpose': 'prepare', 'source_commit': os.environ['GITHUB_SHA'],
               'source_ref': os.environ['GITHUB_REF'], 'run_id': os.environ['UPDATE_BUILD'],
-              'runtime': '25.0.1', 'channel': 'nightly'
+              'runtime': '25.0.1', 'channel': 'nightly',
+              'radio_system_catalog_sha256': hashlib.sha256(catalog.read_bytes()).hexdigest()
           }, indent=2) + '\n', encoding='utf-8')
           PY
           (cd build/image && sha256sum vce-*.zip build_info.txt update.properties candidate.json > SHA256SUMS)

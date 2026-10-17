@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -22,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.sqlite.Function;
 
 /** Request-side presentation enrichment. Native keys, never a name or an Alias List, select a system. */
 final class StatsSystemNameResolver
@@ -38,12 +40,69 @@ final class StatsSystemNameResolver
     private static final Pattern FORMATTED_RADIO = Pattern.compile(
         "([0-9A-Fa-f]{5})\\.([0-9A-Fa-f]{3})\\.([0-9]+)(?: \\(Working ID ([0-9]+)\\))?");
     private final Connection mConnection;
+    private final RadioSystemNameCatalog mCatalog;
     private final Map<String,ObjectNode> mSystems = new HashMap<>();
     private final Map<String,ObjectNode> mChannels = new HashMap<>();
 
     StatsSystemNameResolver(Connection connection)
     {
+        this(connection, RadioSystemNameCatalog.bundled());
+    }
+
+    StatsSystemNameResolver(Connection connection, RadioSystemNameCatalog catalog)
+    {
         mConnection = connection;
+        mCatalog = catalog;
+    }
+
+    /** Connection-local, read-only presentation function; it never changes the database schema or rows. */
+    static void installCatalog(Connection connection) throws SQLException
+    {
+        installCatalog(connection, RadioSystemNameCatalog.bundled());
+    }
+
+    static void installCatalog(Connection connection, RadioSystemNameCatalog catalog) throws SQLException
+    {
+        Function.create(connection, "radio_system_catalog_name", new Function()
+        {
+            @Override
+            protected void xFunc() throws SQLException
+            {
+                String name = catalog.nameFor(value_text(0));
+                if(name == null) result();
+                else result(name);
+            }
+        }, 1, Function.FLAG_DETERMINISTIC);
+    }
+
+    static String displayNameSql(String system)
+    {
+        return "coalesce(" + configuredNameSql(system) + ",radio_system_catalog_name(" + system + ".system_key))";
+    }
+
+    static String nameForKeySql(String key)
+    {
+        return "coalesce((SELECT " + configuredNameSql("label_system") +
+            " FROM radio_system label_system WHERE label_system.system_key=" + key +
+            "),radio_system_catalog_name(" + key + "))";
+    }
+
+    /** The queried identity_key is generated from typed database identities, never user-entered channel text. */
+    static String identityHomeNameSql(String identityKey)
+    {
+        String hex = "[0-9a-f]";
+        String pattern = "v1-[grp]-" + hex.repeat(5) + "-" + hex.repeat(3) + "-*";
+        return "CASE WHEN " + identityKey + " GLOB '" + pattern + "' THEN " +
+            nameForKeySql("('p25:'||substr(" + identityKey + ",6,5)||':'||substr(" + identityKey + ",12,3))") +
+            " END";
+    }
+
+    /** A remote home system need not have a retained local system row to have a catalog label. */
+    static String p25NameSql(String wacn, String systemId)
+    {
+        String key = "printf('p25:%05x:%03x'," + wacn + "," + systemId + ")";
+        return "CASE WHEN " + wacn + " IS NOT NULL AND " + wacn + " BETWEEN 0 AND 1048575 AND " +
+            systemId + " IS NOT NULL AND " + systemId + " BETWEEN 0 AND 4095 THEN " + nameForKeySql(key) + " END";
     }
 
     /** Includes all distinct configured names in stable order instead of hiding conflicting channel labels. */
@@ -131,21 +190,26 @@ final class StatsSystemNameResolver
             copyAbsent(row, channel, "channel_name", "site_name", "configuration_id");
             if(key == null || key.equals(channelKey)) copyAbsent(row, channel, "system_name");
         }
+        String configuredSystem = text(row, "system");
+        if(!row.hasNonNull("system_name") && configuredSystem != null &&
+            (row.has("call_id") || row.has("playback_target") ||
+                !RadioSystemKey.isCanonical(configuredSystem) && !configuredSystem.matches("[0-9]+")))
+            row.put("system_name", configuredSystem);
         ObjectNode identity = system(key);
         if(identity != null)
         {
-            String fallbackSystem = RadioSystemKey.isP25Native(key) ?
-                "P25 " + key.substring(4).replace(':', '-').toUpperCase(Locale.ROOT) : null;
-            if(fallbackSystem != null && fallbackSystem.equals(text(row, "system_name")) &&
-                identity.hasNonNull("system_name"))
+            String suppliedName = text(row, "system_name");
+            if(suppliedName != null && !suppliedName.equals(text(identity, "system_name")) &&
+                "catalog".equals(text(identity, "system_name_source")))
             {
-                if((fallbackSystem + " · " + text(row, "site_name")).equals(text(row, "name")))
-                    row.put("name", identity.path("system_name").asText() + " · " + text(row, "site_name"));
-                copyName(row, identity, "system_name");
+                identity = identity.deepCopy();
+                identity.put("system_name", suppliedName);
+                identity.put("name", suppliedName);
+                identity.remove("system_name_source");
             }
             copyAbsent(row, identity, "system_name", "system_names", "radio_system_key",
                 "radio_system_entity_ref", "protocol", "wacn", "system_id", "network_id", "model",
-                "location_category");
+                "location_category", "system_name_source");
             row.set("system_identity", identity.deepCopy());
             if(row.has("source_value") && row.has("destination_value"))
                 row.set("serving_system", identity.deepCopy());
@@ -154,11 +218,6 @@ final class StatsSystemNameResolver
             if("radio_system".equals(text(row, "source_kind"))) copyName(row, identity, "label");
             if("system".equals(text(row, "kind")) && row.has("id")) copyName(row, identity, "label");
         }
-        String configuredSystem = text(row, "system");
-        if(!row.hasNonNull("system_name") && configuredSystem != null &&
-            !RadioSystemKey.isCanonical(configuredSystem) && !configuredSystem.matches("[0-9]+"))
-            row.put("system_name", configuredSystem);
-
         addSystem(row, "home", number(row, "home_wacn", "canonical_wacn"),
             number(row, "home_system_id", "home_system", "canonical_system_id"));
         addSystem(row, "foreign", number(row, "foreign_wacn"), number(row, "foreign_system_id"));
@@ -166,6 +225,12 @@ final class StatsSystemNameResolver
             number(row, "source_home_system_id", "source_home_system"));
         addSystem(row, "target_home", number(row, "target_home_wacn"),
             number(row, "target_home_system_id", "target_home_system"));
+        canonicalHome(row, "", "identity_key");
+        canonicalHome(row, "source", "source_identity_key");
+        canonicalHome(row, "target", "target_identity_key");
+        canonicalHome(row, "radio", "radio_identity_key");
+        canonicalHome(row, "group", "group_identity_key");
+        canonicalHome(row, "affiliated_talkgroup", "affiliated_talkgroup_identity_key");
         qualified(row, "source_value", "source_home", "source_radio_id");
         qualified(row, "source_id", "source_home", "source_radio_id");
         qualified(row, "destination_value", "target_home", "target_native_id");
@@ -199,6 +264,31 @@ final class StatsSystemNameResolver
             if(rawHome >= 0) row.put("detail", detail.substring(0, rawHome) + " · Home: " +
                 row.path("home_system_name").asText());
         }
+    }
+
+    private void canonicalHome(ObjectNode row, String prefix, String identityField) throws SQLException
+    {
+        String base = prefix.isEmpty() ? "" : prefix + "_";
+        JsonNode canonical = row.get(base + "canonical_identity");
+        if(canonical == null) canonical = row.get(base + "canonical_group_identity");
+        Integer wacn = canonical instanceof ObjectNode object ? number(object, "wacn") :
+            number(row, base + "canonical_wacn");
+        Integer systemId = canonical instanceof ObjectNode object ? number(object, "system_id") :
+            number(row, base + "canonical_system_id");
+        if(wacn == null || systemId == null)
+        {
+            String key = text(row, identityField);
+            if(key == null) return;
+            try
+            {
+                RadioSystemIdentityKey.Identity identity = RadioSystemIdentityKey.parse(key);
+                if(!identity.hasHome()) return;
+                wacn = identity.homeWacn();
+                systemId = identity.homeSystemId();
+            }
+            catch(IllegalArgumentException ignored) { return; }
+        }
+        addSystem(row, base + "home", wacn, systemId);
     }
 
     private void qualified(ObjectNode row, String field, String prefix, String idField) throws SQLException
@@ -287,9 +377,23 @@ final class StatsSystemNameResolver
         if(wacn == null || systemId == null) return;
         ObjectNode identity = system(RadioSystemKey.p25(wacn, systemId));
         if(identity == null) return;
+        String suppliedName = text(row, prefix + "_system_name");
+        if(suppliedName == null && row.get(prefix + "_system") instanceof ObjectNode existing)
+            suppliedName = text(existing, "system_name", "name");
+        if(suppliedName != null && !suppliedName.equals(text(identity, "system_name")) &&
+            "catalog".equals(text(identity, "system_name_source")))
+        {
+            identity = identity.deepCopy();
+            identity.put("system_name", suppliedName);
+            identity.put("name", suppliedName);
+            identity.remove("system_name_source");
+        }
         row.put(prefix + "_system_id", systemId);
         row.set(prefix + "_system", identity.deepCopy());
         copyName(row, identity, prefix + "_system_name");
+        if("catalog".equals(text(identity, "system_name_source")) &&
+            text(identity, "system_name").equals(text(row, prefix + "_system_name")))
+            row.put(prefix + "_system_name_source", "catalog");
         row.set(prefix + "_radio_system_key", identity.get("radio_system_key"));
         row.set(prefix + "_system_key", identity.get("radio_system_key"));
         if(identity.has("radio_system_entity_ref"))
@@ -305,7 +409,8 @@ final class StatsSystemNameResolver
         try { key = RadioSystemKey.parse(key); }
         catch(IllegalArgumentException ignored) { return null; }
         if(mSystems.containsKey(key)) return mSystems.get(key);
-        if(mSystems.size() >= MAXIMUM_LOOKUPS) return null;
+        boolean cacheAvailable = mSystems.size() < MAXIMUM_LOOKUPS;
+        if(!cacheAvailable && mCatalog.nameFor(key) == null) return null;
         ObjectNode identity = MAPPER.createObjectNode();
         identity.put("radio_system_key", key);
         identity.put("key", key);
@@ -329,8 +434,8 @@ final class StatsSystemNameResolver
             identity.put("system_id", Integer.parseInt(parts[2]));
         }
         else identity.put("protocol", key.startsWith("dmr:") ? "dmr" : "nxdn");
-        List<Map<String,Object>> systems = queryRows(mConnection,
-            "SELECT id,configuration_id FROM radio_system WHERE system_key=?", key);
+        List<Map<String,Object>> systems = mConnection != null && cacheAvailable ? queryRows(mConnection,
+            "SELECT id,configuration_id FROM radio_system WHERE system_key=?", key) : List.of();
         if(!systems.isEmpty())
         {
             Map<String,Object> system = systems.getFirst();
@@ -353,13 +458,24 @@ final class StatsSystemNameResolver
             identity.set("radio_system_entity_ref", MAPPER.valueToTree(WebEntityRef.radioSystem(key).toMap()));
             identity.set("entity_ref", identity.get("radio_system_entity_ref"));
         }
-        mSystems.put(key, identity);
+        if(!identity.hasNonNull("system_name"))
+        {
+            String name = mCatalog.nameFor(key);
+            if(name != null)
+            {
+                identity.put("system_name", name);
+                identity.put("name", name);
+                identity.put("system_name_source", "catalog");
+            }
+        }
+        // Keep SQLite work and the request cache bounded; the shared in-memory fallback needs neither.
+        if(cacheAvailable) mSystems.put(key, identity);
         return identity;
     }
 
     private ObjectNode channel(String configuration) throws SQLException
     {
-        if(configuration == null || !CONFIGURATION.matcher(configuration).matches()) return null;
+        if(mConnection == null || configuration == null || !CONFIGURATION.matcher(configuration).matches()) return null;
         if(mChannels.containsKey(configuration)) return mChannels.get(configuration);
         if(mChannels.size() >= MAXIMUM_LOOKUPS) return null;
         List<Map<String,Object>> rows = queryRows(mConnection, """
@@ -417,7 +533,9 @@ final class StatsSystemNameResolver
 
     private static void copyName(ObjectNode target, ObjectNode source, String field)
     {
-        if(source.hasNonNull("system_name")) target.set(field, source.get("system_name"));
+        if(source.hasNonNull("system_name") &&
+            (!"catalog".equals(text(source, "system_name_source")) || text(target, field) == null))
+            target.set(field, source.get("system_name"));
     }
 
     private static Integer number(ObjectNode row, String... fields)

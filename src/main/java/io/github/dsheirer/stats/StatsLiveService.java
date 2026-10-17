@@ -12,6 +12,8 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.remote.RemoteOriginLookup;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -25,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
@@ -53,6 +56,7 @@ final class StatsLiveService implements AutoCloseable
     private final ActivitySource mActivitySource;
     private final WebEntityNavigationCatalog mNavigationCatalog;
     private final RemoteOriginLookup mRemoteOriginLookup;
+    private final Function<String,String> mCatalogNames;
     private final StatsLiveEventHub mChannelActivityHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
@@ -87,9 +91,16 @@ final class StatsLiveService implements AutoCloseable
     private StatsLiveService(ActivitySource activitySource, WebEntityNavigationCatalog navigationCatalog,
                              RemoteOriginLookup remoteOriginLookup)
     {
+        this(activitySource, navigationCatalog, remoteOriginLookup, RadioSystemNameCatalog.bundled()::nameFor);
+    }
+
+    private StatsLiveService(ActivitySource activitySource, WebEntityNavigationCatalog navigationCatalog,
+                             RemoteOriginLookup remoteOriginLookup, Function<String,String> catalogNames)
+    {
         mActivitySource = Objects.requireNonNull(activitySource, "Channel activity source cannot be null");
         mNavigationCatalog = navigationCatalog;
         mRemoteOriginLookup = remoteOriginLookup != null ? remoteOriginLookup : RemoteOriginLookup.EMPTY;
+        mCatalogNames = Objects.requireNonNull(catalogNames);
     }
 
     static StatsLiveService fromActivitySource(ActivitySource activitySource,
@@ -103,6 +114,14 @@ final class StatsLiveService implements AutoCloseable
                                                RemoteOriginLookup remoteOriginLookup)
     {
         return new StatsLiveService(activitySource, navigationCatalog, remoteOriginLookup);
+    }
+
+    static StatsLiveService fromActivitySource(ActivitySource activitySource,
+                                               WebEntityNavigationCatalog navigationCatalog,
+                                               RemoteOriginLookup remoteOriginLookup,
+                                               Function<String,String> catalogNames)
+    {
+        return new StatsLiveService(activitySource, navigationCatalog, remoteOriginLookup, catalogNames);
     }
 
     void start()
@@ -831,6 +850,13 @@ final class StatsLiveService implements AutoCloseable
         {
             putText(table, "radio_system_key", tableSystemChannel.radioSystemRef().key(), MAXIMUM_LIVE_TEXT_LENGTH);
         }
+        if(snapshot.systemName().isBlank())
+        {
+            String key = (String)table.get("radio_system_key");
+            if(key == null && snapshot.site() != null)
+                key = p25Key(snapshot.site().wacn(), snapshot.site().systemId());
+            putCatalogSystemName(table, key);
+        }
         if(snapshot.site() != null)
         {
             LinkedHashMap<String,Object> site = new LinkedHashMap<>();
@@ -858,11 +884,14 @@ final class StatsLiveService implements AutoCloseable
         }
         Map<String,Map<String,Object>> oldRows = rowIndex(previousTable);
         boolean sameSite = previousSource != null && Objects.equals(snapshot.site(), previousSource.site()) &&
-            Objects.equals(snapshot.configurationId(), previousSource.configurationId());
+            Objects.equals(snapshot.configurationId(), previousSource.configurationId()) &&
+            Objects.equals(snapshot.systemName(), previousSource.systemName());
+        String tableSystemKey = snapshot.site() != null ?
+            p25Key(snapshot.site().wacn(), snapshot.site().systemId()) : (String)table.get("radio_system_key");
         table.put("rows", snapshot.rows().stream().limit(included)
             .map(row -> sameSite && row.equals(oldSources.get(row.key())) && oldRows.containsKey(row.key()) ?
                 oldRows.get(row.key()) : activityRow(snapshot.tableId(), row, tableChannel, snapshot.site(), navigation,
-                    remoteOrigins, rowSystemScopes)).toList());
+                    remoteOrigins, rowSystemScopes, snapshot.systemName(), tableSystemKey)).toList());
         table.put("rows_total", rowCount);
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
@@ -883,7 +912,8 @@ final class StatsLiveService implements AutoCloseable
                                            ChannelActivitySnapshot.Site site,
                                            WebEntityNavigationCatalog.Snapshot catalog,
                                            RemoteOriginLookup.OriginSnapshot remoteOrigins,
-                                           RowSystemScopeState rowSystemScopes)
+                                           RowSystemScopeState rowSystemScopes, String tableSystemName,
+                                           String tableSystemKey)
     {
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
         ChannelActivitySnapshot.Navigation navigation = snapshot.navigation();
@@ -909,6 +939,12 @@ final class StatsLiveService implements AutoCloseable
         row.put("key", boundedText(snapshot.key(), MAXIMUM_LIVE_TEXT_LENGTH));
         //Present-null is authoritative: current navigation/configuration cannot fill missing receiver proof.
         row.put("serving_system_key", snapshot.servingSystemKey());
+        putText(row, "radio_system_key", snapshot.servingSystemKey(), MAXIMUM_LIVE_TEXT_LENGTH);
+        // A missing captured serving key remains unknown, even if the current channel has a system assignment.
+        if(snapshot.servingSystemKey() != null && snapshot.servingSystemKey().equals(tableSystemKey) &&
+            tableSystemName != null && !tableSystemName.isBlank())
+            row.put("system_name", boundedText(tableSystemName, MAXIMUM_LIVE_TEXT_LENGTH));
+        else putCatalogSystemName(row, snapshot.servingSystemKey());
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "configuration_id", configurationId, MAXIMUM_LIVE_TEXT_LENGTH);
         putRemoteOrigin(row, remoteOrigins.find(configurationId));
@@ -1064,7 +1100,7 @@ final class StatsLiveService implements AutoCloseable
      * Publishes immutable radio/group identity facts captured by the receiver. Home-only identities retain null
      * local observations; this projection performs no radio-system or database inference.
      */
-    private static void putP25Identity(Map<String,Object> row, String prefix,
+    private void putP25Identity(Map<String,Object> row, String prefix,
                                        ChannelActivitySnapshot.MatcherReference matcher)
     {
         if(matcher != null && "p25".equals(matcher.protocol()) &&
@@ -1083,6 +1119,7 @@ final class StatsLiveService implements AutoCloseable
             {
                 row.put(prefix + "_canonical_group_identity", Map.of("wacn", group.talkgroup().homeWacn(),
                     "system_id", group.talkgroup().homeSystemId(), "talkgroup_id", group.talkgroup().talkgroupId()));
+                putHomeCatalogName(row, prefix, group.talkgroup().homeWacn(), group.talkgroup().homeSystemId());
             }
             return;
         }
@@ -1118,6 +1155,7 @@ final class StatsLiveService implements AutoCloseable
                 "wacn", identity.homeWacn(),
                 "system_id", identity.homeSystemId(),
                 "subscriber_id", identity.identityId()));
+            putHomeCatalogName(row, prefix, identity.homeWacn(), identity.homeSystemId());
             Integer workingAddress = matcher.workingAddress();
             if(workingAddress != null && workingAddress > 0 &&
                 workingAddress <= RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID)
@@ -1129,6 +1167,30 @@ final class StatsLiveService implements AutoCloseable
         {
             //Malformed or non-canonical matcher keys remain local working identifiers.
         }
+    }
+
+    private void putHomeCatalogName(Map<String,Object> row, String prefix, Integer wacn, Integer system)
+    {
+        String key = p25Key(wacn, system);
+        String name = key != null ? mCatalogNames.apply(key) : null;
+        if(name != null && !name.isBlank()) row.put(prefix + "_home_catalog_name", name);
+    }
+
+    private void putCatalogSystemName(Map<String,Object> row, String key)
+    {
+        if(key == null) return;
+        String name = mCatalogNames.apply(key);
+        if(name != null && !name.isBlank())
+        {
+            row.put("system_name", name);
+            row.put("system_name_source", "catalog");
+        }
+    }
+
+    private static String p25Key(Integer wacn, Integer system)
+    {
+        try { return wacn != null && system != null ? RadioSystemKey.p25(wacn, system) : null; }
+        catch(IllegalArgumentException ignored) { return null; }
     }
 
     /**

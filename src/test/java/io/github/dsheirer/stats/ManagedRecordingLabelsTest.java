@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -20,6 +21,83 @@ class ManagedRecordingLabelsTest
 {
     @TempDir Path directory;
     private static final String CHANNEL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+    @Test
+    void catalogNamesDecorateRecordingsWithoutAMainDatabaseAndPreserveCapturedLabels() throws Exception
+    {
+        var names = RadioSystemNameCatalog.parse("""
+            P25, BEE00.123, "Example serving network"
+            P25, BEE01.124, "Example home network"
+            """);
+        var labels = new ManagedRecordingLabels(directory.resolve("absent.sqlite"), names);
+        var raw = Map.<String,Object>of("protocol", "APCO25", "wacn", 0xBEE00, "system_id", 0x123,
+            "source_home_wacn", 0xBEE01, "source_home_system_id", 0x124);
+        var decorated = labels.decorate(List.of(raw)).getFirst();
+        assertEquals("Example serving network", decorated.get("system_name"));
+        assertEquals("Example home network", decorated.get("source_home_system_name"));
+        assertEquals("p25:bee00:123", decorated.get("system_key"));
+        assertFalse(decorated.containsKey("radio_system_entity_ref"), "A catalog name creates no retained destination");
+        assertFalse(raw.containsKey("system_key"), "Captured recording metadata remains unchanged");
+        var captured = new LinkedHashMap<String,Object>(raw);
+        captured.put("system_name", "P25 BEE00-123");
+        captured.put("channel_name", "My channel");
+        captured.put("site_name", "My site");
+        var preserved = labels.decorate(List.of(captured)).getFirst();
+        assertEquals("P25 BEE00-123", preserved.get("system_name"));
+        assertEquals("My channel", preserved.get("channel_name"));
+        assertEquals("My site", preserved.get("site_name"));
+        assertEquals("Example serving network", labels.enrichSystemNames(List.of(Map.of(
+            "system_key", "p25:bee00:123"))).getFirst().get("system_name"));
+    }
+
+    @Test
+    void catalogNameSuggestionsMatchBeforeTheLimitAndYieldToEverySavedSystemLabel() throws Exception
+    {
+        String alphaChannel = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        Path database = directory.resolve("catalog-suggestions.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                "system_name,site_name,name,alias_list_id,decoder_type,config_json) VALUES('" + CHANNEL_ID +
+                "','TRUNKED',0,'','North','Control',(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'P25_PHASE1','{}')");
+            statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code," +
+                "p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) VALUES(1,'p25:bee00:123',1,0," +
+                0xBEE00 + "," + 0x123 + ",1,2)");
+            statement.execute("INSERT INTO receiver_channel(id,configuration_id,radio_system_id," +
+                "radio_system_assigned_at_ms,first_seen_ms,last_seen_ms) VALUES(1,'" + CHANNEL_ID + "',1,1,1,2)");
+            statement.execute("INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms,rfss,site) VALUES(1,1,2,1,2)");
+            statement.execute("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                "system_name,site_name,name,alias_list_id,decoder_type,config_json) VALUES('" + alphaChannel +
+                "','TRUNKED',1,'Alpha saved network','North','Control'," +
+                "(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'P25_PHASE1','{}')");
+            statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code," +
+                "p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) VALUES(2,'p25:bee00:124',1,0," +
+                0xBEE00 + "," + 0x124 + ",1,2)");
+            statement.execute("INSERT INTO receiver_channel(id,configuration_id,radio_system_id," +
+                "radio_system_assigned_at_ms,first_seen_ms,last_seen_ms) VALUES(2,'" + alphaChannel + "',2,1,1,2)");
+            statement.execute("INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms,rfss,site) VALUES(2,1,2,1,3)");
+        }
+        var names = RadioSystemNameCatalog.parse("P25, BEE00.123, \"Example catalog network\"");
+        var labels = new ManagedRecordingLabels(database, names);
+        assertEquals("Example catalog network", labels.suggestions("Example catalog", "system", 1).getFirst().get("label"));
+        assertEquals(CHANNEL_ID, labels.suggestions("Example catalog", "channel", 1).getFirst().get("id"));
+        assertEquals("North · Example catalog network", labels.suggestions("Example catalog", "site", 1).getFirst().get("detail"));
+        assertEquals(alphaChannel, labels.suggestions("Control", "channel", 1).getFirst().get("id"),
+            "Channel choices sort by the displayed System name before the limit");
+        assertEquals(alphaChannel, labels.suggestions("North", "site", 1).getFirst().get("id"),
+            "Site choices sort saved and fallback System names together before the limit");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET system_name='P25 BEE00-123' WHERE configuration_id='" + CHANNEL_ID + "'");
+        }
+        assertTrue(labels.suggestions("Example catalog", "system", 1).isEmpty());
+        assertTrue(labels.suggestions("Example catalog", "channel", 1).isEmpty());
+        assertEquals("P25 BEE00-123", labels.suggestions("BEE00-123", "system", 1).getFirst().get("label"));
+        assertEquals("North · P25 BEE00-123", labels.suggestions("BEE00-123", "site", 1).getFirst().get("detail"));
+    }
 
     @Test
     void currentNamesAndLatestHomeScopedOtaDecorateOldCallWithoutCopyingLabels() throws Exception

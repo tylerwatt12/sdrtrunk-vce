@@ -1,6 +1,6 @@
 'use strict';
 
-import { systemName, systemIdentity } from '../../core/system-labels.js?v=1';
+import { systemName, homeSystemName, systemIdentity } from '../../core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from '../../core/radio-labels.js?v=7';
 
 const P25_HISTORY_ACTIONS = Object.freeze([
@@ -104,8 +104,7 @@ function groupLabel(row, key) {
   const id = nativeId(key, row?.target_native_id ?? row?.target_id);
   const facts = p25IdentityFacts({ ...row, target_identity_key: key }, 'target', 'talkgroup');
   const label = facts ? p25IdentifierText({ ...row, target_identity_key: key }, id, {
-    prefix: 'target', kind: 'talkgroup', homeSystemName: text(row?.target_home_system_name) ||
-      systemName(facts.homeSystemKey) }) : '';
+    prefix: 'target', kind: 'talkgroup', homeSystemName: homeSystemName(row, 'target', facts.homeSystemKey) }) : '';
   return text(row?.target_alias_name) || text(row?.target_name) || label || String(id ?? 'Talkgroup');
 }
 
@@ -126,7 +125,7 @@ function radioLabel(row, key, role = 'source') {
       Number(identity.system_id).toString(16).padStart(3, '0');
     return formatP25RadioIdentifier(identity, {
       servingSystemKey: p25ServingSystemKey(row, role),
-      homeSystemName: text(row?.[`${role}_home_system_name`]) || systemName(homeKey),
+      homeSystemName: homeSystemName(row, role, homeKey),
       workingId: row?.[`${role}_observed_working_id`] ?? row?.[`${role}_working_subscriber_id`]
     });
   }

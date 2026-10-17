@@ -148,7 +148,8 @@ async function siteBandPlanChecks() {
     semanticLabel: value => value, frequency: value => value / 1000000,
     dateTime: value => value, stackedDateTime: value => value, yesNo: value => value ? 'Yes' : 'No',
     badge: value => value, compactStateBadge: value => value,
-    systemLabels: { systemName: () => '' },
+    systemLabels: { systemName: () => '', homeSystemName: (row, prefix = '') =>
+      row?.[`${prefix ? `${prefix}_` : ''}home_system_name`] || '' },
     trunkedChannelTabItems: () => [{ id: 'info' }, { id: 'frequencies' }],
     channelDisplayParts: value => ({ primary: value.name, secondary: value.site_name }),
     trunkedVariant: () => '', radioSystemPrimaryName: () => '', channelLocationIdentity: () => '',
@@ -331,7 +332,8 @@ async function main() {
     capabilityAllowed: () => true, ACCESS_CAPABILITIES: { RADIO: 'radio' },
     entityRefHref: reference => reference?.href || '',
     identitySummaryValue: (primary, secondary, target) => ({primary,secondary,target}),
-    systemLabels: { systemName: () => '' },
+    systemLabels: { systemName: () => '', homeSystemName: (row, prefix = '') =>
+      row?.[`${prefix ? `${prefix}_` : ''}home_system_name`] || '' },
     hex: (value, width) => Number(value).toString(16).toUpperCase().padStart(width, '0'),
     issiSubscriberColumns: () => [], issiForeignSystemColumns: () => [], issiBandColumns: () => [],
     render: async () => {}

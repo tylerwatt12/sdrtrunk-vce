@@ -1,6 +1,6 @@
 'use strict';
 
-import { systemLabel, systemName, systemIdentity } from '../core/system-labels.js?v=1';
+import { systemLabel, systemName, homeSystemName, systemIdentity } from '../core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, parseP25RadioIdentifier, p25ServingSystemKey } from '../core/radio-labels.js?v=7';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
 
@@ -73,7 +73,7 @@ function mapRadioIdentifier(entity, servingSystem) {
   return formatP25RadioIdentifier(identity, {
     servingSystemKey: Object.prototype.hasOwnProperty.call(entity, 'serving_system_key') ?
       p25ServingSystemKey(entity) : p25ServingSystemKey(entity) || p25ServingSystemKey(servingSystem) || servingSystem?.key || '',
-    homeSystemName: String(entity.home_system_name || '').trim() || systemName(entity.home_system) || systemName(homeKey),
+    homeSystemName: homeSystemName(entity, '', homeKey),
     workingId: entity.observed_working_id ?? (matchingText ? parsed.observed_working_id : null)
   });
 }
@@ -98,7 +98,7 @@ function normalizeSnapshot(value) {
       system: systemLabel(servingSystem) || systemLabel(entity),
       system_name: systemName(servingSystem) || systemName(entity),
       serving_system: servingSystem && typeof servingSystem === 'object' ? servingSystem : null,
-      home_system_name: String(entity.home_system_name || systemName(entity.home_system)),
+      home_system_name: homeSystemName(entity),
       home_system: entity.home_system && typeof entity.home_system === 'object' ? entity.home_system : null,
       icon: ICON_SLUG.test(String(entity.icon || '')) ? entity.icon : 'no-icon',
       color: /^#[0-9a-fA-F]{6}$/.test(String(entity.color || '')) ? entity.color : null,
@@ -122,7 +122,7 @@ function mapSystemFacts(entity, radioSystemLink = (_reference, label) => label) 
     ...(servingIdentity ? [['Radio identity', servingIdentity]] : []),
     ...(entity.home_system || entity.home_system_name ?
       [['Home system', radioSystemLink(reference(entity.home_system),
-        entity.home_system_name || systemLabel(entity.home_system))]] : []),
+        homeSystemName(entity) || systemLabel(entity.home_system))]] : []),
     ...(homeIdentity ? [['Home radio identity', homeIdentity]] : [])
   ];
 }

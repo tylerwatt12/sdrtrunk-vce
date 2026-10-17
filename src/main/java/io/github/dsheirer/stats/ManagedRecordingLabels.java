@@ -11,6 +11,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import io.github.dsheirer.stats.activity.RadioSystemIdentityLookup;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,6 +39,7 @@ final class ManagedRecordingLabels
 {
     private static final int MAX_SUGGESTIONS = 20;
     private final Path mDatabasePath;
+    private final RadioSystemNameCatalog mSystemNames;
 
     ManagedRecordingLabels(UserPreferences preferences)
     {
@@ -46,7 +48,13 @@ final class ManagedRecordingLabels
 
     ManagedRecordingLabels(Path databasePath)
     {
+        this(databasePath, RadioSystemNameCatalog.bundled());
+    }
+
+    ManagedRecordingLabels(Path databasePath, RadioSystemNameCatalog systemNames)
+    {
         mDatabasePath = databasePath;
+        mSystemNames = java.util.Objects.requireNonNull(systemNames);
     }
 
     List<Map<String,Object>> decorate(List<Map<String,Object>> calls)
@@ -59,12 +67,14 @@ final class ManagedRecordingLabels
         List<Map<String,Object>> result = new ArrayList<>(calls.size());
         for(Map<String,Object> call: calls)
         {
-            result.add(new LinkedHashMap<>(call));
+            Map<String,Object> copy = new LinkedHashMap<>(call);
+            put(copy, "system_key", recordedSystemKey(copy, string(copy.get("protocol"))));
+            result.add(copy);
         }
 
         if(!Files.isRegularFile(mDatabasePath))
         {
-            return result;
+            return catalogNames(result);
         }
 
         try(Connection connection = open())
@@ -74,7 +84,7 @@ final class ManagedRecordingLabels
             Map<String,String> talkerAliases = new HashMap<>();
             Map<String,SystemScope> systems = new HashMap<>();
             Map<String,String> knownIdentities = new HashMap<>();
-            StatsSystemNameResolver systemNames = new StatsSystemNameResolver(connection);
+            StatsSystemNameResolver systemNames = new StatsSystemNameResolver(connection, mSystemNames);
             for(Map<String,Object> call: result)
             {
                 String protocol = string(call.get("protocol"));
@@ -194,6 +204,7 @@ final class ManagedRecordingLabels
         catch(SQLException ignored)
         {
             //Current names are optional. Catalog data remains usable when the main database is busy or replaced.
+            return catalogNames(result);
         }
         return result;
     }
@@ -202,7 +213,7 @@ final class ManagedRecordingLabels
                                   Long fromMs, Long toMs, int offset, int limit, String radioRole)
         throws SQLException
     {
-        return new ManagedRecordingIdentityDiscovery(mDatabasePath).search(catalogDatabase, kind, query,
+        return new ManagedRecordingIdentityDiscovery(mDatabasePath, mSystemNames).search(catalogDatabase, kind, query,
             systemKey, fromMs, toMs, offset, limit, radioRole);
     }
 
@@ -210,14 +221,14 @@ final class ManagedRecordingLabels
                                   Long fromMs, Long toMs, int offset, int limit, String radioRole, String sort)
         throws SQLException
     {
-        return new ManagedRecordingIdentityDiscovery(mDatabasePath).search(catalogDatabase, kind, query,
+        return new ManagedRecordingIdentityDiscovery(mDatabasePath, mSystemNames).search(catalogDatabase, kind, query,
             systemKey, fromMs, toMs, offset, limit, radioRole, sort);
     }
 
     Map<String,Object> entities(Path catalogDatabase, String kind, String query, String systemKey,
                                 Long fromMs, Long toMs, int offset, int limit, String sort) throws SQLException
     {
-        return new ManagedRecordingEntityDiscovery(mDatabasePath).search(catalogDatabase, kind, query,
+        return new ManagedRecordingEntityDiscovery(mDatabasePath, mSystemNames).search(catalogDatabase, kind, query,
             systemKey, fromMs, toMs, offset, limit, sort);
     }
 
@@ -225,7 +236,7 @@ final class ManagedRecordingLabels
                                      Long fromMs, Long toMs, int offset, int limit, String radioRole, String sort,
                                      String groupKey) throws SQLException
     {
-        return new ManagedRecordingIdentityDiscovery(mDatabasePath).groups(catalogDatabase, kind, query,
+        return new ManagedRecordingIdentityDiscovery(mDatabasePath, mSystemNames).groups(catalogDatabase, kind, query,
             systemKey, fromMs, toMs, offset, limit, radioRole, sort, groupKey);
     }
 
@@ -258,17 +269,33 @@ final class ManagedRecordingLabels
                                    Long fromMs, Long toMs, int offset, int limit, String sort, String groupKey)
         throws SQLException
     {
-        return new ManagedRecordingEntityDiscovery(mDatabasePath).groups(catalogDatabase, kind, query,
+        return new ManagedRecordingEntityDiscovery(mDatabasePath, mSystemNames).groups(catalogDatabase, kind, query,
             systemKey, fromMs, toMs, offset, limit, sort, groupKey);
     }
 
     List<Map<String,Object>> enrichSystemNames(List<Map<String,Object>> values)
     {
-        if(values.isEmpty() || !Files.isRegularFile(mDatabasePath)) return values;
+        if(values.isEmpty()) return values;
+        if(!Files.isRegularFile(mDatabasePath)) return catalogNames(values);
         try(Connection connection = open())
         {
-            StatsSystemNameResolver names = new StatsSystemNameResolver(connection);
+            StatsSystemNameResolver names = new StatsSystemNameResolver(connection, mSystemNames);
             List<Map<String,Object>> result = new ArrayList<>(values.size());
+            for(Map<String,Object> value: values) result.add(names.enrichMap(value));
+            return result;
+        }
+        catch(SQLException ignored)
+        {
+            return catalogNames(values);
+        }
+    }
+
+    private List<Map<String,Object>> catalogNames(List<Map<String,Object>> values)
+    {
+        StatsSystemNameResolver names = new StatsSystemNameResolver(null, mSystemNames);
+        List<Map<String,Object>> result = new ArrayList<>(values.size());
+        try
+        {
             for(Map<String,Object> value: values) result.add(names.enrichMap(value));
             return result;
         }
@@ -551,10 +578,12 @@ final class ManagedRecordingLabels
                            JOIN configuration_channel saved ON saved.configuration_id=receiver.configuration_id
                            WHERE receiver.radio_system_id=system.id
                              AND lower(coalesce(saved.system_name,'')) LIKE ? ESCAPE '\\'
-                       ))
+                       )
+                       OR lower(coalesce(%s,'')) LIKE ? ESCAPE '\\')
                       AND %s
                     ORDER BY label LIMIT ?
-                    """.formatted(StatsSystemNameResolver.configuredNameSql("system"), recordedOnly ? "EXISTS(SELECT 1 FROM (" +
+                    """.formatted(StatsSystemNameResolver.displayNameSql("system"),
+                        StatsSystemNameResolver.displayNameSql("system"), recordedOnly ? "EXISTS(SELECT 1 FROM (" +
                         recordingCallCandidates("system.system_key", "system.p25_wacn", "system.p25_system_id") +
                         "))" : "1")))
                 {
@@ -562,7 +591,8 @@ final class ManagedRecordingLabels
                     statement.setString(offset + 1, pattern);
                     statement.setString(offset + 2, pattern);
                     statement.setString(offset + 3, pattern);
-                    statement.setInt(offset + 4, limit);
+                    statement.setString(offset + 4, pattern);
+                    statement.setInt(offset + 5, limit);
                     try(ResultSet rows = statement.executeQuery())
                     {
                         while(rows.next())
@@ -576,7 +606,8 @@ final class ManagedRecordingLabels
             if(result.size() < limit && (kind == null || "channel".equals(kind) || "site".equals(kind)))
             {
                 try(PreparedStatement statement = connection.prepareStatement(scope + """
-                    SELECT config.configuration_id, config.name, config.site_name, config.system_name,
+                    SELECT config.configuration_id, config.name, config.site_name,
+                        coalesce(nullif(trim(config.system_name),''),%s) AS system_name,
                         config.channel_kind, p25.rfss, p25.site AS site_id,
                         system.p25_wacn AS wacn, system.p25_system_id AS sysid
                     FROM configuration_channel config
@@ -584,16 +615,18 @@ final class ManagedRecordingLabels
                     LEFT JOIN p25_site_snapshot p25 ON p25.channel_id=receiver.id
                     LEFT JOIN radio_system system ON system.id=receiver.radio_system_id
                     WHERE lower(coalesce(config.name,'') || ' ' || coalesce(config.site_name,'') || ' ' ||
-                        coalesce(config.system_name,'')%s) LIKE ? ESCAPE '\\'
+                        coalesce(nullif(trim(config.system_name),''),%s,'')%s) LIKE ? ESCAPE '\\'
                       AND (? IS NULL OR %s)
                       AND %s
-                    ORDER BY lower(coalesce(config.system_name,'')), lower(coalesce(config.site_name,'')),
+                    ORDER BY lower(coalesce(nullif(trim(config.system_name),''),%s,'')), lower(coalesce(config.site_name,'')),
                         lower(coalesce(config.name,''))
                     LIMIT ?
-                    """.formatted("site".equals(kind) ?
+                    """.formatted(StatsSystemNameResolver.displayNameSql("system"),
+                        StatsSystemNameResolver.displayNameSql("system"), "site".equals(kind) ?
                         " || ' ' || coalesce(CAST(p25.rfss AS TEXT),'') || ' ' || coalesce(CAST(p25.site AS TEXT),'')" : "",
                         recordedOnly ? "?=(SELECT system_key FROM recording_scope)" : "system.system_key=?",
-                        recordedOnly ? recordedChannelPredicate("site".equals(kind)) : "1")))
+                        recordedOnly ? recordedChannelPredicate("site".equals(kind)) : "1",
+                        StatsSystemNameResolver.displayNameSql("system"))))
                 {
                     int offset = bindRecordingScope(statement, recordedOnly, systemKey);
                     statement.setString(offset + 1, pattern);
@@ -1065,6 +1098,7 @@ final class ManagedRecordingLabels
             statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
             statement.execute("PRAGMA query_only=ON");
         }
+        StatsSystemNameResolver.installCatalog(connection, mSystemNames);
         return connection;
     }
 

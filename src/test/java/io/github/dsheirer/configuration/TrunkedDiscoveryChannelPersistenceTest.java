@@ -25,12 +25,59 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class TrunkedDiscoveryChannelPersistenceTest
 {
     @TempDir Path root;
+
+    @Test
+    void catalogSuggestionsForNativeSystemsRespectExistingRawLabelsAndNeverNameFrequencyScopedSystems() throws Exception
+    {
+        for(String protocol: List.of("dmr", "nxdn"))
+        {
+            List<String> requestedKeys = new java.util.ArrayList<>();
+            try(Fixture fixture = new Fixture(root.resolve(protocol), key -> {
+                requestedKeys.add(key);
+                return "Example regional network";
+            }))
+            {
+                var proof = matchingSiteEvidence(protocol, 3, 450_000_000);
+                var review = fixture.channels.discoveryTrunkedReview(protocol, 450_000_000, "Tuner", proof);
+                assertEquals(List.of(proof.identity().radioSystemKey()), requestedKeys);
+                assertEquals("Example regional network", review.template().system());
+                assertEquals("Example regional network", review.defaultNewAliasListName());
+                assertEquals(proof.frequencyMap(), review.template().frequencyMap());
+                String rawLabel = proof.systemName();
+                var source = review.template();
+                var edited = new ChannelDefinition(null, source.protocolId(), rawLabel, source.site(), "My control",
+                    null, 0, source.source(), source.settings(), source.frequencyMap(), List.of(), List.of(), List.of(),
+                    ChannelDefinition.Observed.EMPTY);
+                var saved = fixture.channels.createTrunkedDiscovered(edited, proof, rawLabel, review.revision(), false);
+                requestedKeys.clear();
+                var nextSite = matchingSiteEvidence(protocol, 4, 452_000_000);
+                var next = fixture.channels.discoveryTrunkedReview(protocol, 452_000_000, "Tuner", nextSite);
+                assertEquals(rawLabel, next.template().system());
+                assertEquals(rawLabel, next.defaultNewAliasListName());
+                assertEquals(saved.aliasListId(), next.suggestedAliasListId());
+                assertTrue(requestedKeys.isEmpty(), "Existing labels are authoritative even when they look generated");
+                var disk = new ConfigurationRepository(fixture.database).load();
+                assertEquals(rawLabel, disk.channels().getFirst().getSystem());
+                assertEquals("My control", disk.channels().getFirst().getName());
+                assertEquals(rawLabel, disk.aliasListDefinitions().stream().filter(list -> list.getId() == saved.aliasListId())
+                    .findFirst().orElseThrow().getName());
+
+                var local = evidence(protocol, "dmr".equals(protocol) ? "CAPACITY_PLUS" : "TYPE_D", null,
+                    5, 454_000_000, "dmr".equals(protocol) ? Map.of("channel_mode", "TRUNKED") :
+                        Map.of("channel_mode", "TRUNKED", "transmission_mode", "TYPE_D"));
+                var localReview = fixture.channels.discoveryTrunkedReview(protocol, 454_000_000, "Tuner", local);
+                assertEquals(local.systemName(), localReview.template().system());
+                assertTrue(requestedKeys.isEmpty(), "A local site ID does not become a global catalog key");
+            }
+        }
+    }
 
     @Test
     void savesWeakVerifiedP25WithoutReintroducingAScoreGateOrAcceptingAModulationOverride() throws Exception
@@ -452,6 +499,11 @@ class TrunkedDiscoveryChannelPersistenceTest
 
         Fixture(Path root) throws Exception
         {
+            this(root, key -> null);
+        }
+
+        Fixture(Path root, Function<String,String> systemNames) throws Exception
+        {
             database = SdrTrunkDatabasePath.getDatabasePath(root);
             SdrTrunkTestDatabase.create(database);
             var preferences = new UserPreferences()
@@ -476,7 +528,7 @@ class TrunkedDiscoveryChannelPersistenceTest
                 }
             };
             manager.init();
-            channels = ChannelAdministrationServiceTestSupport.create(manager);
+            channels = ChannelAdministrationServiceTestSupport.create(manager, systemNames);
         }
 
         @Override public void close()

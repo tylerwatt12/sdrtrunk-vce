@@ -52,7 +52,7 @@ final class RetainedStatisticsCatalog
         "coalesce(printf('%.6f',config.primary_frequency_hz/1000000.0),'') || ' ' || " +
         "config.configuration_id) LIKE ? ESCAPE '\\'";
     private static final String SYSTEM_LABEL = "coalesce(" +
-        StatsSystemNameResolver.configuredNameSql("system") + ", system.system_key)";
+        StatsSystemNameResolver.displayNameSql("system") + ", system.system_key)";
     private static final String SITE_SELECT = """
         SELECT config.configuration_id,
                CASE WHEN config.channel_kind='TRUNKED' AND p25.channel_id IS NULL
@@ -519,10 +519,9 @@ final class RetainedStatisticsCatalog
                 "LIKE ? ESCAPE '\\'" + (foreign ?
                 " OR printf('%05X',keys.foreign_wacn) LIKE ? ESCAPE '\\' " +
                     "OR CAST(keys.foreign_system_id AS TEXT) LIKE ? ESCAPE '\\' " +
-                    "OR EXISTS (SELECT 1 FROM radio_system foreign_system WHERE foreign_system.system_key=" +
-                    "printf('p25:%05x:%03x',keys.foreign_wacn,keys.foreign_system_id) AND lower(coalesce(" +
-                    StatsSystemNameResolver.configuredNameSql("foreign_system") +
-                    ",'')) LIKE ? ESCAPE '\\')" : "") + ")";
+                    "OR lower(coalesce(" +
+                    StatsSystemNameResolver.p25NameSql("keys.foreign_wacn", "keys.foreign_system_id") +
+                    ",'')) LIKE ? ESCAPE '\\'" : "") + ")";
             parameters.add(like(search));
             parameters.add(like(search));
             if(foreign)
@@ -1373,6 +1372,7 @@ final class RetainedStatisticsCatalog
                     statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
                     statement.execute("PRAGMA query_only=ON");
                 }
+                StatsSystemNameResolver.installCatalog(connection);
                 connection.setAutoCommit(false);
                 T result = query.run(connection);
                 if(result instanceof Page page)

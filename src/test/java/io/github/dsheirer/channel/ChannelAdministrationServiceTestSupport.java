@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel;
 
 import io.github.dsheirer.configuration.ConfigurationManager;
+import java.util.function.Function;
 
 /** Creates channel administration without starting the process-wide JavaFX toolkit. */
 public final class ChannelAdministrationServiceTestSupport
@@ -16,6 +17,11 @@ public final class ChannelAdministrationServiceTestSupport
 
     public static ChannelAdministrationService create(ConfigurationManager manager)
     {
-        return new ChannelAdministrationService(manager, new ChannelProtocolRegistry(), false);
+        return create(manager, key -> null);
+    }
+
+    public static ChannelAdministrationService create(ConfigurationManager manager, Function<String,String> systemNames)
+    {
+        return new ChannelAdministrationService(manager, new ChannelProtocolRegistry(), false, systemNames);
     }
 }

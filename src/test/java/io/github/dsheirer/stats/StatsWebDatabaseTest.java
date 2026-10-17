@@ -3313,6 +3313,7 @@ class StatsWebDatabaseTest
             assertTrue(aliasPlan.stream().noneMatch(detail -> detail.contains("receiver_activity_event")),
                 () -> "Alias discovery must not scan detailed activity, plan was: " + aliasPlan);
 
+            StatsSystemNameResolver.installCatalog(connection);
             String directorySql = "WITH radio_systems AS (" + StatsWebDatabase.radioSystemSummarySelect() +
                 ") SELECT * FROM radio_systems ORDER BY last_seen_ms DESC, radio_system_key LIMIT ? OFFSET ?";
             List<String> directoryPlan = explain(connection, directorySql, 26, 0);
@@ -3754,6 +3755,7 @@ class StatsWebDatabaseTest
 
     private static List<String> explain(Connection connection, String sql, Object... parameters) throws Exception
     {
+        StatsSystemNameResolver.installCatalog(connection);
         try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
         {
             for(int index = 0; index < parameters.length; index++)

@@ -30,13 +30,15 @@ class SpectrumDiscoveryServiceTest
     {
         for(String protocol: List.of("p25-phase1", "dmr", "nxdn"))
         {
-            var template = new ChannelDefinition(null, protocol, "P25 BEE00-49F", "Site 02-0C", "Control",
+            var template = new ChannelDefinition(null, protocol, "Example catalog suggestion", "Site 02-0C", "Control",
                 null, 23, new ChannelDefinition.Source(List.of(853_162_500L), null, null, 853_162_500L,
                 "Tuner", null), Map.of(), List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
             var aliases = List.of(new ChannelAdministrationService.DiscoveryAliasList(23, "Existing List", true));
-            var original = new ChannelAdministrationService.DiscoveryReview(7, template, aliases, 23L, "P25 BEE00-49F");
+            var original = new ChannelAdministrationService.DiscoveryReview(7, template, aliases, 23L, "Example catalog suggestion");
             assertSame(original, SpectrumDiscoveryService.directoryReview(original,
                 RadioReferenceDiscoveryResolver.Result.pending()));
+            assertSame(original, SpectrumDiscoveryService.directoryReview(original,
+                RadioReferenceDiscoveryResolver.Result.manual("no_match", "No directory match")));
             var match = new RadioReferenceDiscoveryResolver.Match(100, 200,
                 "Metropolitan Emergency Communications Network", "North", List.of(),
                 "https://www.radioreference.com/db/sid/100", "https://www.radioreference.com/db/site/200");

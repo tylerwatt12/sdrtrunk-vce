@@ -19,12 +19,70 @@ import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SpectrumChannelCreationTest
 {
     @TempDir Path temporary;
+
+    @Test void catalogNamesSuggestANewP25SystemAndAliasListAndAcceptedNamesRemainOrdinaryConfiguration() throws Exception
+    {
+        var names = new java.util.HashMap<>(Map.of("p25:bee00:123", "Example County / Example Regional Network"));
+        try(Fixture fixture = fixture(names::get))
+        {
+            var identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            long revision = fixture.channels.currentRevision();
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            assertEquals("Example County / Example Regional Network", review.template().system());
+            assertEquals(review.template().system(), review.defaultNewAliasListName());
+            assertEquals("Site 01-02", review.template().site(), "A system-name catalog supplies no site name");
+            assertTrue(review.aliasLists().isEmpty());
+            assertEquals(revision, fixture.channels.currentRevision());
+            assertTrue(fixture.manager.getChannelModel().getChannels().isEmpty(), "Reviewing suggestions does not save them");
+
+            var saved = fixture.channels.createDiscovered(review.template(), identity, null, review.revision(), false);
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertEquals("Example County / Example Regional Network", disk.channels().getFirst().getSystem());
+            assertEquals(identity, disk.channels().getFirst().getP25SiteIdentity());
+            assertEquals("Example County / Example Regional Network", disk.aliasListDefinitions().stream()
+                .filter(list -> list.getId() == saved.aliasListId()).findFirst().orElseThrow().getName());
+
+            names.put("p25:bee00:123", "A newer catalog label");
+            var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner",
+                new P25SiteIdentity(0xBEE00, 0x123, 1, 3), "CQPSK");
+            assertEquals("Example County / Example Regional Network", next.template().system());
+            assertEquals(saved.aliasListId(), next.suggestedAliasListId());
+            assertEquals("P25 BEE01-123", fixture.channels.discoveryReview("p25-phase1", 853_012_500, "Tuner",
+                new P25SiteIdentity(0xBEE01, 0x123, 1, 3), "C4FM").template().system(),
+                "The same SysID under a different WACN does not inherit the name");
+        }
+    }
+
+    @Test void anExistingRawP25LabelAndOperatorEditedCreationNamesAlwaysBeatTheCatalog() throws Exception
+    {
+        try(Fixture fixture = fixture(key -> "Catalog suggestion"))
+        {
+            var identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+            var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            var template = review.template();
+            var edited = new ChannelDefinition(null, template.protocolId(), "P25 BEE00-123", "My site", "My channel",
+                null, 0, template.source(), template.settings(), List.of(), List.of(), List.of(), List.of(),
+                ChannelDefinition.Observed.EMPTY);
+            var saved = fixture.channels.createDiscovered(edited, identity, "P25 BEE00-123", review.revision(), false);
+            var next = fixture.channels.discoveryReview("p25-phase1", 852_012_500, "Tuner",
+                new P25SiteIdentity(0xBEE00, 0x123, 1, 3), "C4FM");
+            assertEquals("P25 BEE00-123", next.template().system());
+            assertEquals("P25 BEE00-123", next.defaultNewAliasListName());
+            var disk = new ConfigurationRepository(fixture.database).load();
+            assertEquals("P25 BEE00-123", disk.channels().getFirst().getSystem());
+            assertEquals("My site", disk.channels().getFirst().getSite());
+            assertEquals("My channel", disk.channels().getFirst().getName());
+            assertEquals("P25 BEE00-123", disk.aliasListDefinitions().stream()
+                .filter(list -> list.getId() == saved.aliasListId()).findFirst().orElseThrow().getName());
+        }
+    }
 
     @Test void discoveryReusesFriendlyNamesAndRecognizesAnAlreadySavedServingSite() throws Exception
     {
@@ -317,6 +375,11 @@ class SpectrumChannelCreationTest
 
     private Fixture fixture() throws Exception
     {
+        return fixture(key -> null);
+    }
+
+    private Fixture fixture(Function<String,String> systemNames) throws Exception
+    {
         Path root = temporary.resolve(java.util.UUID.randomUUID().toString());
         Path database = SdrTrunkDatabasePath.getDatabasePath(root);
         SdrTrunkTestDatabase.create(database);
@@ -328,7 +391,7 @@ class SpectrumChannelCreationTest
         };
         ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null);
         manager.init();
-        return new Fixture(manager, ChannelAdministrationServiceTestSupport.create(manager), database);
+        return new Fixture(manager, ChannelAdministrationServiceTestSupport.create(manager, systemNames), database);
     }
 
     private record Fixture(ConfigurationManager manager, ChannelAdministrationService channels, Path database)

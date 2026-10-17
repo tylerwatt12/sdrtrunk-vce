@@ -237,6 +237,29 @@ class SpectrumSearchServiceTest
     }
 
     @Test
+    void creationSuggestionsFlowThroughBulkReviewAndSaveWithoutBecomingRadioReferenceEvidence() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A))
+        {
+            fixture.channels.systemName = "Example County / Example Regional Network";
+            var completed = fixture.complete(fixture.open().jobId());
+            var row = completed.candidates().getFirst();
+            assertEquals(fixture.channels.systemName, row.systemName());
+            assertEquals(fixture.channels.systemName, completed.aliasGroups().getFirst().defaultNewAliasListName());
+            assertFalse(row.radioReference().matched());
+            assertNull(row.radioReference().match());
+            var identity = row.trunkedEvidence().identity();
+            var saved = fixture.service.save(completed.jobId(), new SpectrumSearchService.SaveRequest(completed.revision(),
+                List.of(new SpectrumSearchService.SaveCandidate(row.candidateId(), "My control channel", false)), List.of()));
+            assertEquals(fixture.channels.systemName, fixture.channels.definitions.getFirst().system());
+            assertEquals("My control channel", fixture.channels.definitions.getFirst().name());
+            assertEquals(List.of(fixture.channels.systemName), fixture.channels.aliasNames);
+            assertEquals(identity, saved.candidates().getFirst().trunkedEvidence().identity());
+            assertFalse(saved.candidates().getFirst().radioReference().matched());
+        }
+    }
+
+    @Test
     void lateDirectoryNameRefreshesTheGeneratedGroupAndDefaultSaveName() throws Exception
     {
         NamingGateway gateway = new NamingGateway();

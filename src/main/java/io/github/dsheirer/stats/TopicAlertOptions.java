@@ -6,6 +6,7 @@ import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -19,6 +20,11 @@ final class TopicAlertOptions
 {
     static Map<String,Object> read(Path database)
     {
+        return read(database, RadioSystemNameCatalog.bundled());
+    }
+
+    static Map<String,Object> read(Path database, RadioSystemNameCatalog systemNames)
+    {
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("aliases", List.of()); // Alias/radio/talkgroup selectors use complete server-side name search.
         result.put("protocol_families", List.of("P25", "DMR", "NXDN", "AM", "NBFM").stream().map(family -> option(family, family, "")).toList());
@@ -31,12 +37,15 @@ final class TopicAlertOptions
             .map(value -> option(value.name(), value.toString(), "")).toList());
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
+            StatsSystemNameResolver.installCatalog(connection, systemNames);
             List<Map<String,Object>> systems = StatsSqlRows.queryRows(connection, "SELECT system.system_key,system.protocol_code," +
-                StatsSystemNameResolver.configuredNameSql("system") + " AS system_name FROM radio_system system ORDER BY system_name,system.system_key");
+                StatsSystemNameResolver.displayNameSql("system") + " AS system_name FROM radio_system system ORDER BY system_name,system.system_key");
             result.put("systems", systems.stream().map(row -> sourceOption(text(row, "system_key"),
                 named(row, "system_name", "system_key"), text(row, "system_key"), StatsApiProtocol.fromCode(((Number)row.get("protocol_code")).longValue()).name())).toList());
             List<Map<String,Object>> channels = StatsSqlRows.queryRows(connection,
                 WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT + " ORDER BY config.sort_order,config.id");
+            StatsSystemNameResolver names = new StatsSystemNameResolver(connection, systemNames);
+            for(int index = 0; index < channels.size(); index++) channels.set(index, names.enrichMap(channels.get(index)));
             result.put("channels", channels.stream().map(row -> {
                 Map<String,Object> option = sourceOption(text(row, "configuration_id"), channelLabel(row),
                     text(row, "radio_system_key"), AlertProtocolFamily.fromDecoder(text(row, "decoder")));

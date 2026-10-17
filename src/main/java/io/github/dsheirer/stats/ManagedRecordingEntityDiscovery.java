@@ -2,6 +2,7 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -24,8 +25,15 @@ import org.sqlite.ProgressHandler;
 final class ManagedRecordingEntityDiscovery
 {
     private final Path mMainDatabase;
+    private final RadioSystemNameCatalog mSystemNames;
 
-    ManagedRecordingEntityDiscovery(Path mainDatabase) { mMainDatabase = mainDatabase; }
+    ManagedRecordingEntityDiscovery(Path mainDatabase) { this(mainDatabase, RadioSystemNameCatalog.bundled()); }
+
+    ManagedRecordingEntityDiscovery(Path mainDatabase, RadioSystemNameCatalog systemNames)
+    {
+        mMainDatabase = mainDatabase;
+        mSystemNames = java.util.Objects.requireNonNull(systemNames);
+    }
 
     Map<String,Object> search(Path catalog, String kind, String query, String systemKey, Long fromMs, Long toMs,
                               int offset, int limit, String sort) throws SQLException
@@ -74,7 +82,7 @@ final class ManagedRecordingEntityDiscovery
             Map<String,Entity> entities = aggregate(connection, kind, systemKey, fromMs, toMs);
             Map<String,Channel> channels = labels ? channels(connection) : Map.of();
             Map<String,String> sites = labels && "site".equals(kind) ? siteNames(connection) : Map.of();
-            StatsSystemNameResolver names = labels ? new StatsSystemNameResolver(connection) : null;
+            StatsSystemNameResolver names = new StatsSystemNameResolver(labels ? connection : null, mSystemNames);
             Map<String,String> systemNames = new LinkedHashMap<>();
             List<Map<String,Object>> rows = new ArrayList<>();
             String match = query != null ? query.toLowerCase(Locale.ROOT) : null;
@@ -83,7 +91,7 @@ final class ManagedRecordingEntityDiscovery
                 checkDeadline(deadline);
                 Map<String,Object> row = entity.row(kind);
                 String key = string(row.get("system_key"));
-                if(key != null && names != null)
+                if(key != null)
                 {
                     if(!systemNames.containsKey(key))
                         systemNames.put(key, string(names.enrichMap(Map.of("system_key",key)).get("system_name")));

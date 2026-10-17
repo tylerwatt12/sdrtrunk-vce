@@ -4,6 +4,7 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,39 @@ import org.junit.jupiter.api.io.TempDir;
 class TopicAlertOptionsTest
 {
     @TempDir Path directory;
+
+    @Test void sourceOptionsUseCatalogFallbackWhileKeepingSavedRawSystemLabels() throws Exception
+    {
+        Path database = directory.resolve("catalog-options.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(var connection = SdrTrunkDatabase.open(database); var sql = connection.createStatement())
+        {
+            for(int index = 1; index <= 2; index++)
+            {
+                String id = "00000000-0000-4000-8000-%012d".formatted(index);
+                String label = index == 1 ? "" : "P25 00002-002";
+                sql.execute("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,system_name," +
+                    "site_name,name,alias_list_id,decoder_type,config_json) VALUES('" + id + "','TRUNKED'," + index +
+                    ",'" + label + "','North','Control',(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'P25_PHASE1','{}')");
+                sql.execute("INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code,p25_wacn," +
+                    "p25_system_id,first_seen_ms,last_seen_ms) VALUES(" + index + ",'p25:%05x:%03x',1,0,%d,%d,1,2)"
+                        .formatted(index, index, index, index));
+                sql.execute("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms," +
+                    "radio_system_id,radio_system_assigned_at_ms) VALUES(" + index + ",'" + id + "',1,2," + index + ",1)");
+            }
+        }
+        var names = RadioSystemNameCatalog.parse("P25, 00001.001, \"Example catalog network\"\n" +
+            "P25, 00002.002, \"Hidden catalog label\"");
+        var options = TopicAlertOptions.read(database, names);
+        assertEquals("Example catalog network", rows(options, "systems").stream()
+            .filter(row -> "p25:00001:001".equals(row.get("value"))).findFirst().orElseThrow().get("label"));
+        assertEquals("P25 00002-002", rows(options, "systems").stream()
+            .filter(row -> "p25:00002:002".equals(row.get("value"))).findFirst().orElseThrow().get("label"));
+        assertTrue(rows(options, "channels").getFirst().get("label").toString().contains("Example catalog network"));
+        assertTrue(rows(options, "channels").getLast().get("label").toString().contains("P25 00002-002"));
+        assertFalse(options.toString().contains("Hidden catalog label"));
+    }
+
     @Test void catalogKeepsNamedSourcesAndTopologySeparateFromDecodedProtocolCompatibility() throws Exception
     {
         Path database = directory.resolve("options.sqlite"); SdrTrunkDatabaseStartup.createGlobalDatabase(database);
