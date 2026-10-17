@@ -3,7 +3,7 @@ import { href as entityRefHref } from '../core/entity-ref.js?v=1';
 export const ALERT_TRIGGERS = Object.freeze([
   ['call', 'Call activity'], ['emergency', 'Emergency alarm received'], ['paging', 'Paging or call alert'],
   ['affiliation', 'Radio affiliation'], ['command', 'Radio control message'],
-  ['event', 'Decoded message'], ['tone', 'Decoded AMBE tone'], ['dcs', 'DCS code'],
+  ['event', 'Decoded message'], ['tone', 'Tone detected'], ['dcs', 'DCS code'],
   ['health', 'Tuner or system health issue']
 ]);
 export const ALERT_PROTOCOL_FAMILIES = Object.freeze([
@@ -14,7 +14,7 @@ export const ALERT_FIELDS = Object.freeze([
   ['alias_id', 'Alias'], ['channel_id', 'Channel'], ['system_key', 'Radio system'], ['site_id', 'Site'],
   ['protocol', 'Message protocol'], ['event_type', 'Decoded message type'], ['encrypted', 'Encrypted'],
   ['emergency', 'Emergency flag'], ['duration_seconds', 'Call duration (seconds)'],
-  ['tone', 'AMBE tone'], ['dcs', 'DCS code'], ['issue', 'Health issue'],
+  ['tone', 'Tone'], ['dcs', 'DCS code'], ['issue', 'Health issue'],
   ['severity', 'Health severity'], ['state', 'Health state']
 ]);
 export const ALERT_OPERATORS = Object.freeze([
@@ -59,8 +59,21 @@ export function alertSourceChoices(choices, family = '', systemKey = '') {
 }
 export function alertActivityChoices(family = '') {
   return ALERT_TRIGGERS.filter(([trigger]) => !family ||
-    (trigger !== 'tone' || ['P25', 'DMR'].includes(family)) &&
-    (trigger !== 'dcs' || ['AM', 'NBFM'].includes(family)));
+    trigger !== 'dcs' || ['AM', 'NBFM'].includes(family));
+}
+export function alertToneChoices(choices, family = '', decoder = '') {
+  const analog = ['AM', 'NBFM'].includes(family);
+  const phaseOne = ['P25_PHASE1', 'P25_CONVENTIONAL'].includes(decoder);
+  return (Array.isArray(choices) ? choices : []).filter(choice => {
+    const code = String(choice?.value ?? choice?.[0] ?? '');
+    if (code === 'INVALID') return false;
+    if (!analog && !phaseOne) return true;
+    if (analog && /^DTMF_(?:[0-9A-D]|STAR|POUND)$/.test(code)) return true;
+    const single = /^HZ_(\d+)_(\d+)$/.exec(code);
+    if (!single) return false;
+    const frequency = Number(`${single[1]}.${single[2]}`);
+    return frequency >= (analog ? 281.25 : 187.5) && frequency <= 3000;
+  });
 }
 export function alertRuleDescription(rule, topicName = '') {
   const trigger = ALERT_TRIGGERS.find(([id]) => id === rule.trigger)?.[1] || 'Decoded event';

@@ -1,8 +1,8 @@
 import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS, ALERT_TEMPLATE_FIELDS, cloneAlert,
   newAlertRule, newAlertCondition, alertRuleDescription,
-  alertSourceChoices, alertActivityChoices, alertActionLabel, alertPopupAction,
+  alertSourceChoices, alertActivityChoices, alertToneChoices, alertActionLabel, alertPopupAction,
   visibleAlertTopics, availableAlertTopics, visibleAlertHistory, validAlertSiteUrl,
-  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=3';
+  directPushSupport, vapidKeyBytes } from './alerts-model.js?v=4';
 import { readAlertDevice, saveAlertDevice, forgetAlertDevice } from './alerts-device-storage.js?v=1';
 import { reconcileDirectSubscription, syncDirectWorkerDevice } from './alerts-direct.js?v=1';
 import { enrollmentQrCanvas } from './alerts-qr.js?v=2';
@@ -573,7 +573,7 @@ export function createAlertsWorkspace(deps) {
       capabilityCopy.hidden = value !== 'tone';
       healthCopy.hidden = value !== 'health';
     });
-    const capabilityCopy = paragraph('AMBE tones require DMR or P25 Phase II.');
+    const capabilityCopy = paragraph('Matches detected tones when the call ends.');
     capabilityCopy.hidden = draft.trigger !== 'tone';
     const healthCopy = paragraph('Matches tuner and system health issues.');
     healthCopy.hidden = draft.trigger !== 'health';
@@ -584,10 +584,10 @@ export function createAlertsWorkspace(deps) {
     const scopeHost = node('fieldset', 'alerts-source ui-surface-inset alerts-form');
     const sourceChoices = (key, systemKey = '') => alertSourceChoices(options(key), draft.protocol_family, systemKey);
     const selectedChannel = () => options('channels').find(channel => channel.value === draft.channel_id);
+    const sourceFamily = () => draft.protocol_family || selectedChannel()?.protocol_family ||
+      options('systems').find(system => system.value === draft.system_key)?.protocol_family || '';
     function refreshActivity() {
-      const family = draft.protocol_family || selectedChannel()?.protocol_family ||
-        options('systems').find(system => system.value === draft.system_key)?.protocol_family || '';
-      const choices = alertActivityChoices(family);
+      const choices = alertActivityChoices(sourceFamily());
       const supported = choices.some(([id]) => id === draft.trigger);
       if (!supported) choices.push([draft.trigger, `${ALERT_TRIGGERS.find(([id]) => id === draft.trigger)?.[1] || draft.trigger} · unavailable for this source`]);
       trigger.control.replaceChildren(...select(choices, draft.trigger).childNodes);
@@ -669,7 +669,8 @@ export function createAlertsWorkspace(deps) {
     function fieldOptions(field) {
       return ({ channel_id: sourceChoices('channels'), system_key: sourceChoices('systems'), site_id: sourceChoices('sites').filter(
         site => !draft.system_key || !site.system_key || site.system_key === draft.system_key),
-        protocol: options('protocols'), event_type: options('message_types'), tone: options('tone_types'),
+        protocol: options('protocols'), event_type: options('message_types'),
+        tone: alertToneChoices(options('tone_types'), sourceFamily(), selectedChannel()?.decoder_type),
         dcs: options('dcs_codes'), issue: options('health_issues').length ? options('health_issues') :
           receiverHealthAlertGroups.flatMap(group => group.alerts.map(alert => ({ value: alert.id, label: alert.name }))),
         severity: [['info', 'Information'], ['warning', 'Warning'], ['critical', 'Critical']],

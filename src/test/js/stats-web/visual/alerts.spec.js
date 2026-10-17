@@ -41,7 +41,10 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
       { value: 'conventional-channel', label: 'Local repeater', protocol_family: 'NBFM', channel_kind: 'CONVENTIONAL', decoder_type: 'NBFM', system_key: '' }],
     sites: [{ value: '1', label: 'North site', system_key: systemKey, protocol_family: 'P25', channel_id: channelId }],
     protocols: [{ value: 'APCO25', label: 'P25 Phase I' }, { value: 'DCS', label: 'DCS' }], message_types: [{ value: 'PAGE', label: 'Page' }],
-    tone_types: [{ value: 'CALL_PROGRESS_TONE', label: 'Call progress tone' }], dcs_codes: [{ value: 'N023', label: 'DCS 023' }] },
+    tone_types: [{ value: 'INVALID', label: 'INVALID' }, { value: 'CALL_PROGRESS', label: 'Call progress tone' },
+      { value: 'DTMF_1', label: 'DTMF 1' }, { value: 'KNOX_1', label: 'KNOX 1' },
+      { value: 'HZ_1000_00', label: 'TONE 1000.00' }],
+    dcs_codes: [{ value: 'N023', label: 'DCS 023' }] },
     config: { revision: 1, enabled: true, mode: 'proxy', site_url: '', sender_label: 'VCE installation', registration: { status: 'approved', sender_id: 'synthetic-sender' } },
     writes: [], requests: [], pending: [], enrollmentStatus: 'pending', publicMode: 'proxy', publicReady: true,
     deviceMode: 'proxy', deviceStatus: 'connected', deviceTopics: ['fire'],
@@ -546,14 +549,126 @@ test('activity choices reflect source capabilities without clearing an existing 
   await family.selectOption('DMR');
   await expect(activity.locator('option[value="dcs"]')).toHaveCount(0);
   await activity.selectOption('tone');
+  for (const protocol of ['NBFM', 'AM', 'NXDN', 'P25']) {
+    await family.selectOption(protocol);
+    await expect(activity).toHaveValue('tone');
+    await expect(activity.locator('option[value="tone"]')).toHaveText('Tone detected');
+    await expect(dialog.getByText('Choose another activity or source.', { exact: true })).toBeHidden();
+  }
   await family.selectOption('NBFM');
-  await expect(activity).toHaveValue('tone');
-  await expect(activity.locator('option[value="tone"]')).toContainText('unavailable for this source');
-  await expect(dialog).toContainText('Choose another activity or source.');
   await activity.selectOption('dcs');
   await family.selectOption('AM');
   await expect(activity).toHaveValue('dcs');
+  await family.selectOption('NXDN');
+  await expect(activity).toHaveValue('dcs');
+  await expect(activity.locator('option[value="dcs"]')).toContainText('unavailable for this source');
+  await expect(dialog.getByText('Choose another activity or source.', { exact: true })).toBeVisible();
   await expect(activity.locator('option[value="health"]')).toHaveCount(1);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+for (const protocol of ['NBFM', 'AM', 'NXDN']) {
+  for (const source of ['protocol', 'channel']) {
+    test(`tone alerts save and reopen for ${protocol} selected by ${source}`, async ({ page }) => {
+      const phone = protocol === 'AM' && source === 'channel';
+      await page.setViewportSize({ width: phone ? 320 : 1280, height: phone ? 844 : 900 });
+      const { state, fixture } = await installAlerts(page, { theme: phone ? 'dark' : 'light' });
+      const selectedChannel = `tone-channel-${protocol.toLowerCase()}`;
+      state.options.channels.push({ value: selectedChannel, label: `${protocol} Dispatch`, protocol_family: protocol,
+        channel_kind: 'CONVENTIONAL', decoder_type: protocol, system_key: '' });
+      await page.goto('/app.html?view=alerts');
+      await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+      const name = `${protocol} paging tone by ${source}`;
+      await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill(name);
+      if (source === 'protocol') {
+        await dialog.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption(protocol);
+      } else {
+        await dialog.getByRole('button', { name: 'Channel', exact: true }).click();
+        await dialog.getByRole('combobox', { name: 'Channel', exact: true }).selectOption(selectedChannel);
+        await expect(dialog.getByRole('combobox', { name: 'Protocol', exact: true })).toHaveValue('');
+        await expect(dialog).toContainText(`Conventional · ${protocol} · ${protocol} Dispatch`);
+      }
+      const activity = dialog.getByRole('combobox', { name: 'Activity', exact: true });
+      await expect(activity.locator('option[value="tone"]')).toHaveText('Tone detected');
+      await activity.selectOption('tone');
+      await expect(dialog.getByText('Matches detected tones when the call ends.', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Choose another activity or source.', { exact: true })).toBeHidden();
+      await expect(dialog).not.toContainText('AMBE tones require');
+      if (phone || protocol === 'NBFM' && source === 'protocol') {
+        await expectNoHorizontalOverflow(page, ['.ui-modal-dialog', '.alerts-form']);
+        await auditScreenshot(page, `tone-editor-${protocol.toLowerCase()}-${source}-${phone ? 'dark-phone' : 'light-desktop'}`);
+      }
+      await dialog.getByRole('button', { name: 'Conditions', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Add condition', exact: true }).click();
+      const field = dialog.getByRole('combobox', { name: 'Field', exact: true });
+      await expect(field.locator('option[value="tone"]')).toHaveText('Tone');
+      await field.selectOption('tone');
+      const tone = dialog.getByRole('combobox', { name: 'Value', exact: true });
+      await expect(tone.locator('option[value="INVALID"]')).toHaveCount(0);
+      await expect(tone.locator('option[value="DTMF_1"]')).toHaveCount(1);
+      await expect(tone.locator('option[value="CALL_PROGRESS"]')).toHaveCount(protocol === 'NXDN' ? 1 : 0);
+      await expect(tone.locator('option[value="KNOX_1"]')).toHaveCount(protocol === 'NXDN' ? 1 : 0);
+      await tone.selectOption('HZ_1000_00');
+      if (phone) await auditScreenshot(page, 'tone-editor-am-conditions-dark-phone');
+      await revealPrimaryAction(page, dialog.getByRole('button', { name: 'Create rule', exact: true }));
+      await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
+      await expect(dialog).toBeHidden();
+      expect(state.writes).toHaveLength(1);
+      expect(state.writes[0].value.rule).toMatchObject({
+        trigger: 'tone', protocol_family: source === 'protocol' ? protocol : '', protocol: '',
+        channel_id: source === 'channel' ? selectedChannel : '',
+        conditions: { op: 'all', items: [{ field: 'tone', operator: 'is', value: 'HZ_1000_00' }] }
+      });
+      await page.locator('.alerts-management-rules').getByRole('button', { name, exact: true }).click();
+      const edit = page.getByRole('dialog', { name: 'Edit alert rule', exact: true });
+      await expect(edit.getByRole('combobox', { name: 'Activity', exact: true })).toHaveValue('tone');
+      await expect(edit.getByRole('combobox', { name: 'Activity', exact: true }).locator('option:checked')).toHaveText('Tone detected');
+      await expect(edit.getByRole('combobox', { name: 'Protocol', exact: true })).toHaveValue(source === 'protocol' ? protocol : '');
+      if (source === 'channel') await expect(edit.getByRole('combobox', { name: 'Channel', exact: true })).toHaveValue(selectedChannel);
+      await expect(edit.getByText('Choose another activity or source.', { exact: true })).toBeHidden();
+      await edit.getByRole('button', { name: 'Conditions', exact: true }).click();
+      await expect(edit.getByRole('combobox', { name: 'Field', exact: true })).toHaveValue('tone');
+      await expect(edit.getByRole('combobox', { name: 'Value', exact: true })).toHaveValue('HZ_1000_00');
+      expect(fixture.pageErrors).toEqual([]);
+    });
+  }
+}
+
+test('tone choices follow a source change and preserve an existing encoded tone condition', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  await page.goto('/app.html?view=alerts');
+  await page.getByRole('button', { name: 'Create alert rule', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
+  await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Existing encoded tone');
+  await dialog.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption('NXDN');
+  await dialog.getByRole('combobox', { name: 'Activity', exact: true }).selectOption('tone');
+  await dialog.getByRole('button', { name: 'Conditions', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add condition', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Field', exact: true }).selectOption('tone');
+  await dialog.getByRole('combobox', { name: 'Value', exact: true }).selectOption('CALL_PROGRESS');
+  await dialog.getByRole('button', { name: 'When', exact: true }).click();
+  await dialog.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption('NBFM');
+  await dialog.getByRole('button', { name: 'Conditions', exact: true }).click();
+  const tone = dialog.getByRole('combobox', { name: 'Value', exact: true });
+  await expect(tone).toHaveValue('CALL_PROGRESS');
+  await expect(tone.locator('option:checked')).toHaveText('CALL_PROGRESS · unavailable');
+  await expect(tone.locator('option[value="KNOX_1"]')).toHaveCount(0);
+  await expect(tone.locator('option[value="DTMF_1"]')).toHaveCount(1);
+  await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.writes[0].value.rule.conditions.items[0].value).toBe('CALL_PROGRESS');
+  await page.locator('.alerts-management-rules').getByRole('button', { name: 'Existing encoded tone', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit alert rule', exact: true });
+  await edit.getByRole('button', { name: 'Conditions', exact: true }).click();
+  await expect(edit.getByRole('combobox', { name: 'Value', exact: true })).toHaveValue('CALL_PROGRESS');
+  await expect(edit.getByRole('combobox', { name: 'Value', exact: true }).locator('option:checked')).toContainText('unavailable');
+  await edit.getByRole('button', { name: 'When', exact: true }).click();
+  await edit.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption('NXDN');
+  await edit.getByRole('button', { name: 'Conditions', exact: true }).click();
+  await expect(edit.getByRole('combobox', { name: 'Value', exact: true })).toHaveValue('CALL_PROGRESS');
+  await expect(edit.getByRole('combobox', { name: 'Value', exact: true }).locator('option:checked')).toHaveText('Call progress tone');
+  await expect(edit.getByRole('combobox', { name: 'Value', exact: true }).locator('option[value="KNOX_1"]')).toHaveCount(1);
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -1001,16 +1116,16 @@ test('rule builder preserves nested conditions and uses typed tone codes', async
   const dialog = page.getByRole('dialog', { name: 'Create alert rule', exact: true });
   await dialog.getByRole('textbox', { name: 'Rule name', exact: true }).fill('Tactical tone');
   await dialog.getByRole('combobox', { name: 'Activity', exact: true }).selectOption('tone');
-  await expect(dialog).toContainText('P25 Phase II');
+  await expect(dialog).toContainText('Matches detected tones when the call ends.');
   await dialog.getByRole('button', { name: 'Conditions', exact: true }).click();
   await dialog.getByRole('button', { name: 'Add group', exact: true }).click();
   await dialog.getByRole('combobox', { name: 'Field', exact: true }).selectOption('tone');
-  await dialog.getByRole('combobox', { name: 'Value', exact: true }).selectOption('CALL_PROGRESS_TONE');
+  await dialog.getByRole('combobox', { name: 'Value', exact: true }).selectOption('CALL_PROGRESS');
   await dialog.getByRole('button', { name: 'Create rule', exact: true }).click();
   await expect(dialog).toBeHidden();
   const rule = state.writes[0].value.rule;
   expect(rule.conditions.items[0].op).toBe('any');
-  expect(rule.conditions.items[0].items[0].value).toBe('CALL_PROGRESS_TONE');
+  expect(rule.conditions.items[0].items[0].value).toBe('CALL_PROGRESS');
   expect(rule.click_action).toBe('details');
   expect(fixture.pageErrors).toEqual([]);
 });

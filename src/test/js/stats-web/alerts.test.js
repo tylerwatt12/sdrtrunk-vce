@@ -41,11 +41,32 @@ async function main() {
   assert.deepEqual(model.alertSourceChoices(sources, 'P25').map(value => value.value), ['p25']);
   assert.deepEqual(model.alertSourceChoices(sources, '', 'regional').map(value => value.value), ['dmr']);
   assert.deepEqual(model.alertSourceChoices(sources, 'P25', 'regional'), []);
-  assert.equal(model.alertActivityChoices('NBFM').some(([key]) => key === 'tone'), false);
-  assert.equal(model.alertActivityChoices('NBFM').some(([key]) => key === 'dcs'), true);
-  assert.equal(model.alertActivityChoices('P25').some(([key]) => key === 'tone'), true);
-  assert.equal(model.alertActivityChoices('P25').some(([key]) => key === 'dcs'), false);
-  assert.equal(model.alertActivityChoices('AM').some(([key]) => key === 'dcs'), true);
+  for (const family of ['', 'P25', 'DMR', 'NXDN', 'AM', 'NBFM']) {
+    assert.deepEqual(model.alertActivityChoices(family).find(([key]) => key === 'tone'), ['tone', 'Tone detected'],
+      `Tone alerts are available for ${family || 'all protocols'}`);
+    assert.equal(model.alertActivityChoices(family).some(([key]) => key === 'dcs'), ['', 'AM', 'NBFM'].includes(family),
+      `DCS availability still reflects ${family || 'all protocols'}`);
+  }
+  assert.deepEqual(model.ALERT_FIELDS.find(([key]) => key === 'tone'), ['tone', 'Tone']);
+  assert.equal(model.describeAlertConditions({ field: 'tone', operator: 'is', value: 'HZ_1000_00' }), 'Tone is HZ_1000_00');
+  const toneCodes = ['INVALID', 'DTMF_1', 'DTMF_STAR', 'DTMF_POUND', 'KNOX_1', 'CALL_PROGRESS',
+    'HZ_156_25', 'HZ_187_50', 'HZ_250_00', 'HZ_281_25', 'HZ_3000_00', 'HZ_3031_25'];
+  const toneChoices = toneCodes.map(value => ({ value, label: value }));
+  for (const family of ['', 'P25', 'DMR', 'NXDN']) {
+    assert.deepEqual(model.alertToneChoices(toneChoices, family).map(value => value.value), toneCodes.slice(1),
+      `Encoded tones remain available for ${family || 'all protocols'} without INVALID`);
+  }
+  for (const family of ['AM', 'NBFM']) {
+    assert.deepEqual(model.alertToneChoices(toneChoices, family).map(value => value.value),
+      ['DTMF_1', 'DTMF_STAR', 'DTMF_POUND', 'HZ_281_25', 'HZ_3000_00'],
+      `${family} offers waveform DTMF and the mapped single-tone boundaries`);
+  }
+  for (const decoder of ['P25_PHASE1', 'P25_CONVENTIONAL']) {
+    assert.deepEqual(model.alertToneChoices(toneChoices, 'P25', decoder).map(value => value.value),
+      ['HZ_187_50', 'HZ_250_00', 'HZ_281_25', 'HZ_3000_00'],
+      `${decoder} offers only mapped waveform single tones`);
+  }
+  assert.deepEqual(model.alertToneChoices(toneChoices, 'P25', 'P25_PHASE2').map(value => value.value), toneCodes.slice(1));
   assert.equal(model.alertActivityChoices('AM').some(([key]) => key === 'health'), true);
   assert.equal(model.ALERT_TRIGGERS.some(([key]) => key === 'audio'), false);
   for (const value of ['http://vce.example.com', 'https://127.0.0.1', 'https://vce.local',
