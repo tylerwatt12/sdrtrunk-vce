@@ -535,7 +535,7 @@ class StatsWebAliasCatalogUiContractTest
             assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
         }
         assertTrue(policy.contains("aliasScanListChoices(options, policy?.scan_list_ids || [])"));
-        assertTrue(policy.contains("selectedAliasScanListIds(behavior.panel)"));
+        assertTrue(policy.contains("selectedAliasScanListIds(controls.panel)"));
         assertTrue(policy.contains("'Scan List'"));
         assertTrue(policy.contains("'Save Call Handling Defaults'"));
         assertTrue(policy.contains("'Recording'"));
