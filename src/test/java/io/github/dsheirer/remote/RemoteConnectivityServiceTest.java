@@ -14,10 +14,12 @@ import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -47,11 +49,16 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -545,6 +552,178 @@ class RemoteConnectivityServiceTest
     }
 
     @Test
+    void queuedRepairCannotRestartAStoppedRemoteChannel() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("queued-stopped-host"));
+            RemoteControl control = connectControl(host))
+        {
+            var processing = host.configuration.getChannelProcessingManager();
+            synchronized(host.remote)
+            {
+                processing.stop(control.channel());
+                processing.start(control.channel());
+                assertTrue(catalogWork(host.remote, "mCatalogSetupRunning").contains(control.senderId()),
+                    "Restart must queue repair while the catalog worker is gated");
+                processing.stop(control.channel());
+            }
+            awaitCatalogIdle(host.remote);
+            assertNull(processing.getProcessingChain(control.channel()),
+                "Queued repair must not restart a channel stopped before repair runs");
+            assertTrue(host.remote.snapshot().senders().stream().filter(peer ->
+                control.senderId().equals(peer.senderId())).flatMap(peer -> peer.feeds().stream()).anyMatch(feed ->
+                    control.feedId().equals(feed.feedId()) && "Host channel is not running".equals(feed.statusMessage())),
+                "The stopped channel must remain absent from active service state");
+        }
+    }
+
+    @Test
+    void closeBeforeQueuedRepairCannotRestoreTheClosedGeneration() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("queued-close-host"));
+            RemoteControl control = connectControl(host))
+        {
+            var processing = host.configuration.getChannelProcessingManager();
+            List<Long> received = new CopyOnWriteArrayList<>();
+            CountDownLatch currentReceived = new CountDownLatch(1);
+            synchronized(host.remote)
+            {
+                processing.stop(control.channel());
+                processing.start(control.channel());
+                RemoteP25BitstreamSource replacement = (RemoteP25BitstreamSource)
+                    processing.getProcessingChain(control.channel()).getSource();
+                replacement.setRemoteBitstreamListener(packet -> {
+                    received.add(packet.sequence());
+                    if(packet.sequence() == 1L) currentReceived.countDown();
+                });
+                assertTrue(control.sender().offer(new Frame(Type.CLOSE, RemoteWireMessages.json(
+                    new RemoteWireMessages.Close(control.streamId(), 1L)))));
+                assertTrue(control.sender().offer(control.catalog("After close")));
+                await(() -> host.remote.snapshot().senders().stream().filter(peer ->
+                    control.senderId().equals(peer.senderId())).flatMap(peer -> peer.feeds().stream()).anyMatch(feed ->
+                        control.feedId().equals(feed.feedId()) && "After close".equals(feed.advertisedName())));
+            }
+            awaitCatalogIdle(host.remote);
+            assertTrue(control.sender().offer(data(control.streamId(), 0L)));
+            assertTrue(control.sender().offer(control.open(2L)));
+            assertTrue(control.sender().offer(data(control.streamId(), 2L, 1L)));
+            assertTrue(currentReceived.await(3, TimeUnit.SECONDS), "A newer OPEN must still bind the replacement source");
+            assertEquals(List.of(1L), received, "The closed generation's packet must never reach the repaired source");
+        }
+    }
+
+    @Test
+    void repairCapturedBeforeCloseCannotRetuneTheNewGeneration() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("stale-carrier-host"));
+            RemoteControl control = connectControl(host))
+        {
+            Object peer = privateMap(host.remote, "mPeers").get(control.senderId());
+            Object retained = ((Map<?,?>)privateField(peer, "activeOpens")).values().iterator().next();
+            RemoteWireMessages.Open oldOpen = (RemoteWireMessages.Open)privateField(retained, "open");
+            RemoteLinkTransport.Connection connection = (RemoteLinkTransport.Connection)privateField(peer, "connection");
+            RemoteP25BitstreamSource source = (RemoteP25BitstreamSource)host.configuration.getChannelProcessingManager()
+                .getProcessingChain(control.channel()).getSource();
+            List<Long> received = new CopyOnWriteArrayList<>();
+            CountDownLatch firstCurrent = new CountDownLatch(1);
+            CountDownLatch nextCurrent = new CountDownLatch(1);
+            source.setRemoteBitstreamListener(packet -> {
+                received.add(packet.sequence());
+                if(packet.sequence() == 1L) firstCurrent.countDown();
+                if(packet.sequence() == 3L) nextCurrent.countDown();
+            });
+            assertTrue(control.sender().offer(new Frame(Type.CLOSE, RemoteWireMessages.json(
+                new RemoteWireMessages.Close(control.streamId(), 1L)))));
+            assertTrue(control.sender().offer(new Frame(Type.OPEN, RemoteWireMessages.json(new RemoteWireMessages.Open(
+                control.streamId(), control.feedId(), true, "PHASE_1", 851_025_000L, 2L,
+                System.currentTimeMillis(), null, null, null)))));
+            assertTrue(control.sender().offer(data(control.streamId(), 2L, 1L)));
+            assertTrue(firstCurrent.await(3, TimeUnit.SECONDS));
+            assertEquals(851_025_000L, source.getFrequency());
+            long dropped = source.getDroppedPacketCount();
+            AtomicLong epoch = (AtomicLong)privateField(source, "mFrequencyEpoch");
+            long currentEpoch = epoch.get();
+            var repair = RemoteConnectivityService.class.getDeclaredMethod("acceptOpen", String.class,
+                RemoteLinkTransport.Connection.class, RemoteWireMessages.Open.class, retained.getClass());
+            repair.setAccessible(true);
+            repair.invoke(host.remote, control.senderId(), connection, oldOpen, retained);
+
+            assertEquals(851_025_000L, source.getFrequency(), "Stale repair must not retune the current source");
+            assertEquals(dropped, source.getDroppedPacketCount(), "Stale repair must not discard current packets");
+            assertEquals(currentEpoch, epoch.get(), "Stale repair must not reset the source's frequency epoch");
+            assertTrue(control.sender().offer(data(control.streamId(), 1L, 2L)));
+            assertTrue(control.sender().offer(data(control.streamId(), 2L, 3L)));
+            assertTrue(nextCurrent.await(3, TimeUnit.SECONDS));
+            assertEquals(List.of(1L, 3L), received, "Only the current generation may continue delivering packets");
+        }
+    }
+
+    @Test
+    void channelStartedDoesNotWaitForTrafficOwnerWhileHoldingTheActualProcessingMonitor() throws Exception
+    {
+        Installation host = new Installation(mTemp.resolve("startup-monitor-host"));
+        AtomicBoolean safeToClose = new AtomicBoolean(true);
+        try(RemoteControl control = connectControl(host))
+        {
+            var processing = host.configuration.getChannelProcessingManager();
+            var parentChain = processing.getProcessingChain(control.channel());
+            P25TrafficChannelManager owner = parentChain.getModules().stream()
+                .filter(P25TrafficChannelManager.class::isInstance).map(P25TrafficChannelManager.class::cast)
+                .findFirst().orElseThrow();
+            var lockField = P25TrafficChannelManager.class.getDeclaredField("mLock");
+            lockField.setAccessible(true);
+            ReentrantLock ownerLock = (ReentrantLock)lockField.get(owner);
+            CountDownLatch monitorHeld = new CountDownLatch(1);
+            CountDownLatch notifyStarted = new CountDownLatch(1);
+            CountDownLatch returned = new CountDownLatch(1);
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread startup = Thread.ofPlatform().daemon().name("test-remote-control-startup").start(() -> {
+                try
+                {
+                    synchronized(processing)
+                    {
+                        monitorHeld.countDown();
+                        if(!notifyStarted.await(5, TimeUnit.SECONDS)) throw new AssertionError("No START notification");
+                        host.remote.channelStarted(control.channel(), new ChannelStartProcessingRequest(control.channel()),
+                            parentChain);
+                    }
+                }
+                catch(Throwable error) { failure.set(error); }
+                finally { returned.countDown(); }
+            });
+            safeToClose.set(false);
+            try
+            {
+                assertTrue(monitorHeld.await(3, TimeUnit.SECONDS));
+                String trafficStream = UUID.randomUUID().toString();
+                assertTrue(control.sender().offer(new Frame(Type.OPEN, RemoteWireMessages.json(
+                    new RemoteWireMessages.Open(trafficStream, control.feedId(), false, "PHASE_1", 851_025_000L,
+                        1L, System.currentTimeMillis(), 0x491, null, null)))));
+                await(ownerLock::isLocked);
+                notifyStarted.countDown();
+                assertTrue(returned.await(3, TimeUnit.SECONDS),
+                    "START must release CPM while the traffic reader waits for that same monitor");
+                safeToClose.set(true);
+                assertNull(failure.get());
+                startup.join(1_000L);
+                Map<?,?> bindings = privateMap(host.remote, "mOpenSources");
+                await(() -> bindings.size() == 2);
+                var trafficChain = processing.getProcessingChainsByConfiguration(control.channel().getConfigurationId(),
+                    851_025_000L).getFirst();
+                RemoteP25BitstreamSource source = (RemoteP25BitstreamSource)trafficChain.getSource();
+                CountDownLatch received = new CountDownLatch(1);
+                source.setRemoteBitstreamListener(packet -> received.countDown());
+                assertTrue(control.sender().offer(data(trafficStream, 0L)));
+                assertTrue(received.await(3, TimeUnit.SECONDS), "The contended traffic OPEN must finish and deliver data");
+            }
+            finally { notifyStarted.countDown(); }
+        }
+        finally
+        {
+            if(safeToClose.get()) host.close();
+        }
+    }
+
+    @Test
     void renamedRemoteChannelRebindsTheExistingStreamAfterItsOldSourceHasBeenDetached() throws Exception
     {
         int port = availablePort();
@@ -578,7 +757,7 @@ class RemoteConnectivityServiceTest
                 CountDownLatch beforeRename = new CountDownLatch(1);
                 oldSource.setRemoteBitstreamListener(packet -> beforeRename.countDown());
                 assertTrue(sender.offer(new Frame(Type.OPEN, RemoteWireMessages.json(new RemoteWireMessages.Open(
-                    streamId, feedId, true, "PHASE_1", 851_012_500L, 1L,
+                    streamId, feedId, true, "PHASE_1", 851_018_750L, 1L,
                     System.currentTimeMillis(), null, null, null)))));
                 assertTrue(sender.offer(data(streamId, 0L)));
                 assertTrue(beforeRename.await(3, TimeUnit.SECONDS), "The original live stream must deliver data");
@@ -597,6 +776,9 @@ class RemoteConnectivityServiceTest
                 var newChain = processing.getProcessingChain(replacement);
                 RemoteP25BitstreamSource newSource = (RemoteP25BitstreamSource)newChain.getSource();
                 assertNotSame(oldSource, newSource);
+                assertEquals(851_018_750L, newSource.getFrequency(),
+                    "A replacement must start on the retained OPEN carrier rather than the saved configuration");
+                awaitCatalogIdle(host.remote);
                 CountDownLatch afterRename = new CountDownLatch(2);
                 newSource.setRemoteBitstreamListener(packet -> afterRename.countDown());
                 assertTrue(sender.offer(data(streamId, 1L)));
@@ -613,9 +795,102 @@ class RemoteConnectivityServiceTest
         }
     }
 
+    private RemoteControl connectControl(Installation host) throws Exception
+    {
+        int port = availablePort();
+        CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
+            new RemoteLinkAdministrationService.CreateSenderRequest("Synthetic sender"));
+        host.remote.start();
+        host.remote.updateListener(host.remote.snapshot().revision(), new ListenerUpdate(true, "127.0.0.1", port));
+        await(() -> host.remote.snapshot().listener().state() == ListenerState.LISTENING);
+        RemoteLinkTransport.Connection sender = RemoteLinkTransport.connect("127.0.0.1", port,
+            pair.senderId(), pair.secret(), NO_OP_LISTENER);
+        String feedId = UUID.randomUUID().toString();
+        String streamId = UUID.randomUUID().toString();
+        RemoteControl pending = new RemoteControl(sender, pair.senderId(), feedId, streamId, null);
+        try
+        {
+            assertTrue(sender.offer(pending.catalog("Synthetic feed")));
+            await(() -> host.remote.snapshot().senders().stream().anyMatch(peer ->
+                pair.senderId().equals(peer.senderId()) && peer.feeds().stream().anyMatch(feed ->
+                    feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null)));
+            Channel channel = host.configuration.getChannelModel().getChannels().stream().filter(saved ->
+                saved.getSourceConfiguration() instanceof SourceConfigRemote source &&
+                    pair.senderId().equals(source.getSenderId()) && feedId.equals(source.getFeedId()))
+                .findFirst().orElseThrow();
+            var processing = host.configuration.getChannelProcessingManager();
+            await(() -> processing.getProcessingChain(channel) != null &&
+                processing.getProcessingChain(channel).isProcessing());
+            RemoteP25BitstreamSource source = (RemoteP25BitstreamSource)processing.getProcessingChain(channel).getSource();
+            CountDownLatch received = new CountDownLatch(1);
+            source.setRemoteBitstreamListener(packet -> received.countDown());
+            assertTrue(sender.offer(pending.open(1L)));
+            assertTrue(sender.offer(data(streamId, 0L)));
+            assertTrue(received.await(3, TimeUnit.SECONDS), "The initial control OPEN must bind and deliver data");
+            awaitCatalogIdle(host.remote);
+            return new RemoteControl(sender, pair.senderId(), feedId, streamId, channel);
+        }
+        catch(Throwable failure)
+        {
+            sender.close();
+            throw failure;
+        }
+    }
+
+    private static Set<?> catalogWork(RemoteConnectivityService remote, String name) throws Exception
+    {
+        return (Set<?>)privateField(remote, name);
+    }
+
+    private static Map<?,?> privateMap(RemoteConnectivityService remote, String name) throws Exception
+    {
+        return (Map<?,?>)privateField(remote, name);
+    }
+
+    private static Object privateField(Object target, String name) throws Exception
+    {
+        var field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
+    }
+
+    private static void awaitCatalogIdle(RemoteConnectivityService remote) throws Exception
+    {
+        Set<?> running = catalogWork(remote, "mCatalogSetupRunning");
+        Set<?> dirty = catalogWork(remote, "mCatalogSetupDirty");
+        await(() -> running.isEmpty() && dirty.isEmpty());
+    }
+
+    private record RemoteControl(RemoteLinkTransport.Connection sender, String senderId, String feedId,
+                                 String streamId, Channel channel) implements AutoCloseable
+    {
+        private Frame catalog(String name) throws java.io.IOException
+        {
+            return new Frame(Type.CATALOG, RemoteWireMessages.json(new RemoteWireMessages.Catalog(List.of(
+                new RemoteWireMessages.Feed(feedId, "System", "Site", name, "P25_PHASE1", 851_012_500L, true)))));
+        }
+
+        private Frame open(long generation) throws java.io.IOException
+        {
+            return new Frame(Type.OPEN, RemoteWireMessages.json(new RemoteWireMessages.Open(streamId, feedId,
+                true, "PHASE_1", 851_012_500L, generation, System.currentTimeMillis(), null, null, null)));
+        }
+
+        @Override
+        public void close()
+        {
+            sender.close();
+        }
+    }
+
     private static Frame data(String streamId, long sequence) throws java.io.IOException
     {
-        return new Frame(Type.DATA, RemoteWireMessages.encodeData(new RemoteWireMessages.Data(streamId, 1L,
+        return data(streamId, 1L, sequence);
+    }
+
+    private static Frame data(String streamId, long generation, long sequence) throws java.io.IOException
+    {
+        return new Frame(Type.DATA, RemoteWireMessages.encodeData(new RemoteWireMessages.Data(streamId, generation,
             sequence, System.currentTimeMillis(), new byte[300])));
     }
 

@@ -167,7 +167,15 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             throw new SourceException("Remote sender is no longer trusted");
         }
         P25RemoteTrafficOpen traffic = request != null ? request.getRemoteTrafficOpen() : null;
-        long frequency = traffic != null ? traffic.frequency() : remote.getFrequency();
+        PeerState peer = mPeers.get(remote.getSenderId());
+        RemoteLinkTransport.Connection connection = peer != null ? peer.connection : null;
+        RemoteWireMessages.Open retainedControl = traffic == null && connection != null && connection.isOpen() ?
+            peer.activeOpens.values().stream().filter(active -> active.open().control() &&
+                remote.getFeedId().equals(active.open().feedId()) && connection.sessionId().equals(active.sessionId()))
+                .map(ActiveOpen::open).findFirst().orElse(null) : null;
+        long frequency = traffic != null ? traffic.frequency() : retainedControl != null &&
+            mPeers.get(remote.getSenderId()) == peer && peer.connection == connection ?
+                retainedControl.frequency() : remote.getFrequency();
         P25RemotePhase phase = traffic != null ? traffic.phase() :
             channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE2 ?
                 P25RemotePhase.PHASE_2 : P25RemotePhase.PHASE_1;
@@ -229,8 +237,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             }
             if(channel.isStandardChannel() && channel.isAutoStart())
             {
-                PeerState peer = mPeers.get(remote.getSenderId());
-                if(peer != null) rebindActiveOpens(new FeedKey(remote.getSenderId(), remote.getFeedId()), peer);
+                scheduleCatalogSetup(remote.getSenderId());
             }
             return;
         }
@@ -889,11 +896,6 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         String channelId = created.configurationIds().getFirst();
         mChannels.setAutoStart(List.of(channelId), true, mChannels.currentRevision());
         mChannels.setProcessing(List.of(channelId), true);
-        PeerState peer = mPeers.get(key.senderId());
-        if(peer != null && peer.connection != null)
-        {
-            rebindActiveOpens(key, peer);
-        }
     }
 
     private void rebindActiveOpens(FeedKey key, PeerState peer)
@@ -903,9 +905,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         peer.activeOpens.values().stream()
             .filter(active -> connection.sessionId().equals(active.sessionId()) &&
                 key.feedId().equals(active.open().feedId()))
-            .map(ActiveOpen::open)
-            .sorted(Comparator.comparing(RemoteWireMessages.Open::control).reversed())
-            .forEach(open -> acceptOpen(key.senderId(), connection, open));
+            .sorted(Comparator.comparing((ActiveOpen active) -> active.open().control()).reversed())
+            .forEach(active -> acceptOpen(key.senderId(), connection, active.open(), active));
     }
 
     private void updateRemoteChannel(Channel channel, String name, long aliasListId, boolean enabled)
@@ -1316,6 +1317,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                         {
                             markCatalogSetupUnavailable(senderId);
                         }
+                        rebindActiveChannels(senderId);
                     }
                 }
                 finally
@@ -1324,6 +1326,23 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                     if(!mClosed.get() && mCatalogSetupDirty.contains(senderId)) scheduleCatalogSetup(senderId);
                 }
             });
+        }
+    }
+
+    /** Reconcile current sources after setup releases its monitor; startup only schedules this existing worker. */
+    private void rebindActiveChannels(String senderId)
+    {
+        PeerState peer = mPeers.get(senderId);
+        if(peer == null) return;
+        for(ActiveChain active: List.copyOf(mActiveChains.values()))
+        {
+            Channel channel = active.channel();
+            if(channel.isStandardChannel() && channel.isAutoStart() &&
+                channel.getSourceConfiguration() instanceof SourceConfigRemote remote &&
+                senderId.equals(remote.getSenderId()) && mProcessing.getProcessingChain(channel) == active.chain())
+            {
+                rebindActiveOpens(new FeedKey(senderId, remote.getFeedId()), peer);
+            }
         }
     }
 
@@ -1405,20 +1424,32 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
 
     private void acceptOpen(String senderId, RemoteLinkTransport.Connection connection, RemoteWireMessages.Open open)
     {
+        acceptOpen(senderId, connection, open, null);
+    }
+
+    private void acceptOpen(String senderId, RemoteLinkTransport.Connection connection, RemoteWireMessages.Open open,
+                            ActiveOpen retained)
+    {
         PeerState peer = mPeers.get(senderId);
         if(peer == null || peer.connection != connection || !connection.isOpen() || !admitSenderWork(senderId, peer)) return;
-        try { acceptOpenAdmitted(senderId, connection, open, peer); }
+        try { acceptOpenAdmitted(senderId, connection, open, peer, retained); }
         finally { finishSenderWork(senderId, peer); }
     }
 
     private void acceptOpenAdmitted(String senderId, RemoteLinkTransport.Connection connection,
-                                    RemoteWireMessages.Open open, PeerState peer)
+                                    RemoteWireMessages.Open open, PeerState peer, ActiveOpen retained)
     {
         ObservedFeed advertised = peer != null ? peer.feeds.get(open.feedId()) : null;
         if(advertised == null || !advertised.present ||
             !"P25_PHASE1".equals(advertised.advertisement.decoder())) return;
         StreamKey streamKey = new StreamKey(senderId, open.streamId(), open.generation());
-        synchronized(mPeerAdmissionLock)
+        final ActiveOpen accepted;
+        if(retained != null)
+        {
+            if(peer.activeOpens.get(streamKey) != retained) return;
+            accepted = retained;
+        }
+        else synchronized(mPeerAdmissionLock)
         {
             if(open.control() && peer.activeOpens.entrySet().stream().anyMatch(entry ->
                 !streamKey.equals(entry.getKey()) && entry.getValue().open().control() &&
@@ -1446,7 +1477,10 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                     }
                 }
             }
-            peer.activeOpens.put(streamKey, new ActiveOpen(open, connection.sessionId()));
+            ActiveOpen previous = peer.activeOpens.get(streamKey);
+            accepted = previous != null && previous.open().equals(open) &&
+                connection.sessionId().equals(previous.sessionId()) ? previous : new ActiveOpen(open, connection.sessionId());
+            peer.activeOpens.put(streamKey, accepted);
         }
         FeedKey feedKey = new FeedKey(senderId, open.feedId());
         SavedChannel hostState = findHostChannelState(feedKey);
@@ -1457,7 +1491,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         if(open.control())
         {
             source = mWaitingSources.get(feedKey);
-            if(source == null)
+            if(source == null && retained == null)
             {
                 mChannels.setProcessing(List.of(hostChannel.getConfigurationId()), true);
                 source = mWaitingSources.get(feedKey);
@@ -1477,11 +1511,14 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             ChannelProcessingManager.RemoteTrafficOpenResult result = mProcessing.acceptRemoteTrafficOpen(traffic);
             if(result == ChannelProcessingManager.RemoteTrafficOpenResult.REJECTED)
             {
+                if(retained != null) return;
                 peer.activeOpens.remove(streamKey);
                 RemoteP25BitstreamSource failed = mOpeningSources.remove(streamKey);
                 if(failed != null) failed.stop();
                 return;
             }
+            //The original synchronous OPEN owns a pending startup; repair must not take its source.
+            if(result == ChannelProcessingManager.RemoteTrafficOpenResult.ALREADY_OPEN) return;
             source = mOpeningSources.remove(streamKey);
             if(source != null && !isStartedSource(source, open, hostChannel))
             {
@@ -1497,9 +1534,26 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
         if(source != null)
         {
-            if(open.control()) source.updateFrequency(open.frequency());
-            mOpenSources.putIfAbsent(streamKey, new BoundStream(open, source, hostChannel.getConfigurationId(),
-                connection.sessionId()));
+            if(open.control())
+            {
+                //Only a fresh wire OPEN owns a retune; cached repair binds the source's existing carrier.
+                if(retained != null && source.getFrequency() != open.frequency()) return;
+                if(retained == null) source.updateFrequency(open.frequency());
+            }
+            BoundStream binding = new BoundStream(open, source, hostChannel.getConfigurationId(), connection.sessionId());
+            peer.activeOpens.computeIfPresent(streamKey, (_, active) ->
+            {
+                if(active == accepted && peer.connection == connection && connection.isOpen())
+                    mOpenSources.putIfAbsent(streamKey, binding);
+                return active;
+            });
+            BoundStream installed = mOpenSources.get(streamKey);
+            if(!open.control() && (installed == null || installed.source != source))
+            {
+                source.stop();
+                if(installed == null)
+                    mProcessing.acceptRemoteTrafficClose(hostChannel.getConfigurationId(), open.streamId(), open.generation());
+            }
             publishOriginSnapshot();
         }
     }

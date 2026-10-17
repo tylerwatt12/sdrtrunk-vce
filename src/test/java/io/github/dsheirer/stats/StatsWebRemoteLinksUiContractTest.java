@@ -27,9 +27,9 @@ class StatsWebRemoteLinksUiContractTest
         assertTrue(app.contains("id: 'remote-links', label: 'Remote Links'"));
         assertTrue(app.contains("createRemoteLinksWorkspace"));
         assertTrue(feature.contains("const ROOT = '/api/v1/admin/remote-links'"));
-        assertTrue(feature.contains("'Receive remote feeds'"));
-        assertTrue(feature.contains("'Send local P25 feeds'"));
-        assertTrue(feature.contains("'Add trusted sender'"));
+        assertTrue(feature.contains("'Receive here'"));
+        assertTrue(feature.contains("'Send from here'"));
+        assertTrue(feature.contains("'Add sender'"));
         assertTrue(feature.contains("'Setting up a local channel.'"));
         assertTrue(feature.contains("'Manage feed'"));
         assertTrue(feature.contains("'Preferred P25 Alias List'"));
