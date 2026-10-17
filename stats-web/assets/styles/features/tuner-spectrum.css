@@ -124,7 +124,7 @@ body[data-view="tuner-spectrum"] {
   border-bottom: 1px solid var(--line);
 }
 
-.tuner-frequency-lookup-summary + .tuner-frequency-results:not(:empty) {
+.tuner-frequency-lookup-body > .tuner-frequency-results:not(:empty) {
   padding-top: var(--space-3);
 }
 

@@ -15,7 +15,8 @@ function ohioDiscoveryFixture(theme) {
   // Public system names with synthetic observations; no receiver is contacted.
   return { theme, templateName: 'MARCS Cuyahoga control', templateSystem: ohioSystem, templateSite: ohioSite,
     defaultAliasName: 'MARCS-IP', probeOverride: { identity: { wacn: 0xbee00, system: 0x348, rfss: 1, site: 27 } },
-    directoryResult: { state: 'matched', provenance: 'Directory-only provenance', match: {
+    directoryConfiguration: { account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 },
+    directoryResult: { state: 'matched', provenance: 'Directory-only provenance', match: { rr_system_id: 123,
       system_name: ohioSystem, site_name: ohioSite, url: 'https://www.radioreference.com/db/sid/123',
       site_url: 'https://www.radioreference.com/db/site/456',
       channels: [{ frequency_hz: 851012500, primary_control: true }] } } };
@@ -45,7 +46,8 @@ function snapshot(protocolId, state) {
     protocol_id: protocolId,
     tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
-    radio_reference: state.directoryResult,
+    radio_reference: state.directoryResult?.state === 'matched' ? { ...state.directoryResult,
+      match: { rr_system_id: 123, ...state.directoryResult.match } } : state.directoryResult,
     alias_import: state.aliasImports,
     digital_probe: digital ? { state: state.phase || 'ready', elapsed_ms: 1200, timeout_ms: 10000 } : null,
     trunked_evidence: digital ? { variant: protocolId === 'dmr' ? 'Tier III' : 'Type-C', identity: {
@@ -165,7 +167,7 @@ async function install(page, state = {}) {
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       tier: 'admin', username: 'admin', csrf_token: 'test-token', capabilities: {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,
-        'admin-channels': true, 'admin-aliases': true,
+        'admin-channels': true, 'admin-aliases': true, 'admin-settings': state.adminSettings !== false,
         ...(state.listening ? { live: true, 'call-audio': true, recordings: true } : {})
       } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
@@ -199,7 +201,20 @@ async function install(page, state = {}) {
     }] : [] });
     if (path === '/api/v1/admin/radioreference') {
       if (state.delayDirectoryConfiguration) await new Promise((release) => { state.releaseDirectory = release; });
-      return respond(state.directoryConfiguration || { account: { state: 'SIGNED_OUT' } });
+      return respond(state.directoryConfiguration || (state.directoryResult &&
+        !['login_required', 'premium_required'].includes(state.directoryResult.state) ?
+        { account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 } : { account: { state: 'SIGNED_OUT' } }));
+    }
+    if (path === '/api/v1/admin/radioreference/session' && request.method() === 'PUT') {
+      state.directoryConfiguration = state.connectedConfiguration || {
+        account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 };
+      return respond(state.directoryConfiguration);
+    }
+    if (path === '/api/v1/admin/radioreference/systems/talkgroups') {
+      if (state.failTalkgroupCatalog) return route.fulfill({ status: 503, json: { error: {
+        code: 'unavailable', message: 'Talkgroups temporarily unavailable.' } } });
+      const count = state.talkgroupCount ?? 73;
+      return respond({ items: count > 0 ? [{ talkgroup_id: 101, alpha_tag: 'Dispatch' }] : [], total_items: count });
     }
     if (path === '/api/v1/admin/radioreference/countries') {
       if (state.failDirectoryCountriesCount > 0) {
@@ -374,6 +389,7 @@ async function addDiscovery(page, importChoice = importNo) {
   const continueButton = modal.getByRole('button', { name: 'Continue', exact: true });
   if (await continueButton.count()) {
     await continueButton.click();
+    await expect(modal).not.toHaveAttribute('aria-busy', 'true');
     if (!await modal.getByRole('radio', { name: importChoice, exact: true }).count()) return;
   }
   const choice = modal.getByRole('radio', { name: importChoice, exact: true });
@@ -445,7 +461,7 @@ test('discovery keeps an explicit No choice after Back and never retries imports
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
 });
 
-test('discovery imports only lists actually created and offers No when no directory system matches', async ({ page }) => {
+test('discovery imports only lists actually created and skips import without a directory match', async ({ page }) => {
   const state = { ...ohioDiscoveryFixture('light'), sameNameReuse: true };
   await install(page, state);
   await begin(page);
@@ -458,9 +474,9 @@ test('discovery imports only lists actually created and offers No when no direct
   state.directoryResult = { state: 'no_match' };
   await begin(page);
   await review(page);
-  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeDisabled();
-  await expect(wizard(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+  await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
+  await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toHaveCount(0);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
@@ -658,19 +674,62 @@ test('discovery lookup country failure retries account settings and recovers its
     .body.radioreference_state_id).toBe(39);
 });
 
-test('signed-out spectrum discovery keeps names optional and links to connection settings', async ({ page }) => {
+test('signed-out spectrum discovery offers connection before checking and hides late directory panels', async ({ page }) => {
   const state = {};
   await install(page, state);
   await page.evaluate(() => window.openDiscovery());
   await disclose(page, 'RadioReference names (optional)');
-  await expect(wizard(page).getByRole('link', { name: 'RadioReference settings', exact: true }))
-    .toHaveAttribute('href', /view=radioreference/);
+  await expect(wizard(page).getByRole('button', { name: 'Connect account', exact: true })).toBeEnabled();
+  await expect(wizard(page).getByRole('link', { name: 'RadioReference settings', exact: true })).toHaveCount(0);
   await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveCount(0);
   await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
+  await expect(wizard(page).locator('summary').filter({ hasText: /^RadioReference$/ })).toHaveCount(0);
   expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST').body.radioreference_state_id).toBe(null);
 });
+
+test('discovery signs in above the same wizard and immediately uses its region without resetting the radio type', async ({ page }) => {
+  const state = {};
+  await install(page, state);
+  await page.evaluate(() => window.openDiscovery());
+  const parent = wizard(page);
+  const original = await parent.elementHandle();
+  await parent.getByRole('radio', { name: 'DMR trunked system', exact: true }).check();
+  await disclose(page, 'RadioReference names (optional)');
+  await parent.getByRole('button', { name: 'Connect account', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await expect(connection).toBeVisible();
+  expect(await parent.evaluate(element => element.closest('.modal-backdrop').inert)).toBe(true);
+  await connection.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');
+  await connection.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await connection.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await expect(connection).toHaveCount(0);
+  expect(await parent.evaluate((element, previous) => element === previous, original)).toBe(true);
+  await expect(parent).toContainText('Connected to RadioReference.');
+  await expect(parent.getByRole('radio', { name: 'DMR trunked system', exact: true })).toBeChecked();
+  await expect(parent.getByLabel('RadioReference state or province')).toHaveValue('39');
+  await expect(parent.getByLabel('RadioReference state or province')).toBeFocused();
+  await parent.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await expect(parent.getByRole('heading', { name: /details found$/, exact: false })).toBeVisible();
+  expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST').body)
+    .toMatchObject({ protocol_id: 'dmr', radioreference_state_id: 39 });
+  expect(state.requests.filter(({ path, method }) => path === '/api/v1/admin/radioreference/session' && method === 'PUT')).toHaveLength(1);
+});
+
+for (const scenario of [{ talkgroupCount: 0 }, { failTalkgroupCatalog: true }]) {
+  test(`discovery skips unavailable talkgroups when ${scenario.talkgroupCount === 0 ? 'empty' : 'the catalog fails'}`, async ({ page }) => {
+    const state = { ...ohioDiscoveryFixture('light'), ...scenario };
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toHaveCount(0);
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  });
+}
 
 test('discovery start failure restores the saved region control after its pending initial load', async ({ page }) => {
   const state = { delayDirectoryStates: true, failCreateOnce: true,

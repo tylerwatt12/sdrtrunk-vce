@@ -8,7 +8,7 @@ const POLL_MS = 3000;
 export function createStreamingWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
     openReadOnlyModal, confirmAction, requestJson, modalFooter, metrics, formatNumber, href,
-    browsingWorkflows, signal } = deps;
+    browsingWorkflows, connectRadioReference, radioReferenceAllowed = true, signal } = deps;
   const host = node('div', 'streaming-page data-workspace');
   const toolbar = node('div', 'streaming-toolbar streaming-page-toolbar ui-catalog-toolbar');
   const summary = node('div', 'streaming-summary');
@@ -512,21 +512,49 @@ export function createStreamingWorkspace(deps) {
   }
 
   async function findFeeds() {
+    if (disposed || modalActive || !radioReferenceAllowed) return;
+    modalActive = true;
     const body = node('div', 'streaming-feed-browser editor-workspace');
-    let alive = true;
+    let alive = true, running = false;
     const abort = new AbortController();
     const modal = openReadOnlyModal('Available Broadcastify feeds', body, {
-      id: 'streaming-feeds', className: 'streaming-feeds-modal',
-      cleanup: () => { alive = false; abort.abort(); modalActive = false; void refresh(); }
+      id: 'streaming-feeds', className: 'streaming-feeds-modal', stack: 'child',
+      cleanup: () => {
+        alive = false; abort.abort(); modalActive = false;
+        signal?.removeEventListener('abort', closeFeeds);
+        void refresh();
+      }
     });
-    if (!modal || (modal.ready && !await modal.ready)) return;
-    modalActive = true;
-    async function loadFeeds() {
+    const closeFeeds = () => { abort.abort(); modal?.close(); };
+    if (!modal || (modal.ready && !await modal.ready)) { modalActive = false; return; }
+    signal?.addEventListener('abort', closeFeeds, { once: true });
+    const current = () => alive && !disposed && !abort.signal.aborted;
+    const showConnect = () => {
+      const prompt = node('div', 'streaming-feed-introduction');
+      prompt.append(feedback('Connect an account to load your available Broadcastify feeds.'),
+        button('Connect account', () => void loadFeeds(true)));
+      body.replaceChildren(prompt);
+    };
+    async function loadFeeds(connect = false) {
+      if (!current() || running) return;
+      running = true;
       body.replaceChildren(feedback('Loading available Broadcastify feeds…', 'loading'));
       try {
+        let configuration = connect ? null : await requestJson('/api/v1/admin/radioreference', {
+          csrf: false, signal: abort.signal, page: false, timeoutMs: 15000
+        });
+        if (!current()) return;
+        if (configuration?.account?.state !== 'VALID_PREMIUM') {
+          configuration = await connectRadioReference({
+            introduction: 'Connect your account to load your available Broadcastify feeds.', signal: abort.signal
+          });
+        }
+        if (!current()) return;
+        if (configuration?.account?.state !== 'VALID_PREMIUM') { showConnect(); return; }
         const result = await write('/feeds/refresh', 'POST', {}, { signal: abort.signal, page: false });
+        if (!current()) return;
         const options = await read('/options', { signal: abort.signal, page: false });
-        if (!alive) return;
+        if (!current()) return;
         const rows = result.items || [];
         const introduction = node('div', 'streaming-feed-introduction');
         const introductionText = node('div');
@@ -589,18 +617,20 @@ export function createStreamingWorkspace(deps) {
           const errorState = node('div', 'streaming-feed-error');
           errorState.append(feedback(error.message || 'Available feeds could not be loaded', 'error'));
           const recovery = node('div', 'ui-action-row');
-          const settings = node('a', 'ui-button ui-button-secondary', 'Open RadioReference settings');
-          settings.href = href('radioreference');
-          recovery.append(button('Try again', () => void loadFeeds()), settings);
+          recovery.append(button('Try again', () => void loadFeeds()),
+            button('Connect account', () => void loadFeeds(true)));
           errorState.append(recovery);
           body.replaceChildren(errorState);
         }
-      }
+      } finally { running = false; }
     }
     void loadFeeds();
   }
 
-  actions.append(button('Find Broadcastify feeds', () => void findFeeds()), button('Add destination', () => void openEditor(), true));
+  const findFeedsAction = button('Find Broadcastify feeds', () => void findFeeds());
+  findFeedsAction.disabled = !radioReferenceAllowed;
+  if (!radioReferenceAllowed) findFeedsAction.title = 'RadioReference settings access is required.';
+  actions.append(findFeedsAction, button('Add destination', () => void openEditor(), true));
   toolbar.append(summary, actions);
   pageMeta.append(note, freshness);
   host.append(toolbar, message, destinationHost, pageMeta);

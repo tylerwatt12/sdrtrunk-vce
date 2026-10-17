@@ -27,17 +27,18 @@ import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=6';
+} from './features/alias-list-create.js?v=7';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=29';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
-import { createStreamingWorkspace } from './features/streaming.js?v=10';
+import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
+import { createStreamingWorkspace } from './features/streaming.js?v=11';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=16';
 import { createAlertsWorkspace } from './features/alerts.js?v=11';
 import { createRecordingsFeature } from './features/recordings.js?v=48';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=29';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=8';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
+import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
@@ -14504,13 +14505,16 @@ function openSpectrumDiscoveryWizard(selection) {
   let savedAliasName = '';
   let wantsAliasImport = true;
   let aliasImportResult = null;
+  let aliasImportSystems = new Set();
   let restartRequired = false;
   let manualProbeReleased = false;
   let probeNodes = null;
   let signalDetails = null;
   const path = '/api/v1/admin/spectrum-discovery';
-  const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href },
-    (url, options) => request(url, options));
+  const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href,
+    connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null },
+    (url, options) => request(url, options), { signal: abort.signal });
+  const availableTalkgroups = createDiscoveryTalkgroupAvailability((url, options) => request(url, options));
   const protocolLabels = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system',
     nxdn: 'NXDN trunked system', am: 'AM radio', nbfm: 'FM two-way radio' };
   const trunkedProtocol = (id = profile?.id) => ['p25-phase1', 'dmr', 'nxdn'].includes(id);
@@ -14606,13 +14610,13 @@ function openSpectrumDiscoveryWizard(selection) {
     const directoryFocused = binding.directory.contains(document.activeElement);
     const title = spectrumDiscoverySystemName(session, reviewDraft);
     const label = title || (trunkedProtocol() ? 'Radio system' : 'Single-frequency channel');
-    const url = discoveryRadioReferenceSystemUrl(session);
+    const url = directory.available() ? discoveryRadioReferenceSystemUrl(session) : null;
     const signature = JSON.stringify([label, url]);
     if (binding.titleSignature !== signature) {
       binding.summary.replaceChildren(url ? anchor(label, url) : document.createTextNode(label));
       binding.titleSignature = signature;
     }
-    const result = session.radio_reference?.state === 'matched' ? null :
+    const result = !directory.available() || session.radio_reference?.state === 'matched' ? null :
       discoveryRadioReferenceResult({ node, anchor, href }, session, binding.directory.firstElementChild);
     if (result !== binding.directory.firstElementChild)
       binding.directory.replaceChildren(...(result ? [result] : []));
@@ -14653,6 +14657,7 @@ function openSpectrumDiscoveryWizard(selection) {
       if (reviewDraft) reviewDraft[key] = input?.value || null;
     });
     refreshSystemSummary(reviewBinding);
+    reviewBinding.refreshActions?.();
     refreshSignalDetails();
     if (!editedReviewFields.has('new_alias_list_name')) {
       reviewBinding.alias.value = discoveryAliasListName(
@@ -14673,6 +14678,8 @@ function openSpectrumDiscoveryWizard(selection) {
       }
     }
   };
+  const canOfferAliasImport = () => directory.available() && trunkedProtocol() &&
+    session?.radio_reference?.state === 'matched' && Number(session.radio_reference.match?.rr_system_id) > 0;
   const showStep = (index, label) => {
     signalDetails?.modal.close();
     activeStep = index;
@@ -14680,8 +14687,7 @@ function openSpectrumDiscoveryWizard(selection) {
     probeNodes = null;
     steps.hidden = index === 4;
     const labels = ['Signal', !profile || trunkedProtocol() ? 'Check signal' : 'Audio', 'Review',
-      ...(index >= 2 && trunkedProtocol() && (reviewDraft?.alias_list_id === 0 ||
-        !reviewDraft && session?.review?.alias_lists?.length === 0 || index === 3) ? ['Talkgroups'] : [])];
+      ...(index === 3 ? ['Talkgroups'] : [])];
     steps.dataset.stepCount = String(labels.length);
     steps.replaceChildren(...labels.map((text, position) => {
         const item = node('li');
@@ -14839,6 +14845,7 @@ function openSpectrumDiscoveryWizard(selection) {
       restartRequired = false;
       wantsAliasImport = true;
       aliasImportResult = null;
+      aliasImportSystems = new Set();
       modal.setDirty(false);
       drawSession();
     } catch (error) {
@@ -15033,6 +15040,8 @@ function openSpectrumDiscoveryWizard(selection) {
       session = updated;
       if (directoryRefresh && activeStep === 2 && updated.state === 'ready') {
         refreshReviewDirectory();
+        scheduleDirectoryPoll();
+      } else if (directoryRefresh && activeStep === 3 && updated.state === 'ready') {
         scheduleDirectoryPoll();
       } else drawSession();
     } catch (error) {
@@ -15282,7 +15291,8 @@ function openSpectrumDiscoveryWizard(selection) {
         if (!current()) return;
         modal.setDirty(false);
         selection.onSaved?.(session);
-        aliasImportResult = session.alias_import;
+        aliasImportResult = session.alias_import && { ...session.alias_import,
+          targets: (session.alias_import.targets || []).filter((target) => aliasImportSystems.has(Number(target.system_id))) };
         if (wantsAliasImport && aliasImportResult?.targets?.length) await runAliasImports();
         else showComplete();
       } catch (error) {
@@ -15314,23 +15324,33 @@ function openSpectrumDiscoveryWizard(selection) {
         }
       } finally { if (current()) busy(false); }
     };
-    const addAction = () => {
+    const addAction = async () => {
       if (!valid(form)) return;
       reviewDraft = read();
-      if (trunkedProtocol() && selected === 'new') {
+      if (canOfferAliasImport() && selected === 'new') {
+        busy(true);
+        message.textContent = 'Checking available talkgroups…';
+        let targets;
+        try {
+          targets = await availableTalkgroups([{ name: reviewDraft.new_alias_list_name,
+            systemName: spectrumDiscoverySystemName(session, reviewDraft), matched: true,
+            rrSystemId: Number(session.radio_reference.match.rr_system_id) }]);
+        } finally { if (current()) { busy(false); message.replaceChildren(); } }
+        if (!current()) return;
+        if (!targets.length) { wantsAliasImport = false; void saveChannel(); return; }
+        aliasImportSystems = new Set(targets.map((target) => target.rrSystemId));
         showStep(3, 'Do you want to import talkgroups into your Alias List?');
-        const choice = discoveryAliasImportChoice({ node }, [{ name: reviewDraft.new_alias_list_name,
-          systemName: spectrumDiscoverySystemName(session, reviewDraft), matched: session.radio_reference?.state === 'matched' }],
-          wantsAliasImport);
+        const choice = discoveryAliasImportChoice({ node }, targets, wantsAliasImport);
         stage.append(choice.element);
         button('Back', () => { wantsAliasImport = choice.wantsImport(); showReview(); });
         add = button('Add and start listening', () => { wantsAliasImport = choice.wantsImport(); void saveChannel(); }, true);
       } else { wantsAliasImport = false; void saveChannel(); }
     };
-    add = button(trunkedProtocol() && selected === 'new' ? 'Continue' : 'Add and start listening', addAction, true);
-    aliases?.addEventListener('change', () => {
-      add.textContent = trunkedProtocol() && selected === 'new' ? 'Continue' : 'Add and start listening';
-    });
+    add = button(canOfferAliasImport() && selected === 'new' ? 'Continue' : 'Add and start listening', () => void addAction(), true);
+    reviewBinding.refreshActions = () => {
+      add.textContent = canOfferAliasImport() && selected === 'new' ? 'Continue' : 'Add and start listening';
+    };
+    aliases?.addEventListener('change', reviewBinding.refreshActions);
   };
   const runAliasImports = async () => {
     if (restartRequired) { showComplete(); return; }
@@ -15441,35 +15461,71 @@ function openTunerRadioReferenceLookup(selectedHz) {
   message.setAttribute('role', 'status');
   const summary = node('header', 'tuner-frequency-lookup-summary');
   summary.append(frequency, message);
+  const region = node('div');
   const results = node('div', 'tuner-frequency-results');
-  body.append(summary, results);
+  const actions = node('footer', 'ui-modal-footer ui-action-row');
+  body.append(summary, region, results, actions);
   const modal = openReadOnlyModal('RadioReference lookup', body, {
-    id: 'tuner-radioreference-lookup', className: 'tuner-frequency-lookup-modal',
+    id: 'tuner-radioreference-lookup', className: 'tuner-frequency-lookup-modal', stack: 'child',
     cleanup: () => detailController.abort()
   });
   if (!modal) return null;
-  void (async () => {
-    if (modal.ready && !await modal.ready) return;
-    if (detailController.signal.aborted || !modal.dialog.isConnected) return;
+  const current = () => !detailController.signal.aborted && modal.dialog.isConnected;
+  const request = (path, options = {}) => requestJson(path, {
+    csrf: false, page: false, timeoutMs: 15_000, ...options, signal: detailController.signal
+  });
+  const allowed = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS);
+  const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField,
+    uiActionButton, anchor, href, connectRadioReference }, request, { signal: detailController.signal, requiredRegion: true });
+  let busy = false;
+  const button = (label, action) => {
+    const control = node('button', 'ui-button ui-button-secondary', label);
+    control.type = 'button';
+    control.addEventListener('click', action);
+    return control;
+  };
+  const search = button('Search', () => void searchFrequency());
+  const accountError = (error) => ['not_authenticated', 'invalid_credentials', 'premium_required']
+    .includes(String(error?.code || ''));
+  const showConnect = () => {
+    message.textContent = allowed ? 'Connect an account to look up this frequency.' :
+      'RadioReference settings access is required to look up this frequency.';
+    actions.replaceChildren(...(allowed ? [button('Connect account', () => void loadAccount(true))] : []));
+  };
+  const showFailure = (error, retry) => {
+    message.textContent = error?.message || 'RadioReference could not be loaded. Try again.';
+    actions.replaceChildren(button('Try again', retry));
+    if (allowed) actions.append(button('Connect account', () => void loadAccount(true)));
+  };
+  directory.element.addEventListener('change', () => {
+    if (!current() || busy) return;
+    results.replaceChildren();
+    search.disabled = !directory.stateId();
+    message.textContent = directory.stateId() ? 'Search this frequency in the selected region.' :
+      'Choose a state or province to look up this frequency.';
+  });
+  async function searchFrequency() {
+    if (!current() || busy) return;
+    busy = true;
+    directory.setBusy(true);
+    search.disabled = true;
+    results.replaceChildren();
+    actions.replaceChildren(search);
     try {
-      const configuration = await requestJson('/api/v1/admin/radioreference', {
-        csrf: false, page: false, signal: detailController.signal
-      });
-      if (configuration?.account?.state !== 'VALID_PREMIUM') {
-        throw new Error('Connect a current RadioReference Premium account in Settings before searching.');
-      }
-      const stateId = Number(configuration?.state_id);
-      if (!Number.isInteger(stateId) || stateId <= 0) {
-        throw new Error('Choose a RadioReference country and state in Settings before searching.');
+      await directory.load();
+      if (!current()) return;
+      const stateId = directory.stateId();
+      if (!stateId) {
+        directory.element.open = true;
+        message.textContent = 'Choose a state or province to look up this frequency.';
+        return;
       }
       message.textContent = 'Searching RadioReference…';
       const query = new URLSearchParams({
         state_id: String(stateId), frequency_hz: String(Math.round(selectedHz)), limit: '100'
       });
-      const response = await requestJson(`/api/v1/admin/radioreference/frequencies?${query}`, {
-        csrf: false, page: false, signal: detailController.signal, timeoutMs: 15_000
-      });
-      if (detailController.signal.aborted) return;
+      const response = await request(`/api/v1/admin/radioreference/frequencies?${query}`);
+      if (!current()) return;
       const matches = Array.isArray(response?.items) ? response.items : [];
       results.replaceChildren(radioReferenceResultView(matches, selectedHz, detailController.signal));
       const total = Number(response?.total_items || matches.length);
@@ -15477,11 +15533,49 @@ function openTunerRadioReferenceLookup(selectedHz) {
         `Showing the first ${number(matches.length)} of ${number(total)} matches.` :
         `${number(total)} RadioReference ${total === 1 ? 'match' : 'matches'} found.`;
     } catch (error) {
-      if (detailController.signal.aborted) return;
-      message.textContent = error.message;
-      results.append(anchor('Open RadioReference settings', href('radioreference'),
-        'ui-button ui-button-secondary'));
+      if (!current()) return;
+      if (accountError(error)) showConnect();
+      else showFailure(error, () => void searchFrequency());
+    } finally {
+      busy = false;
+      directory.setBusy(false);
+      search.disabled = !directory.stateId();
     }
+  }
+  async function loadAccount(connect = false) {
+    if (!current() || busy) return;
+    if (!allowed) { showConnect(); return; }
+    busy = true;
+    actions.replaceChildren();
+    results.replaceChildren();
+    region.replaceChildren();
+    message.textContent = 'Checking RadioReference account and lookup region…';
+    let ready = false;
+    try {
+      let configuration = connect ? null : await request('/api/v1/admin/radioreference');
+      if (!current()) return;
+      if (configuration?.account?.state !== 'VALID_PREMIUM') {
+        configuration = await connectRadioReference({
+          introduction: 'Connect your account to look up the selected frequency.', signal: detailController.signal
+        });
+      }
+      if (!current()) return;
+      if (configuration?.account?.state !== 'VALID_PREMIUM') { showConnect(); return; }
+      await directory.load(configuration);
+      if (!current()) return;
+      region.replaceChildren(directory.element);
+      actions.replaceChildren(search);
+      search.disabled = !directory.stateId();
+      message.textContent = 'Choose a state or province to look up this frequency.';
+      ready = Boolean(directory.stateId());
+    } catch (error) {
+      if (current()) showFailure(error, () => void loadAccount());
+    } finally { busy = false; }
+    if (ready && current()) void searchFrequency();
+  }
+  void (async () => {
+    if (modal.ready && !await modal.ready) return;
+    if (current()) await loadAccount();
   })();
   return modal;
 }
@@ -24378,7 +24472,8 @@ async function renderModernChannelCatalog(renderContext) {
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
         uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
-        channelEditorControl, channelEditorFieldValue, protocols }, {
+        channelEditorControl, channelEditorFieldValue, protocols,
+        connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null }, {
         prepareReceiver: async (tuner) => {
           const count = Math.max(0, Number(tuner.channel_count) || 0);
           const stop = count > 0 || /channel|serving/i.test(String(tuner.reason || ''));
@@ -27437,6 +27532,15 @@ async function renderAdminScanLists() {
   content.append(workspace);
 }
 
+function connectRadioReference(options = {}) {
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) return Promise.resolve(null);
+  return openRadioReferenceConnect({ node, formField, uiToggleField, openReadOnlyModal, requestJson }, options)
+    .then((configuration) => {
+      if (configuration) radioReferenceDetailCache.clear();
+      return configuration;
+    });
+}
+
 function radioReferenceAccountMessage(account) {
   const state = String(account?.state || 'SIGNED_OUT');
   const userName = String(account?.user_name || '').trim();
@@ -30010,6 +30114,7 @@ async function renderStreaming() {
   const workspace = createStreamingWorkspace({
     node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table, browsingWorkflows,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
+    connectRadioReference, radioReferenceAllowed: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS),
     signal: renderContext.signal
   });
   const routingHost = node('div');

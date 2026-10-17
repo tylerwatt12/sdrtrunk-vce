@@ -6,7 +6,7 @@ const galleryViews = [
   'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters',
   'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls',
-  'dashboard-activity', 'signal-quality-detail', 'radioreference-results', 'radio-directory-coverage',
+  'dashboard-activity', 'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'radio-directory-coverage',
   'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases',
   'alias-modal', 'alias-export', 'scan-list-members', 'channels', 'radio-directory', 'entity-details',
   'live-notice', 'live-filter', 'tuner-frequency-popover', 'spectrum-discovery', 'spectrum-search',
@@ -19,6 +19,7 @@ const gallerySelector = (view) => ({
   'receiving-windows': '.visual-frequency-window-example',
   'spectrum-discovery': '.visual-spectrum-discovery-example .spectrum-discovery-modal',
   'spectrum-search': '.visual-spectrum-search-example .spectrum-search-modal',
+  'radioreference-connect': '[role="dialog"][aria-labelledby^="read-only-modal-title-radioreference-connect-"]',
   'setup-guide': 'body'
 }[view] || `.visual-${view}-example`);
 const presentations = [

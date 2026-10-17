@@ -9,7 +9,7 @@ async function main() {
   const assets = path.resolve(process.argv[2] || 'stats-web/assets');
   const { spectrumSearchGroupKey, spectrumSearchIdentityFacts, spectrumSearchSystemName } =
     await import(pathToFileURL(path.join(assets, 'features/spectrum-search.js')).href);
-  const { discoveryRadioReferenceResult } =
+  const { discoveryRadioReferenceResult, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
     await import(pathToFileURL(path.join(assets, 'features/discovery-radioreference.js')).href);
   const app = fs.readFileSync(path.join(assets, 'app.js'), 'utf8');
   const spectrum = app.slice(app.indexOf('async function renderTunerSpectrum()'), app.indexOf('function radioDirectory',
@@ -69,6 +69,33 @@ async function main() {
   assert.equal(matched.firstElementChild, summary);
   assert.match(JSON.stringify(matched), /Transit|radioreference.com/);
   assert.doesNotMatch(JSON.stringify(matched), /North|Channel|451|exact-frequency/);
+  for (const state of ['login_required', 'premium_required']) {
+    assert.equal(discoveryRadioReferenceResult(ui, { radio_reference: { state } }), null,
+      'Results must never offer a late account connection prompt.');
+  }
+  const catalogCalls = [];
+  const availableTalkgroups = createDiscoveryTalkgroupAvailability(async (url, options) => {
+    catalogCalls.push([url, options.timeoutMs]);
+    if (url.includes('system_id=3')) throw new Error('Temporary directory failure');
+    return { items: url.includes('system_id=1&') ? [{ id: 100 }] : [], total_items: 0 };
+  });
+  const targets = [1, 2, 3].map((rrSystemId) => ({ rrSystemId, matched: true }));
+  assert.deepEqual(await availableTalkgroups([...targets, { rrSystemId: 4, matched: false },
+    { rrSystemId: 0, matched: true }]), [targets[0]]);
+  assert.equal(catalogCalls.length, 3);
+  assert.ok(catalogCalls.every(([url, timeout]) => url.endsWith('&offset=0&limit=1') && timeout === 15000));
+  await availableTalkgroups(targets);
+  assert.equal(catalogCalls.length, 4, 'Successful catalogs are cached; failed catalogs can be retried.');
+  const progress = [];
+  const imports = [];
+  const imported = await importDiscoveryAliases(async (url, options) => {
+    imports.push(options.body.alias_list_id);
+    return { complete: false, targets: [{ alias_list_id: 21, state: 'imported' },
+      { alias_list_id: 22, state: 'pending' }] };
+  }, '/import', { targets: [{ alias_list_id: 21, state: 'pending' }] }, (value) => progress.push(value));
+  assert.deepEqual(imports, [21]);
+  assert.deepEqual(imported.targets.map((target) => target.alias_list_id), [21],
+    'A mixed system import keeps only the systems the user was offered.');
   console.log('Trunked discovery UI contracts passed.');
 }
 

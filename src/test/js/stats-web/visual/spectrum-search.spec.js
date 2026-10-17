@@ -39,7 +39,7 @@ function ohioResultsFixture({ pendingMarcs = false } = {}) {
       health: { quality_pct: 99 - index, valid_messages: 54, valid_control_messages: 41,
         invalid_control_messages: 1, checked_at_ms: 1790878800000 },
       radio_reference: pendingMarcs && group === 'marcs' ? { state: 'pending' } : {
-        state: 'matched', match: { system_name: ohioSystems[group], site_name: site,
+        state: 'matched', match: { rr_system_id: 123 + Object.keys(ohioSystems).indexOf(group), system_name: ohioSystems[group], site_name: site,
           url: `https://www.radioreference.com/db/sid/${123 + Object.keys(ohioSystems).indexOf(group)}`,
           channels: [{ frequency_hz: frequency, primary_control: true }] }
       }
@@ -107,6 +107,9 @@ function snapshot(state) {
 
 async function install(page, state = {}) {
   state.requests = [];
+  if (state.directoryConfiguration === undefined && state.customCandidates?.some((candidate) =>
+    candidate.radio_reference && !['login_required', 'premium_required'].includes(candidate.radio_reference.state)))
+    state.directoryConfiguration = { account: { state: 'VALID_PREMIUM' } };
   state.ledger = {};
   state.createdListByGroup = new Map();
   state.aliasImports = { targets: [], complete: true };
@@ -139,7 +142,7 @@ async function install(page, state = {}) {
       body: JSON.stringify({ error: { message, code } }) });
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true, tier: 'admin',
       csrf_token: 'test-token', capabilities: { 'web-access': true, dashboard: true, 'tuner-spectrum': true,
-        'admin-tuners': state.adminTuners !== false, 'admin-channels': state.adminChannels !== false, 'admin-aliases': true } });
+        'admin-settings': state.adminSettings !== false, 'admin-tuners': state.adminTuners !== false, 'admin-channels': state.adminChannels !== false, 'admin-aliases': true } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
       revision: 1, preferences: { ...preferenceModule.defaults, appearance: { hue: null, theme: state.theme || 'light' } } }) });
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
@@ -148,6 +151,19 @@ async function install(page, state = {}) {
       if (state.delayDirectoryConfiguration) await new Promise((resolve) => { state.releaseDirectory = resolve; });
       return state.directoryOffline ? fail('Directory unavailable', 'unavailable', 503) :
         respond(state.directoryConfiguration || {});
+    }
+    if (path === '/api/v1/admin/radioreference/session') {
+      state.directoryConfiguration = state.connectConfiguration || {
+        account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39
+      };
+      return respond(state.directoryConfiguration);
+    }
+    if (path === '/api/v1/admin/radioreference/systems/talkgroups') {
+      if (state.failTalkgroupCatalog) return fail('Catalog unavailable');
+      const systemId = Number(new URL(request.url()).searchParams.get('system_id'));
+      const empty = state.emptyTalkgroupSystems?.includes(systemId);
+      return respond({ items: empty ? [] : [{ id: 100, decimal_value: 100, alpha_tag: 'Dispatch' }],
+        total_items: empty ? 0 : 1 });
     }
     if (path === '/api/v1/admin/radioreference/countries') {
       if (state.failDirectoryCountriesCount > 0) {
@@ -314,7 +330,7 @@ async function install(page, state = {}) {
             state.createdListByGroup.set(group.group_id, aliasListId);
             const matched = candidateRow.radio_reference?.state === 'matched';
             state.aliasImports.targets.push({ alias_list_id: aliasListId,
-              alias_list_name: group.new_alias_list_name, system_id: matched ? 123 + aliasListId : null,
+              alias_list_name: group.new_alias_list_name, system_id: matched ? candidateRow.radio_reference.match?.rr_system_id : null,
               system_name: candidateRow.system_name, state: matched ? 'pending' : 'unavailable',
               added: 0, updated: 0, unchanged: 0, message: matched ? null : 'Import these talkgroups later.' });
           }
@@ -513,7 +529,107 @@ test('search publication restart suppresses a prior failed import retry without 
   expect(imports()).toHaveLength(2);
 });
 
-test('search skips the import step for existing Alias Lists and disables Yes without a trusted match', async ({ page }) => {
+test('search connects RadioReference in a child dialog and updates the same wizard with the saved region', async ({ page }) => {
+  const state = await install(page, { directoryConfiguration: {} });
+  await dialog(page).getByText('RadioReference names (optional)', { exact: true }).click();
+  await dialog(page).getByLabel('Receiver', { exact: true }).selectOption('idle-b');
+  await openBands(page);
+  await bandCheckbox(page, bandLabels[1]).check();
+  await closeBands(page);
+  const wizard = await dialog(page).elementHandle();
+  await dialog(page).getByRole('button', { name: 'Connect account', exact: true }).click();
+  const connect = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await expect(connect).toBeVisible();
+  expect(await dialog(page).evaluate((element) => element.closest('.modal-backdrop').inert)).toBe(true);
+  await connect.getByLabel('Username', { exact: true }).fill('synthetic-user');
+  await connect.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await connect.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await expect(connect).toHaveCount(0);
+  expect(await dialog(page).evaluate((element, previous) => element === previous, wizard)).toBe(true);
+  await expect(dialog(page)).toContainText('Connected to RadioReference.');
+  await expect(dialog(page).getByLabel('RadioReference state or province')).toHaveValue('39');
+  await expect(dialog(page).getByLabel('RadioReference state or province')).toBeEnabled();
+  await expect(dialog(page).getByLabel('Receiver', { exact: true })).toHaveValue('idle-b');
+  await openBands(page);
+  await expect(bandCheckbox(page, bandLabels[1])).toBeChecked();
+  await closeBands(page);
+  await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+  const search = state.requests.find(({ path, method }) => path === searchPath && method === 'POST');
+  expect(search.body.radioreference_state_id).toBe(39);
+  expect(search.body.tuner_id).toBe('idle-b');
+  expect(state.requests.filter(({ path, method }) => path === '/api/v1/admin/radioreference' && method === 'GET')).toHaveLength(1);
+});
+
+test('signed-out search results omit late RadioReference panels and the import step', async ({ page }) => {
+  const fixture = importSearchFixture({ directoryConfiguration: {} });
+  fixture.customCandidates = fixture.customCandidates.map((candidate) => ({ ...candidate,
+    radio_reference: { state: 'login_required' } }));
+  const state = await install(page, fixture);
+  await complete(page);
+  await expect(dialog(page).getByText('RadioReference', { exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('link', { name: /RadioReference/ })).toHaveCount(0);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('radio')).toHaveCount(0);
+  await dialog(page).getByRole('button', { name: 'Add 4 channels', exact: true }).click();
+  await expect(dialog(page)).toContainText('4 channels added.');
+  expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') || path.endsWith('/aliases/import'))).toHaveLength(0);
+});
+
+for (const catalog of ['empty', 'failed']) {
+  test(`search skips a ${catalog} talkgroup catalog and adds channels`, async ({ page }) => {
+    const state = await install(page, importSearchFixture({
+      emptyTalkgroupSystems: catalog === 'empty' ? [123, 124, 125] : [], failTalkgroupCatalog: catalog === 'failed'
+    }));
+    await complete(page);
+    await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(dialog(page)).toContainText('4 channels added.');
+    await expect(dialog(page).getByRole('radio')).toHaveCount(0);
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  });
+}
+
+test('pending directory updates preserve the displayed import choice and an explicit No', async ({ page }) => {
+  await page.clock.install();
+  const fixture = ohioResultsFixture({ pendingMarcs: true });
+  fixture.customAliasGroups = fixture.customAliasGroups.map((group) => ({ ...group, alias_lists: [] }));
+  const state = await install(page, fixture);
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  const no = dialog(page).getByRole('radio', { name: importNo, exact: true });
+  await no.check();
+  const previous = await no.elementHandle();
+  state.customCandidates = state.customCandidates.map((candidate) => candidate.radio_reference.state === 'pending' ?
+    { ...candidate, radio_reference: { state: 'matched', match: { rr_system_id: 123, system_name: ohioSystems.marcs } } } : candidate);
+  await page.clock.fastForward(800);
+  await expect(no).toBeChecked();
+  expect(await no.evaluate((element, original) => element === original, previous)).toBe(true);
+  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
+  await expect(no).toBeChecked();
+});
+
+test('search offers and imports only systems with available talkgroups in a mixed result', async ({ page }) => {
+  const state = await install(page, importSearchFixture({ emptyTalkgroupSystems: [124] }));
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(2);
+  await expect(dialog(page)).not.toContainText(ohioSystems.cleveland);
+  await addChannels(page, 4, importYes);
+  await expect(dialog(page)).toContainText('4 channels added.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body.alias_list_id)).toEqual([41, 43]);
+});
+
+test('search skips the import step for existing Alias Lists and new lists without a trusted match', async ({ page }) => {
   const state = await install(page);
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
@@ -524,9 +640,8 @@ test('search skips the import step for existing Alias Lists and disables Yes wit
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).uncheck();
   await dialog(page).getByRole('checkbox', { name: 'Select Regional South', exact: true }).check();
   await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(dialog(page).getByRole('radio', { name: importYes, exact: true })).toBeDisabled();
-  await expect(dialog(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(dialog(page).getByRole('radio')).toHaveCount(0);
   await addChannels(page, 1);
   await expect(dialog(page)).toContainText('1 channel added.');
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
@@ -544,7 +659,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
         alias_group_id: 'lorain', selectable: true, saved: false, running: false, modulation: 'CQPSK',
         strength_dbfs: -35.2, health: { quality_pct: 99, valid_messages: 54, valid_control_messages: 41,
           invalid_control_messages: 1, checked_at_ms: 1790878800000 },
-        radio_reference: { state: 'matched', match: { system_name: realDirectory.system_name,
+        radio_reference: { state: 'matched', match: { rr_system_id: 123, system_name: realDirectory.system_name,
           site_name: 'Lorain County Simulcast', url: realDirectory.source_url,
           channels: realDirectory.frequencies_hz.map((frequency_hz) => ({ frequency_hz, primary_control: true })) } } }],
       customAliasGroups: [{ group_id: 'lorain', protocol_id: 'p25-phase1', wacn: realDirectory.wacn,
@@ -2082,7 +2197,7 @@ function aliasNamingFixture() {
 
 function resolveAliasNamingFixture(state, systemName) {
   state.customCandidates[0] = { ...state.customCandidates[0], name: 'Directory North', system_name: systemName,
-    site_name: 'North', radio_reference: { state: 'matched', match: { system_name: systemName, site_name: 'North',
+    site_name: 'North', radio_reference: { state: 'matched', match: { rr_system_id: 123, system_name: systemName, site_name: 'North',
       url: 'https://www.radioreference.com/db/sid/123' } } };
   state.customAliasGroups[0] = { ...state.customAliasGroups[0], system_name: systemName,
     default_new_alias_list_name: systemName };
@@ -2117,6 +2232,7 @@ test('late search directory naming updates an untouched Alias List and its visib
   resolveAliasNamingFixture(state, ohioSystems.marcs);
   await page.clock.fastForward(800);
   await expect(alias).toHaveValue(ohioSystems.marcs);
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
   await expect(dialog(page)).toContainText(`Alias List: ${ohioSystems.marcs}`);
   expect(await alias.evaluate((element, previous) => element === previous, original)).toBe(true);
   await expect(alias).toBeFocused();

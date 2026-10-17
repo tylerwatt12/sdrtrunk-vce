@@ -1,7 +1,7 @@
 import { systemName, systemIdentity } from '../core/system-labels.js?v=2';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=1';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './discovery-radioreference.js?v=8';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases, createDiscoveryTalkgroupAvailability } from './discovery-radioreference.js?v=9';
 
 export function spectrumSearchProtocolLabel(candidate, profiles = []) {
   const id = String(candidate?.protocol_id || '');
@@ -104,6 +104,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let currentStep = '';
   let wantsAliasImport = true;
   let aliasImportResult = null;
+  let aliasImportSystemIds = new Set();
+  let refreshReviewImportAction = null;
   let receiverChooser = null;
   let reviewBindings = [];
   let reviewGroupBindings = [];
@@ -305,11 +307,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     receiverChooser = null;
     reviewBindings = [];
     reviewGroupBindings = [];
+    refreshReviewImportAction = null;
     resultBindings = null;
     steps.hidden = next === 'saved';
-    const aliasStep = next === 'aliases' || next === 'importing' || next === 'review' &&
-      selectedCandidates().some((candidate) => (job.alias_groups || []).some((group) =>
-        group.group_id === candidate.alias_group_id && !group.alias_lists?.length));
+    const aliasStep = next === 'aliases' || next === 'importing';
     const labels = next === 'progress' ? ['Bands', 'Find channels', 'Review & add'] :
       ['Bands', 'Select channels', aliasStep ? 'Review' : 'Review & add', ...(aliasStep ? ['Talkgroups'] : [])];
     steps.dataset.stepCount = String(labels.length);
@@ -330,7 +331,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const receiver = () => catalog?.tuners?.find((tuner) => tuner.id === receiverId);
   const candidates = () => job?.candidates || [];
-  const directory = createDiscoveryRadioReferenceContext(ui, request);
+  const directory = createDiscoveryRadioReferenceContext(ui, request, { signal: abort.signal });
+  const availableTalkgroups = createDiscoveryTalkgroupAvailability(request);
+  const scopedAliasImport = (result) => result ? { ...result, targets: (result.targets || []).filter((target) =>
+    aliasImportSystemIds.has(Number(target.system_id))) } : null;
   const recordingWindow = () => {
     const tuner = receiver();
     if (!tuner?.fixed_window && tuner?.source_type !== 'recording') return null;
@@ -367,6 +371,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       }
     });
     reviewGroupBindings.forEach((binding) => refreshGroupDirectory(binding));
+    refreshReviewImportAction?.();
   };
   const identityFacts = (candidate) => spectrumSearchIdentityFacts(candidate, hex);
   const identityText = (candidate) => identityFacts(candidate).map(([label, value]) => `${label} ${value}`).join(' · ') ||
@@ -960,6 +965,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       } else if (directoryRefresh && updated.phase === 'complete' && currentStep === 'results') {
         refreshResultsDirectory();
         scheduleDirectoryPoll();
+      } else if (directoryRefresh && updated.phase === 'complete' && currentStep === 'aliases') {
+        scheduleDirectoryPoll();
       } else if (directoryRefresh && updated.phase === 'complete' && pendingDirectory()) scheduleDirectoryPoll();
       else drawJob();
     } catch (cause) {
@@ -1044,7 +1051,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       spectrumSearchGroupKey(candidate) === spectrumSearchGroupKey(members[0]));
     const representative = groupRepresentative(observed);
     const title = systemLabel(representative);
-    const url = discoveryRadioReferenceSystemUrl(representative);
+    const url = directory.available() ? discoveryRadioReferenceSystemUrl(representative) : null;
     const signature = JSON.stringify([title, url]);
     if (binding.titleSignature !== signature) {
       binding.title.replaceChildren(url ? anchor(title, url) : document.createTextNode(title));
@@ -1053,7 +1060,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const lookup = representative.radio_reference?.state === 'matched' ? null :
       members.find((candidate) => candidate.radio_reference?.state === 'pending') ||
       members.find((candidate) => candidate.radio_reference);
-    const result = lookup ? discoveryRadioReferenceResult(ui, lookup, binding.directoryResult) : null;
+    const result = directory.available() && lookup ? discoveryRadioReferenceResult(ui, lookup, binding.directoryResult) : null;
     const returnDirectoryFocus = !result && binding.directoryHost.contains(document.activeElement);
     if (result !== binding.directoryResult) binding.directoryHost.replaceChildren(...(result ? [result] : []));
     binding.directoryResult = result;
@@ -1431,7 +1438,18 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const newAliasGroups = groupedCandidates(chosen).filter((entry) => entry.aliasGroup &&
       Number(groups.get(entry.aliasGroup.group_id)?.alias_list_id) === 0);
     const addLabel = `Add ${chosen.length} ${chosen.length === 1 ? 'channel' : 'channels'}`;
-    button(newAliasGroups.length ? 'Continue' : addLabel, () => {
+    const importTargets = () => directory.available() ? newAliasGroups.map((entry) => {
+      const members = candidates().filter((candidate) => spectrumSearchGroupKey(candidate) === entry.key);
+      const representative = groupRepresentative(members);
+      const matchedIds = members.filter((candidate) => candidate.radio_reference?.state === 'matched')
+        .map((candidate) => Number(candidate.radio_reference.match?.rr_system_id));
+      const directoryIds = new Set(matchedIds);
+      const consistent = directoryIds.size === 1 && matchedIds.every((id) => Number.isSafeInteger(id) && id > 0);
+      return { name: groups.get(entry.aliasGroup.group_id).new_alias_list_name,
+        systemName: systemLabel(representative), rrSystemId: [...directoryIds][0], matched: consistent };
+    }).filter((target) => target.matched) : [];
+    const add = button(importTargets().length ? 'Continue' : addLabel, async () => {
+      if (busy) return;
       if (!form.checkValidity()) {
         form.querySelectorAll('input:invalid, select:invalid, textarea:invalid').forEach((control) => {
           const panel = control.closest('.spectrum-search-review-customize');
@@ -1448,21 +1466,24 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         mapEditors.forEach(({ map, field, draft }) => { draft.frequency_map = channelEditorFieldValue(map, field); });
       } catch (cause) { error(cause.message || 'Check the channel maps and try again.'); return; }
       const ids = chosen.map((candidate) => candidate.candidate_id);
-      if (!newAliasGroups.length) { void save(ids); return; }
-      show('aliases', 3, `Do you want to import talkgroups into your Alias ${newAliasGroups.length === 1 ? 'List' : 'Lists'}?`);
-      const targets = newAliasGroups.map((entry) => {
-        const members = candidates().filter((candidate) => spectrumSearchGroupKey(candidate) === entry.key);
-        const representative = groupRepresentative(members);
-        const directoryIds = new Set(members.filter((candidate) => candidate.radio_reference?.state === 'matched')
-          .map((candidate) => Number(candidate.radio_reference.match?.rr_system_id)).filter((id) => id > 0));
-        return { name: groups.get(entry.aliasGroup.group_id).new_alias_list_name, systemName: systemLabel(representative),
-          matched: representative.radio_reference?.state === 'matched' && directoryIds.size <= 1 };
-      });
+      const possibleTargets = importTargets();
+      let targets = [];
+      if (possibleTargets.length) {
+        setBusy(true);
+        feedback.replaceChildren(node('p', '', 'Checking available talkgroups…'));
+        try { targets = await availableTalkgroups(possibleTargets); }
+        finally { if (current()) { clearFeedback(); setBusy(false); } }
+        if (!current()) return;
+      }
+      aliasImportSystemIds = new Set(targets.map((target) => target.rrSystemId));
+      if (!targets.length) { void save(ids); return; }
+      show('aliases', 3, `Do you want to import talkgroups into your Alias ${targets.length === 1 ? 'List' : 'Lists'}?`);
       const choice = discoveryAliasImportChoice(ui, targets, wantsAliasImport);
       stage.append(choice.element);
       button('Back', () => { wantsAliasImport = choice.wantsImport(); showReview(); });
       button(addLabel, () => { wantsAliasImport = choice.wantsImport(); void save(ids); }, true);
     }, true);
+    refreshReviewImportAction = () => { add.textContent = importTargets().length ? 'Continue' : addLabel; };
     scheduleDirectoryPoll();
   };
   const payload = (ids) => ({ revision: job.revision,
@@ -1549,7 +1570,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (!current()) return;
       added = true;
       modal.setDirty(false);
-      aliasImportResult = job.alias_import || aliasImportResult;
+      aliasImportResult = scopedAliasImport(job.alias_import) || aliasImportResult;
       showSaved();
       await finishReceiverIfComplete();
       if (!job.restart_required && wantsAliasImport && aliasImportResult?.targets?.length) await runAliasImports();
@@ -1563,7 +1584,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         job = { ...job, restart_required: true, ledger_unavailable: true };
       if (job.restart_required || added || candidates().some((candidate) => candidate.saved)) {
         modal.setDirty(false);
-        aliasImportResult = job.alias_import || aliasImportResult;
+        aliasImportResult = scopedAliasImport(job.alias_import) || aliasImportResult;
         showSaved();
         await finishReceiverIfComplete();
         if (!job.restart_required && wantsAliasImport && aliasImportResult?.targets?.length) await runAliasImports();

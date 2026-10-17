@@ -9,10 +9,11 @@ const helpersSource = app.slice(app.indexOf('function closeReadOnlyModal('), app
   app.slice(app.indexOf('function uiSegmentedControl('), app.indexOf('function channelSummaryCards(')) +
   app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
 
-async function install(page, theme = 'light', empty = false) {
+async function install(page, theme = 'light', empty = false, radioReferenceAllowed = true) {
   await page.goto(`/design-system.html?theme=${theme}`);
-  await page.evaluate(async ({helpersSource, theme, empty}) => {
+  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed}) => {
     const { createStreamingWorkspace } = await import('/assets/features/streaming.js');
+    const { openRadioReferenceConnect } = await import('/assets/features/radioreference-connect.js');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
     const tableDefaults = await import('/assets/core/table-defaults.js');
     document.documentElement.dataset.theme = theme;
@@ -134,7 +135,7 @@ async function install(page, theme = 'light', empty = false) {
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
-    window.streamingTest={calls,status,fail:false,stale:false,holdWrite:false,releaseWrite:null,holdOptions:false,releaseOptions:null,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,feeds:[
+    window.streamingTest={calls,status,fail:false,stale:false,holdWrite:false,releaseWrite:null,holdOptions:false,releaseOptions:null,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,accountState:'VALID_PREMIUM',connectCount:0,feeds:[
       {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
       {id:2087,name:'County Fire and EMS',configured:true},
       {id:3194,name:'Citywide Events',configured:false}
@@ -142,6 +143,12 @@ async function install(page, theme = 'light', empty = false) {
     const requestJson=async (path, options={}) => {
       calls.push([path, options]);
       const url=new URL(path,location.href); const suffix=url.pathname.replace('/api/v1/admin/streaming','');
+      if(url.pathname==='/api/v1/admin/radioreference') return {account:{state:window.streamingTest.accountState}};
+      if(url.pathname==='/api/v1/admin/radioreference/session'&&options.method==='PUT') {
+        if(window.streamingTest.holdConnect) await new Promise(resolve=>{window.streamingTest.releaseConnect=resolve;});
+        window.streamingTest.accountState='VALID_PREMIUM';
+        return {account:{state:'VALID_PREMIUM'}};
+      }
       if(options.method&&window.streamingTest.holdWrite) await new Promise(resolve=>{window.streamingTest.releaseWrite=resolve;});
       if(suffix==='/options'&&window.streamingTest.holdOptions) await new Promise(resolve=>{window.streamingTest.releaseOptions=resolve;});
       if(window.streamingTest.fail) throw new Error('Connection unavailable');
@@ -175,11 +182,17 @@ async function install(page, theme = 'light', empty = false) {
     const header=node('header','page-header ui-page-header');
     const labels=node('div'); labels.append(node('h1','page-title','Streaming'),node('div','page-subtitle','Manage destinations and monitor delivery')); header.append(labels);
     const abort=new AbortController();
+    window.streamingTest.abort=()=>abort.abort();
+    const connectRadioReference=options=>{
+      window.streamingTest.connectCount+=1;
+      return openRadioReferenceConnect({node,formField,...shared,requestJson},options);
+    };
     const workspace=createStreamingWorkspace({node,formField,uiSelectFrame,uiStatus,table,...shared,requestJson,browsingWorkflows,
+      connectRadioReference,radioReferenceAllowed,
       modalFooter:(...controls)=>{const footer=node('footer','alias-modal-footer ui-modal-footer ui-action-row');footer.append(...controls);return footer;},
       formatNumber:String,href:(view,params)=>`/?${new URLSearchParams({view,...params})}`,signal:abort.signal});
     shell.append(header,workspace.element);document.body.append(shell);
-  }, {helpersSource,theme,empty});
+  }, {helpersSource,theme,empty,radioReferenceAllowed});
   await expect(page.getByRole('button',{name:'Add destination',exact:true})).toBeVisible();
 }
 
@@ -502,7 +515,8 @@ test('Broadcastify feed picker presents recoverable error and empty states',asyn
   await page.getByRole('button',{name:'Find Broadcastify feeds',exact:true}).click();
   const modal=page.getByRole('dialog');
   await expect(modal.getByText('Available feeds could not be loaded',{exact:true})).toBeVisible();
-  await expect(modal.getByRole('link',{name:'Open RadioReference settings',exact:true})).toHaveAttribute('href','/?view=radioreference');
+  await expect(modal.getByRole('button',{name:'Connect account',exact:true})).toBeVisible();
+  await expect(modal.getByRole('link')).toHaveCount(0);
   await page.evaluate(()=>{window.streamingTest.feedMode='empty';});
   await modal.getByRole('button',{name:'Try again',exact:true}).click();
   await expect(modal.getByRole('heading',{name:'No assigned feeds',exact:true})).toBeVisible();
@@ -526,4 +540,83 @@ for(const theme of ['light','dark']) test(`shared labeled mobile table ${theme}`
   await page.setViewportSize({width:390,height:844});
   await page.goto(`/design-system.html?theme=${theme}&view=mobile-table`);
   await expect(page.locator('.visual-mobile-table-example')).toHaveScreenshot(`shared-mobile-table-${theme}.png`);
+});
+
+
+test('signed-out Broadcastify discovery resumes once after shared sign-in without leaving the feed picker', async ({ page }) => {
+  await install(page);
+  await page.evaluate(() => { window.streamingTest.accountState = 'NOT_CONFIGURED'; });
+  const originalUrl = page.url();
+  await page.getByRole('button', { name: 'Find Broadcastify feeds', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await expect(connection).toBeVisible();
+  expect(await page.evaluate(() => window.streamingTest.calls.filter(([path]) => path.endsWith('/feeds/refresh')).length)).toBe(0);
+  await connection.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');
+  await connection.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await connection.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await expect(connection).toHaveCount(0);
+  const picker = page.getByRole('dialog', { name: 'Available Broadcastify feeds', exact: true });
+  await expect(picker.locator('.streaming-feed-card')).toHaveCount(3);
+  expect(page.url()).toBe(originalUrl);
+  expect(await page.evaluate(() => ({ connections: window.streamingTest.connectCount,
+    refreshes: window.streamingTest.calls.filter(([path]) => path.endsWith('/feeds/refresh')).length })))
+    .toEqual({ connections: 1, refreshes: 1 });
+});
+
+test('Cancel from Broadcastify sign-in preserves the picker and reconnect retries in place', async ({ page }) => {
+  await install(page);
+  await page.evaluate(() => { window.streamingTest.accountState = 'EXPIRED_PREMIUM'; });
+  await page.getByRole('button', { name: 'Find Broadcastify feeds', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await connection.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Available Broadcastify feeds', exact: true });
+  await expect(picker.getByRole('button', { name: 'Connect account', exact: true })).toBeVisible();
+  await expect(picker.locator('.ui-feedback-error')).toHaveCount(0);
+  expect(await page.evaluate(() => window.streamingTest.calls.filter(([path]) => path.endsWith('/feeds/refresh')).length)).toBe(0);
+  await picker.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await connection.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');
+  await connection.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await connection.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await expect(picker.locator('.streaming-feed-card')).toHaveCount(3);
+});
+
+test('failed Broadcastify refresh can reconnect and load feeds without navigation', async ({ page }) => {
+  await install(page);
+  await page.evaluate(() => { window.streamingTest.feedMode = 'error'; });
+  await page.getByRole('button', { name: 'Find Broadcastify feeds', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Available Broadcastify feeds', exact: true });
+  await picker.getByRole('button', { name: 'Connect account', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await connection.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');
+  await connection.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await page.evaluate(() => { window.streamingTest.feedMode = 'ready'; });
+  await connection.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await expect(picker.locator('.streaming-feed-card')).toHaveCount(3);
+  expect(await page.evaluate(() => window.streamingTest.calls.filter(([path]) => path.endsWith('/feeds/refresh')).length)).toBe(2);
+});
+
+test('Broadcastify discovery respects account access while manual destination setup remains available', async ({ page }) => {
+  await install(page, 'light', false, false);
+  await expect(page.getByRole('button', { name: 'Find Broadcastify feeds', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Add destination', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Add streaming destination', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.streamingTest.calls.filter(([path]) => path.includes('/radioreference')).length)).toBe(0);
+});
+
+
+test('leaving Streaming aborts the shared sign-in and ignores a late connection result', async ({ page }) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.streamingTest.accountState = 'NOT_CONFIGURED';
+    window.streamingTest.holdConnect = true;
+  });
+  await page.getByRole('button', { name: 'Find Broadcastify feeds', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await connection.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');
+  await connection.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await connection.getByRole('button', { name: 'Connect account', exact: true }).click();
+  await expect(connection).toHaveAttribute('aria-busy', 'true');
+  await page.evaluate(() => { window.streamingTest.abort(); window.streamingTest.releaseConnect(); });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await page.evaluate(() => window.streamingTest.calls.filter(([path]) => path.endsWith('/feeds/refresh')).length)).toBe(0);
 });

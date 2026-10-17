@@ -9,6 +9,7 @@ import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAva
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
 import { openSetupGuide } from '/assets/core/setup-guide.js?v=2';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
+import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=1';
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
   'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));
@@ -410,7 +411,7 @@ const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
-  'signal-quality-detail', 'radioreference-results',
+  'signal-quality-detail', 'radioreference-results', 'radioreference-connect',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'call-matching', 'receiving-windows', 'live-notice', 'live-filter', 'tuner-frequency-popover',
@@ -423,6 +424,40 @@ document.body.dataset.galleryView = view;
 const modalSize = parameters.get('modal-size');
 if (['small', 'medium'].includes(modalSize)) {
   document.querySelector('.visual-modal-example .read-only-modal')?.classList.add(`modal-size-${modalSize}`);
+}
+
+if (view === 'radioreference-connect') {
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  const foundation = await createGalleryModalFoundation();
+  const response = await fetch('/assets/app.js');
+  if (!response.ok) throw new Error('The production account controls could not be loaded.');
+  const source = await response.text();
+  const fieldsStart = source.indexOf('function formField(');
+  const fieldsEnd = source.indexOf('function authenticationFailureMessage(', fieldsStart);
+  const togglesStart = source.indexOf('function uiToggle(');
+  const togglesEnd = source.indexOf('function uiPill(', togglesStart);
+  if ([fieldsStart, fieldsEnd, togglesStart, togglesEnd].some(index => index < 0)) {
+    throw new Error('The production account controls were not found.');
+  }
+  const controls = new Function('node', `${source.slice(fieldsStart, fieldsEnd)}
+    ${source.slice(togglesStart, togglesEnd)}
+    return { formField, uiToggleField };`)(node);
+  const requestJson = (_path, options) => {
+    if (parameters.get('connection-state') === 'busy') {
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () =>
+        reject(new DOMException('Example closed', 'AbortError')), { once: true }));
+    }
+    return Promise.resolve({ account: { state: parameters.get('connection-state') === 'error' ?
+      'INVALID_CREDENTIALS' : 'VALID_PREMIUM' } });
+  };
+  void openRadioReferenceConnect({ node, ...foundation, ...controls, requestJson }, {
+    introduction: 'Connect RadioReference to add system and site names.'
+  });
 }
 
 if (view === 'setup-guide') {
