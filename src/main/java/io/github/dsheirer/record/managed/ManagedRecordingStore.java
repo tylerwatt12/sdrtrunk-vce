@@ -40,6 +40,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -50,6 +51,8 @@ final class ManagedRecordingStore implements AutoCloseable
     private static final int FORMAT_VERSION = ManagedRecordingSchema.CURRENT_FORMAT_VERSION;
     private static final int APPLICATION_ID = ManagedRecordingSchema.APPLICATION_ID;
     private static final int MAINTENANCE_BATCH = 256;
+    private static final int MAX_NAME_SEARCH_HOME_SYSTEMS = 128;
+    private static final int MAX_NAME_GROUP_HOME_LOOKUPS = 4_096;
     // String.isBlank whitespace, so stored no-speech responses agree with the excerpt shown by the web API.
     private static final String TRANSCRIPT_WHITESPACE = "\t\n\u000B\f\r\u001C\u001D\u001E\u001F " +
         "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2008\u2009\u200A\u2028\u2029\u205F\u3000";
@@ -584,10 +587,36 @@ final class ManagedRecordingStore implements AutoCloseable
         if(!filter.identityNameMatches.isEmpty())
         {
             List<CandidateQuery> queries = new ArrayList<>();
+            List<String> homeSystems = filter.identityNameMatches.stream().anyMatch(IdentityNameMatch::configuredTalkgroup) ?
+                nameSearchHomeSystems(filter, connection) : List.of();
+            long homeLookups = filter.identityNameMatches.stream().filter(IdentityNameMatch::configuredTalkgroup)
+                .map(IdentityNameMatch::identityId).distinct().count() * homeSystems.size();
+            if(homeLookups > MAX_NAME_GROUP_HOME_LOOKUPS)
+                throw new IllegalArgumentException("Too many talkgroups and systems match this name search. " +
+                    "Choose a system and try again.");
+            var rawIds = new LinkedHashSet<Integer>();
             for(IdentityNameMatch match: filter.identityNameMatches)
             {
                 if(match.systemKey() == null)
-                    queries.addAll(numericIdentityCandidateQueries(filter, match.identityId(), false, false));
+                {
+                    if(rawIds.add(match.identityId()))
+                        queries.addAll(numericIdentityCandidateQueries(filter, match.identityId(), false, false));
+                    //A qualified same-home group can have a known local Alias but no captured working address.
+                    //Keep raw numeric searches unchanged and add this compatibility stream only for name searches.
+                    for(String system: match.configuredTalkgroup() ? homeSystems : List.<String>of())
+                    {
+                        int wacn = Integer.parseInt(system.substring(4, 9), 16);
+                        int sysid = Integer.parseInt(system.substring(10), 16);
+                        queries.add(scopedIdentityCandidate(filter,
+                            new HomeMatch(match.identityId(), system, wacn, sysid, false),
+                            "recording_patch_member pm INDEXED BY idx_recording_patch_member_home_lookup " +
+                                "JOIN recording_call c ON c.id=pm.call_id",
+                            "pm.kind=1 AND pm.home_wacn=? AND pm.home_system=? AND pm.home_id=? " +
+                                "AND pm.local_id=0 AND pm.start_ms BETWEEN ? AND ?",
+                            List.of(wacn, sysid, match.identityId(), filter.fromMs, filter.toMs),
+                            "pm.start_ms", "pm.call_id", null));
+                    }
+                }
                 else
                     queries.addAll(nameIdentityCandidateQueries(filter, match));
             }
@@ -648,6 +677,47 @@ final class ManagedRecordingStore implements AutoCloseable
                 "c.voice_type=?",List.of(voiceTypeFilter(filter.voiceType)),"c.start_ms","c.id"));
         return List.of(candidateQuery(filter, "recording_call c INDEXED BY idx_recording_call_time", "1",
             List.of(), "c.start_ms", "c.id"));
+    }
+
+    /** Read only the small identity directories; never discover receiving homes by scanning call history. */
+    private List<String> nameSearchHomeSystems(SearchFilter filter, Connection connection) throws SQLException
+    {
+        if(filter.systemKey != null && !filter.systemKey.isBlank())
+            return RadioSystemKey.isP25Native(filter.systemKey) ? List.of(filter.systemKey) : List.of();
+        var systems = new LinkedHashSet<String>();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT system_key FROM recording_system " +
+                "WHERE system_key GLOB 'p25:*' LIMIT " + (MAX_NAME_SEARCH_HOME_SYSTEMS + 1)))
+        {
+            int examined = 0;
+            while(rows.next())
+            {
+                requireBoundedNameHomes(++examined);
+                String key = rows.getString(1);
+                if(RadioSystemKey.isP25Native(key)) systems.add(key);
+            }
+        }
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT DISTINCT wacn,system_id FROM recording_site LIMIT " +
+                (MAX_NAME_SEARCH_HOME_SYSTEMS + 1)))
+        {
+            int examined = 0;
+            while(rows.next())
+            {
+                requireBoundedNameHomes(++examined);
+                String key = RadioSystemKey.p25(rows.getInt(1), rows.getInt(2));
+                if(key != null) systems.add(key);
+                requireBoundedNameHomes(systems.size());
+            }
+        }
+        return List.copyOf(systems);
+    }
+
+    private static void requireBoundedNameHomes(int count)
+    {
+        if(count > MAX_NAME_SEARCH_HOME_SYSTEMS)
+            throw new IllegalArgumentException("Too many recorded systems match this name search. " +
+                "Choose a system and try again.");
     }
 
     /** Resolve the small site directory, then page each matching site's ordered index inside this read snapshot. */

@@ -757,8 +757,14 @@ final class ManagedRecordingsHttpController
         {
             for(Object member: members)
             {
-                if(member instanceof Map<?,?> values && values.get("ota_alias") instanceof String text &&
-                    text.toLowerCase(Locale.ROOT).contains(lowercaseQuery)) return true;
+                if(member instanceof Map<?,?> values)
+                {
+                    for(String field: List.of("alias", "description", "group", "ota_alias"))
+                    {
+                        if(values.get(field) instanceof String text &&
+                            text.toLowerCase(Locale.ROOT).contains(lowercaseQuery)) return true;
+                    }
+                }
             }
         }
         return false;

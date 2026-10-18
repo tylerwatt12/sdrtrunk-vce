@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Member;
 import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -409,6 +410,95 @@ class ManagedRecordingLabelsTest
                 "VALUES(1,'p25:00001:001',1,0,1,1,1000,2000)");
         }
         return database;
+    }
+
+    @Test
+    void patchMemberAliasesKeepListProtocolRangePrecedenceAndRadioHomeBoundaries() throws Exception
+    {
+        Path database = freshRadioDatabase("patch-configured-alias.sqlite");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("INSERT INTO alias_list(id,name,family) VALUES" +
+                "(7,'Recorded List','P25'),(8,'Other List','P25')");
+            statement.execute("INSERT INTO alias(alias_list_id,matcher_type,protocol,value,name) VALUES" +
+                "(7,'TALKGROUP','APCO25',1001,'Exact dispatch')," +
+                "(7,'TALKGROUP','DMR',1001,'Wrong protocol')," +
+                "(8,'TALKGROUP','APCO25',1001,'Wrong list')," +
+                "(7,'RADIO_ID','APCO25',401,'Wrong foreign subscriber')," +
+                "(7,'RADIO_ID','APCO25',402,'Home radio')," +
+                "(7,'RADIO_ID','APCO25',403,'Observed working radio')");
+            statement.execute("INSERT INTO alias(alias_list_id,matcher_type,protocol,min_value,max_value,name) " +
+                "VALUES(7,'TALKGROUP_RANGE','APCO25',1000,1099,'Dispatch range')");
+        }
+        List<Map<String,Object>> members = List.of(
+            Map.of("kind", "talkgroup", "id", 1001),
+            Map.of("kind", "talkgroup", "id", 1050),
+            Map.of("kind", "radio", "id", 401, "home_wacn", 2, "home_system_id", 2, "home_identity_id", 401),
+            Map.of("kind", "radio", "id", 402, "home_wacn", 1, "home_system_id", 1, "home_identity_id", 402),
+            Map.of("kind", "radio", "id", 403, "home_wacn", 2, "home_system_id", 2, "home_identity_id", 777));
+        Map<String,Object> call = Map.of("system_key", "p25:00001:001", "protocol", "APCO25_PHASE2",
+            "alias_list_id", 7, "patch_members", members);
+        ManagedRecordingLabels labels = new ManagedRecordingLabels(database);
+        for(boolean systemRetained: List.of(true, false))
+        {
+            if(!systemRetained)
+            {
+                try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                    Statement statement = connection.createStatement())
+                {
+                    statement.execute("DELETE FROM radio_system WHERE id=1");
+                }
+            }
+            var decorated = (List<?>)labels.decorate(List.of(call)).getFirst().get("patch_members");
+            assertEquals("Exact dispatch", ((Map<?,?>)decorated.get(0)).get("alias"));
+            assertEquals("Dispatch range", ((Map<?,?>)decorated.get(1)).get("alias"));
+            assertFalse(((Map<?,?>)decorated.get(2)).containsKey("alias"));
+            assertEquals("Home radio", ((Map<?,?>)decorated.get(3)).get("alias"));
+            assertEquals("Observed working radio", ((Map<?,?>)decorated.get(4)).get("alias"));
+        }
+        assertFalse(members.getFirst().containsKey("alias"), "Captured metadata stays unchanged");
+    }
+
+    @Test
+    void patchGroupAliasesRequireAnObservedAddressOrTheSameReceivingHome() throws Exception
+    {
+        Path database = freshRadioDatabase("qualified-group-alias.sqlite");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("INSERT INTO alias_list(id,name,family) VALUES" +
+                "(7,'P25 members','P25'),(9,'NXDN members','NXDN')");
+            statement.execute("INSERT INTO alias(alias_list_id,matcher_type,protocol,value,name) VALUES" +
+                "(7,'TALKGROUP','APCO25',1001,'Local dispatch')," +
+                "(7,'TALKGROUP','APCO25',1050,'Observed working group')," +
+                "(9,'TALKGROUP','NXDN',0,'NXDN group zero')");
+        }
+        var members = List.of(
+            new Member("talkgroup", 1001, 2, 2, 1001).toMap(),
+            new Member("talkgroup", 0, 2, 2, 1001).toMap(),
+            new Member("talkgroup", 1001, 1, 1, 1001).toMap(),
+            new Member("talkgroup", 0, 1, 1, 1001).toMap(),
+            new Member("talkgroup", 1050, 2, 2, 1001).toMap(),
+            new Member("talkgroup", 1001, null, null, null).toMap());
+        ManagedRecordingLabels labels = new ManagedRecordingLabels(database);
+        var decorated = (List<?>)labels.decorate(List.of(Map.<String,Object>of("system_key", "p25:00001:001",
+            "protocol", "APCO25_PHASE2", "alias_list_id", 7, "patch_members", members)))
+            .getFirst().get("patch_members");
+        assertFalse(((Map<?,?>)decorated.get(0)).containsKey("alias"), "Foreign canonical number is not a local address");
+        assertFalse(((Map<?,?>)decorated.get(1)).containsKey("alias"), "Zero does not prove a foreign local address");
+        assertEquals("Local dispatch", ((Map<?,?>)decorated.get(2)).get("alias"));
+        assertEquals("Local dispatch", ((Map<?,?>)decorated.get(3)).get("alias"));
+        assertEquals("Observed working group", ((Map<?,?>)decorated.get(4)).get("alias"));
+        assertEquals("Local dispatch", ((Map<?,?>)decorated.get(5)).get("alias"));
+        var unknown = (List<?>)labels.decorate(List.of(Map.<String,Object>of("protocol", "APCO25",
+            "alias_list_id", 7, "patch_members", members.subList(2, 4)))).getFirst().get("patch_members");
+        assertTrue(unknown.stream().allMatch(value -> !((Map<?,?>)value).containsKey("alias")));
+        var nxdn = (List<?>)labels.decorate(List.of(Map.<String,Object>of("protocol", "NXDN",
+            "alias_list_id", 9, "patch_members", List.of(
+                new Member("talkgroup", 0, null, null, null).toMap()))))
+            .getFirst().get("patch_members");
+        assertEquals("NXDN group zero", ((Map<?,?>)nxdn.getFirst()).get("alias"));
     }
 
     @Test

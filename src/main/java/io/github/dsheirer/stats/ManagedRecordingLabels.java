@@ -23,6 +23,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,6 +39,7 @@ import java.util.Set;
 final class ManagedRecordingLabels
 {
     private static final int MAX_SUGGESTIONS = 20;
+    private static final int MAX_PATCH_ALIAS_LOOKUPS = 4_096;
     private final Path mDatabasePath;
     private final RadioSystemNameCatalog mSystemNames;
 
@@ -81,6 +83,7 @@ final class ManagedRecordingLabels
         {
             Map<String,ChannelLabels> channels = new HashMap<>();
             Map<String,AliasLabels> aliases = new HashMap<>();
+            Set<String> patchAliasLookups = new HashSet<>();
             Map<String,String> talkerAliases = new HashMap<>();
             Map<String,SystemScope> systems = new HashMap<>();
             Map<String,String> knownIdentities = new HashMap<>();
@@ -153,6 +156,8 @@ final class ManagedRecordingLabels
                         put(call, "destination_radio_group", label.group());
                     }
                 }
+                decoratePatchMemberAliases(connection, call, aliasListId, protocol, recordedSystem, aliases,
+                    patchAliasLookups);
                 String systemKey = string(call.get("system_key"));
                 SystemScope system = systemKey != null ? systems.computeIfAbsent(systemKey,
                     key -> system(connection, key)) : null;
@@ -346,6 +351,76 @@ final class ManagedRecordingLabels
         call.put("patch_members", decorated);
     }
 
+    /** Configured member names remain available even after the optional activity identity has been pruned. */
+    private static void decoratePatchMemberAliases(Connection connection, Map<String,Object> call,
+                                                   Long aliasListId, String protocol, String receivingSystem,
+                                                   Map<String,AliasLabels> aliases, Set<String> lookupBudget)
+    {
+        if(aliasListId == null || !(call.get("patch_members") instanceof List<?> members) || members.isEmpty())
+        {
+            return;
+        }
+        List<Map<String,Object>> decorated = new ArrayList<>(members.size());
+        for(Object item: members)
+        {
+            if(!(item instanceof Map<?,?> member)) continue;
+            Map<String,Object> copy = new LinkedHashMap<>();
+            member.forEach((key, value) -> {
+                if(key instanceof String field) copy.put(field, value);
+            });
+            boolean radio = "radio".equals(copy.get("kind"));
+            Integer id = radio ? integer(copy.get("id")) : "talkgroup".equals(copy.get("kind")) ?
+                localGroupAliasId(copy, receivingSystem, protocol) : null;
+            if(id != null && id >= 0 &&
+                (!radio || id > 0 && localRadioAliasEligible(id, integer(copy.get("home_wacn")),
+                    integer(copy.get("home_system_id")), integer(copy.get("home_identity_id")),
+                    receivingSystem, protocol)))
+            {
+                String key = aliasListId + (radio ? ":r:" : ":g:") + protocol + ':' + id;
+                if(!aliases.containsKey(key))
+                {
+                    if(lookupBudget.size() >= MAX_PATCH_ALIAS_LOOKUPS)
+                    {
+                        throw new StatsApiException(422, "recording_alias_lookup_too_broad",
+                            "This selection contains too many patch members. " +
+                                "Choose a narrower time range or fewer recordings, then try again.");
+                    }
+                    lookupBudget.add(key);
+                    //Remember misses too, so repeated members never repeat a database lookup on this page.
+                    aliases.put(key, alias(connection, aliasListId, protocol, id, radio));
+                }
+                AliasLabels label = aliases.get(key);
+                if(label != null)
+                {
+                    put(copy, "alias", label.name());
+                    put(copy, "description", label.description());
+                    put(copy, "group", label.group());
+                }
+            }
+            decorated.add(copy);
+        }
+        call.put("patch_members", decorated);
+    }
+
+    /** A foreign canonical group number alone is not a captured address on the receiving system. */
+    private static Integer localGroupAliasId(Map<String,Object> member, String receivingSystem, String protocol)
+    {
+        Integer id = integer(member.get("id"));
+        if(id == null || id < 0) return null;
+        if(!("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol))) return id;
+        Integer homeId = integer(member.get("home_identity_id"));
+        Integer observed = integer(member.get("observed_local_id"));
+        if(!member.containsKey("observed_local_id") &&
+            (homeId == null || id > 0 && !id.equals(homeId))) observed = id;
+        if(observed != null && observed > 0) return observed;
+        Integer homeWacn = integer(member.get("home_wacn"));
+        Integer homeSystem = integer(member.get("home_system_id"));
+        if(homeId != null && homeId > 0 && homeWacn != null && homeSystem != null &&
+            RadioSystemKey.isP25Native(receivingSystem) &&
+            receivingSystem.equals(RadioSystemKey.p25(homeWacn, homeSystem))) return homeId;
+        return null;
+    }
+
     private static boolean protocolMatches(int systemProtocol, String callProtocol)
     {
         return switch(callProtocol != null ? callProtocol : "")
@@ -384,11 +459,16 @@ final class ManagedRecordingLabels
     private static boolean localRadioAliasEligible(Map<String,Object> call, String prefix, int localId,
                                                     String receivingSystem, String protocol)
     {
+        return localRadioAliasEligible(localId, integer(call.get(prefix + "_home_wacn")),
+            integer(call.get(prefix + "_home_system_id")), integer(call.get(prefix + "_home_id")),
+            receivingSystem, protocol);
+    }
+
+    private static boolean localRadioAliasEligible(int localId, Integer homeWacn, Integer homeSystem,
+                                                    Integer homeId, String receivingSystem, String protocol)
+    {
         if(!RadioSystemKey.isP25Native(receivingSystem) ||
             !("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol))) return true;
-        Integer homeWacn = integer(call.get(prefix + "_home_wacn"));
-        Integer homeSystem = integer(call.get(prefix + "_home_system_id"));
-        Integer homeId = integer(call.get(prefix + "_home_id"));
         if(homeWacn == null || homeSystem == null || homeId == null || homeId != localId) return true;
         String home = RadioSystemKey.p25(homeWacn, homeSystem);
         return home == null || home.equals(receivingSystem);
@@ -974,6 +1054,8 @@ final class ManagedRecordingLabels
         String pattern = '%' + query.toLowerCase(Locale.ROOT).replace("\\", "\\\\")
             .replace("%", "\\%").replace("_", "\\_") + '%';
         Set<Integer> ids = new LinkedHashSet<>();
+        Set<Integer> groupIds = new LinkedHashSet<>();
+        Set<Integer> radioIds = new LinkedHashSet<>();
         Set<IdentityNameMatch> matches = new LinkedHashSet<>();
         try(Connection connection = open())
         {
@@ -1001,6 +1083,7 @@ final class ManagedRecordingLabels
                     while(rows.next())
                     {
                         String matcher = rows.getString("matcher_type");
+                        Set<Integer> typedIds = matcher.startsWith("TALKGROUP") ? groupIds : radioIds;
                         if(matcher.endsWith("_RANGE"))
                         {
                             int minimum = rows.getInt("min_value");
@@ -1013,17 +1096,21 @@ final class ManagedRecordingLabels
                             for(int id = minimum; id <= maximumId; id++)
                             {
                                 ids.add(id);
+                                typedIds.add(id);
                             }
                         }
                         else
                         {
-                            ids.add(rows.getInt("value"));
+                            int id = rows.getInt("value");
+                            ids.add(id);
+                            typedIds.add(id);
                         }
                         if(ids.size() > maximum) break;
                     }
                 }
             }
-            ids.forEach(id -> matches.add(new IdentityNameMatch(id, null, null, null, false)));
+            groupIds.forEach(id -> matches.add(new IdentityNameMatch(id, null, null, null, false, true)));
+            radioIds.forEach(id -> matches.add(new IdentityNameMatch(id, null, null, null, false, false)));
             if(matches.size() <= maximum)
             {
                 String otaSql = """

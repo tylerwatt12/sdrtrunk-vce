@@ -783,10 +783,19 @@ public final class ManagedRecordingCatalog implements AutoCloseable
 
     /** A raw Alias number or an OTA owner scoped to its receiving system and stored home tuple. */
     public record IdentityNameMatch(int identityId, String systemKey, Integer homeWacn,
-                                    Integer homeSystemId, boolean includeNullHome)
+                                    Integer homeSystemId, boolean includeNullHome, boolean configuredTalkgroup)
     {
+        /** Older callers retain raw-address name matching unless configured group expansion is explicit. */
+        public IdentityNameMatch(int identityId, String systemKey, Integer homeWacn,
+                                 Integer homeSystemId, boolean includeNullHome)
+        {
+            this(identityId, systemKey, homeWacn, homeSystemId, includeNullHome, false);
+        }
+
         public IdentityNameMatch
         {
+            if(configuredTalkgroup && systemKey != null)
+                throw new IllegalArgumentException("A configured talkgroup name cannot carry a radio home scope");
             if(identityId < 0 || (systemKey == null) != (homeWacn == null && homeSystemId == null) ||
                 systemKey != null && (identityId < 1 || systemKey.isBlank() || homeWacn == null || homeSystemId == null ||
                     !((homeWacn == -1 && homeSystemId == -1) ||

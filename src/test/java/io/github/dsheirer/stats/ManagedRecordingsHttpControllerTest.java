@@ -404,6 +404,183 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void patchedTalkgroupNamesFindTheSameRecordingAsTheirNumericIdentity() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES" +
+                "(700,'Fixture Recorded List','P25'),(701,'Fixture Other List','P25')");
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,description,group_name," +
+                "matcher_type,protocol,value) VALUES" +
+                "(700,'Harbor Dispatch','County dispatch desk','Public Safety','TALKGROUP','APCO25',1001)," +
+                "(701,'Other Dispatch','Unrelated description','Unrelated group','TALKGROUP','APCO25',1001)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700,call_type=2 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_patch_member(call_id,kind,local_id,home_wacn," +
+                "home_system,home_id,start_ms) VALUES(1,1,1001,-1,-1,-1,1000)");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=5000";
+        assertEquals(1, json(send(request(base + "&talkgroup_id=1001").GET())).at("/data/calls").size());
+        for(String query : List.of("Harbor", "County", "Public"))
+        {
+            HttpResponse<String> response = send(request(base + "&q=" + query).GET());
+            assertEquals(200, response.statusCode(), response.body());
+            assertEquals(1, json(response).at("/data/calls").size(), query);
+            assertEquals("Harbor Dispatch", json(response).at("/data/calls/0/patch_members/0/alias").textValue());
+        }
+        assertEquals(0, json(send(request(base + "&q=Unrelated").GET())).at("/data/calls").size());
+    }
+
+    @Test
+    void foreignCanonicalPatchGroupCannotMatchAnUnrelatedLocalAliasName() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture Local List','P25')");
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(700,'Local Dispatch','TALKGROUP','APCO25',1001)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_system(id,system_key) VALUES(1,'p25:00001:001')");
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700,system_id=1,call_type=2 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_patch_member(call_id,kind,local_id,home_wacn," +
+                "home_system,home_id,start_ms) VALUES(1,1,1001,2,2,1001,1000),(1,1,0,2,2,1001,1000)");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH;
+        HttpResponse<String> foreign = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
+        assertEquals(200, foreign.statusCode(), foreign.body());
+        assertEquals(0, json(foreign).at("/data/calls").size());
+        JsonNode detail = json(send(request(base + "/calls/1").GET())).at("/data/patch_members");
+        assertEquals(2, detail.size());
+        assertTrue(detail.findValues("alias").isEmpty());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_patch_member SET home_wacn=1,home_system=1");
+        }
+        HttpResponse<String> local = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
+        assertEquals(200, local.statusCode(), local.body());
+        assertEquals(1, json(local).at("/data/calls").size());
+        detail = json(send(request(base + "/calls/1").GET())).at("/data/patch_members");
+        assertEquals(2, detail.findValues("alias").size());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM recording_patch_member WHERE local_id<>0");
+        }
+        local = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
+        assertEquals(200, local.statusCode(), local.body());
+        assertEquals(1, json(local).at("/data/calls").size(), "A same-home zero-address member is searchable by its Alias");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_patch_member SET home_wacn=2,home_system=2");
+        }
+        foreign = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
+        assertEquals(200, foreign.statusCode(), foreign.body());
+        assertEquals(0, json(foreign).at("/data/calls").size());
+    }
+
+    @Test
+    void patchAliasLookupBudgetCountsDistinctMissesAcrossTheWholePageAndReturnsAnActionableError() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture Members','P25')");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700,call_type=2 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,alias_list_id,protocol,call_type,voice_type,target_id) " +
+                "VALUES(2,2000,3000,1000,'other.mp3',5,700,1,2,1,4001)");
+            statement.executeUpdate("WITH RECURSIVE members(id) AS (VALUES(1000) UNION ALL " +
+                "SELECT id+1 FROM members WHERE id<5095) " +
+                "INSERT INTO recording_patch_member(call_id,kind,local_id,home_wacn,home_system,home_id,start_ms) " +
+                "SELECT 1,1,id,-1,-1,-1,1000 FROM members");
+            statement.executeUpdate("INSERT INTO recording_patch_member " +
+                "SELECT 2,kind,local_id,home_wacn,home_system,home_id,2000 FROM recording_patch_member WHERE call_id=1");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=5000";
+        HttpResponse<String> boundary = send(request(base).GET());
+        assertEquals(200, boundary.statusCode(), boundary.body());
+        JsonNode calls = json(boundary).at("/data/calls");
+        assertEquals(2, calls.size());
+        assertEquals(4096, calls.get(0).get("patch_members").size());
+        assertEquals(4096, calls.get(1).get("patch_members").size(), "Duplicate misses share the same lookup budget");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_patch_member VALUES(1,1,6000,-1,-1,-1,1000)");
+        }
+        HttpResponse<String> overflow = send(request(base).GET());
+        assertEquals(422, overflow.statusCode(), overflow.body());
+        assertEquals("recording_alias_lookup_too_broad", json(overflow).at("/error/code").textValue());
+        assertTrue(json(overflow).at("/error/message").textValue().contains("Choose a narrower time range or fewer recordings"));
+    }
+
+    @Test
+    void radioOnlyNamesSkipZeroAddressGroupCandidatesAndHomeDirectoryFanoutWhileMixedNamesKeepBothKinds() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture Names','P25')");
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(700,'Patrol radio','RADIO_ID','APCO25',101)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_system(id,system_key) VALUES(1,'p25:00001:001')");
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700,system_id=1 WHERE id=1");
+            statement.executeUpdate("WITH RECURSIVE n(x) AS(VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<7) " +
+                "INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path,size_bytes,system_id," +
+                "alias_list_id,protocol,call_type,voice_type,source_id,target_id) " +
+                "SELECT x,x*1000,x*1000+1000,1000,'group-'||x,5,1,700,1,2,1,999,4001 FROM n");
+            statement.executeUpdate("INSERT INTO recording_patch_member " +
+                "SELECT id,1,0,1,1,101,start_ms FROM recording_call WHERE id>1");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=10000&q=Patrol";
+        HttpResponse<String> radio = send(request(base + "&limit=1").GET());
+        assertEquals(200, radio.statusCode(), radio.body());
+        assertEquals(1, json(radio).at("/data/calls/0/id").longValue(),
+            "False group candidates must not consume the five empty candidate pages before the radio call");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(700,'Patrol group','TALKGROUP','APCO25',101)");
+        }
+        HttpResponse<String> mixed = send(request(base).GET());
+        assertEquals(200, mixed.statusCode(), mixed.body());
+        assertEquals(7, json(mixed).at("/data/calls").size(), "Both matching name kinds survive deduplication");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE alias SET name='Different group' WHERE matcher_type='TALKGROUP'");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("WITH RECURSIVE n(x) AS(VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<129) " +
+                "INSERT INTO recording_system(system_key) SELECT printf('p25:%05x:001',x) FROM n");
+        }
+        radio = send(request(base + "&limit=1").GET());
+        assertEquals(200, radio.statusCode(), radio.body());
+        assertEquals(1, json(radio).at("/data/calls/0/id").longValue(), "Radio-only names do not inspect the group-home directory");
+    }
+
+    @Test
     void otaNameSearchRetainsHomeOwnershipDifferentWorkingIdsAndPaging() throws Exception
     {
         String system = "p25:00001:001";

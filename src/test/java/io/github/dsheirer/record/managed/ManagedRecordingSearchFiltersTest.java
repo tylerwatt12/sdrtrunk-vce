@@ -66,6 +66,71 @@ class ManagedRecordingSearchFiltersTest
     }
 
     @Test
+    void configuredNamesIncludeZeroAddressSameHomePatchGroupsWithIndexedPagingAndLegacySites() throws Exception
+    {
+        Path db = temporary.resolve("zero-address-group-name.sqlite");
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, temporary.resolve("audio")))
+        {
+            store.insert(call(1000,A,10,999,2,List.of(),List.of(new Member("talkgroup",0,1,1,101))));
+            store.insert(call(2000,A,10,999,2,List.of(),List.of(new Member("talkgroup",0,2,2,101))));
+            store.insert(call(3000,A,10,999,2,List.of(),List.of(new Member("talkgroup",101,null,null,null))));
+            store.insert(call(4000,B,10,999,2,List.of(),List.of(new Member("talkgroup",0,2,2,101))));
+            store.insert(call(5000,null,10,999,2,List.of(new Site(1,1,1,1)),
+                List.of(new Member("talkgroup",0,1,1,101))));
+            store.insert(call(6000,null,10,999,2,List.of(new Site(1,1,1,1),new Site(2,2,1,1)),
+                List.of(new Member("talkgroup",0,1,1,101))));
+            var names = List.of(new ManagedRecordingCatalog.IdentityNameMatch(101,null,null,null,false,true));
+            assertEquals(List.of(5000L,4000L,3000L,1000L), starts(store,base().identityNameMatches(names).build()));
+            assertEquals(List.of(5000L,3000L,1000L), starts(store,base().systemKey(A).identityNameMatches(names).build()));
+            assertEquals(List.of(4000L), starts(store,base().systemKey(B).identityNameMatches(names).build()));
+            assertEquals(List.of(3000L), starts(store,base().anyIdentityId(101).build()),
+                "Numeric search still means a captured raw address");
+            for(boolean ascending: List.of(false,true))
+            {
+                List<Long> found = new ArrayList<>();
+                String cursor = null;
+                do
+                {
+                    var page = store.search(base().identityNameMatches(names).sortAscending(ascending)
+                        .limit(1).cursor(cursor).build());
+                    found.addAll(page.calls().stream().map(call -> call.startMs()).toList());
+                    cursor = page.nextCursor();
+                }
+                while(cursor != null);
+                assertEquals(ascending ? List.of(1000L,3000L,4000L,5000L) : List.of(5000L,4000L,3000L,1000L), found);
+            }
+            for(var query: store.singleIdentityCandidateQueries(base().identityNameMatches(names).build()))
+            {
+                if(!query.sql().contains("pm.local_id=0")) continue;
+                String explain = plan(db,query);
+                assertTrue(explain.contains("idx_recording_patch_member_home_lookup"), explain);
+                assertTrue(explain.contains("home_wacn=? AND home_system=? AND home_id=?"), explain);
+                assertFalse(explain.contains("SCAN c"), explain);
+                assertFalse(explain.contains("USE TEMP B-TREE"), explain);
+            }
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:"+db); var statement = connection.createStatement())
+            {
+                statement.executeUpdate("WITH RECURSIVE n(x) AS(VALUES(3) UNION ALL SELECT x+1 FROM n WHERE x<129) " +
+                    "INSERT INTO recording_system(system_key) SELECT printf('p25:%05x:001',x) FROM n WHERE x<129");
+            }
+            var broadNames = java.util.stream.IntStream.rangeClosed(101,133).mapToObj(id ->
+                new ManagedRecordingCatalog.IdentityNameMatch(id,null,null,null,false,true)).toList();
+            var fanout = assertThrows(IllegalArgumentException.class,
+                () -> store.search(base().identityNameMatches(broadNames).build()));
+            assertTrue(fanout.getMessage().contains("Choose a system"));
+            assertEquals(List.of(5000L,3000L,1000L), starts(store,base().systemKey(A).identityNameMatches(broadNames).build()));
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:"+db); var statement = connection.createStatement())
+            {
+                statement.executeUpdate("INSERT INTO recording_system(system_key) VALUES('p25:00081:001')");
+            }
+            var tooBroad = assertThrows(IllegalArgumentException.class,
+                () -> store.search(base().identityNameMatches(names).build()));
+            assertTrue(tooBroad.getMessage().contains("Choose a system"));
+            assertEquals(List.of(5000L,3000L,1000L), starts(store,base().systemKey(A).identityNameMatches(names).build()));
+        }
+    }
+
+    @Test
     void qualifiedSourcesFollowCanonicalOwnersAcrossWorkingIdsAndPreserveRoleAndHome() throws Exception
     {
         Path db = temporary.resolve("home.sqlite");
