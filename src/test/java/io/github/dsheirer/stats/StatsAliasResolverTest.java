@@ -1293,6 +1293,134 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void seeksRequestedExactAndRangeAliasesInsteadOfScanningOtherLists() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("requested-alias-volume.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'Selected', 'P25'), (2, 'Other', 'P25')
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE identifiers(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM identifiers WHERE value < 50000
+                ), types(matcher) AS (VALUES ('TALKGROUP'), ('RADIO_ID'))
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
+                SELECT 2, 'Other exact', types.matcher, 'APCO25', identifiers.value
+                FROM identifiers CROSS JOIN types
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE identifiers(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM identifiers WHERE value < 10000
+                ), types(matcher) AS (VALUES ('TALKGROUP_RANGE'), ('RADIO_ID_RANGE'))
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                SELECT 2, 'Other range', types.matcher, 'APCO25', 1, 65500
+                FROM identifiers CROSS JOIN types
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE identifiers(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM identifiers WHERE value < 49
+                ), types(matcher) AS (VALUES ('TALKGROUP'), ('RADIO_ID'))
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
+                SELECT 1, 'Selected ' || identifiers.value, types.matcher, 'APCO25', identifiers.value
+                FROM identifiers CROSS JOIN types
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value, min_value, max_value)
+                VALUES (1, 'Selected range', 'TALKGROUP_RANGE', 'APCO25', NULL, 1, 100),
+                       (1, 'Selected range', 'RADIO_ID_RANGE', 'APCO25', NULL, 1, 100),
+                       (1, 'Second phase', 'TALKGROUP', 'APCO25_PHASE2', 25, NULL, NULL),
+                       (1, 'Second phase', 'RADIO_ID', 'APCO25_PHASE2', 25, NULL, NULL)
+                """);
+            statement.execute("ANALYZE");
+            List<Map<String,Object>> talkgroups = new ArrayList<>();
+            List<Map<String,Object>> radios = new ArrayList<>();
+            for(int identifier = 1; identifier <= 50; identifier++)
+            {
+                talkgroups.add(row(1, identifier));
+                radios.add(row(1, identifier));
+            }
+
+            AtomicInteger progressCalls = new AtomicInteger();
+            ProgressHandler.setHandler(connection, 1_000, new ProgressHandler()
+            {
+                @Override
+                protected int progress()
+                {
+                    return progressCalls.incrementAndGet() > 500 ? 1 : 0;
+                }
+            });
+            try
+            {
+                StatsAliasResolver resolver = new StatsAliasResolver();
+                resolver.enrichP25ConventionalTalkgroups(connection, talkgroups, "identity_id", "alias_");
+                resolver.enrichP25ConventionalRadios(connection, radios, "identity_id", "alias_");
+            }
+            finally
+            {
+                ProgressHandler.clearHandler(connection);
+            }
+
+            for(List<Map<String,Object>> identities: List.of(talkgroups, radios))
+            {
+                assertEquals("Selected 1", identities.getFirst().get("alias_name"));
+                assertEquals("Second phase", identities.get(24).get("alias_name"));
+                assertEquals("Selected range", identities.getLast().get("alias_name"));
+                assertTrue(identities.stream().allMatch(identity -> Long.valueOf(1).equals(
+                    identity.get("alias_list_id"))));
+            }
+            assertTrue(progressCalls.get() < 100,
+                "page Alias lookup scanned unrelated configuration; callbacks=" + progressCalls);
+        }
+    }
+
+    @Test
+    void deduplicatesMatchingRangesBeforeApplyingTheLoadedRuleBudget() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("shared-range-rules.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'Selected', 'P25')");
+            statement.executeUpdate("""
+                WITH RECURSIVE rules(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM rules WHERE value < 50
+                )
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                SELECT value, 1, 'Range ' || value, 'TALKGROUP_RANGE', 'APCO25', 1, 100
+                FROM rules
+                """);
+            List<Map<String,Object>> talkgroups = new ArrayList<>();
+            for(int identifier = 1; identifier <= 100; identifier++) talkgroups.add(row(1, identifier));
+            new StatsAliasResolver().enrichP25ConventionalTalkgroups(connection, talkgroups,
+                "identity_id", "alias_");
+            assertTrue(talkgroups.stream().allMatch(identity -> "Range 50".equals(identity.get("alias_name"))),
+                "the 5,000 matching pairs represent only 50 distinct configured rules");
+
+            statement.executeUpdate("""
+                WITH RECURSIVE rules(value) AS (
+                    SELECT 51 UNION ALL SELECT value + 1 FROM rules WHERE value <= 4096
+                )
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                SELECT value, 1, 'Range ' || value, 'TALKGROUP_RANGE', 'APCO25', 1, 100
+                FROM rules
+                """);
+            StatsApiException exception = assertThrows(StatsApiException.class,
+                () -> new StatsAliasResolver().enrichP25ConventionalTalkgroups(connection,
+                    rows(row(1, 50)), "identity_id", "alias_"));
+            assertEquals("response_too_large", exception.code());
+        }
+    }
+
+    @Test
     void loadsOnlyRulesForTheBoundedPageIdentityAndAliasList() throws Exception
     {
         Path database = mTemporaryFolder.resolve("bounded-alias-rules.sqlite");

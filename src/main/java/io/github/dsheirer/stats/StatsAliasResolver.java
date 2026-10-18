@@ -727,6 +727,13 @@ class StatsAliasResolver
                     best = rules.best(identifier, aliasListId);
                 }
             }
+            else if(identifier != null && identifier == 0 && aliasListId != null && protocol != null &&
+                protocol == 1 && "TRUNKED".equals(row.get("topology")))
+            {
+                //Zero remains invalid and never reaches matching or promotion, but has the same reserved-address
+                //explanation as the other reserved P25 trunked talkgroup address.
+                promotionReason = "The local P25 talkgroup address is reserved";
+            }
 
             row.put("match_kind", best == null ? "none" : best.ranged() ? "range" : "exact");
             row.put("matched_alias_id", best != null ? best.aliasId() : null);
@@ -1763,19 +1770,28 @@ class StatsAliasResolver
         String matcher = ranged ? type.rangeMatcher() : type.valueMatcher();
         String match = ranged ? "requested.identifier BETWEEN definition.min_value AND definition.max_value" :
             "requested.identifier = definition.value";
+        //Start with the bounded page, not every configured Alias of this protocol. The exact index can seek
+        //all three equality keys; the range index limits each search to its owning list and protocol first.
+        //Several requested identities can match one range, so deduplicate IDs before applying the rule budget.
         String sql = """
-            WITH requested(alias_list_id, identifier) AS (VALUES %s)
+            WITH requested(alias_list_id, identifier) AS (VALUES %s),
+            matched(alias_id) AS (
+                SELECT DISTINCT definition.id
+                FROM requested
+                CROSS JOIN alias definition INDEXED BY %s
+                WHERE definition.matcher_type = '%s'
+                  AND definition.protocol IN (%s)
+                  AND definition.alias_list_id = requested.alias_list_id AND %s
+                ORDER BY definition.id
+                LIMIT ?
+            )
             SELECT definition.id AS alias_id, definition.value, definition.min_value,
                 definition.max_value, definition.name, definition.description, definition.group_name,
                 definition.color, definition.alias_list_id, list.name AS alias_list_name
-            FROM alias definition INDEXED BY %s
+            FROM matched
+            JOIN alias definition ON definition.id = matched.alias_id
             JOIN alias_list list ON list.id = definition.alias_list_id
-            WHERE definition.matcher_type = '%s'
-              AND definition.protocol IN (%s)
-              AND EXISTS (SELECT 1 FROM requested
-                          WHERE definition.alias_list_id = requested.alias_list_id AND %s)
             ORDER BY definition.id
-            LIMIT ?
             """.formatted(pairPlaceholders(targets.size()), index, matcher,
             placeholders(protocols.size()), match);
 
@@ -2361,8 +2377,8 @@ class StatsAliasResolver
     private enum RuleType
     {
         TALKGROUP("TALKGROUP", "TALKGROUP_RANGE", "idx_alias_talkgroup_value",
-            "idx_alias_talkgroup_range"),
-        RADIO("RADIO_ID", "RADIO_ID_RANGE", "idx_alias_radio_value", "idx_alias_radio_range");
+            "idx_alias_activity_talkgroup_range"),
+        RADIO("RADIO_ID", "RADIO_ID_RANGE", "idx_alias_radio_value", "idx_alias_activity_radio_range");
 
         private final String mValueMatcher;
         private final String mRangeMatcher;

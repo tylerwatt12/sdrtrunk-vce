@@ -238,8 +238,10 @@ history is inferred at migration, and no per-call attribution ledger or syntheti
 `idx_alias_list_name_sort(alias_list_id, lower(coalesce(name, '')), id)` serves normal name browsing. List-first
 matcher, identity-type, group, and displayed-value indexes serve the other sortable Alias fields. The summary's
 list-first indexes serve Calls, Signaling, and Last Seen sorts. Dedicated list-first partial range indexes serve the
-prospective writer's range winner lookup without replacing the older protocol-first matcher indexes used by bounded
-page enrichment. These indexes contain no time-series rows: their size follows administrator-owned Alias
+prospective writer's range winner lookup and bounded page enrichment. Exact page enrichment seeks the existing
+protocol/value/list keys. Both page lookups start with the requested identity/list pairs and deduplicate matching
+Alias IDs before applying the loaded-rule budget. These indexes contain no time-series rows: their size follows
+administrator-owned Alias
 configuration, not receiver uptime.
 
 ### Canonical P25 subscribers and WUID observations
