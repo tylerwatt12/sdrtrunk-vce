@@ -5605,7 +5605,60 @@ class StatsWebDatabase
         });
     }
 
-    /** Bounded direct source-index lookup; ordinary Activity paging never queries the recording catalog. */
+    /** Optional page-only lookup uses Activity primary keys and never exposes private references in its response. */
+    Map<Long,String> activitySourceCallReferences(List<Long> activityIds)
+    {
+        if(activityIds == null || activityIds.isEmpty()) return Map.of();
+        if(activityIds.size() > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
+            throw new IllegalArgumentException("Too many Activity rows");
+        List<Long> ids = activityIds.stream().distinct().toList();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100);
+        Path path = getDatabasePath();
+        if(!Files.isRegularFile(path)) return Map.of();
+        org.sqlite.SQLiteConfig config = new org.sqlite.SQLiteConfig();
+        config.setReadOnly(true);
+        config.setBusyTimeout(100);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + path, config.toProperties()))
+        {
+            org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
+            {
+                @Override protected int progress()
+                {
+                    return Thread.currentThread().isInterrupted() || System.nanoTime() >= deadline ? 1 : 0;
+                }
+            });
+            try
+            {
+                Map<Long,String> references = new LinkedHashMap<>();
+                for(int start = 0; start < ids.size(); start += StatsRequest.MAX_LIMIT)
+                {
+                    if(Thread.currentThread().isInterrupted() || System.nanoTime() >= deadline)
+                        throw new SQLException("Activity source lookup exceeded its page budget");
+                    List<Long> batch = ids.subList(start, Math.min(start + StatsRequest.MAX_LIMIT, ids.size()));
+                    String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
+                    for(Map<String,Object> row: queryRows(connection,
+                        "SELECT id,source_call_uuid FROM receiver_activity_event WHERE id IN (" + placeholders +
+                            ") AND source_call_uuid IS NOT NULL", batch.toArray()))
+                    {
+                        references.put(((Number)row.get("id")).longValue(), (String)row.get("source_call_uuid"));
+                    }
+                }
+                if(System.nanoTime() >= deadline)
+                    throw new SQLException("Activity source lookup exceeded its page budget");
+                return java.util.Collections.unmodifiableMap(references);
+            }
+            finally
+            {
+                org.sqlite.ProgressHandler.clearHandler(connection);
+            }
+        }
+        catch(SQLException exception)
+        {
+            throw new StatsApiException(503, "Activity source lookup is temporarily unavailable");
+        }
+    }
+
+    /** Bounded direct source-index lookup for related-content requests. */
     List<Map<String,Object>> activityBySourceCallReferences(List<String> sourceReferences)
     {
         if(sourceReferences == null || sourceReferences.isEmpty()) return List.of();

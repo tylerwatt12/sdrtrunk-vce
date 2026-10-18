@@ -43,7 +43,8 @@ final class StatsApiV1Controller
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(StatsApiV1Controller.class);
     private static final int MAX_PATH_SEGMENT_LENGTH = 512;
-    private static final Set<WebCapability> ACTIVITY_CAPABILITIES = Set.of(WebCapability.RADIO_VIEW);
+    private static final Set<WebCapability> ACTIVITY_CAPABILITIES = Set.of(WebCapability.RADIO_VIEW,
+        WebCapability.RECORDINGS_VIEW);
     private static final Set<WebCapability> CSV_ROUTE_CAPABILITIES = Set.of(WebCapability.CSV_EXPORT,
         WebCapability.DASHBOARD_VIEW, WebCapability.RADIO_VIEW, WebCapability.ADMIN_ALIASES);
 
@@ -55,6 +56,7 @@ final class StatsApiV1Controller
     private final StatsP25AssignmentService mP25AssignmentService;
     private final IntSupplier mTrafficGrantAgeOutMilliseconds;
     private final RemoteOriginLookup mRemoteOriginLookup;
+    private final ActivityRecordingAvailability mActivityRecordingAvailability;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
@@ -96,6 +98,17 @@ final class StatsApiV1Controller
                          StatsP25AssignmentService p25AssignmentService,
                          IntSupplier trafficGrantAgeOutMilliseconds, RemoteOriginLookup remoteOriginLookup)
     {
+        this(database, statusSupplier, requestSecurity, tunerDiagnosticService, receiverHealthSupplier,
+            p25AssignmentService, trafficGrantAgeOutMilliseconds, remoteOriginLookup, null);
+    }
+
+    StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
+                         WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService,
+                         Supplier<Map<String,Object>> receiverHealthSupplier,
+                         StatsP25AssignmentService p25AssignmentService,
+                         IntSupplier trafficGrantAgeOutMilliseconds, RemoteOriginLookup remoteOriginLookup,
+                         ActivityRecordingAvailability activityRecordingAvailability)
+    {
         mDatabase = database;
         mStatusSupplier = statusSupplier;
         mRequestSecurity = requestSecurity;
@@ -104,6 +117,7 @@ final class StatsApiV1Controller
         mP25AssignmentService = p25AssignmentService;
         mTrafficGrantAgeOutMilliseconds = trafficGrantAgeOutMilliseconds;
         mRemoteOriginLookup = remoteOriginLookup != null ? remoteOriginLookup : RemoteOriginLookup.EMPTY;
+        mActivityRecordingAvailability = activityRecordingAvailability;
     }
 
     void register(HttpServer server)
@@ -136,7 +150,8 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.IDENTITIES, this::identities));
         create(server, StatsApiV1.CHANNELS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CHANNELS, this::channels));
-        server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
+        server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protect(WebCapability.RADIO_VIEW,
+            mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "after_id", "watermark_id", "group_identity_key", "radio_identity_key",
@@ -145,11 +160,14 @@ final class StatsApiV1Controller
                     "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
                     "timeslot", "projection");
                 Map<String,Object> activity = new LinkedHashMap<>(mDatabase.activity(request));
+                boolean visualizer = "p25_visualizer".equals(request.text("projection"));
+                if(!visualizer && mActivityRecordingAvailability != null)
+                    mActivityRecordingAvailability.enrich(activity,
+                        mRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.RECORDINGS_VIEW));
                 activity.put("traffic_grant_age_out_milliseconds", mTrafficGrantAgeOutMilliseconds.getAsInt());
                 JsonBody body = page(activity);
-                return "p25_visualizer".equals(request.text("projection")) ?
-                    new JsonBody(body.data(), body.meta(), true) : body;
-            })));
+                return visualizer ? new JsonBody(body.data(), body.meta(), true) : body;
+            }))));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {
                 requireNoSegments(segments);

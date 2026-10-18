@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.audio.call.SourceCallReference;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -124,6 +125,53 @@ class StatsWebDatabaseCallRelationsTest
         assertFalse(json.contains("source_call_uuid")); assertFalse(json.contains(SOURCE));
     }
 
+    @Test void recordingAvailabilityUsesTheExactStoredReferencesAndAddsNoPersistedState() throws Exception
+    {
+        Path catalogFile = directory.resolve("recordings.sqlite");
+        try(var catalog = new ManagedRecordingCatalog(catalogFile, directory))
+        {
+            CallRelationsServiceTest.addRecording(catalogFile, 1, List.of(SOURCE));
+            var availability = new ActivityRecordingAvailability(database, () -> catalog);
+            Map<String,Object> page = database.activity(StatsRequest.from(URI.create("/?configuration_id=" + CHANNEL +
+                "&from_ms=1&to_ms=5000&hide_grants=false&limit=20")));
+            availability.enrich(page, true);
+            @SuppressWarnings("unchecked") List<Map<String,Object>> rows = (List<Map<String,Object>>)page.get("rows");
+            assertEquals(List.of(1002L,1001L), ids(rows.stream()
+                .filter(row -> Boolean.TRUE.equals(row.get("has_recording"))).toList()));
+            assertFalse(new ObjectMapper().writeValueAsString(page).contains(SOURCE));
+            assertEquals(SOURCE, database.activitySourceCallReference(1001));
+
+            var noCatalog = new ActivityRecordingAvailability(database, () -> null);
+            noCatalog.enrich(page, true);
+            assertTrue(rows(page).stream().noneMatch(row -> Boolean.TRUE.equals(row.get("has_recording"))));
+            assertTrue(catalog.delete(1));
+            availability.enrich(page, true);
+            assertTrue(rows(page).stream().noneMatch(row -> Boolean.TRUE.equals(row.get("has_recording"))));
+            assertEquals(SOURCE, database.activitySourceCallReference(1001),
+                "Availability and cleanup do not rewrite the retained Activity association");
+        }
+    }
+
+    @Test void availabilitySourceLookupIsBoundedByPageIdsAndUsesTheExistingPrimaryKey() throws Exception
+    {
+        assertEquals(Map.of(1001L,SOURCE,1002L,SOURCE,1003L,OTHER_SOURCE),
+            database.activitySourceCallReferences(List.of(1001L,1002L,1003L,1004L,1001L,9999L)));
+        assertTrue(database.activitySourceCallReferences(List.of()).isEmpty());
+        assertTrue(database.activitySourceCallReferences(null).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> database.activitySourceCallReferences(
+            IntStream.range(0,5001).mapToObj(Long::valueOf).toList()));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        {
+            List<String> plan = new ArrayList<>();
+            try(var result = sql.executeQuery("EXPLAIN QUERY PLAN SELECT id,source_call_uuid FROM " +
+                "receiver_activity_event WHERE id IN (1001,1002,1003,1004) AND source_call_uuid IS NOT NULL"))
+            { while(result.next()) plan.add(result.getString(4)); }
+            assertTrue(plan.stream().anyMatch(detail -> detail.startsWith("SEARCH receiver_activity_event ") &&
+                detail.contains("INTEGER PRIMARY KEY")), plan.toString());
+            assertFalse(plan.stream().anyMatch(detail -> detail.startsWith("SCAN ")), plan.toString());
+        }
+    }
+
     @Test void activityAndRelatedRowsShareNumericDurationAndExplicitUnknown() throws Exception
     {
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
@@ -178,4 +226,8 @@ class StatsWebDatabaseCallRelationsTest
     {
         return rows.stream().map(row -> ((Number)row.get("id")).longValue()).toList();
     }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String,Object>> rows(Map<String,Object> page)
+    { return (List<Map<String,Object>>)page.get("rows"); }
 }

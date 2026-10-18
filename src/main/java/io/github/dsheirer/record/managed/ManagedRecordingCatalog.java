@@ -443,6 +443,13 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         return mStore.recordingIdsBySourceCallReferences(sources, limitPerSource);
     }
 
+    /** Optional Activity availability lookup shares one monotonic deadline across the visible page's batches. */
+    public Map<String,List<Long>> recordingIdsBySourceCallReferences(List<String> sources, int limitPerSource,
+                                                                    long deadlineNanos) throws SQLException
+    {
+        return mStore.recordingIdsBySourceCallReferences(sources, limitPerSource, deadlineNanos);
+    }
+
     /** First retained recording parts for exact sources, bounded to one normal result page. */
     public List<RecordingCall> findBySourceCallReferences(List<String> sources, int limit) throws SQLException
     {

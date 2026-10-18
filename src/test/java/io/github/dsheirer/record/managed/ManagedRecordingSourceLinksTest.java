@@ -118,6 +118,20 @@ class ManagedRecordingSourceLinksTest
     }
 
     @Test
+    void expiredAvailabilityBudgetDoesNotChangeTheOrdinaryRecordingLookup() throws Exception
+    {
+        Path database = directory.resolve("availability-budget.sqlite");
+        try(var store = new ManagedRecordingStore(database, directory))
+        { store.insert(call(1000, 1, List.of(A))); }
+        try(var catalog = new ManagedRecordingCatalog(database, directory))
+        {
+            assertThrows(SQLException.class, () -> catalog.recordingIdsBySourceCallReferences(
+                List.of(A), 1, System.nanoTime() - 1));
+            assertEquals(Map.of(A, List.of(1L)), catalog.recordingIdsBySourceCallReferences(List.of(A), 1));
+        }
+    }
+
+    @Test
     void lookupAndMetadataBoundsRejectInvalidReferencesAndDoNotExposeMutableLists() throws Exception
     {
         var mutable = new ArrayList<>(List.of(A, A, B));

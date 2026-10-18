@@ -118,11 +118,23 @@ final class ManagedRecordingStore implements AutoCloseable
 
     private Connection openReader() throws SQLException
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabaseFile);
+        return openReader(5000);
+    }
+
+    private Connection openReader(int busyTimeoutMilliseconds) throws SQLException
+    {
+        org.sqlite.SQLiteConfig config = new org.sqlite.SQLiteConfig();
+        config.setReadOnly(true);
+        config.setBusyTimeout(busyTimeoutMilliseconds);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabaseFile, config.toProperties());
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA busy_timeout=5000");
             statement.execute("PRAGMA query_only=ON");
+        }
+        catch(SQLException exception)
+        {
+            connection.close();
+            throw exception;
         }
         return connection;
     }
@@ -1398,6 +1410,13 @@ final class ManagedRecordingStore implements AutoCloseable
     Map<String,List<Long>> recordingIdsBySourceCallReferences(List<String> references, int limitPerSource)
         throws SQLException
     {
+        return recordingIdsBySourceCallReferences(references, limitPerSource, 0);
+    }
+
+    /** Optional availability reads share their page's short deadline instead of waiting behind maintenance. */
+    Map<String,List<Long>> recordingIdsBySourceCallReferences(List<String> references, int limitPerSource,
+                                                              long deadlineNanos) throws SQLException
+    {
         List<String> sources = ManagedRecordingSourceReferences.copy(references, ManagedRecordingCatalog.MAX_PAGE_SIZE);
         if(sources.isEmpty()) return Map.of();
         int limit = Math.max(1, Math.min(ManagedRecordingCatalog.MAX_PAGE_SIZE, limitPerSource));
@@ -1409,22 +1428,47 @@ final class ManagedRecordingStore implements AutoCloseable
             branches.add("SELECT * FROM (SELECT source_call_uuid,call_id FROM recording_source " +
                 "WHERE source_call_uuid=? ORDER BY call_id LIMIT ?)");
         }
-        try(Connection connection = openReader();
-            PreparedStatement statement = connection.prepareStatement(String.join(" UNION ALL ", branches)))
+        boolean bounded = deadlineNanos != 0;
+        if(bounded) requireSourceLookupBudget(deadlineNanos);
+        int busyTimeout = bounded ? (int)Math.max(1, Math.min(100,
+            java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()))) : 5000;
+        try(Connection connection = openReader(busyTimeout))
         {
-            int parameter = 1;
-            for(String source: sources)
+            if(bounded) org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
             {
-                statement.setString(parameter++, source);
-                statement.setInt(parameter++, limit);
+                @Override protected int progress()
+                {
+                    return Thread.currentThread().isInterrupted() || System.nanoTime() >= deadlineNanos ? 1 : 0;
+                }
+            });
+            try(PreparedStatement statement = connection.prepareStatement(String.join(" UNION ALL ", branches)))
+            {
+                if(bounded) requireSourceLookupBudget(deadlineNanos);
+                int parameter = 1;
+                for(String source: sources)
+                {
+                    statement.setString(parameter++, source);
+                    statement.setInt(parameter++, limit);
+                }
+                try(ResultSet rows = statement.executeQuery())
+                {
+                    while(rows.next()) matches.get(rows.getString(1)).add(rows.getLong(2));
+                }
+                if(bounded) requireSourceLookupBudget(deadlineNanos);
             }
-            try(ResultSet rows = statement.executeQuery())
+            finally
             {
-                while(rows.next()) matches.get(rows.getString(1)).add(rows.getLong(2));
+                if(bounded) org.sqlite.ProgressHandler.clearHandler(connection);
             }
         }
         matches.replaceAll((source, ids) -> List.copyOf(ids));
         return java.util.Collections.unmodifiableMap(matches);
+    }
+
+    private static void requireSourceLookupBudget(long deadlineNanos) throws SQLException
+    {
+        if(Thread.currentThread().isInterrupted() || System.nanoTime() >= deadlineNanos)
+            throw new SQLException("Recording source lookup exceeded its page budget");
     }
 
     /** Bounded exact receiver-leg references retained with one recording, independently of Activity retention. */
