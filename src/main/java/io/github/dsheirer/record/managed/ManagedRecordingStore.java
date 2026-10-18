@@ -159,7 +159,7 @@ final class ManagedRecordingStore implements AutoCloseable
     }
 
     /** Only the dedicated catalog thread calls this method. */
-    void insert(ManagedRecordingMetadata item) throws SQLException
+    long insert(ManagedRecordingMetadata item) throws SQLException
     {
         mWriterConnection.setAutoCommit(false);
         try
@@ -279,6 +279,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 statement.executeUpdate();
             }
             mWriterConnection.commit();
+            return callId;
         }
         catch(SQLException | RuntimeException exception)
         {
@@ -289,6 +290,32 @@ final class ManagedRecordingStore implements AutoCloseable
         {
             mWriterConnection.setAutoCommit(true);
         }
+    }
+
+    /** Exact catalog ID supplied by its committed insert; optional attachment never alters the audio row. */
+    void attachCompletedTones(long callId, io.github.dsheirer.audio.tone.CompletedToneSequence sequence) throws SQLException
+    {
+        mWriterConnection.setAutoCommit(false);
+        try
+        {
+            try(var query = mWriterConnection.prepareStatement("SELECT 1 FROM recording_call WHERE id=? AND NOT EXISTS(" +
+                "SELECT 1 FROM recording_tone_sequence WHERE call_id=?)"))
+            {
+                query.setLong(1, callId); query.setLong(2, callId);
+                try(var row = query.executeQuery())
+                {
+                    if(!row.next()) { mWriterConnection.commit(); return; }
+                }
+            }
+            ManagedRecordingTones.insert(mWriterConnection, callId, sequence);
+            mWriterConnection.commit();
+        }
+        catch(SQLException | RuntimeException failure)
+        {
+            mWriterConnection.rollback();
+            throw failure;
+        }
+        finally { mWriterConnection.setAutoCommit(true); }
     }
 
     private static void set(PreparedStatement statement, int position, Number value) throws SQLException

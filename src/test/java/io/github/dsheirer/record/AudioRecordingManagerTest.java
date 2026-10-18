@@ -199,6 +199,31 @@ class AudioRecordingManagerTest
     }
 
     @Test
+    void managedEncodingDoesNotAwaitToneCompletion() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode previous = preferences.getRecordPreference().getRecordingMode();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        AtomicInteger indexed = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
+            (call, path, format, prefs, normalize) -> Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW),
+            (path, call, size, observer) -> { indexed.incrementAndGet(); return true; },
+            mTemporaryFolder.resolve("managed-no-tone-wait"),
+            call -> { throw new AssertionError("Managed audio must not invoke the bounded tone wait"); });
+        try
+        {
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+            manager.start(); manager.receive(completedCall()); manager.stop();
+            assertEquals(1, indexed.get());
+        }
+        finally
+        {
+            manager.stop(); scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(previous);
+        }
+    }
+
+    @Test
     void recordingWriterReceivesNativePcmAndRetainsRawCallForObservers() throws Exception
     {
         UserPreferences preferences = new UserPreferences();

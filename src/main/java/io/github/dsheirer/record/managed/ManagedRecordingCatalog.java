@@ -11,6 +11,10 @@
 package io.github.dsheirer.record.managed;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.tone.CompletedToneSequence;
+import io.github.dsheirer.audio.tone.P25PagingToneService;
+import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
@@ -31,6 +35,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +66,14 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     private final ArrayBlockingQueue<PendingRecording> mPending = new ArrayBlockingQueue<>(MAX_PENDING_WRITES);
     private final ArrayBlockingQueue<PendingTranscription> mPendingTranscription =
         new ArrayBlockingQueue<>(MAX_PENDING_TRANSCRIPT_WRITES);
+    static final int MAX_PENDING_TONES = 512;
+    private final ArrayBlockingQueue<CompletedToneSequence> mPendingTones = new ArrayBlockingQueue<>(MAX_PENDING_TONES);
+    private final ManagedRecordingToneAssociations mToneAssociations = new ManagedRecordingToneAssociations();
+    private final CompletedToneSource mToneSource;
+    private final AutoCloseable mToneSubscription;
+    private final AtomicBoolean mToneSubscriptionClosed = new AtomicBoolean();
+    private final AtomicLong mDroppedTones = new AtomicLong();
+    private final ReentrantLock mToneHandoff = new ReentrantLock();
     private final Thread mWriter;
     private final AtomicLong mDropped = new AtomicLong();
     private final AtomicLong mWriteFailures = new AtomicLong();
@@ -71,6 +84,24 @@ public final class ManagedRecordingCatalog implements AutoCloseable
 
     public ManagedRecordingCatalog(Path databaseFile, Path recordingsRoot) throws SQLException, IOException
     {
+        this(databaseFile, recordingsRoot, new CompletedToneSource()
+        {
+            @Override public CompletedToneSequence lookup(AudioCallSnapshot snapshot)
+            { return P25PagingToneService.getInstance().lookupCompleted(snapshot); }
+            @Override public AutoCloseable subscribe(Listener<CompletedToneSequence> listener)
+            { return P25PagingToneService.getInstance().addCompletedToneListener(listener); }
+        });
+    }
+
+    interface CompletedToneSource
+    {
+        CompletedToneSequence lookup(AudioCallSnapshot snapshot);
+        AutoCloseable subscribe(Listener<CompletedToneSequence> listener);
+    }
+
+    ManagedRecordingCatalog(Path databaseFile, Path recordingsRoot, CompletedToneSource toneSource) throws SQLException, IOException
+    {
+        mToneSource = Objects.requireNonNull(toneSource);
         mDatabaseFile = Objects.requireNonNull(databaseFile, "Database file is required")
             .toAbsolutePath().normalize();
         mRoot = Objects.requireNonNull(recordingsRoot, "Managed recordings root is required")
@@ -79,8 +110,37 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         mStore = new ManagedRecordingStore(mDatabaseFile, mRoot);
         mWriter = new Thread(this::writeLoop, "managed-recordings-catalog");
         mWriter.setDaemon(true);
-        mWriter.start();
+        AutoCloseable subscription;
+        try
+        {
+            // Subscribe before any lookup or recording submission so completion cannot fall between them.
+            subscription = Objects.requireNonNull(mToneSource.subscribe(this::offerCompletedTone));
+        }
+        catch(RuntimeException failure)
+        {
+            mLog.warn("Optional recording tone observer is unavailable; audio recording remains enabled", failure);
+            subscription = () -> {};
+        }
+        mToneSubscription = subscription;
+        try { mWriter.start(); }
+        catch(RuntimeException failure)
+        {
+            closeToneSubscription(); mStore.close(); throw failure;
+        }
     }
+
+    private void offerCompletedTone(CompletedToneSequence sequence)
+    {
+        if(sequence == null || sequence.tones().isEmpty()) return;
+        if(!mToneHandoff.tryLock()) { mDroppedTones.incrementAndGet(); return; }
+        try
+        {
+            if(mAccepting && !mPendingTones.offer(sequence)) mDroppedTones.incrementAndGet();
+        }
+        finally { mToneHandoff.unlock(); }
+    }
+
+    long droppedToneObservations() { return mDroppedTones.get(); }
 
     /**
      * Offers a completed file to the catalog without filesystem or SQLite access. On false, the caller still owns the
@@ -105,10 +165,23 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                 return false;
             }
             relativePath = relative.toString().replace('\\', '/');
-            ManagedRecordingMetadata metadata = ManagedRecordingMetadata.from(call, relativePath, sizeBytes);
+            // Cheap exact lookup handles results completed before this catalog's subscription was installed.
+            try
+            {
+                if(call.completedToneSequence() == null)
+                {
+                    CompletedToneSequence sequence = mToneSource.lookup(call.nativeAudioSnapshot());
+                    if(sequence != null && sequence.matches(call.nativeAudioSnapshot())) call = call.withCompletedTones(sequence);
+                }
+            }
+            catch(RuntimeException ignored) { /* Optional analysis must never reject a saved audio file. */ }
+            CompletedToneSequence initialTones = call.completedToneSequence();
+            // Optional tone writes must never roll back the recording row or cause its saved audio to be removed.
+            ManagedRecordingMetadata metadata = ManagedRecordingMetadata.from(call.withCompletedTones(null), relativePath, sizeBytes);
+            var nativeKey = ManagedRecordingToneAssociations.Key.from(call.nativeAudioSnapshot());
             synchronized(mQueueHandoff)
             {
-                if(mAccepting && mPending.offer(new PendingRecording(metadata, onIndexed)))
+                if(mAccepting && mPending.offer(new PendingRecording(metadata, onIndexed, nativeKey, initialTones)))
                 {
                     return true;
                 }
@@ -129,12 +202,21 @@ public final class ManagedRecordingCatalog implements AutoCloseable
 
     private void writeLoop()
     {
-        while(mAccepting || !mPending.isEmpty() || !mPendingTranscription.isEmpty())
+        while(mAccepting || !mPending.isEmpty() || !mPendingTranscription.isEmpty() || !mPendingTones.isEmpty() ||
+            mToneAssociations.hasReady(System.currentTimeMillis()))
         {
+            for(int count = 0; count < 32; count++)
+            {
+                CompletedToneSequence sequence = mPendingTones.poll();
+                if(sequence == null) break;
+                mToneAssociations.completed(sequence);
+            }
+            attachCompletedTones();
             PendingRecording pending;
             try
             {
-                pending = mPending.poll(250, TimeUnit.MILLISECONDS);
+                pending = !mAccepting || !mPendingTones.isEmpty() || mToneAssociations.hasReady(System.currentTimeMillis()) ?
+                    mPending.poll() : mPending.poll(250, TimeUnit.MILLISECONDS);
             }
             catch(InterruptedException exception)
             {
@@ -152,7 +234,10 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             ManagedRecordingMetadata metadata = pending.metadata();
             try
             {
-                mStore.insert(metadata);
+                long recordingId = mStore.insert(metadata);
+                mToneAssociations.indexed(pending.nativeKey(), recordingId, false);
+                mToneAssociations.completed(pending.initialTones());
+                attachCompletedTones();
                 if(pending.onIndexed() != null)
                 {
                     try
@@ -184,7 +269,35 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         }
     }
 
-    private record PendingRecording(ManagedRecordingMetadata metadata, Runnable onIndexed) {}
+    private record PendingRecording(ManagedRecordingMetadata metadata, Runnable onIndexed,
+                                    ManagedRecordingToneAssociations.Key nativeKey, CompletedToneSequence initialTones) {}
+
+    private void attachCompletedTones()
+    {
+        long now = System.currentTimeMillis();
+        for(var attachment: mToneAssociations.ready(now))
+        {
+            try
+            {
+                mStore.attachCompletedTones(attachment.recordingId(), attachment.sequence());
+                mToneAssociations.attached(attachment);
+            }
+            catch(SQLException | RuntimeException failure)
+            {
+                mToneAssociations.failed(attachment, now);
+                long failures = mWriteFailures.incrementAndGet();
+                if(failures == 1 || failures % 100 == 0)
+                    mLog.warn("Unable to attach optional managed recording tone metadata ({} failures)", failures, failure);
+            }
+        }
+    }
+
+    private void closeToneSubscription()
+    {
+        if(!mToneSubscriptionClosed.compareAndSet(false, true)) return;
+        try { mToneSubscription.close(); }
+        catch(Exception failure) { mLog.warn("Unable to remove the recording tone observer", failure); }
+    }
 
     private record PendingTranscription(long id, String text, long storedAtMs, boolean failed,
                                         CompletableFuture<Boolean> result) {}
@@ -488,9 +601,12 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         {
             synchronized(mTranscriptionHandoff)
             {
-                mAccepting = false;
+                mToneHandoff.lock();
+                try { mAccepting = false; }
+                finally { mToneHandoff.unlock(); }
             }
         }
+        closeToneSubscription();
         // A user-started recount/reindex may still be finishing as the web server stops. Keep the SQLite
         // connection alive until that operation exits, then drain every already accepted catalog write.
         mMaintenanceLock.lock();
@@ -512,6 +628,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             {
                 Thread.currentThread().interrupt();
             }
+            mToneAssociations.clear();
             try
             {
                 mStore.close();

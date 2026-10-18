@@ -223,12 +223,12 @@ public class AudioRecordingManager
 
                 try
                 {
-                    //Optional native analysis may finish after logical-call resolution. Only this recording worker
-                    //waits briefly; live decode never waits for tone detection or file metadata. On loss/timeout,
-                    //audio is still saved with unknown tone evidence rather than an invented empty sequence.
+                    // Basic files can embed an already completed result. Managed catalog metadata also accepts
+                    // later exact native-call results, so its audio encoding never waits for tone analysis.
                     try
                     {
-                        CompletedToneSequence sequence = mToneLookup.apply(completedAudioCall);
+                        CompletedToneSequence sequence = managed ? P25PagingToneService.getInstance().lookupCompleted(completedAudioCall) :
+                            mToneLookup.apply(completedAudioCall);
                         if(sequence != null && !sequence.tones().isEmpty() && sequence.matches(completedAudioCall.nativeAudioSnapshot()))
                             completedAudioCall = completedAudioCall.withCompletedTones(sequence);
                     }
