@@ -253,6 +253,8 @@ class ReceiverActivityMapper
     {
         P25CallStartEvent call = update != null ? update.call() : null;
         ReceiverActivityRecords.ActivityEvent activity = map(call);
+        if(activity != null && update.complete())
+            activity = activity.withDurationMilliseconds(update.durationMilliseconds());
         return activity != null && call.callToken() != null ? new ReceiverActivityRecords.P25CallObservation(call.callToken(),
                 activity, false, update.complete()) : null;
     }
@@ -400,7 +402,31 @@ class ReceiverActivityMapper
             facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
             facts.encryptionAlgorithmId(), facts.encryptionKeyId(), resolvedTargetIdentity,
             resolvedSourceIdentity, p25 ? facts.p25PatchMemberIdentities() : List.of(), siteObservations,
-            radioSystemKey, p25WorkingAddress(source), p25WorkingAddress(target), call.sourceCallReferences());
+            radioSystemKey, p25WorkingAddress(source), p25WorkingAddress(target), call.sourceCallReferences(),
+            p25 ? null : observedDuration(snapshot));
+    }
+
+    /** Analog timing comes from the completed accepted call, independently of recording or streaming policy. */
+    ReceiverActivityRecords.ActivityCallTiming mapActivityCallTiming(CompletedAudioCall call)
+    {
+        AudioCallSnapshot snapshot = call != null ? call.nativeAudioSnapshot() : null;
+        if(snapshot == null && call != null) snapshot = call.snapshot();
+        if(snapshot == null || snapshot.callLegSource() == null ||
+            !snapshot.callLegSource().isConventional()) return null;
+        DecoderType decoder = snapshot.callLegSource().decoderType();
+        if(decoder != DecoderType.AM && decoder != DecoderType.NBFM) return null;
+        String configuration = ChannelConfigurationKey.canonical(snapshot.callLegSource().channelConfigurationId());
+        String token = snapshot.activityCallToken();
+        Long duration = observedDuration(snapshot);
+        return configuration != null && token != null && !token.isBlank() && duration != null ?
+            new ReceiverActivityRecords.ActivityCallTiming(token, configuration, snapshot.lastActivityTimestamp(),
+                duration) : null;
+    }
+
+    private static Long observedDuration(AudioCallSnapshot snapshot)
+    {
+        return snapshot.startTimestamp() > 0 && snapshot.lastActivityTimestamp() > snapshot.startTimestamp() ?
+            snapshot.lastActivityTimestamp() - snapshot.startTimestamp() : null;
     }
 
     private static List<ReceiverActivityRecords.P25SiteCallObservation> p25SiteCallObservations(

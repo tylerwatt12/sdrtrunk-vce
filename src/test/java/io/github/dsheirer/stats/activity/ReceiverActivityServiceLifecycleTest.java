@@ -1915,6 +1915,58 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
+    void analogDurationEnrichesOnlyItsAcceptedCallWithoutRecordingOrStreaming() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000302");
+        persistChannels(database, channel);
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = fastWriterService(preferences);
+        long start = System.currentTimeMillis();
+        long frequency = 154_310_000L;
+
+        try
+        {
+            var first = new io.github.dsheirer.alias.AnalogCallAttribution(channel.getConfigurationId(),
+                channel.getAliasListId(), Protocol.NBFM, 1, start, List.of());
+            var second = new io.github.dsheirer.alias.AnalogCallAttribution(channel.getConfigurationId(),
+                channel.getAliasListId(), Protocol.NBFM, 1, start + 500L, List.of());
+            for(var attribution: List.of(first, second))
+            {
+                var event = new io.github.dsheirer.module.decode.analog.AnalogCallEvent(
+                    attribution.startedAt(), attribution);
+                event.setProtocol(Protocol.NBFM);
+                event.setChannelDescriptor(new StandardChannel(frequency));
+                event.setIdentifierCollection(new IdentifierCollection());
+                service.getDecodeEventListener().accept(channel, event);
+            }
+
+            var completed = conventionalCompletedCall(92, channel.getConfigurationId(), null,
+                frequency, start, first);
+            var metadataOnly = new CompletedAudioCall(completed.snapshot(), List.of());
+            service.receiveResolvedCall(metadataOnly);
+            service.receiveResolvedCall(metadataOnly);
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            disposeAndAwait(service);
+
+            assertEquals(2, count(database, "receiver_activity_event"));
+            assertEquals(1, scalar(database,
+                "SELECT COUNT(*) FROM receiver_activity_event WHERE duration_ms=100"));
+            assertEquals(1, scalar(database,
+                "SELECT COUNT(*) FROM receiver_activity_event WHERE duration_ms IS NULL"));
+            assertEquals(2, scalar(database, "SELECT call_count FROM conventional_activity_summary"));
+            assertEquals(0, scalar(database,
+                "SELECT recorded_count + streamed_count FROM conventional_activity_summary"));
+        }
+        finally
+        {
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
     void countsBackToBackNbfmCallsAndStoresOptionalHistory() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);

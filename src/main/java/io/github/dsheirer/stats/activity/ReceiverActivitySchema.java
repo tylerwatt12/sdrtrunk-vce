@@ -212,6 +212,26 @@ public class ReceiverActivitySchema
         createFormat48(connection);
         ToneActivitySchema.createCurrent(connection);
         addSourceCallReference(connection);
+        addCallDuration(connection);
+    }
+
+    private static final String CALL_DURATION_DEFINITION = "duration_ms INTEGER CHECK(duration_ms IS NULL OR " +
+        "(typeof(duration_ms) = 'integer' AND duration_ms >= 0 AND action_code = 4))";
+
+    /** Fresh creation and the adjacent format-58-to-59 migration retain no guessed historical timing. */
+    public static void addCallDuration(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " + CALL_DURATION_DEFINITION);
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+            statement.executeUpdate(createCurrentResolvedViewSql());
+        }
+    }
+
+    private static String createCurrentResolvedViewSql()
+    {
+        return createFormat50ResolvedViewSql().replace("a.observed_at_ms,", "a.observed_at_ms, a.duration_ms,");
     }
 
     /** Fresh creation and the format-57-to-58 migrator add only an optional exact source reference. */
@@ -492,7 +512,7 @@ public class ReceiverActivitySchema
             new SqliteSchemaValidator.Definition("table", "p25_site_call_identity_bucket",
                 createP25SiteCallIdentityBucketSql()),
             new SqliteSchemaValidator.Definition("view", "receiver_activity_event_resolved",
-                createFormat50ResolvedViewSql())));
+                createCurrentResolvedViewSql())));
         SqliteSchemaValidator.validateDefinitions(connection, exactDefinitions);
         ToneActivitySchema.validate(connection);
         validateRequiredForeignKeys(connection);
@@ -833,7 +853,8 @@ public class ReceiverActivitySchema
     private static String currentReceiverActivityEventSql()
     {
         return receiverActivityEventSql().replace("    UNIQUE(id, radio_system_id)",
-            "    " + SourceCallSchema.COLUMN_DEFINITION + ",\n    UNIQUE(id, radio_system_id)");
+            "    " + SourceCallSchema.COLUMN_DEFINITION + ",\n    " + CALL_DURATION_DEFINITION +
+                ",\n    UNIQUE(id, radio_system_id)");
     }
 
     /** Frozen format-50 through format-57 event definition. */
@@ -986,7 +1007,7 @@ public class ReceiverActivitySchema
                                   ReceiverActivityRecords.P25Identity sourceIdentity,
                                   ReceiverActivityRecords.P25Identity targetIdentity,
                                   Integer sourceWorkingId, Integer targetWorkingId,
-                                  boolean encrypted)
+                                  boolean encrypted, Long durationMilliseconds)
     {
     }
 
@@ -1011,7 +1032,8 @@ public class ReceiverActivitySchema
         return new P25CallCredit(channelId, detailId, positiveInteger(activity.sourceRadioId()),
             p25DestinationId(activity), activity.targetKind(),
             activity.patchMemberTalkgroupIds(), activity.p25SourceIdentity(), activity.p25TargetIdentity(),
-            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId(), activity.encrypted());
+            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId(), activity.encrypted(),
+            activity.durationMilliseconds());
     }
 
     static P25CallCredit enrichP25Call(Connection connection,
@@ -1047,6 +1069,9 @@ public class ReceiverActivitySchema
         //Trunked counters use the completed logical call, but optional detail must retain confirmation learned
         //after its start. Only this physical receiver call's confirmed facts may enrich its retained row.
         boolean encryptionBecameKnown = !conventional && observation.encrypted() && !credit.encrypted();
+        Long duration = observation.durationMilliseconds() != null ? observation.durationMilliseconds() :
+            credit.durationMilliseconds();
+        boolean durationChanged = !java.util.Objects.equals(duration, credit.durationMilliseconds());
         long bucket = bucketStart(original.observedAtEpochMilliseconds());
         int encrypted = original.encrypted() ? 1 : 0;
         if(conventional && newSource)
@@ -1097,8 +1122,9 @@ public class ReceiverActivitySchema
             newTarget ? observation.p25TargetIdentity() : credit.targetIdentity(),
             newSource ? observation.sourceObservedWorkingId() : credit.sourceWorkingId(),
             newTarget ? observation.targetObservedWorkingId() : credit.targetWorkingId(),
-            credit.encrypted() || encryptionBecameKnown);
-        if(newSource || sourceEvidenceKnown || newTarget || !newMembers.isEmpty() || encryptionBecameKnown)
+            credit.encrypted() || encryptionBecameKnown, duration);
+        if(newSource || sourceEvidenceKnown || newTarget || !newMembers.isEmpty() || encryptionBecameKnown ||
+            durationChanged)
         {
             ReceiverActivityRecords.ActivityEvent effective = observation.withP25Identities(
                 updated.sourceRadioId(), updated.targetId(), updated.targetKind(), updated.patchMemberTalkgroupIds(),
@@ -1152,7 +1178,8 @@ public class ReceiverActivitySchema
                 target_identity_summary_id = coalesce(target_identity_summary_id, ?),
                 encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END,
                 encryption_algorithm_id = coalesce(encryption_algorithm_id, ?),
-                encryption_key_id = coalesce(encryption_key_id, ?)
+                encryption_key_id = coalesce(encryption_key_id, ?),
+                duration_ms = coalesce(?, duration_ms)
             WHERE id = ? AND channel_id = ? AND observed_at_ms = ?
               AND (radio_system_id IS NULL OR radio_system_id = ?)
             """))
@@ -1171,10 +1198,11 @@ public class ReceiverActivitySchema
             statement.setInt(12, encryptionBecameKnown ? 1 : 0);
             setInteger(statement, 13, encryptionBecameKnown ? observation.encryptionAlgorithmId() : null);
             setInteger(statement, 14, encryptionBecameKnown ? observation.encryptionKeyId() : null);
-            statement.setLong(15, credit.detailedEventId());
-            statement.setLong(16, credit.channelId());
-            statement.setLong(17, observation.observedAtEpochMilliseconds());
-            setLong(statement, 18, system != null ? system.radioSystemId() : null);
+            setLong(statement, 15, observation.durationMilliseconds());
+            statement.setLong(16, credit.detailedEventId());
+            statement.setLong(17, credit.channelId());
+            statement.setLong(18, observation.observedAtEpochMilliseconds());
+            setLong(statement, 19, system != null ? system.radioSystemId() : null);
             //Retention can remove detail while the bounded call receipt is still alive.
             if(statement.executeUpdate() == 0) return;
         }
@@ -1345,39 +1373,68 @@ public class ReceiverActivitySchema
             }
         }
 
-        if(enrichResolvedCallSource(connection, radioSystem, call)) historyChanged.run();
+        if(enrichResolvedCall(connection, radioSystem, call)) historyChanged.run();
         AliasActivityProjection.recordResolvedLogicalCall(connection, call);
 
         return true;
     }
 
     /** Shared call identity enriches only exact receiver calls; their observed RF addresses remain evidence. */
-    private static boolean enrichResolvedCallSource(Connection connection, RadioSystemSchema.RadioSystem system,
+    private static boolean enrichResolvedCall(Connection connection, RadioSystemSchema.RadioSystem system,
         ReceiverActivityRecords.ResolvedLogicalCall call) throws SQLException
     {
         RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, system,
             IDENTITY_KIND_RADIO, call.sourceRadioId(), call.p25SourceIdentity(), call.callStartEpochMilliseconds());
-        if(source == null || call.sourceCallReferences().isEmpty()) return false;
+        if((source == null && call.durationMilliseconds() == null) || call.sourceCallReferences().isEmpty()) return false;
         boolean changed = false;
         try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE receiver_activity_event SET radio_system_id = ?, source_identity_summary_id = ?
+            UPDATE receiver_activity_event SET radio_system_id = ?,
+                source_identity_summary_id = coalesce(?, source_identity_summary_id),
+                duration_ms = coalesce(?, duration_ms)
             WHERE source_call_uuid = ? AND action_code = ?
               AND (radio_system_id IS NULL OR radio_system_id = ?)
-              AND (radio_system_id IS NULL OR source_identity_summary_id IS NOT ?)
+              AND (radio_system_id IS NULL OR (? IS NOT NULL AND source_identity_summary_id IS NOT ?)
+                OR (? IS NOT NULL AND duration_ms IS NOT ?))
             """))
         {
             for(String reference: call.sourceCallReferences())
             {
                 statement.setLong(1, system.radioSystemId());
-                statement.setLong(2, source.summaryId());
-                statement.setString(3, reference);
-                statement.setInt(4, actionCode(ReceiverActivityRecords.Action.CALL));
-                statement.setLong(5, system.radioSystemId());
-                statement.setLong(6, source.summaryId());
+                setLong(statement, 2, source != null ? source.summaryId() : null);
+                setLong(statement, 3, call.durationMilliseconds());
+                statement.setString(4, reference);
+                statement.setInt(5, actionCode(ReceiverActivityRecords.Action.CALL));
+                statement.setLong(6, system.radioSystemId());
+                setLong(statement, 7, source != null ? source.summaryId() : null);
+                setLong(statement, 8, source != null ? source.summaryId() : null);
+                setLong(statement, 9, call.durationMilliseconds());
+                setLong(statement, 10, call.durationMilliseconds());
                 changed |= statement.executeUpdate() > 0;
             }
         }
         return changed;
+    }
+
+    /** Completion annotates only its exact retained call and never creates or recounts Activity. */
+    static boolean applyActivityCallTiming(Connection connection, ReceiverActivityRecords.ActivityCallTiming timing)
+        throws SQLException
+    {
+        String reference = io.github.dsheirer.audio.call.SourceCallReference.fromToken(timing.activityCallToken());
+        if(reference == null || timing.durationMilliseconds() == null) return false;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE receiver_activity_event SET duration_ms = ?
+            WHERE source_call_uuid = ? AND action_code = ?
+              AND channel_id = (SELECT id FROM receiver_channel WHERE configuration_id = ?)
+              AND duration_ms IS NOT ?
+            """))
+        {
+            statement.setLong(1, timing.durationMilliseconds());
+            statement.setString(2, reference);
+            statement.setInt(3, actionCode(ReceiverActivityRecords.Action.CALL));
+            statement.setString(4, timing.configurationId());
+            statement.setLong(5, timing.durationMilliseconds());
+            return statement.executeUpdate() > 0;
+        }
     }
 
     static boolean applyLogicalCallOutput(Connection connection, ReceiverActivityRecords.LogicalCallOutput output)
@@ -1920,7 +1977,8 @@ public class ReceiverActivitySchema
             List.of(), call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null,
             null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(),
-            null, null, null, null, null, call.activityCallToken());
+            null, null, null, null, null, call.activityCallToken())
+                .withDurationMilliseconds(call.callEndEpochMilliseconds() - call.callStartEpochMilliseconds());
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
         DmrActivitySchema.recordCompletedCall(connection, channelId, call);
@@ -1969,7 +2027,8 @@ public class ReceiverActivitySchema
             eventType, value(call.sourceRadioId()), targetId, targetKind, List.of(), call.frequencyHertz(), null, null,
             call.encrypted(), null, null, null, null, null, null, null, null, true, null, null,
             call.identityDomain(), ReceiverActivityRecords.P25Identity.UNKNOWN,
-            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null, null, null, null, null, call.activityCallToken());
+            ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null, null, null, null, null, call.activityCallToken())
+                .withDurationMilliseconds(call.callEndEpochMilliseconds() - call.callStartEpochMilliseconds());
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
         AliasActivityProjection.recordNxdnConventionalCall(connection, call);
@@ -3660,7 +3719,7 @@ public class ReceiverActivitySchema
             "source_identity_summary_id", "source_identity_kind_code", "target_identity_summary_id", "frequency_hz",
             "lcn_band", "lcn_number", "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id",
             "observed_nac", "observed_rfss", "observed_site", "source_observed_working_id",
-            "target_observed_working_id", "source_call_uuid"),
+            "target_observed_working_id", "source_call_uuid", "duration_ms"),
         table("activity_event_identity_member", "event_id", "radio_system_id", "identity_summary_id",
             "identity_kind_code", "observed_local_id", "channel_id"),
         table("p25_learned_site", "learned_site_id", "radio_system_id", "rfss", "site", "first_seen_ms",
@@ -4062,8 +4121,8 @@ public class ReceiverActivitySchema
                 source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
                 frequency_hz, lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id,
                 observed_nac, observed_rfss, observed_site, source_observed_working_id,
-                target_observed_working_id, source_call_uuid
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                target_observed_working_id, source_call_uuid, duration_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """))
         {
@@ -4092,6 +4151,7 @@ public class ReceiverActivitySchema
             setInteger(statement, 23, activity.targetObservedWorkingId());
             statement.setString(24, activity.action() == ReceiverActivityRecords.Action.CALL ?
                 io.github.dsheirer.audio.call.SourceCallReference.fromToken(activity.activityCallToken()) : null);
+            setLong(statement, 25, activity.durationMilliseconds());
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(resultSet.next())

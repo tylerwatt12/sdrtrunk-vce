@@ -89,6 +89,7 @@ class DmrActivitySchemaTest
             Long activityId = ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 groupCall(1_000, 2_000, "detailed", 461_125_000L, 1, 91, 101, true), true);
             assertEquals(Long.valueOf(1L), activityId);
+            assertEquals(1_000, scalar(connection, "SELECT duration_ms FROM receiver_activity_event"));
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(1, scalar(connection, "SELECT call_count FROM conventional_activity_summary"));
             assertEquals(1, scalar(connection, "SELECT call_count FROM dmr_conventional_talkgroup_summary"));

@@ -355,7 +355,7 @@ class StatsWebDatabase
             "THEN grouped.observed_local_id END";
     private static final String ACTIVITY_PROJECTION_SQL = """
         SELECT activity.id, activity.channel_id, activity.configuration_id,
-            activity.observed_at_ms, activity.channel_kind,
+            activity.observed_at_ms, activity.duration_ms, activity.channel_kind,
             activity.channel_kind_code,
             CASE WHEN activity.protocol_code = 11 THEN 'AM' ELSE activity.protocol END AS protocol,
             activity.action, activity.event_type,

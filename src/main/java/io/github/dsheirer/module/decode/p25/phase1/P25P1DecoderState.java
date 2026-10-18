@@ -2553,7 +2553,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         super.resetState();
         mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), TimeslotMessage.TIMESLOT_1,
-            System.currentTimeMillis());
+            System.currentTimeMillis(), false);
     }
 
     @Override

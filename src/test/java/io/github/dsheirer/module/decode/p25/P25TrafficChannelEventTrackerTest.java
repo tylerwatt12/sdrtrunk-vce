@@ -9,6 +9,7 @@ import io.github.dsheirer.identifier.IdentityResolutionEvidence;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,12 +22,98 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class P25TrafficChannelEventTrackerTest
 {
     private static final long START = 1_000L;
+
+    @Test
+    void finalObservedDurationSurvivesLateCallerEnrichmentWithoutDependingOnAudio()
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            var event = P25ChannelGrantEvent.builder(encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED :
+                DecodeEventType.CALL_GROUP, START, encrypted ? VoiceServiceOptions.createEncrypted() :
+                VoiceServiceOptions.createUnencrypted()).identifiers(identifiers(1201, null)).build();
+            var tracked = publishedTracker(event);
+            assertNull(tracked.callUpdate(), "Creating a tracker does not invent a final interval");
+            tracked.updateDurationTraffic(START + 100);
+            tracked.addIdentifierIfMissing(APCO25RadioIdentifier.createFrom(501));
+            var enriched = tracked.callUpdate();
+            assertFalse(enriched.complete());
+            assertNull(enriched.durationMilliseconds());
+            assertEquals(START, enriched.call().startedAtEpochMilliseconds());
+
+            assertTrue(tracked.completeTraffic(START + 900));
+            var completed = tracked.callUpdate();
+            assertTrue(completed.complete());
+            assertEquals(900L, completed.durationMilliseconds());
+            assertEquals(enriched.call().callToken(), completed.call().callToken());
+            assertEquals(START, completed.call().startedAtEpochMilliseconds());
+            assertNull(tracked.callUpdate(), "Unchanged completion remains coalesced");
+            event.setDuration(5_000);
+            assertEquals(900L, completed.durationMilliseconds(), "Published timing is immutable");
+        }
+    }
+
+    @Test
+    void grantOnlyCompletionAndRetiredOwnershipDoNotInventObservedCallTiming()
+    {
+        var grantOnly = publishedTracker(P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, null)).build());
+        grantOnly.updateDurationControl(START + 500);
+        grantOnly.completeTraffic(START + 750);
+        assertNull(grantOnly.callUpdate().durationMilliseconds());
+
+        var retired = publishedTracker(P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, null)).build());
+        retired.updateDurationTraffic(START + 100);
+        retired.completeAttribution();
+        retired.addIdentifierIfMissing(APCO25RadioIdentifier.createFrom(501));
+        var update = retired.callUpdate();
+        assertFalse(update.complete());
+        assertNull(update.durationMilliseconds(), "Map retirement supplies no new RF end timestamp");
+    }
+
+    @Test
+    void missingStartOrDefaultZeroSpanStaysUnknown()
+    {
+        for(long start: List.of(0L, START))
+        {
+            var tracked = publishedTracker(P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, start, null)
+                .identifiers(identifiers(1201, null)).build());
+            tracked.updateDurationTraffic(start);
+            tracked.completeTraffic(start == 0 ? 500 : start);
+            assertNull(tracked.callUpdate().durationMilliseconds());
+        }
+        assertNull(new P25CallUpdateEvent(null, true).durationMilliseconds(),
+            "Compatibility producers without observed timing preserve unknown");
+
+        var staleEnd = publishedTracker(P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, null)).build());
+        staleEnd.updateDurationTraffic(START + 100);
+        staleEnd.completeTraffic(START - 10);
+        assertNull(staleEnd.callUpdate().durationMilliseconds(),
+            "An ignored end before the call start must not reuse an in-progress duration");
+    }
+
+    @Test
+    void resetCompletionCannotExportItsWallClockAsAnObservedCallLength()
+    {
+        var tracked = publishedTracker(P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, null)).build());
+        tracked.updateDurationTraffic(START + 100);
+        assertTrue(tracked.completeTraffic(1_700_000_000_000L, false));
+        var completed = tracked.callUpdate();
+        assertTrue(completed.complete());
+        assertNull(completed.durationMilliseconds());
+        assertFalse(tracked.completeTraffic(START + 500), "A later notification cannot rewrite final provenance");
+        tracked.addIdentifierIfMissing(APCO25RadioIdentifier.createFrom(501));
+        assertNull(tracked.callUpdate().durationMilliseconds(), "Late identity enrichment cannot invent an RF end");
+    }
 
     @Test
     void equalHomeGroupLocalChangesAndRadioEvidenceChangesReachTheTracker()
@@ -285,6 +372,13 @@ class P25TrafficChannelEventTrackerTest
     private static P25TrafficChannelEventTracker tracker(int talkgroup, RadioIdentifier source)
     {
         return tracker(identifiers(talkgroup, source));
+    }
+
+    private static P25TrafficChannelEventTracker publishedTracker(P25ChannelGrantEvent event)
+    {
+        var tracker = new P25TrafficChannelEventTracker(event);
+        tracker.setCallStart(new P25CallStartEvent(null, event, null, tracker.getActivityCallToken()));
+        return tracker;
     }
 
     private static P25TrafficChannelEventTracker tracker(MutableIdentifierCollection identifiers)

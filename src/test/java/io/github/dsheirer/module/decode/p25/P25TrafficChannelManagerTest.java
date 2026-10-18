@@ -13,6 +13,8 @@ package io.github.dsheirer.module.decode.p25;
 
 import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.bits.IntField;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
@@ -47,6 +49,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
 import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
@@ -69,6 +72,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -401,7 +405,81 @@ class P25TrafficChannelManagerTest
                 update.call().identifierCollection().getFromIdentifier());
         }
         assertFalse(subscriber.updates.getFirst().complete());
+        assertNull(subscriber.updates.getFirst().durationMilliseconds());
         assertTrue(subscriber.updates.getLast().complete());
+        assertEquals(200L, subscriber.updates.getLast().durationMilliseconds());
+    }
+
+    @Test
+    void clearAndEncryptedMetadataOnlyCallsDistinguishObservedEndFromReset()
+    {
+        for(boolean encrypted: List.of(false, true))
+        {
+            for(boolean observedEnd: List.of(false, true))
+            {
+                long frequency = 154_875_000L;
+                Channel parent = new Channel("Conventional");
+                parent.setDecodeConfiguration(new DecodeConfigP25Conventional());
+                P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+                CallStartSubscriber subscriber = new CallStartSubscriber();
+                MyEventBus.getGlobalEventBus().register(subscriber);
+                try
+                {
+                    manager.processP1TrafficCallStart(frequency, APCO25Talkgroup.create(1201), null,
+                        EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(encrypted ? 0x84 : 0x80, 0)),
+                        encrypted ? VoiceServiceOptions.createEncrypted() : VoiceServiceOptions.createUnencrypted(),
+                        new StandardChannel(frequency), 1_000L);
+                    assertTrue(manager.processTrafficCallEnd(frequency, TimeslotMessage.TIMESLOT_1,
+                        observedEnd ? 1_450L : 1_700_000_000_000L, observedEnd));
+                }
+                finally
+                {
+                    MyEventBus.getGlobalEventBus().unregister(subscriber);
+                }
+                assertEquals(1, subscriber.events.size());
+                assertEquals(1, subscriber.updates.size());
+                assertTrue(subscriber.updates.getFirst().complete());
+                assertEquals(observedEnd ? 450L : null, subscriber.updates.getFirst().durationMilliseconds(),
+                    "Only the accepted RF interval is known; the manager has no audio module or codec");
+            }
+        }
+    }
+
+    @Test
+    void nextPhaseTwoPttKeepsCallBoundariesWithoutInventingThePriorEndTime()
+    {
+        long frequency = 851_000_000L;
+        int timeslot = TimeslotMessage.TIMESLOT_1;
+        Channel parent = new Channel("Phase 2");
+        parent.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        var manager = new P25TrafficChannelManager(parent);
+        var subscriber = new CallStartSubscriber();
+        var bits = new CorrectedBinaryMessage(144);
+        bits.setInt(0x80, IntField.length8(80));
+        bits.setInt(700_001, IntField.length24(104));
+        bits.setInt(1201, IntField.length16(128));
+        var ptt = new PushToTalk(bits);
+        var identifiers = new IdentifierCollection(ptt.getIdentifiers());
+        MyEventBus.getGlobalEventBus().register(subscriber);
+        try
+        {
+            manager.processP2TrafficPushToTalk(frequency, timeslot, new StandardChannel(frequency), identifiers,
+                ptt, 1_000L);
+            manager.processP2TrafficVoice(frequency, timeslot, 1_100L);
+            manager.processP2TrafficPushToTalk(frequency, timeslot, new StandardChannel(frequency), identifiers,
+                ptt, 2_000L);
+            assertTrue(manager.processP2TrafficEndPushToTalk(frequency, timeslot, 2_500L));
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+        assertEquals(2, subscriber.events.size());
+        assertNotEquals(subscriber.events.getFirst().callToken(), subscriber.events.getLast().callToken());
+        var completed = subscriber.updates.stream().filter(P25CallUpdateEvent::complete).toList();
+        assertEquals(2, completed.size());
+        assertNull(completed.getFirst().durationMilliseconds(), "No previous EndPTT was received");
+        assertEquals(500L, completed.getLast().durationMilliseconds());
     }
 
     @Test

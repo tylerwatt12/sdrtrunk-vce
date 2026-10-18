@@ -142,17 +142,18 @@ class SourceCallPersistenceTest
         {
             var initial = activity(now,ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25,
                 ReceiverActivityRecords.Action.CALL,"conventional:1");
-            var complete = activity(now + 100,ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25,
-                ReceiverActivityRecords.Action.CALL,"conventional:1");
+            var complete = activity(now,ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25,
+                ReceiverActivityRecords.Action.CALL,"conventional:1").withDurationMilliseconds(100L);
             writer.enqueue(new ReceiverActivityRecords.P25CallObservation("conventional:1",initial,true,false));
             writer.enqueue(new ReceiverActivityRecords.P25CallObservation("conventional:1",complete,false,true));
         }
         finally { writer.close(); }
         assertEquals(0,writer.getDroppedRecords());
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement();
-            var rows = sql.executeQuery("SELECT source_call_uuid FROM receiver_activity_event"))
+            var rows = sql.executeQuery("SELECT source_call_uuid,duration_ms FROM receiver_activity_event"))
         {
             assertTrue(rows.next()); assertEquals(SourceCallReference.fromToken("conventional:1"),rows.getString(1));
+            assertEquals(100L,rows.getLong(2));
             assertFalse(rows.next());
         }
     }
@@ -320,8 +321,8 @@ class SourceCallPersistenceTest
         assertEquals(2,writer.getWrittenRecords()); assertEquals(0,writer.getDroppedRecords());
         List<String> references = new ArrayList<>();
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement();
-            var rows = sql.executeQuery("SELECT source_call_uuid FROM receiver_activity_event ORDER BY observed_at_ms,id"))
-        { while(rows.next()) references.add(rows.getString(1)); }
+            var rows = sql.executeQuery("SELECT source_call_uuid,duration_ms FROM receiver_activity_event ORDER BY observed_at_ms,id"))
+        { while(rows.next()) { references.add(rows.getString(1)); assertEquals(100L,rows.getLong(2)); } }
         assertEquals(List.of(SourceCallReference.fromToken("dmr:1"),SourceCallReference.fromToken("nxdn:1")),references);
     }
 

@@ -35,7 +35,7 @@ class Format50To51DatabaseMigrationTest
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
-            assertEquals(List.of("format-50-to-51", "format-51-to-52", "format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56", "format-56-to-57", "format-57-to-58"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-50-to-51", "format-51-to-52", "format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56", "format-56-to-57", "format-57-to-58", "format-58-to-59"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(17, scalar(connection, "SELECT logical_call_count FROM alias_activity_summary WHERE alias_id=900002"));
             assertEquals(2000, scalar(connection, "SELECT last_evidence_ms FROM alias_activity_summary WHERE alias_id=900002"));

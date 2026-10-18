@@ -353,6 +353,7 @@ class ReceiverActivityWriter implements AutoCloseable
             if(record instanceof ReceiverActivityRecords.ConventionalCallOutput ||
                 record instanceof ReceiverActivityRecords.LogicalCallOutput) return CALL_OUTPUTS;
             if(record instanceof ReceiverActivityRecords.P25CallObservation ||
+                record instanceof ReceiverActivityRecords.ActivityCallTiming ||
                 record instanceof ReceiverActivityRecords.ResolvedLogicalCall ||
                 record instanceof ReceiverActivityRecords.TrunkedCallAttribution ||
                 record instanceof ReceiverActivityRecords.DmrConventionalCall ||
@@ -1141,6 +1142,14 @@ class ReceiverActivityWriter implements AutoCloseable
                         acceptedP25Calls.put(observation.callToken(), updated);
                         toneAssociations.call(connection, observation.callToken(), observation.activity().configurationId(),
                             updated.credit().detailedEventId(), System.currentTimeMillis());
+                        writtenRecords++;
+                    }
+                }
+                else if(record instanceof ReceiverActivityRecords.ActivityCallTiming timing)
+                {
+                    if(ReceiverActivitySchema.applyActivityCallTiming(connection, timing))
+                    {
+                        historyChanged[0] = true;
                         writtenRecords++;
                     }
                 }

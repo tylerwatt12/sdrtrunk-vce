@@ -134,6 +134,28 @@ the current schema and settings without performing migrations. Application forma
 only the admitted method-4 nominal paging identities. Their adjacent semantic migrations change no DDL or historical
 tone value; P25 Phase 1 method 3, encoded metadata, waveform DTMF, storage bounds, queries and retention are unchanged.
 
+### Accepted Activity call length (application format 59)
+
+Every Activity table displays the observed length of its individual accepted call when that timing is known.
+Hourly totals and identity summaries cannot provide an individual call boundary. The existing detailed
+`receiver_activity_event` row therefore owns one nullable integer `duration_ms`; no new row, table, registry or
+pending queue is introduced. Non-call events and unknown historical lengths remain NULL. Known lengths come only
+from shared accepted call timing, without using recording length, the next row, or cross-table time matching.
+
+P25 completion enriches its existing exact tracker receipt. DMR/NXDN conventional completion already owns both
+accepted boundaries. Completed trunked DMR/NXDN and conventional analog timing update only existing rows by their
+canonical source-call reference and existing channel or radio-system ownership. Completion changes neither call counts nor source identity,
+and a later identity update cannot reset known timing. All SQLite work remains on the existing bounded writer
+worker; decoder callbacks do not perform database work.
+
+At R retained detailed calls per hour, the field adds at most R populated integers per hour, or 8,760 × R at the
+maximum 365-day retention. It adds no index entry and follows the same retained-row deletion and clear operations.
+SQLite integer payloads occupy up to eight bytes plus record-header overhead; page occupancy and WAL behavior,
+rather than that payload bound alone, determine allocated size. Historical records are not rewritten with guessed
+values. Existing owner/time page bounds and the sparse exact source-call index bound reads and completion updates;
+no unindexed history scan, sort key, extra index or cross-database join is added. Migration and runtime tests verify
+exact preservation, null/zero/value meanings and the indexed update plan.
+
 ### Exact Activity, alert and recording connections (application format 58 / catalog format 11)
 
 The site needs the exact Activity rows and saved audio that caused a call alert, and the saved audio associated with

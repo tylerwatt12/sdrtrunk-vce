@@ -1130,6 +1130,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public boolean processTrafficCallEnd(long frequency, int timeslot, long timestamp)
     {
+        return processTrafficCallEnd(frequency, timeslot, timestamp, true);
+    }
+
+    /** Lifecycle resets complete the same call without crediting their wall clock as an observed RF end. */
+    public boolean processTrafficCallEnd(long frequency, int timeslot, long timestamp, boolean observedEnd)
+    {
         boolean completed = false;
 
         mLock.lock();
@@ -1139,7 +1145,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
 
             //If we have a tracker that we can mark complete, broadcast the updated tracker/event.
-            if(tracker != null && tracker.completeTraffic(timestamp))
+            if(tracker != null && tracker.completeTraffic(timestamp, observedEnd))
             {
                 completed = true;
                 broadcast(tracker, timestamp);
@@ -1400,7 +1406,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null && (tracker.isComplete() || (pushToTalk != null &&
                 !tracker.acceptsPushToTalk(ic, pushToTalk.getEncryptionSyncParameters(), timestamp))))
             {
-                if(tracker.completeTraffic(timestamp))
+                // The next PTT establishes replacement, not the previous call's missing RF end time.
+                if(tracker.completeTraffic(timestamp, false))
                 {
                     broadcast(tracker, timestamp);
                     P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);

@@ -124,6 +124,28 @@ class StatsWebDatabaseCallRelationsTest
         assertFalse(json.contains("source_call_uuid")); assertFalse(json.contains(SOURCE));
     }
 
+    @Test void activityAndRelatedRowsShareNumericDurationAndExplicitUnknown() throws Exception
+    {
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        {
+            sql.executeUpdate("UPDATE receiver_activity_event SET duration_ms=12345 WHERE id=1001");
+            sql.executeUpdate("UPDATE receiver_activity_event SET duration_ms=0 WHERE id=1003");
+        }
+        List<Map<String,Object>> related = database.activityBySourceCallReferences(List.of(SOURCE));
+        assertNull(related.getFirst().get("duration_ms"));
+        assertEquals(12_345L, ((Number)related.getLast().get("duration_ms")).longValue());
+        Map<String,Object> page = database.activity(StatsRequest.from(URI.create("/?configuration_id=" + CHANNEL +
+            "&from_ms=1&to_ms=5000&hide_grants=false&limit=20")));
+        @SuppressWarnings("unchecked") List<Map<String,Object>> rows = (List<Map<String,Object>>)page.get("rows");
+        assertTrue(rows.stream().allMatch(row -> row.containsKey("duration_ms")));
+        assertEquals(12_345L, ((Number)rows.stream().filter(row -> ((Number)row.get("id")).longValue()==1001)
+            .findFirst().orElseThrow().get("duration_ms")).longValue());
+        assertEquals(0L, ((Number)rows.stream().filter(row -> ((Number)row.get("id")).longValue()==1003)
+            .findFirst().orElseThrow().get("duration_ms")).longValue());
+        assertNull(rows.stream().filter(row -> ((Number)row.get("id")).longValue()==1004)
+            .findFirst().orElseThrow().get("duration_ms"));
+    }
+
     @Test void relationReadsBoundSourcesAndResultsAndRejectInvalidReferences() throws Exception
     {
         assertTrue(database.activityBySourceCallReferences(null).isEmpty());

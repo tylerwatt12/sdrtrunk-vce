@@ -414,6 +414,69 @@ class ReceiverActivityWriterTest
             "Unchanged exact references and references without a retained row must not trigger reloads");
     }
 
+    @Test
+    void p25CompletionEnrichesTheSameRowWithoutLosingTimingOnLaterIdentityUpdates() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("p25-call-duration.sqlite"));
+        insertConfiguredChannel(database);
+        var writer = new ReceiverActivityWriter(database, 30, true);
+        List<Boolean> invalidations = new ArrayList<>();
+        writer.setLiveActivityObserver(() -> true, invalidations::add);
+        long now = System.currentTimeMillis();
+        var initial = p25Call("duration", now, null);
+        var finalTiming = new ReceiverActivityRecords.P25CallObservation("duration",
+            initial.activity().withDurationMilliseconds(2_345L), false, true);
+        var lateSource = new ReceiverActivityRecords.P25CallObservation("duration",
+            p25Call("duration", now, 202).activity(), false, false);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            writeBatch(writer, connection, List.of(initial));
+            long id = scalar(connection, "SELECT id FROM receiver_activity_event");
+            writeBatch(writer, connection, List.of(finalTiming));
+            writeBatch(writer, connection, List.of(lateSource));
+            writeBatch(writer, connection, List.of(finalTiming));
+            //P25 native audio has no timing authority; its null duration must preserve the tracker span.
+            writeBatch(writer, connection, List.of(resolved(1, now, "duration")));
+            assertEquals(id, scalar(connection, "SELECT id FROM receiver_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(2_345L, scalar(connection, "SELECT duration_ms FROM receiver_activity_event"));
+            assertEquals(202, scalar(connection, "SELECT source_observed_local_id FROM receiver_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT sum(logical_call_count) FROM trunked_logical_call_bucket"));
+        }
+        assertEquals(List.of(false, true, true, false, false), invalidations);
+    }
+
+    @Test
+    void completionTimingUpdatesOnlyItsExactRetainedCallAndConfiguredOwner() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("exact-call-duration.sqlite"));
+        insertConfiguredChannel(database);
+        var writer = new ReceiverActivityWriter(database, 30, true);
+        List<Boolean> invalidations = new ArrayList<>();
+        writer.setLiveActivityObserver(() -> true, invalidations::add);
+        long now = System.currentTimeMillis();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            writeBatch(writer, connection, List.of(p25Call("first", now, 202), p25Call("next", now, 202)));
+            writeBatch(writer, connection, List.of(new ReceiverActivityRecords.ActivityCallTiming(
+                "first", "99999999-9999-4999-8999-999999999999", now + 100, 100L)));
+            writeBatch(writer, connection, List.of(new ReceiverActivityRecords.ActivityCallTiming(
+                "absent", CONFIGURATION_ID, now + 100, 100L)));
+            writeBatch(writer, connection, List.of(new ReceiverActivityRecords.ActivityCallTiming(
+                "first", CONFIGURATION_ID, now + 2_500, 2_500L)));
+            writeBatch(writer, connection, List.of(new ReceiverActivityRecords.ActivityCallTiming(
+                "first", CONFIGURATION_ID, now + 2_500, 2_500L)));
+            writeBatch(writer, connection, List.of(new ReceiverActivityRecords.ActivityCallTiming(
+                "first", CONFIGURATION_ID, now + 2_500, null)));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE duration_ms=2500"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE duration_ms IS NULL"));
+            assertEquals(2_500L, scalar(connection, "SELECT duration_ms FROM receiver_activity_event WHERE source_call_uuid='" +
+                SourceCallReference.fromToken("first") + "'"));
+        }
+        assertEquals(List.of(false, false, false, true, false, false), invalidations);
+    }
+
     private static ReceiverActivityRecords.ResolvedLogicalCall resolved(long sequence, long timestamp, String token)
     {
         return new ReceiverActivityRecords.ResolvedLogicalCall(new LogicalCallId(1, sequence), timestamp,

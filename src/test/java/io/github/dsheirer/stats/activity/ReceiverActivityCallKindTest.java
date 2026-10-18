@@ -6,6 +6,7 @@
 package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -84,6 +85,40 @@ class ReceiverActivityCallKindTest
                 assertEquals(2, rows.getInt(1));
                 assertEquals(2, rows.getInt(2));
                 assertEquals(2, rows.getInt(3));
+            }
+        }
+    }
+
+    @Test
+    void completedTrunkedTimingEnrichesExactActivityWithoutRequiringASource() throws Exception
+    {
+        for(TrunkedIdentityDomain domain: TrunkedIdentityDomain.values())
+        {
+            try(Connection connection = database(domain))
+            {
+                var mapped = new ReceiverActivityMapper().mapResolvedLogicalCall(call(domain, ChannelKind.TRUNKED, false));
+                String token = "accepted:" + domain;
+                var initial = new ReceiverActivityRecords.ActivityEvent(mapped.callStartEpochMilliseconds(),
+                    CONFIGURATION_ID, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, mapped.protocol(),
+                    ReceiverActivityRecords.Action.CALL, "CALL_GROUP", null, "91", "TALKGROUP", List.of(),
+                    451_012_500L, null, 1, false, null, null, null, null, null, null, null, null,
+                    true, null, null, domain, ReceiverActivityRecords.P25Identity.UNKNOWN,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null, null, null, null, null, token);
+                assertNotNull(ReceiverActivitySchema.recordActivity(connection, initial, true));
+                var completed = new ReceiverActivityRecords.ResolvedLogicalCall(mapped.logicalCallId(),
+                    mapped.callStartEpochMilliseconds(), CONFIGURATION_ID, mapped.protocol(), domain, null, null,
+                    91, "TALKGROUP", List.of(), null, false, null, null,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN,
+                    List.of(), List.of(), mapped.radioSystemKey(), null, null,
+                    List.of(io.github.dsheirer.audio.call.SourceCallReference.fromToken(token)),
+                    mapped.durationMilliseconds());
+                assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection, completed));
+                try(Statement sql = connection.createStatement(); ResultSet rows = sql.executeQuery(
+                    "SELECT duration_ms,source_identity_summary_id FROM receiver_activity_event"))
+                {
+                    assertTrue(rows.next()); assertEquals(100, rows.getLong(1));
+                    assertNull(rows.getObject(2)); assertFalse(rows.next());
+                }
             }
         }
     }

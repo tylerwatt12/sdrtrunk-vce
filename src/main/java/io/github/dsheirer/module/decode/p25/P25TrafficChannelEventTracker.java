@@ -65,6 +65,7 @@ public class P25TrafficChannelEventTracker
     private long mLastObservationTimestamp;
     private boolean mStarted = false;
     private boolean mComplete = false;
+    private boolean mObservedEnd;
     private boolean mVoiceObserved;
     private EncryptionKeyIdentifier mPushToTalkKey;
     private CallEncryptionEvidence mPushToTalkEncryption;
@@ -157,7 +158,10 @@ public class P25TrafficChannelEventTracker
         P25CallStartEvent snapshot = mCallStart.withIdentifiers(getEvent());
         mActivityIdentifiers = snapshot.identifiers();
         mCompletionPublished |= isComplete();
-        return new P25CallUpdateEvent(snapshot, isComplete());
+        // A grant builder defaults its end to its start; that zero does not establish an observed call span.
+        Long duration = mObservedEnd && isStarted() && getEvent().getTimeStart() > 0 &&
+            getEvent().getTimeEnd() > getEvent().getTimeStart() ? getEvent().getDuration() : null;
+        return new P25CallUpdateEvent(snapshot, isComplete(), duration);
     }
 
     private boolean sameIdentifiers()
@@ -474,9 +478,16 @@ public class P25TrafficChannelEventTracker
      */
     public boolean completeTraffic(long timestamp)
     {
+        return completeTraffic(timestamp, true);
+    }
+
+    /** Reset/replacement completion retires ownership but does not establish a received RF end. */
+    boolean completeTraffic(long timestamp, boolean observedEnd)
+    {
         if(!isComplete())
         {
             mComplete = true;
+            mObservedEnd = observedEnd && timestamp > getEvent().getTimeStart();
             completeAttribution();
             observe(timestamp);
             getEvent().end(timestamp);

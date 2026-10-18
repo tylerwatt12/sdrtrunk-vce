@@ -48,7 +48,7 @@ class Format57To58DatabaseMigrationTest
             assertTrue(count(connection, "topic_alert_message") > 0);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-57-to-58"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-57-to-58", "format-58-to-59"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL"));
@@ -57,7 +57,7 @@ class Format57To58DatabaseMigrationTest
             assertEquals(57, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
             DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(58, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(before, contents(connection));
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             integrity(connection);
@@ -80,7 +80,7 @@ class Format57To58DatabaseMigrationTest
         try(var connection = open(database))
         {
             connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(58, DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
         }
     }
 
@@ -172,7 +172,8 @@ class Format57To58DatabaseMigrationTest
                     List<String> row = new ArrayList<>();
                     for(int i = 1; i <= rows.getMetaData().getColumnCount(); i++)
                     {
-                        if("source_call_uuid".equals(rows.getMetaData().getColumnName(i))) continue;
+                        if("source_call_uuid".equals(rows.getMetaData().getColumnName(i)) ||
+                            table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(i))) continue;
                         Object value = rows.getObject(i);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }

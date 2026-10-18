@@ -268,7 +268,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         mTalkerAliasReceptionGeneration++;
         super.resetState();
-        mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis());
+        mTrafficChannelManager.processTrafficCallEnd(getCurrentFrequency(), getTimeslot(), System.currentTimeMillis(), false);
         mEndPttOnFacchCounter = 0;
     }
 

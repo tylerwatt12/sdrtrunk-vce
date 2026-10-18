@@ -414,6 +414,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             return;
         }
 
+        ReceiverActivityRecords.ActivityCallTiming timing = mMapper.mapActivityCallTiming(call);
+        if(timing != null && firstLogicalNotification(call.logicalCallId() + "|activity-timing"))
+            enqueueObservation(writer, timing);
+
         ReceiverActivityRecords.ResolvedLogicalCall resolved = mMapper.mapResolvedLogicalCall(call);
         if(resolved != null && firstLogicalNotification(resolved.logicalCallId().toString() + "|resolved"))
         {

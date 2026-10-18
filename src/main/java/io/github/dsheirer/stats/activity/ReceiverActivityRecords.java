@@ -181,9 +181,26 @@ final class ReceiverActivityRecords
                                List<P25SiteCallObservation> p25SiteObservations,
                                String radioSystemKey,
                                Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
-                               List<String> sourceCallReferences)
+                               List<String> sourceCallReferences, Long durationMilliseconds)
         implements ReceiverActivityRecord
     {
+        ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String configurationId,
+                            String protocol, TrunkedIdentityDomain identityDomain, Integer wacn, Integer systemId,
+                            int destinationId, String destinationKind, List<Integer> patchMemberTalkgroupIds,
+                            Integer sourceRadioId, boolean encrypted, Integer encryptionAlgorithmId,
+                            Integer encryptionKeyId, P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                            List<P25PatchMemberIdentity> p25PatchMemberIdentities,
+                            List<P25SiteCallObservation> p25SiteObservations, String radioSystemKey,
+                            Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                            List<String> sourceCallReferences)
+        {
+            this(logicalCallId, callStartEpochMilliseconds, configurationId, protocol, identityDomain, wacn,
+                systemId, destinationId, destinationKind, patchMemberTalkgroupIds, sourceRadioId, encrypted,
+                encryptionAlgorithmId, encryptionKeyId, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, p25SiteObservations, radioSystemKey, sourceObservedWorkingId,
+                targetObservedWorkingId, sourceCallReferences, null);
+        }
+
         ResolvedLogicalCall(LogicalCallId logicalCallId, long callStartEpochMilliseconds, String configurationId,
                             String protocol, TrunkedIdentityDomain identityDomain, Integer wacn, Integer systemId,
                             int destinationId, String destinationKind, List<Integer> patchMemberTalkgroupIds,
@@ -240,6 +257,7 @@ final class ReceiverActivityRecords
             sourceCallReferences = sourceCallReferences == null ? List.of() : sourceCallReferences.stream()
                 .map(io.github.dsheirer.audio.call.SourceCallReference::canonical)
                 .filter(java.util.Objects::nonNull).distinct().limit(128).toList();
+            durationMilliseconds = knownDuration(durationMilliseconds);
         }
 
         @Override
@@ -483,9 +501,31 @@ final class ReceiverActivityRecords
                          String radioSystemKey,
                          Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
                          P25WuidObservation p25WuidObservation,
-                         io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution, String activityCallToken)
+                         io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution, String activityCallToken,
+                         Long durationMilliseconds)
         implements ReceiverActivityRecord
     {
+        ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioPresenceUpdate radioPresenceUpdate, TrunkedIdentityDomain identityDomain,
+                      P25Identity p25TargetIdentity, P25Identity p25SourceIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities, String radioSystemKey,
+                      Integer sourceObservedWorkingId, Integer targetObservedWorkingId,
+                      P25WuidObservation p25WuidObservation,
+                      io.github.dsheirer.alias.AnalogCallAttribution analogCallAttribution, String activityCallToken)
+        {
+            this(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, talkerAlias,
+                countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity, p25SourceIdentity,
+                p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId, targetObservedWorkingId,
+                p25WuidObservation, analogCallAttribution, activityCallToken, null);
+        }
+
         ActivityEvent(long observedAtEpochMilliseconds, String configurationId, ReceiverKind receiverKind,
                       String protocol, Action action, String eventType, String sourceRadioId, String targetId,
                       String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
@@ -582,6 +622,7 @@ final class ReceiverActivityRecords
             radioSystemKey = validateRadioSystemKey(protocol, identityDomain, configurationId, radioSystemKey);
             sourceObservedWorkingId = explicitWorkingId(sourceObservedWorkingId);
             targetObservedWorkingId = explicitWorkingId(targetObservedWorkingId);
+            durationMilliseconds = action == Action.CALL ? knownDuration(durationMilliseconds) : null;
         }
 
         /** Keeps observation metadata while projecting only identities accepted for this same call. */
@@ -593,9 +634,31 @@ final class ReceiverActivityRecords
                 lcn, timeslot, encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
                 talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, targetIdentity,
                 sourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceWorkingId, targetWorkingId,
-                p25WuidObservation, analogCallAttribution, activityCallToken);
+                p25WuidObservation, analogCallAttribution, activityCallToken, durationMilliseconds);
         }
 
+        ActivityEvent withDurationMilliseconds(Long duration)
+        {
+            return new ActivityEvent(observedAtEpochMilliseconds, configurationId, receiverKind, protocol, action,
+                eventType, sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn,
+                timeslot, encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site,
+                talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain, p25TargetIdentity,
+                p25SourceIdentity, p25PatchMemberIdentities, radioSystemKey, sourceObservedWorkingId,
+                targetObservedWorkingId, p25WuidObservation, analogCallAttribution, activityCallToken, duration);
+        }
+    }
+
+    /** Final observed timing for an exact accepted call; this never inserts or counts another Activity event. */
+    record ActivityCallTiming(String activityCallToken, String configurationId, long observedAtEpochMilliseconds,
+                              Long durationMilliseconds) implements ReceiverActivityRecord
+    {
+        ActivityCallTiming
+        {
+            if(activityCallToken == null || activityCallToken.isBlank() ||
+                configurationId == null || configurationId.isBlank())
+                throw new IllegalArgumentException("Call timing requires its exact call token and configuration");
+            durationMilliseconds = knownDuration(durationMilliseconds);
+        }
     }
 
     /**
@@ -817,6 +880,11 @@ final class ReceiverActivityRecords
         GROUP,
         PRIVATE,
         UNKNOWN
+    }
+
+    private static Long knownDuration(Long duration)
+    {
+        return duration != null && duration >= 0 ? duration : null;
     }
 
     private static List<Integer> distinctPositiveTalkgroups(List<Integer> talkgroups, Integer excludedTalkgroup)
