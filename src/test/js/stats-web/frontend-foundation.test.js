@@ -169,6 +169,23 @@ function checkActivityDuration(tableLayouts, tableDefaults) {
     { kind: 'conventional-digital', protocol: 'NXDN' },
     { kind: 'conventional-analog', protocol: 'NBFM' }
   ]) {
+    const declared = context.activityColumnsForContext(scope, {});
+    const type = context.activityTableType(scope);
+    const defaultLayout = tableDefaults.layout(type, declared);
+    const fresh = tableLayouts.normalize(declared, defaultLayout);
+    assert.equal(fresh.reset, false);
+    assert.deepEqual(Array.from(fresh.hidden_columns),
+      ['tones', 'encryption'].filter((id) => declared.some((column) => column.id === id)),
+      `${scope.kind} ${scope.protocol}: tone and encryption details start hidden.`);
+    assert.ok(fresh.columns.some((column) => column.id === 'related'),
+      'Call actions remain visible while detail columns start hidden.');
+    const shownDetails = tableLayouts.persisted(tableLayouts.normalize(declared, null));
+    savedTables[type] = shownDetails;
+    const explicit = context.activityTableLayout(scope, declared);
+    assert.equal(explicit, shownDetails, 'Existing explicit column choices are retained.');
+    assert.deepEqual(Array.from(tableLayouts.normalize(declared, explicit).hidden_columns), [],
+      'New defaults must not hide details in a saved layout that shows them.');
+    delete savedTables[type];
     const column = columnFor(scope);
     assert.ok(column, `${scope.kind} ${scope.protocol} must show the shared Duration column.`);
     assert.equal(column.render({ action: 'CALL', duration_ms: 1250, encrypted: true }), '1.3s',

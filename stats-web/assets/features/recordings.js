@@ -663,6 +663,7 @@ export function createRecordingsFeature(deps) {
   const playbackObservers = new Set();
   const maximumSharedCalls = 100;
   let sharedQueueRequest = 0;
+  let playbackIntentRevision = 0;
   let clickMode = 'queue';
   let queueEntrySequence = 0;
   let queueResume = null;
@@ -699,7 +700,7 @@ export function createRecordingsFeature(deps) {
     const callDuration = Number(value(state.current, 'duration_ms', 'call_duration_ms')) / 1000;
     const total = Number.isFinite(measuredDuration) && measuredDuration > 0 ? measuredDuration :
       (Number.isFinite(callDuration) && callDuration > 0 ? callDuration : 0);
-    return { current: state.current, queue: [...state.queue], history: [...state.history],
+    return { intentRevision: playbackIntentRevision, current: state.current, queue: [...state.queue], history: [...state.history],
       playing: Boolean(state.current && !state.stopped && !state.audio.paused),
       paused: Boolean(state.current && !state.stopped && state.audio.paused), stopped: state.stopped, loading: state.loading,
       status: state.status, duration: total, currentTime: Number(state.audio.currentTime) || 0,
@@ -727,6 +728,7 @@ export function createRecordingsFeature(deps) {
   }
 
   async function toggleAudio() {
+    playbackIntentRevision++;
     const state = recordedPlayer();
     if (state.current) {
       if (state.audio.paused || state.stopped) {
@@ -753,6 +755,7 @@ export function createRecordingsFeature(deps) {
   }
 
   function stopAudio() {
+    playbackIntentRevision++;
     sharedQueueRequest++;
     if (!player) return;
     const state = player;
@@ -892,6 +895,7 @@ export function createRecordingsFeature(deps) {
 
   function playbackAction(row, action = 'once') {
     if (!row || row.id === null || row.id === undefined) return;
+    playbackIntentRevision++;
     const state = recordedPlayer();
     sharedQueueRequest++;
     if (action === 'queue') {
@@ -951,6 +955,7 @@ export function createRecordingsFeature(deps) {
     const target = Number(seconds);
     const total = playbackState().duration;
     if (!state.current || !Number.isFinite(target) || !total) return;
+    playbackIntentRevision++;
     state.audio.currentTime = Math.max(0, Math.min(total, target));
     drawQueue();
   }
@@ -959,6 +964,7 @@ export function createRecordingsFeature(deps) {
     const state = recordedPlayer();
     const previous = state.history.pop();
     if (!previous) return;
+    playbackIntentRevision++;
     state.token++;
     state.loading = false;
     state.pendingStart = false;
@@ -968,6 +974,7 @@ export function createRecordingsFeature(deps) {
   }
 
   function clearQueue() {
+    playbackIntentRevision++;
     const state = recordedPlayer();
     sharedQueueRequest++;
     state.token++;
@@ -992,6 +999,7 @@ export function createRecordingsFeature(deps) {
     if (!raw) return false;
     const ids = String(raw).split(',');
     if (ids.length > maximumSharedCalls || ids.some((id) => !/^[1-9]\d{0,18}$/.test(id))) return false;
+    playbackIntentRevision++;
     const token = ++sharedQueueRequest;
     const state = recordedPlayer();
     state.status = 'Loading shared recording queue…';
@@ -1021,7 +1029,7 @@ export function createRecordingsFeature(deps) {
   }
 
   const playback = {
-    subscribeState, viewState: playbackState, toggle: toggleAudio, next: advance, previous: previousAudio,
+    subscribeState, viewState: playbackState, toggle: toggleAudio, next: () => { playbackIntentRevision++; return advance(); }, previous: previousAudio,
     stop: stopAudio, reset: resetAudio, seek: seekAudio, skipSeconds: (seconds) => seekAudio(playbackState().currentTime + Number(seconds)),
     setVolume: (volume) => {
       if (!Number.isFinite(Number(volume))) return;
@@ -1037,6 +1045,7 @@ export function createRecordingsFeature(deps) {
       const state = recordedPlayer();
       const index = queuedIndex(state, reference);
       if (index < 0) return;
+      playbackIntentRevision++;
       const restart = state.loading && state.pendingStart;
       if (restart) {
         state.token++;
@@ -1051,6 +1060,7 @@ export function createRecordingsFeature(deps) {
       const state = recordedPlayer();
       const index = queuedIndex(state, reference);
       if (index < 0) return;
+      playbackIntentRevision++;
       // Invalidate an in-flight start before reordering. It must neither consume
       // the selected row nor clear the loading state of the replacement start.
       state.token++;

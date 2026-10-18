@@ -25,11 +25,12 @@ async function openActivity(page, options = {}) {
   const radioSystemKey = options.radioSystemKey || 'p25:00001:001';
   const encodedRadioSystemKey = encodeURIComponent(radioSystemKey);
   const radioSystemPath = `/api/v1/radio-systems/${encodedRadioSystemKey}`;
-  const preferences = structuredClone(defaultPreferences);
+  let preferences = structuredClone(defaultPreferences);
+  let preferenceRevision = 1;
   preferences.appearance.theme = options.theme || 'light';
   preferences.presentation.source_name_display = options.sourceMode || 'talker_alias';
   if (options.activityLayout) preferences.tables.activity = options.activityLayout;
-  const requests = { activity: [], groups: [], radios: [] };
+  const requests = { activity: [], groups: [], radios: [], preferenceWrites: [] };
   const groupRows = [
     { identity_key: talkgroupIdentityKey, native_id: 56131, group_identity_kind: 'talkgroup',
       alias_name: 'CPD D3 DISP' },
@@ -56,7 +57,12 @@ async function openActivity(page, options = {}) {
       await respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
         primary: true, capabilities: { dashboard: true, radio: true, credits: true, recordings: options.recordings === true } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences } });
+      if (route.request().method() === 'PUT') {
+        preferences = route.request().postDataJSON();
+        preferenceRevision++;
+        requests.preferenceWrites.push(preferences);
+      }
+      await route.fulfill({ json: { revision: preferenceRevision, preferences } });
     } else if (pathname === '/api/v1/status') {
       await respond({ stats_logging: { summary_configured: true, detailed_history_configured: true,
         summary_active: true, detailed_history_active: true, state: 'RUNNING' },
@@ -96,6 +102,38 @@ async function openActivity(page, options = {}) {
 
   await page.goto(`/app.html?view=radio-system&radio_system_key=${encodedRadioSystemKey}&tab=activity`);
   await expect(page.locator('.activity-filter-toolbar')).toBeVisible();
+  return requests;
+}
+
+async function stubActivityAudio(page) {
+  await page.addInitScript(() => {
+    window.recordingPlays = [];
+    class RecordingAudio extends EventTarget {
+      constructor() { super(); this.paused = true; this.currentTime = 0; this.volume = 1; this._src = ''; window.recordingAudio = this; }
+      get duration() { return this._src ? 42 : Number.NaN; }
+      get src() { return this._src; }
+      set src(value) { this._src = new URL(value, location.href).href; }
+      play() { this.paused = false; window.recordingPlays.push(this.src); this.dispatchEvent(new Event('play')); return Promise.resolve(); }
+      pause() { this.paused = true; this.dispatchEvent(new Event('pause')); }
+      removeAttribute(name) { if (name === 'src') this._src = ''; }
+      load() {}
+    }
+    window.Audio = RecordingAudio;
+  });
+}
+
+async function showActivityColumns(page, ids) {
+  await page.getByRole('button', { name: 'Choose table columns', exact: true }).click();
+  const chooser = page.locator('.table-layout-panel:visible');
+  for (const id of ids) await chooser.locator(`input[data-layout-column-id="${id}"]`).check();
+  await page.keyboard.press('Escape');
+}
+
+function trackActivityRelationRequests(page) {
+  const requests = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/api/v1/call-relations/activity/')) requests.push(request.url());
+  });
   return requests;
 }
 
@@ -162,75 +200,191 @@ for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
 }
 
 for (const [theme, width] of [['light', 1440], ['dark', 390], ['light', 320]]) {
-  test(`Activity opens exact related recordings and alerts on ${theme} ${width}`, async ({ page }) => {
+  test(`Activity plays exact recording parts directly on ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
+    await stubActivityAudio(page);
+    const relationRequests = trackActivityRelationRequests(page);
     const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true,
       system_name: 'Metro Public Safety' });
     await openActivity(page, { theme, recordings: true, rows: [activity] });
-    const requests = [];
-    await page.route('**/api/v1/call-relations/activity/18', route => {
-      requests.push(route.request().url());
-      return route.fulfill({ json: { data: { activity_rows: [activity, { ...activity, id: 19,
-        name: 'South Simulcast Control', configuration_id: '22222222-2222-4222-8222-222222222222' }], recordings: [
-        { id: 71, start_ms: activity.observed_at_ms, duration_ms: 41_400, group_alias: 'CPD D3 DISP', talkgroup_id: 56131,
-          system_name: 'Metro Public Safety', channel_name: 'North Simulcast Control', source_id: 2808137, source_alias: 'Engine 12' },
-        { id: 72, start_ms: activity.observed_at_ms + 41_400, duration_ms: 10_000, talkgroup_id: 56131,
-          system_name: 'County Safety', channel_name: 'South Site', source_id: 999 }
-      ], alerts: [{ id: 'alert-exact-call', title: 'Dispatch tones', body: 'Engine 12 dispatched.', topic_id: 'fire', created_at_ms: activity.observed_at_ms }] } } });
+    const recordings = [
+      { id: 72, start_ms: activity.observed_at_ms + 41_400, duration_ms: 10_000, group_alias: 'CPD D3 DISP' },
+      { id: 71, start_ms: activity.observed_at_ms, duration_ms: 41_400, group_alias: 'CPD D3 DISP' }
+    ];
+    await page.route('**/api/v1/call-relations/activity/18', route => route.fulfill({ json: { data: {
+      activity_rows: [activity, { ...activity, id: 19, name: 'South Simulcast Control' }],
+      recordings: [...recordings, recordings[1]], alerts: []
+    } } }));
+    await page.route('**/api/v1/recordings/calls/*', route => {
+      const id = Number(new URL(route.request().url()).pathname.split('/').at(-1));
+      return route.fulfill({ json: { data: { call: recordings.find(recording => recording.id === id) } } });
     });
-    await page.getByRole('button', { name: 'Related recordings and alerts', exact: true }).click();
-    const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
-    await expect(detail).toBeVisible();
-    const bounds = await detail.boundingBox();
-    expect(bounds.y).toBeGreaterThanOrEqual(-1);
-    expect(bounds.y + bounds.height).toBeLessThanOrEqual(page.viewportSize().height + 1);
-    await expect(detail.getByRole('table')).toHaveCount(0);
-    await expect(detail.getByRole('button', { name: /column|scroll left|scroll right/i })).toHaveCount(0);
-    await expect(detail.locator('.call-summary-recording')).toHaveCount(2);
-    await expect(detail.locator('.call-summary-observation')).toHaveCount(2);
-    await expect(detail.getByRole('heading', { name: 'Recordings', exact: true })).toBeVisible();
-    await expect(detail.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
-    await expect(detail.locator('time').first()).toBeVisible();
-    await expect(detail).not.toContainText('[object');
-    await expect(detail).toContainText('CPD D3 DISP');
-    await expect(detail).toContainText('Talkgroup 56131');
-    await expect(detail).toContainText('Metro Public Safety');
-    await expect(detail).toContainText('County Safety');
-    await expect(detail).toContainText('Radio 999');
-    await expect(detail).toContainText('South Simulcast Control');
-    const activityDestination = new URL(await detail.locator('.call-summary-observation').first()
-      .getByRole('link', { name: 'Open', exact: true }).getAttribute('href'), 'http://127.0.0.1');
-    expect(Object.fromEntries(activityDestination.searchParams)).toMatchObject({
-      view: 'channel', configuration_id: activity.configuration_id, tab: 'activity', activity_range: 'custom',
-      activity_from_ms: String(activity.observed_at_ms), activity_to_ms: String(activity.observed_at_ms + 1)
-    });
-    await expect(detail.getByRole('link', { name: 'Dispatch tones', exact: true })).toHaveAttribute('href', /view=topics.*alert=alert-exact-call/);
-    await expect(detail.getByRole('link', { name: 'View all recordings', exact: true })).toHaveAttribute('href', /recording_queue=71%2C72/);
-    expect(requests).toHaveLength(1);
-    expect(new URL(requests[0]).pathname).toBe('/api/v1/call-relations/activity/18');
+    const row = page.locator('tr[data-id="18"]');
+    const play = row.getByRole('button', { name: 'Play recording', exact: true });
+    await expect(play).toBeVisible();
+    expect(relationRequests).toHaveLength(0);
+    await play.click();
+    await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([
+      expect.stringMatching(/calls\/71\/audio$/)
+    ]);
+    await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toHaveCount(0);
+    expect(relationRequests).toHaveLength(1);
+    expect(new URL(relationRequests[0]).pathname).toBe('/api/v1/call-relations/activity/18');
+    await page.evaluate(() => window.recordingAudio.dispatchEvent(new Event('ended')));
+    await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([
+      expect.stringMatching(/calls\/71\/audio$/), expect.stringMatching(/calls\/72\/audio$/)
+    ]);
+    await page.evaluate(() => window.recordingAudio.dispatchEvent(new Event('ended')));
+    await expect.poll(() => page.evaluate(() => window.recordingAudio.paused)).toBe(true);
+    expect(await page.evaluate(() => window.recordingPlays.length)).toBe(2);
+    expect(relationRequests).toHaveLength(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    expect(await detail.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth + 1)).toBe(true);
-    await toneScreenshot(page, `call-relations-${theme}-${width}`, false);
-    await page.keyboard.press('Escape');
-    await expect(detail).toHaveCount(0);
+    await toneScreenshot(page, `activity-direct-play-${theme}-${width}`, false);
   });
 }
 
-test('Activity-only call summary keeps protected recordings out of its context and controls', async ({ page }) => {
+test('Activity missing and failed recordings stay in the row and can retry without a dialog', async ({ page }) => {
+  await stubActivityAudio(page);
+  const relationRequests = trackActivityRelationRequests(page);
   const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true });
-  await openActivity(page, { rows: [activity] });
-  await page.route('**/api/v1/call-relations/activity/18', route => route.fulfill({ json: { data: {
-    activity_rows: [activity], recordings: [{ id: 71, group_alias: 'Restricted recording target',
-      source_alias: 'Restricted recording source', duration_ms: 41_400 }], alerts: []
-  } } }));
-  await page.getByRole('button', { name: 'Related recordings and alerts', exact: true }).click();
-  const summary = page.getByRole('dialog', { name: 'Call details', exact: true });
-  await expect(summary.getByRole('heading', { name: 'Activity', exact: true })).toBeVisible();
-  await expect(summary.getByRole('heading', { name: /^Recordings?$/ })).toHaveCount(0);
-  await expect(summary.getByRole('button', { name: 'Play', exact: true })).toHaveCount(0);
-  await expect(summary.getByRole('slider')).toHaveCount(0);
-  await expect(summary).not.toContainText('Restricted recording');
+  await openActivity(page, { recordings: true, rows: [activity] });
+  await page.route('**/api/v1/call-relations/activity/18', route => {
+    if (relationRequests.length === 1) return route.fulfill({ status: 503, json: { error: { message: 'Unavailable' } } });
+    return route.fulfill({ json: { data: { activity_rows: [], recordings: relationRequests.length > 2 ? [
+      { id: 71, start_ms: activity.observed_at_ms, duration_ms: 41_400, group_alias: 'CPD D3 DISP' }
+    ] : [], alerts: [] } } });
+  });
+  const row = page.locator('tr[data-id="18"]');
+  const play = row.getByRole('button', { name: 'Play recording', exact: true });
+  expect(relationRequests).toHaveLength(0);
+  await play.click();
+  await expect(row.getByRole('status')).toHaveText('Recording could not be loaded. Try again.');
+  await expect(play).toBeEnabled();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await play.click();
+  await expect(row.getByRole('status')).toHaveText('No recording available.');
+  expect(await page.evaluate(() => window.recordingPlays)).toEqual([]);
+  await play.click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await expect(row.getByRole('status')).toBeHidden();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(relationRequests).toHaveLength(3);
 });
+
+test('a newer Activity play selection wins over an earlier lookup still in flight', async ({ page }) => {
+  await stubActivityAudio(page);
+  const relationRequests = trackActivityRelationRequests(page);
+  await openActivity(page, { recordings: true, rows: [18, 19].map(id => toneActivityRow(id, undefined,
+    { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true })) });
+  let releaseFirst;
+  await page.route('**/api/v1/call-relations/activity/18', route => new Promise(resolve => {
+    releaseFirst = async () => {
+      await route.fulfill({ json: { data: { activity_rows: [], alerts: [], recordings: [
+        { id: 71, start_ms: 1000, duration_ms: 10_000 }
+      ] } } }).catch(() => {});
+      resolve();
+    };
+  }));
+  await page.route('**/api/v1/call-relations/activity/19', route => route.fulfill({ json: { data: {
+    activity_rows: [], alerts: [], recordings: [{ id: 72, start_ms: 2000, duration_ms: 10_000 }]
+  } } }));
+  await page.locator('tr[data-id="18"]').getByRole('button', { name: 'Play recording', exact: true }).click();
+  await expect.poll(() => Boolean(releaseFirst)).toBe(true);
+  await page.locator('tr[data-id="19"]').getByRole('button', { name: 'Play recording', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([
+    expect.stringMatching(/calls\/72\/audio$/)
+  ]);
+  await releaseFirst();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(await page.evaluate(() => window.recordingPlays)).toEqual([expect.stringMatching(/calls\/72\/audio$/)]);
+  expect(relationRequests).toHaveLength(2);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('Stop in the audio dock cancels an Activity play lookup still in flight', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await stubActivityAudio(page);
+  await openActivity(page, { recordings: true, rows: [18, 19].map(id => toneActivityRow(id, undefined,
+    { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true })) });
+  await page.route('**/api/v1/call-relations/activity/18', route => route.fulfill({ json: { data: {
+    activity_rows: [], alerts: [], recordings: [{ id: 71, start_ms: 1000, duration_ms: 10_000 }]
+  } } }));
+  let releaseLookup;
+  await page.route('**/api/v1/call-relations/activity/19', route => new Promise(resolve => {
+    releaseLookup = async () => {
+      await route.fulfill({ json: { data: { activity_rows: [], alerts: [], recordings: [
+        { id: 72, start_ms: 2000, duration_ms: 10_000 }
+      ] } } }).catch(() => {});
+      resolve();
+    };
+  }));
+  await page.locator('tr[data-id="18"]').getByRole('button', { name: 'Play recording', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await page.locator('tr[data-id="19"]').getByRole('button', { name: 'Play recording', exact: true }).click();
+  await expect.poll(() => Boolean(releaseLookup)).toBe(true);
+  const dock = page.locator('#audio-dock');
+  await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
+  await dock.getByRole('button', { name: 'Stop recording', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.recordingAudio.paused)).toBe(true);
+  await releaseLookup();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(await page.evaluate(() => window.recordingPlays)).toEqual([expect.stringMatching(/calls\/71\/audio$/)]);
+  expect(await page.evaluate(() => window.recordingAudio.src)).toBe('');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+for (const [recordings, theme, width] of [[true, 'light', 1440], [false, 'dark', 390], [true, 'light', 320]]) {
+  test(`Activity indicators keep tone and encryption detail with recording permission ${recordings} on ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const relationRequests = trackActivityRelationRequests(page);
+    const summary = { source: 'decoded_audio', method: 'p25_pcm_ambe_tone_v2', phase: 1,
+      tones: [{ frequencies_hz: [593.75], duration_milliseconds: 1020, offset_milliseconds: 80 }] };
+    const requests = await openActivity(page, { recordings, theme, rows: [
+      toneActivityRow(18, summary, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true,
+        encrypted: true, encryption_display: 'AES-256', encryption_full_display: 'AES-256 · Key ID 0042' }),
+      toneActivityRow(19, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: false })
+    ] });
+    const table = page.locator('table[data-table-type="activity"]');
+    await expect(table.locator('th[data-column="tones"], th[data-column="encryption"]')).toHaveCount(0);
+    const row = table.locator('tr[data-id="18"]');
+    const icons = row.locator('[data-column="related"] .activity-call-icons');
+    await expect(icons.getByRole('button', { name: 'Play recording', exact: true })).toHaveCount(recordings ? 1 : 0);
+    const tones = icons.getByRole('img', { name: 'Tones', exact: true });
+    const encrypted = icons.getByRole('img', { name: 'Encrypted', exact: true });
+    await expect(tones).toBeVisible();
+    await expect(encrypted).toBeVisible();
+    await expect(tones).toHaveAttribute('data-ui-hint', /593\.75 Hz.*1020 ms.*80 ms/);
+    await expect(encrypted).toHaveAttribute('data-ui-hint', /AES-256.*0042/);
+    await expect(tones).toHaveAccessibleDescription(/593\.75 Hz.*1020 ms.*80 ms/);
+    await expect(encrypted).toHaveAccessibleDescription(/AES-256.*0042/);
+    await tones.scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await tones.hover();
+    await expect(page.getByRole('tooltip')).toContainText('593.75 Hz');
+    await encrypted.focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(tones).toBeFocused();
+    await expect(page.getByRole('tooltip')).toContainText('593.75 Hz');
+    await page.keyboard.press('Tab');
+    await expect(encrypted).toBeFocused();
+    await expect(page.getByRole('tooltip')).toContainText('Key ID 0042');
+    await toneScreenshot(page, `activity-indicators-${theme}-${width}`, false);
+    await expect(table.locator('tr[data-id="19"] [data-column="related"]')
+      .locator('button, [role="img"]')).toHaveCount(0);
+    expect(relationRequests).toHaveLength(0);
+    await showActivityColumns(page, ['tones', 'encryption']);
+    await expect(table.locator('th[data-column="tones"]')).toHaveCount(1);
+    await expect(table.locator('th[data-column="encryption"]')).toHaveCount(1);
+    await expect(row.locator('[data-column="tones"]')).toContainText('593.75 Hz');
+    await expect(row.locator('[data-column="encryption"]')).toContainText('AES-256');
+    await expect.poll(() => requests.preferenceWrites.at(-1)?.tables.activity?.hidden_columns
+      .filter(id => ['tones', 'encryption'].includes(id))).toEqual([]);
+    await page.reload();
+    await expect(table.locator('th[data-column="tones"]')).toHaveCount(1);
+    await expect(table.locator('th[data-column="encryption"]')).toHaveCount(1);
+    expect(relationRequests).toHaveLength(0);
+  });
+}
 
 test('call tones preserve group call types and filter independently with alias context', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -242,6 +396,7 @@ test('call tones preserve group call types and filter independently with alias c
         { frequencies_hz: [700], code: 'TONE_700', duration_milliseconds: 240 }] }),
     toneActivityRow(20, undefined, { source_alias_name: '', source_radio_id: 999, source_identity_key: '', source_entity_ref: null })
   ] });
+  await showActivityColumns(page, ['tones']);
   const row = page.locator('tr[data-id="18"]');
   await expect(row.locator('[data-column="event"]')).toHaveText('CALL_GROUP');
   await expect(row.locator('[data-column="action"]')).toHaveText('CALL');
@@ -277,6 +432,7 @@ test('paging tones keep DMR encoded dual frequencies and code readable on a dark
       tones: [{ frequencies_hz: [697, 1477], code: 'DTMF_3', duration_milliseconds: 120 }] },
       { protocol: 'DMR', source_alias_name: 'Depot Portable', target_alias_name: 'Depot Dispatch', timeslot: 2 })
   ] });
+  await showActivityColumns(page, ['tones']);
   const row = page.locator('tr[data-id="21"]');
   await expect(row.locator('[data-column="tones"]')).toContainText('Encoded');
   await expect(row.locator('[data-column="tones"]')).toContainText('DTMF 3 · 697 + 1477 Hz · 120 ms');

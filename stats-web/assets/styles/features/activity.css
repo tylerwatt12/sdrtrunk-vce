@@ -444,3 +444,15 @@
     grid-column: 2;
   }
 }
+
+.activity-call-icons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.activity-call-feedback {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}

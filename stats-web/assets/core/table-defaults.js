@@ -22,7 +22,8 @@ const ALIAS_WIDTHS = Object.freeze({
 });
 const ALIAS_GROW = ['alias', 'description', 'group', 'behavior'];
 const ACTIVITY_DEFAULTS = {
-  widths: { duration: 88, action: 110, event: 180, tones: 280, source: 240, target: 240, channel: 320 },
+  widths: { duration: 88, action: 110, event: 180, tones: 280, source: 240, target: 240, channel: 320, related: 120 },
+  hidden: ['tones', 'encryption'],
   grow: ['channel', 'source', 'target']
 };
 const NEIGHBOR_DEFAULTS = {

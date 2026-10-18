@@ -4,7 +4,7 @@ import { formatSourceName } from './core/source-names.js?v=1';
 import { observedCallPresentation, systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js?v=2';
-import * as tableDefaults from './core/table-defaults.js?v=21';
+import * as tableDefaults from './core/table-defaults.js?v=22';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -36,8 +36,9 @@ import { createStreamingWorkspace } from './features/streaming.js?v=13';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=18';
 import { createAlertsWorkspace } from './features/alerts.js?v=17';
-import { createCallRelations } from './features/call-relations.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=52';
+import { createCallRelations } from './features/call-relations.js?v=3';
+import { createActivityCallPlayback } from './features/activity-call-playback.js?v=1';
+import { createRecordingsFeature } from './features/recordings.js?v=53';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
@@ -23651,6 +23652,28 @@ function activityToneValue(row) {
   return value;
 }
 
+function activityCallIcons(row, context) {
+  const icons = node('div', 'activity-call-icons');
+  const controls = context?.callPlayback?.render(row);
+  if (controls) icons.append(controls.button);
+  const indicator = (icon, label, detail) => {
+    const value = node('span', 'ui-record-card-icon');
+    value.tabIndex = 0;
+    value.setAttribute('role', 'img');
+    value.setAttribute('aria-label', label);
+    value.setAttribute('aria-description', detail);
+    value.dataset.uiHint = detail;
+    value.append(iconGlyph(icon));
+    icons.append(value);
+  };
+  const tones = formatPagingToneSummary(row.paging_tone_summary);
+  if (tones) indicator('icon-tones', 'Tones', `Tones · ${tones.source} · ${tones.tones.join('; ')}`);
+  if (row.encrypted === true || row.encrypted === 1) indicator('icon-lock', 'Encrypted',
+    row.encryption_full_display || row.encryption_display || 'Encrypted');
+  if (controls) icons.append(controls.feedback);
+  return icons;
+}
+
 function activityColumns(context, filters) {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
@@ -23679,12 +23702,7 @@ function activityColumns(context, filters) {
     { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) =>
       activityCellValue(encryptionActivityValue(row), row, 'encryption', context, filters),
       className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') },
-    { id: 'related', label: 'Related', render: row => {
-      if (!row.has_call_source) return '';
-      const button = iconButton('icon-info-circle', 'Related recordings and alerts');
-      button.addEventListener('click', () => openCallRelations('activity', row.id));
-      return button;
-    } }
+    { id: 'related', label: 'Related', render: row => activityCallIcons(row, context) }
   ];
 }
 
@@ -23740,7 +23758,13 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     limit: 200
   });
   if (!renderIsCurrent(renderContext)) return;
-  const columns = activityColumnsForContext(activityContext, filters);
+  const callPlayback = createActivityCallPlayback({
+    node, iconButton, setIconButton, requestJson, playback: recordingsFeature.playback,
+    canPlay: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS),
+    isCurrent: () => renderIsCurrent(renderContext), signal: renderContext.signal
+  });
+  pageConnections.add(callPlayback);
+  const columns = activityColumnsForContext({ ...activityContext, callPlayback }, filters);
   const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
   const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
     'Detailed event history is enabled, but no matching activity has been recorded yet.';
