@@ -985,7 +985,8 @@ public class ReceiverActivitySchema
                                   String targetId, String targetKind, List<Integer> patchMemberTalkgroupIds,
                                   ReceiverActivityRecords.P25Identity sourceIdentity,
                                   ReceiverActivityRecords.P25Identity targetIdentity,
-                                  Integer sourceWorkingId, Integer targetWorkingId)
+                                  Integer sourceWorkingId, Integer targetWorkingId,
+                                  boolean encrypted)
     {
     }
 
@@ -1010,7 +1011,7 @@ public class ReceiverActivitySchema
         return new P25CallCredit(channelId, detailId, positiveInteger(activity.sourceRadioId()),
             p25DestinationId(activity), activity.targetKind(),
             activity.patchMemberTalkgroupIds(), activity.p25SourceIdentity(), activity.p25TargetIdentity(),
-            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId());
+            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId(), activity.encrypted());
     }
 
     static P25CallCredit enrichP25Call(Connection connection,
@@ -1043,6 +1044,9 @@ public class ReceiverActivitySchema
             observation.patchMemberTalkgroupIds().stream()
                 .filter(member -> !credit.patchMemberTalkgroupIds().contains(member)).toList() : List.of();
         boolean conventional = original.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25;
+        //Trunked counters use the completed logical call, but optional detail must retain confirmation learned
+        //after its start. Only this physical receiver call's confirmed facts may enrich its retained row.
+        boolean encryptionBecameKnown = !conventional && observation.encrypted() && !credit.encrypted();
         long bucket = bucketStart(original.observedAtEpochMilliseconds());
         int encrypted = original.encrypted() ? 1 : 0;
         if(conventional && newSource)
@@ -1092,8 +1096,9 @@ public class ReceiverActivitySchema
                 observation.p25SourceIdentity() : credit.sourceIdentity(),
             newTarget ? observation.p25TargetIdentity() : credit.targetIdentity(),
             newSource ? observation.sourceObservedWorkingId() : credit.sourceWorkingId(),
-            newTarget ? observation.targetObservedWorkingId() : credit.targetWorkingId());
-        if(newSource || sourceEvidenceKnown || newTarget || !newMembers.isEmpty())
+            newTarget ? observation.targetObservedWorkingId() : credit.targetWorkingId(),
+            credit.encrypted() || encryptionBecameKnown);
+        if(newSource || sourceEvidenceKnown || newTarget || !newMembers.isEmpty() || encryptionBecameKnown)
         {
             ReceiverActivityRecords.ActivityEvent effective = observation.withP25Identities(
                 updated.sourceRadioId(), updated.targetId(), updated.targetKind(), updated.patchMemberTalkgroupIds(),
@@ -1103,7 +1108,7 @@ public class ReceiverActivitySchema
                 AliasActivityProjection.recordConventionalCallAttribution(connection, effective, newSource,
                     newTarget, newMembers, original.encrypted(), credit.sourceRadioId() != null);
             }
-            enrichDetailedP25Call(connection, credit, effective, newSource, newTarget);
+            enrichDetailedP25Call(connection, credit, effective, newSource, newTarget, encryptionBecameKnown);
         }
         return updated;
     }
@@ -1118,7 +1123,8 @@ public class ReceiverActivitySchema
     }
 
     private static void enrichDetailedP25Call(Connection connection, P25CallCredit credit,
-        ReceiverActivityRecords.ActivityEvent observation, boolean newSource, boolean newTarget) throws SQLException
+        ReceiverActivityRecords.ActivityEvent observation, boolean newSource, boolean newTarget,
+        boolean encryptionBecameKnown) throws SQLException
     {
         RadioSystemSchema.RadioSystem system = observation.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE ?
             RadioSystemSchema.ensureReceiverRadioSystem(connection, credit.channelId(),
@@ -1143,7 +1149,10 @@ public class ReceiverActivitySchema
                 target_observed_working_id = CASE WHEN ? = 1 THEN ? ELSE target_observed_working_id END,
                 radio_system_id = coalesce(radio_system_id, ?),
                 source_identity_summary_id = coalesce(?, source_identity_summary_id),
-                target_identity_summary_id = coalesce(target_identity_summary_id, ?)
+                target_identity_summary_id = coalesce(target_identity_summary_id, ?),
+                encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END,
+                encryption_algorithm_id = coalesce(encryption_algorithm_id, ?),
+                encryption_key_id = coalesce(encryption_key_id, ?)
             WHERE id = ? AND channel_id = ? AND observed_at_ms = ?
               AND (radio_system_id IS NULL OR radio_system_id = ?)
             """))
@@ -1159,11 +1168,15 @@ public class ReceiverActivitySchema
             setLong(statement, 9, system != null ? system.radioSystemId() : null);
             setLong(statement, 10, source != null ? source.summaryId() : null);
             setLong(statement, 11, target != null ? target.summaryId() : null);
-            statement.setLong(12, credit.detailedEventId());
-            statement.setLong(13, credit.channelId());
-            statement.setLong(14, observation.observedAtEpochMilliseconds());
-            setLong(statement, 15, system != null ? system.radioSystemId() : null);
-            statement.executeUpdate();
+            statement.setInt(12, encryptionBecameKnown ? 1 : 0);
+            setInteger(statement, 13, encryptionBecameKnown ? observation.encryptionAlgorithmId() : null);
+            setInteger(statement, 14, encryptionBecameKnown ? observation.encryptionKeyId() : null);
+            statement.setLong(15, credit.detailedEventId());
+            statement.setLong(16, credit.channelId());
+            statement.setLong(17, observation.observedAtEpochMilliseconds());
+            setLong(statement, 18, system != null ? system.radioSystemId() : null);
+            //Retention can remove detail while the bounded call receipt is still alive.
+            if(statement.executeUpdate() == 0) return;
         }
         insertActivityEventIdentityMembers(connection, credit.detailedEventId(), credit.channelId(), system,
             destinations, target != null ? target.summaryId() : null);
