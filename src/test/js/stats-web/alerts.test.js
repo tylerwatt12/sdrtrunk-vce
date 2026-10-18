@@ -26,7 +26,19 @@ async function main() {
     { label: 'View radio', href: '/?view=radio&radio_system_key=p25%3Aabcde%3A123&identity_key=v1-r-abcde-123-1101' });
   assert.deepEqual(model.alertPopupAction({ action: { kind: 'channel', entity_ref: {
     kind: 'channel', key: '12345678-1234-1234-1234-123456789abc' } } }),
-    { label: 'View channel', href: '/?view=channel&configuration_id=12345678-1234-1234-1234-123456789abc' });
+    { label: 'View activity', href: '/?view=channel&configuration_id=12345678-1234-1234-1234-123456789abc&tab=activity' });
+  for (const [kind, identity] of [['talkgroup', 'v1-g-abcde-123-1201'], ['patch_group', 'v1-p-abcde-123-1202']]) {
+    const action = model.alertPopupAction({ action: { kind, entity_ref: {
+      kind, radio_system_key: 'p25:00001:001', identity_key: identity } } });
+    assert.equal(action.label, 'View activity');
+    assert.deepEqual(Object.fromEntries(new URLSearchParams(action.href.slice(2))), {
+      view: 'radio-system', radio_system_key: 'p25:00001:001', tab: 'activity',
+      activity_target_identity_key: identity, activity_target_kind: kind
+    }, 'Trunked Activity keeps the serving system and the target canonical home identity separately');
+  }
+  assert.deepEqual(model.alertPopupAction({ action: { kind: 'radio_system', entity_ref: {
+    kind: 'radio_system', key: 'dmr:tier3:small:1' } } }),
+    { label: 'View activity', href: '/?view=radio-system&radio_system_key=dmr%3Atier3%3Asmall%3A1&tab=activity' });
   for (const action of [null, { kind: 'admin', entity_ref: null },
     { kind: 'channel', entity_ref: { kind: 'channel', key: '/?view=admin' } },
     { kind: 'radio', entity_ref: { kind: 'radio', radio_system_key: 'p25:abcde:123', identity_key: 'https://example.com' } },

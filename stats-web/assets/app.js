@@ -34,7 +34,7 @@ import { openRadioReferenceConnect } from './features/radioreference-connect.js?
 import { createStreamingWorkspace } from './features/streaming.js?v=12';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=18';
-import { createAlertsWorkspace } from './features/alerts.js?v=16';
+import { createAlertsWorkspace } from './features/alerts.js?v=17';
 import { createCallRelations } from './features/call-relations.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=52';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';

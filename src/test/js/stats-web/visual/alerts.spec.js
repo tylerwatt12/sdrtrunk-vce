@@ -1528,7 +1528,7 @@ test('rule action toggle previews the activity destination and saves an explicit
   await expect(preview.getByRole('button')).toHaveCount(0);
   await toggle.focus(); await toggle.press('Space');
   await expect(toggle).toBeChecked();
-  await expect(preview.getByRole('button', { name: 'View talkgroup', exact: true })).toBeDisabled();
+  await expect(preview.getByRole('button', { name: 'View activity', exact: true })).toBeDisabled();
   await dialog.getByRole('textbox', { name: 'Title', exact: true }).fill('{radio} called {talkgroup}');
   await expect(preview).toContainText('Engine 12 called Fire Tactical');
   await dialog.getByRole('button', { name: 'When', exact: true }).click();
@@ -1587,10 +1587,10 @@ test('public alert popup exposes only validated public entity actions and never 
   const { fixture } = await installAlerts(page, { guest: true });
   const scenarios = [
     { name: 'Radio action', action: { kind: 'radio', entity_ref: { kind: 'radio', radio_system_key: 'p25:00001:001', identity_key: 'v1-r-00001-001-12' } }, label: 'View radio', destination: 'radio' },
-    { name: 'Talkgroup action', action: { kind: 'talkgroup', entity_ref: { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-00001-001-1201' } }, label: 'View talkgroup', destination: 'group-identity' },
-    { name: 'Patch group action', action: { kind: 'patch_group', entity_ref: { kind: 'patch_group', radio_system_key: 'p25:00001:001', identity_key: 'v1-p-00001-001-1202' } }, label: 'View patch group', destination: 'group-identity' },
-    { name: 'Channel action', action: { kind: 'channel', entity_ref: { kind: 'channel', key: channelId } }, label: 'View channel', destination: 'channel' },
-    { name: 'System action', action: { kind: 'radio_system', entity_ref: { kind: 'radio_system', key: systemKey } }, label: 'View radio system', destination: 'radio-system' },
+    { name: 'Talkgroup action', action: { kind: 'talkgroup', entity_ref: { kind: 'talkgroup', radio_system_key: 'p25:00001:001', identity_key: 'v1-g-abcde-123-1201' } }, label: 'View activity', destination: 'radio-system' },
+    { name: 'Patch group action', action: { kind: 'patch_group', entity_ref: { kind: 'patch_group', radio_system_key: 'p25:00001:001', identity_key: 'v1-p-00001-001-1202' } }, label: 'View activity', destination: 'radio-system' },
+    { name: 'Channel action', action: { kind: 'channel', entity_ref: { kind: 'channel', key: channelId } }, label: 'View activity', destination: 'channel' },
+    { name: 'System action', action: { kind: 'radio_system', entity_ref: { kind: 'radio_system', key: systemKey } }, label: 'View activity', destination: 'radio-system' },
     { name: 'Live action', action: { kind: 'live', entity_ref: null }, label: 'View live channels', destination: 'live' },
     { name: 'Disabled action', action: null, click_action: 'listen' },
     { name: 'Absent action' },
@@ -1608,6 +1608,13 @@ test('public alert popup exposes only validated public entity actions and never 
       const action = dialog.getByRole('link', { name: scenario.label, exact: true });
       await expect(action).toHaveAttribute('href', new RegExp('^/\\?view=' + scenario.destination + '(?:&|$)'));
       await expect(action).toHaveClass(/ui-button-primary/);
+      const target = new URL(await action.getAttribute('href'), page.url());
+      if (scenario.label === 'View activity') expect(target.searchParams.get('tab')).toBe('activity');
+      if (['talkgroup', 'patch_group'].includes(scenario.action.kind)) {
+        expect(target.searchParams.get('radio_system_key')).toBe(scenario.action.entity_ref.radio_system_key);
+        expect(target.searchParams.get('activity_target_identity_key')).toBe(scenario.action.entity_ref.identity_key);
+        expect(target.searchParams.get('activity_target_kind')).toBe(scenario.action.kind);
+      }
     } else await expect(dialog.getByRole('link')).toHaveCount(0);
     await expect(dialog.locator('a[href*="view=admin"]')).toHaveCount(0);
     await page.keyboard.press('Escape');
@@ -1615,6 +1622,56 @@ test('public alert popup exposes only validated public entity actions and never 
   }
   expect(fixture.pageErrors).toEqual([]);
 });
+
+for (const conventional of [false, true]) {
+  test(`alert activity action opens ${conventional ? 'conventional channel Activity' : 'filtered trunked system Activity'}`, async ({ page }) => {
+    await page.setViewportSize({ width: conventional ? 320 : 1280, height: 844 });
+    const { fixture } = await installAlerts(page, { theme: conventional ? 'dark' : 'light' });
+    const identityKey = 'v1-g-abcde-123-1201';
+    const action = conventional ? { kind: 'channel', entity_ref: { kind: 'channel', key: channelId } } :
+      { kind: 'talkgroup', entity_ref: { kind: 'talkgroup', radio_system_key: systemKey, identity_key: identityKey } };
+    const activityRequests = [];
+    await page.route('**/api/v1/alerts/history?**', route => route.fulfill({ json: { data: { items: [
+      { id: 'alert-activity', topic_id: 'fire', title: 'Dispatch tones', body: 'Dispatch tones detected.',
+        created_at_ms: 1770000000000, action }
+    ], total: 1 } } }));
+    if (conventional) await page.route(`**/api/v1/channels/${channelId}`, route => route.fulfill({ json: { data: { channel: {
+      configuration_id: channelId, channel_kind: 'CONVENTIONAL', protocol: 'NBFM', protocol_id: 'nbfm', protocol_label: 'NBFM',
+      name: 'Conventional Dispatch', frequency_hz: 154280000, capabilities: { activity: true }
+    } } } }));
+    await page.route('**/api/v1/activity**', route => {
+      activityRequests.push(Object.fromEntries(new URL(route.request().url()).searchParams));
+      return route.fulfill({ json: { data: { rows: [{ id: 1, observed_at_ms: 1770000000000,
+        action: 'CALL', event_type: conventional ? 'CALL' : 'CALL_GROUP', protocol: conventional ? 'NBFM' : 'P25',
+        configuration_id: channelId, radio_system_key: conventional ? null : systemKey,
+        name: conventional ? 'Conventional Dispatch' : 'North Simulcast', target_identity_key: conventional ? null : identityKey,
+        target_id: conventional ? null : 1201, target_kind: conventional ? null : 'talkgroup',
+        target_alias_name: conventional ? null : 'Mutual Aid Dispatch' }],
+        watermark_id: 1, next_after_id: 1, has_more: false } } });
+    });
+    await page.goto('/app.html?view=topics');
+    await page.locator('.alerts-timeline').getByRole('button', { name: 'Dispatch tones', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Dispatch tones', exact: true });
+    await auditScreenshot(page, `alert-activity-${conventional ? 'conventional-dark-phone' : 'trunked-light-desktop'}`, false);
+    await dialog.getByRole('link', { name: 'View activity', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('tab')).toBe('activity');
+    await expect.poll(() => activityRequests.length).toBeGreaterThan(0);
+    await expect(page.locator('table[data-table-type^="activity"] tbody tr')).toHaveCount(1);
+    if (conventional) {
+      expect(new URL(page.url()).searchParams.get('view')).toBe('channel');
+      expect(activityRequests.at(-1)).toMatchObject({ configuration_id: channelId });
+      expect(activityRequests.at(-1)).not.toHaveProperty('target_identity_key');
+    } else {
+      expect(new URL(page.url()).searchParams.get('view')).toBe('radio-system');
+      expect(activityRequests.at(-1)).toMatchObject({ radio_system_key: systemKey,
+        target_identity_key: identityKey, target_kind: 'talkgroup' });
+      await expect(page.locator('table[data-table-type="activity"]')).toContainText('Mutual Aid Dispatch');
+    }
+    await expectNoHorizontalOverflow(page);
+    await auditScreenshot(page, `alert-activity-destination-${conventional ? 'conventional-dark-phone' : 'trunked-light-desktop'}`, false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
 
 test('alert details open exact local related calls without notification credentials', async ({ page }) => {
   const { fixture } = await installAlerts(page);

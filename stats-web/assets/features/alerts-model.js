@@ -39,8 +39,8 @@ export function newAlertRule(timeZone = 'UTC') {
 }
 
 export function alertActionLabel(kind) {
-  return ({ live: 'View live channels', channel: 'View channel', radio: 'View radio',
-    talkgroup: 'View talkgroup', patch_group: 'View patch group', radio_system: 'View radio system' })[kind] || '';
+  return ({ live: 'View live channels', channel: 'View activity', radio: 'View radio',
+    talkgroup: 'View activity', patch_group: 'View activity', radio_system: 'View activity' })[kind] || '';
 }
 
 export function alertPopupAction(event) {
@@ -50,8 +50,15 @@ export function alertPopupAction(event) {
   if (!label) return null;
   if (action.kind === 'live') return action.entity_ref == null ? { label, href: '/?view=live' } : null;
   if (action.entity_ref?.kind !== action.kind) return null;
-  const href = entityRefHref(action.entity_ref);
-  return href ? { label, href } : null;
+  const entityHref = entityRefHref(action.entity_ref);
+  if (!entityHref) return null;
+  if (['talkgroup', 'patch_group'].includes(action.kind)) {
+    return { label, href: '/?' + new URLSearchParams({ view: 'radio-system',
+      radio_system_key: action.entity_ref.radio_system_key, tab: 'activity',
+      activity_target_identity_key: action.entity_ref.identity_key, activity_target_kind: action.kind }) };
+  }
+  if (['channel', 'radio_system'].includes(action.kind)) return { label, href: entityHref + '&tab=activity' };
+  return { label, href: entityHref };
 }
 export function alertSourceChoices(choices, family = '', systemKey = '') {
   return (Array.isArray(choices) ? choices : []).filter(choice =>

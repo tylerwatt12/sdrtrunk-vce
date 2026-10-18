@@ -17,27 +17,70 @@ class AlertActionTest
     {
         var context = AlertAction.capture(view(CHANNEL, SYSTEM, List.of(radio(100, 100)), List.of(group("TALKGROUP", 200), radio(300, 300)), "APCO25"));
         for(String trigger: AlertRule.TRIGGERS) assertEquals(AlertAction.NONE, AlertAction.automatic(trigger, context, false));
-        assertEquals("talkgroup", AlertAction.automatic("call", context, true).kind());
+        for(String trigger: List.of("call", "tone")) assertEquals("talkgroup", AlertAction.automatic(trigger, context, true).kind());
         for(String trigger: List.of("emergency", "affiliation"))
             assertEquals("v1-r-12345-001-100", AlertAction.automatic(trigger, context, true).entityRef().get("identity_key"));
         for(String trigger: List.of("paging", "command"))
             assertEquals("v1-r-12345-001-300", AlertAction.automatic(trigger, context, true).entityRef().get("identity_key"));
-        for(String trigger: List.of("tone", "dcs", "event")) assertEquals("channel", AlertAction.automatic(trigger, context, true).kind());
+        for(String trigger: List.of("dcs", "event")) assertEquals("radio_system", AlertAction.automatic(trigger, context, true).kind());
         assertEquals(AlertAction.LIVE, AlertAction.automatic("health", context, true));
         var patch = AlertAction.capture(view(CHANNEL, SYSTEM, List.of(), List.of(group("PATCH_GROUP", 400)), "APCO25"));
-        assertEquals("patch_group", AlertAction.automatic("call", patch, true).kind());
+        for(String trigger: List.of("call", "tone")) assertEquals("patch_group", AlertAction.automatic(trigger, patch, true).kind());
         assertEquals("radio", AlertAction.automatic("paging", new AlertAction.Context(null, null, context.sourceRadio(), null, null), true).kind());
+    }
+
+    @Test void completedCallNavigationPreservesServingScopeAndCanonicalGroupAndConventionalOwnership()
+    {
+        var foreign = new DecodeEventViewService.PartyIdentifier("Mutual aid dispatch", "TALKGROUP", "APCO25", null, null,
+            List.of(), null, List.of(), false, false, new DecodeEventViewService.CanonicalGroupIdentity(0xabcde, 2, 200), 42);
+        var event = view(CHANNEL, SYSTEM, List.of(), List.of(foreign), "APCO25");
+        var trunked = new io.github.dsheirer.audio.call.CallLegSource(io.github.dsheirer.module.decode.DecoderType.P25_PHASE1,
+            CHANNEL, "Trunked site", null, 0, null, null,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true, SYSTEM);
+        for(String trigger: List.of("call", "tone"))
+        {
+            var action = AlertAction.automatic(trigger, AlertAction.capture(event, trunked), true);
+            assertEquals("talkgroup", action.kind());
+            assertEquals(SYSTEM, action.entityRef().get("radio_system_key"), "Serving scope is independent of the group's home");
+            assertEquals("v1-g-abcde-002-200", action.entityRef().get("identity_key"));
+        }
+        var conventional = new io.github.dsheirer.audio.call.CallLegSource(io.github.dsheirer.module.decode.DecoderType.P25_CONVENTIONAL,
+            CHANNEL, "Conventional dispatch", null, 0, null, null,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL, false, SYSTEM);
+        for(String trigger: List.of("call", "tone"))
+        {
+            var action = AlertAction.automatic(trigger, AlertAction.capture(event, conventional), true);
+            assertEquals("channel", action.kind());
+            assertEquals(CHANNEL, action.entityRef().get("key"), "A conventional digital group remains owned by its channel");
+        }
+        assertEquals("channel", AlertAction.automatic("tone", AlertAction.capture(event,
+            io.github.dsheirer.audio.call.CallLegSource.UNKNOWN), true).kind());
+    }
+
+    @Test void conventionalLiveEventContextDoesNotUseDecodedDigitalIdentityAsTrunkedOwnership()
+    {
+        var channel = new io.github.dsheirer.controller.channel.Channel("Conventional dispatch");
+        channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional());
+        channel.setSourceConfiguration(new io.github.dsheirer.source.config.SourceConfigTuner());
+        var basic = view(CHANNEL, SYSTEM, List.of(radio(100, 100)), List.of(group("TALKGROUP", 200)), "APCO25");
+        var bound = new DecodeEventViewService.EventView(basic.eventId(), CHANNEL, 1000, 10, "CALL", "Call", "calls",
+            "", "", "", "", "", null, null, "", "APCO25", basic.fromParty(), basic.toParty(), 1, "Channel", null,
+            new io.github.dsheirer.controller.channel.DecodeEventSource(channel, null, null), SYSTEM, null);
+        assertEquals("channel", AlertAction.automatic("call", AlertAction.capture(bound), true).kind());
+        channel.setDecodeConfiguration(new io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1());
+        assertEquals("talkgroup", AlertAction.automatic("call", AlertAction.capture(bound), true).kind());
     }
 
     @Test void ambiguousOrUnavailableIdentitiesFallBackWithoutGuessing()
     {
         var ambiguous = AlertAction.capture(view(CHANNEL, SYSTEM, List.of(radio(1, 1), radio(2, 2)),
             List.of(group("TALKGROUP", 3), group("TALKGROUP", 4)), "APCO25"));
-        assertEquals("channel", AlertAction.automatic("call", ambiguous, true).kind());
-        assertEquals("channel", AlertAction.automatic("emergency", ambiguous, true).kind());
+        assertEquals("radio_system", AlertAction.automatic("call", ambiguous, true).kind());
+        assertEquals("radio_system", AlertAction.automatic("tone", ambiguous, true).kind());
+        assertEquals("radio_system", AlertAction.automatic("emergency", ambiguous, true).kind());
         assertEquals("radio_system", AlertAction.automatic("event", new AlertAction.Context(null, ambiguous.system(), null, null, null), true).kind());
         assertEquals(AlertAction.LIVE, AlertAction.automatic("call", AlertAction.Context.EMPTY, true));
-        assertEquals("channel", AlertAction.automatic("call", AlertAction.capture(view(CHANNEL, SYSTEM, List.of(),
+        assertEquals("radio_system", AlertAction.automatic("call", AlertAction.capture(view(CHANNEL, SYSTEM, List.of(),
             List.of(group("TALKGROUP", 65535)), "APCO25")), true).kind());
     }
 
@@ -82,7 +125,7 @@ class AlertActionTest
         var nullFacts = new DecodeEventViewService.EventView(basic.eventId(), CHANNEL, 1000, 10, "CALL", "Call", "calls",
             "", "", "", "", "", null, null, "", "APCO25", List.of(), List.of(), 1, "Channel", null, null, SYSTEM, null);
         assertNotNull(nullFacts.alertFacts(), "EventView normalizes missing facts before observer consumers");
-        assertEquals("channel", AlertAction.automatic("call", AlertAction.capture(nullFacts), true).kind());
+        assertEquals("radio_system", AlertAction.automatic("call", AlertAction.capture(nullFacts), true).kind());
         var mismatch = new DecodeEventViewService.PartyIdentifier("Radio 42", "RADIO", "APCO25", null, null,
             List.of(), null, List.of(), false, false, new DecodeEventViewService.CanonicalGroupIdentity(0x12345, 1, 200), 42);
         assertNull(AlertAction.capture(view(CHANNEL, SYSTEM, List.of(mismatch), List.of(), "APCO25")).sourceRadio());

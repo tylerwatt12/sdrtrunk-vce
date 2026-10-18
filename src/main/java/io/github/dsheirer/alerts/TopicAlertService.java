@@ -419,7 +419,7 @@ public final class TopicAlertService implements AutoCloseable
         add(facts, "protocol_family", view.alertFacts().protocolFamily());
         if(servingKey != null) facts.put("system_key", List.of(servingKey));
         return facts.get("tone").isEmpty() ? null : new AlertEvent(view.eventId(), Math.max(1, sequence.completedTimestamp()),
-            "tone", facts, AlertAction.capture(view),
+            "tone", facts, AlertAction.capture(view, sequence.callLegSource()),
             io.github.dsheirer.audio.call.SourceCallReference.fromToken(sequence.snapshot().activityCallToken()));
     }
 

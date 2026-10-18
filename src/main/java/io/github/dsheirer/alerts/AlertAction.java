@@ -2,6 +2,8 @@
 package io.github.dsheirer.alerts;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService.EventView;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService.PartyIdentifier;
@@ -51,12 +53,12 @@ public record AlertAction(String kind, @JsonProperty("entity_ref") Map<String,Ob
         Context source = context != null ? context : Context.EMPTY;
         Map<String,Object> preferred = switch(trigger)
         {
-            case "call" -> source.targetGroup();
+            case "call", "tone" -> source.targetGroup();
             case "emergency", "affiliation" -> source.sourceRadio();
             case "paging", "command" -> source.targetRadio() != null ? source.targetRadio() : source.sourceRadio();
             default -> null;
         };
-        Map<String,Object> target = preferred != null ? preferred : source.channel() != null ? source.channel() : source.system();
+        Map<String,Object> target = preferred != null ? preferred : source.system() != null ? source.system() : source.channel();
         return target != null ? new AlertAction((String)target.get("kind"), target) : LIVE;
     }
 
@@ -64,6 +66,15 @@ public record AlertAction(String kind, @JsonProperty("entity_ref") Map<String,Ob
     public static Context capture(EventView view)
     {
         Map<String,Object> channel = safe(() -> WebEntityReferences.channel(view.configurationId()));
+        if(view.sourceBinding() != null)
+        {
+            try
+            {
+                if(ChannelConfigurationPolicy.requireChannelKind(view.sourceBinding().channel()) !=
+                    ChannelConfigurationPolicy.ChannelKind.TRUNKED) return channelContext(channel);
+            }
+            catch(IllegalArgumentException | NullPointerException unavailable) { return channelContext(channel); }
+        }
         String serving = view.servingSystemKey();
         String projected = view.alertFacts() != null ? view.alertFacts().systemKey() : null;
         String key = serving != null && !serving.isBlank() ? serving : projected;
@@ -77,6 +88,18 @@ public record AlertAction(String kind, @JsonProperty("entity_ref") Map<String,Ob
         if(system == null) return new Context(channel, null, null, null, null);
         return new Context(channel, system, unique(view.fromParty(), true, systemKey, sourceProtocol),
             unique(view.toParty(), true, systemKey, sourceProtocol), unique(view.toParty(), false, systemKey, sourceProtocol));
+    }
+
+    /** Completed calls use their immutable source classification, including conventional digital calls. */
+    public static Context capture(EventView view, CallLegSource source)
+    {
+        return source != null && source.isTrunked() ? capture(view) :
+            channelContext(safe(() -> WebEntityReferences.channel(view.configurationId())));
+    }
+
+    private static Context channelContext(Map<String,Object> channel)
+    {
+        return new Context(channel, null, null, null, null);
     }
 
     private static boolean compatibleSystem(String key, Protocol protocol, String channel)
