@@ -19,10 +19,11 @@ import org.jtransforms.fft.FloatFFT_1D;
  * Conservative sustained single-tone analysis of raw 8 kHz decoded PCM, before ML or presentation gain. Run only on a
  * completed-call worker. This is inferred audio evidence, not an IMBE tone frame or identification of a paging system.
  *
- * Examines 128 ms Hann windows every 20 ms. A candidate must have 90% of its spectral power within five bins of one
- * 200-3000 Hz peak, at least 12 dB separation from any other peak, energy in every 32 ms quarter-window, and continuous
- * frequency within 4 Hz for at least 200 ms of qualified window centers. Qualified tone reports use the nearest
- * allowed AMBE single-tone frequency. Analog analysis also admits QCII/Plectron nominals through 3487 Hz.
+ * Examines 128 ms Hann windows every 20 ms. P25 candidates require 90% of spectral power within five bins of one
+ * 200-3000 Hz peak and at least 12 dB separation from any other peak. Analog candidates tolerate demodulated noise
+ * and paging harmonics with 65% concentration and 9 dB separation. Both require energy in every 32 ms quarter-window
+ * and continuous frequency within 4 Hz for at least 200 ms of qualified window centers. Qualified P25 reports use the
+ * nearest allowed AMBE single-tone frequency. Analog analysis also admits QCII/Plectron nominals through 3487 Hz.
  * Continuity still uses the unsnapped spectral estimates, so different pitches
  * in the same nominal band cannot borrow each other's qualification time. Short gaps are not bridged. Offsets/durations
  * describe the qualified
@@ -30,7 +31,7 @@ import org.jtransforms.fft.FloatFFT_1D;
  * score, not a calibrated probability. Pure sustained whistles or nearly sinusoidal speech can also qualify.
  *
  * Bounds: 120 seconds, 6000 input buffers and 32 tones. Invalid, oversized or non-finite input returns no evidence.
- * Synthetic tests cover the signal rules; accuracy on labeled real paging captures remains unvalidated.
+ * Synthetic tests cover the signal rules; playback regressions do not establish accuracy on original receiver PCM.
  */
 public final class P25PagingToneDetector
 {
@@ -48,6 +49,8 @@ public final class P25PagingToneDetector
     private static final double MINIMUM_RMS = 0.002;
     private static final double MINIMUM_NARROWBAND_FRACTION = 0.90;
     private static final double MINIMUM_PEAK_RATIO = 15.848931924611133; //12 dB in power
+    private static final double MINIMUM_ANALOG_NARROWBAND_FRACTION = 0.65;
+    private static final double MINIMUM_ANALOG_PEAK_RATIO = 7.943282347242816; //9 dB in power
 
     public record DetectedTone(double frequencyHz, long offsetMilliseconds, long durationMilliseconds,
                                double confidence, String source, String method)
@@ -77,7 +80,7 @@ public final class P25PagingToneDetector
         return detect(rawAudioBuffers,false);
     }
 
-    /** Same waveform qualification, with analog paging nominals selected before any AMBE rounding. */
+    /** Analog noise/harmonic qualification, with paging nominals selected before any AMBE rounding. */
     public List<DetectedTone> detectAnalog(List<float[]> rawAudioBuffers)
     {
         return detect(rawAudioBuffers,true);
@@ -248,7 +251,9 @@ public final class P25PagingToneDetector
 
         double fraction = narrowbandPower / totalPower;
 
-        if(fraction < MINIMUM_NARROWBAND_FRACTION || power[peakBin] < secondPeak * MINIMUM_PEAK_RATIO)
+        double minimumFraction = analog ? MINIMUM_ANALOG_NARROWBAND_FRACTION : MINIMUM_NARROWBAND_FRACTION;
+        double minimumPeakRatio = analog ? MINIMUM_ANALOG_PEAK_RATIO : MINIMUM_PEAK_RATIO;
+        if(fraction < minimumFraction || power[peakBin] < secondPeak * minimumPeakRatio)
         {
             return null;
         }
