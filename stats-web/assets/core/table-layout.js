@@ -194,7 +194,64 @@
     };
   }
 
+  const PARTY_COLUMN_UPGRADES = Object.freeze({
+    activity: {
+      previous: ['time', 'duration', 'action', 'event', 'tones', 'source', 'source-alias',
+        'source-ota-alias', 'target', 'target-alias', 'channel', 'encryption', 'related'],
+      current: ['time', 'duration', 'action', 'event', 'tones', 'source', 'target',
+        'channel', 'encryption', 'related'],
+      merged: { source: ['source-alias', 'source-ota-alias', 'source'],
+        target: ['target-alias', 'target'] }
+    },
+    'live-channels': {
+      previous: ['status', 'tags', 'channel', 'frequency', 'signal', 'decode-health',
+        'source-alias', 'source', 'target-alias', 'target', 'decoder'],
+      current: ['status', 'tags', 'channel', 'frequency', 'signal', 'decode-health',
+        'source', 'target', 'decoder'],
+      merged: { source: ['source-alias', 'source'], target: ['target-alias', 'target'] }
+    }
+  });
+
+  function sameSchema(left, right) {
+    return Array.isArray(left) && left.length === right.length &&
+      left.every((id, index) => id === right[index]);
+  }
+
+  // Upgrade only these known schemas. Invalid preferences still go through the
+  // normal reset path, rather than being repaired into an accepted layout.
+  function mergePartyColumns(type, columns, saved) {
+    const upgrade = Object.hasOwn(PARTY_COLUMN_UPGRADES, type) ? PARTY_COLUMN_UPGRADES[type] : null;
+    if (!upgrade || !saved || !sameSchema(schema(columns), upgrade.current)) return saved;
+    const withoutDuration = type === 'activity' ?
+      upgrade.previous.filter((id) => id !== 'duration') : null;
+    const addDuration = withoutDuration && sameSchema(saved.schema, withoutDuration);
+    const previousSchema = addDuration ? withoutDuration : upgrade.previous;
+    if (!sameSchema(saved.schema, previousSchema)) return saved;
+    const previous = normalize(previousSchema.map((id) => ({ id })), saved);
+    if (previous.reset) return saved;
+    const upgraded = persisted(previous);
+    if (addDuration) {
+      upgraded.column_order.splice(upgraded.column_order.indexOf('time') + 1, 0, 'duration');
+    }
+    const replacements = new Map(Object.entries(upgrade.merged)
+      .flatMap(([id, members]) => members.map((member) => [member, id])));
+    upgraded.schema = upgrade.current.slice();
+    upgraded.column_order = [...new Set(upgraded.column_order.map((id) => replacements.get(id) || id))];
+    const hidden = new Set(previous.hidden_columns);
+    upgraded.hidden_columns = upgraded.column_order.filter((id) => upgrade.merged[id] ?
+      upgrade.merged[id].every((member) => hidden.has(member)) : hidden.has(id));
+    for (const [id, members] of Object.entries(upgrade.merged)) {
+      // A saved name width remains useful. Otherwise use the combined column's
+      // default instead of inheriting a narrow width from an ID-only column.
+      const preferredWidth = members.find((member) => member !== id &&
+        Object.hasOwn(previous.column_widths, member));
+      members.forEach((member) => delete upgraded.column_widths[member]);
+      if (preferredWidth) upgraded.column_widths[id] = previous.column_widths[preferredWidth];
+    }
+    return normalize(columns, upgraded).reset ? saved : upgraded;
+  }
+
 export {
   MINIMUM_WIDTH, MAXIMUM_WIDTH, columnId, tableId, schema, registerSchema,
-  normalize, move, canMove, resize, setHidden, setGroupCollapsed, persisted
+  normalize, move, canMove, resize, setHidden, setGroupCollapsed, persisted, mergePartyColumns
 };

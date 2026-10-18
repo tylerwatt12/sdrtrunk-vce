@@ -632,10 +632,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(sourceTalkerAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref, 'source')"));
         assertTrue(sourceAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref, 'source')"));
         assertTrue(labels.contains("p25IdentityFacts(row, prefix || (kind === 'radio' ?"));
-        assertTrue(columns.contains("label: 'Src Alias'"));
-        assertTrue(columns.contains("label: 'Src OTA Alias'"));
-        assertTrue(columns.contains("activitySourceAlias(row, false)"));
-        assertTrue(columns.contains("activitySourceTalkerAlias(row, false)"));
+        assertTrue(columns.contains("label: 'Source'"));
+        assertTrue(columns.contains("label: 'Target'"));
+        assertTrue(columns.contains("activityPartyValue(row, 'source')"));
+        assertTrue(columns.contains("activityPartyValue(row, 'target')"));
     }
 
     @Test

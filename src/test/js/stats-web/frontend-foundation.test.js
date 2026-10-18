@@ -193,7 +193,10 @@ function checkActivityDuration(tableLayouts, tableDefaults) {
   for (const scope of [{ kind: 'system' }, { kind: 'conventional-analog' }]) {
     const columns = context.activityColumnsForContext(scope, {});
     const type = context.activityTableType(scope);
-    const oldColumns = columns.filter((column) => column.id !== 'duration');
+    const oldColumns = columns.flatMap((column) => scope.kind === 'conventional-analog' ? [column] :
+      column.id === 'source' ? [column, { id: 'source-alias' }, { id: 'source-ota-alias' }] :
+        column.id === 'target' ? [column, { id: 'target-alias' }] : [column])
+      .filter((column) => column.id !== 'duration');
     const previous = tableLayouts.setHidden(tableLayouts.resize(tableLayouts.move(
       tableLayouts.normalize(oldColumns, null), 'event', 'action'), 'time', 194), 'tones', true);
     savedTables[type] = tableLayouts.persisted(previous);
@@ -201,7 +204,9 @@ function checkActivityDuration(tableLayouts, tableDefaults) {
     const upgraded = context.activityTableLayout(scope, columns);
     const restored = tableLayouts.normalize(columns, upgraded);
     assert.equal(restored.reset, false);
-    assert.deepEqual(Array.from(restored.column_order), ['time', 'duration', ...previous.column_order.slice(1)]);
+    const removedAliases = new Set(['source-alias', 'source-ota-alias', 'target-alias']);
+    assert.deepEqual(Array.from(restored.column_order),
+      ['time', 'duration', ...previous.column_order.slice(1).filter((id) => !removedAliases.has(id))]);
     assert.equal(restored.column_widths.time, 194);
     assert.deepEqual(Array.from(restored.hidden_columns), ['tones']);
     assert.equal(JSON.stringify(savedTables[type]), before, 'Reading an old layout must not write preferences.');
@@ -559,6 +564,7 @@ async function main() {
     '../web-call-player'
   ].map(loadModule));
   const browsing = await loadModule('browsing-workflows');
+  await require('./party-column-layouts.test').checkPartyColumnLayouts(core);
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');

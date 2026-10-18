@@ -94,7 +94,7 @@ const behavior = vm.runInNewContext(`(() => {
   function entityRefHref(reference) { return reference?.href || ''; }
   function radioSystemContextLink() { return 'Receiving system'; }
   function liveIdentityActionLink(_row, _kind, label) { return label; }
-  function identitySummaryValue(primary, secondary, target) { return {primary, secondary, target}; }
+  function identitySummaryValue(primary, secondary, target) { return primary ? {primary, secondary, target} : ''; }
   function keyValues(values) { return {values, classList: {add() {}}}; }
   function node(tag, className, textContent) {
     return { tag, className, textContent, setAttribute() {} };
@@ -152,6 +152,9 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('activitySourceAlias')}
   ${functionSource('activitySourceTalkerAlias')}
   ${functionSource('activityTargetAlias')}
+  ${functionSource('activityPartyName')}
+  ${functionSource('activityPartyIdentifier')}
+  ${functionSource('activityPartyValue')}
   ${functionSource('activityIdentityKey')}
   ${functionSource('activityIdentityKindFromKey')}
   ${functionSource('activityIdentityKindLabel')}
@@ -176,7 +179,7 @@ const behavior = vm.runInNewContext(`(() => {
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText, liveIdentityActionTitle,
-    activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias,
+    activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias, activityPartyValue,
     activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue,
     liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
     liveEventMatchesQuery };
@@ -384,6 +387,56 @@ assert.equal(behavior.activityTargetAlias(activityMaximum).label, 'Command');
 assert.equal(behavior.activitySourceAlias({ ...activityMaximum, source_canonical_identity: null }), 'Engine 42');
 assert.equal(behavior.activityTargetAlias({ ...activityMaximum, target_canonical_identity: null }), 'Command',
   'A canonical source does not turn an unrelated bare special target into a subscriber.');
+
+for (const protocol of ['P25', 'DMR', 'NXDN']) {
+  for (const missing of [null, undefined, '']) {
+    const row = { protocol, source_radio_id: missing, target_id: missing, target_kind: 'talkgroup' };
+    for (const party of ['source', 'target']) {
+      assert.equal(behavior.activityPartyValue(row, party), '',
+        `${protocol} missing ${party} IDs must remain blank rather than becoming a special zero ID.`);
+      const named = behavior.activityPartyValue({ ...row, source_alias_name: 'Dispatch radio',
+        target_alias_name: 'Dispatch group' }, party);
+      assert.equal(named.primary, party === 'source' ? 'Dispatch radio' : 'Dispatch group');
+      assert.equal(named.secondary, '', 'A supplied name without an ID does not fabricate an ID below it.');
+    }
+  }
+}
+for (const [protocol, sourceLabel, targetLabel] of [['P25', 'No Unit', 'No Talkgroup'],
+  ['DMR', 'Reserved', 'Reserved'], ['NXDN', 'No Unit', 'Null Group']]) {
+  const row = { protocol, source_radio_id: 0, target_id: 0, target_kind: 'talkgroup' };
+  for (const [party, expectedLabel] of [['source', sourceLabel], ['target', targetLabel]]) {
+    const summary = behavior.activityPartyValue(row, party);
+    assert.equal(summary.primary, expectedLabel, `${protocol} retains its actual zero-ID meaning.`);
+    assert.equal(summary.secondary, '0', 'A reported special zero ID remains explicitly visible.');
+  }
+}
+const namedSpecial = behavior.activityPartyValue({ protocol: 'P25', source_radio_id: 16_777_212,
+  source_alias_name: 'Console' }, 'source');
+assert.equal(namedSpecial.primary, 'Console');
+assert.equal(namedSpecial.secondary, '16777212', 'A named special identity still shows its exact ID.');
+for (const missing of [null, undefined, '']) {
+  const canonicalRows = [
+    ['source', '202', { source_radio_id: missing, source_id: missing,
+      source_canonical_identity: { wacn: 1, system_id: 1, subscriber_id: 202 } }],
+    ['target', '303', { target_id: missing, target_kind: 'talkgroup', target_form: 'TALKGROUP',
+      target_canonical_group_identity: { wacn: 1, system_id: 1, talkgroup_id: 303 } }],
+    ['target', '404', { target_id: missing, target_kind: 'radio', target_form: 'RADIO',
+      target_canonical_identity: { wacn: 1, system_id: 1, subscriber_id: 404 } }]
+  ];
+  for (const [party, expectedId, fields] of canonicalRows) {
+    const row = { protocol: 'P25', serving_system_key: 'p25:00001:001', ...fields };
+    const unnamed = behavior.activityPartyValue(row, party);
+    assert.equal(unnamed.primary, expectedId,
+      'Activity retains a confirmed permanent identity when its observed local address is absent.');
+    assert.equal(unnamed.secondary, '', 'An unnamed confirmed identity appears once, without a fabricated special label.');
+    const named = behavior.activityPartyValue({ ...row, source_alias_name: 'Dispatch radio',
+      target_alias_name: 'Dispatch target' }, party);
+    assert.equal(named.primary, party === 'source' ? 'Dispatch radio' : 'Dispatch target');
+    assert.equal(named.secondary, expectedId, 'A named confirmed identity keeps its exact permanent ID below the name.');
+    assert.equal(behavior.liveIdentifierAliasValue(row, party), expectedId,
+      'Live also retains the supplied permanent identity when the observed local address is absent.');
+  }
+}
 
 const nativeDmr = Object.freeze({
   protocol: 'DMR', channel_kind: 'TRUNKED', radio_system_key: 'dmr:tier3:small:0',

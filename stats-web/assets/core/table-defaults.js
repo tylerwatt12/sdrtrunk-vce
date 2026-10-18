@@ -22,9 +22,8 @@ const ALIAS_WIDTHS = Object.freeze({
 });
 const ALIAS_GROW = ['alias', 'description', 'group', 'behavior'];
 const ACTIVITY_DEFAULTS = {
-  widths: { duration: 88, action: 110, event: 180, tones: 280, source: 220, target: 220, channel: 320,
-    'source-alias': 190, 'source-ota-alias': 190, 'target-alias': 190 },
-  grow: ['channel', 'source-alias', 'source-ota-alias', 'target-alias']
+  widths: { duration: 88, action: 110, event: 180, tones: 280, source: 240, target: 240, channel: 320 },
+  grow: ['channel', 'source', 'target']
 };
 const NEIGHBOR_DEFAULTS = {
   widths: { 'neighbor-name': 240, system: 250 },
@@ -241,9 +240,9 @@ const TABLE_DEFAULTS = Object.freeze({
   },
   'live-channels': { widths: {
     status: 105, tags: 100, channel: 150, frequency: 96, signal: 95,
-    'decode-health': { normal: 105, detailed: 260 }, 'source-alias': 220,
-    source: 90, 'target-alias': 220, target: 90, decoder: 78
-  }, grow: ['channel', 'source-alias', 'target-alias'] },
+    'decode-health': { normal: 105, detailed: 260 },
+    source: 240, target: 240, decoder: 78
+  }, grow: ['channel', 'source', 'target'] },
   'alias-editor-configure': {
     widths: ALIAS_WIDTHS, grow: ALIAS_GROW
   },

@@ -27,6 +27,7 @@ async function openActivity(page, options = {}) {
   const radioSystemPath = `/api/v1/radio-systems/${encodedRadioSystemKey}`;
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
+  preferences.presentation.source_name_display = options.sourceMode || 'talker_alias';
   if (options.activityLayout) preferences.tables.activity = options.activityLayout;
   const requests = { activity: [], groups: [], radios: [] };
   const groupRows = [
@@ -127,7 +128,7 @@ function toneActivityRow(id, summary, overrides = {}) {
     name: 'North Simulcast Control', frequency_hz: 855_737_500, lcn: '0-757', encrypted: false,
     configuration_id: '11111111-1111-4111-8111-111111111111',
     source_entity_ref: { kind: 'radio', radio_system_key: radioSystemKey, identity_key: sourceIdentityKey },
-    target_entity_ref: { kind: 'group', radio_system_key: radioSystemKey, identity_key: talkgroupIdentityKey },
+    target_entity_ref: { kind: 'talkgroup', radio_system_key: radioSystemKey, identity_key: talkgroupIdentityKey },
     entity_ref: { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' },
     paging_tone_summary: summary, ...overrides };
 }
@@ -264,7 +265,7 @@ test('call tones preserve group call types and filter independently with alias c
   await expect.poll(() => requests.activity.at(-1)?.has_tones).toBe('true');
   await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('CALL_GROUP');
   await expect(page.locator('.activity-filter-chips')).toContainText('With tones');
-  const source = page.locator('tr[data-id="18"] [data-column="source-alias"] .activity-cell-action-link');
+  const source = page.locator('tr[data-id="18"] [data-column="source"] .activity-cell-action-link');
   await source.click();
   await expect(page.getByRole('link', { name: 'Open source radio details', exact: true })).toBeVisible();
 });
@@ -310,7 +311,7 @@ test('P25 Activity provides compact identity-first filters in the actual applica
   await expect(sourcePicker.locator(`.activity-identity-result[data-identity-key="${sourceIdentityKey}"]`))
     .toContainText('2808137');
   await expect(sourcePicker.locator(`.activity-identity-result[data-identity-key="${sourceIdentityKey}"]`))
-    .toContainText('Engine 12');
+    .toContainText('E12 Portable');
   await sourcePicker.locator(`.activity-identity-result[data-identity-key="${sourceIdentityKey}"]`).click();
 
   const destinationTrigger = toolbar.locator(
@@ -358,7 +359,7 @@ test('P25 Activity provides compact identity-first filters in the actual applica
     .toBe(talkgroupIdentityKey);
   const chips = page.locator('.activity-filter-chips');
   await expect(chips).toContainText('Action:Grants included');
-  await expect(chips).toContainText('Source:2808137 · Engine 12');
+  await expect(chips).toContainText('Source:2808137 · E12 Portable');
   await expect(chips).toContainText('Destination:Talkgroup56131 · CPD D3 DISP');
   await expect(chips).toContainText('Encrypted only');
   await expect(chips.locator('.activity-filter-chip-label')).toHaveText([
@@ -533,4 +534,94 @@ test('Destination selections filter requested activity and rendered rows by iden
   await picker.locator('.activity-identity-any-kind').click();
   await toolbar.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expectFilter('', 'talkgroup', 'Alpha Dispatch');
+});
+
+
+for (const [sourceMode, expected] of [['talker_alias', 'E12 Portable'],
+  ['source_alias', 'Engine 12'], ['both', 'Engine 12 · E12 Portable']]) {
+  test(`Activity combined source respects ${sourceMode} and filters by the scoped identity`, async ({ page }) => {
+    const mobile = sourceMode === 'both';
+    await page.setViewportSize({ width: mobile ? 390 : 1440, height: 1000 });
+    const requests = await openActivity(page, { sourceMode, theme: mobile ? 'dark' : 'light', rows: [
+      toneActivityRow(31, undefined, { action: 'CALL', event_type: 'CALL_GROUP',
+        source_talker_alias: 'E12 Portable' })
+    ] });
+    const table = page.locator('table[data-table-type="activity"]');
+    const row = table.locator('tr[data-id="31"]');
+    const source = row.locator('[data-column="source"]');
+    const target = row.locator('[data-column="target"]');
+    await expect(table.locator('thead [data-column="source"]')).toHaveText('Source');
+    await expect(table.locator('thead [data-column="target"]')).toHaveText('Target');
+    await expect(table.locator('[data-column="source-alias"], [data-column="source-ota-alias"], [data-column="target-alias"]'))
+      .toHaveCount(0);
+    await expect(source.locator('.identity-summary-primary')).toHaveText(expected);
+    await expect(source.locator('.identity-summary-context')).toHaveText('2808137');
+    await expect(source.locator('.activity-cell-action-link')).toHaveAttribute('aria-label',
+      `source radio ${expected} · 2808137 actions`);
+    await expect(target.locator('.identity-summary-primary')).toHaveText('CPD D3 DISP');
+    await expect(target.locator('.identity-summary-context')).toHaveText('56131');
+    await expect(source.locator('.identity-summary-context')).toBeVisible();
+    await source.locator('.activity-cell-action-link').click();
+    const filter = page.getByRole('link', { name: 'Filter activity by this source radio', exact: true });
+    const destination = new URL(await filter.getAttribute('href'), page.url());
+    expect(destination.searchParams.get('radio_system_key')).toBe(radioSystemKey);
+    expect(destination.searchParams.get('activity_source_identity_key')).toBe(sourceIdentityKey);
+    expect(destination.searchParams.get('activity_source_id')).toBeNull();
+    expect(destination.search).not.toContain('Engine');
+    expect(destination.search).not.toContain('Portable');
+    const details = page.getByRole('link', { name: 'Open source radio details', exact: true });
+    expect(new URL(await details.getAttribute('href'), page.url()).searchParams.get('identity_key'))
+      .toBe(sourceIdentityKey);
+    await filter.click();
+    await expect.poll(() => requests.activity.at(-1)?.source_identity_key).toBe(sourceIdentityKey);
+    await expect.poll(() => requests.activity.at(-1)?.radio_system_key).toBe(radioSystemKey);
+    if (sourceMode === 'both' && process.env.WEB_REVIEW_DIR) {
+      await source.scrollIntoViewIfNeeded();
+      await toneScreenshot(page, 'combined-activity-source-dark-phone');
+      await target.scrollIntoViewIfNeeded();
+      await toneScreenshot(page, 'combined-activity-target-dark-phone');
+    }
+  });
+}
+
+test('Activity combined cells show nameless identifiers once', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openActivity(page, { rows: [toneActivityRow(32, undefined, { action: 'CALL', event_type: 'CALL_GROUP',
+    source_alias_name: '', source_talker_alias: '', target_alias_name: '' })] });
+  const row = page.locator('tr[data-id="32"]');
+  for (const [role, identifier] of [['source', '2808137'], ['target', '56131']]) {
+    const party = row.locator(`[data-column="${role}"]`);
+    await expect(party.locator('.identity-summary-primary')).toHaveText(identifier);
+    await expect(party.locator('.identity-summary-context')).toHaveCount(0);
+    await expect(party).toHaveText(identifier);
+  }
+});
+
+test('Activity combined target keeps distinct talkgroup, patch, and radio filter identities', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const kinds = [['talkgroup', 'v1-g-00001-001-56131', 'Shared dispatch'],
+    ['patch_group', 'v1-p-00001-001-56131', 'Shared dispatch'],
+    ['radio', 'v1-r-00001-001-56131', 'Shared dispatch']];
+  const requests = await openActivity(page, { rows: kinds.map(([kind, identity, alias], index) =>
+    toneActivityRow(40 + index, undefined, { action: 'CALL', event_type: 'CALL_GROUP', target_kind: kind,
+      target_id: 56131, target_identity_key: identity, target_alias_name: alias,
+      target_entity_ref: { kind,
+        radio_system_key: radioSystemKey, identity_key: identity } })) });
+  for (const [index, [kind, identity, alias]] of kinds.entries()) {
+    const target = page.locator(`tr[data-id="${40 + index}"] [data-column="target"]`);
+    await expect(target.locator('.identity-summary-primary')).toHaveText(alias);
+    await expect(target.locator('.identity-summary-context')).toHaveText('56131');
+    await target.locator('.activity-cell-action-link').click();
+    const filter = page.getByRole('link', { name: 'Filter activity by this target', exact: true });
+    const destination = new URL(await filter.getAttribute('href'), page.url());
+    expect(destination.searchParams.get('radio_system_key')).toBe(radioSystemKey);
+    expect(destination.searchParams.get('activity_target_identity_key')).toBe(identity);
+    expect(destination.searchParams.get('activity_target_kind')).toBe(kind);
+    expect(destination.searchParams.get('activity_target_id')).toBeNull();
+    const details = page.getByRole('link', { name: 'Open target details', exact: true });
+    expect(new URL(await details.getAttribute('href'), page.url()).searchParams.get('identity_key')).toBe(identity);
+    await filter.click();
+    await expect.poll(() => requests.activity.at(-1)?.target_identity_key).toBe(identity);
+    await expect.poll(() => requests.activity.at(-1)?.target_kind).toBe(kind);
+  }
 });

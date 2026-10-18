@@ -2,8 +2,8 @@ import * as routeFoundation from './core/routes.js?v=11';
 import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
-import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=20';
+import * as tableLayouts from './core/table-layout.js?v=2';
+import * as tableDefaults from './core/table-defaults.js?v=21';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -3113,7 +3113,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns);
   const defaultLayout = options.recordList && Array.isArray(options.recordListOrder) ?
     { ...tableDefaultLayout, column_order: options.recordListOrder } : tableDefaultLayout;
-  const storedLayout = options.layout || activeUserPreferences().tables[tableType] || defaultLayout;
+  const storedLayout = tableLayouts.mergePartyColumns(tableType, declaredColumns,
+    options.layout || activeUserPreferences().tables[tableType] || defaultLayout);
   let layout = tableLayouts.normalize(declaredColumns, storedLayout);
   if (layout.reset) {
     removeResetTableLayout(tableType);
@@ -18786,8 +18787,8 @@ function liveIdentityActionLink(row, kind, label) {
 
 function liveIdentifierAliasValue(row, kind) {
   const value = row?.[`${kind}_id`];
-  const text = value === null || value === undefined ? '' :
-    partyIdentifierText(row, value, kind);
+  const missing = value == null || value === '';
+  const text = missing && !isP25(row) ? '' : partyIdentifierText(row, missing ? null : value, kind);
   if (!text) return '';
   return liveIdentityActionLink(row, kind, text);
 }
@@ -18814,6 +18815,37 @@ function liveAliasValue(row, kind) {
     result.append(liveIdentityActionLink(row, kind, label));
   });
   return result;
+}
+
+function liveIdentitySortValue(row, kind) {
+  if (kind === 'target' && isAnalogChannel(row)) return row.channel_name || '';
+  const name = kind === 'source' ? liveSourceName(row) :
+    liveAliasReferences(row, kind).map((reference) => String(reference.name || '').trim())
+      .filter(Boolean).join(', ') || String(row?.target_alias || '').trim();
+  const value = row?.[`${kind}_id`];
+  const missing = value == null || value === '';
+  return name || (missing && !isP25(row) ? '' : partyIdentifierText(row, missing ? null : value, kind));
+}
+
+function liveIdentityValue(row, kind) {
+  if (kind === 'target' && isAnalogChannel(row)) return liveConventionalChannelValue(row);
+  const name = liveAliasValue(row, kind);
+  const identifier = liveIdentifierAliasValue(row, kind);
+  const text = (value) => value instanceof Node ? value.textContent.trim() : String(value || '').trim();
+  const nameText = text(name);
+  const idText = text(identifier);
+  if (!nameText && !idText) return '';
+  const summary = node('span', 'identity-summary');
+  summary.title = [nameText, idText && idText !== nameText ? idText : ''].filter(Boolean).join(' · ');
+  const primary = node('span', 'identity-summary-primary');
+  primary.append(valueNode(nameText ? name : identifier));
+  summary.append(primary);
+  if (nameText && idText && nameText !== idText) {
+    const secondary = node('small', 'identity-summary-context');
+    secondary.append(valueNode(identifier));
+    summary.append(secondary);
+  }
+  return summary;
 }
 
 function liveConventionalChannelValue(row) {
@@ -19172,21 +19204,14 @@ function liveChannelsSection(onSelectionChange) {
         const values = decodeQualityValues(row);
         return values.length ? Math.min(...values) : -1;
       } },
-    { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias',
-      render: (row) => liveAliasValue(row, 'source'), title: (row) => row.source_alias_description || '',
-      sortValue: liveSourceName,
+    { id: 'source', label: 'Source',
+      render: (row) => liveIdentityValue(row, 'source'), title: (row) => row.source_alias_description || '',
+      sortValue: (row) => liveIdentitySortValue(row, 'source'),
       reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
-    { id: 'source', label: 'Src ID', fullLabel: 'Source ID',
-      render: (row) => liveIdentifierAliasValue(row, 'source'), sortValue: (row) => Number(row.source_id || 0),
-      reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
-    { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias',
-      render: (row) => isAnalogChannel(row) ? liveConventionalChannelValue(row) : liveAliasValue(row, 'target'),
+    { id: 'target', label: 'Target',
+      render: (row) => liveIdentityValue(row, 'target'),
       title: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias_description || '',
-      sortValue: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias || '',
-      reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
-    { id: 'target', label: 'Tgt ID', fullLabel: 'Target ID',
-      render: (row) => isAnalogChannel(row) ? '' : liveIdentifierAliasValue(row, 'target'),
-      sortValue: (row) => isAnalogChannel(row) ? 0 : Number(row.target_id || 0),
+      sortValue: (row) => liveIdentitySortValue(row, 'target'),
       reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
     { id: 'decoder', label: 'Decoder', render: (row) => decoderLabel(row.decoder, true),
       title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' }
@@ -22062,6 +22087,30 @@ function activityTargetAlias(row, linked = true) {
   return alias;
 }
 
+function activityPartyName(row, kind) {
+  return kind === 'source' ? formatSourceName(row.source_alias_name, row.source_talker_alias,
+    sourceNameDisplayMode()) : String(row.target_alias_name || '').trim();
+}
+
+function activityPartyIdentifier(row, kind) {
+  const value = kind === 'source' ? row.source_radio_id : row.target_id;
+  const missing = value == null || value === '';
+  if (missing && !isP25(row)) return '';
+  return kind === 'source' || activityTargetKind(row) === 'radio' ?
+    radioIdentifierText(row, missing ? null : value, kind) :
+    groupIdentifierText(row, missing ? null : value, kind);
+}
+
+function activityPartyValue(row, kind) {
+  if (kind === 'target' && isAnalogChannel(row)) return '';
+  const identifier = activityPartyIdentifier(row, kind);
+  const value = kind === 'source' ? row.source_radio_id : row.target_id;
+  const identityKind = kind === 'source' ? 'radio' : activityTargetKind(row);
+  const name = activityPartyName(row, kind) ||
+    (identifier && value != null && value !== '' ? specialIdentifierLabel(row, value, identityKind, kind) : '');
+  return identitySummaryValue(name || identifier, name && name !== identifier ? identifier : '');
+}
+
 function activityChannel(row, linked = true) {
   const label = String(row.name || '').trim();
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row.entity_ref) : '';
@@ -22416,14 +22465,16 @@ function activityIdentityKindLabel(kind, plural = false) {
   return plural ? 'Talkgroups' : 'Talkgroup';
 }
 
-function activityIdentitySuggestion(row, requestedKind = '', context = null) {
+function activityIdentitySuggestion(row, requestedKind = '', context = null, useSourceNamePreference = false) {
   const nativeId = row?.native_id ?? row?.radio_native_id ?? row?.group_native_id;
   const identityKey = activityIdentityKey(row?.identity_key || row?.radio_identity_key ||
     row?.group_identity_key);
   if (nativeId === null || nativeId === undefined || !identityKey) return null;
   const kind = requestedKind || activityIdentityKindFromKey(identityKey) || rowGroupIdentityKind(row);
   if (!['radio', 'talkgroup', 'patch_group'].includes(kind)) return null;
-  const alias = String(aliasLabel(row) || row?.last_talker_alias || '').trim();
+  const alias = useSourceNamePreference && kind === 'radio' ?
+    formatSourceName(aliasLabel(row), row?.last_talker_alias, sourceNameDisplayMode()) :
+    String(aliasLabel(row) || row?.last_talker_alias || '').trim();
   const kindLabel = activityIdentityKindLabel(kind);
   const displayRow = p25ServingSystemKey(row) || !context?.radioSystemKey ? row :
     { ...row, radio_system_key: context.radioSystemKey };
@@ -22662,7 +22713,7 @@ function activityIdentityPicker(context, options = {}) {
       const deduplicated = new Map();
       fulfilled.forEach(({ kind, page }) => (page.rows || []).forEach((row) => {
         const rowKind = kind === 'radio' ? 'radio' : rowGroupIdentityKind(row);
-        const entry = activityIdentitySuggestion(row, rowKind, context);
+        const entry = activityIdentitySuggestion(row, rowKind, context, !destination);
         if (entry) deduplicated.set(entry.key, entry);
       }));
       loadedEntries = [...deduplicated.values()].sort((left, right) => {
@@ -23476,7 +23527,8 @@ function showActivityCellActionTooltip(trigger, dimension, text, filterTarget, n
 }
 
 function activityCellValue(displayValue, row, columnId, context, filters) {
-  const text = displayValue instanceof Node ? displayValue.textContent.trim() : String(displayValue || '').trim();
+  const text = displayValue instanceof Node ?
+    (displayValue.getAttribute?.('title') || displayValue.textContent).trim() : String(displayValue || '').trim();
   if (!text) return displayValue;
   const filterOverrides = activityCellFilterRouteOverrides(filters, context, row, columnId);
   const filterTarget = filterOverrides ? currentHref(filterOverrides) : '';
@@ -23579,24 +23631,14 @@ function activityColumns(context, filters) {
     { id: 'tones', label: 'Tones', render: (row) =>
       activityCellValue(activityToneValue(row), row, 'tones', context, filters),
       sortValue: (row) => formatPagingToneSummary(row.paging_tone_summary)?.tones.join(' ') || '' },
-    { id: 'source', label: 'Src', fullLabel: 'Source ID',
-      render: (row) => activityCellValue(activityIdentifier(row, row.source_radio_id, 'radio',
-        row.source_entity_ref, false, 'source'), row, 'source', context, filters),
-      className: 'numeric identifier-cell', sortValue: (row) => Number(row.source_radio_id || 0) },
-    { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias',
-      render: (row) => activityCellValue(activitySourceAlias(row, false), row, 'source-alias', context, filters),
+    { id: 'source', label: 'Source',
+      render: (row) => activityCellValue(activityPartyValue(row, 'source'), row, 'source', context, filters),
       className: 'alias-cell',
-      sortValue: (row) => row.source_alias_name || '' },
-    { id: 'source-ota-alias', label: 'Src OTA Alias', fullLabel: 'Source Over-the-Air Talker Alias',
-      render: (row) => activityCellValue(activitySourceTalkerAlias(row, false), row,
-        'source-ota-alias', context, filters), className: 'alias-cell',
-      sortValue: (row) => row.source_talker_alias || '' },
-    { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: (row) =>
-      activityCellValue(activityTargetIdentifier(row, false), row, 'target', context, filters),
-      className: 'numeric identifier-cell', sortValue: (row) => Number(row.target_id || 0) },
-    { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: (row) =>
-      activityCellValue(activityTargetAlias(row, false), row, 'target-alias', context, filters),
-      className: 'alias-cell', sortValue: (row) => row.target_alias_name || '' },
+      sortValue: (row) => activityPartyName(row, 'source') || activityPartyIdentifier(row, 'source') },
+    { id: 'target', label: 'Target',
+      render: (row) => activityCellValue(activityPartyValue(row, 'target'), row, 'target', context, filters),
+      className: 'alias-cell',
+      sortValue: (row) => activityPartyName(row, 'target') || activityPartyIdentifier(row, 'target') },
     { id: 'channel', label: 'Channel', render: (row) =>
       activityCellValue(activityChannel(row, false), row, 'channel', context, filters), sortValue: (row) =>
       Number(row.frequency_hz || 0) },
@@ -23633,6 +23675,9 @@ function activityDurationMilliseconds(row) {
 
 function activityTableLayout(context, columns) {
   const saved = activeUserPreferences().tables[activityTableType(context)];
+  if (context?.kind !== 'conventional-analog') {
+    return tableLayouts.mergePartyColumns(activityTableType(context), columns, saved);
+  }
   if (!saved || saved.schema?.includes('duration')) return saved;
   const previous = tableLayouts.normalize(columns.filter((column) => column.id !== 'duration'), saved);
   if (previous.reset) return saved;
@@ -23669,6 +23714,11 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   const activityTable = table(initialRows, columns, emptyMessage,
     { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions,
       layout: activityTableLayout(activityContext, columns) });
+  const refreshSourceNames = () => activityTable.tableController.render();
+  sourceNamePresentationRenderer = refreshSourceNames;
+  pageConnections.add({ close: () => {
+    if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
+  } });
   activityTable.setAttribute('aria-live', 'off');
   const block = section(title, activityTable, titleActions);
   const filterToolbar = activityFilterToolbar(activityContext, filters);

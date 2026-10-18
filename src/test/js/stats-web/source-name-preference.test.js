@@ -225,9 +225,12 @@ async function main() {
   assert.notEqual(context.scannerCallRenderKey(call, {}, null),
     context.scannerCallRenderKey({ ...call, source_alias: 'Engine 5' }, {}, null),
     'Late alias metadata must invalidate the Scanner call display');
-  const column = functionSource('liveChannelsSection').match(/\{ id: 'source-alias',[\s\S]*?reconcileKey:/)?.[0];
+  const column = functionSource('liveChannelsSection').match(/\{ id: 'source', label: 'Source',[\s\S]*?reconcileKey:/)?.[0];
   assert.ok(column, 'The Live Source column exists');
-  assert.match(column, /sortValue: liveSourceName/, 'Sorting uses the same source name shown to the user');
+  assert.match(column, /sortValue:.*liveIdentitySortValue\(row, 'source'\)/,
+    'The combined Source column sorts by its displayed name with an identifier fallback');
+  assert.match(column, /render:.*liveIdentityValue\(row, 'source'\)/,
+    'The Source column renders the name and exact identifier together');
   const rows = [{ source_alias: 'Zulu', talker_alias: 'Alpha' },
     { source_alias: 'Alpha', talker_alias: 'Zulu' }];
   assert.equal([...rows].sort((a, b) => context.liveSourceName(a).localeCompare(context.liveSourceName(b)))[0], rows[1]);

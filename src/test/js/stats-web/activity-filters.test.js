@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
 const applicationPath = process.argv[2];
@@ -15,10 +16,27 @@ const modelEnd = application.indexOf('function activityFilterField(', modelStart
 assert.ok(constantsStart >= 0 && constantsEnd > constantsStart, 'Activity filter constants are required.');
 assert.ok(modelStart >= 0 && modelEnd > modelStart, 'Activity filter model functions are required.');
 
-const context = { URLSearchParams };
+let sourceNameMode = 'talker_alias';
+const context = {
+  URLSearchParams,
+  aliasLabel: (row) => row.alias_name || '',
+  p25ServingSystemKey: () => '',
+  radioIdentifierText: (_row, id) => String(id),
+  groupIdentifierText: (_row, id) => String(id),
+  sourceNameDisplayMode: () => sourceNameMode
+};
 vm.createContext(context);
 vm.runInContext(`${application.slice(constantsStart, constantsEnd)}\n${application.slice(modelStart, modelEnd)}`,
   context);
+const sourceNames = fs.readFileSync(path.join(path.dirname(applicationPath), 'core/source-names.js'), 'utf8');
+const identityStart = application.indexOf('function activityIdentityDirectoryPath(');
+const identityEnd = application.indexOf('function activityIdentityPicker(', identityStart);
+const chipStart = application.indexOf('function activityIdentityChipValue(');
+const chipEnd = application.indexOf('function activityFilterChipDefinitions(', chipStart);
+assert.ok(identityStart >= 0 && identityEnd > identityStart, 'Identity suggestion helpers are required.');
+assert.ok(chipStart >= 0 && chipEnd > chipStart, 'Identity chip labels are required.');
+vm.runInContext(`${sourceNames.replace('export function', 'function')}\n` +
+  `${application.slice(identityStart, identityEnd)}\n${application.slice(chipStart, chipEnd)}`, context);
 
 function parameters(values = {}) {
   return new URLSearchParams(Object.entries(values).map(([key, value]) => [key, String(value)]));
@@ -40,6 +58,33 @@ const nativeSystemCapabilities = context.activityContextCapabilities(systemConte
 assert.equal(nativeSystemCapabilities.channel, true);
 assert.equal(nativeSystemCapabilities.sourceIdentity, true);
 assert.equal(nativeSystemCapabilities.targetIdentity, true);
+
+const namedRadio = { native_id: 202, identity_key: 'v1-r-bee00-49f-202',
+  alias_name: 'Dispatch radio', last_talker_alias: 'Engine 4' };
+for (const [mode, expected] of [['talker_alias', 'Engine 4'], ['source_alias', 'Dispatch radio'],
+  ['both', 'Dispatch radio · Engine 4']]) {
+  sourceNameMode = mode;
+  const suggestion = context.activityIdentitySuggestion(namedRadio, 'radio', systemContext, true);
+  assert.equal(suggestion.alias, expected, 'Source suggestions follow the shared source-name preference.');
+  assert.equal(suggestion.key, namedRadio.identity_key, 'Preferred display names never replace identity keys.');
+  assert.equal(suggestion.id, 202);
+  assert.equal(context.activityIdentityChipValue(suggestion), `202 · ${expected}`,
+    'Resolved source chips show the same preferred name and retain the exact ID.');
+  assert.equal(context.activityIdentitySuggestion(namedRadio, 'radio', systemContext, false).alias,
+    'Dispatch radio', 'Destination radio names retain configured-alias priority.');
+}
+sourceNameMode = 'talker_alias';
+assert.equal(context.activityIdentitySuggestion({ ...namedRadio, last_talker_alias: '' }, 'radio',
+  systemContext, true).alias, 'Dispatch radio', 'Missing OTA names fall back to the configured alias.');
+sourceNameMode = 'source_alias';
+assert.equal(context.activityIdentitySuggestion({ ...namedRadio, alias_name: '' }, 'radio',
+  systemContext, true).alias, 'Engine 4', 'Missing configured aliases fall back to the OTA name.');
+sourceNameMode = 'both';
+assert.equal(context.activityIdentitySuggestion({ ...namedRadio, last_talker_alias: 'dispatch RADIO' },
+  'radio', systemContext, true).alias, 'Dispatch radio', 'Both mode shows duplicate names once.');
+assert.equal(context.activityIdentitySuggestion({ ...namedRadio, alias_name: '', last_talker_alias: '' },
+  'radio', systemContext, true).label, 'Radio 202', 'An unnamed identity remains selectable by its ID.');
+sourceNameMode = 'talker_alias';
 assert.equal(nativeSystemCapabilities.timeslot, true,
   'Existing P25 timeslot deep links must remain supported.');
 assert.equal(nativeSystemCapabilities.timeslotFilter, false,

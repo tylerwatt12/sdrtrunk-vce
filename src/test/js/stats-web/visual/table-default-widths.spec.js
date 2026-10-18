@@ -120,7 +120,7 @@ for (const presentation of [
     await expect(channel).toContainText(channelName);
     await expect(channel).toContainText('851.01250 MHz · LCN 0-1234 · Slot 2');
     await expectReadableCell(table, 'channel', 320, 4);
-    await expectReadableCell(table, 'source', 220, 1);
+    await expectReadableCell(table, 'source', 240, 3);
     await expect(table.locator('tbody [data-column="source"]')).toContainText('00002.002.1234567');
     const stack = channel.locator('.activity-cell-action-content');
     await expect(stack).toHaveCSS('display', 'grid');

@@ -15,6 +15,7 @@ async function installApplication(page, theme = 'light') {
   const file = path.resolve(__dirname, '../../../../../stats-web/assets/core/preference-schema.js');
   const preferences = structuredClone((await import(pathToFileURL(file).href)).defaults);
   preferences.appearance.theme = theme;
+  preferences.presentation.source_name_display = 'source_alias';
   const state = { fixture, preferences, revision: 1 };
   await page.route('**/api/v1/me/preferences', async (route) => {
     if (route.request().method() === 'PUT') {
@@ -103,7 +104,7 @@ test('Activity arrows reveal clipped columns, track both ends, and preserve the 
   await page.goto(`/app.html?${activityQuery}`);
   const parts = tableParts(page, 'activity');
   await expect(parts.table.locator('tbody tr[data-id="1"]')).toHaveCount(1);
-  await expect(parts.table.locator('tbody [data-column="source-alias"]')).toContainText('Engine 4 Portable');
+  await expect(parts.table.locator('tbody [data-column="source"]')).toContainText('Engine 4 Portable');
   await expectBoundary(parts, 'left');
   await expect(parts.wrapper).toHaveCSS('overflow-x', 'auto');
   const initial = await position(parts.wrapper);
@@ -139,7 +140,7 @@ test('table keyboard scrolling leaves column-resizer arrows available and tracks
   await handle.press('ArrowRight');
   await expect.poll(() => state.preferences.tables.activity?.column_widths.channel).toBe(330);
   expect((await position(parts.wrapper)).left).toBe(before.left);
-  await hideColumns(parts, page, ['source-alias', 'source-ota-alias', 'target-alias']);
+  await hideColumns(parts, page, ['source', 'target']);
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 2560, height: 900 });
   await expect(parts.controls).toBeHidden();

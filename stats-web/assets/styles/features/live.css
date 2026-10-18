@@ -1128,60 +1128,21 @@ body[data-view="live"] .channel-diagnostic-readouts {
     text-align: right;
   }
 
-  .channels-live-table td[data-column="source-alias"],
-  .channels-live-table td[data-column="target-alias"] {
-    order: 20;
-    font-size: var(--font-size-body);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .channels-live-table td[data-column="source-alias"] {
-    grid-column: 1 / span 4;
-  }
-
-  .channels-live-table td[data-column="target-alias"] {
-    grid-column: 7 / span 4;
-  }
-
   .channels-live-table td[data-column="source"],
   .channels-live-table td[data-column="target"] {
     order: 20;
-    color: var(--muted);
-    font-size: var(--font-size-meta);
-  }
-
-  .channels-live-table td[data-column="source"] {
-    grid-column: 5 / span 2;
-  }
-
-  .channels-live-table td[data-column="target"] {
-    grid-column: 11 / span 2;
-  }
-
-  .channels-live-table tr:has(td[data-column="source-alias"]:not(:empty)) td[data-column="source"],
-  .channels-live-table tr:has(td[data-column="target-alias"]:not(:empty)) td[data-column="target"] {
-    display: none;
-  }
-
-  .channels-live-table tr:has(td[data-column="source-alias"]:not(:empty)) td[data-column="source-alias"],
-  .channels-live-table tr:not(:has(td[data-column="source-alias"]:not(:empty))) td[data-column="source"] {
-    grid-column: 1 / span 6;
-  }
-
-  .channels-live-table tr:has(td[data-column="target-alias"]:not(:empty)) td[data-column="target-alias"],
-  .channels-live-table tr:not(:has(td[data-column="target-alias"]:not(:empty))) td[data-column="target"] {
-    grid-column: 7 / span 6;
-  }
-
-  .channels-live-table tr:not(:has(td[data-column="source-alias"]:not(:empty))) td[data-column="source"],
-  .channels-live-table tr:not(:has(td[data-column="target-alias"]:not(:empty))) td[data-column="target"] {
-    color: var(--ink);
     font-size: var(--font-size-body);
     font-weight: var(--font-weight-medium);
   }
 
-  .channels-live-table td[data-column="source-alias"]::before,
-  .channels-live-table td[data-column="target-alias"]::before,
+  .channels-live-table td[data-column="source"] {
+    grid-column: 1 / span 6;
+  }
+
+  .channels-live-table td[data-column="target"] {
+    grid-column: 7 / span 6;
+  }
+
   .channels-live-table td[data-column="source"]::before,
   .channels-live-table td[data-column="target"]::before,
   .channels-live-table td[data-column="signal"]::before,
@@ -1193,18 +1154,8 @@ body[data-view="live"] .channel-diagnostic-readouts {
     font-weight: var(--font-weight-medium);
   }
 
-  .channels-live-table td[data-column="source-alias"]::before { content: "From"; }
-  .channels-live-table td[data-column="target-alias"]::before { content: "To"; }
-  .channels-live-table td[data-column="source"]::before,
-  .channels-live-table td[data-column="target"]::before { content: "#"; }
-
-  .channels-live-table tr:not(:has(td[data-column="source-alias"]:not(:empty))) td[data-column="source"]::before {
-    content: "From";
-  }
-
-  .channels-live-table tr:not(:has(td[data-column="target-alias"]:not(:empty))) td[data-column="target"]::before {
-    content: "To";
-  }
+  .channels-live-table td[data-column="source"]::before { content: "From"; }
+  .channels-live-table td[data-column="target"]::before { content: "To"; }
 
   .channels-live-table td[data-column="channel"],
   .channels-live-table td[data-column="frequency"] {

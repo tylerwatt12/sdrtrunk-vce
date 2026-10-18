@@ -1846,7 +1846,8 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   await expect(rows).toHaveCount(5);
   await expect(rows.filter({ visible: true })).toHaveCount(4);
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true');
-  await expect(rows.first().locator('[data-column="source-alias"]')).toHaveCount(1);
+  await expect(rows.first().locator('[data-column="source"]')).toHaveCount(1);
+  await expect(table.locator('[data-column="source-alias"], [data-column="target-alias"]')).toHaveCount(0);
 
   const control = rows.nth(0);
   const labeled = rows.nth(1);
@@ -1854,12 +1855,15 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   const fallback = rows.nth(3);
   await expect(control.locator('[data-column="channel"]')).toHaveText('LCN 1-1772');
   await expect(control.locator('[data-column="channel"]')).toBeHidden();
-  await expect(labeled.locator('[data-column="source-alias"]')).toHaveText('Engine 4');
-  await expect(labeled.locator('[data-column="target-alias"]')).toHaveText('Fire Dispatch');
-  await expect(labeled.locator('[data-column="source"]')).toBeHidden();
-  await expect(labeled.locator('[data-column="target"]')).toBeHidden();
-  await expect(otaLabeled.locator('[data-column="source-alias"]')).toHaveText('Unit 312');
-  await expect(otaLabeled.locator('[data-column="source"]')).toBeHidden();
+  await expect(labeled.locator('[data-column="source"] .identity-summary-primary')).toHaveText('Engine 4');
+  await expect(labeled.locator('[data-column="source"] .identity-summary-context')).toHaveText('30412');
+  await expect(labeled.locator('[data-column="target"] .identity-summary-primary')).toHaveText('Fire Dispatch');
+  await expect(labeled.locator('[data-column="target"] .identity-summary-context')).toHaveText('12011');
+  await expect(labeled.locator('[data-column="source"]')).toBeVisible();
+  await expect(labeled.locator('[data-column="target"]')).toBeVisible();
+  await expect(otaLabeled.locator('[data-column="source"] .identity-summary-primary')).toHaveText('Unit 312');
+  await expect(otaLabeled.locator('[data-column="source"] .identity-summary-context')).toHaveText('312');
+  await expect(otaLabeled.locator('[data-column="source"]')).toBeVisible();
   await expect(otaLabeled.locator('[data-column="target"]')).toBeVisible();
   await expect(fallback.locator('[data-column="source"]')).toHaveText('318');
   await expect(fallback.locator('[data-column="target"]')).toHaveText('12044');
@@ -1899,7 +1903,7 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
     const row = document.createElement('tr');
     const cell = document.createElement('td');
     cell.className = 'empty';
-    cell.colSpan = 11;
+    cell.colSpan = 9;
     cell.textContent = 'No channels observed';
     row.append(cell);
     body.replaceChildren(row);

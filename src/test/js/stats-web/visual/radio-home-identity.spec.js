@@ -102,7 +102,9 @@ for (const presentation of presentations) {
     await page.goto(`/app.html?view=radio&${scope}&identity_key=${radioKey}&tab=activity`);
     await expect(page.locator('#content')).toContainText('Engine 4');
     await expect(page.locator('#content')).not.toContainText('00001.001.30914');
-    const sourceLink = page.locator('#content a[href]').filter({ hasText: /^30914$/ }).first();
+    const sourceCell = page.locator('[data-column="source"]');
+    await expect(sourceCell.locator('.identity-summary-context')).toHaveText('30914');
+    const sourceLink = sourceCell.locator('.activity-cell-action-link');
     await expect(sourceLink).toBeVisible();
     expect(new URL(await sourceLink.getAttribute('href'), page.url()).searchParams.get('identity_key')).toBe(radioKey);
     await expectNoHorizontalOverflow(page, '#content');
