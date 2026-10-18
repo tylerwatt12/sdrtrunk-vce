@@ -213,6 +213,110 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void callCountCoverageKeepsSummaryCollectionDatesSeparateFromAvailableChannelHistory() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE database_metadata SET value='500' WHERE key='" +
+                ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY + "'");
+            statement.executeUpdate("UPDATE database_metadata SET value='700' WHERE key='" +
+                ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY + "'");
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site (
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (711,71,1,1,1000,4000), (712,71,1,2,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_bucket(radio_system_id,bucket_start_ms,logical_call_count)
+                VALUES (71,7200000,2), (71,10800000,3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_bucket(radio_system_id,learned_site_id,bucket_start_ms,
+                    observed_call_count)
+                VALUES (71,711,3600000,3), (71,712,10800000,5)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(radio_system_id,learned_site_id,channel_id,
+                    bucket_start_ms,identity_role_code,identity_kind_code,identity_summary_id,
+                    last_observed_at_ms,observed_call_count)
+                VALUES (71,711,71,3600000,1,1,7101,3610000,3),
+                       (71,712,72,10800000,1,1,7101,10812000,5),
+                       (71,711,71,0,2,2,7102,12000000,100)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket(radio_system_id,channel_id,bucket_start_ms,
+                    grant_count,join_count)
+                VALUES (71,71,7200000,1,2), (71,72,10800000,3,4)
+                """);
+        }
+
+        long requestedAt = System.currentTimeMillis();
+        Map<String,Object> system = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
+        Map<String,Object> group = map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY,
+            p25IdentityKey(1,101)), "group_identity");
+        Map<String,Object> radio = map(mDatabase.radio(RADIO_SYSTEM_KEY,p25IdentityKey(2,202)), "radio");
+        for(Map<String,Object> detail: List.of(system,group,radio))
+        {
+            assertEquals(500,number(detail.get("call_totals_started_at_ms")));
+            assertTrue(number(detail.get("call_totals_as_of_ms")) >= requestedAt);
+        }
+        assertEquals(5,number(system.get("logical_call_count")));
+        assertEquals(7200000,number(system.get("calls_from_ms")));
+        assertEquals(10800000,number(system.get("calls_through_hour_ms")));
+        assertEquals(3600000,number(system.get("channel_observations_from_ms")));
+        assertEquals(10800000,number(system.get("channel_observations_through_hour_ms")));
+        assertEquals(8,number(group.get("channel_observation_count")));
+        assertEquals(3600000,number(group.get("channel_observations_from_ms")));
+        assertEquals(10812000,number(group.get("channel_observations_to_ms")));
+        assertEquals(700,number(group.get("signaling_totals_started_at_ms")));
+        assertEquals(700,number(radio.get("signaling_totals_started_at_ms")));
+        assertEquals(7200000,number(system.get("signaling_from_ms")));
+        assertEquals(10800000,number(system.get("signaling_through_hour_ms")));
+        assertEquals(1000,number(group.get("first_seen_ms")),
+            "identity activity dates remain independent of the call count's coverage");
+
+        Map<String,Object> activity = mDatabase.radioSystemGroupIdentityActivity(RADIO_SYSTEM_KEY,
+            p25IdentityKey(1,101),request("/?range=24h"));
+        assertEquals(500,number(activity.get("call_totals_started_at_ms")));
+        assertEquals(700,number(activity.get("signaling_totals_started_at_ms")));
+        assertTrue(number(activity.get("counts_as_of_ms")) >= requestedAt);
+        Map<String,Object> unobserved = map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY,
+            p25IdentityKey(1,999)), "group_identity");
+        assertEquals(0,number(unobserved.get("channel_observation_count")));
+        assertNull(unobserved.get("channel_observations_from_ms"));
+        assertNull(unobserved.get("channel_observations_to_ms"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            try(ResultSet plan = statement.executeQuery("""
+                EXPLAIN QUERY PLAN SELECT coalesce(SUM(observed_call_count),0),
+                    MIN(bucket_start_ms),MAX(last_observed_at_ms)
+                FROM p25_site_call_identity_bucket INDEXED BY idx_p25_site_call_identity_identity
+                WHERE identity_summary_id=7101 AND radio_system_id=71 AND identity_role_code=1
+                """))
+            {
+                assertTrue(plan.next());
+                String detail = plan.getString("detail");
+                assertTrue(detail.contains("SEARCH") && detail.contains("identity_summary_id=?"),detail);
+            }
+            statement.executeUpdate("DELETE FROM p25_site_call_identity_bucket WHERE identity_summary_id=7101");
+            statement.executeUpdate("DELETE FROM trunked_logical_call_bucket");
+        }
+        Map<String,Object> afterPruning = map(mDatabase.radioSystemGroupIdentity(RADIO_SYSTEM_KEY,
+            p25IdentityKey(1,101)), "group_identity");
+        assertEquals(3,number(afterPruning.get("logical_call_count")));
+        assertEquals(500,number(afterPruning.get("call_totals_started_at_ms")));
+        assertEquals(0,number(afterPruning.get("channel_observation_count")));
+        assertNull(afterPruning.get("channel_observations_from_ms"));
+        assertNull(afterPruning.get("channel_observations_to_ms"));
+        Map<String,Object> emptySystem = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
+        assertNull(emptySystem.get("calls_from_ms"));
+        assertNull(emptySystem.get("calls_through_hour_ms"));
+    }
+
+    @Test
     void radioSystemDirectoryOwnsSystemsWhileSavedChannelsOwnConfiguration()
     {
         Map<String,Object> directory = mDatabase.radioSystemDirectory(request("/"));
@@ -496,11 +600,18 @@ class StatsWebDatabaseTest
             "dmr:tier3:small:42", dmrRadioKey), "radio").get("system_name"));
         assertDmrNativeIdentity(rows(mDatabase.radioSystemRelationships(
             "dmr:tier3:small:42", request("/?group_identity_key=" + dmrGroupKey))).getFirst());
-        List<Map<String,Object>> observedDmr = rows(mDatabase.observedGroupIdentities(81, request("/")));
+        long observedRequestedAt = System.currentTimeMillis();
+        Map<String,Object> observedDmrPage = mDatabase.observedGroupIdentities(81, request("/"));
+        List<Map<String,Object>> observedDmr = rows(observedDmrPage);
         assertEquals(1, observedDmr.size(),
             "Two channels using the list must not duplicate one native system identity");
         assertDmrNativeIdentity(observedDmr.getFirst());
         assertEquals("Shared DMR", observedDmr.getFirst().get("system_name"));
+        long observedAsOf = number(observedDmrPage.get("counts_as_of_ms"));
+        assertTrue(observedAsOf >= observedRequestedAt && observedAsOf <= System.currentTimeMillis());
+        assertTrue(observedDmr.stream().allMatch(row -> number(row.get("counts_as_of_ms")) == observedAsOf),
+            "all current-hour rows need one shared snapshot time to prevent future popup end dates");
+        assertEquals(bucket,number(observedDmr.getFirst().get("last_seen_ms")));
         assertEquals(1, number(mDatabase.observedGroupIdentities(81,
             request("/?search=Shared%20DMR")).get("total_count")));
         assertNull(observedDmr.getFirst().get("channel_id"));
@@ -1752,6 +1863,9 @@ class StatsWebDatabaseTest
         assertEquals(0, number(firstGroup.get("offset")));
         assertEquals(true, firstGroup.get("has_more"));
         assertEquals(1, number(firstGroup.get("next_offset")));
+        assertEquals(Math.floorDiv(number(firstGroup.get("to_ms")),3_600_000L) * 3_600_000L -
+            23 * 3_600_000L,number(firstGroup.get("from_ms")),
+            "reported coverage must use the same 24 complete/current hour buckets as the query");
 
         StatsRequest secondGroupRequest = request("/?sort=alias&direction=asc&range=24h&limit=1&offset=1");
         Map<String,Object> secondGroup = mDatabase.channelGroupIdentities(P25_CHANNEL_A, secondGroupRequest);

@@ -1705,9 +1705,11 @@ class StatsWebDatabase
 
             long totalCount = rows.isEmpty() ? 0 : ((Number)rows.getFirst()
                 .getOrDefault("result_total_count", 0)).longValue();
+            long countsAsOfMilliseconds = System.currentTimeMillis();
 
             for(Map<String,Object> row: rows)
             {
+                row.put("counts_as_of_ms", countsAsOfMilliseconds);
                 row.remove("has_exact_definition");
                 row.remove("result_total_count");
                 String radioSystemKey = textValue(row.get("radio_system_key"));
@@ -1733,6 +1735,7 @@ class StatsWebDatabase
             response.put("total_count", totalCount);
             response.put("alias_list", aliasList);
             response.put("include_exact", includeExact);
+            response.put("counts_as_of_ms", countsAsOfMilliseconds);
             return response;
         });
     }
@@ -1816,8 +1819,10 @@ class StatsWebDatabase
             // A newly added alias may shrink the result while the browser is on a later page.
             totalCount = scalarLong(connection, countSql, countParameters.toArray());
         }
+        long countsAsOfMilliseconds = System.currentTimeMillis();
         for(Map<String,Object> row: rows)
         {
+            row.put("counts_as_of_ms", countsAsOfMilliseconds);
             row.remove("result_total_count");
             WebEntityRef channel = WebEntityRef.channel(textValue(row.get("configuration_id")));
             WebEntityRef.put(row, "channel_entity_ref", channel);
@@ -1827,6 +1832,7 @@ class StatsWebDatabase
         response.put("total_count", totalCount);
         response.put("alias_list", aliasList);
         response.put("include_exact", includeExact);
+        response.put("counts_as_of_ms", countsAsOfMilliseconds);
         return response;
     }
 
@@ -2420,7 +2426,9 @@ class StatsWebDatabase
                 SELECT coalesce(SUM(logical_call_count), 0) AS logical_call_count,
                     coalesce(SUM(recorded_output_count), 0) AS recorded_logical_call_count,
                     coalesce(SUM(streamed_output_count), 0) AS stream_submitted_logical_call_count,
-                    coalesce(SUM(encrypted_logical_call_count), 0) AS encrypted_logical_call_count
+                    coalesce(SUM(encrypted_logical_call_count), 0) AS encrypted_logical_call_count,
+                    MIN(bucket_start_ms) AS calls_from_ms,
+                    MAX(bucket_start_ms) AS calls_through_hour_ms
                 FROM trunked_logical_call_bucket
                 WHERE radio_system_id = ?
                 """, system.get("radio_system_id"));
@@ -2435,7 +2443,9 @@ class StatsWebDatabase
                 List<Map<String,Object>> channelActivity = queryRows(connection, """
                     SELECT coalesce(SUM(observed_call_count), 0) AS channel_observation_count,
                         coalesce(SUM(encrypted_observed_call_count), 0)
-                            AS encrypted_channel_observation_count
+                            AS encrypted_channel_observation_count,
+                        MIN(bucket_start_ms) AS channel_observations_from_ms,
+                        MAX(bucket_start_ms) AS channel_observations_through_hour_ms
                     FROM p25_site_call_bucket
                     WHERE radio_system_id = ?
                     """, system.get("radio_system_id"));
@@ -2448,13 +2458,15 @@ class StatsWebDatabase
             {
                 system.put("channel_observation_count", system.get("logical_call_count"));
                 system.put("encrypted_channel_observation_count", system.get("encrypted_logical_call_count"));
+                system.put("channel_observations_from_ms", system.get("calls_from_ms"));
+                system.put("channel_observations_through_hour_ms", system.get("calls_through_hour_ms"));
             }
 
+            attachCallTotalsCoverage(connection, system);
             system.put("capabilities", radioSystemCapabilities((int)number(system.get("protocol_code"))));
             WebEntityRef.put(system, WebEntityRef.radioSystem(radioSystemKey));
             attachRadioSystemAliasLists(connection, List.of(system));
-            List<Map<String,Object>> actionCounts = systemActionCounts(connection,
-                number(system.get("radio_system_id")));
+            List<Map<String,Object>> actionCounts = systemActionCounts(connection, system);
             system.put("action_counts", actionCounts);
             response.put("radio_system", system);
             response.put("action_counts", actionCounts);
@@ -3558,14 +3570,7 @@ class StatsWebDatabase
                        AND presence.radio_identity_id = affiliation.radio_identity_id
                       WHERE summary.identity_kind_code = 1
                         AND affiliation.radio_system_id = summary.radio_system_id
-                        AND affiliation.talkgroup_identity_id = summary.id) AS affiliated_channels,
-                    CASE WHEN system.protocol_code = 1 THEN coalesce((
-                        SELECT SUM(site_calls.observed_call_count)
-                        FROM p25_site_call_identity_bucket site_calls
-                        WHERE site_calls.radio_system_id = summary.radio_system_id
-                          AND site_calls.identity_role_code = 1
-                          AND site_calls.identity_summary_id = summary.id
-                    ), 0) ELSE summary.logical_call_count END AS channel_observation_count
+                        AND affiliation.talkgroup_identity_id = summary.id) AS affiliated_channels
                 FROM radio_system_identity_summary summary
                 JOIN radio_system system ON system.id = summary.radio_system_id
                 LEFT JOIN p25_subscriber_identity canonical_subscriber
@@ -3585,6 +3590,9 @@ class StatsWebDatabase
             Map<String,Object> row = rows.getFirst();
             row.put("system_name", radioSystem.get("system_name"));
 
+            attachCallTotalsCoverage(connection, row);
+            row.put("signaling_totals_started_at_ms", radioSystemMetricStartedAt(connection));
+            attachGroupChannelObservationCoverage(connection, row);
             row.put("capabilities", groupIdentityCapabilities((int)number(row.get("protocol_code")),
                 (int)number(row.get("group_identity_kind_code"))));
             WebEntityRef.put(row, identityKind == IDENTITY_KIND_PATCH_GROUP ?
@@ -3730,6 +3738,9 @@ class StatsWebDatabase
             response.put("to_ms", toMilliseconds);
             response.put("bucket_ms", bucketMilliseconds);
             response.put("logical_metric_start_ms", radioSystemMetricStartedAt(connection));
+            response.put("call_totals_started_at_ms", trunkedLogicalCallMetricsStartedAt(connection));
+            response.put("signaling_totals_started_at_ms", radioSystemMetricStartedAt(connection));
+            response.put("counts_as_of_ms", System.currentTimeMillis());
             response.put("totals", totals);
             response.put("series", series);
             return response;
@@ -3790,6 +3801,8 @@ class StatsWebDatabase
             Map<String,Object> row = rows.getFirst();
             row.put("system_name", radioSystem.get("system_name"));
 
+            attachCallTotalsCoverage(connection, row);
+            row.put("signaling_totals_started_at_ms", radioSystemMetricStartedAt(connection));
             row.put("capabilities", radioSystemCapabilities((int)number(row.get("protocol_code"))));
             WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
                 textValue(row.get("identity_key"))));
@@ -4308,12 +4321,15 @@ class StatsWebDatabase
         return read(connection -> {
             WebConfiguredEntityRepository.ConfiguredChannel configured =
                 mConfiguredEntities.requireChannel(connection, configurationId);
+            long nowMilliseconds = System.currentTimeMillis();
+            long throughMilliseconds = Math.floorDiv(nowMilliseconds, HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
+            long bucketCount = Math.max(1, (range.milliseconds() + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
             List<Map<String,Object>> rows = queryTrunkedChannelGroupIdentities(connection, configured, request,
-                request.limit() + 1, request.offset());
+                request.limit() + 1, request.offset(), throughMilliseconds);
             Map<String,Object> response = new LinkedHashMap<>(page(rows, request));
             response.put("range", range.label());
-            response.put("from_ms", System.currentTimeMillis() - range.milliseconds());
-            response.put("to_ms", System.currentTimeMillis());
+            response.put("from_ms", throughMilliseconds - (bucketCount - 1) * HOUR_MILLISECONDS);
+            response.put("to_ms", nowMilliseconds);
             response.put("bucket_ms", HOUR_MILLISECONDS);
             response.put("logical_metric_start_ms", radioSystemMetricStartedAt(connection));
             return response;
@@ -4324,8 +4340,16 @@ class StatsWebDatabase
         WebConfiguredEntityRepository.ConfiguredChannel configured, StatsRequest request, int limit, int offset)
         throws SQLException
     {
-        ActivityRange range = activityRange(request);
         long throughMilliseconds = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
+        return queryTrunkedChannelGroupIdentities(connection, configured, request, limit, offset,
+            throughMilliseconds);
+    }
+
+    private List<Map<String,Object>> queryTrunkedChannelGroupIdentities(Connection connection,
+        WebConfiguredEntityRepository.ConfiguredChannel configured, StatsRequest request, int limit, int offset,
+        long throughMilliseconds) throws SQLException
+    {
+        ActivityRange range = activityRange(request);
         long bucketCount = Math.max(1, (range.milliseconds() + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
         long fromMilliseconds = throughMilliseconds - (bucketCount - 1) * HOUR_MILLISECONDS;
         Long radioSystemId = configured.radioSystemId();
@@ -7745,6 +7769,33 @@ class StatsWebDatabase
             "_observation_count";
     }
 
+    /** Collection dates describe summary counters, independently of first/last call or signaling activity. */
+    private static void attachCallTotalsCoverage(Connection connection, Map<String,Object> row) throws SQLException
+    {
+        row.put("call_totals_started_at_ms", trunkedLogicalCallMetricsStartedAt(connection));
+        row.put("call_totals_as_of_ms", System.currentTimeMillis());
+    }
+
+    /** Keep the channel-observation count and its date range on the same identity-scoped bucket rows. */
+    private static void attachGroupChannelObservationCoverage(Connection connection, Map<String,Object> row)
+        throws SQLException
+    {
+        if(number(row.get("protocol_code")) != StatsApiProtocol.P25.databaseCode())
+        {
+            row.put("channel_observation_count", row.get("logical_call_count"));
+            return;
+        }
+
+        Map<String,Object> observations = queryRows(connection, """
+            SELECT coalesce(SUM(observed_call_count), 0) AS channel_observation_count,
+                MIN(bucket_start_ms) AS channel_observations_from_ms,
+                MAX(last_observed_at_ms) AS channel_observations_to_ms
+            FROM p25_site_call_identity_bucket INDEXED BY idx_p25_site_call_identity_identity
+            WHERE identity_summary_id = ? AND radio_system_id = ? AND identity_role_code = ?
+            """, row.get("identity_summary_id"), row.get("radio_system_id"), IDENTITY_ROLE_DESTINATION).getFirst();
+        row.putAll(observations);
+    }
+
     private static long trunkedLogicalCallMetricsStartedAt(Connection connection) throws SQLException
     {
         return scalarLong(connection, """
@@ -7957,17 +8008,18 @@ class StatsWebDatabase
         return rows.stream().filter(row -> number(row.get("protocol_code")) == protocolCode).toList();
     }
 
-    private static List<Map<String,Object>> systemActionCounts(Connection connection, long radioSystemId)
+    private static List<Map<String,Object>> systemActionCounts(Connection connection, Map<String,Object> system)
         throws SQLException
     {
         String sums = GROUP_IDENTITY_SIGNALING_FIELDS.stream()
             .map(field -> "SUM(bucket." + field + ") AS " + field)
             .collect(java.util.stream.Collectors.joining(", "));
         List<Map<String,Object>> totals = queryRows(connection, """
-            SELECT %s
+            SELECT %s, MIN(bucket.bucket_start_ms) AS signaling_from_ms,
+                MAX(bucket.bucket_start_ms) AS signaling_through_hour_ms
             FROM trunked_signaling_activity_bucket bucket
             WHERE bucket.radio_system_id = ?
-            """.formatted(sums), radioSystemId);
+            """.formatted(sums), system.get("radio_system_id"));
 
         if(totals.isEmpty())
         {
@@ -7975,6 +8027,8 @@ class StatsWebDatabase
         }
 
         Map<String,Object> row = totals.getFirst();
+        system.put("signaling_from_ms", row.get("signaling_from_ms"));
+        system.put("signaling_through_hour_ms", row.get("signaling_through_hour_ms"));
         List<Map<String,Object>> result = new ArrayList<>();
 
         for(String field: GROUP_IDENTITY_SIGNALING_FIELDS)
