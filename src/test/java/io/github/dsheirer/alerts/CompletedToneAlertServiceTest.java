@@ -37,6 +37,8 @@ class CompletedToneAlertServiceTest
             assertFalse(sequence.snapshot().recordAudio());
             assertEquals(token, DecodeEventViewService.completedToneView(sequence, null).alertFacts().activityCallToken());
             service.receiveCompletedToneSequence(sequence); service.drain();
+            assertTrue(service.pendingDeliveries(1).isEmpty());
+            clock.addAndGet(TopicAlertService.RECORDING_WAIT_MILLISECONDS);
             String alertId = service.pendingDeliveries(1).getFirst().alertId();
             assertEquals(io.github.dsheirer.audio.call.SourceCallReference.fromToken(token), service.sourceCallUuid(alertId).orElseThrow());
         }

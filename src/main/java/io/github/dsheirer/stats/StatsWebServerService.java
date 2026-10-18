@@ -222,6 +222,7 @@ public class StatsWebServerService implements AutoCloseable
     private final PushDeliveryService mPushDeliveryService;
     private final Listener<DecodeEventViewService.EventView> mTopicAlertEventListener;
     private boolean mTopicAlertObservationActive;
+    private AutoCloseable mRecordingReadySubscription;
     private final SupportBundleService mSupportBundleService;
     private final ApplicationLogService mApplicationLogService;
     private final WebDiagnosticLogService mWebDiagnosticLogService;
@@ -498,6 +499,7 @@ public class StatsWebServerService implements AutoCloseable
         {
             topicAlerts.setEventValidator(mDecodeEventViewService::isCurrent);
             topicAlerts.setToneProjector(mDecodeEventViewService::completedToneView);
+            topicAlerts.setCallProjector(mDecodeEventViewService::completedCallView);
         }
         mSupportBundleService = new SupportBundleService(mWebAccessDatabasePath,
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog(),
@@ -565,9 +567,32 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     /** Shares the recording worker's separate catalog with request handlers; it is owned by the receiver. */
-    public void setManagedRecordingCatalog(ManagedRecordingCatalog catalog)
+    public synchronized void setManagedRecordingCatalog(ManagedRecordingCatalog catalog)
     {
+        closeRecordingReadySubscription();
         mManagedRecordingCatalog = catalog;
+        if(!mClosed && catalog != null && mTopicAlertService != null)
+        {
+            try
+            {
+                mRecordingReadySubscription = catalog.addRecordingReadyListener(ready -> {
+                    if(!mClosed && mManagedRecordingCatalog == catalog)
+                        mTopicAlertService.receiveRecordingReady(ready.sourceCallReferences());
+                });
+            }
+            catch(RuntimeException unavailable)
+            {
+                mLog.warn("Recording readiness is unavailable; alerts will use their audio wait timeout", unavailable);
+            }
+        }
+    }
+
+    private void closeRecordingReadySubscription()
+    {
+        if(mRecordingReadySubscription == null) return;
+        try { mRecordingReadySubscription.close(); }
+        catch(Exception failure) { mLog.warn("Unable to remove the recording readiness observer", failure); }
+        mRecordingReadySubscription = null;
     }
 
     public void setManagedRecordingTranscriptionService(ManagedRecordingTranscriptionService service)
@@ -2650,6 +2675,12 @@ public class StatsWebServerService implements AutoCloseable
         mWebCallService.receive(call);
     }
 
+    /** The completed-call coordinator invokes this independently of audio, recording policy and Activity logging. */
+    public void receiveCompletedCallForAlerts(CompletedAudioCall call)
+    {
+        if(!mClosed && mTopicAlertService != null) mTopicAlertService.receiveCompletedCall(call);
+    }
+
     /**
      * Adds the application-owned audio/output queue sources after the completed-call coordinator is constructed.
      */
@@ -2859,6 +2890,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         mClosed = true;
+        closeRecordingReadySubscription();
         mManagedRecordingMaintenance.close();
         mSupportBundleService.close();
         if(mTunerAllocationFrequencySeedService != null) mTunerAllocationFrequencySeedService.close();

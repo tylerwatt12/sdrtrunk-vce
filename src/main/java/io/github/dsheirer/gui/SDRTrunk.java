@@ -351,7 +351,10 @@ public class SDRTrunk
         }
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
-            mStatsWebServerService::receive, mReceiverActivityService::receiveResolvedCall,
+            mStatsWebServerService::receive, call -> {
+                try { mStatsWebServerService.receiveCompletedCallForAlerts(call); }
+                finally { mReceiverActivityService.receiveResolvedCall(call); }
+            },
             mLogicalCallDiagnosticService);
         mStatsWebServerService.setLogicalCallDiagnostics(mLogicalCallDiagnosticService, mAudioCallCoordinator);
 

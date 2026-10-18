@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -80,6 +81,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     private final Object mQueueHandoff = new Object();
     private final Object mTranscriptionHandoff = new Object();
     private final ReentrantLock mMaintenanceLock = new ReentrantLock();
+    private final CopyOnWriteArrayList<RecordingReadyListener> mRecordingReadyListeners = new CopyOnWriteArrayList<>();
     private volatile boolean mAccepting = true;
 
     public ManagedRecordingCatalog(Path databaseFile, Path recordingsRoot) throws SQLException, IOException
@@ -141,6 +143,48 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     }
 
     long droppedToneObservations() { return mDroppedTones.get(); }
+
+    /** Compact readiness fact emitted only after the saved file's catalog transaction has committed. */
+    public record RecordingReady(long recordingId, List<String> sourceCallReferences)
+    {
+        public RecordingReady
+        {
+            if(recordingId <= 0) throw new IllegalArgumentException("Recording ID is required");
+            sourceCallReferences = ManagedRecordingSourceReferences.copy(sourceCallReferences, 128);
+        }
+    }
+
+    /** Listeners must only offer to their own bounded worker; never perform notification delivery here. */
+    public synchronized AutoCloseable addRecordingReadyListener(Listener<RecordingReady> listener)
+    {
+        if(!mAccepting) throw new IllegalStateException("Recording catalog is closed");
+        if(mRecordingReadyListeners.size() >= 8) throw new IllegalStateException("Recording readiness listener bound reached");
+        var registration = new RecordingReadyListener(Objects.requireNonNull(listener));
+        mRecordingReadyListeners.add(registration);
+        return () -> {
+            registration.active.set(false);
+            mRecordingReadyListeners.remove(registration);
+        };
+    }
+
+    private void notifyRecordingReady(long recordingId, List<String> references)
+    {
+        if(references.isEmpty()) return;
+        var ready = new RecordingReady(recordingId, references);
+        for(var registration: mRecordingReadyListeners)
+        {
+            if(!registration.active.get()) continue;
+            try { registration.listener.receive(ready); }
+            catch(RuntimeException failure) { mLog.warn("Optional recording readiness observer failed", failure); }
+        }
+    }
+
+    private static final class RecordingReadyListener
+    {
+        private final Listener<RecordingReady> listener;
+        private final AtomicBoolean active = new AtomicBoolean(true);
+        private RecordingReadyListener(Listener<RecordingReady> listener) { this.listener = listener; }
+    }
 
     /**
      * Offers a completed file to the catalog without filesystem or SQLite access. On false, the caller still owns the
@@ -235,6 +279,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             try
             {
                 long recordingId = mStore.insert(metadata);
+                notifyRecordingReady(recordingId, metadata.sourceCallReferences());
                 mToneAssociations.indexed(pending.nativeKey(), recordingId, false);
                 mToneAssociations.completed(pending.initialTones());
                 attachCompletedTones();
@@ -595,7 +640,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     }
 
     @Override
-    public void close()
+    public synchronized void close()
     {
         synchronized(mQueueHandoff)
         {
@@ -629,6 +674,8 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                 Thread.currentThread().interrupt();
             }
             mToneAssociations.clear();
+            mRecordingReadyListeners.forEach(listener -> listener.active.set(false));
+            mRecordingReadyListeners.clear();
             try
             {
                 mStore.close();

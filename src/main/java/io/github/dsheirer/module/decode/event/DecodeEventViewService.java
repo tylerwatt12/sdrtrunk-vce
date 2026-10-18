@@ -11,6 +11,9 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.AmbeToneFrequencyMapping;
 import io.github.dsheirer.audio.tone.PagingToneFrequencyMapping;
@@ -507,18 +510,6 @@ public class DecodeEventViewService implements AutoCloseable
     /** Alias-free callers retain all native call identities and source scope. No live-source lookup is required. */
     public static EventView completedToneView(CompletedToneSequence sequence, AliasModel aliasModel)
     {
-        var snapshot = sequence.snapshot();
-        var source = sequence.callLegSource();
-        IdentifierCollection identifiers = snapshot.identifierCollection();
-        String servingKey = source.radioSystemKey() != null ? source.radioSystemKey() :
-            RadioSystemKey.p25Serving(null, source.p25SiteIdentity(), identifiers);
-        if(servingKey == null && (source.decoderType() == io.github.dsheirer.module.decode.DecoderType.DMR ||
-            source.decoderType() == io.github.dsheirer.module.decode.DecoderType.NXDN))
-            servingKey = RadioSystemKey.effectiveForReceiver(sequence.protocol(), source.identityDomain(),
-                source.channelConfigurationId(), null);
-        Parties from = parties(identifiers, Role.FROM, servingKey, aliasModel);
-        Parties to = parties(identifiers, Role.TO, servingKey, aliasModel);
-        AlertFacts projected = alertFacts(identifiers, null, aliasModel, servingKey);
         LinkedHashSet<String> tones = new LinkedHashSet<>();
         for(var tone: sequence.tones())
         {
@@ -531,31 +522,69 @@ public class DecodeEventViewService implements AutoCloseable
                 AmbeToneFrequencyMapping.nearest(tone.frequenciesMilliHertz().getFirst()).ifPresent(match -> tones.add(match.code()));
             }
         }
+        return completedSnapshotView("completed-tone:" + sequence.callId(), sequence.snapshot(), sequence.protocol(),
+            aliasModel, List.copyOf(tones), false, null);
+    }
+
+    /** Completed-call observer projection of one final logical call. No audio or mutable call object is retained. */
+    public EventView completedCallView(CompletedAudioCall call)
+    {
+        return completedCallView(call, mAliasModel);
+    }
+
+    public static EventView completedCallView(CompletedAudioCall call, AliasModel aliasModel)
+    {
+        java.util.Objects.requireNonNull(call, "Completed call is required");
+        var snapshot = call.snapshot();
+        if(!snapshot.complete()) throw new IllegalArgumentException("Final logical call snapshot is required");
+        var decoder = snapshot.callLegSource().decoderType();
+        Protocol protocol = decoder == io.github.dsheirer.module.decode.DecoderType.P25_PHASE2 ? Protocol.APCO25_PHASE2 :
+            decoder != null ? decoder.getProtocol() : Protocol.UNKNOWN;
+        Long frequency = call.callLegSummaries().stream().filter(leg -> leg.winner())
+            .map(leg -> leg.frequencyHz()).filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        return completedSnapshotView("completed-call:" + call.logicalCallId(), snapshot, protocol, aliasModel,
+            null, true, frequency);
+    }
+
+    private static EventView completedSnapshotView(String eventId, AudioCallSnapshot snapshot, Protocol protocol,
+        AliasModel aliasModel, List<String> tones, boolean includeDcs, Long frequency)
+    {
+        var source = snapshot.callLegSource();
+        IdentifierCollection identifiers = snapshot.identifierCollection();
+        String servingKey = source.radioSystemKey() != null ? source.radioSystemKey() :
+            RadioSystemKey.p25Serving(null, source.p25SiteIdentity(), identifiers);
+        if(servingKey == null && (source.decoderType() == io.github.dsheirer.module.decode.DecoderType.DMR ||
+            source.decoderType() == io.github.dsheirer.module.decode.DecoderType.NXDN))
+            servingKey = RadioSystemKey.effectiveForReceiver(protocol, source.identityDomain(), source.channelConfigurationId(), null);
+        Parties from = parties(identifiers, Role.FROM, servingKey, aliasModel);
+        Parties to = parties(identifiers, Role.TO, servingKey, aliasModel);
+        AlertFacts projected = alertFacts(identifiers, null, aliasModel, servingKey);
         LinkedHashSet<Long> aliasIds = new LinkedHashSet<>(projected.aliasIds());
         var analog = snapshot.analogCallAttribution();
         if(analog != null) for(var match: analog.matches()) if(aliasIds.size() < 64) aliasIds.add(match.aliasId());
         var site = source.p25SiteIdentity();
         String siteId = site != null ? site.rfss() + ":" + site.site() :
             source.servingSiteId() != null ? source.servingSiteId() : projected.siteId();
-        AlertFacts facts = new AlertFacts(List.copyOf(aliasIds), List.copyOf(tones), List.of(), siteId,
+        AlertFacts facts = new AlertFacts(List.copyOf(aliasIds), tones != null ? tones : projected.toneCodes(),
+            includeDcs ? projected.dcsCodes() : List.of(), siteId,
             servingKey, projected.siteName(), io.github.dsheirer.alerts.AlertProtocolFamily.fromDecoder(source.decoderType()),
             snapshot.activityCallToken());
-        DecodeEventType type = completedCallType(sequence);
-        return new EventView("completed-tone:" + sequence.callId(), source.channelConfigurationId(),
-            sequence.callStartTimestamp(), Math.max(0, sequence.completedTimestamp() - sequence.callStartTimestamp()),
+        DecodeEventType type = completedCallType(snapshot);
+        return new EventView(eventId, source.channelConfigurationId(),
+            snapshot.startTimestamp(), Math.max(0, snapshot.lastActivityTimestamp() - snapshot.startTimestamp()),
             type.name(), type.getLabel(), "calls", from.identifiers(), from.aliases(), to.identifiers(), to.aliases(),
-            null, null, snapshot.timeslot(), null, sequence.protocol().name(), from.party(), to.party(), 0L,
-            source.channelName(), null, null, servingKey, facts);
+            null, frequency, snapshot.timeslot(), null, protocol.name(), from.party(), to.party(), 0L,
+            source.channelName(), frequency, null, servingKey, facts);
     }
 
-    private static DecodeEventType completedCallType(CompletedToneSequence sequence)
+    private static DecodeEventType completedCallType(AudioCallSnapshot snapshot)
     {
-        var snapshot = sequence.snapshot();
-        var decoder = sequence.callLegSource().decoderType();
+        var decoder = snapshot.callLegSource().decoderType();
         boolean encrypted = snapshot.isEncrypted();
         if(decoder == io.github.dsheirer.module.decode.DecoderType.AM || decoder == io.github.dsheirer.module.decode.DecoderType.NBFM)
             return DecodeEventType.CALL;
         var identifiers = snapshot.identifierCollection();
+        if(identifiers == null) return encrypted ? DecodeEventType.CALL_ENCRYPTED : DecodeEventType.CALL;
         if(!identifiers.getIdentifiers(Form.PATCH_GROUP).isEmpty())
             return encrypted ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
         if(!identifiers.getIdentifiers(Form.TELEPHONE_NUMBER).isEmpty())

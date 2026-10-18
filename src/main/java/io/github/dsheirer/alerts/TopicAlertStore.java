@@ -415,6 +415,14 @@ public final class TopicAlertStore
     public synchronized boolean publish(AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body,
                                          String clickAction, AlertAction action, List<AlertDevice> destinations, long now) throws SQLException
     {
+        return publish(topic, ruleId, alertName, event, title, body, clickAction, action, destinations, now, now);
+    }
+
+    /** The delivery eligibility deadline is independent of when matching and durable history were recorded. */
+    synchronized boolean publish(AlertTopic topic, String ruleId, String alertName, AlertEvent event, String title, String body,
+                                 String clickAction, AlertAction action, List<AlertDevice> destinations, long now,
+                                 long nextAttemptAtMs) throws SQLException
+    {
         if(action == null) action = AlertAction.NONE;
         String actionJson;
         try { actionJson = action.entityRef() != null ? mMapper.writeValueAsString(action.entityRef()) : null; }
@@ -452,13 +460,29 @@ public final class TopicAlertStore
                     {
                         update.setString(1, alertId); update.setString(2, destination.id());
                         update.setString(3, "proxy".equals(destination.method()) ? destination.remoteDeviceId() : ""); update.setString(4, destination.method());
-                        update.setLong(5, now); update.setLong(6, now); update.setString(7, destination.id()); update.addBatch();
+                        update.setLong(5, Math.max(now, nextAttemptAtMs)); update.setLong(6, now); update.setString(7, destination.id()); update.addBatch();
                     }
                     update.executeBatch();
                 }
                 prune(connection, now); connection.commit(); return true;
             }
             catch(SQLException | RuntimeException exception) { connection.rollback(); throw exception; }
+        }
+    }
+
+    /** Exact committed recording provenance can release only a not-yet-attempted initial delivery. */
+    synchronized void releaseRecordingReady(List<String> sourceReferences, long now) throws SQLException
+    {
+        if(sourceReferences.isEmpty()) return;
+        if(sourceReferences.size() > 128) throw new IllegalArgumentException("Recording source reference limit exceeded");
+        try(Connection connection = open(); PreparedStatement update = connection.prepareStatement(
+            "UPDATE topic_alert_delivery SET next_at_ms=?,updated_at_ms=? WHERE state='pending' AND attempts=0 AND next_at_ms>?" +
+            " AND alert_id IN (SELECT id FROM topic_alert_message WHERE event_type IN ('call','tone') AND source_call_uuid IN (" +
+            placeholders(sourceReferences.size()) + "))"))
+        {
+            update.setLong(1, now); update.setLong(2, now); update.setLong(3, now);
+            for(int index = 0; index < sourceReferences.size(); index++) update.setString(index + 4, sourceReferences.get(index));
+            update.executeUpdate();
         }
     }
 

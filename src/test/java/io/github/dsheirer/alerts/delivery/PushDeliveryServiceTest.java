@@ -299,6 +299,7 @@ class PushDeliveryServiceTest
         {
             service.observe(new AlertEvent("call-fixture", System.currentTimeMillis(), "call", Map.of("radio", List.of("100"), "talkgroup", List.of("200")),
                 AlertAction.Context.EMPTY, "00000000-0000-4000-8000-000000000001"));
+            service.receiveRecordingReady(List.of("00000000-0000-4000-8000-000000000001"));
             long until = System.nanoTime() + 2_000_000_000L;
             while(service.pendingDeliveries(10).isEmpty() && System.nanoTime() < until) Thread.sleep(10);
             assertEquals(2, service.pendingDeliveries(10).size()); return service.pendingDeliveries(10).getFirst();

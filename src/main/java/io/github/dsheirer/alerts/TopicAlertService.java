@@ -2,6 +2,8 @@
 package io.github.dsheirer.alerts;
 
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.SourceCallReference;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
@@ -42,6 +44,9 @@ import java.util.regex.Pattern;
 public final class TopicAlertService implements AutoCloseable
 {
     private static final Object OBSERVATION = new Object();
+    private static final Object RECORDING_READY = new Object();
+    static final long RECORDING_WAIT_MILLISECONDS = 2000;
+    private static final int MAXIMUM_RECORDING_REFERENCES = 128;
     static final int INGRESS_CAPACITY = 1024;
     private static final int MAXIMUM_STATE_ENTRIES = 8192;
     private static final Pattern TEMPLATE_TOKEN = Pattern.compile("\\{([a-z_]+)}");
@@ -53,6 +58,7 @@ public final class TopicAlertService implements AutoCloseable
     private final AtomicBoolean mStarted = new AtomicBoolean();
     private final AtomicLong mDropped = new AtomicLong();
     private final AtomicLong mFailures = new AtomicLong();
+    private final Map<String,Boolean> mReadyRecordings = boundedMap();
     private final Map<String,MatchState> mStates = boundedMap();
     private final Map<String,Long> mSeenEvents = boundedMap();
     private final Map<String,String> mHealthLifecycle = boundedMap();
@@ -66,6 +72,8 @@ public final class TopicAlertService implements AutoCloseable
     };
     private volatile Function<CompletedToneSequence,DecodeEventViewService.EventView> mToneProjector =
         sequence -> DecodeEventViewService.completedToneView(sequence, null);
+    private volatile Function<CompletedAudioCall,DecodeEventViewService.EventView> mCallProjector =
+        call -> DecodeEventViewService.completedCallView(call, null);
     private AutoCloseable mToneSubscription;
     private long mWorkerRevision;
     private Map<String,AlertRule> mEvaluatedRules = Map.of();
@@ -106,6 +114,10 @@ public final class TopicAlertService implements AutoCloseable
     public void setToneProjector(Function<CompletedToneSequence,DecodeEventViewService.EventView> projector)
     {
         mToneProjector = java.util.Objects.requireNonNull(projector);
+    }
+    public void setCallProjector(Function<CompletedAudioCall,DecodeEventViewService.EventView> projector)
+    {
+        mCallProjector = java.util.Objects.requireNonNull(projector);
     }
     public List<AlertTopic> topics() { return mConfiguration.topics(); }
     public List<AlertRule> rules() { return mConfiguration.rules(); }
@@ -264,17 +276,58 @@ public final class TopicAlertService implements AutoCloseable
         if(sequence != null && !sequence.tones().isEmpty()) offer(sequence, OBSERVATION);
     }
 
+    /** Completed logical calls match independently of Activity, recording policy, encryption, or available PCM. */
+    public void receiveCompletedCall(CompletedAudioCall call)
+    {
+        if(call == null || mClosed.get() || !mConfiguration.push().enabled()) return;
+        // The observer queue retains compact final facts, never the completed recording's PCM buffers.
+        offer(new CompletedAudioCall(call.logicalCallId(), call.snapshot(), List.of(), call.resolvedPolicy(),
+            call.callLegSummaries(), call.nativeAudioSnapshot(), null), OBSERVATION);
+    }
+
+    /** Catalog callbacks only copy a bounded compact observation; readiness work stays on the alert worker. */
+    public boolean receiveRecordingReady(List<String> sourceReferences)
+    {
+        if(sourceReferences == null || sourceReferences.isEmpty() || mClosed.get()) return false;
+        if(sourceReferences.size() > MAXIMUM_RECORDING_REFERENCES)
+        {
+            mDropped.incrementAndGet(); return false;
+        }
+        try
+        {
+            if(mIngress.offer(List.copyOf(sourceReferences), RECORDING_READY)) return true;
+        }
+        catch(NullPointerException ignored) { }
+        mDropped.incrementAndGet(); return false;
+    }
+
     /** Called on the existing DecodeEventViewService observer worker, after its lifecycle/source validation. */
     public void receiveEventView(DecodeEventViewService.EventView view)
     {
         if(view == null || mClosed.get() || !mConfiguration.push().enabled() || !mEventValidator.test(view)) return;
         DecodeEventType type;
         try { type = DecodeEventType.valueOf(view.eventType()); } catch(IllegalArgumentException exception) { return; }
+        // Only the main voice-call observation waits for completion. Independent DCS signaling remains live.
+        for(AlertEvent event: decodedEvents(view, type, AlertAction.capture(view), null))
+            if(!isVoiceCall(type) || !"call".equals(event.trigger())) offer(event, view);
+    }
+
+    private static boolean isVoiceCall(DecodeEventType type)
+    {
+        return type.isVoiceCallEvent();
+    }
+
+    private List<AlertEvent> decodedEvents(DecodeEventViewService.EventView view, DecodeEventType type,
+                                          AlertAction.Context actionContext, io.github.dsheirer.audio.call.CallEncryptionState encryptionState)
+    {
         Map<String,List<String>> facts = new LinkedHashMap<>();
         add(facts, "channel_id", view.configurationId()); add(facts, "system_key", view.servingSystemKey()); add(facts, "protocol", view.protocol());
         add(facts, "event_type", view.eventType()); add(facts, "channel", view.channelName()); add(facts, "duration_seconds", Double.toString(view.durationMs() / 1000.0));
-        if(DecodeEventType.VOICE_CALLS.contains(type) || DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type))
-            add(facts, "encrypted", Boolean.toString(DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type)));
+        if(encryptionState != null)
+        {
+            if(encryptionState.isKnown()) add(facts, "encrypted", Boolean.toString(encryptionState.isEncrypted()));
+        }
+        else if(isVoiceCall(type)) add(facts, "encrypted", Boolean.toString(DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type)));
         if(type == DecodeEventType.EMERGENCY) add(facts, "emergency", "true");
         String servingKey = view.alertFacts() != null && view.alertFacts().systemKey() != null ? view.alertFacts().systemKey() : view.servingSystemKey();
         parties(facts, view.fromParty(), true, servingKey); parties(facts, view.toParty(), false, servingKey);
@@ -293,13 +346,15 @@ public final class TopicAlertService implements AutoCloseable
             if(system != null && system.lastSeenMs() >= view.timeStartMs()) add(facts, "system_key", system.systemKey());
         }
         String trigger = type == DecodeEventType.EMERGENCY ? "emergency" : type == DecodeEventType.PAGE || type == DecodeEventType.CALL_ALERT ? "paging" :
-            type == DecodeEventType.AFFILIATE ? "affiliation" : DecodeEventType.VOICE_CALLS.contains(type) || DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type) ? "call" :
+            type == DecodeEventType.AFFILIATE ? "affiliation" : isVoiceCall(type) ? "call" :
             DecodeEventType.COMMANDS.contains(type) ? "command" : "event";
-        AlertAction.Context actionContext = AlertAction.capture(view);
-        String sourceCallUuid = io.github.dsheirer.audio.call.SourceCallReference.fromToken(view.alertFacts().activityCallToken());
-        offer(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts, actionContext, sourceCallUuid), view);
-        //Tone rules consume the completed native-call outcome exactly once, rather than legacy codec identifier updates.
-        if(!facts.getOrDefault("dcs", List.of()).isEmpty()) offer(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts, actionContext, sourceCallUuid), view);
+        String sourceCallUuid = SourceCallReference.fromToken(view.alertFacts().activityCallToken());
+        List<AlertEvent> events = new ArrayList<>();
+        events.add(new AlertEvent(view.eventId(), Math.max(1, view.timeStartMs()), trigger, facts, actionContext, sourceCallUuid));
+        // Tone rules consume their own completed native-call outcome, rather than codec identifier updates.
+        if(!facts.getOrDefault("dcs", List.of()).isEmpty())
+            events.add(new AlertEvent(view.eventId() + ":dcs", Math.max(1, view.timeStartMs()), "dcs", facts, actionContext, sourceCallUuid));
+        return List.copyOf(events);
     }
     private static void parties(Map<String,List<String>> facts, List<DecodeEventViewService.PartyIdentifier> parties, boolean source, String servingKey)
     {
@@ -385,7 +440,22 @@ public final class TopicAlertService implements AutoCloseable
         for(int count = 0; count < 256 && !mClosed.get(); count++)
         {
             var next = mIngress.poll(); if(next == null) break;
-            if(config.push().enabled() && (!(next.second() instanceof DecodeEventViewService.EventView source) || mEventValidator.test(source)))
+            if(next.second() == RECORDING_READY)
+            {
+                List<String> references = new ArrayList<>();
+                for(Object value: (List<?>)next.first())
+                {
+                    try
+                    {
+                        String reference = SourceCallReference.canonical((String)value);
+                        if(reference != null && !references.contains(reference)) references.add(reference);
+                    }
+                    catch(IllegalArgumentException ignored) { }
+                }
+                references.forEach(reference -> mReadyRecordings.put(reference, true));
+                mStore.releaseRecordingReady(references, mClock.getAsLong());
+            }
+            else if(config.push().enabled() && (!(next.second() instanceof DecodeEventViewService.EventView source) || mEventValidator.test(source)))
             {
                 if(next.first() instanceof CompletedToneSequence sequence)
                 {
@@ -394,6 +464,17 @@ public final class TopicAlertService implements AutoCloseable
                     {
                         AlertEvent event = completedToneEvent(view, sequence);
                         if(event != null) process(config, event, mClock.getAsLong());
+                    }
+                }
+                else if(next.first() instanceof CompletedAudioCall call)
+                {
+                    DecodeEventViewService.EventView view = mCallProjector.apply(call);
+                    if(view != null)
+                    {
+                        DecodeEventType type = DecodeEventType.valueOf(view.eventType());
+                        if(isVoiceCall(type))
+                            for(AlertEvent event: decodedEvents(view, type, AlertAction.capture(view, call.snapshot().callLegSource()), call.snapshot().encryptionState()))
+                                if("call".equals(event.trigger())) process(config, event, mClock.getAsLong());
                     }
                 }
                 else if(next.first() instanceof AlertEvent event) process(config, event, mClock.getAsLong());
@@ -462,7 +543,9 @@ public final class TopicAlertService implements AutoCloseable
     {
         List<AlertDevice> destinations = mStore.devicesForTopic(topic.id(), config.push().mode());
         boolean saved = mStore.publish(topic, ruleId, alertName, event, bounded(title, 128), bounded(body, 2048), click,
-            AlertAction.automatic(event.trigger(), event.actionContext(), actionButtonEnabled), destinations, now);
+            AlertAction.automatic(event.trigger(), event.actionContext(), actionButtonEnabled), destinations, now,
+            ("call".equals(event.trigger()) || "tone".equals(event.trigger())) && event.sourceCallUuid() != null &&
+                !mReadyRecordings.containsKey(event.sourceCallUuid()) ? now + RECORDING_WAIT_MILLISECONDS : now);
         if(!saved) mDropped.incrementAndGet(); return saved;
     }
     private boolean firstEvent(String key, long now) { return mSeenEvents.putIfAbsent(key, now) == null; }

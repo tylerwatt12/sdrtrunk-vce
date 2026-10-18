@@ -34,8 +34,14 @@ class TopicAlertServiceTest
                     "event:" + index, CHANNEL, START, 1000, "CALL_GROUP", "Call", "calls", "", "", "", "", "",
                     null, null, "", "APCO25", List.of(), List.of(party), 0, "Channel", null, null, null, facts);
                 service.receiveEventView(view); service.drain();
+                assertEquals(0, service.history(null, 100, 0).get("total"), "Live voice updates wait for completion");
+                service.setCallProjector(call -> view);
+                service.receiveCompletedCall(RecordingReadyAlertDeliveryTest.call(index, "session:" + index,
+                    io.github.dsheirer.audio.call.CallEncryptionState.CLEAR)); service.drain();
                 assertEquals(index == 2 ? 1 : 0, service.history(null, 100, 0).get("total"));
             }
+            assertTrue(service.pendingDeliveries(1).isEmpty());
+            clock.addAndGet(TopicAlertService.RECORDING_WAIT_MILLISECONDS);
             String alertId = service.pendingDeliveries(1).getFirst().alertId();
             assertEquals(io.github.dsheirer.audio.call.SourceCallReference.fromToken("session:2"),
                 service.sourceCallUuid(alertId).orElseThrow());
