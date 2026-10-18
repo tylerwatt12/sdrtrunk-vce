@@ -199,12 +199,65 @@ for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
   });
 }
 
+for (const [recordings, theme, width] of [[true, 'light', 1440], [false, 'dark', 390]]) {
+  test(`Activity Play follows actual recording availability with permission ${recordings}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const relationRequests = trackActivityRelationRequests(page);
+    const call = { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true };
+    const tones = { source: 'encoded', method: 'ambe_tone_v1',
+      tones: [{ frequencies_hz: [600], code: 'TONE_600', duration_milliseconds: 120 }] };
+    await openActivity(page, { recordings, theme, rows: [
+      toneActivityRow(40, tones, { ...call, duration_ms: 2_000, has_recording: false, encrypted: true }),
+      toneActivityRow(41, undefined, { ...call, duration_ms: null, has_recording: true }),
+      toneActivityRow(42, undefined, { ...call, duration_ms: 2_000 }),
+      toneActivityRow(43, undefined, { ...call, duration_ms: 2_000, has_recording: null }),
+      toneActivityRow(44, undefined, { ...call, duration_ms: 2_000, has_recording: 'true' }),
+      toneActivityRow(45, undefined, { ...call, duration_ms: null, has_call_source: false, has_recording: true }),
+      toneActivityRow(46, undefined, { ...call, duration_ms: 0, has_recording: true })
+    ] });
+    const table = page.locator('table[data-table-type="activity"]');
+    await expect(table.locator('tr[data-id="40"] [data-column="duration"]')).toHaveText('2.0s');
+    await expect(table.locator('tr[data-id="41"] [data-column="duration"]')).toBeEmpty();
+    await expect(table.getByRole('button', { name: 'Play recording', exact: true })).toHaveCount(recordings ? 2 : 0);
+    expect(await table.getByRole('button', { name: 'Play recording', exact: true })
+      .evaluateAll(buttons => buttons.map(button => button.closest('tr').dataset.id)))
+      .toEqual(recordings ? ['41', '46'] : []);
+    const unavailable = table.locator('tr[data-id="40"] [data-column="related"]');
+    await expect(unavailable.getByRole('img', { name: 'Tones', exact: true })).toBeVisible();
+    await expect(unavailable.getByRole('img', { name: 'Encrypted', exact: true })).toBeVisible();
+    expect(relationRequests).toHaveLength(0);
+    await toneScreenshot(page, `activity-availability-${theme}-${width}`, false);
+  });
+}
+
+test('Activity refresh adds and removes Play when recording availability changes', async ({ page }) => {
+  const relationRequests = trackActivityRelationRequests(page);
+  const activity = toneActivityRow(47, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 8_000,
+    has_call_source: true, has_recording: false });
+  const requests = await openActivity(page, { recordings: true, rows: [activity] });
+  const row = page.locator('tr[data-id="47"]');
+  const play = row.getByRole('button', { name: 'Play recording', exact: true });
+  await expect(play).toHaveCount(0);
+  activity.has_recording = true;
+  await page.getByRole('button', { name: 'Pause refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Resume refresh', exact: true }).click();
+  await expect(play).toBeVisible();
+  await expect(row.locator('[data-column="duration"]')).toHaveText('8.0s');
+  activity.has_recording = false;
+  await page.getByRole('button', { name: 'Pause refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Resume refresh', exact: true }).click();
+  await expect(play).toHaveCount(0);
+  await expect(row.locator('[data-column="duration"]')).toHaveText('8.0s');
+  expect(requests.activity).toHaveLength(3);
+  expect(relationRequests).toHaveLength(0);
+});
+
 for (const [theme, width] of [['light', 1440], ['dark', 390], ['light', 320]]) {
   test(`Activity plays exact recording parts directly on ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await stubActivityAudio(page);
     const relationRequests = trackActivityRelationRequests(page);
-    const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true,
+    const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true, has_recording: true,
       system_name: 'Metro Public Safety' });
     await openActivity(page, { theme, recordings: true, rows: [activity] });
     const recordings = [
@@ -246,7 +299,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 390], ['light', 320]]) {
 test('Activity missing and failed recordings stay in the row and can retry without a dialog', async ({ page }) => {
   await stubActivityAudio(page);
   const relationRequests = trackActivityRelationRequests(page);
-  const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true });
+  const activity = toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true, has_recording: true });
   await openActivity(page, { recordings: true, rows: [activity] });
   await page.route('**/api/v1/call-relations/activity/18', route => {
     if (relationRequests.length === 1) return route.fulfill({ status: 503, json: { error: { message: 'Unavailable' } } });
@@ -275,7 +328,7 @@ test('a newer Activity play selection wins over an earlier lookup still in fligh
   await stubActivityAudio(page);
   const relationRequests = trackActivityRelationRequests(page);
   await openActivity(page, { recordings: true, rows: [18, 19].map(id => toneActivityRow(id, undefined,
-    { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true })) });
+    { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true, has_recording: true })) });
   let releaseFirst;
   await page.route('**/api/v1/call-relations/activity/18', route => new Promise(resolve => {
     releaseFirst = async () => {
@@ -305,7 +358,7 @@ test('Stop in the audio dock cancels an Activity play lookup still in flight', a
   await page.setViewportSize({ width: 1440, height: 1000 });
   await stubActivityAudio(page);
   await openActivity(page, { recordings: true, rows: [18, 19].map(id => toneActivityRow(id, undefined,
-    { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true })) });
+    { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true, has_recording: true })) });
   await page.route('**/api/v1/call-relations/activity/18', route => route.fulfill({ json: { data: {
     activity_rows: [], alerts: [], recordings: [{ id: 71, start_ms: 1000, duration_ms: 10_000 }]
   } } }));
@@ -340,7 +393,7 @@ for (const [recordings, theme, width] of [[true, 'light', 1440], [false, 'dark',
     const summary = { source: 'decoded_audio', method: 'p25_pcm_ambe_tone_v2', phase: 1,
       tones: [{ frequencies_hz: [593.75], duration_milliseconds: 1020, offset_milliseconds: 80 }] };
     const requests = await openActivity(page, { recordings, theme, rows: [
-      toneActivityRow(18, summary, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true,
+      toneActivityRow(18, summary, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true, has_recording: true,
         encrypted: true, encryption_display: 'AES-256', encryption_full_display: 'AES-256 · Key ID 0042' }),
       toneActivityRow(19, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: false })
     ] });

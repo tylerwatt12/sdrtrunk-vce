@@ -62,7 +62,7 @@ export function createActivityCallPlayback({ node, iconButton, setIconButton, re
   };
   return {
     render(row) {
-      if (!row.has_call_source || !canPlay()) return null;
+      if (row.has_recording !== true || !row.has_call_source || !canPlay()) return null;
       const id = String(row.id);
       let state = rows.get(id);
       if (!state) state = { busy: false, message: '', controls: null };
