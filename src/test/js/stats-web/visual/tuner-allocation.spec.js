@@ -132,6 +132,8 @@ function pickerCatalog() {
 }
 
 const pickerChoice = (page, id) => page.locator(`.tuner-allocation-channel-choice[data-configuration-id="${id}"]`);
+const channelStatus = (page, label) => page.getByRole('group', { name: 'Channel status', exact: true })
+  .getByRole('button', { name: new RegExp(`^${label}\\b`) });
 async function chooseChannel(page, id) {
   await pickerChoice(page, id).click();
   await expect(page.locator(`.tuner-allocation-selected-channel[data-configuration-id="${id}"]`)).toBeVisible();
@@ -183,20 +185,27 @@ const receivingMarker = (host, titleText) => host.locator(
   '.chart-window-selected, .chart-window-other, .chart-window-unscoped').filter({ hasText: titleText });
 
 for (const theme of ['light', 'dark']) {
-  test(`channel picker starts without choosing a channel and follows Channel manager groups with recognizable names in ${theme}`, async ({ page }, testInfo) => {
+  test(`compact channel catalog starts with running channels and keeps recognizable names in ${theme}`, async ({ page }, testInfo) => {
     const app = await openApp(page, { choose: false, catalog: pickerCatalog(), theme });
     const choices = page.locator('.tuner-allocation-channel-choice');
-    await expect(choices).toHaveCount(9);
+    await expect(choices).toHaveCount(6);
+    await expect(channelStatus(page, 'Running')).toHaveAttribute('aria-pressed', 'true');
+    await expect(channelStatus(page, 'Running')).toHaveAccessibleName('Running (6)');
+    await expect(channelStatus(page, 'Stopped')).toHaveAccessibleName('Stopped (3)');
+    await expect(channelStatus(page, 'All')).toHaveAccessibleName('All (9)');
     await expect(page.getByRole('button', { name: 'Coverage', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Decision history', exact: true })).toHaveCount(0);
     await expect(page.locator('.tuner-allocation-map')).toHaveCount(0);
     await expect(page.locator('table[data-table-type="tuner-allocation-decisions"]')).toHaveCount(0);
     expect(app.requests()).toBe(0);
-    await expect(page.locator('.tuner-allocation-protocol-name')).toHaveText(['P25 Trunked', 'P25 Conventional', 'AM']);
-    await expect(page.locator('.tuner-allocation-protocol-group')).toHaveCount(3);
+    await expect(page.locator('.tuner-allocation-protocol-group')).toHaveCount(0);
+    await expect(page.locator('.tuner-allocation-catalog-columns')).toContainText('Protocol');
+    await expect(page.getByRole('combobox', { name: 'Protocol', exact: true })).toHaveValue('');
     await expect(page.locator('table')).toHaveCount(0);
     await expect(page.locator('.table-layout-menu')).toHaveCount(0);
     await expect(choices.first()).toHaveClass(/ui-select-list-item/);
+    await channelStatus(page, 'All').click();
+    await expect(choices).toHaveCount(9);
     expect(await choices.evaluateAll((elements) => elements.map((element) => element.dataset.configurationId)))
       .toEqual(['albany', 'marcs-elyria', 'marcs-grafton', 'unnamed', 'failed', 'never-run', 'stopped', 'atc-1', 'atc-2']);
     await expect(pickerChoice(page, 'remote')).toHaveCount(0);
@@ -209,12 +218,17 @@ for (const theme of ['light', 'dark']) {
     await expect(row('marcs-grafton')).not.toContainText('770.90625');
     await expect(row('marcs-elyria')).not.toContainText('770.20625');
     await expect(row('marcs-grafton')).toContainText('Running');
+    await expect(row('marcs-grafton')).toHaveAccessibleName(/P25 Trunked · Running$/);
     await expect(row('atc-1')).toContainText('125.85000');
     await expect(row('atc-2')).toContainText('125.97500');
     await expect(pickerChoice(page, 'atc-1')).not.toHaveAttribute('aria-label',
       await pickerChoice(page, 'atc-2').getAttribute('aria-label'));
     await expect(row('unnamed')).toContainText('154.46400');
     await expect(row('stopped')).toContainText('Stopped');
+    await expect(row('marcs-grafton').locator('.tuner-allocation-channel-protocol')).toHaveText('P25 Trunked');
+    await expect(row('atc-1').locator('.tuner-allocation-channel-protocol')).toHaveText('AM');
+    await expect(page.getByRole('navigation', { name: 'Channel pages', exact: true })).toContainText('1–9 of 9');
+    expect(app.requests()).toBe(0);
     for (const width of [1280, 320]) {
       await page.setViewportSize({ width, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -247,6 +261,7 @@ test('duplicate trunked names include saved frequencies and the whole row is key
 
 test('channel search finds configured names, system, site, protocol, and RF frequency', async ({ page }) => {
   await openApp(page, { choose: false, catalog: pickerCatalog() });
+  await channelStatus(page, 'All').click();
   const search = page.locator('.tuner-allocation-channel-search');
   const ids = () => page.locator('.tuner-allocation-channel-choice').evaluateAll(
     (elements) => elements.map((element) => element.dataset.configurationId));
@@ -309,26 +324,106 @@ test('chosen saved channel ID scopes coverage and decision history without a cho
   await expect(page.locator('.tuner-allocation-back')).toBeVisible();
 });
 
-test('Back to channels and browser Back preserve the search and explicit selection', async ({ page }) => {
+test('Back to channels and browser Back preserve search, filters, and explicit selection', async ({ page }) => {
   await openApp(page, { choose: false, catalog: pickerCatalog() });
+  await channelStatus(page, 'All').click();
+  await page.getByRole('combobox', { name: 'Protocol', exact: true }).selectOption('p25-trunked');
   await page.locator('.tuner-allocation-channel-search').fill('MARCS');
   await chooseChannel(page, 'marcs-grafton');
   await page.goBack();
   await expect(page.locator('.tuner-allocation-channel-search')).toHaveValue('MARCS');
+  await expect(channelStatus(page, 'All')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Protocol', exact: true })).toHaveValue('p25-trunked');
   await expect(page.locator('.tuner-allocation-selected-channel')).toHaveCount(0);
   await page.goForward();
   await expect(page.locator('.tuner-allocation-selected-channel[data-configuration-id="marcs-grafton"]')).toBeVisible();
   await page.locator('.tuner-allocation-back').click();
   await expect(page.locator('.tuner-allocation-channel-search')).toHaveValue('MARCS');
+  await expect(channelStatus(page, 'All')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Protocol', exact: true })).toHaveValue('p25-trunked');
   await expect(page).not.toHaveURL(/allocation_channel=/);
   await chooseChannel(page, 'marcs-elyria');
   await expect(page).toHaveURL(/allocation_channel=marcs-elyria/);
+});
+
+test('status and protocol filters combine with search without requesting allocation data', async ({ page }) => {
+  const app = await openApp(page, { choose: false, catalog: pickerCatalog() });
+  const protocol = page.getByRole('combobox', { name: 'Protocol', exact: true });
+  const search = page.locator('.tuner-allocation-channel-search');
+  const ids = () => page.locator('.tuner-allocation-channel-choice').evaluateAll(
+    elements => elements.map(element => element.dataset.configurationId));
+  await protocol.selectOption('p25-conventional');
+  await expect.poll(ids).toEqual(['unnamed']);
+  await expect(channelStatus(page, 'Running')).toHaveAccessibleName('Running (1)');
+  await expect(channelStatus(page, 'Stopped')).toHaveAccessibleName('Stopped (3)');
+  await expect(channelStatus(page, 'All')).toHaveAccessibleName('All (4)');
+  await channelStatus(page, 'Stopped').click();
+  await expect.poll(ids).toEqual(['failed', 'never-run', 'stopped']);
+  await search.fill('West');
+  await expect.poll(ids).toEqual(['stopped']);
+  await expect(channelStatus(page, 'All')).toHaveAccessibleName('All (1)');
+  await channelStatus(page, 'Running').click();
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(0);
+  await channelStatus(page, 'All').click();
+  await expect.poll(ids).toEqual(['stopped']);
+  await search.fill('125.975');
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(0);
+  await protocol.selectOption('');
+  await expect.poll(ids).toEqual(['atc-2']);
+  expect(app.requests()).toBe(0);
+});
+
+test('catalog pagination, search, and live refresh preserve the chosen browsing context', async ({ page }) => {
+  const catalog = pickerCatalog();
+  const template = catalog.channels.find(channel => channel.configuration_id === 'unnamed');
+  catalog.channels = Array.from({ length: 27 }, (_, index) => ({ ...template,
+    configuration_id: `paged-${index + 1}`, name: `Channel ${String(index + 1).padStart(2, '0')}`,
+    site: `Sector ${index + 1}`, frequencies_hz: [154_000_000 + index * 25_000],
+    processing_state: index < 24 ? 'RUNNING' : 'STOPPED' }));
+  const app = await openApp(page, { choose: false, catalog });
+  const pager = page.getByRole('navigation', { name: 'Channel pages', exact: true });
+  const search = page.locator('.tuner-allocation-channel-search');
+  const protocol = page.getByRole('combobox', { name: 'Protocol', exact: true });
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(10);
+  await expect(pager).toContainText('1–10 of 24');
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(pager).toContainText('11–20 of 24');
+  await chooseChannel(page, 'paged-11');
+  await page.locator('.tuner-allocation-back').click();
+  await expect(pager).toContainText('11–20 of 24');
+  await expect(pickerChoice(page, 'paged-11')).toBeFocused();
+  await protocol.selectOption('p25-conventional');
+  await expect(pager).toContainText('1–10 of 24');
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await search.fill('Channel');
+  await expect(pager).toContainText('1–10 of 24');
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  const changed = structuredClone(catalog);
+  changed.channels.find(channel => channel.configuration_id === 'paged-11').name = 'Channel 11 updated';
+  app.respondCatalog({ data: changed });
+  await expect(pickerChoice(page, 'paged-11')).toContainText('Channel 11 updated', { timeout: 7000 });
+  await expect(pager).toContainText('11–20 of 24');
+  await expect(search).toHaveValue('Channel');
+  await expect(protocol).toHaveValue('p25-conventional');
+  await expect(channelStatus(page, 'Running')).toHaveAttribute('aria-pressed', 'true');
+  await search.fill('Channel 24');
+  await expect(pickerChoice(page, 'paged-24')).toBeVisible();
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(1);
+  await expect(pager).toContainText('1–1 of 1');
+  await search.fill('');
+  await pager.getByRole('button', { name: 'Next', exact: true }).click();
+  await channelStatus(page, 'Stopped').click();
+  await expect(pager).toContainText('1–3 of 3');
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(3);
+  await expect(pickerChoice(page, 'paged-25')).toBeVisible();
+  expect(app.requests()).toBeGreaterThan(0);
 });
 
 test('stopped, never-run, and failed channels retain the chosen ID and their own decisions without a current site snapshot', async ({ page }) => {
   const decisions = ['stopped', 'never-run', 'failed'].map((id, index) => decision(80 + index,
     { site_id: id, site_name: 'County conventional', reason: `${id} request could not start`, type: 'failure', outcome: 'allocation_failed' }));
   const app = await openApp(page, { choose: false, data: snapshot(decisions), catalog: pickerCatalog() });
+  await channelStatus(page, 'Stopped').click();
   for (const [index, id] of ['stopped', 'never-run', 'failed'].entries()) {
     await chooseChannel(page, id);
     await expect(page.locator(`.tuner-allocation-selected-channel[data-configuration-id="${id}"]`)).toBeVisible();
@@ -359,7 +454,7 @@ test('catalog load failure retries and a revoked catalog session clears channel 
   await expect(retry).toBeVisible();
   app.respondCatalog({ data: pickerCatalog() });
   await retry.click();
-  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(9);
+  await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(6);
   await page.locator('.tuner-allocation-channel-search').fill('ATC');
   app.respondCatalog({ status: 403 });
   await expect(page.locator('.tuner-allocation-channel-choice')).toHaveCount(0, { timeout: 7000 });

@@ -32798,7 +32798,9 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
 
 const TUNER_ALLOCATION_HISTORY_LIMIT = 100;
 const TUNER_ALLOCATION_PAGE_SIZE = 20;
-const tunerAllocationPickerState = { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false,
+const TUNER_ALLOCATION_CATALOG_PAGE_SIZE = 10;
+const tunerAllocationPickerState = { query: '', status: 'running', protocol: '', page: 0,
+  scrollX: 0, scrollY: 0, focusId: null, restore: false,
   channel: null, account: null };
 
 function tunerAllocationCatalogChannels(value) {
@@ -32824,6 +32826,22 @@ function tunerAllocationChannelMatches(channel, term) {
   return !query || [channel.name || 'Unnamed channel', channel.system, channel.site, channel.protocol_label,
     channelProtocolGroup(channel).label, channelAdminFrequencyList(channel.frequencies_hz)]
     .some((value) => String(value || '').toLowerCase().includes(query));
+}
+
+function tunerAllocationCatalogPage(channels, { query = '', status = 'running', protocol = '', page: requestedPage = 0 } = {}) {
+  const scoped = channels.filter((channel) => tunerAllocationChannelMatches(channel, query) &&
+    (!protocol || channelProtocolGroup(channel).key === protocol));
+  const running = scoped.filter((channel) => channel.processing_state === 'RUNNING').length;
+  const counts = { all: scoped.length, running, stopped: scoped.length - running };
+  const matches = scoped.filter((channel) => status === 'all' ||
+    (channel.processing_state === 'RUNNING') === (status === 'running'));
+  const total = matches.length;
+  const pageCount = Math.max(1, Math.ceil(total / TUNER_ALLOCATION_CATALOG_PAGE_SIZE));
+  const numericPage = Number(requestedPage);
+  const page = Math.max(0, Math.min(Number.isFinite(numericPage) ? Math.trunc(numericPage) : 0, pageCount - 1));
+  const offset = page * TUNER_ALLOCATION_CATALOG_PAGE_SIZE;
+  return { rows: matches.slice(offset, offset + TUNER_ALLOCATION_CATALOG_PAGE_SIZE),
+    page, pageCount, total, offset, counts };
 }
 
 function tunerAllocationSnapshot(value) {
@@ -33366,7 +33384,8 @@ function tunerAllocationDecisionDetails(decision) {
 async function renderAdminTunerAllocation(renderContext = captureRenderContext()) {
   const account = accessSession.authenticated ? accessSession.username : 'anonymous';
   if (tunerAllocationPickerState.account !== account) {
-    Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null,
+    Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0,
+      scrollX: 0, scrollY: 0, focusId: null,
       restore: false, channel: null, account });
   }
   const workspace = node('div', 'ui-settings-page tuner-allocation-workspace');
@@ -33382,7 +33401,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   } catch (error) {
     if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
     if (error?.status === 401 || error?.status === 403) {
-      Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+      Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
       throw error;
     }
     catalogHost.replaceChildren(asyncSectionFailure(null, 'Channels could not be loaded. Reload or try again.', () => render()));
@@ -33417,7 +33436,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
       if (error?.status === 401 || error?.status === 403) {
         catalogRefreshStopped = true;
-        Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+        Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
         workspace.replaceChildren(node('div', 'error', 'You no longer have access to tuner allocation.'));
         void render();
       }
@@ -33425,17 +33444,28 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   };
   if (!selectedChannelId) {
     const toolbar = node('div', 'ui-toolbar tuner-allocation-picker-toolbar');
-    const searchWrap = node('label', 'ui-search tuner-allocation-picker-search');
+    const searchWrap = node('span', 'ui-search tuner-allocation-picker-search');
     const search = node('input', 'ui-input tuner-allocation-channel-search');
     search.type = 'search';
     search.placeholder = 'Find a channel';
     search.setAttribute('aria-label', 'Search channels, systems, protocols, or frequencies');
     search.value = tunerAllocationPickerState.query;
     searchWrap.append(iconGlyph('icon-search'), search);
-    const count = node('span', 'ui-label muted');
-    count.setAttribute('role', 'status');
-    toolbar.append(searchWrap, count);
+    const protocol = node('select', 'ui-select');
+    protocol.setAttribute('aria-label', 'Protocol');
+    const statuses = [['running', 'Running'], ['stopped', 'Stopped'], ['all', 'All']];
+    const statusFilter = uiSegmentedControl(statuses.map(([value, label]) => ({ value, label })),
+      tunerAllocationPickerState.status, (value) => {
+        tunerAllocationPickerState.status = value;
+        tunerAllocationPickerState.page = 0;
+        drawCatalog();
+      });
+    statusFilter.setAttribute('aria-label', 'Channel status');
+    statusFilter.classList.add('tuner-allocation-status-filter');
+    toolbar.append(formField('Search channels', searchWrap), formField('Protocol', uiSelectFrame(protocol)));
     const picker = node('div', 'tuner-allocation-channel-list');
+    const pager = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Channel pages' });
+    pager.querySelector('.ui-browse-pager-count').setAttribute('role', 'status');
     const selectChannel = (channel) => {
       Object.assign(tunerAllocationPickerState, { query: search.value, scrollX: window.scrollX,
         scrollY: window.scrollY, focusId: String(channel.configuration_id), restore: true, channel });
@@ -33444,35 +33474,49 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     drawCatalog = () => {
       const focusedId = picker.contains(document.activeElement) ? document.activeElement.dataset.configurationId : null;
       tunerAllocationPickerState.query = search.value;
-      const matches = channels.filter((channel) => tunerAllocationChannelMatches(channel, search.value));
+      const groups = new Map(channels.map((channel) => {
+        const group = channelProtocolGroup(channel);
+        return [group.key, group.label];
+      }));
+      // Preserve an active protocol if its last channel disappears during a refresh.
+      if (tunerAllocationPickerState.protocol && !groups.has(tunerAllocationPickerState.protocol)) {
+        groups.set(tunerAllocationPickerState.protocol, protocol.selectedOptions[0]?.textContent || 'Selected protocol');
+      }
+      const options = [['', 'All protocols'], ...groups];
+      if (JSON.stringify(options) !== protocol.dataset.options) {
+        protocol.replaceChildren(...options.map(([value, label]) => {
+          const option = node('option', '', label);
+          option.value = value;
+          return option;
+        }));
+        protocol.dataset.options = JSON.stringify(options);
+      }
+      protocol.value = tunerAllocationPickerState.protocol;
+      const result = tunerAllocationCatalogPage(channels, tunerAllocationPickerState);
+      tunerAllocationPickerState.page = result.page;
+      statuses.forEach(([value, label]) => {
+        statusFilter.querySelector(`[data-value="${value}"]`).textContent = `${label} (${number(result.counts[value])})`;
+      });
       const names = new Map();
       channels.forEach((channel) => {
         const name = String(channel.name || '').trim().toLowerCase();
         names.set(name, (names.get(name) || 0) + 1);
       });
-      count.textContent = `${number(matches.length)} ${matches.length === 1 ? 'channel' : 'channels'}`;
-      const groups = new Map();
-      matches.forEach((channel) => {
-        const group = channelProtocolGroup(channel);
-        if (!groups.has(group.key)) groups.set(group.key, { ...group, channels: [] });
-        groups.get(group.key).channels.push(channel);
-      });
       const replacement = document.createDocumentFragment();
-      for (const group of groups.values()) {
-        const groupHost = node('section', 'tuner-allocation-protocol-group');
-        const heading = node('div', 'ui-action-row ui-action-row-start');
-        const title = node('h2', 'ui-section-heading tuner-allocation-protocol-name', group.label);
-        title.id = `allocation-protocol-${group.key}`;
-        groupHost.setAttribute('aria-labelledby', title.id);
-        heading.append(title, node('span', 'ui-label muted', number(group.channels.length)));
+      if (result.rows.length) {
         const list = node('div', 'ui-record-card');
-        for (const channel of group.channels) {
-          const choice = node('button', 'ui-select-list-item tuner-allocation-channel-choice');
+        const columns = node('div', 'ui-surface-header ui-label muted tuner-allocation-catalog-columns');
+        columns.setAttribute('aria-hidden', 'true');
+        columns.append(node('span', '', 'Channel'), node('span', '', 'Protocol'), node('span', '', 'Status'));
+        list.append(columns);
+        for (const channel of result.rows) {
+          const choice = node('button', 'ui-select-list-item ui-select-list-item-compact tuner-allocation-channel-choice');
           choice.type = 'button';
           choice.dataset.configurationId = String(channel.configuration_id);
           choice.dataset.allocationChannelId = String(channel.configuration_id);
           const frequencies = channelAdminFrequencyList(channel.frequencies_hz);
-          choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''}`);
+          const running = channel.processing_state === 'RUNNING';
+          choice.setAttribute('aria-label', `Inspect ${channel.name || 'Unnamed channel'}${frequencies ? ` · ${frequencies} MHz` : ''} · ${channelProtocolGroup(channel).label} · ${running ? 'Running' : 'Stopped'}`);
           choice.addEventListener('click', () => selectChannel(channel));
           const label = node('span', 'ui-toggle-copy tuner-allocation-channel-label');
           label.append(node('strong', '', channel.name || 'Unnamed channel'));
@@ -33485,22 +33529,35 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
           const trailing = node('span', 'ui-action-row tuner-allocation-channel-trailing');
           const chevron = node('span', 'ui-record-card-icon');
           chevron.append(iconGlyph('icon-chevron-right'));
-          trailing.append(uiStatus(channel.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-            channel.processing_state === 'RUNNING' ? 'success' : 'neutral'), chevron);
-          choice.append(label, trailing);
+          trailing.append(uiStatus(running ? 'Running' : 'Stopped', running ? 'success' : 'neutral'), chevron);
+          choice.append(label, node('span', 'ui-label muted tuner-allocation-channel-protocol', channelProtocolGroup(channel).label), trailing);
           list.append(choice);
         }
-        groupHost.append(heading, list);
-        replacement.append(groupHost);
-      }
-      if (!matches.length) replacement.append(node('p', 'ui-field-detail', channels.length ?
-        'No channels match this search.' : 'No local tuner channels are configured.'));
+        replacement.append(list);
+      } else replacement.append(node('p', 'ui-field-detail', channels.length ?
+        'No channels match these filters.' : 'No local tuner channels are configured.'));
       picker.replaceChildren(replacement);
+      const turnPage = (page) => {
+        tunerAllocationPickerState.page = page;
+        drawCatalog();
+      };
+      pager.update({ countText: `${browsingWorkflows.pageRangeText({ offset: result.offset, visible: result.rows.length,
+        total: result.total, label: 'Channels', format: number })} · Page ${number(result.page + 1)} of ${number(result.pageCount)}`,
+      previous: { enabled: result.page > 0, onClick: () => turnPage(result.page - 1) },
+      next: { enabled: result.page + 1 < result.pageCount, onClick: () => turnPage(result.page + 1) } });
       if (focusedId) picker.querySelector(`[data-configuration-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
     };
-    search.addEventListener('input', drawCatalog);
+    search.addEventListener('input', () => {
+      tunerAllocationPickerState.page = 0;
+      drawCatalog();
+    });
+    protocol.addEventListener('change', () => {
+      tunerAllocationPickerState.protocol = protocol.value;
+      tunerAllocationPickerState.page = 0;
+      drawCatalog();
+    });
     drawCatalog();
-    catalogHost.replaceChildren(toolbar, picker);
+    catalogHost.replaceChildren(toolbar, statusFilter, picker, pager);
     if (tunerAllocationPickerState.restore) {
       requestAnimationFrame(() => {
         if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
@@ -33807,7 +33864,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         clearMapStates();
         historyController.replaceRows([]);
         historyPager.replaceChildren();
-        Object.assign(tunerAllocationPickerState, { query: '', scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+        Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
         catalogRefreshStopped = true;
         catalogHost.replaceChildren();
         failure.replaceChildren(node('div', 'error', 'You no longer have access to tuner allocation.'));

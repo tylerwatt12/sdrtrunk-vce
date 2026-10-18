@@ -7,18 +7,41 @@
   gap: var(--space-4);
 }
 
-.tuner-allocation-channel-list,
-.tuner-allocation-protocol-group {
+.tuner-allocation-channel-list {
   display: grid;
   min-width: 0;
-  gap: var(--space-2);
 }
 
-.tuner-allocation-channel-list {
-  gap: var(--space-5);
+.tuner-allocation-picker-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--space-5) * 9));
+  gap: var(--space-3);
+  margin-bottom: 0;
 }
 
-.tuner-allocation-picker-toolbar,
+.tuner-allocation-picker-search {
+  display: block;
+  min-width: 0;
+}
+
+.tuner-allocation-status-filter {
+  justify-self: start;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.tuner-allocation-catalog-columns,
+.tuner-allocation-channel-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--space-5) * 7)) minmax(0, calc(var(--space-5) * 6));
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.tuner-allocation-catalog-columns {
+  padding: var(--space-2) var(--space-3);
+}
+
 .tuner-allocation-monitor-toolbar {
   justify-content: space-between;
 }
@@ -35,6 +58,7 @@
 
 .tuner-allocation-channel-trailing {
   flex-wrap: nowrap;
+  justify-content: space-between;
 }
 
 .tuner-allocation-channel-metadata {
@@ -108,6 +132,34 @@
 }
 
 @media (max-width: 560px) {
+  .tuner-allocation-picker-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuner-allocation-catalog-columns {
+    display: none;
+  }
+
+  .tuner-allocation-channel-choice {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+
+  .tuner-allocation-channel-label {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .tuner-allocation-channel-protocol {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .tuner-allocation-channel-trailing {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
   .tuner-allocation-monitor-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

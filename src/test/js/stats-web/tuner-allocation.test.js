@@ -98,6 +98,42 @@ assert.equal(context.tunerAllocationChannelContext(catalogChannels.find((item) =
 assert.match(context.tunerAllocationChannelContext(grafton), /Ohio MARCS-IP.*Lorain/,
   'Configured name retains separate system and site context');
 
+const pagedChannels = Array.from({ length: 27 }, (_, index) => saved(`paged-${index + 1}`,
+  `Channel ${String(index + 1).padStart(2, '0')}`, index < 20 ? 'p25-conventional' : 'am',
+  [154_000_000 + index * 25_000], { processing_state: index % 3 === 0 ? 'STOPPED' : 'RUNNING' }));
+const firstCatalogPage = plain(context.tunerAllocationCatalogPage(pagedChannels));
+assert.deepEqual(firstCatalogPage.counts, { all: 27, running: 18, stopped: 9 });
+assert.equal(firstCatalogPage.total, 18, 'The catalog initially shows running channels');
+assert.equal(firstCatalogPage.rows.length, 10, 'The catalog has ten channels per page');
+assert.equal(firstCatalogPage.pageCount, 2);
+assert.equal(firstCatalogPage.offset, 0);
+assert.ok(firstCatalogPage.rows.every((channel) => channel.processing_state === 'RUNNING'));
+const lastCatalogPage = plain(context.tunerAllocationCatalogPage(pagedChannels, { page: 99 }));
+assert.equal(lastCatalogPage.page, 1, 'A stale page is clamped to the last matching page');
+assert.equal(lastCatalogPage.offset, 10);
+assert.equal(lastCatalogPage.rows.length, 8);
+assert.equal(context.tunerAllocationCatalogPage(pagedChannels, { page: -1 }).page, 0);
+assert.equal(context.tunerAllocationCatalogPage(pagedChannels, { page: Infinity }).page, 0);
+const namedCatalogPage = plain(context.tunerAllocationCatalogPage(pagedChannels, { query: 'Channel 26', page: 1 }));
+assert.deepEqual(namedCatalogPage.rows.map((channel) => channel.configuration_id), ['paged-26'],
+  'Search reaches matching channels beyond the first unfiltered page');
+assert.equal(namedCatalogPage.page, 0);
+const protocolCatalogPage = plain(context.tunerAllocationCatalogPage(pagedChannels,
+  { query: 'Channel 2', protocol: 'am', status: 'stopped' }));
+assert.deepEqual(protocolCatalogPage.counts, { all: 7, running: 5, stopped: 2 },
+  'Status counts follow search and protocol scope before applying the chosen status');
+assert.deepEqual(protocolCatalogPage.rows.map((channel) => channel.configuration_id), ['paged-22', 'paged-25']);
+const allCatalogPage = plain(context.tunerAllocationCatalogPage(pagedChannels, { status: 'all', page: 2 }));
+assert.equal(allCatalogPage.total, 27);
+assert.equal(allCatalogPage.rows.length, 7);
+const emptyCatalogPage = plain(context.tunerAllocationCatalogPage(pagedChannels, { query: 'No matching channel', page: 5 }));
+assert.deepEqual(emptyCatalogPage.counts, { all: 0, running: 0, stopped: 0 });
+assert.equal(emptyCatalogPage.total, 0);
+assert.equal(emptyCatalogPage.page, 0);
+assert.equal(emptyCatalogPage.pageCount, 1);
+assert.equal(emptyCatalogPage.offset, 0);
+assert.deepEqual(emptyCatalogPage.rows, []);
+
 // Match actual Albany geometry while testing receiver safety boundaries with
 // explicit synthetic frequency limits; the saved report omitted those limits.
 const tuner = { id: 'safe-1', name: 'RTL-SDR 1', frequencyHz: 855_362_500,

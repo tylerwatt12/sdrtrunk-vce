@@ -1027,6 +1027,10 @@
   border-bottom: 0;
 }
 
+.ui-select-list-item-compact {
+  padding: var(--space-2) var(--space-3);
+}
+
 .ui-select-list-item:hover {
   background: var(--surface-2);
 }
