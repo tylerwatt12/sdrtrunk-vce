@@ -3,7 +3,7 @@ import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=19';
+import * as tableDefaults from './core/table-defaults.js?v=20';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -13074,7 +13074,9 @@ function liveChannelStateMatchesSelection(selection, subscriptionId, source) {
 }
 
 function liveEventDuration(value) {
-  const milliseconds = Math.max(0, Number(value) || 0);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '';
+  const milliseconds = value;
+  if (milliseconds === 0) return '0s';
   if (milliseconds < 1000) return `${milliseconds}ms`;
   return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)}s`;
 }
@@ -23566,6 +23568,9 @@ function activityToneValue(row) {
 function activityColumns(context, filters) {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
+    { id: 'duration', label: 'Duration', className: 'numeric',
+      render: (row) => liveEventDuration(activityDurationMilliseconds(row)),
+      sortValue: activityDurationMilliseconds },
     { id: 'action', label: 'Action', render: (row) =>
       activityCellValue(String(row.action || '').toUpperCase() === 'TONE' ? activityOptionLabel('TONE') : row.action, row, 'action', context, filters), sortValue: (row) => row.action || '' },
     { id: 'event', label: 'Event subtype', render: (row) =>
@@ -23610,7 +23615,7 @@ function activityColumns(context, filters) {
 function activityColumnsForContext(context, filters) {
   const columns = activityColumns(context, filters);
   if (context?.kind === 'conventional-analog') {
-    const visible = new Set(['time', 'action', 'event', 'tones', 'channel', 'related']);
+    const visible = new Set(['time', 'duration', 'action', 'event', 'tones', 'channel', 'related']);
     return columns.filter((column) => visible.has(column.id));
   }
   return columns;
@@ -23618,6 +23623,23 @@ function activityColumnsForContext(context, filters) {
 
 function activityTableType(context) {
   return context?.kind === 'conventional-analog' ? 'activity-conventional-analog-v1' : 'activity';
+}
+
+function activityDurationMilliseconds(row) {
+  const value = row?.duration_ms;
+  return String(row?.action || '').toUpperCase() === 'CALL' &&
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function activityTableLayout(context, columns) {
+  const saved = activeUserPreferences().tables[activityTableType(context)];
+  if (!saved || saved.schema?.includes('duration')) return saved;
+  const previous = tableLayouts.normalize(columns.filter((column) => column.id !== 'duration'), saved);
+  if (previous.reset) return saved;
+  const upgraded = tableLayouts.persisted(previous);
+  upgraded.schema = columns.map((column) => column.id);
+  upgraded.column_order.splice(upgraded.column_order.indexOf('time') + 1, 0, 'duration');
+  return upgraded;
 }
 
 async function renderActivity(scopeParameters, title = 'Activity') {
@@ -23645,7 +23667,8 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     'Detailed event history is enabled, but no matching activity has been recorded yet.';
   const titleActions = node('div', 'section-title-actions ui-section-actions');
   const activityTable = table(initialRows, columns, emptyMessage,
-    { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions });
+    { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions,
+      layout: activityTableLayout(activityContext, columns) });
   activityTable.setAttribute('aria-live', 'off');
   const block = section(title, activityTable, titleActions);
   const filterToolbar = activityFilterToolbar(activityContext, filters);

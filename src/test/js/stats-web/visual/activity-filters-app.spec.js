@@ -27,6 +27,7 @@ async function openActivity(page, options = {}) {
   const radioSystemPath = `/api/v1/radio-systems/${encodedRadioSystemKey}`;
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
+  if (options.activityLayout) preferences.tables.activity = options.activityLayout;
   const requests = { activity: [], groups: [], radios: [] };
   const groupRows = [
     { identity_key: talkgroupIdentityKey, native_id: 56131, group_identity_kind: 'talkgroup',
@@ -129,6 +130,34 @@ function toneActivityRow(id, summary, overrides = {}) {
     target_entity_ref: { kind: 'group', radio_system_key: radioSystemKey, identity_key: talkgroupIdentityKey },
     entity_ref: { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' },
     paging_tone_summary: summary, ...overrides };
+}
+
+for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
+  test(`Activity duration is shared, nullable, and sortable on ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const schema = ['time', 'action', 'event', 'tones', 'source', 'source-alias', 'source-ota-alias',
+      'target', 'target-alias', 'channel', 'encryption', 'related'];
+    await openActivity(page, { theme, rows: [
+      toneActivityRow(17, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 1250 }),
+      toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: null }),
+      toneActivityRow(19, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 30_000, encrypted: true }),
+      toneActivityRow(20, undefined, { action: 'RESPONSE', event_type: 'RESPONSE', duration_ms: 1000 }),
+      toneActivityRow(21, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 0 })
+    ], activityLayout: { schema, column_order: ['time', 'event', 'action', ...schema.slice(3)],
+      column_widths: { time: 112 }, hidden_columns: ['tones', 'source-ota-alias'], collapsed_groups: [] } });
+    const table = page.locator('table[data-table-type="activity"]');
+    await expect(table.locator('thead th').first()).toHaveAttribute('data-column', 'time');
+    await expect(table.locator('thead th').nth(1)).toHaveAttribute('data-column', 'duration');
+    await expect(table.locator('thead th').nth(2)).toHaveAttribute('data-column', 'event');
+    await expect(table.locator('thead th[data-column="tones"]')).toHaveCount(0);
+    await expect(table.locator('col').first()).toHaveAttribute('style', 'width: 112px;');
+    await expect(table.locator('tbody td[data-column="duration"]')).toHaveText(['1.3s', '', '30s', '', '0s']);
+    await table.getByRole('button', { name: 'Duration', exact: true }).click();
+    expect(await table.locator('tbody tr').evaluateAll((rows) => rows.map((row) => row.dataset.id)))
+      .toEqual(['21', '17', '19', '18', '20']);
+    await expect(table.locator('th[data-column="duration"]')).toHaveAttribute('aria-sort', 'ascending');
+    await toneScreenshot(page, `activity-duration-${theme}-${width}`);
+  });
 }
 
 for (const [theme, width] of [['light', 1440], ['dark', 390], ['light', 320]]) {

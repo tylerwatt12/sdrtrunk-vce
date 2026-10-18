@@ -22,7 +22,7 @@ const ALIAS_WIDTHS = Object.freeze({
 });
 const ALIAS_GROW = ['alias', 'description', 'group', 'behavior'];
 const ACTIVITY_DEFAULTS = {
-  widths: { action: 110, event: 180, tones: 280, source: 220, target: 220, channel: 320,
+  widths: { duration: 88, action: 110, event: 180, tones: 280, source: 220, target: 220, channel: 320,
     'source-alias': 190, 'source-ota-alias': 190, 'target-alias': 190 },
   grow: ['channel', 'source-alias', 'source-ota-alias', 'target-alias']
 };

@@ -148,6 +148,73 @@ async function loadModule(name) {
   return import(pathToFileURL(path.join(core, `${name}.js`)).href);
 }
 
+function checkActivityDuration(tableLayouts, tableDefaults) {
+  const savedTables = {};
+  const context = { tableLayouts, activeUserPreferences: () => ({ tables: savedTables }) };
+  vm.createContext(context);
+  const signatures = [
+    'liveEventDuration(value)', 'activityDurationMilliseconds(row)', 'activityColumns(context, filters)',
+    'activityColumnsForContext(context, filters)', 'activityTableType(context)',
+    'activityTableLayout(context, columns)', 'compareTableValues(left, right)'
+  ];
+  vm.runInContext(signatures.map((signature) => `function ${signature} ${
+    functionBinding(appSource, signature.slice(0, signature.indexOf('(')))}`).join('\n'), context);
+  const columnFor = (scope) => context.activityColumnsForContext(scope, {})
+    .find((column) => column.id === 'duration');
+  for (const scope of [
+    { kind: 'system', protocol: 'P25' }, { kind: 'talkgroup', protocol: 'P25' },
+    { kind: 'patch-group', protocol: 'P25' }, { kind: 'radio', protocol: 'P25' },
+    { kind: 'trunked-channel', protocol: 'P25' }, { kind: 'saved-system', protocol: 'DMR' },
+    { kind: 'conventional-digital', protocol: 'DMR' },
+    { kind: 'conventional-digital', protocol: 'NXDN' },
+    { kind: 'conventional-analog', protocol: 'NBFM' }
+  ]) {
+    const column = columnFor(scope);
+    assert.ok(column, `${scope.kind} ${scope.protocol} must show the shared Duration column.`);
+    assert.equal(column.render({ action: 'CALL', duration_ms: 1250, encrypted: true }), '1.3s',
+      'Metadata-only encrypted calls use accepted duration without requiring an audio file.');
+    assert.equal(column.render({ action: 'CALL', duration_ms: 0 }), '0s');
+    for (const value of [undefined, null, '', '1250', -1, NaN, Infinity]) {
+      assert.equal(column.render({ action: 'CALL', duration_ms: value }), '');
+      assert.equal(column.sortValue({ action: 'CALL', duration_ms: value }), null);
+    }
+    for (const action of ['GRANT', 'RESPONSE', 'TONE', 'REGISTER', undefined]) {
+      assert.equal(column.render({ action, duration_ms: 1250 }), '', 'Non-call rows have no call duration.');
+    }
+  }
+  const duration = columnFor({ kind: 'system' });
+  const rows = [{ id: 1, action: 'CALL', duration_ms: 10_000 },
+    { id: 2, action: 'CALL', duration_ms: 1200 }, { id: 3, action: 'CALL', duration_ms: 999 },
+    { id: 4, action: 'CALL', duration_ms: null }];
+  assert.deepEqual(rows.sort((a, b) => context.compareTableValues(duration.sortValue(a),
+    duration.sortValue(b))).map((row) => row.id), [3, 2, 1, 4], 'Sort by numeric length, with unknowns after known lengths.');
+  assert.equal(duration.render({ action: 'CALL', recording_duration_ms: 4000 }), '',
+    'A recording length must never stand in for missing Activity timing.');
+  for (const scope of [{ kind: 'system' }, { kind: 'conventional-analog' }]) {
+    const columns = context.activityColumnsForContext(scope, {});
+    const type = context.activityTableType(scope);
+    const oldColumns = columns.filter((column) => column.id !== 'duration');
+    const previous = tableLayouts.setHidden(tableLayouts.resize(tableLayouts.move(
+      tableLayouts.normalize(oldColumns, null), 'event', 'action'), 'time', 194), 'tones', true);
+    savedTables[type] = tableLayouts.persisted(previous);
+    const before = JSON.stringify(savedTables[type]);
+    const upgraded = context.activityTableLayout(scope, columns);
+    const restored = tableLayouts.normalize(columns, upgraded);
+    assert.equal(restored.reset, false);
+    assert.deepEqual(Array.from(restored.column_order), ['time', 'duration', ...previous.column_order.slice(1)]);
+    assert.equal(restored.column_widths.time, 194);
+    assert.deepEqual(Array.from(restored.hidden_columns), ['tones']);
+    assert.equal(JSON.stringify(savedTables[type]), before, 'Reading an old layout must not write preferences.');
+    assert.equal(tableDefaults.width(type, { id: 'duration' }), 88);
+    savedTables[type] = tableLayouts.persisted(tableLayouts.setHidden(restored, 'duration', true));
+    assert.equal(context.activityTableLayout(scope, columns), savedTables[type],
+      'Existing choices for the new column must be retained.');
+    savedTables[type] = { ...savedTables[type], schema: ['unrelated'] };
+    assert.equal(tableLayouts.normalize(columns, context.activityTableLayout(scope, columns)).reset, true,
+      'The targeted upgrade must not accept unrelated or invalid old layouts.');
+  }
+}
+
 function response(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
@@ -492,6 +559,7 @@ async function main() {
     '../web-call-player'
   ].map(loadModule));
   const browsing = await loadModule('browsing-workflows');
+  checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
   assert.equal(browsing.scanListAvailabilityLabel({ published: true }), 'Available to listeners');
