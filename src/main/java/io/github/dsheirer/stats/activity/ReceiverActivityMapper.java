@@ -396,11 +396,15 @@ class ReceiverActivityMapper
                     null);
         }
 
+        //Retained identifiers may describe rejected or conflicting signaling. The accepted physical call state
+        //owns encryption; an old key identifier must not turn a clear or unknown call into an encrypted summary.
+        boolean encrypted = snapshot.isEncrypted();
         return new ReceiverActivityRecords.ResolvedLogicalCall(call.logicalCallId(), timestamp, configurationId,
             protocol, winnerSource.identityDomain(), systemWacn, systemId,
             destination != null ? destination : 0, facts.targetForm(),
-            facts.patchMemberTalkgroupIds(), sourceRadio, snapshot.isEncrypted() || facts.encrypted(),
-            facts.encryptionAlgorithmId(), facts.encryptionKeyId(), resolvedTargetIdentity,
+            facts.patchMemberTalkgroupIds(), sourceRadio, encrypted,
+            encrypted ? facts.encryptionAlgorithmId() : null, encrypted ? facts.encryptionKeyId() : null,
+            resolvedTargetIdentity,
             resolvedSourceIdentity, p25 ? facts.p25PatchMemberIdentities() : List.of(), siteObservations,
             radioSystemKey, p25WorkingAddress(source), p25WorkingAddress(target), call.sourceCallReferences(),
             p25 ? null : observedDuration(snapshot));

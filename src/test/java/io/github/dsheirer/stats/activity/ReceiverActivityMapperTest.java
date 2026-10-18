@@ -7,22 +7,42 @@
 package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionEvidence;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.identifier.encryption.EncryptionKey;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNEncryptionKey;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelEventTracker;
@@ -35,6 +55,7 @@ import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -45,12 +66,148 @@ import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /** Focused mapper coverage for the immutable conventional producer records. */
 class ReceiverActivityMapperTest
 {
     private static final String CONFIGURATION_ID = "223e4567-e89b-42d3-a456-426614174000";
+
+    @Test
+    void p25SummaryCannotResurrectEncryptionFromARetainedIdentifier()
+    {
+        for(DecoderType decoder: List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            for(CallEncryptionState state: List.of(CallEncryptionState.CLEAR, CallEncryptionState.UNKNOWN))
+            {
+                var call = completedCall(decoder, state, encryptedIdentifiers(decoder));
+                var record = new ReceiverActivityMapper().mapResolvedLogicalCall(call);
+                assertNotNull(record);
+                assertFalse(record.encrypted(), "a retained key identifier must not override " + state);
+                assertNull(record.encryptionAlgorithmId());
+                assertNull(record.encryptionKeyId());
+            }
+        }
+    }
+
+    @Test
+    void p25SummaryPreservesTheBuildersRejectedEncryptionAfterConflictingEvidence()
+    {
+        for(DecoderType decoder: List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            var builder = new MutableAudioCallBuilder(AliasList.empty("Test"), 1);
+            encryptedIdentifiers(decoder).getIdentifiers().forEach(builder::addIdentifier);
+            builder.observeEncryptionState(CallEncryptionState.CLEAR);
+            builder.setCallEncryptionEvidence(new CallEncryptionEvidence(0x84, 12328, 1L));
+            builder.addAudio(new float[160], 1_100L);
+            assertEquals(CallEncryptionState.UNKNOWN, builder.getEncryptionState());
+            assertNotNull(builder.getIdentifierCollection().getEncryptionIdentifier());
+
+            var record = new ReceiverActivityMapper().mapResolvedLogicalCall(
+                completedCall(decoder, builder.getEncryptionState(), builder.getIdentifierCollection()));
+            assertNotNull(record);
+            assertFalse(record.encrypted());
+            assertNull(record.encryptionAlgorithmId());
+            assertNull(record.encryptionKeyId());
+        }
+    }
+
+    @Test
+    void p25SummaryPreservesAcceptedEncryptionIncludingDecodedDecryptedAudio()
+    {
+        for(DecoderType decoder: List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            var builder = new MutableAudioCallBuilder(AliasList.empty("Test"), 1);
+            encryptedIdentifiers(decoder).getIdentifiers().forEach(builder::addIdentifier);
+            builder.setCallEncryptionEvidence(new CallEncryptionEvidence(0x84, 12328, 1L));
+            builder.addAudio(new float[160], 1_100L);
+            assertEquals(CallEncryptionState.ENCRYPTED, builder.getEncryptionState());
+            var record = new ReceiverActivityMapper().mapResolvedLogicalCall(
+                completedCall(decoder, builder.getEncryptionState(), builder.getIdentifierCollection()));
+            assertNotNull(record);
+            assertTrue(record.encrypted());
+            assertEquals(0x84, record.encryptionAlgorithmId());
+            assertEquals(12328, record.encryptionKeyId());
+        }
+    }
+
+    @Test
+    void p25SummaryKeepsAcceptedEncryptionWhenKeyDetailsAreUnavailable()
+    {
+        var identifiers = new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(101),
+            APCO25Talkgroup.create(91)));
+        for(DecoderType decoder: List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2))
+        {
+            var record = new ReceiverActivityMapper().mapResolvedLogicalCall(
+                completedCall(decoder, CallEncryptionState.ENCRYPTED, identifiers));
+            assertNotNull(record);
+            assertTrue(record.encrypted());
+            assertNull(record.encryptionAlgorithmId());
+            assertNull(record.encryptionKeyId());
+        }
+    }
+
+    @Test
+    void dmrAndNxdnSummaryAlsoRespectAcceptedEncryptionState()
+    {
+        for(DecoderType decoder: List.of(DecoderType.DMR, DecoderType.NXDN))
+        {
+            for(CallEncryptionState state: CallEncryptionState.values())
+            {
+                var record = new ReceiverActivityMapper().mapResolvedLogicalCall(
+                    completedCall(decoder, state, encryptedIdentifiers(decoder)));
+                assertNotNull(record);
+                assertEquals(state.isEncrypted(), record.encrypted());
+                if(state.isEncrypted())
+                {
+                    assertEquals(decoder == DecoderType.NXDN ? 3 : 0x84, record.encryptionAlgorithmId());
+                    assertEquals(decoder == DecoderType.NXDN ? 7 : 12328, record.encryptionKeyId());
+                }
+                else
+                {
+                    assertNull(record.encryptionAlgorithmId());
+                    assertNull(record.encryptionKeyId());
+                }
+            }
+        }
+    }
+
+    private static IdentifierCollection encryptedIdentifiers(DecoderType decoder)
+    {
+        if(decoder == DecoderType.DMR)
+        {
+            EncryptionKey key = new EncryptionKey(0x84, 12328)
+            {
+                @Override public boolean isEncrypted() { return true; }
+            };
+            return new IdentifierCollection(List.of(DMRRadio.createFrom(101), DMRTalkgroup.create(91),
+                EncryptionKeyIdentifier.create(Protocol.DMR, key)));
+        }
+        if(decoder == DecoderType.NXDN)
+        {
+            return new IdentifierCollection(List.of(NXDNRadioIdentifier.createFrom(101),
+                NXDNTalkgroupIdentifier.createTo(91),
+                EncryptionKeyIdentifier.create(Protocol.NXDN, NXDNEncryptionKey.create(3, 7))));
+        }
+        return new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(101), APCO25Talkgroup.create(91),
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 12328))));
+    }
+
+    private static CompletedAudioCall completedCall(DecoderType decoder, CallEncryptionState state,
+        IdentifierCollection identifiers)
+    {
+        boolean p25 = decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2;
+        CallLegSource source = new CallLegSource(decoder, CONFIGURATION_ID, "Test", null, 0,
+            p25 ? new P25SiteIdentity(0xBEE00, 0x123, 1, 1) : null,
+            decoder == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C : TrunkedIdentityDomain.STANDARD,
+            ChannelKind.TRUNKED, true);
+        AudioCallId id = new AudioCallId(91, 1, 1);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(id, null, null, identifiers, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, state, true, null,
+            VoiceCallQuality.EMPTY, CallLegId.from(id), source, null);
+        return new CompletedAudioCall(snapshot, List.of());
+    }
 
     @Test
     void activityFactsRejectNamesWithoutTheObservedRadioOwner()
