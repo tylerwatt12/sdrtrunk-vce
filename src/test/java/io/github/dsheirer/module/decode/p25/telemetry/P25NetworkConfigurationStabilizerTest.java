@@ -276,22 +276,38 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void capsPromotedControlFrequenciesAtEight()
+    public void retainsMoreThanEightConfirmedControlsWithoutPromotingNoiseOrNeighborFrequencies()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
-        List<P25NetworkConfigurationSnapshot.Channel> channels = java.util.stream.LongStream.range(0, 9)
+        List<P25NetworkConfigurationSnapshot.Channel> channels = java.util.stream.LongStream.range(0, 12)
             .mapToObj(index -> new P25NetworkConfigurationSnapshot.Channel("secondary_control", "0-" + index,
                 851000000L + index * 12500L, null, false, 1))
             .toList();
+        P25NetworkConfigurationSnapshot observation = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x123, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x123, 2, 1, null, true), channels,
+            List.of(neighbor(855237500L)), List.of(), List.of(), List.of());
 
-        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
-            List.of(), List.of(), List.of(), List.of()), 1000L);
-        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
-            List.of(), List.of(), List.of(), List.of()), 31_000L);
-        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
-            List.of(), List.of(), List.of(), List.of()), 61_000L);
+        stabilizer.observe(observation, 1_000L);
+        stabilizer.observe(observation, 31_000L);
+        assertTrue(stabilizer.getStableCurrentSiteControlFrequencies().isEmpty());
+        stabilizer.observe(observation, 61_000L);
 
-        assertEquals(8, stabilizer.getStableCurrentSiteControlFrequencies().size());
+        P25NetworkConfigurationSnapshot.Channel noise = new P25NetworkConfigurationSnapshot.Channel(
+            "secondary_control", "0-100", 852250000L, null, false, 1);
+        for(long timestamp: new long[]{70_000L, 100_000L, 130_000L})
+        {
+            stabilizer.observe(snapshot(noise.withObservedAt(70_000L)), timestamp);
+            stabilizer.observe(snapshot(new P25NetworkConfigurationSnapshot.Channel("secondary_control",
+                "0-101", 0L, null, false, 1)), timestamp);
+        }
+
+        assertEquals(12, stabilizer.getStableCurrentSiteControlFrequencies().size());
+        assertTrue(channels.stream().allMatch(channel ->
+            stabilizer.getStableCurrentSiteControlFrequencies().contains(channel.downlink())));
+        assertFalse(stabilizer.getStableCurrentSiteControlFrequencies().contains(855237500L));
+        assertFalse(stabilizer.getStableCurrentSiteControlFrequencies().contains(noise.downlink()));
+        assertFalse(stabilizer.getStableCurrentSiteControlFrequencies().contains(0L));
     }
 
     @Test

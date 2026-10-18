@@ -53,6 +53,29 @@ class P25P2NetworkConfigurationMonitorTest
     }
 
     @Test
+    void learnsMoreThanEightSameSiteControlsFromSeparateFreshBroadcasts()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = stabilizedSite();
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor(stabilizer);
+
+        for(long timestamp: new long[]{1_000L, 31_000L, 61_000L})
+        {
+            for(int channel = 97; channel < 109; channel++)
+            {
+                stabilizer.observe(monitor.processMacMessage(secondaryControl(2, 7, 4, channel, timestamp)),
+                    timestamp);
+            }
+
+            assertNull(monitor.processMacMessage(secondaryControl(2, 8, 4, 200, timestamp)));
+            assertNull(monitor.processMacMessage(secondaryControl(3, 7, 4, 201, timestamp)));
+            assertNull(monitor.processMacMessage(secondaryControl(2, 7, 0, 202, timestamp)));
+        }
+
+        assertEquals(12, stabilizer.getStableCurrentSiteControlFrequencies().size());
+        assertTrue(stabilizer.getStableCurrentSiteControlFrequencies().contains(770_675_000L));
+    }
+
+    @Test
     void ignoresZeroServiceSecondaryControlSlotsAcrossPhaseTwoFormats()
     {
         MacMessage implicit = secondaryControl(2, 7, 0);
@@ -281,18 +304,24 @@ class P25P2NetworkConfigurationMonitorTest
 
     private static MacMessage secondaryControl(int rfss, int site, int serviceClass)
     {
+        return secondaryControl(rfss, site, serviceClass, 97, 1_000L);
+    }
+
+    private static MacMessage secondaryControl(int rfss, int site, int serviceClass, int channelNumber,
+                                                long timestamp)
+    {
         int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
         message.setInt(121, IntField.length8(offset));
         message.setInt(rfss, IntField.length8(8 + offset));
         message.setInt(site, IntField.length8(16 + offset));
-        message.setInt(97, IntField.length12(28 + offset));
+        message.setInt(channelNumber, IntField.length12(28 + offset));
         message.setInt(serviceClass, IntField.length8(40 + offset));
         SecondaryControlChannelBroadcastImplicit structure =
             new SecondaryControlChannelBroadcastImplicit(message, offset);
         structure.getChannels().forEach(channel -> ((APCO25Channel)channel).setFrequencyBand(
             new P25FrequencyBand(0, 770_000_000L, 30_000_000L, 6_250L, 12_500, 1)));
-        return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
+        return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, timestamp, structure);
     }
 
     private static SecondaryControlChannelBroadcastImplicit secondaryControlSlots(boolean distinctBands)

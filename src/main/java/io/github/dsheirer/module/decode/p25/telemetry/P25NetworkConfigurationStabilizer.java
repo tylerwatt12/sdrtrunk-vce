@@ -23,7 +23,6 @@ import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,15 +30,12 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Stabilizes freshly observed P25 RF configuration facts before they are used by external consumers.
  */
 public class P25NetworkConfigurationStabilizer
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(P25NetworkConfigurationStabilizer.class);
     static final long DISCOVERY_WINDOW_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
     static final int GUARDED_STATIC_OBSERVATION_THRESHOLD = 3;
     static final long GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
@@ -48,9 +44,7 @@ public class P25NetworkConfigurationStabilizer
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final long STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final long PATCH_GROUP_FRESHNESS_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
-    static final int MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES = 8;
     private static final int MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS = 2;
-    private static final int MAXIMUM_REJECTED_CONTROL_CHANNEL_FREQUENCIES = 64;
     private static final FactConfirmationPolicy IMMEDIATE_DISCOVERY_POLICY =
         new FactConfirmationPolicy(1, 0, CANDIDATE_EXPIRATION_MILLISECONDS, true);
     private static final FactConfirmationPolicy GUARDED_STATIC_POLICY =
@@ -85,7 +79,6 @@ public class P25NetworkConfigurationStabilizer
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.TalkerAlias,
         P25NetworkConfigurationSnapshot.TalkerAlias>> mTalkerAliases =
         new ConcurrentSkipListMap<>();
-    private final Set<Long> mRejectedControlChannelFrequencies = new LinkedHashSet<>();
     private long mDiscoveryStartedAt;
     private volatile PatchCompleteness mPatchCompleteness = PatchCompleteness.EMPTY;
     private volatile long mMutationEpoch;
@@ -125,7 +118,6 @@ public class P25NetworkConfigurationStabilizer
             mForeignSystemBands.clear();
             mPatchGroups.clear();
             mTalkerAliases.clear();
-            mRejectedControlChannelFrequencies.clear();
             mDiscoveryStartedAt = 0;
             resetPatchCompleteness();
         }
@@ -630,56 +622,10 @@ public class P25NetworkConfigurationStabilizer
 
     private boolean allowChannelPromotion(P25NetworkConfigurationSnapshot.Channel channel)
     {
-        if(!isControlChannel(channel) || channel.downlink() == null)
-        {
-            return true;
-        }
-
-        if(channel.downlink() <= 0)
-        {
-            return false;
-        }
-
-        if(isCurrentControlChannel(channel))
-        {
-            return true;
-        }
-
-        if(hasStableControlFrequency(channel.downlink()))
-        {
-            return true;
-        }
-
-        if(stableControlFrequencyCount() < MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES)
-        {
-            return true;
-        }
-
-        if(mRejectedControlChannelFrequencies.add(channel.downlink()))
-        {
-            LOGGER.warn("Rejected P25 control channel candidate [{}]; stable control channel cap [{}] reached",
-                channel.downlink(), MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES);
-            trimRejectedControlChannels();
-        }
-
-        return false;
-    }
-
-    private boolean hasStableControlFrequency(long frequency)
-    {
-        for(StableFactTracker<P25NetworkConfigurationSnapshot.Channel,
-            P25NetworkConfigurationSnapshot.Channel> tracker: mChannels.values())
-        {
-            P25NetworkConfigurationSnapshot.Channel stable = tracker.getStableValue();
-
-            if(isControlChannel(stable) && stable.downlink() != null && stable.downlink() > 0 &&
-                stable.downlink() == frequency)
-            {
-                return true;
-            }
-        }
-
-        return false;
+        //TIA-102.AABC-B (2005), 6.2.16/6.2.28 limit channels per broadcast, not per site. Monitors
+        //validate the serving site and resolved band before observation; fresh confirmation and expiry
+        //still apply here. An arbitrary site-wide cap would discard legitimate later advertisements.
+        return !isControlChannel(channel) || channel.downlink() == null || channel.downlink() > 0;
     }
 
     private int stableControlFrequencyCount()
@@ -904,14 +850,6 @@ public class P25NetworkConfigurationStabilizer
     private static String value(Object value)
     {
         return value != null ? value.toString() : "";
-    }
-
-    private void trimRejectedControlChannels()
-    {
-        while(mRejectedControlChannelFrequencies.size() > MAXIMUM_REJECTED_CONTROL_CHANNEL_FREQUENCIES)
-        {
-            mRejectedControlChannelFrequencies.remove(mRejectedControlChannelFrequencies.iterator().next());
-        }
     }
 
     private static <T> StableFactTracker<T,T> tracker()

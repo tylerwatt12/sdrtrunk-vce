@@ -63,6 +63,29 @@ class P25P1NetworkConfigurationMonitorTest
     }
 
     @Test
+    void learnsMoreThanEightSameSiteControlsFromSeparateFreshBroadcasts()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = stabilizedSite();
+        P25P1NetworkConfigurationMonitor monitor = new P25P1NetworkConfigurationMonitor(Modulation.C4FM,
+            stabilizer);
+
+        for(long timestamp: new long[]{1_000L, 31_000L, 61_000L})
+        {
+            for(int channel = 97; channel < 109; channel++)
+            {
+                stabilizer.observe(monitor.process(secondaryControl(2, 7, 4, channel, timestamp)), timestamp);
+            }
+
+            assertNull(monitor.process(secondaryControl(2, 8, 4, 200, timestamp)));
+            assertNull(monitor.process(secondaryControl(3, 7, 4, 201, timestamp)));
+            assertNull(monitor.process(secondaryControl(2, 7, 0, 202, timestamp)));
+        }
+
+        assertEquals(12, stabilizer.getStableCurrentSiteControlFrequencies().size());
+        assertTrue(stabilizer.getStableCurrentSiteControlFrequencies().contains(770_675_000L));
+    }
+
+    @Test
     void ignoresZeroServiceSecondaryControlSlotsAcrossPhaseOneFormats()
     {
         SecondaryControlChannelBroadcast implicit = secondaryControl(2, 7, 0);
@@ -150,14 +173,20 @@ class P25P1NetworkConfigurationMonitorTest
 
     private static SecondaryControlChannelBroadcast secondaryControl(int rfss, int site, int serviceClass)
     {
+        return secondaryControl(rfss, site, serviceClass, 97, 1_000L);
+    }
+
+    private static SecondaryControlChannelBroadcast secondaryControl(int rfss, int site, int serviceClass,
+                                                                    int channelNumber, long timestamp)
+    {
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
         message.setInt(57, IntField.length6(2));
         message.setInt(rfss, IntField.length8(16));
         message.setInt(site, IntField.length8(24));
-        message.setInt(97, IntField.length12(36));
+        message.setInt(channelNumber, IntField.length12(36));
         message.setInt(serviceClass, IntField.length8(48));
         SecondaryControlChannelBroadcast broadcast = new SecondaryControlChannelBroadcast(
-            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x346, 1_000L);
+            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x346, timestamp);
         broadcast.getChannels().forEach(channel -> ((APCO25Channel)channel).setFrequencyBand(
             new P25FrequencyBand(0, 770_000_000L, 30_000_000L, 6_250L, 12_500, 1)));
         return broadcast;
