@@ -42,9 +42,9 @@ class StatsWebDashboardUiContractTest
         assertFalse(dashboard.contains("'Monitored Coverage'"));
         assertFalse(dashboard.contains("'Recent Channels'"));
         assertFalse(dashboard.contains("dashboard.recent_channels"));
-        assertTrue(dashboard.contains("'Logical Call Totals · Last 24h'"));
-        assertTrue(dashboard.contains("'Call Activity · Last 24h'"));
-        assertTrue(dashboard.contains("'Logical Calls by Conventional Channel · Last 24h'"));
+        assertTrue(dashboard.contains("'Calls across all systems and channels · 24h'"));
+        assertTrue(dashboard.contains("'Call history · 24h'"));
+        assertTrue(dashboard.contains("'Calls by Conventional Channel · Last 24h'"));
         assertTrue(dashboard.contains("dashboard.source_activity_24h"));
         assertTrue(dashboard.contains("dashboard.top_destinations"));
         assertTrue(dashboard.contains("dashboard.top_sources"));
@@ -164,15 +164,15 @@ class StatsWebDashboardUiContractTest
 
         assertTrue(calls.contains("label: 'Conventional Channel'"));
         assertTrue(calls.contains("label: 'Mode'"));
-        assertTrue(calls.contains("label: 'Calls', fullLabel: 'Logical Calls'"));
+        assertTrue(calls.contains("label: 'Calls', fullLabel: 'Calls'"));
         assertTrue(calls.contains("label: 'Recorded'"));
-        assertTrue(calls.contains("label: 'Submitted'"));
+        assertTrue(calls.contains("label: 'Sent to Streamer'"));
         assertFalse(calls.contains("label: 'Type'"));
         assertFalse(calls.contains("label: 'Enc'"));
         assertFalse(calls.contains("Latest Hour"));
         assertTrue(identities.contains("label: identityLabel"));
         assertTrue(identities.contains("label: 'System / Channel'"));
-        assertTrue(identities.contains("label: 'Calls', fullLabel: 'Logical Calls'"));
+        assertTrue(identities.contains("label: 'Calls', fullLabel: 'Calls'"));
         assertFalse(identities.contains("...dashboardCallSourceColumns"));
         String identity = function(source, "function dashboardIdentity(row)");
         assertTrue(identity.contains("dashboard-identity-context"));

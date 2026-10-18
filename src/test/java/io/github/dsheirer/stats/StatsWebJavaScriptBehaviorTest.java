@@ -59,6 +59,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("Live impaired network", "live-network-simulation.test.js", APP_JAVASCRIPT),
         contract("Live focus recovery", "live-focus-recovery.test.js", APP_JAVASCRIPT),
         contract("Call matching deltas", "call-matching-deltas.test.js", APP_JAVASCRIPT),
+        contract("Call count scopes and dates", "call-count-scope.test.js", APP_JAVASCRIPT),
         contract("Tuner allocation", "tuner-allocation.test.js", APP_JAVASCRIPT),
         contract("source names", "source-names.test.js", CORE_MODULES.resolve("source-names.js")),
         contract("source name preference", "source-name-preference.test.js", APP_JAVASCRIPT),

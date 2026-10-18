@@ -34,6 +34,13 @@ async function mockEntities(page, theme) {
     radio_system_key: systemKey, protocol: 'P25', wacn: 1, system_id: 1,
     system_name: systemName, radio_system_entity_ref: systemRef,
     first_seen_ms: Date.UTC(2026, 8, 5, 11), last_seen_ms: Date.UTC(2026, 9, 1, 13),
+    call_totals_started_at_ms: Date.UTC(2026, 8, 5, 10),
+    call_totals_as_of_ms: Date.UTC(2026, 9, 1, 13),
+    calls_from_ms: Date.UTC(2026, 8, 20, 10), calls_through_hour_ms: Date.UTC(2026, 9, 1, 12),
+    channel_observations_from_ms: Date.UTC(2026, 8, 21, 9),
+    channel_observations_through_hour_ms: Date.UTC(2026, 9, 1, 12),
+    signaling_totals_started_at_ms: Date.UTC(2026, 8, 5, 10),
+    signaling_from_ms: Date.UTC(2026, 8, 21, 9), signaling_through_hour_ms: Date.UTC(2026, 9, 1, 12),
     capabilities: { current_affiliations: true, radio_channel_presence: true,
       group_identities: true, radios: true, activity: true },
     ...totals
@@ -80,7 +87,9 @@ async function mockEntities(page, theme) {
         affiliated_radios: 9, affiliated_channels: 1 });
     }
     if (pathname === `${systemPath}/group-identities/${groupKey}/activity`) {
-      return respond({ totals, series: [] });
+      return respond({ totals, series: [], from_ms: Date.UTC(2026, 8, 30, 14),
+        to_ms: Date.UTC(2026, 9, 1, 13), counts_as_of_ms: Date.UTC(2026, 9, 1, 13),
+        signaling_totals_started_at_ms: Date.UTC(2026, 8, 5, 10) });
     }
     if (pathname === `${systemPath}/radios/${radioKey}`) {
       return respond({ ...identity, native_id: 30914, alias_name: 'Engine 12 Portable', groups: 4,
@@ -117,10 +126,15 @@ for (const theme of ['light', 'dark']) {
     test(`entity stat cards retain one inset and drilldown links in ${theme} at ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await mockEntities(page, theme);
+      await page.route('**/assets/app.js*', async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: await response.text() +
+          '\nwindow.showObservedCountsForTest = (row) => openObservedGroupIdentityDetail(row, { alias_list_id: 7, family: \'P25\' });' });
+      });
       const scope = `radio_system_key=${encodeURIComponent(systemKey)}`;
 
       await page.goto(`/app.html?view=radio-system&${scope}`);
-      await expect(page.locator('.system-info-column .ui-metric-grid')).toHaveCount(4);
+      await expect(page.locator('.system-info-column .ui-metric-grid')).toHaveCount(5);
       await expect.poll(() => page.locator('html').getAttribute('data-theme'))
         .toBe(theme === 'dark' ? 'dark' : null);
       await expectMetricGridSpacing(page.locator('.system-info-column .ui-metric-grid'));
@@ -142,8 +156,18 @@ for (const theme of ['light', 'dark']) {
         fullPage: true });
 
       await page.goto(`/app.html?view=group-identity&${scope}&identity_key=${groupKey}`);
-      await expect(page.locator('.entity-info-layout .ui-metric-grid')).toHaveCount(5);
+      await expect(page.locator('.entity-info-layout .ui-metric-grid')).toHaveCount(6);
       await expectMetricGridSpacing(page.locator('.entity-info-layout .ui-metric-grid'));
+      const callCounts = page.locator('.entity-info-layout .ui-section')
+        .filter({ has: page.locator('.ui-section-title:text-is("Calls heard across this system")') });
+      const channelCounts = page.locator('.entity-info-layout .ui-section')
+        .filter({ has: page.locator('.ui-section-title:text-is("Times heard across all channels")') });
+      await expect(callCounts.locator('dt')).toHaveText(['Since', 'As of']);
+      await expect(callCounts.locator('time').first()).toHaveAttribute('datetime', '2026-09-05T10:00:00.000Z');
+      await expect(channelCounts.locator('time').first()).toHaveAttribute('datetime', '2026-09-21T09:00:00.000Z');
+      const history = page.locator('.group-identity-history-section');
+      await expect(history.locator('time').first()).toHaveAttribute('datetime', '2026-09-30T14:00:00.000Z');
+      await expect(history.locator('.ui-metric-label')).toHaveText(['Calls', 'Recorded', 'Sent to Streamer', 'Encrypted']);
       await expectBoxedFacts(page.locator('.entity-info-layout .ui-section > dl.ui-facts'),
         page.locator('.entity-info-layout .ui-metric:not(.ui-metric-compact)').first());
       await expect(page.locator('.entity-info-layout .ui-facts a').first())
@@ -159,6 +183,8 @@ for (const theme of ['light', 'dark']) {
       await expect(affiliation).toBeFocused();
       await expectNoHorizontalOverflow(page);
 
+      await page.screenshot({ path: testInfo.outputPath(`talkgroup-count-dates-${theme}-${width}.png`), fullPage: true });
+
       await page.goto(`/app.html?view=radio&${scope}&identity_key=${radioKey}`);
       await expect(page.locator('.entity-info-standalone .ui-metric-grid')).toHaveCount(3);
       await expectMetricGridSpacing(page.locator('.entity-info-standalone .ui-metric-grid'));
@@ -167,6 +193,31 @@ for (const theme of ['light', 'dark']) {
       await expect(page.getByRole('link', { name: 'County Fire Dispatch', exact: true }))
         .toHaveAttribute('href', new RegExp(`view=group-identity.*identity_key=${groupKey}`));
       await expectNoHorizontalOverflow(page);
+
+      await page.evaluate(() => window.showObservedCountsForTest({
+        protocol: 'P25', topology: 'TRUNKED', native_id: 1201, group_identity_id: 1201,
+        group_identity_kind: 'talkgroup', group_identity_kind_code: 1, radio_system_key: 'p25:00001:001',
+        radio_system_entity_ref: { kind: 'radio_system', key: 'p25:00001:001' },
+        system_name: 'County Public Safety', channel_names: 'North Simulcast',
+        first_seen_ms: Date.UTC(2026, 8, 21, 9), last_seen_ms: Date.UTC(2026, 9, 1, 12, 55),
+        logical_call_count: 412, encrypted_logical_call_count: 12,
+        recorded_logical_call_count: null, stream_submitted_logical_call_count: null,
+        signaling_observation_count: null
+      }));
+      const popup = page.getByRole('dialog', { name: 'Observed Talkgroup 1201', exact: true });
+      await expect(popup.locator('.ui-section-title').filter({ hasText: 'Calls heard on North Simulcast' })).toBeVisible();
+      await expect(popup.locator('.ui-metric-label')).toHaveText([
+        'Calls heard', 'Recorded', 'Sent to Streamer', 'Encrypted'
+      ]);
+      await expect(popup.locator('.ui-metric strong')).toHaveText(['412', 'Not available', 'Not available', '12']);
+      await expect(popup.locator('time').first()).toHaveAttribute('datetime', '2026-09-21T09:00:00.000Z');
+      await expect(popup.getByText('Latest call', { exact: true })).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await popup.locator('.ui-section').filter({
+        has: page.locator('.ui-section-title:text-is("Calls heard on North Simulcast")')
+      }).screenshot({ path: testInfo.outputPath(`observed-count-dates-${theme}-${width}.png`) });
+      await page.keyboard.press('Escape');
+      await expect(popup).toHaveCount(0);
     });
   }
 }

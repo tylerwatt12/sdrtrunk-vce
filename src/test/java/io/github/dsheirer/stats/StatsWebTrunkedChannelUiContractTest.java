@@ -179,10 +179,11 @@ class StatsWebTrunkedChannelUiContractTest
         assertTrue(channelInfo.contains("configuration_id: channel.configuration_id"));
         assertFalse(channelInfo.contains("['Name', channel.channel_name]"));
         assertFalse(siteName.contains("channel_name"));
-        assertTrue(groups.contains("section('Group Activity on This Channel'"));
-        assertTrue(groups.contains("label: 'Calls', fullLabel: 'Logical Calls'"));
+        assertTrue(groups.contains("section('Calls heard on this channel'"));
+        assertTrue(groups.contains("label: isP25(channel) ? 'Calls heard' : 'Calls'"));
+        assertTrue(groups.contains("fullLabel: isP25(channel) ? 'Calls heard on this channel' : 'Calls'"));
         assertTrue(groups.contains("row.logical_call_count"));
-        assertTrue(groups.contains("fullLabel: 'Encrypted Logical Calls'"));
+        assertTrue(groups.contains("fullLabel: 'Encrypted Calls'"));
         assertTrue(groups.contains("row.encrypted_logical_call_count"));
         assertFalse(groups.contains("channel_observation_count"));
         assertFalse(groups.contains("recorded_logical_call_count"));

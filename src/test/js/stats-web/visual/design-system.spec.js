@@ -149,10 +149,10 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
     getComputedStyle(document.documentElement).getPropertyValue('--radius-control').trim());
   expect(tileRadius).toBe(controlRadius);
   await expect(tile.locator('.ui-metric-icon svg')).toHaveAttribute('aria-hidden', 'true');
-  await expect(tile.locator('.ui-metric-label')).toHaveText('Logical Calls');
+  await expect(tile.locator('.ui-metric-label')).toHaveText('Calls');
   await expect(page.locator('.visual-entity-details-example .ui-metric a')).toHaveText('9');
   const signaling = page.locator('.visual-entity-details-example .ui-section')
-    .filter({ has: page.locator('.ui-section-title:text-is("Retained Signaling Totals")') });
+    .filter({ has: page.locator('.ui-section-title:text-is("Signaling activity")') });
   await expect(signaling.locator('.ui-metric-compact')).toHaveCount(6);
   await expect(signaling.locator('.ui-metric-label')).toHaveText([
     'Continue', 'Active', 'Join', 'Register', 'Emergency', 'Status'

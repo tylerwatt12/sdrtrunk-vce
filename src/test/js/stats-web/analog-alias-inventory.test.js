@@ -79,9 +79,12 @@ for (const protocol of ['AM', 'nbfm']) {
   assert.equal(prefill.matcher.value, 1);
   assert.equal(prefill.alias_list_id, 7);
   const panels = context.aliasActivityContent(row).children;
-  assert.deepEqual(Array.from(panels, panel => panel.title), ['Calls', 'Activity dates'],
+  assert.deepEqual(Array.from(panels, panel => panel.title), ['Calls matching this alias', 'Activity dates'],
     'Analog details must not invent signaling, affiliations, or historical source breakdown');
   assert.equal(panels[0].body.some(([label]) => label === 'Encrypted'), false);
+  assert.equal(panels[1].body.length, 1,
+    'The analog activity section contains dates without unsupported relationship counters.');
+  assert.deepEqual(Array.from(panels[1].body[0], ([label]) => label), ['First activity', 'Latest activity']);
 }
 assert.match(context.aliasCoverageAliasCell({ protocol: 'P25', identity_type: 'talkgroup',
   entity_ref: { key: 'digital-1' } }).target, /tab=groups$/,

@@ -393,20 +393,28 @@ class StatsWebInteractionUiContractTest
             .contains(".sort((left, right) => right[1] - left[1])"));
         assertTrue(function(source, "function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel)")
             .contains("const largest = configurations.reduce"));
-        assertTrue(source.contains("section('Logical Call Activity'"));
-        assertTrue(source.contains("section('Retained Signaling Observations'"));
-        assertTrue(source.contains("section('Call Activity'"));
+        assertTrue(function(source, "async function renderGroupIdentity()")
+            .contains("systemCallCounts(systemCallTitle(groupIdentity), groupIdentity)"));
+        String callCounts = function(source, "function systemCallCounts(title, row, mode = 'totals')");
+        assertTrue(callCounts.contains("row.logical_call_count"));
+        assertTrue(callCounts.contains("row.recorded_logical_call_count"));
+        assertTrue(callCounts.contains("row.stream_submitted_logical_call_count"));
+        assertTrue(callCounts.contains("row.encrypted_logical_call_count"));
+        assertTrue(callCounts.contains("callCountDates(row, mode)"));
+        assertFalse(callCounts.contains("channel_observation_count"));
+        assertTrue(source.contains("section('Signaling activity'"));
+        assertTrue(source.contains("section('Calls by time'"));
         assertFalse(function(source, "async function renderGroupIdentity()")
             .contains("tableSection('Collected Signaling Observations'"));
         assertTrue(function(source, "async function renderRadio()")
-            .contains("section('Collected Signaling Observations'"));
+            .contains("section('Signaling activity'"));
         String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters)");
-        assertTrue(history.contains("section('Activity History'"));
-        assertTrue(history.contains("section('Call Activity'"));
-        assertTrue(history.contains("section('Retained Signaling Totals'"));
-        assertTrue(history.indexOf("section('Activity History'") < history.indexOf("section('Call Activity'"));
-        assertTrue(history.indexOf("section('Call Activity'") <
-            history.indexOf("section('Retained Signaling Totals'"));
+        assertTrue(history.contains("section('Call history'"));
+        assertTrue(history.contains("section('Calls by time'"));
+        assertTrue(history.contains("section('Signaling activity'"));
+        assertTrue(history.indexOf("section('Call history'") < history.indexOf("section('Calls by time'"));
+        assertTrue(history.indexOf("section('Calls by time'") <
+            history.indexOf("section('Signaling activity'"));
         assertTrue(history.contains("panels.append(historySection, chartSection, signalingSection)"));
         assertTrue(history.contains("groupIdentityHistoryTotals(response.totals)"));
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
@@ -800,7 +808,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("api('/api/v1/activity'"));
         assertTrue(activity.contains("tableController.replaceRows"));
         assertTrue(activity.contains("refreshFailed = true"));
-        assertTrue(activity.contains("The current entries were retained; retrying automatically."));
+        assertTrue(activity.contains("The current entries are still shown; retrying automatically."));
         assertFalse(activity.contains("activity_reset"));
     }
 

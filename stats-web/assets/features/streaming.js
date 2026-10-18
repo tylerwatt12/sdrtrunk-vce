@@ -425,7 +425,7 @@ export function createStreamingWorkspace(deps) {
         const fact = node('div', 'ui-fact'); fact.append(node('dt', '', label), node('dd', '', value)); facts.append(fact);
       }
       statusPanel.replaceChildren(uiStatus(row.state_label, statusTone(row)), counters, facts,
-        node('p', 'muted', 'Counts describe delivery by this sender, not the dashboard’s “Submitted to Streamer” total.'),
+        node('p', 'muted', 'These counts show delivery by this sender. The dashboard’s “Sent to Streamer” count shows calls handed over for delivery.'),
         button('Refresh status', () => void updateStatus()));
     }
     async function updateStatus() {
