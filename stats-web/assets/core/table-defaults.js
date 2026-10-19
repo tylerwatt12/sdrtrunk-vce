@@ -199,9 +199,8 @@ const TABLE_DEFAULTS = Object.freeze({
     widths: { system: 250 }, grow: ['system']
   },
   'dashboard-activity-radios': {
-    widths: { system: 280, radio: 220, alias: 220,
-      observations: 110, 'last-seen': 174 },
-    grow: ['system', 'alias']
+    widths: { system: 280, radio: 300, observations: 110, 'last-seen': 174 },
+    grow: ['system', 'radio']
   },
   'dashboard-call-sources': {
     widths: { receiver: 300, mode: 80, 'logical-calls': 85,

@@ -46,6 +46,7 @@ async function verifyDetailPageOrientation() {
     setNavigationOpen() {}, capabilityAllowed: () => true,
     closeReadOnlyModal: () => true, restorePlaybackBarBeforeRender() {},
     closePageConnections() {}, synchronizeAccessLanding: () => false,
+    loadActivityMessageTypes: async () => {},
     clearAliasSelectionOutsideEditor() {}, activateNavigation() {},
     clearInactiveAliasSelection() {}, databaseLoggingNotice: () => null,
     pageHeader: (title) => node('h1', 'page-header', title),
@@ -102,8 +103,10 @@ async function verifyDetailPageOrientation() {
 
   const obsolete = deferred();
   const current = deferred();
-  context.applicationRoutes.radio.handler = () => obsolete.promise;
+  const obsoleteStarted = deferred();
+  context.applicationRoutes.radio.handler = () => { obsoleteStarted.resolve(); return obsolete.promise; };
   const obsoleteRender = context.render();
+  await obsoleteStarted.promise;
   context.route = new URLSearchParams('view=channel');
   context.applicationRoutes.channel.handler = () => current.promise;
   const currentRender = context.render();

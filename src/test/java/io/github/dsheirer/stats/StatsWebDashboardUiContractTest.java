@@ -74,20 +74,20 @@ class StatsWebDashboardUiContractTest
         String failure = function(source, "function asyncSectionFailure(error, fallbackMessage, retry)");
 
         assertTrue(source.contains("['6h', '6h'], ['24h', '24h'], ['7d', '7d']"));
-        assertTrue(source.contains("series.field !== 'continue_observation_count'"));
-        assertTrue(source.contains("{ action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' }"));
+        assertTrue(source.contains("function activitySignalingSeries()"));
+        assertTrue(source.contains("activityOptionLabel(normalized)"));
         assertTrue(actionRows.contains("row.action !== 'CONTINUE'"));
         assertTrue(mix.contains("class: 'dashboard-activity-donut'"));
         assertTrue(mix.contains("role: 'button', tabindex: 0"));
         assertTrue(mix.contains("setAttribute('aria-pressed'"));
         assertTrue(mix.contains("event.key !== 'Enter' && event.key !== ' '"));
         assertTrue(mix.contains("const total = summedTotal"));
-        assertTrue(mix.contains("selected?.label || 'Visible events'"));
+        assertTrue(mix.contains("selected?.label || 'Events'"));
         assertFalse(mix.contains("response?.total"));
         assertTrue(activity.contains("api('/api/v1/activity/actions'"));
         assertTrue(activity.contains("apiPage('/api/v1/activity/radios'"));
         assertTrue(activity.contains("range: selectedRange, action, limit: 100, offset: selectedOffset"));
-        assertTrue(activity.contains("Select an activity type to list source radios."));
+        assertTrue(activity.contains("Select an activity type to see its source radios."));
         assertTrue(activity.contains("selectedAction = ''"));
         assertTrue(activity.contains("selectedOffset = 0"));
         assertTrue(activity.contains("const loadRadios = async (offset = 0, restorePagingFocus = false)"));
@@ -95,7 +95,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(activity.contains("if (restorePagingFocus) pager.focus()"));
         assertTrue(activity.contains("failure.querySelector('.async-section-retry')?.focus()"));
         assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
-        assertTrue(activity.contains("Radio access is required to list source radios."));
+        assertTrue(activity.contains("Your account cannot view radios."));
         assertTrue(activity.contains("renderIsCurrent(renderContext)"));
         assertTrue(activity.contains("new AbortController()"));
         assertTrue(activity.contains("removeEventListener('abort', abortFromPage)"));
@@ -109,8 +109,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(failure.contains("setAttribute('role', 'alert')"));
         assertTrue(columns.contains("label: 'System / Channel'"));
         assertTrue(columns.contains("label: 'Radio'"));
-        assertTrue(columns.contains("label: 'Alias'"));
-        assertTrue(columns.contains("label: 'Observations'"));
+        assertFalse(columns.contains("label: 'Alias'"));
+        assertTrue(radio.contains("identitySummaryValue(alias || identifier"));
+        assertTrue(columns.contains("label: 'Events'"));
         assertTrue(columns.contains("label: 'Last Seen'"));
         assertTrue(system.contains("row.name"));
         assertFalse(system.contains("row.resolved_channel_name"));
@@ -133,7 +134,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(pager.contains("page.next_offset"));
         assertTrue(pager.contains("page.total_count"));
         assertTrue(pager.contains("navigation.tabIndex = -1"));
-        assertTrue(note.contains("Hourly ${actionLabel.toLowerCase()} observations"));
+        assertTrue(note.contains("Events in this time range:"));
         assertTrue(note.contains("page.action_observation_count"));
         assertTrue(note.contains("page.retained_observation_count"));
         assertTrue(note.contains("page.identified_observation_count"));
@@ -142,7 +143,7 @@ class StatsWebDashboardUiContractTest
         assertFalse(activity.contains("group_by"));
         assertTrue(activity.contains("detailedHistoryAvailable()"));
         assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));
-        assertTrue(activity.contains("Saved activity is unavailable."));
+        assertTrue(activity.contains("Saved event details are unavailable."));
         assertFalse(activity.contains("Retained-detail sample"));
         assertFalse(activity.contains("openReadOnlyModal"));
         assertFalse(activity.contains("pageInterval"));

@@ -9,7 +9,7 @@ import {
   nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=14';
+} from './history.js?v=15';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=7';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=4';
@@ -18,7 +18,7 @@ import {
   normalizeP25EventSettings,
   enabledP25EventCategories,
   routineP25ActivityEnabled
-} from './settings.js?v=3';
+} from './settings.js?v=4';
 
 const HOUR_MS = 60 * 60 * 1_000;
 const POLL_MS = 5_000;
@@ -142,7 +142,7 @@ function createP25Visualizer(dependencies = {}) {
   stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, legend, events);
   layout.append(toolbar, stage);
 
-  let state = createP25HistoryState();
+  let state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
   let eventSettings = normalizeP25EventSettings(loadEventSettings());
   let highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
   let autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
@@ -258,8 +258,10 @@ function createP25Visualizer(dependencies = {}) {
     message.setAttribute('role', 'status');
     const controls = new Map();
     const choices = (property) => P25_EVENT_SETTINGS.map((entry) => {
-      const choice = preferenceCheckbox(`p25-visualizer-${property}-${entry.id}`, entry.label,
-        eventSettings[entry.id][property], entry.detail);
+      const definition = entry.action ? dependencies.messageTypeDefinition?.(entry.action) : null;
+      const label = definition?.label || entry.label || dependencies.messageTypeLabel?.(entry.action) || entry.id;
+      const choice = preferenceCheckbox(`p25-visualizer-${property}-${entry.id}`, label,
+        eventSettings[entry.id][property], definition?.meaning || entry.detail || '');
       controls.set(`${property}:${entry.id}`, choice.input);
       return choice.control;
     });
@@ -455,7 +457,7 @@ function createP25Visualizer(dependencies = {}) {
     requestController = controller;
     const abort = () => controller.abort();
     dependencies.signal?.addEventListener?.('abort', abort, { once: true });
-    state = createP25HistoryState();
+    state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
     selectedSystemKey = '';
     selectedGroupKey = '';
     visibleNodeKeys = new Set();

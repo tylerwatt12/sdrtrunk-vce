@@ -59,7 +59,7 @@ class StatsWebActivityFiltersUiContractTest
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertTrue(activity.contains("activityFilterToolbar(activityContext, filters)"));
-        assertTrue(toolbar.contains("aria-label', 'Filter retained activity'"));
+        assertTrue(toolbar.contains("aria-label', 'Filter activity history'"));
         assertTrue(toolbar.contains("'Apply filters'"));
         assertTrue(toolbar.contains("'Clear filters'"));
         assertTrue(toolbar.contains("'Filters'"));
@@ -174,7 +174,7 @@ class StatsWebActivityFiltersUiContractTest
         assertTrue(tooltip.contains("Filter activity"));
         assertFalse(tooltip.contains("openReadOnlyModal"));
         assertTrue(columns.contains("activityCellValue"));
-        assertTrue(activity.contains("activityColumnsForContext(activityContext, filters)"));
+        assertTrue(activity.contains("activityColumnsForContext({ ...activityContext, callPlayback }, filters)"));
     }
 
     @Test

@@ -98,6 +98,20 @@ async function checkPartyColumnLayouts(core = defaultCore) {
       'A later schema change must not accidentally opt into this targeted migration.');
   }
 
+  const dashboardColumns = columns(['system', 'radio', 'observations', 'last-seen']);
+  const dashboardSaved = savedLayout(['system', 'radio', 'alias', 'observations', 'last-seen']);
+  dashboardSaved.column_order = ['alias', 'last-seen', 'system', 'radio', 'observations'];
+  dashboardSaved.column_widths = { radio: 74, alias: 290, system: 330 };
+  dashboardSaved.hidden_columns = ['radio'];
+  const dashboardCombined = layouts.mergePartyColumns('dashboard-activity-radios', dashboardColumns, dashboardSaved);
+  assert.equal(layouts.normalize(dashboardColumns, dashboardCombined).reset, false);
+  assert.deepEqual(dashboardCombined.column_order, ['radio', 'last-seen', 'system', 'observations']);
+  assert.deepEqual(dashboardCombined.column_widths, { radio: 290, system: 330 });
+  assert.deepEqual(dashboardCombined.hidden_columns, [], 'The combined radio remains visible when its alias was visible.');
+  dashboardSaved.hidden_columns = ['radio', 'alias'];
+  assert.deepEqual(layouts.mergePartyColumns('dashboard-activity-radios', dashboardColumns,
+    dashboardSaved).hidden_columns, ['radio']);
+
   const withoutDuration = activity.previous.filter((id) => id !== 'duration');
   const oldActivity = savedLayout(withoutDuration);
   oldActivity.column_order = ['event', 'source-alias', 'time', 'source', 'target', 'target-alias',

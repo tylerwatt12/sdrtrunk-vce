@@ -208,6 +208,8 @@ function groupPosition(system, key, ordinal) {
 
 function createP25HistoryState(options = {}) {
   return {
+    actionLabel: typeof options.actionLabel === 'function' ? options.actionLabel :
+      (action) => text(action).toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (value) => value.toUpperCase()),
     systems: new Map(),
     groups: new Map(),
     radios: new Map(),
@@ -433,9 +435,7 @@ function applySignal(state, system, row, result, initial, action, ingestedAtMs, 
   const priority = CAMERA_PRIORITY[category] || CAMERA_PRIORITY.patch;
   const entity = radio || group;
   const eventKey = `${category}:${entity.key}`;
-  const title = ({ EMERGENCY: 'Emergency observed', DENIAL: 'Denied', CHECK: 'Radio check', PAGE: 'Page',
-    BUSY: 'Busy response', QUEUED: 'Queued response', PATCH: 'Patch observed',
-    PATCH_CREATE: 'Patch created', PATCH_CANCEL: 'Patch removed' })[action] || action;
+  const title = state.actionLabel(action);
   const eventCategory = action.startsWith('PATCH') ? 'patch' : category;
   const event = { key: eventKey, category: eventCategory, title,
     detail: eventDetail(category, radio, group), observedAtMs: atMs, systemKey: system.key,
@@ -473,7 +473,7 @@ function applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHi
   }
   const group = state.groups.get(previousVisualGroupKey);
   if (!initial && shouldHighlight('logout')) highlight(radio, 'logout', ingestedAtMs + 7_000);
-  const event = { key: `logout:${radio.key}`, category: 'logout', title: 'Logout observed',
+  const event = { key: `logout:${radio.key}`, category: 'logout', title: state.actionLabel('LOGOUT'),
     detail: eventDetail('logout', radio, group), observedAtMs: atMs, systemKey: system.key,
     focusKeys: [radio.key], priority: CAMERA_PRIORITY.logout };
   const firstGroupedEvent = !state.events.has(event.key);
@@ -494,7 +494,7 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   const atMs = finite(row.observed_at_ms);
   const entity = group || radio;
   const event = { key: `call:${entity.key}`, category: 'call',
-    title: action === 'GRANT' ? 'Grant activity' : 'Call activity',
+    title: state.actionLabel(action),
     detail: eventDetail('call', radio, group), observedAtMs: atMs, systemKey: system.key,
     focusKeys: [radio?.key, group?.key].filter(Boolean), priority: CAMERA_PRIORITY.call };
   const firstGroupedEvent = !state.events.has(event.key);

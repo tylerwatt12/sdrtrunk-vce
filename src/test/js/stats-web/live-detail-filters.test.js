@@ -304,6 +304,18 @@ assert.equal(controller.setCatalog(catalogV1), 'changed');
 assert.equal(controller.matchesLeaf('message/root/a'), false);
 assert.equal(typeof controller.resetForSelection, 'undefined');
 controller.close();
+const eventController = context.liveDetailFilterController({ noun: 'events',
+  leafLabel: (key) => `Database label for ${key}` });
+eventController.setCatalog({ signature: 'events', timeslots: [], groups: [{ key: 'calls',
+  label: 'Call category', children: [{ key: 'CALL_GROUP', label: 'Old event label', children: [] }] }] });
+eventController.element.children[0].dispatch('click');
+assert.equal(findAll(lastModalBody, (candidate) => candidate.tag === 'span' &&
+  candidate.textContent === 'Database label for CALL_GROUP').length, 1,
+  'Event filter leaves use the shared message definition label.');
+assert.equal(findAll(lastModalBody, (candidate) => candidate.tag === 'span' &&
+  candidate.textContent === 'Call category').length, 1,
+  'Filter category branches preserve their source labels.');
+eventController.close();
 
 // Control selections retain logical identity while their exact transport follows the active control row.
 const site = { table_id: 'site-a', title: 'County · Downtown', configuration_id: 'site-config' };

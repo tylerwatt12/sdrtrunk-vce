@@ -195,6 +195,11 @@
   }
 
   const PARTY_COLUMN_UPGRADES = Object.freeze({
+    'dashboard-activity-radios': {
+      previous: ['system', 'radio', 'alias', 'observations', 'last-seen'],
+      current: ['system', 'radio', 'observations', 'last-seen'],
+      merged: { radio: ['alias', 'radio'] }
+    },
     activity: {
       previous: ['time', 'duration', 'action', 'event', 'tones', 'source', 'source-alias',
         'source-ota-alias', 'target', 'target-alias', 'channel', 'encryption', 'related'],

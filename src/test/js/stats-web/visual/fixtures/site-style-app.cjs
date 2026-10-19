@@ -282,6 +282,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     const request = route.request(), url = new URL(request.url()), p = decodeURIComponent(url.pathname);
     state.requests.push(p);
     const respond = data => route.fulfill({ json: { data } });
+    if (p === '/api/v1/activity/message-types') return respond([]);
     if (p === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     if (p === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       username: 'fixture-admin', tier: 'admin', primary: true, csrf_token: 'fixture-csrf',

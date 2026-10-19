@@ -582,6 +582,7 @@ async function main() {
   ].map(loadModule));
   const browsing = await loadModule('browsing-workflows');
   await require('./party-column-layouts.test').checkPartyColumnLayouts(core);
+  await require('./message-types.test').checkMessageTypes(core, appSource);
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
@@ -1228,7 +1229,7 @@ async function main() {
     /browsingWorkflows\.createBrowsingPager\([\s\S]+dashboard-activity-radio-pager/);
   const dashboardActivity = functionBinding(appSource, 'renderDashboardActivity');
   assert.match(dashboardActivity,
-    /radioStatus\.textContent = '';\s*radioStatus\.hidden = true;[\s\S]+Loading \$\{actionLabel\.toLowerCase\(\)\} source radios…/,
+    /radioStatus\.textContent = '';\s*radioStatus\.hidden = true;[\s\S]+Loading source radios…/,
     'Dashboard activity must show one loading or prompt treatment instead of duplicate status rows');
   const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
   assert.match(tunerSpectrumPanel,

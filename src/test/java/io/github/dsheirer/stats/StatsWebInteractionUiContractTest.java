@@ -418,7 +418,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(history.contains("panels.append(historySection, chartSection, signalingSection)"));
         assertTrue(history.contains("groupIdentityHistoryTotals(response.totals)"));
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
-        assertTrue(source.contains("GROUP_IDENTITY_SIGNALING_SERIES"));
+        assertTrue(source.contains("activitySignalingSeries()"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
         assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".entity-info-column > .section"));
         assertFalse(source.contains("function talkgroupEvidence"));

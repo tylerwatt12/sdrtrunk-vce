@@ -1,10 +1,11 @@
 import * as routeFoundation from './core/routes.js?v=11';
 import * as preferenceSchema from './core/preference-schema.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
+import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
-import * as tableLayouts from './core/table-layout.js?v=2';
-import * as tableDefaults from './core/table-defaults.js?v=23';
+import * as tableLayouts from './core/table-layout.js?v=3';
+import * as tableDefaults from './core/table-defaults.js?v=24';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -111,25 +112,6 @@ const ACTIVITY_LOG_RANGES = Object.freeze([
   { value: '30d', label: 'Last 30d', milliseconds: 30 * 24 * 60 * 60 * 1000 },
   { value: 'custom', label: 'Custom dates', milliseconds: 0 }
 ]);
-const ACTIVITY_ACTION_VALUES = Object.freeze([
-  'ACKNOWLEDGE', 'ACTIVE', 'BUSY', 'CALL', 'CHECK', 'CHECK_ACK', 'CONTINUE', 'DATA',
-  'DENIAL', 'EMERGENCY', 'GPS', 'GRANT', 'JOIN', 'LOGOUT', 'PAGE', 'PATCH',
-  'PATCH_CANCEL', 'PATCH_CREATE', 'QUEUED', 'REGISTER', 'REQUEST', 'STATUS', 'TONE', 'UNKNOWN'
-]);
-const ACTIVITY_EVENT_TYPE_VALUES = Object.freeze([
-  'AFFILIATE', 'ANNOUNCEMENT', 'ACKNOWLEDGE', 'AUTOMATIC_REGISTRATION_SERVICE', 'CALL',
-  'CALL_ENCRYPTED', 'CALL_GROUP', 'CALL_GROUP_ENCRYPTED', 'CALL_PATCH_GROUP',
-  'CALL_PATCH_GROUP_ENCRYPTED', 'CALL_ALERT', 'CALL_DETECT', 'CALL_IN_PROGRESS',
-  'CALL_DO_NOT_MONITOR', 'CALL_END', 'CALL_INTERCONNECT', 'CALL_INTERCONNECT_ENCRYPTED',
-  'CALL_UNIQUE_ID', 'CALL_UNIT_TO_UNIT', 'CALL_UNIT_TO_UNIT_ENCRYPTED', 'CALL_NO_TUNER',
-  'CALL_TIMEOUT', 'CELLOCATOR', 'COMMAND', 'DATA_CALL', 'DATA_CALL_ENCRYPTED', 'DATA_PACKET',
-  'DEREGISTER', 'DYNAMIC_REGROUP', 'EMERGENCY', 'FUNCTION', 'GPS', 'ICMP_PACKET', 'ID_ANI',
-  'ID_UNIQUE', 'IP_PACKET', 'LRRP', 'NOTIFICATION', 'PAGE', 'QUERY', 'RADIO_CHECK',
-  'RADIO_REGISTRATION_SERVICE', 'REGISTER', 'REGISTER_ESN', 'REQUEST', 'RESPONSE',
-  'RESPONSE_PACKET', 'SDM', 'SMS', 'STATION_ID', 'STATUS', 'TEXT_MESSAGE', 'UDP_PACKET',
-  'UNKNOWN_PACKET', 'XCMP', 'UNKNOWN', 'DENIAL', 'RADIO_UNINHIBIT', 'RADIO_INHIBIT',
-  'RADIO_UNINHIBIT_ACK', 'RADIO_INHIBIT_ACK', 'TONE'
-]);
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
 const ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
@@ -214,38 +196,34 @@ const GROUP_IDENTITY_CALL_ACTIVITY_SERIES = Object.freeze([
   ...CALL_ACTIVITY_SERIES,
   { field: 'encrypted_logical_call_count', label: 'Encrypted', color: 'var(--chart-encrypted)', visible: true }
 ]);
-const GROUP_IDENTITY_SIGNALING_SERIES = Object.freeze([
-  { field: 'emergency_observation_count', label: 'Emergency', color: 'var(--chart-emergency)' },
-  { field: 'data_observation_count', label: 'Data', color: 'var(--chart-data)' },
-  { field: 'join_observation_count', label: 'Join', color: 'var(--chart-join)' },
-  { field: 'register_observation_count', label: 'Register', color: 'var(--chart-register)' },
-  { field: 'denial_observation_count', label: 'Denial', color: 'var(--chart-denial)' },
-  { field: 'busy_observation_count', label: 'Busy', color: 'var(--chart-busy)' },
-  { field: 'queued_observation_count', label: 'Queued', color: 'var(--chart-queued)' },
-  { field: 'continue_observation_count', label: 'Continue', color: 'var(--chart-continue)' },
-  { field: 'active_observation_count', label: 'Active', color: 'var(--chart-active)' },
-  { field: 'acknowledge_observation_count', label: 'Acknowledge', color: 'var(--chart-acknowledge)' },
-  { field: 'check_observation_count', label: 'Check', color: 'var(--chart-check)' },
-  { field: 'check_ack_observation_count', label: 'Check Ack', color: 'var(--chart-check-ack)' },
-  { field: 'gps_observation_count', label: 'GPS', color: 'var(--chart-gps)' },
-  { field: 'logout_observation_count', label: 'Logout', color: 'var(--chart-logout)' },
-  { field: 'page_observation_count', label: 'Page', color: 'var(--chart-page)' },
-  { field: 'patch_observation_count', label: 'Patch', color: 'var(--chart-patch)' },
-  { field: 'patch_cancel_observation_count', label: 'Patch Cancel', color: 'var(--chart-patch-cancel)' },
-  { field: 'patch_create_observation_count', label: 'Patch Create', color: 'var(--chart-patch-create)' },
-  { field: 'request_observation_count', label: 'Request', color: 'var(--chart-request)' },
-  { field: 'status_observation_count', label: 'Status', color: 'var(--chart-status)' },
-  { field: 'unknown_observation_count', label: 'Unknown', color: 'var(--chart-unknown)' }
-]);
-const DASHBOARD_ACTIVITY_SERIES = Object.freeze([
-  { action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' },
-  ...GROUP_IDENTITY_SIGNALING_SERIES.filter((series) => series.field !== 'continue_observation_count')
-    .map((series) => ({
-      action: series.field.replace(/_observation_count$/, '').toUpperCase(),
-      label: series.label,
-      color: series.color
-    }))
-]);
+const activityMessageTypes = createMessageTypeCatalog();
+let activityMessageTypesRequest = null;
+
+async function loadActivityMessageTypes() {
+  if (!activityMessageTypesRequest) {
+    activityMessageTypesRequest = api('/api/v1/activity/message-types', {}, { page: false })
+      .then((response) => activityMessageTypes.replace(response.rows))
+      .catch(() => activityMessageTypes.replace([]))
+      .finally(() => { activityMessageTypesRequest = null; });
+  }
+  await activityMessageTypesRequest;
+}
+
+function activityDefinitions(kind = 'ACTION') {
+  return activityMessageTypes.definitions(kind);
+}
+
+function activitySignalingSeries() {
+  return activityDefinitions().filter((definition) => !['CALL', 'GRANT', 'TONE'].includes(definition.name))
+    .map((definition) => ({ field: `${definition.name.toLowerCase()}_observation_count`,
+      label: definition.label, color: activityActionColor(definition.name) }));
+}
+
+function activityActionColor(action) {
+  const token = String(action || '').toLowerCase().replaceAll('_', '-').replace(/[^a-z-]/g, '');
+  return `var(--chart-${token}, var(--chart-unknown))`;
+}
+
 const DASHBOARD_ACTIVITY_RANGES = Object.freeze([
   ['6h', '6h'], ['24h', '24h'], ['7d', '7d']
 ]);
@@ -254,29 +232,6 @@ const CALL_METRIC_GUIDE = Object.freeze([
   ['Recorded', 'Calls saved as an audio recording.'],
   ['Sent to Streamer', 'Calls handed to a configured streamer. Check the streamer’s status for delivery.'],
   ['Encrypted', 'Calls with confirmed encrypted voice.']
-]);
-const ACTION_METRIC_GUIDE = Object.freeze([
-  ['Active', 'A voice-channel grant event observed outside the dedicated call-start assignment. It is an event count, not the number of calls currently active.'],
-  ['Continue', 'A repeated or continuing channel-grant observation for an already assigned call. It is not a new call.'],
-  ['Emergency', 'An emergency service event or a tracked call carrying the emergency flag.'],
-  ['Data', 'A data-call event.'],
-  ['Join', 'A radio affiliation or group-join event.'],
-  ['Register', 'A unit-registration event.'],
-  ['Denial', 'A denied service request.'],
-  ['Busy', 'A busy response, including a target group already active response.'],
-  ['Queued', 'A service request placed in a queue.'],
-  ['Acknowledge', 'An acknowledgement response.'],
-  ['Check', 'A radio-check or query event.'],
-  ['Check Ack', 'An acknowledgement of a radio check.'],
-  ['GPS', 'A location or GPS event.'],
-  ['Logout', 'A unit de-registration or logout event.'],
-  ['Page', 'A page event.'],
-  ['Patch', 'A dynamic regroup or patch event whose operation was not more specific.'],
-  ['Patch Create', 'A dynamic regroup or patch activation.'],
-  ['Patch Cancel', 'A dynamic regroup or patch deactivation.'],
-  ['Request', 'A service request event.'],
-  ['Status', 'A unit or user status event.'],
-  ['Unknown', 'An observed event that could not be mapped to a more specific action.']
 ]);
 const CHANNEL_TAG_DISPLAY = Object.freeze({
   CONVENTIONAL: { abbreviation: 'CONV', description: 'Conventional channel' },
@@ -5451,14 +5406,11 @@ function aliasActivityContent(response) {
   if (!configuredAliasAssignment(alias)) wrapper.append(section('Signaling', fragment(
     aliasDetailMetricBand(alias, [
       ['Total', 'signaling_observation_count'],
-      ['Grants', 'grant_observation_count'], ['Join', 'join_observation_count'],
-      ['Emergency', 'emergency_observation_count'], ['Register', 'register_observation_count'],
-      ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
-      ['Data', 'data_observation_count']
+      ...activityDefinitions().map((definition) =>
+        [definition.label, `${definition.name.toLowerCase()}_observation_count`])
+        .filter(([, field]) => alias[field] != null)
     ]),
-    node('p', 'ui-section-note',
-      'The total also includes other recognized signaling actions. Calls and signaling can describe the same ' +
-      'transmission, so they should not be added together. Logout means unit deregistration, not leaving a group.')
+    node('p', 'ui-section-note', 'A transmission may appear in both calls and signaling.')
   )));
   wrapper.append(section(configuredAliasAssignment(alias) ? 'Activity dates' : 'Activity dates and relationships', fragment(
     configuredAliasAssignment(alias) ? null : aliasDetailMetricBand(alias, [
@@ -8142,11 +8094,8 @@ async function renderAliases() {
   }
 }
 
-const SIGNALING_COUNT_LABELS = new Map(GROUP_IDENTITY_SIGNALING_SERIES.map((series) =>
-  [series.field, series.label]));
-
 function signalingCounts(row) {
-  return [...SIGNALING_COUNT_LABELS]
+  return activitySignalingSeries().map((series) => [series.field, series.label])
     .filter(([field]) => Number(row[field] || 0) > 0)
     .map(([field, label]) => [label, Number(row[field])])
     .sort((left, right) => right[1] - left[1]);
@@ -8163,9 +8112,7 @@ function signalingMetrics(values) {
 
 function signalingActionRows(rows) {
   return (rows || []).map((row) => {
-    const field = `${String(row.action || '').trim().toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')}_observation_count`;
-    return { ...row, label: SIGNALING_COUNT_LABELS.get(field) };
+    return { ...row, label: activityOptionLabel(row.action) };
   }).filter((row) => row.label);
 }
 
@@ -8229,13 +8176,33 @@ function callSourceLink(row) {
 
 function activityMetricGuide(includeCallMetrics = false) {
   const details = node('details', 'ui-explainer');
-  details.append(node('summary', '', 'What these activity metrics mean'));
-  const list = node('dl', 'ui-explainer-list');
-  const entries = includeCallMetrics ? [...CALL_METRIC_GUIDE, ...ACTION_METRIC_GUIDE] : ACTION_METRIC_GUIDE;
-  entries.forEach(([label, description]) => {
-    list.append(node('dt', '', label), node('dd', '', description));
+  details.append(node('summary', '', 'Activity types and protocols'));
+  const reference = node('table', 'ui-data-table ui-data-table-quiet');
+  const heading = node('tr');
+  ['Activity type', 'Meaning', 'Protocols'].forEach((label) => {
+    const cell = node('th', '', label);
+    cell.scope = 'col';
+    heading.append(cell);
   });
-  details.append(list);
+  const head = node('thead');
+  head.append(heading);
+  const body = node('tbody');
+  const entries = activityDefinitions().map((definition) => [definition.label, definition.meaning,
+    ['p25', 'dmr', 'nxdn'].filter((protocol) => definition[protocol])
+      .map((protocol) => protocol.toUpperCase()).join(' · ') || '—']);
+  if (includeCallMetrics) entries.unshift(...CALL_METRIC_GUIDE);
+  entries.forEach(([label, description, protocols = '—']) => {
+    const row = node('tr');
+    const name = node('th', '', label);
+    name.scope = 'row';
+    row.append(name, node('td', '', description), node('td', '', protocols));
+    body.append(row);
+  });
+  reference.append(head, body);
+  const wrapper = node('div', 'ui-table-wrap');
+  wrapper.append(reference);
+  details.append(entries.length ? wrapper :
+    node('p', 'ui-section-note', 'Activity descriptions could not be loaded. Refresh to try again.'));
   return details;
 }
 
@@ -12339,14 +12306,10 @@ function dashboardSummarySection(title, values, history = null) {
   return block;
 }
 
-function dashboardActivityActionConfiguration(action, index = 0) {
+function dashboardActivityActionConfiguration(action) {
   const normalized = String(action || '').trim().toUpperCase();
-  const configured = DASHBOARD_ACTIVITY_SERIES.find((series) => series.action === normalized);
-  return configured || {
-    action: normalized,
-    label: semanticLabel(normalized) || 'Unknown',
-    color: `hsl(${Math.round(index * 137.508) % 360} 58% var(--chart-dynamic-lightness))`
-  };
+  return { action: normalized, label: activityOptionLabel(normalized) || 'Unknown',
+    color: activityActionColor(normalized) };
 }
 
 function dashboardActivityActionRows(response) {
@@ -12363,7 +12326,7 @@ function dashboardActivityActionRows(response) {
 
 function dashboardActivityMix(response, selectedAction, onSelect) {
   const actions = dashboardActivityActionRows(response);
-  if (!actions.length) return node('div', 'empty', 'No activity was recorded for this range.');
+  if (!actions.length) return node('div', 'empty', 'No radio activity was saved for this time range.');
   const summedTotal = actions.reduce((sum, row) => sum + row.count, 0);
   const total = summedTotal;
   const circumference = 2 * Math.PI * 78;
@@ -12395,7 +12358,7 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
       element.setAttribute('aria-pressed', String(active));
     });
     centerCount.textContent = number(selected?.count ?? total);
-    centerLabel.textContent = selected?.label || 'Visible events';
+    centerLabel.textContent = selected?.label || 'Events';
     if (notify && selected) onSelect(selected);
   };
 
@@ -12451,30 +12414,18 @@ function dashboardActivitySystem(row) {
 
 function dashboardActivityRadio(row) {
   const identifier = radioIdentifierText(row, radioDisplayId(row)) || '—';
-  const reference = row.radio_entity_ref;
-  const target = entityReferenceAllowed(reference) ?
-    entityTarget(reference, { channel: 'radios' }) : '';
-  return target ? anchor(identifier, target) : identifier;
-}
-
-function dashboardActivityAlias(row) {
   const alias = String(row.alias_name || '').trim();
   const description = String(row.alias_description || '').trim();
-  if (!alias && !description) return '—';
-  const summary = node('span', 'dashboard-identity');
-  summary.title = [alias, description].filter(Boolean).join(' · ');
-  const primary = node('span', 'dashboard-identity-primary');
-  primary.textContent = alias || description;
-  summary.append(primary);
-  if (alias && description) summary.append(node('small', 'dashboard-identity-context', description));
-  return summary;
+  const reference = row.radio_entity_ref;
+  const target = entityReferenceAllowed(reference) ? entityTarget(reference, { channel: 'radios' }) : '';
+  return identitySummaryValue(alias || identifier,
+    [alias ? identifier : '', description].filter(Boolean).join(' · '), target);
 }
 
 const dashboardActivityRadioColumns = [
   { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
-  { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'numeric' },
-  { id: 'alias', label: 'Alias', render: dashboardActivityAlias, className: 'alias-cell' },
-  { id: 'observations', label: 'Observations', render: (row) => number(row.observation_count),
+  { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'alias-cell' },
+  { id: 'observations', label: 'Events', render: (row) => number(row.observation_count),
     className: 'numeric' },
   { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
 ];
@@ -12497,10 +12448,10 @@ function dashboardActivityRadioPager(page, onOffset) {
 
 function dashboardActivityRadioNote(page, actionLabel) {
   return node('p', 'ui-section-note',
-    `Hourly ${actionLabel.toLowerCase()} observations: ${number(page.action_observation_count)}. ` +
-    `Exact currently retained detail: ${number(page.retained_observation_count)} observations; ` +
+    `Events in this time range: ${number(page.action_observation_count)}. ` +
+    `Saved event details: ${number(page.retained_observation_count)}; ` +
     `${number(page.identified_observation_count)} identify a source radio and ` +
-    `${number(page.unknown_source_observation_count)} have no source radio ID.`);
+    `${number(page.unknown_source_observation_count)} do not.`);
 }
 
 async function renderDashboardActivity(renderContext) {
@@ -12518,7 +12469,7 @@ async function renderDashboardActivity(renderContext) {
   let radioTitleActions = null;
   const radioTableController = {};
   const toolbar = node('div', 'dashboard-activity-page-controls');
-  toolbar.setAttribute('aria-label', 'Activity analytics controls');
+  toolbar.setAttribute('aria-label', 'Radio activity controls');
   toolbar.append(node('span', 'dashboard-control-label', 'Time range'));
   const host = node('div', 'dashboard-activity-view');
   const rangeControl = rangeControls(DASHBOARD_ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
@@ -12566,7 +12517,7 @@ async function renderDashboardActivity(renderContext) {
     }
     radioHost.setAttribute('aria-busy', 'false');
     cleanupTableLayoutMenu(radioTableController);
-    radioHost.replaceChildren(node('div', 'empty', 'Select an activity type to list source radios.'));
+    radioHost.replaceChildren(node('div', 'empty', 'Select an activity type to see its source radios.'));
   };
 
   const loadRadios = async (offset = 0, restorePagingFocus = false) => {
@@ -12574,12 +12525,12 @@ async function renderDashboardActivity(renderContext) {
     selectedOffset = Math.max(0, Number(offset) || 0);
     const sequence = ++radioSequence;
     const action = selectedAction;
-    const actionLabel = selectedActionLabel || semanticLabel(action);
+    const actionLabel = selectedActionLabel || activityOptionLabel(action);
     radioTitle.textContent = `${actionLabel} · Source radios`;
     radioStatus.hidden = false;
     const historyNotice = detailedHistoryNotice();
     if (!detailedHistoryAvailable()) {
-      radioStatus.textContent = 'Saved activity is unavailable.';
+      radioStatus.textContent = 'Saved event details are unavailable.';
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(historyNotice);
@@ -12594,7 +12545,7 @@ async function renderDashboardActivity(renderContext) {
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(node('div', 'empty',
-        'Radio access is required to list source radios.'));
+        'Your account cannot view radios.'));
       return;
     }
     const request = nextRequest(radioRequest);
@@ -12603,7 +12554,7 @@ async function renderDashboardActivity(renderContext) {
     radioStatus.hidden = true;
     radioHost.setAttribute('aria-busy', 'true');
     cleanupTableLayoutMenu(radioTableController);
-    radioHost.replaceChildren(node('div', 'loading', `Loading ${actionLabel.toLowerCase()} source radios…`));
+    radioHost.replaceChildren(node('div', 'loading', 'Loading source radios…'));
     try {
       const page = await apiPage('/api/v1/activity/radios', {
         range: selectedRange, action, limit: 100, offset: selectedOffset
@@ -12620,7 +12571,7 @@ async function renderDashboardActivity(renderContext) {
       if (historyNotice) result.append(historyNotice);
       result.append(dashboardActivityRadioNote(page, actionLabel),
         table(page.rows, dashboardActivityRadioColumns,
-          `No source radios were identified in currently retained ${actionLabel.toLowerCase()} detail.`,
+          `No source radios were identified in saved ${actionLabel.toLowerCase()} events.`,
           {
             type: 'dashboard-activity-radios', sortable: false,
             controller: radioTableController, layoutMenuHost: radioTitleActions
@@ -12636,9 +12587,9 @@ async function renderDashboardActivity(renderContext) {
         if (sequence === radioSequence && renderIsCurrent(renderContext) && host.isConnected) await render();
         return;
       }
-      radioStatus.textContent = `${actionLabel} source radios could not be loaded.`;
+      radioStatus.textContent = 'Source radios could not be loaded. Try again.';
       radioStatus.hidden = false;
-      const failure = asyncSectionFailure(error, 'Source radios could not be loaded.',
+      const failure = asyncSectionFailure(error, 'Source radios could not be loaded. Try again.',
         () => loadRadios(selectedOffset, restorePagingFocus));
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(failure);
@@ -12660,9 +12611,8 @@ async function renderDashboardActivity(renderContext) {
       selectedOffset = 0;
       void loadRadios(0);
     }), node('p', 'ui-section-note',
-      'Percentages use the visible activity total. Repeated signaling can produce more than one event for the same ' +
-      'call or radio.'));
-    const mix = section(`Activity Mix · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
+      'A call or radio can produce several signaling events.'));
+    const mix = section(`Activity types · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
     const radioBody = node('div', 'dashboard-activity-radio-body');
     radioStatus = node('p', 'dashboard-activity-radio-status');
     radioStatus.setAttribute('aria-live', 'polite');
@@ -12671,7 +12621,7 @@ async function renderDashboardActivity(renderContext) {
     radioTitleActions = sectionActionHost();
     const radios = section('Source radios', radioBody, radioTitleActions);
     radioTitle = radios.querySelector('.section-title').firstChild;
-    host.replaceChildren(mix, radios);
+    host.replaceChildren(mix, radios, activityMetricGuide());
     showRadioPrompt();
   };
 
@@ -12686,7 +12636,7 @@ async function renderDashboardActivity(renderContext) {
     summaryRequest = request;
     buttons.forEach((button) => { button.disabled = true; });
     host.setAttribute('aria-busy', 'true');
-    host.replaceChildren(node('div', 'loading', 'Loading activity analytics'));
+    host.replaceChildren(node('div', 'loading', 'Loading radio activity…'));
     try {
       const response = await api('/api/v1/activity/actions', { range: selectedRange },
         { signal: request.controller.signal });
@@ -12700,7 +12650,7 @@ async function renderDashboardActivity(renderContext) {
         if (sequence === summarySequence && renderIsCurrent(renderContext) && host.isConnected) await render();
         return;
       }
-      host.replaceChildren(asyncSectionFailure(error, 'Activity totals could not be loaded.',
+      host.replaceChildren(asyncSectionFailure(error, 'Radio activity could not be loaded. Try again.',
         () => loadSummary(buttons)));
     } finally {
       request.unlink();
@@ -12783,7 +12733,8 @@ async function renderDashboard() {
   const callTotals = callActivity.totals || {};
   if (!beginPage(renderContext,
     pageHeader(tab === 'health' ? 'Main' : 'Dashboard', tab === 'health' ?
-      'Signal quality and radio directory' : dashboard.last_seen_ms ?
+      'Signal quality and radio directory' : tab === 'activity' ?
+        'Signaling events heard on P25, DMR, and NXDN channels.' : dashboard.last_seen_ms ?
         fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
     tabs([
       { id: 'health', label: 'Main', href: href('dashboard', { tab: 'health' }) },
@@ -13116,7 +13067,7 @@ function liveEventDetailsText(event) {
 }
 
 function liveEventMatchesQuery(event, query) {
-  return !query || [event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
+  return !query || [activityOptionLabel(event.event_type, 'EVENT'), event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
     event.to_aliases, event.to_identifiers, liveEventPartyText(event, 'from'), liveEventPartyText(event, 'to'),
     event.channel, event.channel_name, event.frequency_hz ? frequency(event.frequency_hz) : '',
     event.source_frequency_hz ? frequency(event.source_frequency_hz) : '',
@@ -13408,7 +13359,8 @@ function liveDetailFilterController(options) {
       const input = node('input');
       input.type = 'checkbox';
       input.className = 'ui-selection-check';
-      const text = node('span', '', filterNode.label);
+      const text = node('span', '', !branch && options.leafLabel ?
+        options.leafLabel(filterNode.key, filterNode.label) : filterNode.label);
       const count = branch ? node('span', 'live-filter-node-count') : null;
       label.append(input, text);
       if (count) label.append(count);
@@ -18321,6 +18273,7 @@ function liveEventsPanel(onCollapse) {
   const eventColumnsHost = node('div', 'live-detail-columns');
   const filters = liveDetailFilterController({
     noun: 'events',
+    leafLabel: (key) => activityOptionLabel(key, 'EVENT'),
     title: 'Event filters',
     typeHeading: 'Event types',
     searchPlaceholder: 'Search parties or details',
@@ -18351,7 +18304,7 @@ function liveEventsPanel(onCollapse) {
     } },
     { id: 'event', label: 'Event', className: 'live-event-stack', render: (event) => {
       const value = node('span', 'live-event-stack');
-      value.append(node('strong', '', event.event_label || event.event_type || 'Event'));
+      value.append(node('strong', '', activityOptionLabel(event.event_type, 'EVENT') || event.event_label || 'Event'));
       if (event.protocol) value.append(node('small', '', event.protocol));
       return value;
     } },
@@ -19621,7 +19574,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=45');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=46');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19635,6 +19588,8 @@ async function renderP25Visualizer() {
     modalFooter: aliasModalFooter,
     loadEventSettings: loadP25VisualizerEventSettings,
     saveEventSettings: saveP25VisualizerEventSettings,
+    messageTypeLabel: (name) => activityOptionLabel(name),
+    messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
     subscribeActivity: (callbacks) => {
       const subscriptionId = randomLiveClientId();
@@ -22002,22 +21957,8 @@ function activityChannel(row, linked = true) {
   return details ? fragment(channel, node('small', 'identity-summary-context', details)) : channel;
 }
 
-function activityOptionLabel(value) {
-  const labels = {
-    ACKNOWLEDGE: 'Acknowledge', CHECK_ACK: 'Check Ack', PATCH_CANCEL: 'Patch Cancel',
-    PATCH_CREATE: 'Patch Create', AUTOMATIC_REGISTRATION_SERVICE: 'Motorola ARS',
-    CALL_DO_NOT_MONITOR: 'Call - Do Not Monitor', CALL_GROUP: 'Group Call',
-    CALL_GROUP_ENCRYPTED: 'Encrypted Group Call', CALL_PATCH_GROUP: 'Patch Call',
-    CALL_PATCH_GROUP_ENCRYPTED: 'Encrypted Patch Call', CALL_UNIT_TO_UNIT: 'Unit-to-Unit Call',
-    CALL_UNIT_TO_UNIT_ENCRYPTED: 'Encrypted Unit-to-Unit Call', CALL_INTERCONNECT: 'Telephone Call',
-    CALL_INTERCONNECT_ENCRYPTED: 'Encrypted Telephone Call', CALL_NO_TUNER: 'Call - No Tuner',
-    DATA_CALL: 'Data Call', DATA_CALL_ENCRYPTED: 'Encrypted Data Call', ICMP_PACKET: 'ICMP Packet',
-    ID_ANI: 'ANI', ID_UNIQUE: 'Unique ID', IP_PACKET: 'IP Packet', LRRP: 'Motorola LRRP',
-    RADIO_REGISTRATION_SERVICE: 'Hytera RRS', REGISTER_ESN: 'ESN Registration',
-    RESPONSE_PACKET: 'Response Packet', SDM: 'Short Data Message', SMS: 'SMS',
-    UDP_PACKET: 'UDP/IP Packet', XCMP: 'Motorola XCMP', TONE: 'Paging tones'
-  };
-  return labels[value] || semanticLabel(value);
+function activityOptionLabel(value, kind = 'ACTION') {
+  return activityMessageTypes.label(kind, value);
 }
 
 function activityFilterContext(scopeParameters) {
@@ -22097,9 +22038,9 @@ function activityRouteFilters(parameters, context, now = Date.now()) {
     fromMs = Math.max(1, toMs - 24 * 60 * 60 * 1000);
   }
   const actionValue = value('activity_action').toUpperCase();
-  const action = ACTIVITY_ACTION_VALUES.includes(actionValue) ? actionValue : '';
+  const action = activityMessageTypes.has('ACTION', actionValue) ? actionValue : '';
   const eventValue = value('activity_event_type').toUpperCase();
-  const eventType = ACTIVITY_EVENT_TYPE_VALUES.includes(eventValue) ? eventValue : '';
+  const eventType = activityMessageTypes.has('EVENT', eventValue) ? eventValue : '';
   const encryptionValue = value('activity_encryption').toLowerCase();
   const encryption = capabilities.encryption && ['clear', 'encrypted'].includes(encryptionValue) ?
     encryptionValue : 'all';
@@ -22238,11 +22179,11 @@ function activityCellFilterPatch(context, row, columnId) {
   const targetColumns = new Set(['target', 'target-alias']);
   if (columnId === 'action') {
     const action = String(row?.action || '').trim().toUpperCase();
-    return ACTIVITY_ACTION_VALUES.includes(action) ? { action } : null;
+    return activityMessageTypes.has('ACTION', action) ? { action } : null;
   }
   if (columnId === 'event') {
     const eventType = String(row?.event_type || '').trim().toUpperCase();
-    return ACTIVITY_EVENT_TYPE_VALUES.includes(eventType) ? { eventType } : null;
+    return activityMessageTypes.has('EVENT', eventType) ? { eventType } : null;
   }
   if (columnId === 'tones' && row?.paging_tone_summary?.tones?.length) return { hasTones: true };
   const encryptionValue = row?.encrypted;
@@ -22851,7 +22792,7 @@ function activityFilterChipDefinitions(filters, capabilities) {
       'Encrypted only' : 'Clear only', keys: ['activity_encryption'] });
   }
   if (filters.eventType) {
-    chips.push({ id: 'event', prefix: 'Event subtype:', value: activityOptionLabel(filters.eventType),
+    chips.push({ id: 'event', prefix: 'Event subtype:', value: activityOptionLabel(filters.eventType, 'EVENT'),
       keys: ['activity_event_type'] });
   }
   if (filters.hasTones) {
@@ -22912,7 +22853,7 @@ function activityFilterToolbar(context, initialFilters) {
     { value: '', label: capabilities.grants ? 'All actions (grants hidden)' : 'All actions' },
     ...(capabilities.grants ? [{ value: ACTIVITY_ACTION_INCLUDE_GRANTS,
       label: 'All actions (including grants)' }] : []),
-    ...ACTIVITY_ACTION_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
+    ...activityDefinitions().map((definition) => ({ value: definition.name, label: definition.label }))
   ], activityActionControlValue(initialFilters, capabilities));
   primary.append(rangeControl.field, actionControl.field);
 
@@ -23031,7 +22972,7 @@ function activityFilterToolbar(context, initialFilters) {
 
   const eventControl = activityFilterSelect('Event subtype', [
     { value: '', label: 'All event subtypes' },
-    ...ACTIVITY_EVENT_TYPE_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
+    ...activityDefinitions('EVENT').map((definition) => ({ value: definition.name, label: definition.label }))
   ], initialFilters.eventType);
   const toneControl = activityFilterSelect('Tones', [
     { value: '', label: 'Any' }, { value: 'true', label: 'With tones' }
@@ -23483,7 +23424,7 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
 }
 
 function activityEventValue(row) {
-  return String(row?.event_type || '').toUpperCase() === 'TONE' ? 'Paging tones' : row.event_type;
+  return activityOptionLabel(row?.event_type, 'EVENT');
 }
 
 function activityToneValue(row) {
@@ -23524,7 +23465,7 @@ function activityColumns(context, filters) {
       render: (row) => liveEventDuration(activityDurationMilliseconds(row)),
       sortValue: activityDurationMilliseconds },
     { id: 'action', label: 'Action', render: (row) =>
-      activityCellValue(String(row.action || '').toUpperCase() === 'TONE' ? activityOptionLabel('TONE') : row.action, row, 'action', context, filters), sortValue: (row) => row.action || '' },
+      activityCellValue(activityOptionLabel(row.action), row, 'action', context, filters), sortValue: (row) => row.action || '' },
     { id: 'event', label: 'Event subtype', render: (row) =>
       activityCellValue(activityEventValue(row), row, 'event', context, filters),
       sortValue: (row) => row.event_type || '' },
@@ -34200,7 +34141,7 @@ const showCallRelations = createCallRelations({
     row.source_entity_ref, true, 'source'),
   activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
   activityChannel: row => activityChannel(row),
-  activityEventLabel: row => activityOptionLabel(row.event_type || row.action),
+  activityEventLabel: row => row.event_type ? activityOptionLabel(row.event_type, 'EVENT') : activityOptionLabel(row.action),
   playback: recordingsFeature.playback,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
@@ -34298,6 +34239,8 @@ async function render() {
       renderAccessDenied(effectiveView, renderContext);
       return;
     }
+    await loadActivityMessageTypes();
+    if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;
     await entry.handler();
     if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;
     const notice = databaseLoggingNotice(effectiveView);

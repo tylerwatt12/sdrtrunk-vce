@@ -25,6 +25,14 @@ const context = {
   groupIdentifierText: (_row, id) => String(id),
   sourceNameDisplayMode: () => sourceNameMode
 };
+const catalogSource = fs.readFileSync(path.join(path.dirname(applicationPath), 'core/message-types.js'), 'utf8');
+const createCatalog = vm.runInNewContext(catalogSource.replace(/^export /gm, '') + '\ncreateMessageTypeCatalog;');
+context.activityMessageTypes = createCatalog();
+context.activityMessageTypes.replace([
+  ...['GRANT', 'CALL', 'TONE', 'ACTIVE', 'NEW_ACTION'].map((name) => ({ definition_kind: 'ACTION', name, label: name })),
+  ...['CALL_GROUP', 'CALL', 'TONE', 'RADIO_UNINHIBIT', 'RADIO_INHIBIT', 'RADIO_UNINHIBIT_ACK',
+    'RADIO_INHIBIT_ACK', 'NEW_EVENT'].map((name) => ({ definition_kind: 'EVENT', name, label: name }))
+]);
 vm.createContext(context);
 vm.runInContext(`${application.slice(constantsStart, constantsEnd)}\n${application.slice(modelStart, modelEnd)}`,
   context);
@@ -418,3 +426,8 @@ assert.match(picker, /activityListboxNavigationIndex\(/,
   'Identity results must use the shared Arrow, Home, and End navigation model.');
 assert.match(picker, /event\.key === 'Escape'[\s\S]*?event\.stopPropagation\(\);[\s\S]*?input\.focus\(\);/,
   'Escape from a result must return focus to the combobox without dismissing the picker.');
+
+const catalogFilters = context.activityRouteFilters(parameters({ activity_action: 'NEW_ACTION',
+  activity_event_type: 'NEW_EVENT' }), systemContext);
+assert.equal(catalogFilters.action, 'NEW_ACTION', 'A new database action is usable without a frontend allowlist.');
+assert.equal(catalogFilters.eventType, 'NEW_EVENT', 'A new database event is usable without a frontend allowlist.');
