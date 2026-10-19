@@ -245,7 +245,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(activity.contains("aliasEditorSourceBreakdownColumns()"));
         assertTrue(activity.contains("grant_observation_count"));
         assertTrue(activity.contains("relationship_count"));
-        assertTrue(activity.contains("retained call and signaling activity"));
+        assertTrue(activity.contains("saved call and signaling activity"));
         assertTrue(activity.contains("included in the Signaling total"));
     }
 
@@ -254,16 +254,16 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String system = function(source, "function observedGroupIdentitySystem(row)");
-        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
+        String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
 
         assertTrue(system.contains("row.channel_names"));
         assertFalse(system.contains("row.source_label"));
         assertFalse(system.contains("row.site_name"));
-        assertTrue(detail.contains("row.channel_names"));
-        assertTrue(detail.contains("row.frequency_hz"));
-        assertTrue(detail.contains("row.timeslot"));
-        assertFalse(detail.contains("row.frequency_count"));
-        assertFalse(detail.contains("row.timeslot_count"));
+        assertTrue(actions.contains("row?.entity_ref"));
+        assertTrue(actions.contains("row?.channel_entity_ref"));
+        assertTrue(actions.contains("entityReferenceAllowed(reference)"));
+        assertTrue(actions.contains("aliasIdentityDetailTarget(row, reference)"));
+        assertFalse(source.contains("function observedGroupIdentityDetail("));
     }
 
     @Test
@@ -464,7 +464,7 @@ class StatsWebAliasCatalogUiContractTest
             .contains("String(new Date(value).getTime())"));
         assertTrue(activeFilters.contains("'lastActivityAfter', 'lastActivityBefore'"));
         assertTrue(source.contains("A call can also have signaling"));
-        assertTrue(source.contains("An em dash means unavailable; 0 means monitored with none observed"));
+        assertTrue(source.contains("An em dash means unavailable; 0 means monitored with none "));
     }
 
     @Test
@@ -486,7 +486,7 @@ class StatsWebAliasCatalogUiContractTest
         String focusKey = function(source, "function observedGroupIdentityFocusKey(row)");
         String time = function(source, "function observedGroupIdentityTime(row, value)");
         String create = function(source, "function observedGroupIdentityCreateButton(row, selectedList)");
-        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
+        String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
         String editor = function(source,
             "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
 
@@ -566,12 +566,13 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(prefill.contains("observedGroupIdentityFocusKey(row)"));
         assertTrue(create.contains("dataset.observedKey = observedGroupIdentityFocusKey(row)"));
         assertTrue(identity.contains("groupIdentifierText(row, row.group_identity_id)"));
-        assertTrue(detail.contains("'Local Talkgroup'"));
-        assertTrue(detail.contains("other recognized signaling actions"));
+        assertTrue(actions.contains("anchor('Details', target"));
+        assertFalse(observed.contains("onRowClick:"));
+        assertTrue(observed.contains("observedGroupIdentityActions(row, selectedList)"));
         assertTrue(create.contains("!observedGroupIdentityPromotionSupported(row)"));
         assertTrue(create.contains("'Review only'"));
         assertTrue(create.contains("observedGroupIdentityPromotionReason(row)"));
-        assertTrue(detail.contains("observedGroupIdentityPromotionSupported(row)"));
+        assertTrue(actions.contains("observedGroupIdentityCreateButton(row, selectedList)"));
         assertTrue(prefill.contains("stream_as_talkgroup: null"));
         assertFalse(prefill.contains("copy_actions_from_alias_id"));
         assertFalse(editor.contains("rangeActionsPromise"));
@@ -586,7 +587,7 @@ class StatsWebAliasCatalogUiContractTest
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
             ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",
             ".alias-tone-actions", ".alias-conflict-list",
-            ".alias-scan-list-option", ".observed-group-identity-table-host", ".observed-group-identity-detail",
+            ".alias-scan-list-option",
             ".alias-policy-modal"})
         {
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);

@@ -111,6 +111,10 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     const channelLink = discover.getByRole('link', { name: 'Air Operations', exact: true });
     await expect(channelLink).toHaveAttribute('href', /view=channel/);
     expect(await channelLink.getAttribute('href')).not.toContain('tab=groups');
+    const details = discover.getByRole('link', { name: 'Details', exact: true });
+    await expect(details).toHaveAttribute('href', /view=channel/);
+    expect(await details.getAttribute('href')).not.toContain('tab=groups');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await discover.getByRole('button', { name: 'Create Alias' }).click();
     const modal = page.getByRole('dialog');
     await expect(modal).toBeVisible();

@@ -19,7 +19,7 @@ export function createAlertsWorkspace(deps) {
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
     identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected,
-    onPushEnabledChanged, openCallRelations } = deps;
+    onPushEnabledChanged, canViewRadio = () => false, canViewRecordings = () => false } = deps;
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');
   feedback.setAttribute('role', 'status');
@@ -33,6 +33,9 @@ export function createAlertsWorkspace(deps) {
   let publicOffset = 0;
   let publicTopic = selectedTopic;
   let openedLinkedAlert = false;
+  let linkedAlert = null;
+  let expandedAlertId = selectedAlert;
+  let cleanupPublicHistory = null;
   let directConnection = { state: 'none' };
   let ruleTestBusy = false;
   let activeTopic = selectedTopic;
@@ -1066,6 +1069,7 @@ export function createAlertsWorkspace(deps) {
   }
 
   async function renderPublic() {
+    cleanupPublicHistory?.();
     if (snapshot.enabled === false) { renderDisabled(); return; }
     document.querySelector('link[rel="manifest"]')?.setAttribute('href', '/assets/alerts.webmanifest?v=1');
     const topics = visibleAlertTopics(snapshot.topics);
@@ -1100,76 +1104,134 @@ export function createAlertsWorkspace(deps) {
     layout.append(sidebar, timelinePanel);
     body.append(layout);
     let generation = 0;
+    let historyClosed = false;
+    const alertCards = new Map();
+    const clearCards = () => { alertCards.forEach(card => card.close()); alertCards.clear(); };
+    cleanupPublicHistory = () => { historyClosed = true; generation++; clearCards(); };
+    const createAlertCard = event => {
+      const card = node('article', 'alerts-event ui-surface ui-section-body');
+      card.dataset.alertId = event.id;
+      const when = event.occurred_at ?? event.created_at_ms;
+      const timestamp = node('time', 'ui-field-detail', formatTime(when));
+      if (Number.isFinite(Number(when))) timestamp.dateTime = new Date(Number(when)).toISOString();
+      const metadata = node('div', 'alerts-event-meta');
+      metadata.append(node('span', 'ui-field-detail', topicName(event.topic_id)), timestamp);
+      const title = node('h3', 'ui-record-title');
+      const readAlert = button(event.title || 'VCE alert', () => {
+        const expanded = readAlert.getAttribute('aria-expanded') !== 'true';
+        expandedAlertId = expanded ? event.id : '';
+        alertCards.forEach((other, id) => other.expand(expanded && id === event.id));
+      });
+      readAlert.className = 'link-button';
+      readAlert.setAttribute('aria-expanded', 'false');
+      title.append(readAlert);
+      const content = node('div', 'ui-heading-group');
+      content.append(title, paragraph(event.body || ''));
+      const detail = node('div', 'alerts-form');
+      detail.id = 'alert-detail-' + createId();
+      detail.hidden = true;
+      readAlert.setAttribute('aria-controls', detail.id);
+      const action = alertPopupAction(event);
+      if (action) {
+        const control = link(action.label, action.href);
+        control.className = 'ui-button ui-button-primary';
+        detail.append(actionRow(control));
+      }
+      const related = node('div', 'alerts-form');
+      related.setAttribute('aria-live', 'polite');
+      const canReadRelated = () => event.id && (canViewRadio() || canViewRecordings());
+      if (canReadRelated()) detail.append(related);
+      let relatedController = null;
+      const cancelRelated = () => { relatedController?.abort(); relatedController = null; };
+      const loadRelated = async () => {
+        cancelRelated();
+        if (!canReadRelated()) return;
+        const controller = new AbortController();
+        relatedController = controller;
+        related.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Loading related activity and recordings…'));
+        try {
+          const data = await requestJson(PUBLIC + '/history/' + encodeURIComponent(event.id) + '/related',
+            { signal: controller.signal, page: false, csrf: false });
+          if (disposed || historyClosed || controller.signal.aborted || !card.isConnected) return;
+          const recordings = canViewRecordings() ? (data.recordings || []).filter(row => /^[1-9]\d{0,18}$/.test(String(row.id))) : [];
+          const activity = canViewRadio() ? (data.activity_rows || []).filter(row => row.configuration_id &&
+            Number.isFinite(Number(row.observed_at_ms))) : [];
+          const links = actionRow();
+          if (recordings.length) links.append(link(recordings.length > 1 ? 'View recordings' : 'View recording',
+            href('recordings', { recording_queue: [...new Set(recordings.map(row => row.id))].join(',') })));
+          activity.forEach((row, index) => links.append(link(activity.length > 1 ? `View call activity ${index + 1}` : 'View call activity',
+            href('channel', { configuration_id: row.configuration_id, tab: 'activity', activity_range: 'custom',
+              activity_from_ms: row.observed_at_ms, activity_to_ms: Number(row.observed_at_ms) + 1,
+              activity_include_grants: String(row.action).toUpperCase() === 'GRANT' ? true : null }))));
+          related.replaceChildren();
+          if (links.childElementCount) related.append(links);
+          else related.append(paragraph('No related activity or recordings available.'));
+        } catch (error) {
+          if (disposed || historyClosed || controller.signal.aborted || !card.isConnected || error?.name === 'AbortError') return;
+          related.replaceChildren(notice('Related activity and recordings could not be loaded. Try again.'),
+            actionRow(button('Retry', () => void loadRelated())));
+        }
+      };
+      const expand = expanded => {
+        if ((readAlert.getAttribute('aria-expanded') === 'true') === expanded) return;
+        readAlert.setAttribute('aria-expanded', String(expanded));
+        detail.hidden = !expanded;
+        if (expanded) void loadRelated();
+        else cancelRelated();
+      };
+      card.append(metadata, content, detail);
+      const record = { element: card, expand, close: cancelRelated };
+      alertCards.set(event.id, record);
+      return record;
+    };
     async function loadHistory() {
       const current = ++generation;
+      clearCards();
       timeline.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Loading recent alerts…'));
       try {
         const query = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(publicOffset) });
         if (publicTopic) query.set('topic_id', publicTopic);
         const page = await read(PUBLIC + '/history?' + query);
-        if (disposed || current !== generation) return;
+        if (disposed || historyClosed || current !== generation) return;
         const events = visibleAlertHistory(page.items, snapshot.topics, publicTopic);
-        timeline.replaceChildren(...events.map(event => {
-          const card = node('article', 'alerts-event ui-surface ui-section-body');
-          const when = event.occurred_at ?? event.created_at_ms;
-          const timestamp = node('time', 'ui-field-detail', formatTime(when));
-          if (Number.isFinite(Number(when))) timestamp.dateTime = new Date(Number(when)).toISOString();
-          const metadata = node('div', 'alerts-event-meta');
-          metadata.append(node('span', 'ui-field-detail', topicName(event.topic_id)), timestamp);
-          const title = node('h3', 'ui-record-title');
-          const readAlert = button(event.title || 'VCE alert', () => openAlert(event));
-          readAlert.className = 'link-button';
-          title.append(readAlert);
-          const content = node('div', 'ui-heading-group');
-          content.append(title, paragraph(event.body || ''));
-          card.append(metadata, content);
-          return card;
-        }));
-        if (!events.length) timeline.append(paragraph(publicTopic ? 'No alerts have been published to this topic yet.' : 'No alerts have been published yet.'));
+        const pinned = linkedAlert && visibleAlertHistory([linkedAlert], snapshot.topics, publicTopic).length ? linkedAlert : null;
+        const shown = pinned && !events.some(event => event.id === pinned.id) ? [pinned, ...events] : events;
+        timeline.replaceChildren(...shown.map(event => createAlertCard(event).element));
+        alertCards.get(expandedAlertId)?.expand(true);
+        if (!shown.length) timeline.append(paragraph(publicTopic ? 'No alerts have been published to this topic yet.' : 'No alerts have been published yet.'));
         timeline.append(browsingWorkflows.createBrowsingPager({ node,
           countText: browsingWorkflows.pageRangeText({ offset: publicOffset, visible: events.length, total: page.total, label: 'Alerts' }),
           previous: { enabled: publicOffset > 0, onClick: () => { publicOffset -= PAGE_SIZE; void loadHistory(); } },
           next: { enabled: Number.isInteger(page.total) ? publicOffset + events.length < page.total : events.length === PAGE_SIZE,
             onClick: () => { publicOffset += PAGE_SIZE; void loadHistory(); } } }));
-      } catch (error) { if (error?.name !== 'AbortError') timeline.replaceChildren(notice('Recent alerts could not be loaded. Try Refresh.', 'danger')); }
+      } catch (error) {
+        if (!disposed && !historyClosed && current === generation && error?.name !== 'AbortError')
+          timeline.replaceChildren(notice('Recent alerts could not be loaded. Try Refresh.', 'danger'));
+      }
     }
     await loadHistory();
-    if (selectedAlert && !openedLinkedAlert) {
+    if (selectedAlert && !openedLinkedAlert && !historyClosed) {
       openedLinkedAlert = true;
+      if (alertCards.has(selectedAlert)) return;
       try {
         const result = await read(PUBLIC + '/history/' + encodeURIComponent(selectedAlert));
         const event = result.item || result;
-        if (!disposed && visibleAlertHistory([event], snapshot.topics).length) openAlert(event);
-        else if (!disposed) feedback.replaceChildren(notice('This alert is unavailable. Read the recent alerts below.'));
+        if (!disposed && !historyClosed && visibleAlertHistory([event], snapshot.topics).length) {
+          linkedAlert = event;
+          if (visibleAlertHistory([event], snapshot.topics, publicTopic).length) {
+            const card = alertCards.get(event.id) || createAlertCard(event);
+            if (!card.element.isConnected) timeline.prepend(card.element);
+            alertCards.forEach((other, id) => other.expand(id === expandedAlertId));
+          }
+        } else if (!disposed && !historyClosed) feedback.replaceChildren(notice('This alert is unavailable. Read the recent alerts below.'));
       } catch (error) {
-        if (!disposed && error?.name !== 'AbortError') feedback.replaceChildren(notice('This alert is unavailable. Read the recent alerts below.'));
+        if (!disposed && !historyClosed && error?.name !== 'AbortError') feedback.replaceChildren(notice('This alert is unavailable. Read the recent alerts below.'));
       }
     }
   }
   function formatTime(value) {
     const date = new Date(typeof value === 'number' || /^\d+$/.test(String(value)) ? Number(value) : value);
     return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Time unavailable';
-  }
-  function openAlert(event) {
-    const detail = node('div', 'alerts-form');
-    detail.append(node('span', 'ui-field-detail', topicName(event.topic_id)), paragraph(event.body || ''),
-      node('time', 'muted', formatTime(event.occurred_at ?? event.created_at_ms)));
-    const action = alertPopupAction(event);
-    const actions = actionRow();
-    if (action) {
-      const control = link(action.label, action.href);
-      control.className = 'ui-button ui-button-primary';
-      actions.append(control);
-    }
-    if (event.id && openCallRelations) actions.append(button('Related activity and recordings', () => {
-      let opened = false;
-      const open = () => { if (!opened) { opened = true; openCallRelations('alert', event.id); } };
-      if (alertModal.close(open)) open();
-    }));
-    if (actions.childElementCount) detail.append(actions);
-    const alertModal = openReadOnlyModal(event.title || 'VCE alert', detail, { id: 'public-alert-detail', className: 'modal-size-small' });
-    const first = detail.querySelector('a, button');
-    void alertModal.ready.then(() => { if (first) alertModal.focus(first); });
   }
 
   async function openSubscription(initialTopic = '') {
@@ -1487,6 +1549,7 @@ export function createAlertsWorkspace(deps) {
 
   function close() {
     disposed = true;
+    cleanupPublicHistory?.();
     managementTableController.widthObserver?.disconnect();
     clearTimeout(pollTimer);
     if (view === 'public' && originalManifest != null) document.querySelector('link[rel="manifest"]')?.setAttribute('href', originalManifest);

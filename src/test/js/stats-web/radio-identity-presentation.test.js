@@ -165,9 +165,6 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveAliasReferences')}
   ${functionSource('liveSourceName')}
   ${functionSource('liveIdentityLabel')}
-  ${functionSource('liveIdentityActionTitle')}
-  ${functionSource('p25IdentityEvidenceLabel')}
-  ${functionSource('liveIdentityFacts')}
   ${functionSource('liveIdentifierAliasValue')}
   ${functionSource('liveEventRadioRow')}
   ${functionSource('liveEventReplaceRadioText')}
@@ -178,9 +175,9 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveEventMatchesQuery')}
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
-    scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText, liveIdentityActionTitle,
+    scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText,
     activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias, activityPartyValue,
-    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentityFacts, liveIdentifierAliasValue,
+    activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentifierAliasValue,
     liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
     liveEventMatchesQuery };
 })()`, { URLSearchParams, systemLabels, ...radioLabels, ...sourceNames });
@@ -241,20 +238,8 @@ assert.equal(behavior.radioIdentifierText({
   observed_working_id: 501
 }, 501), '501',
   'An equal Working ID must not repeat the subscriber number in the radio label.');
-assert.equal(behavior.liveIdentityActionTitle({
-  protocol: 'APCO25', source_form: 'RADIO', source_id: 130_001,
-  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 },
-  source_observed_working_id: 130_001
-}, 'source'), 'Radio 9601699 (Working ID 130001)',
-  'The Live action dialog title must retain the canonical subscriber and explicit working ID.');
-assert.match(functionSource('liveIdentityActionLink'),
-  /openReadOnlyModal\(liveIdentityActionTitle\(row, kind, label\),/,
-  'The Live action dialog must pass its selected label to the identity-aware title formatter.');
-assert.equal(behavior.liveIdentityActionTitle({
-  protocol: 'P25', source_form: 'RADIO', source_id: 130_001, source_alias: 'Engine 42',
-  source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9_601_699 }
-}, 'source', 'Engine 42'), 'Radio Engine 42', 'A known friendly Alias is the Live dialog title.');
-
+assert.doesNotMatch(functionSource('liveIdentityActionLink'), /openReadOnlyModal|aria-haspopup|liveIdentityFacts/,
+  'Live identities navigate directly without a second inspection dialog.');
 const dockSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/audio-dock.js'), 'utf8');
 let sourceMode = 'talker_alias';
@@ -832,15 +817,6 @@ for (const invalid of [false, true, [], {}]) {
     canonical_identity: { ...localRadio.canonical_identity, wacn: invalid } }, 4326018), '4326018',
     'Invalid typed home fields do not become fabricated complete identities.');
 }
-const targetFacts = behavior.liveIdentityFacts({ protocol: 'P25', target_form: 'RADIO', target_id: 501,
-  target_canonical_identity: { wacn: 0xBEE01, system_id: 0x348, subscriber_id: 501 },
-  home_system_name: 'Source home name', home_system_entity_ref: { href: '/source-home' } }, 'target');
-const targetHome = targetFacts.values.find(([label]) => label === 'Home System')[1];
-assert.equal(targetHome.primary, 'BEE01.348', 'Target details do not borrow the source home-system name.');
-assert.equal(targetHome.target, '', 'Target details do not navigate to the source home system.');
-assert.equal(targetFacts.values.find(([label]) => label === 'Permanent Radio ID')[1], 'BEE01.348.501',
-  'Explicit identity inspection retains the exact permanent address.');
-
 const fullGroup = { protocol: 'P25', target_id: 77, target_form: 'TALKGROUP',
   target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
   target_observed_local_id: 77, target_home_system_name: 'County Radio' };
@@ -850,10 +826,6 @@ for (const serving_system_key of [null, 'p25:bee00:348']) {
 }
 assert.equal(behavior.partyIdentifierText({ ...fullGroup, serving_system_key: 'p25:00001:047' }, 77, 'target'),
   'County Radio · 7001 (Local TG ID 77)');
-assert.equal(behavior.liveIdentityFacts({ ...fullGroup, target_identity_source: 'group_affiliation_mapping' },
-  'target').values.find(([label]) => label === 'ID Source')[1], 'Group affiliation response');
-assert.equal(behavior.liveIdentityFacts({ ...fullGroup, target_identity_source: 'local_id' },
-  'target').values.find(([label]) => label === 'ID Source')[1], 'Local talkgroup ID only');
 assert.equal(behavior.groupIdentifierText({ protocol: 'P25', native_id: 7001,
   identity_key: 'v1-p-bee00-348-7001', serving_system_key: null }, 7001), '7001');
 assert.equal(behavior.radioIdentifierText({ protocol: 'P25', native_id: 9001,
@@ -899,8 +871,6 @@ const catalogRestRow = { protocol: 'P25', serving_system_key: 'p25:bee00:349', s
     system_name_source: 'catalog' } };
 assert.equal(behavior.radioIdentifierText(catalogRestRow, 501, 'source'), 'P25 ABCDE-123 · 42 (Working ID 501)',
   'A REST fallback field cannot override an already known configured home name.');
-assert.equal(behavior.liveIdentityFacts({ ...catalogRestRow, source_form: 'RADIO' }, 'source').values
-  .find(([label]) => label === 'Home System')[1].primary, 'P25 ABCDE-123');
 assert.equal(behavior.liveEventIdentifierText(catalogEvent, { ...catalogEvent.from_party[0],
   home_system_name: 'Explicit saved label' }), 'Explicit saved label · 42 (Working ID 501)');
 const catalogLiveRow = { protocol: 'P25', serving_system_key: 'p25:bee00:349', target_id: 77,
@@ -908,5 +878,3 @@ const catalogLiveRow = { protocol: 'P25', serving_system_key: 'p25:bee00:349', t
   target_observed_local_id: 77, target_home_catalog_name: 'Catalog Group' };
 assert.equal(behavior.groupIdentifierText(catalogLiveRow, 77, 'target'),
   'Catalog Group · 7001 (Local TG ID 77)');
-assert.equal(behavior.liveIdentityFacts(catalogLiveRow, 'target').values
-  .find(([label]) => label === 'Home System')[1].primary, 'Catalog Group');

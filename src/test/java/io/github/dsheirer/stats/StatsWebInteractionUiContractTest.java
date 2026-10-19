@@ -1318,12 +1318,11 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void liveRowsExposeReadOnlyIdentityInfoAndDismissOnlyStoppedChannels() throws Exception
+    void liveRowsLinkDirectlyToIdentityInfoAndDismissOnlyStoppedChannels() throws Exception
     {
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
-        String identityFacts = function(source, "function liveIdentityFacts(row, kind)");
         String identityAction = function(source, "function liveIdentityActionLink(row, kind, label)");
         String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
         String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
@@ -1340,19 +1339,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(identityInfo.contains("entityRefHref(row?.[`${kind}_entity_ref`])"));
         assertTrue(identityInfo.contains("{ channel: kind === 'source' ? 'radios' : 'groups' }"));
         assertTrue(identityInfo.contains("`Open channel ${collection}`"));
-        assertTrue(identityFacts.contains("['Serving System', radioSystemContextLink(row)]"));
-        assertTrue(identityFacts.contains("['Home System', homeName"));
-        assertTrue(identityFacts.contains("p25IdentityFacts(row, kind, radio ? 'radio' : 'talkgroup')"));
-        assertTrue(identityFacts.contains("[radio ? 'Permanent Radio ID' : 'Home Talkgroup ID', canonical ?"));
-        assertTrue(identityFacts.contains("`${homeIdentity}.${canonical[radio ? 'subscriber_id' : 'talkgroup_id']}` : 'Not confirmed'"));
-        assertTrue(identityFacts.contains("const observed = radio ? workingSubscriberId(row, kind) : typed?.observedId"));
-        assertTrue(identityFacts.contains("[radio ? 'Working ID' : 'Local Talkgroup ID', observed == null ? 'Not supplied' : identifierNumber(observed)]"));
-        assertTrue(identityFacts.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(homeReference) : ''"));
-        assertTrue(identityFacts.contains("['ID Source', p25IdentityEvidenceLabel(row, kind)]"));
-        assertTrue(identityAction.contains("const facts = liveIdentityFacts(row, kind)"));
-        assertTrue(identityAction.contains("info.title"));
-        assertTrue(identityAction.contains("info.description"));
-        assertTrue(identityAction.contains("openReadOnlyModal(liveIdentityActionTitle(row, kind, label)"));
+        assertTrue(identityAction.contains("const info = liveIdentityInfo(row, kind)"));
+        assertTrue(identityAction.contains("if (!info?.target) return label"));
+        assertTrue(identityAction.contains("anchor(label, info.target, 'live-alias-link')"));
+        assertFalse(identityAction.contains("openReadOnlyModal"));
+        assertFalse(identityAction.contains("addEventListener"));
+        assertFalse(identityAction.contains("aria-haspopup"));
+        assertFalse(source.contains("function liveIdentityFacts("));
         assertTrue(scannerNavigate.contains("dashboardChannelKind(channel) === 'CONVENTIONAL'"));
         assertTrue(scannerNavigate.contains("{ channel: 'groups' }"));
         assertTrue(scannerNavigate.contains("{ channel: 'radios' }"));

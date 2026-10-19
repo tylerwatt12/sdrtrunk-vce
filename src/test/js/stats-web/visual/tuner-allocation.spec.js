@@ -154,7 +154,7 @@ async function openApp(page, options = {}) {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') return route.fulfill({ json: { data: {
       configured: true, authenticated: true, username: 'admin', tier: 'admin', primary: true,
-      capabilities: { 'admin-settings': true, 'radio-view': true, 'admin-channels': false, credits: true } } } });
+      capabilities: { 'admin-settings': true, radio: options.radio !== false, 'admin-channels': false, credits: true } } } });
     if (pathname === '/api/v1/me/preferences') {
       if (route.request().method() === 'PUT') preferences = route.request().postDataJSON();
       return route.fulfill({ json: { revision: 1, preferences } });
@@ -296,20 +296,23 @@ test('chosen saved channel ID scopes coverage and decision history without a cho
   await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('MARCS-Grafton');
   const selected = page.locator('.tuner-allocation-selected-channel');
   await expect(selected).toHaveClass(/ui-record-card/);
-  await expect(selected).not.toContainText('773.08125');
-  await expect(selected).not.toContainText('770.90625');
+  await expect(selected).toContainText('773.08125');
+  await expect(selected).toContainText('770.90625');
+  await expect(selected).toContainText('Running');
   const toolbar = selected.locator('.tuner-allocation-monitor-toolbar');
   await expect(toolbar.getByRole('button', { name: 'Coverage', exact: true })).toBeVisible();
   await expect(toolbar.getByRole('button', { name: 'Decision history', exact: true })).toBeVisible();
   await expect(toolbar.locator('.tuner-allocation-live-status')).toContainText('Live');
   await expect(toolbar.getByRole('button', { name: 'Pause tuner allocation monitor' })).toBeVisible();
-  const details = selected.getByRole('button', { name: 'Channel details', exact: true });
-  await details.click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toContainText('773.08125');
-  await expect(dialog).toContainText('770.90625');
-  await page.keyboard.press('Escape');
+  const details = selected.getByRole('link', { name: 'MARCS-Grafton', exact: true });
+  const destination = new URL(await details.getAttribute('href'), page.url()).searchParams;
+  expect(destination.get('view')).toBe('channel');
+  expect(destination.get('configuration_id')).toBe('marcs-grafton');
+  expect(destination.get('tab')).toBe('info');
+  await expect(selected.getByRole('button', { name: 'Channel details', exact: true })).toHaveCount(0);
+  await details.focus();
   await expect(details).toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-site[data-site-id="marcs-grafton"]')).toBeVisible();
   await expect(page.locator('.tuner-allocation-site[data-site-id="marcs-elyria"]')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-site-filter')).toHaveCount(0);
@@ -671,7 +674,9 @@ test('site selection scopes known frequencies without hiding the tuner inventory
     kind: 'trunked', known_frequency_count: 1, covered_frequency_count: 0, status: 'stopped', tuners: [],
     frequencies: [{ frequency_hz: 773_987_500, bandwidth_hz: 12_500, covered: false, role: 'control' }] });
   await openApp(page, { data });
-  await changeChannel(page, 'other-site');
+  await page.locator('.tuner-allocation-back').click();
+  await channelStatus(page, 'All').click();
+  await chooseChannel(page, 'other-site');
   const selected = page.locator('.tuner-allocation-site[data-site-id="other-site"]');
   await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('Other system');
   await expect(selected).toContainText('0 / 1 in windows');
@@ -846,4 +851,29 @@ test('access loss clears tuner status, history, and open details', async ({ page
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(0);
   await expect(page.locator('.tuner-allocation-workspace')).not.toContainText('855.36250 MHz');
+});
+
+
+test('selected tuner channel loses its details link after the saved channel is removed', async ({ page }) => {
+  const catalog = pickerCatalog();
+  const app = await openApp(page, { channel: 'marcs-grafton', catalog });
+  const selected = page.locator('.tuner-allocation-selected-channel');
+  await expect(selected.getByRole('link', { name: 'MARCS-Grafton', exact: true })).toBeVisible();
+  const removed = structuredClone(catalog);
+  removed.channels = removed.channels.filter(channel => channel.configuration_id !== 'marcs-grafton');
+  app.respondCatalog({ data: removed });
+  await expect(selected).toContainText('Removed', { timeout: 7000 });
+  await expect(selected.getByRole('link', { name: 'MARCS-Grafton', exact: true })).toHaveCount(0);
+  await expect(selected).toContainText('MARCS-Grafton');
+  await expect(selected).toContainText('773.08125');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+
+test('tuner allocation keeps the channel name plain when Radio access is unavailable', async ({ page }) => {
+  await openApp(page, { channel: 'marcs-grafton', catalog: pickerCatalog(), radio: false });
+  const selected = page.locator('.tuner-allocation-selected-channel');
+  await expect(selected).toContainText('MARCS-Grafton');
+  await expect(selected.locator('.tuner-allocation-channel-title')).toHaveCount(0);
+  await expect(selected).toContainText('773.08125');
 });

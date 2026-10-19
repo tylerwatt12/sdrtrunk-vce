@@ -126,11 +126,6 @@ for (const theme of ['light', 'dark']) {
     test(`entity stat cards retain one inset and drilldown links in ${theme} at ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await mockEntities(page, theme);
-      await page.route('**/assets/app.js*', async (route) => {
-        const response = await route.fetch();
-        await route.fulfill({ response, body: await response.text() +
-          '\nwindow.showObservedCountsForTest = (row) => openObservedGroupIdentityDetail(row, { alias_list_id: 7, family: \'P25\' });' });
-      });
       const scope = `radio_system_key=${encodeURIComponent(systemKey)}`;
 
       await page.goto(`/app.html?view=radio-system&${scope}`);
@@ -194,30 +189,6 @@ for (const theme of ['light', 'dark']) {
         .toHaveAttribute('href', new RegExp(`view=group-identity.*identity_key=${groupKey}`));
       await expectNoHorizontalOverflow(page);
 
-      await page.evaluate(() => window.showObservedCountsForTest({
-        protocol: 'P25', topology: 'TRUNKED', native_id: 1201, group_identity_id: 1201,
-        group_identity_kind: 'talkgroup', group_identity_kind_code: 1, radio_system_key: 'p25:00001:001',
-        radio_system_entity_ref: { kind: 'radio_system', key: 'p25:00001:001' },
-        system_name: 'County Public Safety', channel_names: 'North Simulcast',
-        first_seen_ms: Date.UTC(2026, 8, 21, 9), last_seen_ms: Date.UTC(2026, 9, 1, 12, 55),
-        logical_call_count: 412, encrypted_logical_call_count: 12,
-        recorded_logical_call_count: null, stream_submitted_logical_call_count: null,
-        signaling_observation_count: null
-      }));
-      const popup = page.getByRole('dialog', { name: 'Observed Talkgroup 1201', exact: true });
-      await expect(popup.locator('.ui-section-title').filter({ hasText: 'Calls heard on North Simulcast' })).toBeVisible();
-      await expect(popup.locator('.ui-metric-label')).toHaveText([
-        'Calls heard', 'Recorded', 'Sent to Streamer', 'Encrypted'
-      ]);
-      await expect(popup.locator('.ui-metric strong')).toHaveText(['412', 'Not available', 'Not available', '12']);
-      await expect(popup.locator('time').first()).toHaveAttribute('datetime', '2026-09-21T09:00:00.000Z');
-      await expect(popup.getByText('Latest call', { exact: true })).toBeVisible();
-      await expectNoHorizontalOverflow(page);
-      await popup.locator('.ui-section').filter({
-        has: page.locator('.ui-section-title:text-is("Calls heard on North Simulcast")')
-      }).screenshot({ path: testInfo.outputPath(`observed-count-dates-${theme}-${width}.png`) });
-      await page.keyboard.press('Escape');
-      await expect(popup).toHaveCount(0);
     });
   }
 }

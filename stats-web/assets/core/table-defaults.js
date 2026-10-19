@@ -169,7 +169,7 @@ const TABLE_DEFAULTS = Object.freeze({
   },
   'alias-observed-group-identities': {
     widths: { 'group-identity-id': 190, source: 280, calls: 80,
-      signaling: 110, 'last-seen': 174, action: 112 },
+      signaling: 110, 'last-seen': 174, action: 220 },
     grow: ['group-identity-id', 'source']
   },
   'alias-coverage-unassigned-v1': {

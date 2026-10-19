@@ -1,8 +1,9 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const path = require('node:path');
 
-async function installEditor(page, query = 'list=1&aliasTab=configure') {
+async function installEditor(page, query = 'list=1&aliasTab=configure', options = {}) {
   const lists = [
     { alias_list_id: 1, name: 'County', family: 'P25', assigned_channel_count: 1,
       new_alias_behavior: { recordable: true, scan_list_ids: [], broadcast_configuration_ids: [] } },
@@ -16,7 +17,7 @@ async function installEditor(page, query = 'list=1&aliasTab=configure') {
   ].map((row, index) => ({ ...row, recordable: true, color: 0,
     matcher_type: 'TALKGROUP', identifier_display: `TG ${1000 + index}`,
     matcher: { type: 'talkgroup', protocol: 'p25', variant: 'phase_1', value: 1000 + index } }));
-  const observed = [1, 2].map((system) => ({
+  const observed = options.observed || [1, 2].map((system) => ({
     protocol: 'p25', protocol_variant: 'phase_1', topology: 'TRUNKED', group_identity_id: 1201,
     native_id: 1201, group_identity_kind: 'talkgroup', group_identity_kind_code: 1,
     match_kind: 'none', promotion_supported: true,
@@ -36,7 +37,7 @@ async function installEditor(page, query = 'list=1&aliasTab=configure') {
     const send = (data) => route.fulfill({ json: { data } });
     if (path === '/api/v1/auth/session') return send({ configured: true, authenticated: true,
       username: 'alias-admin', tier: 'admin', primary: true, csrf_token: 'fixture',
-      capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true, 'csv-export': true } });
+      capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: options.radio !== false, 'csv-export': true } });
     if (request.method() !== 'GET' && path.startsWith('/api/v1/admin/aliases')) {
       const body = request.postDataJSON();
       writes.push({ path, method: request.method(), body });
@@ -116,7 +117,7 @@ async function expectStableWorkspace(page, fixture) {
 }
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`Alias headings use ordinary text and observed details link follows the title in ${theme} at ${width}px`, async ({ page }) => {
+  test(`Alias headings use ordinary text and Discover exposes direct details actions in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 850 });
     await installEditor(page);
     await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
@@ -130,22 +131,24 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     expect(await channel.evaluate((element) => getComputedStyle(element).color)).not.toBe(colors[0].normal);
     await page.locator('.alias-discover-link').click();
     const row = page.locator('.observed-group-identity-row').first();
-    await row.focus();
-    await page.keyboard.press('Enter');
-    const modal = page.getByRole('dialog', { name: 'Observed Talkgroup 1201', exact: true });
-    const heading = modal.getByRole('heading', { name: 'Observed Talkgroup 1201', exact: true });
-    const link = modal.getByRole('link', { name: 'Open talkgroup details in a new tab', exact: true });
-    expect(await heading.evaluate((element) => element.nextElementSibling?.tagName)).toBe('A');
-    const titleBounds = await heading.boundingBox();
-    const linkBounds = await link.boundingBox();
-    expect(linkBounds.x - titleBounds.x - titleBounds.width).toBeGreaterThanOrEqual(0);
-    expect(linkBounds.x - titleBounds.x - titleBounds.width).toBeLessThanOrEqual(9);
-    expect(linkBounds.x + linkBounds.width).toBeLessThanOrEqual(width);
-    await expect(modal).toHaveScreenshot(`alias-observed-title-${theme}-${width}.png`);
-    await link.focus();
-    await page.keyboard.press('Escape');
-    await expect(modal).toHaveCount(0);
-    await expect(row).toBeFocused();
+    const details = row.getByRole('link', { name: 'Details', exact: true });
+    await expect(details).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Create Alias', exact: true })).toBeVisible();
+    await expect(details).toHaveAttribute('href', /view=group-identity/);
+    await details.focus();
+    await expect(details).toBeFocused();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(await row.getAttribute('tabindex')).toBeNull();
+    const actions = row.locator('.ui-action-row');
+    const cellBounds = await row.locator('td[data-column="action"]').boundingBox();
+    for (const control of await actions.locator('a, button').all()) {
+      const controlBounds = await control.boundingBox();
+      expect(controlBounds.x).toBeGreaterThanOrEqual(cellBounds.x);
+      expect(controlBounds.x + controlBounds.width).toBeLessThanOrEqual(cellBounds.x + cellBounds.width);
+    }
+    await actions.locator('a, button').last().focus();
+    if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR,
+      `discover-direct-details-${theme}-${width}.png`), fullPage: true });
   });
 }
 
@@ -219,19 +222,18 @@ test('Alias query races keep the latest results and failed searches retain draft
   await expectStableWorkspace(page, fixture);
 });
 
-test('Observed group details keep canonical new-tab destinations and promotion refreshes all alias state', async ({ page }) => {
+test('Discover links preserve canonical systems and promotion refreshes all alias state', async ({ page }) => {
   const fixture = await installEditor(page, 'list=1&aliasTab=discover');
   const rows = page.locator('.observed-group-identity-row');
   for (const index of [0, 1]) {
-    await rows.nth(index).locator('td[data-column="group-identity-id"]').click();
-    const modal = page.getByRole('dialog', { name: 'Observed Talkgroup 1201', exact: true });
-    const link = modal.getByRole('link', { name: 'Open talkgroup details in a new tab', exact: true });
-    await expect(link).toHaveAttribute('target', '_blank');
-    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    const link = rows.nth(index).getByRole('link', { name: 'Details', exact: true });
     const query = new URL(await link.getAttribute('href'), page.url()).searchParams;
+    expect(query.get('view')).toBe('group-identity');
+    expect(query.get('radio_system_key')).toBe(`p25:0000${index + 1}:00${index + 1}`);
     expect(query.get('identity_key')).toBe(`v1-g-0000${index + 1}-00${index + 1}-1201`);
-    await modal.getByRole('button', { name: 'Close Observed Talkgroup 1201', exact: true }).click();
+    await expect(link).not.toHaveAttribute('aria-haspopup', 'dialog');
   }
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await rows.first().getByRole('button', { name: 'Create Alias', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Add Alias to County', exact: true });
   await editor.getByRole('textbox', { name: /^Alias name/ }).fill('New Dispatch');
@@ -266,4 +268,19 @@ test('Saving an alias from a later page clears selection and refreshes the route
   await expect(nextEditor).toHaveCount(0);
   expect(fixture.writes.map((write) => write.body.edit_revision)).toEqual(['alias-103-1', 'alias-103-2']);
   await expectStableWorkspace(page, fixture);
+});
+
+
+test('Discover does not fabricate a destination for unresolved observations or bypass Radio access', async ({ page }) => {
+  await installEditor(page, 'list=1&aliasTab=discover', { observed: [{ protocol: 'p25', topology: 'TRUNKED',
+    group_identity_id: 77, native_id: 77, group_identity_kind: 'talkgroup', match_kind: 'range',
+    promotion_supported: true, logical_call_count: 1, entity_ref: null }] });
+  const row = page.locator('.observed-group-identity-row');
+  await expect(row).toContainText('Covered by range');
+  await expect(row.getByRole('link', { name: 'Details', exact: true })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: 'Create Alias', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await installEditor(page, 'list=1&aliasTab=discover', { radio: false });
+  await expect(page.locator('.observed-group-identity-row')).toHaveCount(2);
+  await expect(page.locator('.observed-group-identity-details')).toHaveCount(0);
 });

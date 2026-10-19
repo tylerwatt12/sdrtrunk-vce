@@ -1078,9 +1078,51 @@ test('worker device credentials round-trip through browser IndexedDB and are rem
 test('a notification link opens its exact older alert without depending on the first history page', async ({ page }) => {
   const { fixture } = await installAlerts(page, { guest: true });
   await page.goto('/app.html?view=topics&topic=fire&alert=older-alert');
-  const dialog = page.getByRole('dialog', { name: 'Earlier fire alert', exact: true });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('An older alert reached by notification.');
+  const detail = page.locator('[data-alert-id="older-alert"]');
+  await expect(detail).toBeVisible();
+  await expect(detail.getByRole('button', { name: 'Earlier fire alert', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await expect(detail).toContainText('An older alert reached by notification.');
+  await expect(page.getByRole('combobox', { name: 'Show alerts from', exact: true })).toHaveValue('fire');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(detail.getByRole('button', { name: 'Earlier fire alert', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('combobox', { name: 'Show alerts from', exact: true }).selectOption('paused');
+  await expect(detail).toHaveCount(0);
+  await page.getByRole('combobox', { name: 'Show alerts from', exact: true }).selectOption('fire');
+  await expect(detail.getByRole('button', { name: 'Earlier fire alert', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('a delayed notification alert respects a topic selected while its details load', async ({ page }) => {
+  const { fixture } = await installAlerts(page, { guest: true });
+  let deliver = null;
+  let detailRequests = 0;
+  await page.route('**/api/v1/alerts/history/older-alert', route => new Promise(resolve => {
+    detailRequests++;
+    deliver = async () => {
+      await route.fulfill({ json: { data: { id: 'older-alert', topic_id: 'fire', title: 'Earlier fire alert',
+        body: 'An older alert reached by notification.', created_at_ms: 1760000000000 } } });
+      resolve();
+    };
+  }));
+  await page.goto('/app.html?view=topics&topic=fire&alert=older-alert');
+  await expect.poll(() => typeof deliver).toBe('function');
+  const filter = page.getByRole('combobox', { name: 'Show alerts from', exact: true });
+  await filter.selectOption('paused');
+  await expect(page.locator('.alerts-timeline')).toContainText('No alerts have been published to this topic yet.');
+  const response = page.waitForResponse('**/api/v1/alerts/history/older-alert');
+  await deliver();
+  await (await response).finished();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const detail = page.locator('[data-alert-id="older-alert"]');
+  await expect(detail).toHaveCount(0);
+  await expect(filter).toHaveValue('paused');
+  await expect(page.locator('.alerts-workspace')).not.toContainText('This alert is unavailable.');
+  await filter.selectOption('fire');
+  await expect(detail.getByRole('button', { name: 'Earlier fire alert', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  expect(detailRequests).toBe(1);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(detail.getByRole('button', { name: 'Earlier fire alert', exact: true })).toHaveAttribute('aria-expanded', 'true');
   expect(fixture.pageErrors).toEqual([]);
 });
 
@@ -1583,7 +1625,7 @@ test('built-in topic saves its independent action flag and confirms new public v
   expect(fixture.pageErrors).toEqual([]);
 });
 
-test('public alert popup exposes only validated public entity actions and never administrator destinations', async ({ page }) => {
+test('inline public alerts expose only validated public entity actions and never administrator destinations', async ({ page }) => {
   const { fixture } = await installAlerts(page, { guest: true });
   const scenarios = [
     { name: 'Radio action', action: { kind: 'radio', entity_ref: { kind: 'radio', radio_system_key: 'p25:00001:001', identity_key: 'v1-r-00001-001-12' } }, label: 'View radio', destination: 'radio' },
@@ -1603,9 +1645,10 @@ test('public alert popup exposes only validated public entity actions and never 
   await page.goto('/app.html?view=topics');
   for (const scenario of scenarios) {
     await page.locator('.alerts-timeline').getByRole('button', { name: scenario.name, exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: scenario.name, exact: true });
+    const detail = page.locator('.alerts-event').filter({ has: page.getByRole('button', { name: scenario.name, exact: true }) });
+    await expect(detail.getByRole('button', { name: scenario.name, exact: true })).toHaveAttribute('aria-expanded', 'true');
     if (scenario.label) {
-      const action = dialog.getByRole('link', { name: scenario.label, exact: true });
+      const action = detail.getByRole('link', { name: scenario.label, exact: true });
       await expect(action).toHaveAttribute('href', new RegExp('^/\\?view=' + scenario.destination + '(?:&|$)'));
       await expect(action).toHaveClass(/ui-button-primary/);
       const target = new URL(await action.getAttribute('href'), page.url());
@@ -1615,10 +1658,11 @@ test('public alert popup exposes only validated public entity actions and never 
         expect(target.searchParams.get('activity_target_identity_key')).toBe(scenario.action.entity_ref.identity_key);
         expect(target.searchParams.get('activity_target_kind')).toBe(scenario.action.kind);
       }
-    } else await expect(dialog.getByRole('link')).toHaveCount(0);
-    await expect(dialog.locator('a[href*="view=admin"]')).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
+    } else await expect(detail.getByRole('link')).toHaveCount(0);
+    await expect(detail.locator('a[href*="view=admin"]')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await detail.getByRole('button', { name: scenario.name, exact: true }).click();
+    await expect(detail.getByRole('button', { name: scenario.name, exact: true })).toHaveAttribute('aria-expanded', 'false');
   }
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -1651,9 +1695,10 @@ for (const conventional of [false, true]) {
     });
     await page.goto('/app.html?view=topics');
     await page.locator('.alerts-timeline').getByRole('button', { name: 'Dispatch tones', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Dispatch tones', exact: true });
+    const detail = page.locator('.alerts-event[data-alert-id="alert-activity"]');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await auditScreenshot(page, `alert-activity-${conventional ? 'conventional-dark-phone' : 'trunked-light-desktop'}`, false);
-    await dialog.getByRole('link', { name: 'View activity', exact: true }).click();
+    await detail.getByRole('link', { name: 'View activity', exact: true }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get('tab')).toBe('activity');
     await expect.poll(() => activityRequests.length).toBeGreaterThan(0);
     await expect(page.locator('table[data-table-type^="activity"] tbody tr')).toHaveCount(1);
@@ -1673,7 +1718,7 @@ for (const conventional of [false, true]) {
   });
 }
 
-test('alert details open exact local related calls without notification credentials', async ({ page }) => {
+test('inline alert details lazily link exact related activity and recordings without notification credentials', async ({ page }) => {
   const { fixture } = await installAlerts(page);
   const requests = [];
   await page.route('**/api/v1/alerts/history?**', route => route.fulfill({ json: { data: { items: [
@@ -1682,45 +1727,99 @@ test('alert details open exact local related calls without notification credenti
   await page.route('**/api/v1/alerts/history/alert-exact-call/related', route => {
     requests.push({ url: route.request().url(), authorization: route.request().headers().authorization });
     if (requests.length === 1) return route.fulfill({ status: 503, json: { error: { message: 'Temporarily unavailable.' } } });
-    return route.fulfill({ json: { data: { activity_rows: [], recordings: requests.length > 2 ? [
-      { id: 81, start_ms: 1770000000000, group_alias: 'Dispatch', talkgroup_id: 1201, channel_name: 'North Site' }
-    ] : [], alerts: [{ id: 'alert-exact-call', topic_id: 'fire', topic_name: 'Fire activity',
-      title: 'Dispatch tones', body: 'Engine 4 dispatched.', created_at_ms: 1770000000000 }] } } });
+    return route.fulfill({ json: { data: { activity_rows: [{ id: 5, configuration_id: channelId, observed_at_ms: 1770000000000,
+      action: 'CALL' }], recordings: [ { id: 81 }, { id: 82 } ] } } });
   });
   await page.goto('/app.html?view=topics');
-  await page.locator('.alerts-timeline').getByRole('button', { name: 'Dispatch tones', exact: true }).click();
-  const detail = page.getByRole('dialog', { name: 'Dispatch tones', exact: true });
-  await detail.getByRole('button', { name: 'Related activity and recordings', exact: true }).click();
-  await expect(detail).toHaveCount(0);
-  const related = page.getByRole('dialog', { name: 'Call details', exact: true });
-  await expect(related).toBeVisible();
-  await auditScreenshot(page, 'call-summary-alert-error', false);
-  await related.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(related).toContainText('No recording available');
-  await auditScreenshot(page, 'call-summary-alert-empty', false);
-  await related.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(related.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
-  await expect(related.getByText('Dispatch tones', { exact: true })).toHaveCount(1);
-  await expect(related).toContainText('Engine 4 dispatched.');
-  await expect(related.getByRole('heading', { name: 'Alert', exact: true })).toBeVisible();
-  await expect(related.locator('time').first()).toBeVisible();
-  await expect(related).not.toContainText('[object');
-  await expect.poll(() => requests.length).toBe(3);
-  expect(new URL(requests[0].url).pathname).toBe('/api/v1/alerts/history/alert-exact-call/related');
+  expect(requests).toHaveLength(0);
+  const detail = page.locator('[data-alert-id="alert-exact-call"]');
+  const toggle = detail.getByRole('button', { name: 'Dispatch tones', exact: true });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(detail).toContainText('Engine 4 dispatched.');
+  await expect(detail).toContainText('Related activity and recordings could not be loaded. Try again.');
+  await auditScreenshot(page, 'inline-alert-error', false);
+  await detail.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(detail.getByRole('link', { name: 'View recordings', exact: true })).toHaveAttribute('href',
+    /^\/\?view=recordings&recording_queue=81%2C82$/);
+  const activity = new URL(await detail.getByRole('link', { name: 'View call activity', exact: true }).getAttribute('href'), page.url());
+  expect(Object.fromEntries(activity.searchParams)).toMatchObject({ view: 'channel', configuration_id: channelId, tab: 'activity',
+    activity_range: 'custom', activity_from_ms: '1770000000000', activity_to_ms: '1770000000001' });
+  await expect(detail.getByRole('button', { name: 'Play', exact: true })).toHaveCount(0);
+  await expect(detail.locator('audio')).toHaveCount(0);
   expect(requests.every(request => request.authorization === undefined)).toBe(true);
-  await auditScreenshot(page, 'call-summary-alert-ready', false);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+  await auditScreenshot(page, 'inline-alert-ready', false);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(detail.getByRole('link', { name: 'View recordings', exact: true })).toBeHidden();
+  await toggle.focus();
+  await toggle.press('Enter');
+  await expect.poll(() => requests.length).toBe(3);
   expect(fixture.pageErrors).toEqual([]);
 });
 
-test('public alert details do not offer protected call details or request recordings', async ({ page }) => {
+test('public inline alerts do not request protected related calls and preserve proxied alert content', async ({ page }) => {
   const { state, fixture } = await installAlerts(page, { guest: true });
   await page.goto('/app.html?view=topics');
-  await page.locator('.alerts-timeline').getByRole('button', { name: 'Fire Tactical is active', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Fire Tactical is active', exact: true });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Related activity and recordings', exact: true })).toHaveCount(0);
+  const detail = page.locator('[data-alert-id="alert-1"]');
+  await detail.getByRole('button', { name: 'Fire Tactical is active', exact: true }).click();
+  await expect(detail).toContainText('Engine 12 transmitted.');
+  await expect(detail.getByRole('button', { name: 'Fire Tactical is active', exact: true })).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(detail.getByRole('link', { name: /^View recording/ })).toHaveCount(0);
   expect(state.requests.some(request => request.p.endsWith('/related') || request.p.startsWith('/api/v1/recordings/'))).toBe(false);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+for (const allowed of ['radio', 'recordings']) {
+  test(`inline alert links respect ${allowed} access and remain usable on a small phone`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    const { fixture } = await installAlerts(page, { theme: allowed === 'radio' ? 'dark' : 'light' });
+    await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: { configured: true, authenticated: true,
+      tier: 'listener', capabilities: { 'web-access': true, [allowed]: true } } } }));
+    await page.route('**/api/v1/alerts/history/alert-1/related', route => route.fulfill({ json: { data: {
+      recordings: [{ id: 81 }], activity_rows: [{ configuration_id: channelId, observed_at_ms: 1770000000000, action: 'CALL' }] } } }));
+    await page.goto('/app.html?view=topics');
+    const detail = page.locator('[data-alert-id="alert-1"]');
+    await detail.getByRole('button', { name: 'Fire Tactical is active', exact: true }).click();
+    const available = allowed === 'radio' ? 'View call activity' : 'View recording';
+    const unavailable = allowed === 'radio' ? 'View recording' : 'View call activity';
+    await expect(detail.getByRole('link', { name: available, exact: true })).toBeVisible();
+    await expect(detail.getByRole('link', { name: unavailable, exact: true })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, ['.alerts-workspace']);
+    await auditScreenshot(page, `inline-alert-${allowed}-phone`, false);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
+test('collapsing and leaving an inline alert aborts optional related requests and ignores stale results', async ({ page }) => {
+  const { fixture } = await installAlerts(page);
+  let requests = 0;
+  const pending = [];
+  await page.route('**/api/v1/alerts/history/alert-1/related', route => {
+    requests++;
+    return new Promise(resolve => pending.push(async () => {
+      await route.fulfill({ json: { data: { recordings: [{ id: 81 }], activity_rows: [] } } }).catch(() => {});
+      resolve();
+    }));
+  });
+  await page.goto('/app.html?view=topics');
+  const detail = page.locator('[data-alert-id="alert-1"]');
+  const toggle = detail.getByRole('button', { name: 'Fire Tactical is active', exact: true });
+  await toggle.click();
+  await expect.poll(() => requests).toBe(1);
+  await toggle.click();
+  await pending.shift()();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(detail.getByRole('link', { name: 'View recording', exact: true })).toHaveCount(0);
+  await toggle.click();
+  await expect.poll(() => requests).toBe(2);
+  await page.locator('#primary-navigation [data-nav-group="listen"] > summary').click();
+  await page.locator('#primary-navigation a[data-view="live"]').click();
+  await pending.shift()();
+  await expect(page.locator('.alerts-workspace')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(fixture.pageErrors).toEqual([]);
 });

@@ -230,8 +230,7 @@ const context = {
   aliasAdminAllowed: () => false
 };
 vm.createContext(context);
-for (const name of ['aliasDetailMetricBand', 'callCountDates', 'systemCallCounts', 'channelCallCounts',
-  'observedGroupIdentityDetail']) vm.runInContext(functionSource(name), context);
+for (const name of ['aliasDetailMetricBand', 'callCountDates', 'systemCallCounts', 'channelCallCounts']) vm.runInContext(functionSource(name), context);
 
 function facts(root) {
   if (root?.tag === 'facts' || root?.tag === 'dl' && root.className.split(/\s+/).includes('ui-fact-list')) {
@@ -251,25 +250,6 @@ function dates(root) {
     .map(([label, value]) => [label, epoch(value) ?? text(value)]);
 }
 
-const p25 = { protocol: 'P25', topology: 'TRUNKED', channel_names: 'Cuyahoga',
-  group_identity_id: 29560, logical_call_count: 17973, encrypted_logical_call_count: 17973,
-  recorded_logical_call_count: null, stream_submitted_logical_call_count: null,
-  first_seen_ms: first, last_seen_ms: latestCall };
-const popup = context.observedGroupIdentityDetail(p25, {});
-const popupCalls = sections(popup).find((item) => item.title === 'Calls heard on Cuyahoga');
-assert.ok(popupCalls, 'The observed popup identifies its channel beside its count.');
-assert.match(text(popupCalls), /Calls heard: 17973/);
-assert.match(text(popupCalls), /Recorded: Not available/,
-  'An unavailable recording count must not look like a zero.');
-assert.deepEqual(dates(popupCalls), [['From', first], ['Latest call', latestCall]]);
-assert.match(text(popup), /Signaling counts are not available in this view/);
-for (const protocol of ['DMR', 'NXDN']) {
-  const systemPopup = context.observedGroupIdentityDetail({ ...p25, protocol,
-    last_seen_ms: latestHour }, {});
-  const callSection = sections(systemPopup).find((item) => item.title === 'Calls heard across this system');
-  assert.ok(callSection, 'Other trunked protocols must preserve their system counter scope.');
-  assert.deepEqual(dates(callSection), [['From', first], ['To', latestHour + hour - 1]]);
-}
 const systemRow = { ...counters, protocol: 'P25', logical_call_count: 58605,
   channel_observation_count: 48311, recorded_logical_call_count: 5,
   stream_submitted_logical_call_count: 0, encrypted_logical_call_count: 58600 };

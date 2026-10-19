@@ -118,8 +118,8 @@ class StatsWebPresentationUiContractTest
         assertTrue(defaults.contains("message: 1200"));
         assertTrue(source.contains("const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
         assertTrue(source.contains("column_order: options.recordListOrder } : tableDefaultLayout"));
-        assertTrue(source.contains("const storedLayout = options.layout || " +
-            "activeUserPreferences().tables[tableType] || defaultLayout"));
+        assertTrue(source.contains("const storedLayout = tableLayouts.mergePartyColumns(tableType, declaredColumns,"));
+        assertTrue(source.contains("options.layout || activeUserPreferences().tables[tableType] || defaultLayout"));
     }
 
     @Test
@@ -131,7 +131,7 @@ class StatsWebPresentationUiContractTest
             "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null)");
-        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
+        String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
 
         for(String label: new String[]{"'Identity'", "'System / Channel'", "'Calls'", "'Signaling'",
             "'Last Seen'"})
@@ -143,9 +143,8 @@ class StatsWebPresentationUiContractTest
         assertTrue(discover.contains("aliasMetricValue(row, 'logical_call_count')"));
         assertTrue(discover.contains("aliasMetricValue(row, 'signaling_observation_count')"));
         assertTrue(identity.contains("Covered by range"));
-        assertTrue(detail.contains("recorded_logical_call_count"));
-        assertTrue(detail.contains("stream_submitted_logical_call_count"));
-        assertTrue(detail.contains("encrypted_logical_call_count"));
+        assertTrue(actions.contains("anchor('Details', target"));
+        assertFalse(discover.contains("openObservedGroupIdentityDetail"));
         assertTrue(filters.contains("'alias-filter alias-date-filter ui-field'"));
         assertTrue(filters.contains("filterGroup('Identity and matching', 'alias-filter-group-identity'"));
         assertTrue(filters.contains("filterGroup('Call handling', 'alias-filter-group-behavior'"));
@@ -158,21 +157,21 @@ class StatsWebPresentationUiContractTest
     }
 
     @Test
-    void usesReusableMetricCardsAndIndependentObservedDetailColumns() throws Exception
+    void usesReusableMetricCardsAndSharedDiscoverActions() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
         String css = StatsWebStylesheetTestSupport.readAll();
-        String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
+        String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
 
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr))"));
         assertTrue(css.contains("background: var(--surface);\n  border: 1px solid var(--line);\n" +
             "  border-radius: var(--radius-control);"));
         assertTrue(css.contains(".ui-metric-copy {\n  min-width: 0;"));
         assertTrue(css.contains(".ui-metric-copy > strong {"));
-        assertTrue(detail.contains("node('div', 'observed-group-identity-detail-column')"));
-        assertTrue(detail.contains("wrapper.append(identityColumn, activityColumn)"));
-        assertTrue(css.contains(".observed-group-identity-detail-column {"));
-        assertTrue(css.contains("flex-direction: column;"));
+        assertTrue(actions.contains("node('div', 'ui-action-row')"));
+        assertTrue(actions.contains("observedGroupIdentityCreateButton(row, selectedList)"));
+        assertFalse(css.contains(".observed-group-identity-detail-column {"));
+        assertFalse(source.contains("function observedGroupIdentityDetail("));
     }
 
     private static String function(String source, String signature)

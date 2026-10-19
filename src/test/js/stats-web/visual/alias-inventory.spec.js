@@ -90,6 +90,9 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(inventory.locator('.alias-coverage-summary')).toContainText('Loading…');
   releaseUnassignedCount();
   await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Loading…');
+  await expect(inventory.getByRole('button', { name: /^Unknown aliases(?: \(0\))?$/ })).toBeVisible();
+  await expect(inventory.getByRole('button', { name: /Unassigned observations/ })).toHaveCount(0);
+  await expect(inventory.getByRole('link', { name: 'Discover', exact: true })).toHaveCount(0);
   const toneRow = inventory.locator('.alias-coverage-table-section tbody tr')
     .filter({ hasText: 'Dispatch Tone' });
   await expect(toneRow).toContainText('Tone');

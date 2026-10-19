@@ -152,3 +152,58 @@ for (const protocol of ['P25_PHASE1', 'NXDN']) {
     expectClean(app.fixture);
   });
 }
+
+
+test('Live identities link directly to their typed entities without call fact dialogs', async ({ page }) => {
+  const sourceRef = { kind: 'radio', radio_system_key: 'p25:bee00:348', identity_key: 'v1-r-bee00-348-9601699' };
+  const targetRef = { kind: 'talkgroup', radio_system_key: 'p25:00001:047', identity_key: 'v1-g-00001-047-7001' };
+  const app = await openLive(page, 'light', { row: { protocol: 'P25_PHASE1', decoder: 'P25_PHASE1',
+    source_entity_ref: sourceRef, target_entity_ref: targetRef,
+    source_canonical_identity: { wacn: 0xBEE00, system_id: 0x348, subscriber_id: 9601699 },
+    source_working_subscriber_id: 65536 } });
+  for (const [kind, ref, view] of [['source', sourceRef, 'radio'], ['target', targetRef, 'group-identity']]) {
+    const links = cell(app.row, kind).getByRole('link');
+    await expect(links).toHaveCount(2);
+    for (const link of await links.all()) {
+      const destination = new URL(await link.getAttribute('href'), page.url()).searchParams;
+      expect(destination.get('view')).toBe(view);
+      expect(destination.get('radio_system_key')).toBe(ref.radio_system_key);
+      expect(destination.get('identity_key')).toBe(ref.identity_key);
+      await expect(link).not.toHaveAttribute('aria-haspopup', 'dialog');
+      await link.focus();
+      await expect(link).toBeFocused();
+    }
+  }
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByText(/Call facts in Live|Talkgroup identity from this call/)).toHaveCount(0);
+  expectClean(app.fixture);
+});
+
+test('Live unresolved identities stay plain text', async ({ page }) => {
+  const app = await openLive(page, 'light', { row: { protocol: 'P25_PHASE1', decoder: 'P25_PHASE1' } });
+  await expectParty(app.row, 'source', 'Portable 6 · Operator 6', '65536');
+  await expectParty(app.row, 'target', 'Dispatch', '54321');
+  await expect(cell(app.row, 'source').getByRole('link')).toHaveCount(0);
+  await expect(cell(app.row, 'target').getByRole('link')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expectClean(app.fixture);
+});
+
+for (const protocol of ['P25_PHASE1', 'NXDN']) {
+  test(`Live ${protocol} conventional identity links use the saved channel collections`, async ({ page }) => {
+    const app = await openLive(page, 'light', { row: { protocol, decoder: protocol, tags: ['CONVENTIONAL'],
+      entity_ref: { kind: 'channel', key: channelId } } });
+    for (const [kind, tab] of [['source', 'radios'], ['target', 'groups']]) {
+      const links = cell(app.row, kind).getByRole('link');
+      await expect(links).toHaveCount(2);
+      for (const link of await links.all()) {
+        const destination = new URL(await link.getAttribute('href'), page.url()).searchParams;
+        expect(destination.get('view')).toBe('channel');
+        expect(destination.get('configuration_id')).toBe(channelId);
+        expect(destination.get('tab')).toBe(tab);
+        await expect(link).not.toHaveAttribute('aria-haspopup', 'dialog');
+      }
+    }
+    expectClean(app.fixture);
+  });
+}

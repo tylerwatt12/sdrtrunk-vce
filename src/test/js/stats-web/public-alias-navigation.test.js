@@ -38,7 +38,7 @@ class Element {
 }
 
 const route = new URLSearchParams('view=dashboard');
-let admin = false, modal;
+let admin = false;
 const node = (...args) => new Element(...args);
 const context = {
   formatSourceName, sourceNameDisplayMode: () => 'talker_alias',
@@ -46,13 +46,10 @@ const context = {
   aliasAdminAllowed: () => admin,
   node, anchor: (label, href, className) => Object.assign(node('a', className, label), { href }),
   href: (view, parameters) => `/?${new URLSearchParams({ view, ...parameters })}`,
-  document: { createTextNode: text => node('text', '', text) }, liveIdentityActionSequence: 0,
-  liveIdentityInfo: () => ({ target: '/?view=radio', title: 'Open radio info', description: 'View radio activity.' }),
-  liveIdentityFacts: () => node('dl', '', 'Permanent identity and working assignment'),
-  liveIdentityActionTitle: (_row, _kind, label) => `Radio ${label}`,
+  document: { createTextNode: text => node('text', '', text) },
+  liveIdentityInfo: row => row.unresolved ? null : ({ target: '/?view=radio' }),
   radioIdentifierText: (_row, value) => String(value),
-  partyIdentifierText: (_row, value) => String(value),
-  openReadOnlyModal: (title, body) => { modal = { title, body }; }
+  partyIdentifierText: (_row, value) => String(value)
 };
 const behavior = vm.runInNewContext(['aliasListLink', 'liveAliasReferences', 'liveIdentityActionLink',
   'liveSourceName', 'liveAliasValue', 'liveIdentifierAliasValue'].map(declaration).join('\n') +
@@ -77,17 +74,18 @@ for (admin of [false, true]) {
     const presentations = [behavior.liveAliasValue(row, kind), behavior.liveIdentifierAliasValue(row, kind),
       behavior.liveAliasValue({ ...row, [`${kind}_aliases`]: [] }, kind)];
     for (const presentation of presentations) {
-      const trigger = elements(presentation).find(value => value.listeners.click);
-      assert.ok(trigger, 'Live keeps its read-only identity dialog and radio drilldown.');
-      trigger.listeners.click({ button: 0, preventDefault() {} });
-      assert.ok(elements(modal.body).some(value => value.tag === 'dl'));
-      const links = elements(modal.body).filter(value => value.tag === 'a');
-      assert.deepEqual(links.map(value => value.href), ['/?view=radio']);
-      assert.equal(elements(modal.body).some(value => /Create alias|Edit alias|Manage aliases/i.test(value.textContent)), false,
+      const links = elements(presentation).filter(value => value.tag === 'a');
+      assert.equal(links.length, 1, 'Live goes directly to the associated entity.');
+      assert.equal(links[0].href, '/?view=radio');
+      assert.equal(links[0].listeners.click, undefined, 'Entity navigation has no action popup.');
+      assert.equal(links[0]['aria-haspopup'], undefined);
+      assert.equal(elements(presentation).some(value => /Create alias|Edit alias|Manage aliases/i.test(value.textContent)), false,
         'Public Live must not construct Alias editing controls, even for a logged-in administrator.');
     }
   }
 }
+assert.equal(behavior.liveIdentifierAliasValue({ source_id: 501, source_form: 'RADIO', unresolved: true }, 'source'),
+  '501', 'Unresolved identities remain plain text without a fake destination.');
 assert.doesNotMatch(declaration('renderAliasCoverageDirectory'), /Manage aliases|alias-coverage-manage/);
 assert.match(declaration('routedAliasPrefill'), /type === 'p25_subscriber_identity'/,
   'Configure retains permanent P25 subscriber matcher editing.');

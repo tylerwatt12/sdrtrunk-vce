@@ -286,10 +286,14 @@ async function main() {
       calls.push({ url, parameters });
       if (url.endsWith('/channels')) return { rows: [{ configuration_id: 'site-7', name: 'North' }] };
       if (failure) throw new Error('Connection lost');
+      if (parameters.identity_kind === 'talkgroup') return { ...page(), rows: [] };
       return page();
     },
     api: async (url) => { throw new Error(`Unexpected separate status request: ${url}`); },
     section: (title, child) => { const element = node('section', '', title); element.append(child); return element; },
+    sectionActionHost: () => node('div'),
+    issiGroupAssociationRows: groupPage => groupPage?.rows || [],
+    issiGroupAssociationColumns: () => [],
     keyValues: values => { const element = node('dl'); element.values = values; return element; },
     metrics: values => { const element = node('metrics'); element.values = values; return element; },
     dateTime: value => `time:${value}`, number: value => String(value),
@@ -298,10 +302,11 @@ async function main() {
     issiFilterToolbar: () => node('form'),
     pageParameters: values => ({ limit: 100, offset: 0, ...values }),
     SERVER_TABLE_DEFAULT_SORTS: { 'issi-current-assignments': 'confirmed_at', 'issi-recent-changes': 'changed_at' },
-    browsingWorkflows: { pageRangeText: values => values.label },
+    browsingWorkflows: { pageRangeText: values => values.label, createBrowsingPager: () => node('pager') },
     pager: () => { const element = node('pager'); element.update = value => { element.lastUpdate = value; }; return element; },
     table: (data, columns, empty, options) => {
-      const result = { data, columns, empty, options }; renderedTables.push(result);
+      const result = { data, columns, empty, options };
+      if (options.type !== 'issi-group-associations') renderedTables.push(result);
       options.controller.replaceRows = next => { result.data = next; };
       return result;
     },
@@ -341,10 +346,10 @@ async function main() {
   const behavior = vm.runInNewContext([
     'issiStateLabel', 'issiEmptyMessage', 'issiStateContent', 'issiSectionTabs',
     'issiCurrentAssignmentColumns', 'issiRecentChangeColumns', 'renderRadioSystemIssi',
-    'workingSubscriberId', 'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'p25IdentityEvidenceLabel', 'liveIdentityRenderKey',
+    'workingSubscriberId', 'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'liveIdentityRenderKey',
     'issiSubscriberCell', 'issiHomeSystemCell', 'issiHomeSystemText'
   ].map(declaration).join('\n') + '\n({renderRadioSystemIssi,radioCurrentAssignmentSection,' +
-    'issiStateLabel,issiEmptyMessage,issiAssignmentIsOrdinaryLocal,p25IdentityEvidenceLabel,' +
+    'issiStateLabel,issiEmptyMessage,issiAssignmentIsOrdinaryLocal,' +
     'liveIdentityRenderKey,issiSubscriberCell,issiHomeSystemCell});', context);
   await behavior.renderRadioSystemIssi({ radio_system_key: 'p25:BEE00:348' }, { signal: {} });
   assert.equal(content.children[0].active, 'current-assignments', 'System ISSI must start with current receiver knowledge.');
@@ -357,7 +362,10 @@ async function main() {
   assert.equal(renderedTables[0].data[0].observed_working_id, 130001);
   assert.equal(renderedTables[0].columns.some(column => column.id === 'alias-action'), false,
     'Public Current Assignments must not render administrator editing actions.');
-  assert.equal(calls.length, 2, 'Current Assignments must request channels and one coherent rows/status page.');
+  assert.equal(calls.length, 3, 'Current Assignments requests channels, coherent radio rows/status, and talkgroup associations.');
+  const associations = calls.find(call => call.parameters.identity_kind === 'talkgroup');
+  assert.equal(associations.parameters.configuration_id, 'site-7');
+  assert.equal(associations.parameters.sort, 'observed_at');
   const initialSnapshotFacts = facts(content.children[1]);
   assert.equal(initialSnapshotFacts.find(([label]) => label === 'Last Updated')[1], 'time:100',
     'Receiver status must come from the same response as the displayed assignment rows.');
@@ -468,11 +476,9 @@ async function main() {
   }
   assert.equal(behavior.issiAssignmentIsOrdinaryLocal({ canonical_identity: canonical, observed_working_id: 34006 },
     'p25:bee00:348'), false, 'Matching numbers on a foreign home system do not make a mapping ordinary local.');
-  assert.equal(behavior.p25IdentityEvidenceLabel({ source_identity_source: 'registration_mapping' }, 'source'), 'Confirmed Working ID assignment');
-  assert.equal(behavior.p25IdentityEvidenceLabel({ source_identity_source: 'working_id' }, 'source'), 'Working ID only');
   assert.notEqual(behavior.liveIdentityRenderKey({ source_id: 501, source_identity_source: 'working_id' }, 'source'),
     behavior.liveIdentityRenderKey({ source_id: 501, source_identity_source: 'explicit_identity' }, 'source'),
-    'A new identity evidence source must update the Live action dialog even when the number is unchanged.');
+    'A new identity evidence source must refresh the Live identity cell even when the number is unchanged.');
   assert.equal(behavior.issiSubscriberCell({invalidation_scope:'receiver'}), 'All ISSI assignments');
   assert.equal(behavior.issiSubscriberCell({invalidation_scope:'system'}), 'All assignments on this system');
   assert.equal(behavior.issiHomeSystemCell({invalidation_scope:'system'}), '—',
