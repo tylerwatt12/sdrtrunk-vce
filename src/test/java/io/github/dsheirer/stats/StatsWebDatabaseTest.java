@@ -967,6 +967,8 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET " +
+                "last_talker_alias='Unit 202 OTA',last_talker_alias_seen_ms=4000 WHERE id=7102");
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_event(channel_id, radio_system_id, observed_at_ms, action_code,
                     source_observed_local_id, source_identity_summary_id) VALUES
@@ -993,6 +995,8 @@ class StatsWebDatabaseTest
         assertTrue((Boolean)page.get("has_more"));
         List<Map<String,Object>> first = rows(page);
         assertEquals(RADIO_SYSTEM_KEY, first.getFirst().get("radio_system_key"));
+        assertEquals("Unit 202 OTA", first.getFirst().get("last_talker_alias"));
+        assertEquals(4000, number(first.getFirst().get("last_talker_alias_seen_ms")));
         assertEquals(3, number(first.getFirst().get("observation_count")));
         assertEquals(ANALOG_CHANNEL, first.get(1).get("configuration_id"));
         Map<String,Object> next = mDatabase.dashboardActivityRadios(
@@ -1181,6 +1185,14 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET " +
+                "last_talker_alias='Home OTA',last_talker_alias_seen_ms=4000 WHERE id=7102");
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,
+                    last_talker_alias,last_talker_alias_seen_ms)
+                VALUES(7199,71,2,0x92498,0x926,202,1000,4000,'Foreign OTA',4000)
+                """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_patch_group(channel_id, local_patch_group_id, version, confirmed_at_ms)
                 VALUES (71, 500, 1, 4000)
@@ -1210,6 +1222,9 @@ class StatsWebDatabaseTest
         assertEquals(500, number(patch.get("local_patch_group_id")));
         assertEquals(101, number(talkgroup.get("local_talkgroup_id")));
         assertEquals(202, number(radio.get("local_radio_id")));
+        assertEquals("Home OTA", radio.get("last_talker_alias"),
+            "Protocol-local patch members must not borrow a foreign same-number subscriber's OTA alias");
+        assertEquals(4000, number(radio.get("last_talker_alias_seen_ms")));
         assertEquals(Map.of("kind", "patch_group", "radio_system_key", RADIO_SYSTEM_KEY,
             "identity_key", "v1-p-bee00-49f-500"), patch.get("entity_ref"));
         assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY,
@@ -1965,6 +1980,66 @@ class StatsWebDatabaseTest
         StatsRequest otherSite = request("/?q=999&sort=radio&direction=asc");
         assertTrue(rows(mDatabase.channelRadios(P25_CHANNEL_A, otherSite)).isEmpty());
         otherSite.requireFullyConsumed();
+    }
+
+    @Test
+    void trunkedChannelRadiosExposeAndSearchOnlyTheirOwnedOtaAliases() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            seedTrunkedDmrAndNxdn(statement);
+            statement.executeUpdate("""
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                VALUES(9131,0x92498,0x926,202)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,p25_subscriber_identity_id)
+                VALUES(7131,71,2,0x92498,0x926,202,1000,4000,9131)
+                """);
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary SET last_talker_alias=CASE id
+                    WHEN 7102 THEN 'Local OTA' WHEN 7131 THEN 'Foreign OTA'
+                    WHEN 7803 THEN 'DMR OTA' WHEN 7903 THEN 'NXDN OTA' END,
+                    last_talker_alias_seen_ms=4000 WHERE id IN(7102,7131,7803,7903)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site(learned_site_id,radio_system_id,rfss,site,first_seen_ms,last_seen_ms)
+                VALUES(710,71,1,1,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(radio_system_id,learned_site_id,channel_id,
+                    bucket_start_ms,identity_role_code,identity_kind_code,identity_summary_id,
+                    observed_local_id,last_observed_at_ms,observed_call_count,observed_working_id)
+                VALUES(71,710,71,%1$d,2,2,7102,202,%1$d+1,2,NULL),
+                      (71,710,71,%1$d,2,2,7131,303,%1$d+1,3,303)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO trunked_logical_call_identity_bucket(radio_system_id,bucket_start_ms,
+                    identity_role_code,identity_kind_code,identity_summary_id,logical_call_count)
+                VALUES(78,%1$d,2,2,7803,2),(79,%1$d,2,2,7903,2)
+                """.formatted(bucket));
+        }
+        Map<String,Object> foreign = rows(mDatabase.channelRadios(P25_CHANNEL_A,
+            request("/?q=Foreign%20OTA&limit=1"))).getFirst();
+        assertEquals("Foreign OTA", foreign.get("last_talker_alias"));
+        assertEquals(4000, number(foreign.get("last_talker_alias_seen_ms")));
+        assertEquals(202, number(foreign.get("canonical_subscriber_id")));
+        assertEquals(303, number(foreign.get("observed_working_id")));
+        assertEquals("v1-r-92498-926-202", foreign.get("identity_key"));
+        assertEquals("Local OTA", rows(mDatabase.channelRadios(P25_CHANNEL_A,
+            request("/?q=Local%20OTA&limit=1"))).getFirst().get("last_talker_alias"));
+        assertTrue(rows(mDatabase.channelRadios(P25_CHANNEL_B, request("/?q=Foreign%20OTA"))).isEmpty());
+        for(var selected: Map.of(DMR_TRUNKED_CHANNEL, "DMR OTA", NXDN_TRUNKED_CHANNEL, "NXDN OTA").entrySet())
+        {
+            List<Map<String,Object>> radios = rows(mDatabase.channelRadios(selected.getKey(),
+                request("/?q=" + selected.getValue().replace(" ", "%20") + "&limit=1")));
+            assertEquals(1, radios.size());
+            assertEquals(selected.getValue(), radios.getFirst().get("last_talker_alias"));
+            assertEquals(4000, number(radios.getFirst().get("last_talker_alias_seen_ms")));
+        }
     }
 
     @Test
@@ -4354,10 +4429,33 @@ class StatsWebDatabaseTest
         assertEquals(71, number(row.get("alias_list_id")));
         assertNull(row.get("entity_ref"), "No persisted directory row means no fabricated radio route");
         assertEquals(140001, number(row.get("observed_working_id")));
+        assertNull(row.get("last_talker_alias"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,
+                    p25_subscriber_identity_id,last_talker_alias,last_talker_alias_seen_ms)
+                VALUES(9991,71,2,0x92498,0x926,34031,1000,4000,9991,'Foreign unit OTA',4000),
+                      (9992,71,2,0xBEE00,0x49F,34031,1000,4000,NULL,'Different home OTA',4000)
+                """);
+        }
+        row = mDatabase.enrichCurrentP25Assignments(RADIO_SYSTEM_KEY, input).getFirst();
+        assertEquals("Foreign unit OTA", row.get("last_talker_alias"));
+        assertEquals(4000, number(row.get("last_talker_alias_seen_ms")));
+        assertEquals("v1-r-92498-926-34031", row.get("identity_key"));
+        List<Map<String,Object>> history = rows(mDatabase.radioSystemIssiSubscribers(RADIO_SYSTEM_KEY,
+            request("/?q=Foreign%20unit%20OTA")));
+        assertEquals(1, history.size(), "Radio History must search the displayed OTA alias before paging");
+        assertEquals("Foreign unit OTA", history.getFirst().get("last_talker_alias"));
+        assertEquals("v1-r-92498-926-34031", history.getFirst().get("identity_key"));
 
         input.getFirst().put("canonical_subscriber_id", 34032);
         row = mDatabase.enrichCurrentP25Assignments(RADIO_SYSTEM_KEY, input).getFirst();
         assertEquals("Local Working Alias", row.get("alias_name"));
+        assertNull(row.get("last_talker_alias"));
         assertEquals("radio_id", row.get("alias_matcher_type"));
         input.getFirst().put("configuration_id", P25_CHANNEL_B);
         row = mDatabase.enrichCurrentP25Assignments(RADIO_SYSTEM_KEY, input).getFirst();

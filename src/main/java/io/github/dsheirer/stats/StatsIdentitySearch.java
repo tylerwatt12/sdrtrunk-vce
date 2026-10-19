@@ -85,6 +85,7 @@ final class StatsIdentitySearch
         sql.append(" AND (lower(printf('%05x.%03x.%d', canonical_wacn,canonical_system_id,")
             .append("canonical_subscriber_id)||' '||canonical_wacn||' '||canonical_system_id||' '||")
             .append("canonical_subscriber_id||' '||coalesce(last_observed_working_id,'')||' '||")
+            .append("coalesce(last_talker_alias,'')||' '||")
             .append("coalesce(observation_name,'')||' '||coalesce(observation_site_name,'')) LIKE ? ESCAPE '\\'");
         parameters.add(pattern);
         appendP25SystemName(sql, parameters, pattern, "canonical_wacn", "canonical_system_id");

@@ -2736,6 +2736,7 @@ class StatsWebDatabase
                         groupIdentity.get("talkgroup_id"), configuration) : queryRows(connection, """
                         SELECT subscriber.id AS p25_subscriber_identity_id,
                             directory.id AS identity_summary_id, config.alias_list_id AS observation_alias_list_id,
+                            directory.last_talker_alias, directory.last_talker_alias_seen_ms,
                             config.name AS channel_name, config.site_name
                         FROM (SELECT 1) seed
                         LEFT JOIN p25_subscriber_identity subscriber
@@ -4745,6 +4746,7 @@ class StatsWebDatabase
                             current.local_patch_group_id, current.local_radio_id,
                             current.confirmed_at_ms, summary.first_seen_ms,
                             summary.last_seen_ms, summary.observation_count,
+                            radio.last_talker_alias, radio.last_talker_alias_seen_ms,
                             row_number() OVER (PARTITION BY current.local_patch_group_id
                                 ORDER BY current.local_radio_id) AS member_rank
                         FROM p25_site_patch_group_radio current
@@ -4754,11 +4756,17 @@ class StatsWebDatabase
                           ON summary.channel_id = current.channel_id
                          AND summary.local_patch_group_id = current.local_patch_group_id
                          AND summary.local_radio_id = current.local_radio_id
+                        LEFT JOIN radio_system_identity_summary radio
+                          ON radio.radio_system_id = system.id AND radio.identity_kind_code = 2
+                         AND radio.home_wacn = system.p25_wacn
+                         AND radio.home_system_id = system.p25_system_id
+                         AND radio.identity_id = current.local_radio_id
                         WHERE current.channel_id = ? AND current.local_patch_group_id IN (%s)
                     )
                     SELECT radio_system_id, radio_system_key, protocol_code, address_domain_code,
                         wacn, system_id, local_patch_group_id, local_radio_id, confirmed_at_ms,
-                        first_seen_ms, last_seen_ms, observation_count
+                        first_seen_ms, last_seen_ms, observation_count,
+                        last_talker_alias, last_talker_alias_seen_ms
                     FROM ranked WHERE member_rank <= ?
                     ORDER BY local_patch_group_id, local_radio_id LIMIT ?
                     """.formatted(placeholders), radioParameters.toArray());
@@ -5130,6 +5138,7 @@ class StatsWebDatabase
                 coalesce(identity.identity_id, paged.observed_local_id) AS native_id,
                 identity.home_wacn, identity.home_system_id,
                 identity.p25_subscriber_identity_id,
+                identity.last_talker_alias, identity.last_talker_alias_seen_ms,
                 canonical_subscriber.home_wacn AS canonical_wacn,
                 canonical_subscriber.home_system_id AS canonical_system_id,
                 canonical_subscriber.subscriber_id AS canonical_subscriber_id,
@@ -6391,6 +6400,7 @@ class StatsWebDatabase
             groupedSql = """
                 SELECT summary.id AS identity_summary_id, summary.identity_id AS native_id,
                     summary.p25_subscriber_identity_id,
+                    summary.last_talker_alias, summary.last_talker_alias_seen_ms,
                     serving.p25_wacn AS wacn, serving.p25_system_id AS system_id,
                     CASE WHEN summary.home_wacn=serving.p25_wacn AND
                         summary.home_system_id=serving.p25_system_id THEN 1 ELSE 0 END AS home_system_radio,
@@ -6443,6 +6453,7 @@ class StatsWebDatabase
                     summary.identity_id AS observed_local_id,
                     NULL AS observed_working_id,
                     summary.p25_subscriber_identity_id,
+                    summary.last_talker_alias, summary.last_talker_alias_seen_ms,
                     serving.p25_wacn AS wacn, serving.p25_system_id AS system_id,
                     CASE WHEN summary.home_wacn=serving.p25_wacn AND
                         summary.home_system_id=serving.p25_system_id THEN 1 ELSE 0 END AS home_system_radio,
@@ -6490,7 +6501,7 @@ class StatsWebDatabase
         parameters.add(configured.addressDomainCode());
         parameters.add(configured.aliasListName());
         parameters.add(configured.aliasListId());
-        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)", true);
+        addChannelIdentitySearch(sql, parameters, search, "coalesce(observed_local_id, native_id)", true, true);
         sql.append(" ORDER BY ").append(requestedOrder).append(", native_id ASC LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -8373,6 +8384,13 @@ class StatsWebDatabase
     private static void addChannelIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
                                                   String identifierColumn, boolean qualifiedHome)
     {
+        addChannelIdentitySearch(sql, parameters, search, identifierColumn, qualifiedHome, false);
+    }
+
+    private static void addChannelIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
+                                                  String identifierColumn, boolean qualifiedHome,
+                                                  boolean includeTalkerAlias)
+    {
         if(search == null)
         {
             return;
@@ -8389,6 +8407,7 @@ class StatsWebDatabase
             .append(" OR lower(coalesce(matched_alias_group, '')) LIKE ?");
         if(qualifiedHome) sql.append(" OR lower(coalesce(")
             .append(StatsSystemNameResolver.identityHomeNameSql("identity_key")).append(",'')) LIKE ?");
+        if(includeTalkerAlias) sql.append(" OR lower(coalesce(last_talker_alias, '')) LIKE ?");
         sql.append(')');
         String like = like(search);
         parameters.add(like);
@@ -8396,6 +8415,7 @@ class StatsWebDatabase
         parameters.add(like);
         parameters.add(like);
         if(qualifiedHome) parameters.add(like);
+        if(includeTalkerAlias) parameters.add(like);
     }
 
     /**
