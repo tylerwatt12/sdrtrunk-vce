@@ -15,6 +15,25 @@ class TopicAlertOptionsTest
 {
     @TempDir Path directory;
 
+    @Test void messageChoicesReadTheSameDatabaseDefinitionsAsActivity() throws Exception
+    {
+        Path database = directory.resolve("message-options.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(var connection = SdrTrunkDatabase.open(database); var sql = connection.createStatement())
+        {
+            sql.executeUpdate("UPDATE activity_message_type SET label='Disable radio', " +
+                "meaning='A radio disable command.',dmr=1,nxdn=1,p25=0 " +
+                "WHERE definition_kind='EVENT' AND name='STUN'");
+        }
+        var message = rows(TopicAlertOptions.read(database), "message_types").stream()
+            .filter(row -> "STUN".equals(row.get("value"))).findFirst().orElseThrow();
+        assertEquals("Disable radio", message.get("label"));
+        assertEquals("A radio disable command.", message.get("meaning"));
+        assertEquals(false, message.get("p25"));
+        assertEquals(true, message.get("dmr"));
+        assertEquals(true, message.get("nxdn"));
+    }
+
     @Test void analogPagingFrequenciesExtendTheToneCatalogWithoutChangingEncodedChoices() throws Exception
     {
         Path database = directory.resolve("tone-options.sqlite");

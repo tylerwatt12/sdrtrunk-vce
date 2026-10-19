@@ -71,6 +71,12 @@ final class RadioSystemSchema
         .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
             ") = 'integer' AND " + column + " >= 0)")
         .collect(Collectors.joining(",\n                    "));
+    private static final String FORMAT_59_ACTION_COUNT_DEFINITIONS = ACTIONS.stream()
+        .filter(action -> action.code() <= 23)
+        .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
+        .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
+            ") = 'integer' AND " + column + " >= 0)")
+        .collect(Collectors.joining(",\n                    "));
     private static final String ACTION_INSERT_COLUMNS = String.join(", ", ACTION_COUNT_COLUMNS);
     private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
         .map(column -> "?")
@@ -187,7 +193,8 @@ final class RadioSystemSchema
         }
     }
 
-    static void create(Statement statement) throws SQLException
+    /** Frozen base definitions used by every historical creator through format 59. */
+    static void createFormat59(Statement statement) throws SQLException
     {
         create(statement, true);
     }
@@ -203,7 +210,7 @@ final class RadioSystemSchema
         for(SqliteSchemaValidator.Definition definition:
             currentSchema ? definitions() : format31Definitions())
         {
-            statement.executeUpdate(definition.sql());
+            statement.executeUpdate(definition.sql().replace(ACTION_COUNT_DEFINITIONS, FORMAT_59_ACTION_COUNT_DEFINITIONS));
         }
 
         statement.executeUpdate("""

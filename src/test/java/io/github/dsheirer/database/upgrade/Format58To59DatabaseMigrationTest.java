@@ -48,7 +48,7 @@ class Format58To59DatabaseMigrationTest
             assertTrue(count(connection, "topic_alert_message") > 0);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-58-to-59"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-58-to-59", "format-59-to-60"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE duration_ms IS NOT NULL"));
@@ -156,7 +156,7 @@ class Format58To59DatabaseMigrationTest
         Map<String,List<String>> result = new LinkedHashMap<>();
         List<String> tables = new ArrayList<>();
         try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
-        { while(rows.next()) tables.add(rows.getString(1)); }
+        { while(rows.next()) if(!"activity_message_type".equals(rows.getString(1))) tables.add(rows.getString(1)); }
         for(String table: tables)
         {
             List<String> values = new ArrayList<>();
@@ -168,7 +168,11 @@ class Format58To59DatabaseMigrationTest
                     List<String> row = new ArrayList<>();
                     for(int i = 1; i <= rows.getMetaData().getColumnCount(); i++)
                     {
-                        if(table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(i))) continue;
+                        String column = rows.getMetaData().getColumnName(i);
+                        if(table.equals("receiver_activity_event") && "duration_ms".equals(column)) continue;
+                        if(java.util.Set.of("stun_count", "revive_count", "kill_count", "radio_inhibit_count",
+                            "radio_uninhibit_count", "remote_monitor_count", "authenticate_count", "cancel_call_count",
+                            "radio_detach_count", "protect_count", "vote_now_count").contains(column)) continue;
                         Object value = rows.getObject(i);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }

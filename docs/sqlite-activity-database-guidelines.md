@@ -85,6 +85,23 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
   history. The existing action-specific radio ranking and historical Alias evidence paths below document their
   bounded, indexed exceptions.
 
+### Shared Activity message definitions (application format 60)
+
+`activity_message_type` is the single bounded catalogue used by existing Activity pages for friendly labels,
+meanings and implemented protocol support. Its composite primary key keeps action and decoder-event numeric
+codes in separate namespaces. The 35 action definitions and 78 event definitions contain no received messages,
+radio identities or message payloads and add no rows per receiving hour. The maximum seeded text per definition
+is a 64-character name, an 80-character label and a 512-character explanation, plus bounded integer support and
+sort fields. The 113 rows remain for the database lifetime, independently of detailed-event retention.
+
+The resolved Activity view seeks each definition by its `(definition_kind,code)` primary key; existing page
+time/owner indexes and pagination still bound history reads. A whole-catalogue read returns only these 113 rows,
+without another index, network lookup or receiver callback. Fresh creation and the bundled Application Migrator
+seed definitions; runtime reads and validation do not overwrite database-owned friendly wording. New command
+counters extend the five existing identity, relationship and signaling summary/bucket tables, adding no history or new aggregation table. Old
+counters and generic historical message types retain their meaning; exact command/response distinctions apply
+to new reception only. Existing retention and deletion policies remain unchanged.
+
 ### Complete-call tone evidence (format 55)
 
 New completed-call tone evidence annotates the exact original Activity call row. Its `CALL` action and event types

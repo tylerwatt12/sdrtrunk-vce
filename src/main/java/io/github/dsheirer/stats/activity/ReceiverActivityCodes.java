@@ -49,7 +49,18 @@ final class ReceiverActivityCodes
         ReceiverActivityRecords.Action.REQUEST,
         ReceiverActivityRecords.Action.STATUS,
         ReceiverActivityRecords.Action.UNKNOWN,
-        ReceiverActivityRecords.Action.TONE
+        ReceiverActivityRecords.Action.TONE,
+        ReceiverActivityRecords.Action.STUN,
+        ReceiverActivityRecords.Action.REVIVE,
+        ReceiverActivityRecords.Action.KILL,
+        ReceiverActivityRecords.Action.RADIO_INHIBIT,
+        ReceiverActivityRecords.Action.RADIO_UNINHIBIT,
+        ReceiverActivityRecords.Action.REMOTE_MONITOR,
+        ReceiverActivityRecords.Action.AUTHENTICATE,
+        ReceiverActivityRecords.Action.CANCEL_CALL,
+        ReceiverActivityRecords.Action.RADIO_DETACH,
+        ReceiverActivityRecords.Action.PROTECT,
+        ReceiverActivityRecords.Action.VOTE_NOW
     );
     private static final List<EventTypeCode> EVENT_TYPE_CODES = List.of(
         event(DecodeEventType.AFFILIATE, 1),
@@ -113,7 +124,23 @@ final class ReceiverActivityCodes
         event(DecodeEventType.RADIO_INHIBIT, 59),
         event(DecodeEventType.RADIO_UNINHIBIT_ACK, 60),
         event(DecodeEventType.RADIO_INHIBIT_ACK, 61),
-        event(DecodeEventType.TONE, 62)
+        event(DecodeEventType.TONE, 62),
+        event(DecodeEventType.STUN, 63),
+        event(DecodeEventType.REVIVE, 64),
+        event(DecodeEventType.KILL, 65),
+        event(DecodeEventType.REMOTE_MONITOR, 66),
+        event(DecodeEventType.AUTHENTICATE, 67),
+        event(DecodeEventType.CANCEL_CALL, 68),
+        event(DecodeEventType.RADIO_DETACH, 69),
+        event(DecodeEventType.PROTECT, 70),
+        event(DecodeEventType.VOTE_NOW, 71),
+        event(DecodeEventType.BUSY, 72),
+        event(DecodeEventType.QUEUED, 73),
+        event(DecodeEventType.RADIO_DETACH_ACK, 74),
+        event(DecodeEventType.STUN_RESPONSE, 75),
+        event(DecodeEventType.REVIVE_RESPONSE, 76),
+        event(DecodeEventType.KILL_RESPONSE, 77),
+        event(DecodeEventType.REMOTE_MONITOR_RESPONSE, 78)
     );
     private static final Map<DecodeEventType,Integer> EVENT_TYPE_TO_CODE = buildCodeMap();
 

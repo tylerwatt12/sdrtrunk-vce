@@ -39,6 +39,30 @@ class AliasActivityProjectionTest
     Path mTemporaryFolder;
 
     @Test
+    void namedControlMessagesCreditTheAddressedAliasAsSignalingWithoutCountingCalls() throws Exception
+    {
+        try(Connection connection = open("radio-control.sqlite"); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'DMR','DMR')");
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(1,1,'Addressed radio','RADIO_ID','DMR',501)");
+            insertConfiguration(statement, DMR_CONFIGURATION, 1, "DMR");
+            for(var action: List.of(ReceiverActivityRecords.Action.STUN, ReceiverActivityRecords.Action.REVIVE))
+            {
+                AliasActivityProjection.recordActivity(connection, new ReceiverActivityRecords.ActivityEvent(
+                    1_000, DMR_CONFIGURATION, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "DMR",
+                    action, action.name(), null, "501", "RADIO", List.of(), 451_000_000L, null, 1,
+                    false, null, null, null, 42, null, null, 1, null, false, null, null,
+                    TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
+                    ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null));
+            }
+            assertEquals(2, metric(connection, 1, "signaling_observation_count"));
+            assertEquals(2, metric(connection, 1, "other_signaling_observation_count"));
+            assertEquals(0, metric(connection, 1, "logical_call_count"));
+        }
+    }
+
+    @Test
     void exactAndDuplicateWinnersBeatRangesWithoutDoubleCountingTheCallStart() throws Exception
     {
         try(Connection connection = open("dmr-winners.sqlite"); Statement statement = connection.createStatement())

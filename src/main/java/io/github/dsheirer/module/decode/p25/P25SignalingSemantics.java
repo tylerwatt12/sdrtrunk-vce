@@ -57,6 +57,8 @@ public final class P25SignalingSemantics
         return switch(function)
         {
             case RADIO_CHECK, RADIO_CHECK_ACK -> DecodeEventType.RADIO_CHECK;
+            case RADIO_DETACH -> DecodeEventType.RADIO_DETACH;
+            case RADIO_DETACH_ACK -> DecodeEventType.RADIO_DETACH_ACK;
             case RADIO_UNINHIBIT -> DecodeEventType.RADIO_UNINHIBIT;
             case RADIO_INHIBIT -> DecodeEventType.RADIO_INHIBIT;
             case RADIO_UNINHIBIT_ACK -> DecodeEventType.RADIO_UNINHIBIT_ACK;

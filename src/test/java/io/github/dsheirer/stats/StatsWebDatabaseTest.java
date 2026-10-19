@@ -23,6 +23,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
+import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
 import java.net.URI;
@@ -99,6 +100,77 @@ class StatsWebDatabaseTest
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
         }
+    }
+
+    @Test
+    void messageDefinitionsComeFromOneTableAndKeepActionAndEventTypesSeparate() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE activity_message_type SET label='Disable command', " +
+                "meaning='A command asking the addressed radio to stop operating.', dmr=0 " +
+                "WHERE definition_kind='ACTION' AND name='STUN'");
+            statement.executeUpdate("UPDATE activity_message_type SET label='Stun radio message' " +
+                "WHERE definition_kind='EVENT' AND name='STUN'");
+        }
+        Map<String,Object> action = mDatabase.activityMessageTypes().stream()
+            .filter(row -> "ACTION".equals(row.get("definition_kind")) && "STUN".equals(row.get("name")))
+            .findFirst().orElseThrow();
+        Map<String,Object> event = mDatabase.activityMessageTypes().stream()
+            .filter(row -> "EVENT".equals(row.get("definition_kind")) && "STUN".equals(row.get("name")))
+            .findFirst().orElseThrow();
+        assertEquals("Disable command", action.get("label"));
+        assertEquals("Stun radio message", event.get("label"));
+        assertEquals(false, action.get("dmr"));
+        assertEquals(ReceiverActivityFilterCatalog.actionCode("STUN").longValue(), number(action.get("code")));
+        assertEquals(ReceiverActivityFilterCatalog.eventTypeCode("STUN").longValue(), number(event.get("code")));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE activity_message_type SET label='Radio disable' " +
+                "WHERE definition_kind='ACTION' AND name='STUN'");
+        }
+        assertEquals("Radio disable", mDatabase.activityMessageTypes().stream()
+            .filter(row -> "ACTION".equals(row.get("definition_kind")) && "STUN".equals(row.get("name")))
+            .findFirst().orElseThrow().get("label"));
+    }
+
+    @Test
+    void namedCommandsUseTheSameTypeForSummaryCountsRadioRankingAndActivityFilters() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long bucket = now / 3_600_000L * 3_600_000L;
+        int stun = ReceiverActivityFilterCatalog.actionCode("STUN");
+        int event = ReceiverActivityFilterCatalog.eventTypeCode("STUN");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_bucket
+                    (channel_id,frequency_hz,timeslot,bucket_start_ms,stun_count,revive_count)
+                VALUES (74,460012500,2,%d,2,1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event
+                    (channel_id,observed_at_ms,action_code,event_type_code,source_observed_local_id)
+                VALUES (74,%d,%d,%d,303)
+                """.formatted(now, stun, event));
+        }
+        Map<String,Object> totals = mDatabase.dashboardActivityActions(request("/?range=24h"));
+        assertEquals(2L, number(rowWith(rowsFrom(totals,"rows"),"action","STUN").get("observation_count")));
+        assertEquals(1L, number(rowWith(rowsFrom(totals,"rows"),"action","REVIVE").get("observation_count")));
+        Map<String,Object> radios = mDatabase.dashboardActivityRadios(request("/?range=24h&action=STUN"));
+        assertEquals(2L, number(radios.get("action_observation_count")));
+        assertEquals(1L, number(radios.get("identified_observation_count")));
+        assertEquals(303L, number(rowsFrom(radios,"rows").getFirst().get("native_id")));
+        Map<String,Object> activity = mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL +
+            "&action=STUN&event_type=STUN&limit=10"));
+        assertEquals(1, rowsFrom(activity,"rows").size());
+        assertEquals("STUN", rowsFrom(activity,"rows").getFirst().get("action"));
+        assertEquals("STUN", rowsFrom(activity,"rows").getFirst().get("event_type"));
+        assertTrue(rowsFrom(mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL +
+            "&action=REVIVE&limit=10")),"rows").isEmpty());
     }
 
     @Test

@@ -5,7 +5,7 @@ import io.github.dsheirer.alerts.AlertProtocolFamily;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.audio.tone.PagingToneFrequencyMapping;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
-import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.stats.activity.ActivityMessageCatalog;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Path;
@@ -32,8 +32,6 @@ final class TopicAlertOptions
         result.put("protocol_families", List.of("P25", "DMR", "NXDN", "AM", "NBFM").stream().map(family -> option(family, family, "")).toList());
         result.put("protocols", Arrays.stream(Protocol.values()).filter(value -> value.isActive() && value != Protocol.UNKNOWN)
             .map(TopicAlertOptions::protocolOption).toList());
-        result.put("message_types", Arrays.stream(DecodeEventType.values()).filter(value -> value != DecodeEventType.UNKNOWN)
-            .map(value -> option(value.name(), value.getLabel(), "")).toList());
         List<Map<String,Object>> tones = new ArrayList<>(Arrays.stream(AmbeTone.values())
             .map(value -> option(value.name(), value.toString(), "")).toList());
         var toneCodes = new LinkedHashSet<>(Arrays.stream(AmbeTone.values()).map(Enum::name).toList());
@@ -52,6 +50,16 @@ final class TopicAlertOptions
             .map(value -> option(value.name(), value.toString(), "")).toList());
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
+            result.put("message_types", ActivityMessageCatalog.read(connection).stream()
+                .filter(row -> "EVENT".equals(row.get("definition_kind")) && !"UNKNOWN".equals(row.get("name")))
+                .map(row -> {
+                    Map<String,Object> message = new LinkedHashMap<>(option(text(row, "name"), text(row, "label"), ""));
+                    message.put("meaning", row.get("meaning"));
+                    message.put("p25", row.get("p25"));
+                    message.put("dmr", row.get("dmr"));
+                    message.put("nxdn", row.get("nxdn"));
+                    return message;
+                }).toList());
             StatsSystemNameResolver.installCatalog(connection, systemNames);
             List<Map<String,Object>> systems = StatsSqlRows.queryRows(connection, "SELECT system.system_key,system.protocol_code," +
                 StatsSystemNameResolver.displayNameSql("system") + " AS system_name FROM radio_system system ORDER BY system_name,system.system_key");

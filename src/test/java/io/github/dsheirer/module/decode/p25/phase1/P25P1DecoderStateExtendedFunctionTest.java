@@ -45,8 +45,12 @@ class P25P1DecoderStateExtendedFunctionTest
         state.receive(new TestResponse(ExtendedFunction.RADIO_UNINHIBIT_ACK, 3_000L));
         state.receive(new TestResponse(ExtendedFunction.RADIO_INHIBIT_ACK, 4_000L));
 
+        state.receive(new TestCommand(ExtendedFunction.RADIO_DETACH, 5_000L));
+        state.receive(new TestResponse(ExtendedFunction.RADIO_DETACH_ACK, 6_000L));
+
         assertEquals(List.of(DecodeEventType.RADIO_UNINHIBIT, DecodeEventType.RADIO_INHIBIT,
-            DecodeEventType.RADIO_UNINHIBIT_ACK, DecodeEventType.RADIO_INHIBIT_ACK),
+            DecodeEventType.RADIO_UNINHIBIT_ACK, DecodeEventType.RADIO_INHIBIT_ACK, DecodeEventType.RADIO_DETACH,
+            DecodeEventType.RADIO_DETACH_ACK),
             events.stream().map(IDecodeEvent::getEventType).toList());
     }
 

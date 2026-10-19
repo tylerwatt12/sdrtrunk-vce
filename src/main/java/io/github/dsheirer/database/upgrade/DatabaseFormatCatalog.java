@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 59;
+    public static final int CURRENT_VERSION = 60;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -643,13 +643,21 @@ public final class DatabaseFormatCatalog
             "Add nullable duration milliseconds to existing Activity call rows; keep historical timing unknown",
             "Use shared accepted call timing only, without reconstructing duration from recordings or adjacent events"));
 
+    private static final FormatDescriptor FORMAT_60 = new FormatDescriptor(60, "shared-activity-message-definitions-v1",
+        "Shared Activity message names, meanings and protocol support", "783659af6211d4fdf7efcec85a0cea0882555aae5a3810ee6c4a1a041dbbbd85", Map.of(),
+        List.of("main format 60"), "src/test/java/io/github/dsheirer/database/upgrade/Format60TestDatabase.java", List.of(
+            "Preserve every setting, observation, relationship, counter, exact call reference and allocator",
+            "Store shared action and event definitions in one bounded SQLite catalogue",
+            "Admit prospective radio control commands and responses without reclassifying historical generic messages",
+            "Add zero-initialized command counters to existing signaling summaries and buckets"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
             FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55, FORMAT_56, FORMAT_57, FORMAT_58, FORMAT_59);
+            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55, FORMAT_56, FORMAT_57, FORMAT_58, FORMAT_59, FORMAT_60);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -831,7 +839,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_59;
+        return FORMAT_60;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -1026,6 +1034,10 @@ public final class DatabaseFormatCatalog
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor,
                                            boolean allowRecoverableCurrentData) throws SQLException
     {
+        if(descriptor.version() >= 60)
+        {
+            io.github.dsheirer.stats.activity.ActivityMessageCatalog.validate(connection);
+        }
         if(descriptor.version() >= 56)
         {
             io.github.dsheirer.database.settings.ReceiverSettingsSchema.validate(connection);
@@ -1157,7 +1169,7 @@ public final class DatabaseFormatCatalog
             case 31, 32, 33, 34 -> 8;
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
-            case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59 -> 11;
+            case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60 -> 11;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

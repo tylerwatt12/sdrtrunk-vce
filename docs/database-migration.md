@@ -190,7 +190,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -799,6 +799,15 @@ existing history retention and exact-call lookup bounds remain unchanged. Fresh 
 reach the same exact format-59 signature. The populated format-58 fixture remains frozen and supported, and normal
 runtime startup validates without migrating.
 
+The format 59-to-60 step adds one bounded `activity_message_type` catalogue for shared message labels,
+meanings and implemented P25, DMR and NXDN support. Existing Activity rows keep their action and decoder-event
+codes in separate namespaces; the resolved view reads their names from this same catalogue. Prospective control
+messages gain precise command or response types, and the existing signaling buckets and conventional summaries
+gain zero-initialized counters. Every old row, ID, setting, counter, relationship, exact call reference and allocator
+is preserved. Historical generic commands and responses remain unknown rather than receiving guessed subtypes.
+Fresh creation and the adjacent Application Migrator reach the same exact format-60 signature. The populated
+format-59 fixture remains frozen and supported; normal startup validates without rewriting definitions or history.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -839,7 +848,7 @@ adjacent format-10-to-11 step creates an empty relationship table without guessi
 all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
 to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
 The populated format-10 fixture remains frozen and supported. The main application database is independently at
-format 59; recording-catalog migrations do not change it. Recognized older catalogs are backed up
+format 60; recording-catalog migrations do not change it. Recognized older catalogs are backed up
 and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

@@ -203,6 +203,22 @@ public class ReceiverActivitySchema
     private static final String TRUNKED_SIGNALING_ACTION_INSERT_PLACEHOLDERS =
         TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS.stream().map(column -> "?").collect(Collectors.joining(", "));
 
+    private static final List<ReceiverActivityRecords.Action> CURRENT_ACTIONS = ReceiverActivityCodes.actionCodes().stream()
+        .filter(action -> action != ReceiverActivityRecords.Action.TONE).toList();
+    private static final List<ReceiverActivityRecords.Action> NEW_ACTIONS = CURRENT_ACTIONS.stream()
+        .filter(action -> action.code() > 24).toList();
+    private static final List<String> NEW_ACTION_COUNT_COLUMNS = NEW_ACTIONS.stream()
+        .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count").toList();
+    private static final List<String> CURRENT_ACTION_COUNT_COLUMNS = CURRENT_ACTIONS.stream()
+        .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count").toList();
+    private static final List<ReceiverActivityRecords.Action> CURRENT_SIGNALING_ACTIONS = CURRENT_ACTIONS.stream()
+        .filter(action -> action != ReceiverActivityRecords.Action.CALL).toList();
+    private static final List<String> CURRENT_SIGNALING_COLUMNS = CURRENT_SIGNALING_ACTIONS.stream()
+        .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count").toList();
+    private static final String CURRENT_ACTION_INSERT_COLUMNS = String.join(", ", CURRENT_ACTION_COUNT_COLUMNS);
+    private static final String CURRENT_ACTION_INSERT_PLACEHOLDERS = CURRENT_ACTIONS.stream()
+        .map(action -> "?").collect(Collectors.joining(", "));
+
     private ReceiverActivitySchema()
     {
     }
@@ -213,6 +229,39 @@ public class ReceiverActivitySchema
         ToneActivitySchema.createCurrent(connection);
         addSourceCallReference(connection);
         addCallDuration(connection);
+        upgradeFrom59(connection);
+    }
+
+    /** Adds shared message definitions and prospective command counters without reclassifying retained history. */
+    public static void upgradeFrom59(Connection connection) throws SQLException
+    {
+        ActivityMessageCatalog.create(connection);
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+        }
+        for(var definition: RadioSystemSchema.definitions())
+        {
+            if(definition.name().equals("radio_system_identity_summary") ||
+                definition.name().equals("trunked_radio_group_summary"))
+                ActivityMessageSchemaMigration.rebuild(connection, definition.name(), definition.sql());
+        }
+        ActivityMessageSchemaMigration.rebuild(connection, "receiver_activity_event", currentReceiverActivityEventSql());
+        ActivityMessageSchemaMigration.rebuild(connection, "conventional_activity_summary",
+            createConventionalActivitySummarySql(ReceiverActivityCodes.eventTypeCodes()));
+        try(Statement statement = connection.createStatement())
+        {
+            for(String table: List.of("trunked_signaling_activity_bucket", "conventional_activity_summary",
+                "conventional_activity_bucket"))
+            {
+                for(String column: NEW_ACTION_COUNT_COLUMNS)
+                {
+                    statement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column +
+                        " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column + ") = 'integer' AND " + column + " >= 0)");
+                }
+            }
+            statement.executeUpdate(createCurrentResolvedViewSql());
+        }
     }
 
     private static final String CALL_DURATION_DEFINITION = "duration_ms INTEGER CHECK(duration_ms IS NULL OR " +
@@ -225,13 +274,23 @@ public class ReceiverActivitySchema
         {
             statement.executeUpdate("ALTER TABLE receiver_activity_event ADD COLUMN " + CALL_DURATION_DEFINITION);
             statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
-            statement.executeUpdate(createCurrentResolvedViewSql());
+            statement.executeUpdate(createFormat59ResolvedViewSql());
         }
+    }
+
+    private static String createFormat59ResolvedViewSql()
+    {
+        return createFormat50ResolvedViewSql().replace("a.observed_at_ms,", "a.observed_at_ms, a.duration_ms,");
     }
 
     private static String createCurrentResolvedViewSql()
     {
-        return createFormat50ResolvedViewSql().replace("a.observed_at_ms,", "a.observed_at_ms, a.duration_ms,");
+        return createResolvedViewSql(true, true, "message_event.name")
+            .replace(actionCase("a.action_code") + " AS action", "message_action.name AS action")
+            .replace("a.observed_at_ms,", "a.observed_at_ms, a.duration_ms,")
+            .replace("FROM receiver_activity_event a", "FROM receiver_activity_event a\n" +
+                "LEFT JOIN activity_message_type message_action ON message_action.definition_kind='ACTION' AND message_action.code=a.action_code\n" +
+                "LEFT JOIN activity_message_type message_event ON message_event.definition_kind='EVENT' AND message_event.code=a.event_type_code");
     }
 
     /** Fresh creation and the format-57-to-58 migrator add only an optional exact source reference. */
@@ -464,7 +523,7 @@ public class ReceiverActivitySchema
             statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes, canonicalP25Subscribers));
             statement.executeUpdate(createActivityEventIdentityMemberSql(currentEvidenceIndexes));
             createTrunkedCallTables(statement, canonicalP25Subscribers);
-            if(canonicalP25Subscribers) RadioSystemSchema.create(statement);
+            if(canonicalP25Subscribers) RadioSystemSchema.createFormat59(statement);
             else RadioSystemSchema.createFormat31(statement);
             createConventionalTables(statement, eventTypes);
             createConventionalCallIdentityTable(statement, allowNxdnNullGroup);
@@ -515,6 +574,7 @@ public class ReceiverActivitySchema
                 createCurrentResolvedViewSql())));
         SqliteSchemaValidator.validateDefinitions(connection, exactDefinitions);
         ToneActivitySchema.validate(connection);
+        ActivityMessageCatalog.validate(connection);
         validateRequiredForeignKeys(connection);
         validatePositiveMetadataTimestamp(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
         validatePositiveMetadataTimestamp(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY);
@@ -851,6 +911,16 @@ public class ReceiverActivitySchema
     }
 
     private static String currentReceiverActivityEventSql()
+    {
+        return format59ReceiverActivityEventSql()
+            .replace("action_code IN (" + ACTION_CODES + ",24)", "action_code IN (" +
+                ReceiverActivityCodes.actionCodes().stream().map(action -> Integer.toString(action.code()))
+                    .collect(Collectors.joining(", ")) + ")")
+            .replace("event_type_code IN (" + eventTypeCodes(EVENT_TYPES) + ",62)",
+                "event_type_code IN (" + eventTypeCodes(ReceiverActivityCodes.eventTypeCodes()) + ")");
+    }
+
+    private static String format59ReceiverActivityEventSql()
     {
         return receiverActivityEventSql().replace("    UNIQUE(id, radio_system_id)",
             "    " + SourceCallSchema.COLUMN_DEFINITION + ",\n    " + CALL_DURATION_DEFINITION +
@@ -3947,15 +4017,15 @@ public class ReceiverActivitySchema
             ) VALUES (?, ?, ?, %s)
             ON CONFLICT(channel_id, radio_system_id, bucket_start_ms) DO UPDATE SET
                 %s
-            """.formatted(TRUNKED_SIGNALING_ACTION_INSERT_COLUMNS,
-            TRUNKED_SIGNALING_ACTION_INSERT_PLACEHOLDERS,
-            actionUpdateSql("trunked_signaling_activity_bucket", TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS))))
+            """.formatted(String.join(", ", CURRENT_SIGNALING_COLUMNS),
+            CURRENT_SIGNALING_ACTIONS.stream().map(action -> "?").collect(Collectors.joining(", ")),
+            actionUpdateSql("trunked_signaling_activity_bucket", CURRENT_SIGNALING_COLUMNS))))
         {
             int index = 1;
             statement.setLong(index++, channelId);
             statement.setLong(index++, radioSystemId);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            for(ReceiverActivityRecords.Action action: TRUNKED_SIGNALING_ACTIONS)
+            for(ReceiverActivityRecords.Action action: CURRENT_SIGNALING_ACTIONS)
             {
                 statement.setInt(index++, activity.action() == action ? 1 : 0);
             }
@@ -4234,7 +4304,7 @@ public class ReceiverActivitySchema
                     %s,
                     encrypted_count = conventional_activity_summary.encrypted_count + excluded.encrypted_count,
                     last_event_type_code = coalesce(excluded.last_event_type_code, conventional_activity_summary.last_event_type_code)
-                """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
+                """.formatted(CURRENT_ACTION_INSERT_COLUMNS, CURRENT_ACTION_INSERT_PLACEHOLDERS,
                 actionUpdateSql("conventional_activity_summary"))))
             {
                 int index = 1;
@@ -4257,7 +4327,7 @@ public class ReceiverActivitySchema
             ON CONFLICT(channel_id, frequency_hz, timeslot, bucket_start_ms) DO UPDATE SET
                 %s,
                 encrypted_count = conventional_activity_bucket.encrypted_count + excluded.encrypted_count
-            """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
+            """.formatted(CURRENT_ACTION_INSERT_COLUMNS, CURRENT_ACTION_INSERT_PLACEHOLDERS,
             actionUpdateSql("conventional_activity_bucket"))))
         {
             int index = 1;
@@ -5461,6 +5531,7 @@ public class ReceiverActivitySchema
         }
 
         list.addAll(insertionPoint, ACTION_COUNT_COLUMNS);
+        list.addAll(NEW_ACTION_COUNT_COLUMNS);
         return new SqliteSchemaValidator.Table(name, list);
     }
 
@@ -5468,6 +5539,7 @@ public class ReceiverActivitySchema
     {
         List<String> list = new ArrayList<>(List.of(columns));
         list.addAll(TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS);
+        list.addAll(NEW_ACTION_COUNT_COLUMNS);
         return new SqliteSchemaValidator.Table(name, list);
     }
 
@@ -5482,12 +5554,13 @@ public class ReceiverActivitySchema
         }
 
         list.addAll(insertionPoint, ACTION_COUNT_COLUMNS);
+        list.addAll(NEW_ACTION_COUNT_COLUMNS);
         return new SqliteSchemaValidator.Table(name, list);
     }
 
     private static String actionUpdateSql(String table)
     {
-        return actionUpdateSql(table, ACTION_COUNT_COLUMNS);
+        return actionUpdateSql(table, CURRENT_ACTION_COUNT_COLUMNS);
     }
 
     private static String actionUpdateSql(String table, List<String> columns)
@@ -5500,7 +5573,7 @@ public class ReceiverActivitySchema
     private static int setActionCounts(PreparedStatement statement, int index,
                                        ReceiverActivityRecords.ActivityEvent activity) throws SQLException
     {
-        for(ReceiverActivityRecords.Action action: ACTIONS)
+        for(ReceiverActivityRecords.Action action: CURRENT_ACTIONS)
         {
             boolean counted = activity.action() == action;
 

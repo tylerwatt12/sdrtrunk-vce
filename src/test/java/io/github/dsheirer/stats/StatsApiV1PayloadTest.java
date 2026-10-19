@@ -20,6 +20,22 @@ import org.junit.jupiter.api.Test;
 class StatsApiV1PayloadTest
 {
     @Test
+    void messageSummaryTypesUseStableEventCodesAndHideRawActionCounters()
+    {
+        for(var type: io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog.eventTypes().entrySet())
+        {
+            JsonNode payload = StatsApiV1Payload.present(Map.of("last_event_type_code", type.getValue()));
+            assertEquals(type.getKey().toLowerCase(java.util.Locale.ROOT), payload.path("last_event_type").asText());
+        }
+        JsonNode payload = StatsApiV1Payload.present(Map.of("stun_count", 3, "stun_observation_count", 3,
+            "revive_count", 2, "revive_observation_count", 2));
+        assertFalse(payload.has("stun_count"));
+        assertFalse(payload.has("revive_count"));
+        assertEquals(3, payload.path("stun_observation_count").intValue());
+        assertEquals(2, payload.path("revive_observation_count").intValue());
+    }
+
+    @Test
     void toneEvidenceKeepsExactSymbolsAudioFrequenciesAndOptionalPhaseSeparateFromRfContext()
     {
         var summary = io.github.dsheirer.audio.tone.ToneSummaryPayload.summary(2, 2, null, 1000, null, 2000,

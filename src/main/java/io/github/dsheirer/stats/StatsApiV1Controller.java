@@ -176,6 +176,12 @@ final class StatsApiV1Controller
             }));
         create(server, StatsApiV1.ACTIVITY_RADIOS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_RADIOS, this::dashboardActivityRadios));
+        create(server, StatsApiV1.ACTIVITY_MESSAGE_TYPES, WebCapability.WEB_ACCESS,
+            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_MESSAGE_TYPES, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly();
+                return collection(Map.of("rows", mDatabase.activityMessageTypes()), "rows");
+            }));
         server.createContext(StatsApiV1.EXPORTS,
             mRequestSecurity.protectAny(CSV_ROUTE_CAPABILITIES, this::handleCsvExport));
         create(server, StatsApiV1.RECEIVER_HEALTH, WebCapability.RECEIVER_HEALTH,

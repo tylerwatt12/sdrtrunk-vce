@@ -977,6 +977,29 @@ class ReceiverActivityMapper
         boolean useDetailHeuristics = decoderType != DecoderType.DMR && decoderType != DecoderType.NXDN &&
             event.getProtocol() != Protocol.DMR && event.getProtocol() != Protocol.NXDN;
 
+        ReceiverActivityRecords.Action typedAction = switch(eventType)
+        {
+            case STUN, STUN_RESPONSE -> ReceiverActivityRecords.Action.STUN;
+            case REVIVE, REVIVE_RESPONSE -> ReceiverActivityRecords.Action.REVIVE;
+            case KILL, KILL_RESPONSE -> ReceiverActivityRecords.Action.KILL;
+            case RADIO_INHIBIT -> ReceiverActivityRecords.Action.RADIO_INHIBIT;
+            case RADIO_UNINHIBIT -> ReceiverActivityRecords.Action.RADIO_UNINHIBIT;
+            case REMOTE_MONITOR, REMOTE_MONITOR_RESPONSE -> ReceiverActivityRecords.Action.REMOTE_MONITOR;
+            case AUTHENTICATE -> ReceiverActivityRecords.Action.AUTHENTICATE;
+            case CANCEL_CALL -> ReceiverActivityRecords.Action.CANCEL_CALL;
+            case RADIO_DETACH -> ReceiverActivityRecords.Action.RADIO_DETACH;
+            case PROTECT -> ReceiverActivityRecords.Action.PROTECT;
+            case VOTE_NOW -> ReceiverActivityRecords.Action.VOTE_NOW;
+            case BUSY -> ReceiverActivityRecords.Action.BUSY;
+            case QUEUED -> ReceiverActivityRecords.Action.QUEUED;
+            case RADIO_DETACH_ACK -> ReceiverActivityRecords.Action.ACKNOWLEDGE;
+            case null, default -> null;
+        };
+        if(typedAction != null)
+        {
+            return typedAction;
+        }
+
         if(protocolSignaling && eventType == DecodeEventType.COMMAND && "REGISTER".equals(details.strip()))
         {
             return ReceiverActivityRecords.Action.REGISTER;
@@ -1548,7 +1571,10 @@ class ReceiverActivityMapper
             case ACKNOWLEDGE, AFFILIATE, AUTOMATIC_REGISTRATION_SERVICE, CALL_ALERT, COMMAND, DATA_CALL,
                  DATA_CALL_ENCRYPTED, DATA_PACKET, DENIAL, DEREGISTER, EMERGENCY, GPS, LRRP, PAGE, QUERY, RADIO_CHECK,
                  RADIO_REGISTRATION_SERVICE, REGISTER, REGISTER_ESN, REQUEST, RESPONSE, SDM, SMS, STATUS,
-                 TEXT_MESSAGE, XCMP -> true;
+                 TEXT_MESSAGE, XCMP, STUN, REVIVE, KILL, RADIO_INHIBIT, RADIO_UNINHIBIT,
+                 RADIO_INHIBIT_ACK, RADIO_UNINHIBIT_ACK, REMOTE_MONITOR, AUTHENTICATE, CANCEL_CALL,
+                 RADIO_DETACH, RADIO_DETACH_ACK, PROTECT, VOTE_NOW, BUSY, QUEUED, STUN_RESPONSE,
+                 REVIVE_RESPONSE, KILL_RESPONSE, REMOTE_MONITOR_RESPONSE -> true;
             default -> false;
         };
     }

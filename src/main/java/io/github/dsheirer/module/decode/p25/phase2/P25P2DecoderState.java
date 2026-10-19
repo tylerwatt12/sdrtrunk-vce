@@ -847,7 +847,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_71_AUTHENTICATION_DEMAND:
                 if(mac instanceof AuthenticationDemand ad)
                 {
-                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.COMMAND,
+                    broadcast(message, mac, getCurrentChannel(), DecodeEventType.AUTHENTICATE,
                             "AUTHENTICATE - SEED:" + ad.getRandomSeed() + " CHALLENGE:" + ad.getChallenge());
                 }
                 break;
@@ -1624,7 +1624,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_4C_RADIO_UNIT_MONITOR_COMMAND_ABBREVIATED:
                 if(mac instanceof RadioUnitMonitorCommandAbbreviated rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                    broadcast(message, mac, DecodeEventType.REMOTE_MONITOR, RADIO_UNIT_MONITOR_LABEL +
                             (rum.isSilentMonitor() ? SILENT_LABEL : "") + TIME_LABEL + rum.getTransmitTime() +
                             " MULTIPLIER:" + rum.getTransmitMultiplier());
                 }
@@ -1635,14 +1635,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_5E_RADIO_UNIT_MONITOR_ENHANCED_COMMAND_ABBREVIATED:
                 if(mac instanceof RadioUnitMonitorEnhancedCommandAbbreviated rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                    broadcast(message, mac, DecodeEventType.REMOTE_MONITOR, RADIO_UNIT_MONITOR_LABEL +
                             (rum.isSilentMode() ? SILENT_LABEL : "") + TIME_LABEL + rum.getTransmitTime());
                 }
                 break;
             case PHASE1_CC_RADIO_UNIT_MONITOR_COMMAND_EXTENDED_VCH:
                 if(mac instanceof RadioUnitMonitorCommandExtendedVCH rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                    broadcast(message, mac, DecodeEventType.REMOTE_MONITOR, RADIO_UNIT_MONITOR_LABEL +
                             (rum.isSilentMonitor() ? STEALTH_LABEL : "") + TIME_LABEL + rum.getTransmitTime() +
                             "MULTIPLIER:" + rum.getTransmitMultiplier());
                 }
@@ -1650,7 +1650,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_CD_RADIO_UNIT_MONITOR_COMMAND_EXTENDED_LCCH:
                 if(mac instanceof RadioUnitMonitorCommandExtendedLCCH rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                    broadcast(message, mac, DecodeEventType.REMOTE_MONITOR, RADIO_UNIT_MONITOR_LABEL +
                             (rum.isSilentMonitor() ? STEALTH_LABEL : "") + TIME_LABEL + rum.getTransmitTime() +
                             "MULTIPLIER:" + rum.getTransmitMultiplier());
                 }
@@ -1658,7 +1658,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_DE_RADIO_UNIT_MONITOR_ENHANCED_COMMAND_EXTENDED:
                 if(mac instanceof RadioUnitMonitorEnhancedCommandExtended rum)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, RADIO_UNIT_MONITOR_LABEL +
+                    broadcast(message, mac, DecodeEventType.REMOTE_MONITOR, RADIO_UNIT_MONITOR_LABEL +
                             (rum.isSilentMode() ? STEALTH_LABEL : "") + TIME_LABEL + rum.getTransmitTime());
                 }
                 break;

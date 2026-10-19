@@ -57,6 +57,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.call.DataCallResponse;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.RemoteControlRequest;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.RemoteControlRequestWithESN;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.RemoteControlResponse;
+import io.github.dsheirer.module.decode.nxdn.layer3.call.RemoteControlResponseWithESN;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.ShortDataCallRequestHeader;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.ShortDataCallResponse;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.StatusInquiryRequest;
@@ -86,6 +87,8 @@ import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationRespons
 import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationResponseTypeD;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasComplete;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.CauseMM;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.ControlCommand;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKeyEvent;
@@ -688,21 +691,24 @@ public class NXDNDecoderState extends DecoderState
             case CONTROL_OUT_32_MM_REGISTRATION_RESPONSE:
                 if(layer3 instanceof RegistrationResponse rr)
                 {
-                    broadcastEvent(rr.getIdentifiers(), rr.getTimestamp(), DecodeEventType.REGISTER, rr.getCause().toString());
+                    broadcastEvent(rr.getIdentifiers(), rr.getTimestamp(),
+                            registrationResponseType(rr.getCause(), DecodeEventType.REGISTER), rr.getCause().toString());
                 }
                 break;
             case TYPE_D_OUT_32_MM_REGISTRATION_RESPONSE:
                 if(layer3 instanceof RegistrationResponseTypeD rr)
                 {
-                    broadcastEvent(rr.getIdentifiers(), rr.getTimestamp(), DecodeEventType.REGISTER, rr.getCause().toString());
+                    broadcastEvent(rr.getIdentifiers(), rr.getTimestamp(),
+                            registrationResponseType(rr.getCause(), DecodeEventType.REGISTER), rr.getCause().toString());
                 }
                 break;
             case CONTROL_OUT_34_MM_REGISTRATION_CLEAR_RESPONSE:
             case TYPE_D_OUT_34_MM_REGISTRATION_CLEAR_RESPONSE:
                 if(layer3 instanceof RegistrationClearResponse rcr)
                 {
-                    broadcastEvent(rcr.getIdentifiers(), rcr.getTimestamp(), DecodeEventType.RESPONSE,
-                            "CLEAR REGISTRATION REQUEST - RESPONSE:" + rcr.getCause());
+                    broadcastEvent(rcr.getIdentifiers(), rcr.getTimestamp(),
+                            registrationResponseType(rcr.getCause(), DecodeEventType.DEREGISTER),
+                            "CLEAR REGISTRATION RESPONSE:" + rcr.getCause());
                 }
                 break;
             case CONTROL_OUT_35_MM_REGISTRATION_COMMAND:
@@ -715,21 +721,23 @@ public class NXDNDecoderState extends DecoderState
             case CONTROL_OUT_36_MM_GROUP_REGISTRATION_RESPONSE:
                 if(layer3 instanceof GroupRegistrationResponse grr)
                 {
-                    broadcastEvent(grr.getIdentifiers(), grr.getTimestamp(), DecodeEventType.RESPONSE,
-                            "GROUP REGISTRATION REQUEST - RESPONSE:" + grr.getCause());
+                    broadcastEvent(grr.getIdentifiers(), grr.getTimestamp(),
+                            registrationResponseType(grr.getCause(), DecodeEventType.AFFILIATE),
+                            "GROUP REGISTRATION RESPONSE:" + grr.getCause());
                 }
                 break;
             case TYPE_D_OUT_36_MM_GROUP_REGISTRATION_RESPONSE:
                 if(layer3 instanceof GroupRegistrationResponseTypeD grr)
                 {
-                    broadcastEvent(grr.getIdentifiers(), grr.getTimestamp(), DecodeEventType.RESPONSE,
-                            "GROUP REGISTRATION REQUEST - RESPONSE:" + grr.getCause());
+                    broadcastEvent(grr.getIdentifiers(), grr.getTimestamp(),
+                            registrationResponseType(grr.getCause(), DecodeEventType.AFFILIATE),
+                            "GROUP REGISTRATION RESPONSE:" + grr.getCause());
                 }
                 break;
             case TYPE_D_OUT_38_MM_AUTHENTICATION_PARAMETER_INFORMATION:
                 if(layer3 instanceof AuthenticationParameterInformation api)
                 {
-                    broadcastEvent(api.getIdentifiers(), api.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(api.getIdentifiers(), api.getTimestamp(), DecodeEventType.AUTHENTICATE,
                             "AUTHENTICATE: " + api.getAuthenticationParameter());
                 }
                 break;
@@ -737,7 +745,7 @@ public class NXDNDecoderState extends DecoderState
             case TYPE_D_OUT_40_MM_AUTHENTICATION_INQUIRY_REQUEST:
                 if(layer3 instanceof AuthenticationInquiryRequest air)
                 {
-                    broadcastEvent(air.getIdentifiers(), air.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(air.getIdentifiers(), air.getTimestamp(), DecodeEventType.AUTHENTICATE,
                             "AUTHENTICATE:" + air.getAuthenticationParameter());
                 }
                 break;
@@ -752,7 +760,7 @@ public class NXDNDecoderState extends DecoderState
             case TRAFFIC_OUT_42_MM_AUTHENTICATION_INQUIRY_REQUEST_MULTI_SYSTEM:
                 if(layer3 instanceof AuthenticationInquiryRequestMultiSystem air)
                 {
-                    broadcastEvent(air.getIdentifiers(), air.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(air.getIdentifiers(), air.getTimestamp(), DecodeEventType.AUTHENTICATE,
                             "AUTHENTICATE (MULTI-SYSTEM):" + air.getAuthenticationParameter());
                 }
                 break;
@@ -775,7 +783,7 @@ public class NXDNDecoderState extends DecoderState
             case TYPE_D_OUT_48_CC_STATUS_INQUIRY_REQUEST:
                 if(layer3 instanceof StatusInquiryRequest sir)
                 {
-                    broadcastEvent(sir.getIdentifiers(), sir.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(sir.getIdentifiers(), sir.getTimestamp(), DecodeEventType.QUERY,
                             "STATUS INQUIRY");
                 }
                 break;
@@ -784,7 +792,7 @@ public class NXDNDecoderState extends DecoderState
             case TYPE_D_OUT_49_CC_STATUS_INQUIRY_RESPONSE:
                 if(layer3 instanceof StatusInquiryResponse sir)
                 {
-                    broadcastEvent(sir.getIdentifiers(), sir.getTimestamp(), DecodeEventType.RESPONSE,
+                    broadcastEvent(sir.getIdentifiers(), sir.getTimestamp(), DecodeEventType.STATUS,
                             "STATUS INQUIRY:" + sir.getStatus() + ":" + sir.getStatusValue() + " CAUSE:" + sir.getCause());
                 }
                 break;
@@ -793,7 +801,7 @@ public class NXDNDecoderState extends DecoderState
             case TYPE_D_OUT_50_CC_STATUS_REQUEST:
                 if(layer3 instanceof StatusRequest sr)
                 {
-                    broadcastEvent(sr.getIdentifiers(), sr.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(sr.getIdentifiers(), sr.getTimestamp(), DecodeEventType.STATUS,
                             "STATUS REQUEST:" + sr.getStatus());
                 }
                 break;
@@ -802,33 +810,59 @@ public class NXDNDecoderState extends DecoderState
             case TYPE_D_OUT_51_CC_STATUS_RESPONSE:
                 if(layer3 instanceof StatusResponse sr)
                 {
-                    broadcastEvent(sr.getIdentifiers(), sr.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(sr.getIdentifiers(), sr.getTimestamp(), DecodeEventType.STATUS,
                             "STATUS RESPONSE:" + sr.getCause());
                 }
                 break;
+            case CONTROL_IN_52_CC_REMOTE_CONTROL_REQUEST:
             case CONTROL_OUT_52_CC_REMOTE_CONTROL_REQUEST:
+            case TRAFFIC_IN_52_CC_REMOTE_CONTROL_REQUEST:
             case TRAFFIC_OUT_52_CC_REMOTE_CONTROL_REQUEST:
+            case TYPE_D_IN_52_CC_REMOTE_CONTROL_REQUEST:
             case TYPE_D_OUT_52_CC_REMOTE_CONTROL_REQUEST:
                 if(layer3 instanceof RemoteControlRequest rcr)
                 {
-                    broadcastEvent(rcr.getIdentifiers(), rcr.getTimestamp(), DecodeEventType.REQUEST,
-                            "REMOTE CONTROL REQUEST - PARAMETERS:" + rcr.getControlParameters());
+                    broadcastEvent(rcr.getIdentifiers(), rcr.getTimestamp(),
+                            remoteControlEventType(rcr.getControlCommand(), false),
+                            "REMOTE CONTROL REQUEST: " +
+                                rcr.getControlParameters().interpret(rcr.getControlCommand()));
+                    if(messageType == NXDNMessageType.TRAFFIC_IN_52_CC_REMOTE_CONTROL_REQUEST)
+                    {
+                        state = State.DATA;
+                    }
                 }
                 break;
+            case CONTROL_IN_53_CC_REMOTE_CONTROL_RESPONSE:
             case CONTROL_OUT_53_CC_REMOTE_CONTROL_RESPONSE:
+            case TRAFFIC_IN_53_CC_REMOTE_CONTROL_RESPONSE:
             case TRAFFIC_OUT_53_CC_REMOTE_CONTROL_RESPONSE:
+            case TYPE_D_IN_53_CC_REMOTE_CONTROL_RESPONSE:
             case TYPE_D_OUT_53_CC_REMOTE_CONTROL_RESPONSE:
                 if(layer3 instanceof RemoteControlResponse rcr)
                 {
-                    broadcastEvent(rcr.getIdentifiers(), rcr.getTimestamp(), DecodeEventType.REQUEST,
-                            "REMOTE CONTROL " + rcr.getControlCommand() + " " + rcr.getCause());
+                    broadcastEvent(rcr.getIdentifiers(), rcr.getTimestamp(),
+                            remoteControlEventType(rcr.getControlCommand(), true),
+                            "REMOTE CONTROL RESPONSE: " + rcr.getControlCommand() + " " + rcr.getCause());
+                    if(messageType == NXDNMessageType.TRAFFIC_IN_53_CC_REMOTE_CONTROL_RESPONSE)
+                    {
+                        state = State.DATA;
+                    }
                 }
                 break;
             case CONTROL_OUT_54_CC_REMOTE_CONTROL_REQUEST_WITH_ESN:
                 if(layer3 instanceof RemoteControlRequestWithESN rcrwe)
                 {
-                    broadcastEvent(rcrwe.getIdentifiers(), rcrwe.getTimestamp(), DecodeEventType.REQUEST,
-                            "REMOTE CONTROL REQUEST WITH ESN - PARAMETERS:" + rcrwe.getAuthenticationParameter());
+                    broadcastEvent(rcrwe.getIdentifiers(), rcrwe.getTimestamp(),
+                            remoteControlEventType(rcrwe.getControlCommand(), false),
+                            "REMOTE CONTROL REQUEST WITH ESN: " + rcrwe.getControlCommand());
+                }
+                break;
+            case CONTROL_IN_55_CC_REMOTE_CONTROL_RESPONSE_WITH_ESN:
+                if(layer3 instanceof RemoteControlResponseWithESN response)
+                {
+                    broadcastEvent(response.getIdentifiers(), response.getTimestamp(),
+                        remoteControlEventType(response.getControlCommand(), true),
+                        "REMOTE CONTROL RESPONSE WITH ESN: " + response.getControlCommand() + " " + response.getCause());
                 }
                 break;
             case CONTROL_OUT_56_CC_SHORT_DATA_CALL_REQUEST_HEADER:
@@ -980,8 +1014,6 @@ public class NXDNDecoderState extends DecoderState
             case TRAFFIC_IN_49_CC_STATUS_INQUIRY_RESPONSE:
             case TRAFFIC_IN_50_CC_STATUS_REQUEST:
             case TRAFFIC_IN_51_CC_STATUS_RESPONSE:
-            case TRAFFIC_IN_52_CC_REMOTE_CONTROL_REQUEST:
-            case TRAFFIC_IN_53_CC_REMOTE_CONTROL_RESPONSE:
             case TRAFFIC_IN_56_CC_SHORT_DATA_CALL_REQUEST_HEADER:
             case TRAFFIC_IN_57_CC_SHORT_DATA_CALL_BLOCK:
                 state = State.DATA;
@@ -1001,6 +1033,32 @@ public class NXDNDecoderState extends DecoderState
         }
 
         broadcast(new DecoderStateEvent(this, event, state));
+    }
+
+    /** Keeps a received control response distinct without assuming that the command succeeded. */
+    private static DecodeEventType remoteControlEventType(ControlCommand command, boolean response)
+    {
+        return switch(command)
+        {
+            case STUN -> response ? DecodeEventType.STUN_RESPONSE : DecodeEventType.STUN;
+            case REVIVAL -> response ? DecodeEventType.REVIVE_RESPONSE : DecodeEventType.REVIVE;
+            case KILL -> response ? DecodeEventType.KILL_RESPONSE : DecodeEventType.KILL;
+            case REMOTE_MONITOR -> response ? DecodeEventType.REMOTE_MONITOR_RESPONSE : DecodeEventType.REMOTE_MONITOR;
+            case RESERVED -> response ? DecodeEventType.RESPONSE : DecodeEventType.REQUEST;
+        };
+    }
+
+    private static DecodeEventType registrationResponseType(CauseMM cause, DecodeEventType accepted)
+    {
+        return switch(cause)
+        {
+            case REGISTRATION_ACCEPTED, REGISTRATION_ACCEPTED_VALID_ESN -> accepted;
+            case LOCATION_ACCEPTED_GROUP_FAILED, LOCATION_ACCEPTED_GROUP_REFUSED,
+                 LOCATION_ACCEPTED_GROUP_FAILED_VALID_ESN, LOCATION_ACCEPTED_GROUP_REFUSED_VALID_ESN ->
+                accepted == DecodeEventType.REGISTER ? DecodeEventType.REGISTER : DecodeEventType.DENIAL;
+            case REGISTRATION_FAILED, REGISTRATION_REFUSED, REGISTRATION_REFUSED_VALID_ESN -> DecodeEventType.DENIAL;
+            default -> DecodeEventType.RESPONSE;
+        };
     }
 
     private void updateNativeRadioSystemKey()

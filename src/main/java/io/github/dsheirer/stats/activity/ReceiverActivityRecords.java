@@ -70,7 +70,18 @@ final class ReceiverActivityRecords
         REQUEST(21),
         STATUS(22),
         UNKNOWN(23),
-        TONE(24);
+        TONE(24),
+        STUN(25),
+        REVIVE(26),
+        KILL(27),
+        RADIO_INHIBIT(28),
+        RADIO_UNINHIBIT(29),
+        REMOTE_MONITOR(30),
+        AUTHENTICATE(31),
+        CANCEL_CALL(32),
+        RADIO_DETACH(33),
+        PROTECT(34),
+        VOTE_NOW(35);
 
         private final int mCode;
 

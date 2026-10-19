@@ -1606,7 +1606,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     }
                     break;
                 case OSP_RADIO_UNIT_MONITOR_COMMAND:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.COMMAND,
+                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REMOTE_MONITOR,
                             "RADIO UNIT MONITOR");
                     break;
                 case OSP_CALL_ALERT:
@@ -1642,7 +1642,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             UNIT_REGISTRATION_LABEL);
                     break;
                 case OSP_AUTHENTICATION_COMMAND:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.COMMAND,
+                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.AUTHENTICATE,
                             "AUTHENTICATE");
                     break;
                 case OSP_UNIT_DEREGISTRATION_ACKNOWLEDGE:
@@ -1756,7 +1756,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     }
                     break;
                 case ISP_RADIO_UNIT_MONITOR_REQUEST:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REMOTE_MONITOR,
                             "RADIO UNIT MONITOR");
                     break;
                 case ISP_CALL_ALERT_REQUEST:
@@ -1773,7 +1773,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case ISP_CANCEL_SERVICE_REQUEST:
                     if(tsbk instanceof CancelServiceRequest csr)
                     {
-                        broadcastEvent(tsbk, DecodeEventType.REQUEST, "CANCEL SERVICE:" + csr.getServiceType() +
+                        broadcastEvent(tsbk, DecodeEventType.CANCEL_CALL, "CANCEL SERVICE:" + csr.getServiceType() +
                             " REASON:" + csr.getCancelReason() + (csr.hasAdditionalInformation() ? " INFO:" +
                                 csr.getAdditionalInformation() : ""));
                     }
@@ -2443,7 +2443,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 }
                 break;
             case UNIT_AUTHENTICATION_COMMAND:
-                broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.COMMAND, "Authenticate Unit");
+                broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.AUTHENTICATE, "Authenticate Unit");
                 break;
             case UNIT_REGISTRATION_COMMAND:
                 broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.COMMAND, "Unit Registration");

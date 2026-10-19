@@ -17,6 +17,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -34,27 +35,15 @@ final class AliasActivityProjection
 {
     private static final int TALKGROUP = 1;
     private static final int RADIO = 2;
-    private static final Set<ReceiverActivityRecords.Action> SIGNALING_ACTIONS = Set.of(
-        ReceiverActivityRecords.Action.ACKNOWLEDGE, ReceiverActivityRecords.Action.ACTIVE,
-        ReceiverActivityRecords.Action.BUSY, ReceiverActivityRecords.Action.CHECK,
-        ReceiverActivityRecords.Action.CHECK_ACK, ReceiverActivityRecords.Action.DATA,
+    private static final Set<ReceiverActivityRecords.Action> SIGNALING_ACTIONS = EnumSet.complementOf(EnumSet.of(
+        ReceiverActivityRecords.Action.CALL, ReceiverActivityRecords.Action.CONTINUE,
+        ReceiverActivityRecords.Action.UNKNOWN, ReceiverActivityRecords.Action.TONE));
+    private static final Set<ReceiverActivityRecords.Action> OTHER_SIGNALING_ACTIONS = EnumSet.complementOf(EnumSet.of(
+        ReceiverActivityRecords.Action.CALL, ReceiverActivityRecords.Action.DATA,
         ReceiverActivityRecords.Action.DENIAL, ReceiverActivityRecords.Action.EMERGENCY,
-        ReceiverActivityRecords.Action.GPS, ReceiverActivityRecords.Action.GRANT,
-        ReceiverActivityRecords.Action.JOIN, ReceiverActivityRecords.Action.LOGOUT,
-        ReceiverActivityRecords.Action.PAGE, ReceiverActivityRecords.Action.PATCH,
-        ReceiverActivityRecords.Action.PATCH_CANCEL, ReceiverActivityRecords.Action.PATCH_CREATE,
-        ReceiverActivityRecords.Action.QUEUED, ReceiverActivityRecords.Action.REGISTER,
-        ReceiverActivityRecords.Action.REQUEST, ReceiverActivityRecords.Action.STATUS);
-    private static final Set<ReceiverActivityRecords.Action> OTHER_SIGNALING_ACTIONS = Set.of(
-        ReceiverActivityRecords.Action.ACKNOWLEDGE, ReceiverActivityRecords.Action.ACTIVE,
-        ReceiverActivityRecords.Action.BUSY, ReceiverActivityRecords.Action.CHECK,
-        ReceiverActivityRecords.Action.CHECK_ACK,
-        ReceiverActivityRecords.Action.GPS, ReceiverActivityRecords.Action.PAGE,
-        ReceiverActivityRecords.Action.PATCH, ReceiverActivityRecords.Action.PATCH_CANCEL,
-        ReceiverActivityRecords.Action.PATCH_CREATE, ReceiverActivityRecords.Action.QUEUED,
-        ReceiverActivityRecords.Action.REQUEST, ReceiverActivityRecords.Action.STATUS,
-        ReceiverActivityRecords.Action.CONTINUE,
-        ReceiverActivityRecords.Action.UNKNOWN);
+        ReceiverActivityRecords.Action.GRANT, ReceiverActivityRecords.Action.JOIN,
+        ReceiverActivityRecords.Action.LOGOUT, ReceiverActivityRecords.Action.REGISTER,
+        ReceiverActivityRecords.Action.TONE));
     private static final Map<Connection,CanonicalSchemaSupport> CANONICAL_SCHEMA_SUPPORT =
         Collections.synchronizedMap(new WeakHashMap<>());
 

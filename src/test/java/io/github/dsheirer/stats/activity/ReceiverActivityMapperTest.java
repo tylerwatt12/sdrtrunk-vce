@@ -516,14 +516,46 @@ class ReceiverActivityMapperTest
     }
 
     @Test
-    void mapsRadioInhibitAcknowledgementsWithoutAddingPersistedActions()
+    void keepsRadioInhibitCommandsSeparateFromAcknowledgements()
     {
-        assertEquals(ReceiverActivityRecords.Action.UNKNOWN, mapP25Event(DecodeEventType.RADIO_UNINHIBIT).action());
-        assertEquals(ReceiverActivityRecords.Action.UNKNOWN, mapP25Event(DecodeEventType.RADIO_INHIBIT).action());
+        assertEquals(ReceiverActivityRecords.Action.RADIO_UNINHIBIT, mapP25Event(DecodeEventType.RADIO_UNINHIBIT).action());
+        assertEquals(ReceiverActivityRecords.Action.RADIO_INHIBIT, mapP25Event(DecodeEventType.RADIO_INHIBIT).action());
         assertEquals(ReceiverActivityRecords.Action.ACKNOWLEDGE,
             mapP25Event(DecodeEventType.RADIO_UNINHIBIT_ACK).action());
         assertEquals(ReceiverActivityRecords.Action.ACKNOWLEDGE,
             mapP25Event(DecodeEventType.RADIO_INHIBIT_ACK).action());
+    }
+
+    @Test
+    void typedCommandsSurviveCollectionAndKeepResponsesIndependentForRepeatSuppression()
+    {
+        for(var config: List.of(new io.github.dsheirer.module.decode.dmr.DecodeConfigDMR(),
+            new io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN()))
+        {
+            Channel channel = new Channel("Typed signaling", Channel.ChannelType.STANDARD);
+            channel.setConfigurationId(CONFIGURATION_ID);
+            channel.setDecodeConfiguration(config);
+            ReceiverActivityMapper mapper = new ReceiverActivityMapper();
+            java.util.Set<String> keys = new java.util.HashSet<>();
+            for(DecodeEventType type: List.of(DecodeEventType.STUN, DecodeEventType.REVIVE, DecodeEventType.KILL,
+                DecodeEventType.REMOTE_MONITOR, DecodeEventType.AUTHENTICATE, DecodeEventType.CANCEL_CALL,
+                DecodeEventType.RADIO_DETACH, DecodeEventType.PROTECT, DecodeEventType.VOTE_NOW,
+                DecodeEventType.BUSY, DecodeEventType.QUEUED, DecodeEventType.STUN_RESPONSE,
+                DecodeEventType.REVIVE_RESPONSE, DecodeEventType.KILL_RESPONSE, DecodeEventType.REMOTE_MONITOR_RESPONSE))
+            {
+                DecodeEvent event = new DecodeEvent(type, 1_000L);
+                event.setProtocol(config.getDecoderType().getProtocol());
+                //Known typed operations do not depend on display wording or accidentally become a denial.
+                event.setDetails("DENIED UNKNOWN COMMAND");
+                var record = mapper.map(channel, event);
+                assertNotNull(record, type.name());
+                assertEquals(type.name(), record.eventType());
+                String expectedAction = type.name().replace("_RESPONSE", "");
+                assertEquals(expectedAction, record.action().name());
+                assertEquals(record.dedupeKey(), mapper.map(channel, event).dedupeKey());
+                assertTrue(keys.add(record.dedupeKey()), type + " must not suppress another operation or its response");
+            }
+        }
     }
 
     @Test

@@ -4,7 +4,7 @@ package io.github.dsheirer.database.upgrade;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
-/** Current populated fixture preserves historical rows with unknown call lengths. */
+/** Frozen populated format-59 fixture preserves historical rows with unknown call lengths. */
 public final class Format59TestDatabase
 {
     private Format59TestDatabase() {}
@@ -17,7 +17,8 @@ public final class Format59TestDatabase
             new Format58To59DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 59);
             connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 59)
+                throw new IllegalStateException("Format-59 fixture was not preserved");
         }
         return database;
     }

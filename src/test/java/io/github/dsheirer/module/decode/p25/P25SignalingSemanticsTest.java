@@ -65,9 +65,9 @@ class P25SignalingSemanticsTest
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_UNINHIBIT_ACK, DecodeEventType.RESPONSE));
         assertEquals(DecodeEventType.RADIO_INHIBIT_ACK,
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_INHIBIT_ACK, DecodeEventType.RESPONSE));
-        assertEquals(DecodeEventType.COMMAND,
+        assertEquals(DecodeEventType.RADIO_DETACH,
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_DETACH, DecodeEventType.COMMAND));
-        assertEquals(DecodeEventType.RESPONSE,
+        assertEquals(DecodeEventType.RADIO_DETACH_ACK,
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_DETACH_ACK, DecodeEventType.RESPONSE));
         assertEquals(DecodeEventType.COMMAND,
             P25SignalingSemantics.eventType(null, DecodeEventType.COMMAND));

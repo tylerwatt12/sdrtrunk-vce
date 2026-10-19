@@ -93,6 +93,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.packet.UDTShortMessageS
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
 import io.github.dsheirer.module.decode.dmr.message.type.ServiceOptions;
 import io.github.dsheirer.module.decode.dmr.message.type.Reason;
+import io.github.dsheirer.module.decode.dmr.message.type.Tier3Gateway;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
@@ -1158,19 +1159,25 @@ public class DMRDecoderState extends TimeslotDecoderState
                         case AUTHENTICATE_REGISTER_RADIO_CHECK_SERVICE:
                             if(csbk instanceof AuthenticateRegisterRadioCheck command)
                             {
-                                DecodeEventType type = "RADIO CHECK".equals(command.getCommand()) ?
-                                    DecodeEventType.RADIO_CHECK : DecodeEventType.COMMAND;
+                                DecodeEventType type = command.isAuthenticateCommand() ?
+                                    DecodeEventType.AUTHENTICATE : DecodeEventType.RADIO_CHECK;
                                 broadcast(getDecodeEvent(csbk, type, command.getCommand()));
                             }
                             break;
                         case CANCEL_CALL_SERVICE:
-                            broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND, "CANCEL CALL"));
+                            broadcast(getDecodeEvent(csbk, DecodeEventType.CANCEL_CALL, "CANCEL CALL"));
                             break;
                         case SUPPLEMENTARY_SERVICE:
                             if(csbk instanceof StunReviveKill stunrevivekill)
                             {
-                                broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND,
-                                        stunrevivekill.getCommand() + " RADIO"));
+                                DecodeEventType type = switch(stunrevivekill.getGateway())
+                                {
+                                    case KILLI -> DecodeEventType.KILL;
+                                    case STUNI -> stunrevivekill.isStunCommand() ? DecodeEventType.STUN :
+                                        DecodeEventType.REVIVE;
+                                    default -> DecodeEventType.COMMAND;
+                                };
+                                broadcast(getDecodeEvent(csbk, type, stunrevivekill.getCommand() + " RADIO"));
                             }
                             break;
                         case FULL_DUPLEX_MS_TO_MS_PACKET_CALL_SERVICE, FULL_DUPLEX_MS_TO_MS_VOICE_CALL_SERVICE,
@@ -1209,7 +1216,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         case VOTE_NOW_ADVICE:
                             if(csbk instanceof VoteNowAdvice votenowadvice)
                             {
-                                broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND,
+                                broadcast(getDecodeEvent(csbk, DecodeEventType.VOTE_NOW,
                                         "VOTE NOW FOR " + votenowadvice.getVotedSystemIdentityCode()));
                             }
                             break;
@@ -1230,7 +1237,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case STANDARD_PROTECT:
                 if(csbk instanceof Protect protect)
                 {
-                    broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND,
+                    broadcast(getDecodeEvent(csbk, DecodeEventType.PROTECT,
                             "PROTECT: " + protect.getProtectKind()));
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL, getTimeslot()));
@@ -1579,10 +1586,18 @@ public class DMRDecoderState extends TimeslotDecoderState
         return mOperationalMode.get().hasAllocationAuthority();
     }
 
-    private DecodeEvent getDecodeEvent(CSBKMessage csbk, DecodeEventType decodeEventType, String details) {
+    private DecodeEvent getDecodeEvent(CSBKMessage csbk, DecodeEventType decodeEventType, String details)
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection(csbk.getIdentifiers());
+        Identifier source = identifiers.getFromIdentifier();
+        if(source instanceof RadioIdentifier radio && Tier3Gateway.isGateway(radio.getValue()))
+        {
+            //The command gateway identifies a service, not an originating subscriber radio.
+            identifiers.remove(Role.FROM);
+        }
         return DMRDecodeEvent.builder(decodeEventType, csbk.getTimestamp())
                 .channel(getCurrentChannel())
-                .identifiers(new IdentifierCollection(csbk.getIdentifiers()))
+                .identifiers(identifiers)
                 .timeslot(getTimeslot())
                 .details(details)
                 .build();
@@ -1594,7 +1609,19 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             case TS_REGISTRATION_ACCEPTED, TS_SUBSCRIPTION_SERVICE_REGISTRATION_ACCEPTED ->
                 DecodeEventType.REGISTER;
-            case TS_REGISTRATION_REFUSED, TS_REGISTRATION_DENIED -> DecodeEventType.DENIAL;
+            case MS_REFUSED_EQUIPMENT_BUSY, TS_CALLED_PARTY_BUSY -> DecodeEventType.BUSY;
+            case TS_QUEUED_FOR_RESOURCE, TS_QUEUED_FOR_BUSY_RADIO, TS_WAIT -> DecodeEventType.QUEUED;
+            case MS_SERVICE_NOT_SUPPORTED, MS_LINE_NOT_SUPPORTED, MS_REFUSED_STACK_FULL,
+                 MS_REFUSED_BY_RECIPIENT, MS_REFUSED_CUSTOM, MS_DUPLEX_NOT_SUPPORTED, MS_REFUSED_REASON_UNKNOWN,
+                 TS_SERVICE_NOT_SUPPORTED, TS_REFUSED_NOT_PERMITTED, TS_REFUSED_SERVICE_TEMP_UNAVAILABLE,
+                 TS_REFUSED_SERVICE_UNAVAILABLE, TS_REFUSED_CALLED_RADIO_NOT_REGISTERED,
+                 TS_REFUSED_CALLED_RADIO_OFFLINE, TS_REFUSED_CALLED_RADIO_CALL_DIVERT, TS_REFUSED_NETWORK_CONGESTION,
+                 TS_REFUSED_NETWORK_NOT_READY, TS_REFUSED_CANNOT_CANCEL_CALL, TS_REGISTRATION_REFUSED,
+                 TS_REGISTRATION_DENIED, TS_IP_CONNECTION_FAILED, TS_REFUSED_RADIO_NOT_REGISTERED,
+                 TS_CALLED_TALKGROUP_NOT_ALLOWED, TS_CRC_ERROR_IN_UDT_UPLOAD,
+                 TS_REFUSED_DUPLEX_CALL_NETWORK_CONGESTION, TS_REFUSED_REASON_UNKNOWN -> DecodeEventType.DENIAL;
+            case MS_MESSAGE_ACCEPTED, TS_MESSAGE_ACCEPTED, MS_ACCEPTED_FOR_POLLING_STATUS_SERVICE,
+                 TS_ACCEPTED_FOR_STATUS_POLLING_SERVICE -> DecodeEventType.ACKNOWLEDGE;
             default -> DecodeEventType.RESPONSE;
         };
     }

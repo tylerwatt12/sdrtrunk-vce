@@ -91,7 +91,23 @@ public enum DecodeEventType
     RADIO_INHIBIT("Radio Inhibit"),
     RADIO_UNINHIBIT_ACK("Radio Uninhibit Acknowledge"),
     RADIO_INHIBIT_ACK("Radio Inhibit Acknowledge"),
-    TONE("Tone");
+    TONE("Tone"),
+    STUN("Stun"),
+    REVIVE("Revive"),
+    KILL("Kill"),
+    REMOTE_MONITOR("Remote Monitor"),
+    AUTHENTICATE("Authenticate"),
+    CANCEL_CALL("Cancel Call"),
+    RADIO_DETACH("Radio Detach"),
+    PROTECT("Protect"),
+    VOTE_NOW("Vote Now"),
+    BUSY("Busy"),
+    QUEUED("Queued"),
+    RADIO_DETACH_ACK("Radio Detach Acknowledge"),
+    STUN_RESPONSE("Stun Response"),
+    REVIVE_RESPONSE("Revive Response"),
+    KILL_RESPONSE("Kill Response"),
+    REMOTE_MONITOR_RESPONSE("Remote Monitor Response");
 
     private final String mLabel;
 
@@ -119,7 +135,12 @@ public enum DecodeEventType
             DecodeEventType.RADIO_CHECK, DecodeEventType.STATUS, DecodeEventType.COMMAND, DecodeEventType.EMERGENCY,
             DecodeEventType.NOTIFICATION, DecodeEventType.FUNCTION, DecodeEventType.DYNAMIC_REGROUP,
             DecodeEventType.RADIO_UNINHIBIT, DecodeEventType.RADIO_INHIBIT, DecodeEventType.RADIO_UNINHIBIT_ACK,
-            DecodeEventType.RADIO_INHIBIT_ACK));
+            DecodeEventType.RADIO_INHIBIT_ACK, DecodeEventType.STUN, DecodeEventType.REVIVE,
+            DecodeEventType.KILL, DecodeEventType.REMOTE_MONITOR, DecodeEventType.AUTHENTICATE,
+            DecodeEventType.CANCEL_CALL, DecodeEventType.RADIO_DETACH, DecodeEventType.PROTECT,
+            DecodeEventType.VOTE_NOW, DecodeEventType.BUSY, DecodeEventType.QUEUED,
+            DecodeEventType.RADIO_DETACH_ACK, DecodeEventType.STUN_RESPONSE, DecodeEventType.REVIVE_RESPONSE,
+            DecodeEventType.KILL_RESPONSE, DecodeEventType.REMOTE_MONITOR_RESPONSE));
 
     /**
      * Data call event types for filtering

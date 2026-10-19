@@ -28,6 +28,7 @@ import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
+import io.github.dsheirer.stats.activity.ActivityMessageCatalog;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
@@ -60,7 +61,7 @@ class StatsWebDatabase
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebDatabase.class);
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
-    private static final int MAX_ACTIVITY_ACTION_FILTERS = 23;
+    private static final int MAX_ACTIVITY_ACTION_FILTERS = ReceiverActivityFilterCatalog.actions().size();
     private static final int MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS = 1_000;
 
     /** Optional names are projected on the HTTP/request worker, never on decoder or audio ingress callbacks. */
@@ -320,34 +321,6 @@ class StatsWebDatabase
         LIMIT ?
         """.formatted(StatsSystemNameResolver.displayNameSql("system"),
             IDENTITY_KEY_SQL.formatted("summary"));
-    private static final List<ActivityAction> DASHBOARD_ACTIVITY_ACTIONS = List.of(
-        new ActivityAction("ACKNOWLEDGE", 1, "acknowledge_count"),
-        new ActivityAction("ACTIVE", 2, "active_count"),
-        new ActivityAction("BUSY", 3, "busy_count"),
-        new ActivityAction("CHECK", 5, "check_count"),
-        new ActivityAction("CHECK_ACK", 6, "check_ack_count"),
-        new ActivityAction("DATA", 8, "data_count"),
-        new ActivityAction("DENIAL", 9, "denial_count"),
-        new ActivityAction("EMERGENCY", 10, "emergency_count"),
-        new ActivityAction("GPS", 11, "gps_count"),
-        new ActivityAction("GRANT", 12, "grant_count"),
-        new ActivityAction("JOIN", 13, "join_count"),
-        new ActivityAction("LOGOUT", 14, "logout_count"),
-        new ActivityAction("PAGE", 15, "page_count"),
-        new ActivityAction("PATCH", 16, "patch_count"),
-        new ActivityAction("PATCH_CANCEL", 17, "patch_cancel_count"),
-        new ActivityAction("PATCH_CREATE", 18, "patch_create_count"),
-        new ActivityAction("QUEUED", 19, "queued_count"),
-        new ActivityAction("REGISTER", 20, "register_count"),
-        new ActivityAction("REQUEST", 21, "request_count"),
-        new ActivityAction("STATUS", 22, "status_count"),
-        new ActivityAction("UNKNOWN", 23, "unknown_count")
-    );
-    private static final Map<String,ActivityAction> DASHBOARD_ACTIVITY_ACTION_BY_NAME = activityActionMap();
-    private static final String TRUNKED_ACTIVITY_ACTION_SQL = activityActionAggregateSql(
-        "trunked_signaling_activity_bucket", "idx_trunked_signaling_activity_time");
-    private static final String CONVENTIONAL_ACTIVITY_ACTION_SQL = activityActionAggregateSql(
-        "conventional_activity_bucket", "idx_conventional_bucket_dashboard_time");
     private static final String P25_CHANNEL_RADIO_ALIAS_IDENTIFIER_SQL =
         "CASE WHEN grouped.p25_subscriber_identity_id IS NULL THEN coalesce(grouped.observed_local_id, grouped.native_id) " +
             "WHEN grouped.observed_working_id IS NOT NULL THEN grouped.observed_working_id " +
@@ -457,23 +430,13 @@ class StatsWebDatabase
         new CallActivityGroup(10, "NBFM", "CONVENTIONAL", true),
         new CallActivityGroup(11, "AM", "CONVENTIONAL", true)
     );
-    private static final List<String> TALKGROUP_ACTIVITY_FIELDS = List.of(
-        "acknowledge_observation_count", "active_observation_count", "busy_observation_count",
-        "check_observation_count", "check_ack_observation_count", "continue_observation_count",
-        "data_observation_count", "denial_observation_count", "emergency_observation_count",
-        "gps_observation_count", "join_observation_count", "logout_observation_count",
-        "page_observation_count", "patch_observation_count", "patch_cancel_observation_count",
-        "patch_create_observation_count", "queued_observation_count", "register_observation_count",
-        "request_observation_count", "status_observation_count", "unknown_observation_count",
-        "grant_observation_count", "logical_call_count", "encrypted_logical_call_count",
-        "recorded_logical_call_count", "stream_submitted_logical_call_count"
-    );
-    private static final List<String> GROUP_IDENTITY_SIGNALING_FIELDS = List.of(
-        "grant_count", "join_count", "register_count", "active_count", "continue_count", "denial_count",
-        "emergency_count", "request_count", "busy_count", "queued_count", "acknowledge_count",
-        "check_count", "check_ack_count", "page_count", "status_count", "gps_count", "logout_count",
-        "patch_count", "patch_create_count", "patch_cancel_count", "data_count", "unknown_count"
-    );
+    private static final List<String> GROUP_IDENTITY_SIGNALING_FIELDS = ReceiverActivityFilterCatalog.actions()
+        .entrySet().stream().filter(entry -> !Set.of("CALL", "TONE").contains(entry.getKey()))
+        .sorted(Map.Entry.comparingByValue())
+        .map(entry -> entry.getKey().toLowerCase(Locale.ROOT) + "_count").toList();
+    private static final List<String> TALKGROUP_ACTIVITY_FIELDS = java.util.stream.Stream.concat(
+        GROUP_IDENTITY_SIGNALING_FIELDS.stream().map(StatsWebDatabase::observationCountField),
+        CALL_ACTIVITY_FIELDS.stream()).toList();
     private static final List<String> IDENTITY_EVIDENCE_FIELDS = GROUP_IDENTITY_SIGNALING_FIELDS.stream()
         .filter(field -> !"continue_count".equals(field) && !"unknown_count".equals(field))
         .toList();
@@ -4920,6 +4883,11 @@ class StatsWebDatabase
         return count;
     }
 
+    List<Map<String,Object>> activityMessageTypes()
+    {
+        return readSnapshot(ActivityMessageCatalog::read);
+    }
+
     Map<String,Object> dashboardActivityActions(StatsRequest request)
     {
         DashboardActivityWindow window = dashboardActivityWindow(request);
@@ -4939,19 +4907,14 @@ class StatsWebDatabase
     Map<String,Object> dashboardActivityRadios(StatsRequest request)
     {
         String requestedAction = request.requiredText("action");
-        ActivityAction action = DASHBOARD_ACTIVITY_ACTION_BY_NAME.get(
-            requestedAction.toUpperCase(java.util.Locale.ROOT));
-
-        if(action == null)
-        {
-            throw new StatsApiException(400, "invalid_parameter", "action is not supported", "action");
-        }
-
         DashboardActivityWindow window = dashboardActivityWindow(request);
         int limit = request.limit();
         long offset = request.longOffset();
 
         return readSnapshot(connection -> {
+            ActivityAction action = dashboardActivityDefinitions(connection).stream()
+                .filter(candidate -> candidate.name().equalsIgnoreCase(requestedAction)).findFirst().orElseThrow(
+                    () -> new StatsApiException(400, "invalid_parameter", "action is not supported", "action"));
             long actionObservationCount = activityActionTotal(connection, action, window.fromMilliseconds(),
                 window.untilMilliseconds());
             List<Map<String,Object>> queryRows = dashboardActivityRadioRows(connection, action,
@@ -5001,16 +4964,19 @@ class StatsWebDatabase
     private static Map<String,Object> activityActionSummary(Connection connection, long fromMilliseconds,
                                                              long untilMilliseconds) throws SQLException
     {
-        List<Map<String,Object>> trunked = queryRows(connection, TRUNKED_ACTIVITY_ACTION_SQL,
+        List<ActivityAction> actions = dashboardActivityDefinitions(connection);
+        List<Map<String,Object>> trunked = queryRows(connection, activityActionAggregateSql(actions,
+            "trunked_signaling_activity_bucket", "idx_trunked_signaling_activity_time"),
             fromMilliseconds, untilMilliseconds);
-        List<Map<String,Object>> conventional = queryRows(connection, CONVENTIONAL_ACTIVITY_ACTION_SQL,
+        List<Map<String,Object>> conventional = queryRows(connection, activityActionAggregateSql(actions,
+            "conventional_activity_bucket", "idx_conventional_bucket_dashboard_time"),
             fromMilliseconds, untilMilliseconds);
         Map<String,Object> trunkedCounts = trunked.isEmpty() ? Map.of() : trunked.getFirst();
         Map<String,Object> conventionalCounts = conventional.isEmpty() ? Map.of() : conventional.getFirst();
-        List<Map<String,Object>> rows = new ArrayList<>(DASHBOARD_ACTIVITY_ACTIONS.size());
+        List<Map<String,Object>> rows = new ArrayList<>(actions.size());
         long total = 0;
 
-        for(ActivityAction action: DASHBOARD_ACTIVITY_ACTIONS)
+        for(ActivityAction action: actions)
         {
             long count = number(trunkedCounts.get(action.column())) +
                 number(conventionalCounts.get(action.column()));
@@ -8633,21 +8599,26 @@ class StatsWebDatabase
         }
     }
 
-    private static Map<String,ActivityAction> activityActionMap()
+    private static List<ActivityAction> dashboardActivityDefinitions(Connection connection) throws SQLException
     {
-        Map<String,ActivityAction> actions = new LinkedHashMap<>();
-
-        for(ActivityAction action: DASHBOARD_ACTIVITY_ACTIONS)
+        List<ActivityAction> actions = new ArrayList<>();
+        for(Map<String,Object> definition: ActivityMessageCatalog.read(connection))
         {
-            actions.put(action.name(), action);
+            if(!"ACTION".equals(definition.get("definition_kind"))) continue;
+            String name = String.valueOf(definition.get("name"));
+            if(Set.of("CALL", "CONTINUE", "TONE").contains(name)) continue;
+            Integer code = ReceiverActivityFilterCatalog.actionCode(name);
+            //Only a registered storage column may enter the aggregate SQL. Friendly wording is independent.
+            if(code == null || code != number(definition.get("code")))
+                throw new SQLException("Unrecognized activity message definition");
+            actions.add(new ActivityAction(name, code, name.toLowerCase(Locale.ROOT) + "_count"));
         }
-
-        return Map.copyOf(actions);
+        return List.copyOf(actions);
     }
 
-    private static String activityActionAggregateSql(String table, String index)
+    private static String activityActionAggregateSql(List<ActivityAction> actions, String table, String index)
     {
-        String sums = DASHBOARD_ACTIVITY_ACTIONS.stream()
+        String sums = actions.stream()
             .map(action -> "COALESCE(SUM(bucket." + action.column() + "), 0) AS " + action.column())
             .collect(java.util.stream.Collectors.joining(",\n                "));
         return "SELECT " + sums + "\nFROM " + table + " AS bucket INDEXED BY " + index +

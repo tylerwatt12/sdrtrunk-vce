@@ -12,6 +12,8 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -710,6 +712,46 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void messageTypesExposeDatabaseNamesMeaningsAndProtocolSupport() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE activity_message_type SET label='Disable radio', " +
+                "meaning='A command asking a radio to stop operating.', p25=0,dmr=1,nxdn=1 " +
+                "WHERE definition_kind='ACTION' AND name='STUN'");
+        }
+        HttpResponse<String> response = get(StatsApiV1.ACTIVITY_MESSAGE_TYPES);
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode body = OBJECT_MAPPER.readTree(response.body());
+        assertTrue(body.path("data").isArray());
+        JsonNode stun = null;
+        JsonNode event = null;
+        for(JsonNode row: body.path("data"))
+        {
+            assertTrue(row.path("code").isIntegralNumber());
+            assertTrue(row.path("p25").isBoolean());
+            assertTrue(row.path("dmr").isBoolean());
+            assertTrue(row.path("nxdn").isBoolean());
+            if("STUN".equals(row.path("name").asText()))
+            {
+                if("ACTION".equals(row.path("definition_kind").asText())) stun = row;
+                else if("EVENT".equals(row.path("definition_kind").asText())) event = row;
+            }
+        }
+        assertNotNull(stun);
+        assertNotNull(event);
+        assertEquals("Disable radio", stun.path("label").asText());
+        assertEquals("A command asking a radio to stop operating.", stun.path("meaning").asText());
+        assertFalse(stun.path("p25").booleanValue());
+        assertTrue(stun.path("dmr").booleanValue());
+        assertTrue(stun.path("nxdn").booleanValue());
+        assertNotEquals(stun.path("code"), event.path("code"));
+        assertEquals(400, get(StatsApiV1.ACTIVITY_MESSAGE_TYPES + "?unexpected=1").statusCode());
+    }
+
+    @Test
     void routeManifestDefinesOneUniqueFirstVersionSurface() throws Exception
     {
         Map<String,String> expected = Map.ofEntries(
@@ -726,6 +768,7 @@ class StatsApiV1HttpContractTest
             Map.entry("ACTIVITY", "/api/v1/activity"),
             Map.entry("ACTIVITY_ACTIONS", "/api/v1/activity/actions"),
             Map.entry("ACTIVITY_RADIOS", "/api/v1/activity/radios"),
+            Map.entry("ACTIVITY_MESSAGE_TYPES", "/api/v1/activity/message-types"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),
             Map.entry("RECEIVER_HEALTH", "/api/v1/receiver-health"),

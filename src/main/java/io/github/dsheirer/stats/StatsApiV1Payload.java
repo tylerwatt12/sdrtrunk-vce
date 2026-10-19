@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +27,11 @@ import java.util.Set;
 final class StatsApiV1Payload
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Set<String> RAW_ACTION_COUNT_FIELDS = ReceiverActivityFilterCatalog.actions().keySet()
+        .stream().map(name -> name.toLowerCase(java.util.Locale.ROOT) + "_count")
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    private static final Map<Integer,String> EVENT_TYPE_NAMES = ReceiverActivityFilterCatalog.eventTypes().entrySet()
+        .stream().collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getValue, Map.Entry::getKey));
     private static final Set<String> P25_VISUALIZER_FIELDS = Set.of(
         "id", "configuration_id", "observed_at_ms", "channel_kind", "protocol", "action",
         "source_radio_id", "target_id", "source_identity_key", "target_identity_key",
@@ -135,7 +141,7 @@ final class StatsApiV1Payload
             Map.Entry<String,JsonNode> field = fields.next();
             String name = field.getKey();
 
-            if(INTERNAL_FIELDS.contains(name) || LEGACY_METRIC_FIELDS.contains(name))
+            if(INTERNAL_FIELDS.contains(name) || LEGACY_METRIC_FIELDS.contains(name) || RAW_ACTION_COUNT_FIELDS.contains(name))
             {
                 continue;
             }
@@ -637,11 +643,7 @@ final class StatsApiV1Payload
             return;
         }
 
-        io.github.dsheirer.module.decode.event.DecodeEventType[] values =
-            io.github.dsheirer.module.decode.event.DecodeEventType.values();
-        int ordinal = code.intValue() - 1;
-        presented.put("last_event_type", ordinal >= 0 && ordinal < values.length ?
-            enumName(values[ordinal].name()) : "unknown");
+        presented.put("last_event_type", enumName(EVENT_TYPE_NAMES.getOrDefault(code.intValue(), "UNKNOWN")));
     }
 
     private static StatsApiProtocol protocol(ObjectNode value, StatsApiProtocol inherited)
