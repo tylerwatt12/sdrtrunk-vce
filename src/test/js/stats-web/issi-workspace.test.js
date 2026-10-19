@@ -8,13 +8,16 @@ const radioLabelsSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/core/radio-labels.js'), 'utf8');
 const radioLabels = vm.runInNewContext(radioLabelsSource.replace(/^export .*;$/m, '') +
   '\n({formatP25RadioIdentifier,p25ServingSystemKey});');
+const sourceNamesSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/core/source-names.js'), 'utf8');
+const { formatSourceName } = vm.runInNewContext(sourceNamesSource.replace(/^export /m, '') + '\n({formatSourceName});');
 const source = fs.readFileSync(path.resolve(__dirname, '../../../../stats-web/assets/app.js'), 'utf8');
 
 function declaration(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `Missing ${name}`);
   let quote = '', depth = 0;
-  const open = source.indexOf('{', start);
+  const open = source.indexOf('{', source.indexOf(')', start) + 1);
   for (let index = open; index < source.length; index++) {
     const char = source[index];
     if (quote) {
@@ -279,7 +282,7 @@ async function main() {
   const context = {
     ...radioLabels,
     URLSearchParams, route, document, content, node, fragment,
-    sourceNameDisplayMode: () => 'alias',
+    sourceNameDisplayMode: () => 'source_alias', formatSourceName,
     radioSystemApiPath: (key, suffix) => `/api/v1/radio-systems/${key}/${suffix}`,
     renderIsCurrent: () => current,
     apiPage: async (url, parameters) => {
@@ -336,6 +339,8 @@ async function main() {
     aliasLabel: row => row.alias_name || '',
     capabilityAllowed: () => true, ACCESS_CAPABILITIES: { RADIO: 'radio' },
     entityRefHref: reference => reference?.href || '',
+    entityTarget: reference => reference?.href || '', radioDisplayId: row => row.native_id,
+    radioIdentifierText: (_row, id) => id == null ? '' : String(id), specialIdentifierLabel: () => '',
     identitySummaryValue: (primary, secondary, target) => ({primary,secondary,target}),
     systemLabels: { systemName: () => '', homeSystemName: (row, prefix = '') =>
       row?.[`${prefix ? `${prefix}_` : ''}home_system_name`] || '' },
@@ -347,6 +352,7 @@ async function main() {
     'issiStateLabel', 'issiEmptyMessage', 'issiStateContent', 'issiSectionTabs',
     'issiCurrentAssignmentColumns', 'issiRecentChangeColumns', 'renderRadioSystemIssi',
     'workingSubscriberId', 'issiAssignmentIsOrdinaryLocal', 'radioCurrentAssignmentSection', 'liveIdentityRenderKey',
+    'tableIdentityParts', 'tableIdentityValue', 'radioIdentityValue',
     'issiSubscriberCell', 'issiHomeSystemCell', 'issiHomeSystemText'
   ].map(declaration).join('\n') + '\n({renderRadioSystemIssi,radioCurrentAssignmentSection,' +
     'issiStateLabel,issiEmptyMessage,issiAssignmentIsOrdinaryLocal,' +

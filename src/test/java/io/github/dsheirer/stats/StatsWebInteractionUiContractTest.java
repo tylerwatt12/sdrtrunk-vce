@@ -1425,9 +1425,9 @@ class StatsWebInteractionUiContractTest
         String radio = function(source, "async function renderRadio()");
         assertTrue(system.contains("...(live ? { meaningful_only: true,"));
         assertTrue(system.contains("issiCurrentAssignmentColumns"));
-        assertTrue(subscriber.contains("entityRefHref(row.entity_ref)"));
+        assertTrue(subscriber.contains("radioIdentityValue(row, { identifier, fallback: 'Unknown radio' })"));
         assertTrue(subscriber.contains("const identifier = subscriber ? String(subscriber.subscriber_id) : ''"));
-        assertTrue(subscriber.contains("identitySummaryValue(label, label === identifier ? '' : identifier, target)"));
+        assertFalse(subscriber.contains("aliasLabel(row) || row.last_talker_alias"));
         assertTrue(subscriber.contains("if (subscriber) summary.title = canonicalSubscriberText(subscriber)"));
         assertTrue(function(source, "function issiCurrentAssignmentColumns()")
             .contains("label: 'Home System', render: issiHomeSystemCell"));

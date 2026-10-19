@@ -110,7 +110,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(columns.contains("label: 'System / Channel'"));
         assertTrue(columns.contains("label: 'Radio'"));
         assertFalse(columns.contains("label: 'Alias'"));
-        assertTrue(radio.contains("identitySummaryValue(alias || identifier"));
+        assertTrue(radio.contains("radioIdentityValue(row, { reference: row.radio_entity_ref"));
         assertTrue(columns.contains("label: 'Events'"));
         assertTrue(columns.contains("label: 'Last Seen'"));
         assertTrue(system.contains("row.name"));
@@ -122,8 +122,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(system.contains("radioSystemDisplayName(row)"));
         assertFalse(system.contains("dashboard-identity-context"));
         assertTrue(radio.contains("row.radio_entity_ref"));
-        assertTrue(radio.contains("entityReferenceAllowed(reference)"));
-        assertTrue(radio.contains("entityTarget(reference, { channel: 'radios' })"));
+        String identityParts = function(source, "function tableIdentityParts(row, kind, options)");
+        assertTrue(identityParts.contains("entityTarget(reference, { channel: radio ? 'radios' : 'groups' })"));
         assertFalse(radio.contains("radioLink(row"));
         assertTrue(pager.contains("browsingWorkflows.createBrowsingPager({ node"));
         assertTrue(sharedPager.contains("[['previous', 'Previous'], ['next', 'Next']]"));
@@ -176,10 +176,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(identities.contains("label: 'Calls', fullLabel: 'Calls'"));
         assertFalse(identities.contains("...dashboardCallSourceColumns"));
         String identity = function(source, "function dashboardIdentity(row)");
-        assertTrue(identity.contains("dashboard-identity-context"));
-        assertTrue(identity.contains("last_talker_alias"));
-        assertTrue(identity.contains("`OTA ${talkerAlias}`"));
-        assertTrue(identities.contains("row.alias_name || row.last_talker_alias"));
+        assertTrue(identity.contains("tableIdentityValue(row, identityKind(row.identity_kind) === 'radio' ? 'radio' : 'group'"));
+        assertTrue(identity.contains("dashboardIdentityOptions(row)"));
+        assertTrue(identities.contains("sortValue: dashboardIdentitySortValue"));
         assertFalse(source.contains("function callSourceActivityChart(activity)"));
     }
 
@@ -195,7 +194,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(live.contains("decoderLabel(row.decoder, true)"));
         assertTrue(live.contains("title: (row) => decoderLabel(row.decoder)"));
         assertFalse(live.contains("cells[10]"));
-        String identity = function(source, "function dashboardIdentity(row)");
+        String identity = function(source, "function dashboardIdentityOptions(row)");
         assertTrue(identity.contains("talkgroup: 'TG'"));
         assertTrue(identity.contains("patch_group: 'Patch'"));
     }

@@ -117,13 +117,16 @@ class StatsWebTrunkedChannelUiContractTest
         String patchPresentation = source.substring(patches, activity);
 
         assertTrue(patchPresentation.contains("label: 'Local Patch'"));
-        assertTrue(patchPresentation.contains("label: 'Local TGIDs'"));
+        assertTrue(patchPresentation.contains("label: 'Local Talkgroups'"));
         assertTrue(patchPresentation.contains("label: 'Local Radios'"));
         assertTrue(patchPresentation.contains("patchMembersByLocalGroup(data.talkgroups)"));
         assertTrue(patchPresentation.contains("patchMembersByLocalGroup(data.radios)"));
-        assertTrue(patchPresentation.contains("groupIdentityLink(row, row.local_patch_group_id)"));
-        assertTrue(patchPresentation.contains("groupIdentityLink(member, member.local_talkgroup_id)"));
-        assertTrue(patchPresentation.contains("radioLink(member, member.local_radio_id)"));
+        assertTrue(patchPresentation.contains("groupIdentityValue(row, { id: row.local_patch_group_id, alias: row.patch_alias_name })"));
+        assertTrue(patchPresentation.contains("groupIdentityValue(member, { id: member.local_talkgroup_id })"));
+        assertTrue(patchPresentation.contains("radioIdentityValue(member, { id: member.local_radio_id })"));
+        assertFalse(patchPresentation.contains("id: 'patch-name'"));
+        assertFalse(patchPresentation.contains("id: 'member-talkgroup-names'"));
+        assertFalse(patchPresentation.contains("id: 'member-radio-names'"));
         assertFalse(patchPresentation.contains("row.patch_group"));
         assertFalse(patchPresentation.contains("member.talkgroup_id"));
         assertFalse(patchPresentation.contains("member.radio_id"));

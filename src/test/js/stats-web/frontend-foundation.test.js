@@ -319,7 +319,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
     'section(title, child, action = null)', 'sectionActionHost(action = null)',
     'replaceAsyncContent(host, rendered)', 'asyncSectionFailure(error, fallbackMessage, retry)',
     'createAsyncSection(title, options = {})', 'pager(page, position = "bottom", itemLabel = "Rows")',
-    'pagedTableContent(page, columns, tableType, options = {})', 'radioTableType(baseType, columns)'
+    'pagedTableContent(page, columns, tableType, options = {})', 'radioTableType(baseType, columns, system)'
   ]) {
     const name = signature.slice(0, signature.indexOf('('));
     vm.runInContext(`function ${signature} ${functionBinding(appSource, name)}`, context);
@@ -355,7 +355,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
   assert.equal(host.attributes['aria-busy'], 'false');
   assert.strictEqual(tables[0].rows, rows);
   assert.deepEqual(Array.from(tables[0].columns, (column) => column.id),
-    ['radio', 'alias', 'talker-alias', 'confirmed-channel', 'logical-calls', 'encrypted-logical-calls', 'last-seen']);
+    ['radio', 'confirmed-channel', 'logical-calls', 'encrypted-logical-calls', 'last-seen']);
   assert.equal(tables[0].options.defaultSort, 'last_seen');
   assert.equal(tables[0].options.serverSort, true);
   const pager = host.children[1];
@@ -1903,14 +1903,17 @@ async function main() {
   }))), { available: false, maximum: 100, value: 0 });
 
   const radioTableType = vm.runInNewContext(
-    `(function(baseType, columns) ${functionBinding(appSource, 'radioTableType')})`, { tableLayouts });
+    `(function(baseType, columns, system) ${functionBinding(appSource, 'radioTableType')})`, {
+      tableLayouts, radioSystemCapability: (system, capability) => Boolean(system?.capabilities?.[capability])
+    });
   assert.equal(radioTableType('radios', [{ id: 'radio' }]), 'radios.base');
-  assert.equal(radioTableType('radios', [{ id: 'radio' }, { id: 'talker-alias' }]),
+  const talkerSystem = { capabilities: { talker_aliases: true } };
+  assert.equal(radioTableType('radios', [{ id: 'radio' }], talkerSystem),
     'radios.talker-alias');
   assert.equal(radioTableType('radios', [
-    { id: 'radio' }, { id: 'talker-alias' }, { id: 'affiliation' }, { id: 'confirmed-channel' }
-  ]), 'radios.talker-alias-affiliation-channel');
-  assert.match(appSource, /radioTableType\('group-identity-radios', columns\)/);
+    { id: 'radio' }, { id: 'affiliation' }, { id: 'confirmed-channel' }
+  ], talkerSystem), 'radios.talker-alias-affiliation-channel');
+  assert.match(appSource, /radioTableType\('group-identity-radios', columns, groupIdentity\)/);
   await checkGroupIdentityRadiosLoading(browsing, tableLayouts);
   await checkAliasCoverageIndependentCount();
   assert.match(appSource, /signalingMetrics\(signalingActionRows\(response\.action_counts\)/);

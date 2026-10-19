@@ -777,26 +777,64 @@ assert.equal(groupLinks.groupIdentityLink(groupOwner, 42, undefined, undefined, 
   'A missing group-party reference cannot borrow the owner’s drilldown.');
 assert.equal(groupLinks.groupIdentityLink(groupOwner).target, 'v1-g-bee00-348-7001',
   'Own directory rows keep their complete identity links.');
-const directoryColumns = vm.runInNewContext(`${functionSource('channelGroupIdentityColumns')}\n` +
-  `${functionSource('channelRadioColumns')}\n({channelGroupIdentityColumns, channelRadioColumns});`, {
-  radioLink: links.radioLink, groupIdentityLink: groupLinks.groupIdentityLink,
-  aliasLabel: row => row.alias_name || ''
+let tableNavigationAllowed = true;
+const tableCells = vm.runInNewContext([
+  'identitySummaryValue', 'radioDisplayId', 'groupIdentityDisplayId', 'tableIdentityParts',
+  'tableIdentityValue', 'radioIdentityValue', 'groupIdentityValue', 'radioIdentitySortValue',
+  'groupIdentitySortValue', 'channelGroupIdentityColumns', 'channelRadioColumns'
+].map(functionSource).join('\n') + '\n({radioIdentityValue, groupIdentityValue, radioIdentitySortValue, ' +
+  'channelGroupIdentityColumns, channelRadioColumns});', {
+  ...radioLabels, ...sourceNames, node: detailNode, valueNode: value => value,
+  radioIdentifierText: behavior.radioIdentifierText, groupIdentifierText: behavior.groupIdentifierText,
+  aliasLabel: row => row.alias_name || '', rowGroupIdentityKind: () => 'talkgroup',
+  specialIdentifierLabel: () => '', sourceNameDisplayMode: () => sourceMode,
+  ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => tableNavigationAllowed,
+  entityTarget: reference => reference?.identity_key || '',
+  anchor: (label, target) => Object.assign(detailNode('a', '', label), { target })
 });
-const sourceAliasColumn = directoryColumns.channelGroupIdentityColumns().find(column => column.id === 'source-alias');
-const groupAliasColumn = directoryColumns.channelRadioColumns().find(column => column.id === 'talkgroup-name');
+const sourceAliasColumn = tableCells.channelGroupIdentityColumns().find(column => column.id === 'source');
+const groupAliasColumn = tableCells.channelRadioColumns().find(column => column.id === 'last-talkgroup');
+const cellTarget = cell => descendants(cell).find(item => item.tag === 'a')?.target;
 const lastSourceRow = { ...groupOwner, last_source_radio_id: 42, last_source_alias_name: 'Engine 42',
   last_source_entity_ref: { identity_key: 'v1-r-bee00-348-42' } };
-assert.equal(sourceAliasColumn.render(lastSourceRow).target, lastSourceRow.last_source_entity_ref.identity_key,
+assert.equal(cellTarget(sourceAliasColumn.render(lastSourceRow)), lastSourceRow.last_source_entity_ref.identity_key,
   'The directory Last Source alias links to that source instead of its group owner.');
-assert.equal(sourceAliasColumn.render({ ...lastSourceRow, last_source_entity_ref: undefined }), 'Engine 42',
+assert.equal(cellTarget(sourceAliasColumn.render({ ...lastSourceRow, last_source_entity_ref: undefined })), undefined,
   'A missing Last Source reference keeps its alias as plain text.');
 const lastGroupRow = { protocol: 'P25', native_id: 9001, entity_ref: localRef,
   last_talkgroup_id: 42, last_talkgroup_alias_name: 'Dispatch',
   last_talkgroup_entity_ref: { identity_key: 'v1-g-bee00-348-42' } };
-assert.equal(groupAliasColumn.render(lastGroupRow).target, lastGroupRow.last_talkgroup_entity_ref.identity_key,
+assert.equal(cellTarget(groupAliasColumn.render(lastGroupRow)), lastGroupRow.last_talkgroup_entity_ref.identity_key,
   'The directory Last Talkgroup alias links to that group instead of its radio owner.');
-assert.equal(groupAliasColumn.render({ ...lastGroupRow, last_talkgroup_entity_ref: undefined }), 'Dispatch',
+assert.equal(cellTarget(groupAliasColumn.render({ ...lastGroupRow, last_talkgroup_entity_ref: undefined })), undefined,
   'A missing Last Talkgroup reference keeps its alias as plain text.');
+const namedTableRadio = { protocol: 'P25', native_id: 42, alias_name: 'Engine 42',
+  last_talker_alias: 'ENG 42', entity_ref: { ...localRef, identity_key: 'v1-r-bee00-348-42' } };
+for (const [mode, name] of [['talker_alias', 'ENG 42'], ['source_alias', 'Engine 42'],
+  ['both', 'Engine 42 · ENG 42']]) {
+  sourceMode = mode;
+  const cell = tableCells.radioIdentityValue(namedTableRadio);
+  assert.equal(cell.children[0].textContent, name, 'All radio tables use the saved name preference.');
+  assert.equal(cell.children[1].textContent, '42', 'The exact identifier stays visible below the name.');
+  assert.equal(cellTarget(cell), namedTableRadio.entity_ref.identity_key,
+    'Name selection never changes the drilldown identity.');
+  assert.equal(tableCells.radioIdentitySortValue(namedTableRadio), name,
+    'Client table sorting follows the displayed name.');
+}
+assert.equal(tableCells.radioIdentityValue({ ...namedTableRadio, last_talker_alias: ' engine 42 ' })
+  .children[0].textContent, 'Engine 42', 'Both shows duplicate names once.');
+assert.equal(tableCells.radioIdentityValue({ ...namedTableRadio, alias_name: '', last_talker_alias: '' })
+  .children.length, 1, 'Unnamed rows show the identifier once.');
+assert.equal(tableCells.radioIdentityValue(namedTableRadio, { alias: '42', talkerAlias: '' })
+  .children.length, 1, 'A name equal to the identifier does not repeat it.');
+const missingSourceName = sourceAliasColumn.render({ ...lastSourceRow, alias_name: 'Owner group',
+  last_source_alias_name: undefined, last_source_talker_alias: undefined, last_source_entity_ref: undefined });
+assert.equal(missingSourceName.textContent, '42', 'A source without metadata cannot borrow its owner’s alias.');
+tableNavigationAllowed = false;
+assert.equal(cellTarget(tableCells.radioIdentityValue(namedTableRadio)), undefined,
+  'Public cells do not gain detail links when radio navigation is unavailable.');
+tableNavigationAllowed = true;
+sourceMode = 'talker_alias';
 assert.equal(behavior.groupIdentifierText({ ...sharedLocal,
   source_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7001 },
   target_canonical_group_identity: { wacn: 0xBEE00, system_id: 0x348, talkgroup_id: 7002 },

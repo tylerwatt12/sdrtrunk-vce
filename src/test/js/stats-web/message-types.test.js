@@ -13,7 +13,7 @@ function binding(source, name) {
   const declaration = source.slice(start, next < 0 ? source.length : next);
   // These presentation functions end before any following top-level declaration.
   let depth = 0, quote = '';
-  const opening = declaration.indexOf('{');
+  const opening = declaration.indexOf('{', declaration.indexOf(')') + 1);
   for (let index = opening; index < declaration.length; index += 1) {
     const character = declaration[index];
     if (quote) {
@@ -28,6 +28,7 @@ function binding(source, name) {
 
 async function checkMessageTypes(core, source) {
   const { createMessageTypeCatalog } = await import(pathToFileURL(path.join(core, 'message-types.js')).href);
+  const { formatSourceName } = await import(pathToFileURL(path.join(core, 'source-names.js')).href);
   const rows = [
     { definition_kind: 'ACTION', code: 12, name: 'GRANT', label: 'Assigned channel',
       meaning: 'A channel was assigned.', p25: true, dmr: false, nxdn: false, sort_order: 2 },
@@ -43,9 +44,12 @@ async function checkMessageTypes(core, source) {
   let requests = 0;
   const node = (tag, className = '', text = '') => ({ tag, className, text,
     children: [], append(...values) { this.children.push(...values); } });
-  const context = vm.createContext({ createMessageTypeCatalog, node,
+  const context = vm.createContext({ createMessageTypeCatalog, formatSourceName, node,
     identitySummaryValue: (primary, secondary, target) => ({ primary, secondary, target }),
     radioIdentifierText: (_row, id) => `Radio ${id}`, radioDisplayId: row => row.native_id,
+    aliasLabel: row => row.alias_name, sourceNameDisplayMode: () => 'source_alias',
+    p25ServingSystemKey: () => '', specialIdentifierLabel: () => '',
+    ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
     entityReferenceAllowed: reference => Boolean(reference?.href),
     entityTarget: reference => reference.href,
     api: async () => { requests += 1; return { rows }; }
@@ -54,7 +58,8 @@ async function checkMessageTypes(core, source) {
   const catalogEnd = source.indexOf('const DASHBOARD_ACTIVITY_RANGES =', catalogStart);
   vm.runInContext(source.slice(catalogStart, catalogEnd), context);
   vm.runInContext(['activityOptionLabel', 'activityEventValue', 'dashboardActivityActionConfiguration',
-    'signalingActionRows', 'activityMetricGuide', 'dashboardActivityRadio'].map(name => binding(source, name)).join('\n'), context);
+    'signalingActionRows', 'activityMetricGuide', 'tableIdentityParts', 'tableIdentityValue',
+    'radioIdentityValue', 'dashboardActivityRadio'].map(name => binding(source, name)).join('\n'), context);
   await Promise.all([context.loadActivityMessageTypes(), context.loadActivityMessageTypes()]);
   assert.equal(requests, 1, 'Concurrent page work shares the catalog request.');
   assert.equal(context.activityOptionLabel('GRANT'), 'Assigned channel');

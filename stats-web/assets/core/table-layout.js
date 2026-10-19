@@ -194,7 +194,78 @@
     };
   }
 
+  function identityColumnUpgrade(previous, merged) {
+    const removed = new Set(Object.entries(merged)
+      .flatMap(([id, members]) => members.filter((member) => member !== id)));
+    return { previous, current: previous.filter((id) => !removed.has(id)), merged };
+  }
+
+  function radioColumnUpgrades(baseType, relationship = false) {
+    const upgrades = [];
+    for (const talker of [false, true]) {
+      for (const affiliation of relationship ? [false] : [false, true]) {
+        for (const channel of [false, true]) {
+          const variant = [talker ? 'talker-alias' : '', affiliation ? 'affiliation' : '',
+            channel ? 'channel' : ''].filter(Boolean).join('-') || 'base';
+          const names = ['alias', ...(talker ? ['talker-alias'] : [])];
+          upgrades.push([`${baseType}.${variant}`, identityColumnUpgrade(
+            ['radio', ...names, ...(affiliation ? ['affiliation'] : []),
+              ...(channel ? ['confirmed-channel'] : []), 'logical-calls',
+              'encrypted-logical-calls', 'last-seen'], { radio: [...names, 'radio'] })]);
+        }
+      }
+    }
+    return Object.fromEntries(upgrades);
+  }
+
   const PARTY_COLUMN_UPGRADES = Object.freeze({
+    ...radioColumnUpgrades('radios'),
+    ...radioColumnUpgrades('group-identity-radios', true),
+    'group-identities': identityColumnUpgrade(
+      ['group-identity-id', 'group-identity-kind', 'group-identity-name',
+        'group-identity-description', 'alias-group', 'logical-calls', 'recorded-logical-calls',
+        'stream-submitted-logical-calls', 'encrypted-logical-calls', 'signaling', 'last-seen'],
+      { 'group-identity-id': ['group-identity-name', 'group-identity-id'] }),
+    'radio-groups': identityColumnUpgrade(
+      ['group-identity-id', 'group-identity-kind', 'group-identity-name',
+        'group-identity-description', 'logical-calls', 'encrypted-logical-calls', 'last-seen'],
+      { 'group-identity-id': ['group-identity-name', 'group-identity-id'] }),
+    'talker-aliases': identityColumnUpgrade(
+      ['radio', 'talker-alias', 'radio-alias', 'logical-calls', 'encrypted-logical-calls', 'last-seen'],
+      { radio: ['radio-alias', 'talker-alias', 'radio'] }),
+    'channel-top-groups': identityColumnUpgrade(
+      ['group-identity-id', 'group-identity-kind', 'group-identity-name', 'group',
+        'logical-calls', 'encrypted-logical-calls'],
+      { 'group-identity-id': ['group-identity-name', 'group-identity-id'] }),
+    'channel-group-identities': identityColumnUpgrade(
+      ['group-identity-id', 'group-identity-kind', 'group-identity-name', 'group-identity-description',
+        'frequency', 'timeslot', 'logical-calls', 'encrypted-logical-calls', 'source',
+        'source-alias', 'first-seen', 'last-seen'],
+      { 'group-identity-id': ['group-identity-name', 'group-identity-id'],
+        source: ['source-alias', 'source'] }),
+    'channel-radios': identityColumnUpgrade(
+      ['radio', 'radio-alias', 'frequency', 'timeslot', 'logical-calls', 'encrypted-logical-calls',
+        'source-logical-calls', 'target-logical-calls', 'group-logical-calls', 'private-logical-calls',
+        'last-talkgroup', 'talkgroup-name', 'last-peer', 'peer-alias', 'first-seen', 'last-seen'],
+      { radio: ['radio-alias', 'radio'], 'last-talkgroup': ['talkgroup-name', 'last-talkgroup'],
+        'last-peer': ['peer-alias', 'last-peer'] }),
+    'channel-patches': identityColumnUpgrade(
+      ['patch-id', 'patch-name', 'member-talkgroup-ids', 'member-talkgroup-names',
+        'member-radio-ids', 'member-radio-names', 'state', 'observations', 'last-seen'],
+      { 'patch-id': ['patch-name', 'patch-id'],
+        'member-talkgroup-ids': ['member-talkgroup-names', 'member-talkgroup-ids'],
+        'member-radio-ids': ['member-radio-names', 'member-radio-ids'] }),
+    'channel-patches-versioned': identityColumnUpgrade(
+      ['patch-id', 'patch-name', 'version', 'member-talkgroup-ids', 'member-talkgroup-names',
+        'member-radio-ids', 'member-radio-names', 'state', 'observations', 'last-seen'],
+      { 'patch-id': ['patch-name', 'patch-id'],
+        'member-talkgroup-ids': ['member-talkgroup-names', 'member-talkgroup-ids'],
+        'member-radio-ids': ['member-radio-names', 'member-radio-ids'] }),
+    'issi-subscribers': identityColumnUpgrade(
+      ['canonical-subscriber', 'working-id', 'home-system', 'talker-alias', 'evidence',
+        'affiliation', 'observed-on', 'registrations', 'affiliations', 'logical-calls',
+        'last-mapping-seen', 'last-seen'],
+      { 'canonical-subscriber': ['talker-alias', 'canonical-subscriber'] }),
     'dashboard-activity-radios': {
       previous: ['system', 'radio', 'alias', 'observations', 'last-seen'],
       current: ['system', 'radio', 'observations', 'last-seen'],

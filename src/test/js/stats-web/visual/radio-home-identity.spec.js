@@ -2,6 +2,7 @@
 
 const { test, expect } = require('@playwright/test');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { installSiteStyleApplication, systemKey, groupKey, radioKey, systemName } =
   require('./fixtures/site-style-app.cjs');
 const { presentations } = require('./fixtures/site-style-cases.cjs');
@@ -24,9 +25,15 @@ const foreignRadio = {
   entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: foreignKey }
 };
 
-async function installIdentities(page, theme) {
+async function installIdentities(page, theme, { sourceMode = 'both', radios = [homeRadio, foreignRadio] } = {}) {
   const fixture = await installSiteStyleApplication(page, theme);
-  const radios = [homeRadio, foreignRadio];
+  const { defaults } = await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/core/preference-schema.js')).href);
+  const preferences = structuredClone(defaults);
+  preferences.appearance.theme = theme;
+  preferences.presentation.source_name_display = sourceMode;
+  await page.route('**/api/v1/me/preferences', route =>
+    route.fulfill({ json: { revision: 1, preferences } }));
   const paged = rows => ({ data: rows, meta: { limit: 25, offset: 0,
     has_more: false, total_count: rows.length } });
   await page.route('**/api/v1/**', async route => {
@@ -38,13 +45,14 @@ async function installIdentities(page, theme) {
       ...homeRadio, native_id: 1201, group_identity_kind: 'talkgroup', alias_name: 'Fire Dispatch'
     } } });
     if (pathname === `${base}/radios`) return route.fulfill({ json: paged(radios) });
-    if (pathname === `${base}/relationships`) return route.fulfill({ json: paged([{
-      protocol: 'P25', radio_system_key: systemKey, radio_native_id: homeRadio.native_id,
-      radio_canonical_identity: homeRadio.canonical_identity,
-      radio_observed_working_id: homeRadio.observed_working_id,
-      radio_alias_name: homeRadio.alias_name, last_talker_alias: homeRadio.last_talker_alias,
-      radio_entity_ref: homeRadio.entity_ref, logical_call_count: homeRadio.logical_call_count
-    }]) });
+    if (pathname === `${base}/talker-aliases`) return route.fulfill({ json: paged(radios) });
+    if (pathname === `${base}/relationships`) return route.fulfill({ json: paged(radios.map(radio => ({
+      protocol: 'P25', radio_system_key: systemKey, radio_native_id: radio.native_id,
+      radio_canonical_identity: radio.canonical_identity,
+      radio_observed_working_id: radio.observed_working_id,
+      radio_alias_name: radio.alias_name, last_talker_alias: radio.last_talker_alias,
+      radio_entity_ref: radio.entity_ref, logical_call_count: radio.logical_call_count
+    }))) });
     if (pathname === `${base}/issi/current-assignments`) return route.fulfill({ json: { data: {
       rows: [{ ...foreignRadio, confirmed_at_ms: 1_790_856_000_000, evidence: 'registration' }],
       total_count: 1, limit: 20, offset: 0, has_more: false,
@@ -79,10 +87,10 @@ for (const presentation of presentations) {
     };
     await page.goto(`/app.html?view=radio-system&${scope}&tab=radios`);
     await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
-    await expect(page.getByRole('link', { name: '30914', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Engine 4 · ENG 4', exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'West County · 30914', exact: true })).toBeVisible();
     await expect(page.locator('#content')).toContainText('ENG 4');
-    const localLink = page.getByRole('link', { name: '30914', exact: true });
+    const localLink = page.getByRole('link', { name: 'Engine 4 · ENG 4', exact: true });
     expect(new URL(await localLink.getAttribute('href'), page.url()).searchParams.get('identity_key')).toBe(radioKey);
     const foreignLink = page.getByRole('link', { name: 'West County · 30914', exact: true });
     expect(new URL(await foreignLink.getAttribute('href'), page.url()).searchParams.get('identity_key')).toBe(foreignKey);
@@ -90,8 +98,8 @@ for (const presentation of presentations) {
     await capture('system-radios');
 
     await page.goto(`/app.html?view=group-identity&${scope}&identity_key=${groupKey}&tab=radios`);
-    await expect(page.getByRole('link', { name: '30914', exact: true })).toBeVisible();
-    await page.getByRole('link', { name: '30914', exact: true }).click();
+    await expect(page.getByRole('link', { name: 'Engine 4 · ENG 4', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Engine 4 · ENG 4', exact: true }).click();
     await expect(page.locator('.ui-page-header')).toContainText('Engine 4');
     await expect(page.locator('.entity-info-column')).toContainText('30914');
     await expect(page.locator('.entity-info-column')).not.toContainText('Last Observed Working ID');
@@ -116,6 +124,47 @@ for (const presentation of presentations) {
     await expect(page.locator('.entity-info-column')).toContainText('West County');
     await expectNoHorizontalOverflow(page, '#content');
     await capture('foreign-radio-info');
+    expect(fixture.pageErrors).toEqual([]);
+    expect(fixture.unexpected).toEqual([]);
+  });
+}
+
+for (const [sourceMode, fullName] of [['source_alias', 'Engine 4'],
+  ['talker_alias', 'ENG 4'], ['both', 'Engine 4 · ENG 4']]) {
+  test(`directory radio columns honor ${sourceMode}, fallbacks and typed links`, async ({ page }) => {
+    const radio = (id, alias, ota) => ({ ...homeRadio, native_id: id, alias_name: alias,
+      last_talker_alias: ota, identity_key: `v1-r-00001-001-${id}`,
+      canonical_identity: { wacn: 1, system_id: 1, subscriber_id: id }, observed_working_id: id,
+      entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: `v1-r-00001-001-${id}` } });
+    const radios = [homeRadio, radio(30915, 'Alias only', ''), radio(30916, '', 'OTA only'),
+      radio(30917, 'Echo', 'Echo'), radio(30918, '', ''), radio(30919, 'Engine 4', 'ENG 4')];
+    const fixture = await installIdentities(page, 'light', { sourceMode, radios });
+    const expected = [fullName, 'Alias only', 'OTA only', 'Echo', '30918', fullName];
+    for (const route of [
+      `view=radio-system&${scope}&tab=radios`,
+      `view=radio-system&${scope}&tab=talker-aliases`,
+      `view=group-identity&${scope}&identity_key=${groupKey}&tab=radios`
+    ]) {
+      await page.goto(`/app.html?${route}`);
+      const table = page.locator('#content table');
+      await expect(table.locator('tbody tr')).toHaveCount(radios.length);
+      await expect(table.locator('[data-column="alias"], [data-column="radio-alias"], [data-column="talker-alias"]'))
+        .toHaveCount(0);
+      for (const [index, item] of radios.entries()) {
+        const cell = table.locator('tbody td[data-column="radio"]').filter({
+          has: page.getByText(String(item.native_id), { exact: true })
+        });
+        await expect(cell).toHaveCount(1);
+        await expect(cell.locator('.identity-summary-primary')).toHaveText(expected[index]);
+        const context = cell.locator('.identity-summary-context');
+        if (expected[index] === String(item.native_id)) await expect(context).toHaveCount(0);
+        else await expect(context).toHaveText(String(item.native_id));
+        const target = new URL(await cell.getByRole('link').getAttribute('href'), page.url());
+        expect(target.searchParams.get('view')).toBe('radio');
+        expect(target.searchParams.get('identity_key')).toBe(item.identity_key);
+        expect(target.searchParams.get('radio_system_key')).toBe(systemKey);
+      }
+    }
     expect(fixture.pageErrors).toEqual([]);
     expect(fixture.unexpected).toEqual([]);
   });

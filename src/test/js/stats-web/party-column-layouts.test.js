@@ -22,12 +22,145 @@ const live = {
   source: ['source-alias', 'source'], target: ['target-alias', 'target']
 };
 const columns = (ids) => ids.map((id) => ({ id }));
+const ids = (value) => value.split(' ');
+const identities = [
+  { type: 'group-identities',
+    previous: ids('group-identity-id group-identity-kind group-identity-name group-identity-description alias-group logical-calls recorded-logical-calls stream-submitted-logical-calls encrypted-logical-calls signaling last-seen'),
+    current: ids('group-identity-id group-identity-kind group-identity-description alias-group logical-calls recorded-logical-calls stream-submitted-logical-calls encrypted-logical-calls signaling last-seen'),
+    merged: { 'group-identity-id': ['group-identity-name', 'group-identity-id'] } },
+  { type: 'radio-groups',
+    previous: ids('group-identity-id group-identity-kind group-identity-name group-identity-description logical-calls encrypted-logical-calls last-seen'),
+    current: ids('group-identity-id group-identity-kind group-identity-description logical-calls encrypted-logical-calls last-seen'),
+    merged: { 'group-identity-id': ['group-identity-name', 'group-identity-id'] } },
+  { type: 'talker-aliases',
+    previous: ids('radio talker-alias radio-alias logical-calls encrypted-logical-calls last-seen'),
+    current: ids('radio logical-calls encrypted-logical-calls last-seen'),
+    merged: { radio: ['radio-alias', 'talker-alias', 'radio'] } },
+  { type: 'channel-top-groups',
+    previous: ids('group-identity-id group-identity-kind group-identity-name group logical-calls encrypted-logical-calls'),
+    current: ids('group-identity-id group-identity-kind group logical-calls encrypted-logical-calls'),
+    merged: { 'group-identity-id': ['group-identity-name', 'group-identity-id'] } },
+  { type: 'channel-group-identities',
+    previous: ids('group-identity-id group-identity-kind group-identity-name group-identity-description frequency timeslot logical-calls encrypted-logical-calls source source-alias first-seen last-seen'),
+    current: ids('group-identity-id group-identity-kind group-identity-description frequency timeslot logical-calls encrypted-logical-calls source first-seen last-seen'),
+    merged: { 'group-identity-id': ['group-identity-name', 'group-identity-id'], source: ['source-alias', 'source'] } },
+  { type: 'channel-radios',
+    previous: ids('radio radio-alias frequency timeslot logical-calls encrypted-logical-calls source-logical-calls target-logical-calls group-logical-calls private-logical-calls last-talkgroup talkgroup-name last-peer peer-alias first-seen last-seen'),
+    current: ids('radio frequency timeslot logical-calls encrypted-logical-calls source-logical-calls target-logical-calls group-logical-calls private-logical-calls last-talkgroup last-peer first-seen last-seen'),
+    merged: { radio: ['radio-alias', 'radio'], 'last-talkgroup': ['talkgroup-name', 'last-talkgroup'],
+      'last-peer': ['peer-alias', 'last-peer'] } },
+  { type: 'channel-patches',
+    previous: ids('patch-id patch-name member-talkgroup-ids member-talkgroup-names member-radio-ids member-radio-names state observations last-seen'),
+    current: ids('patch-id member-talkgroup-ids member-radio-ids state observations last-seen'),
+    merged: { 'patch-id': ['patch-name', 'patch-id'], 'member-talkgroup-ids': ['member-talkgroup-names', 'member-talkgroup-ids'],
+      'member-radio-ids': ['member-radio-names', 'member-radio-ids'] } },
+  { type: 'channel-patches-versioned',
+    previous: ids('patch-id patch-name version member-talkgroup-ids member-talkgroup-names member-radio-ids member-radio-names state observations last-seen'),
+    current: ids('patch-id version member-talkgroup-ids member-radio-ids state observations last-seen'),
+    merged: { 'patch-id': ['patch-name', 'patch-id'], 'member-talkgroup-ids': ['member-talkgroup-names', 'member-talkgroup-ids'],
+      'member-radio-ids': ['member-radio-names', 'member-radio-ids'] } },
+  { type: 'issi-subscribers',
+    previous: ids('canonical-subscriber working-id home-system talker-alias evidence affiliation observed-on registrations affiliations logical-calls last-mapping-seen last-seen'),
+    current: ids('canonical-subscriber working-id home-system evidence affiliation observed-on registrations affiliations logical-calls last-mapping-seen last-seen'),
+    merged: { 'canonical-subscriber': ['talker-alias', 'canonical-subscriber'] } }
+];
+// The table IDs retain their capability suffixes so existing saved layouts remain addressable.
+for (const [variant, optional] of [
+  ['base', []], ['channel', ['confirmed-channel']], ['affiliation', ['affiliation']],
+  ['affiliation-channel', ['affiliation', 'confirmed-channel']], ['talker-alias', ['talker-alias']],
+  ['talker-alias-channel', ['talker-alias', 'confirmed-channel']],
+  ['talker-alias-affiliation', ['talker-alias', 'affiliation']],
+  ['talker-alias-affiliation-channel', ['talker-alias', 'affiliation', 'confirmed-channel']]
+]) {
+  for (const type of ['radios', 'group-identity-radios']) {
+    if (type === 'group-identity-radios' && optional.includes('affiliation')) continue;
+    identities.push({ type: `${type}.${variant}`,
+      previous: ['radio', 'alias', ...optional, 'logical-calls', 'encrypted-logical-calls', 'last-seen'],
+      current: ['radio', ...optional.filter((id) => id !== 'talker-alias'),
+        'logical-calls', 'encrypted-logical-calls', 'last-seen'],
+      merged: { radio: ['alias', ...(optional.includes('talker-alias') ? ['talker-alias'] : []), 'radio'] } });
+  }
+}
 
 async function checkPartyColumnLayouts(core = defaultCore) {
   const layouts = await import(pathToFileURL(path.join(core, 'table-layout.js')).href);
   const savedLayout = (ids) => layouts.persisted(layouts.normalize(columns(ids), null));
   const migrate = (definition, saved, declared = columns(definition.current)) =>
     layouts.mergePartyColumns(definition.type, declared, saved);
+
+  const defaults = await import(pathToFileURL(path.join(core, 'table-defaults.js')).href);
+  for (const definition of identities) {
+    const replacement = Object.fromEntries(Object.entries(definition.merged)
+      .flatMap(([id, members]) => members.map((member) => [member, id])));
+    const saved = savedLayout(definition.previous);
+    saved.column_order.reverse();
+    saved.column_widths = Object.fromEntries(definition.previous.map((id, index) =>
+      [id, Object.hasOwn(definition.merged, id) ? 74 : 230 + index]));
+    const unrelated = definition.previous.find((id) => !replacement[id]);
+    saved.hidden_columns = [unrelated, ...Object.keys(definition.merged)];
+    saved.collapsed_groups = ['site-1', 'conventional'];
+    const original = structuredClone(saved);
+    const upgraded = migrate(definition, saved);
+    const expectedOrder = [...new Set(saved.column_order.map((id) => replacement[id] || id))];
+    const expectedWidths = Object.fromEntries(Object.entries(saved.column_widths)
+      .filter(([id]) => !replacement[id]));
+    for (const [id, members] of Object.entries(definition.merged)) {
+      expectedWidths[id] = saved.column_widths[members.find((member) => member !== id)];
+    }
+    assert.deepEqual(upgraded.schema, definition.current, `${definition.type}: all split name columns migrate.`);
+    assert.equal(layouts.normalize(columns(definition.current), upgraded).reset, false, definition.type);
+    assert.deepEqual(upgraded.column_order, expectedOrder, `${definition.type}: personalized order survives.`);
+    assert.deepEqual(upgraded.column_widths, expectedWidths, `${definition.type}: name and unrelated widths survive.`);
+    assert.deepEqual(upgraded.hidden_columns, [unrelated], `${definition.type}: any visible name keeps its identity visible.`);
+    assert.deepEqual(upgraded.collapsed_groups, saved.collapsed_groups, `${definition.type}: collapsed groups survive.`);
+    assert.deepEqual(saved, original, `${definition.type}: stored input is not mutated.`);
+    assert.equal(migrate(definition, upgraded), upgraded, `${definition.type}: current preferences are unchanged.`);
+
+    for (const [id, members] of Object.entries(definition.merged)) {
+      for (let mask = 0; mask < (1 << members.length); mask += 1) {
+        const choice = savedLayout(definition.previous);
+        choice.hidden_columns = members.filter((_member, index) => mask & (1 << index));
+        const result = migrate(definition, choice);
+        assert.equal(result.hidden_columns.includes(id), mask === (1 << members.length) - 1,
+          `${definition.type}: ${id} hides only when every former column was hidden (mask ${mask}).`);
+      }
+    }
+    const narrowIds = savedLayout(definition.previous);
+    narrowIds.column_widths = Object.fromEntries(Object.keys(definition.merged).map((id) => [id, 74]));
+    assert.deepEqual(migrate(definition, narrowIds).column_widths, {},
+      `${definition.type}: old narrow identifier widths yield to combined defaults.`);
+
+    for (const invalidate of [
+      (saved) => { saved.column_order.pop(); },
+      (saved) => { saved.column_order[1] = saved.column_order[0]; },
+      (saved) => { saved.hidden_columns = ['unknown']; },
+      (saved) => { saved.hidden_columns = [unrelated, unrelated]; },
+      (saved) => { saved.hidden_columns = definition.previous.slice(); },
+      (saved) => { saved.column_widths[unrelated] = 47; },
+      (saved) => { saved.column_widths[unrelated] = 1201; },
+      (saved) => { saved.column_widths[unrelated] = '230'; },
+      (saved) => { saved.column_widths.unknown = 230; },
+      (saved) => { saved.collapsed_groups = ['Invalid group']; },
+      (saved) => { saved.schema.reverse(); }
+    ]) {
+      const invalid = savedLayout(definition.previous);
+      invalidate(invalid);
+      assert.equal(migrate(definition, invalid), invalid, `${definition.type}: invalid preferences are not repaired.`);
+      assert.equal(layouts.normalize(columns(definition.current), invalid).reset, true);
+    }
+    const future = [...columns(definition.current), { id: 'future' }];
+    assert.equal(migrate(definition, saved, future), saved, `${definition.type}: future schemas do not opt in.`);
+    const declared = columns(definition.current);
+    const defaultLayout = defaults.layout(definition.type, declared);
+    assert.deepEqual(defaultLayout.column_order, definition.current);
+    const removed = definition.previous.filter((id) => !definition.current.includes(id));
+    assert.ok(defaults.fit(definition.type).grow.every((id) => !removed.includes(id)),
+      `${definition.type}: default growth excludes removed name columns.`);
+    for (const id of Object.keys(definition.merged)) {
+      assert.ok(defaults.width(definition.type, { id }) >= 220,
+        `${definition.type}: combined ${id} has space for a name and identifier.`);
+    }
+  }
 
   for (const definition of [activity, live]) {
     const saved = savedLayout(definition.previous);
@@ -133,9 +266,10 @@ async function checkPartyColumnLayouts(core = defaultCore) {
     column.id === 'source' ? { ...column, essential: true } : column);
   assert.equal(migrate(activity, oldActivity, essential), oldActivity,
     'Migration must not bypass current essential-column validation.');
-  for (const type of ['activity-conventional-analog-v1', 'radios', 'constructor']) {
+  for (const type of ['activity-conventional-analog-v1', 'radios', 'radios.future',
+    'retained-statistics-v3.radio_system.radios', 'call-matching-duplicates', 'constructor']) {
     assert.equal(layouts.mergePartyColumns(type, columns(activity.current), oldActivity), oldActivity,
-      'Only the two named table schemas opt into this migration.');
+      'Unrelated table types do not opt into this migration.');
   }
   assert.equal(layouts.mergePartyColumns('activity', columns(activity.current), null), null);
   console.log('Party column layout migration checks passed.');

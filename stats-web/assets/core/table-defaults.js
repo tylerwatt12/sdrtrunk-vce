@@ -31,9 +31,8 @@ const NEIGHBOR_DEFAULTS = {
   grow: ['neighbor-name', 'system']
 };
 const PATCH_DEFAULTS = {
-  widths: { 'patch-name': 190, 'member-talkgroup-ids': 180,
-    'member-talkgroup-names': 240, 'member-radio-ids': 240, 'member-radio-names': 240 },
-  grow: ['patch-name', 'member-talkgroup-names', 'member-radio-names']
+  widths: { 'patch-id': 240, 'member-talkgroup-ids': 280, 'member-radio-ids': 280 },
+  grow: ['patch-id', 'member-talkgroup-ids', 'member-radio-ids']
 };
 const RETAINED_DEFAULTS = {
   widths: { item: 320, action: 112, 'alias-list': 210, 'alias-group': 190,
@@ -73,10 +72,10 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['radio', 'home-system', 'observed-on']
   },
   'issi-subscribers': {
-    widths: { 'canonical-subscriber': 220, 'working-id': 170, 'home-system': 230,
-      'talker-alias': 220, evidence: 150, affiliation: 220, 'observed-on': 260,
+    widths: { 'canonical-subscriber': 260, 'working-id': 170, 'home-system': 230,
+      evidence: 150, affiliation: 220, 'observed-on': 260,
       'last-mapping-seen': 180, 'last-seen': 180 },
-    grow: ['canonical-subscriber', 'home-system', 'talker-alias', 'observed-on']
+    grow: ['canonical-subscriber', 'home-system', 'observed-on']
   },
   'issi-foreign-systems': {
     widths: { 'home-system': 250, subscribers: 115, 'wuid-observed-subscribers': 120,
@@ -130,42 +129,45 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['name', 'frequency', 'alias-list']
   },
   'group-identities': {
-    widths: { 'group-identity-id': 64, 'group-identity-kind': 60,
-      'group-identity-name': 160, 'group-identity-description': 240,
+    widths: { 'group-identity-id': 240, 'group-identity-kind': 60,
+      'group-identity-description': 240,
       'alias-group': 200, 'logical-calls': 90, 'recorded-logical-calls': 65,
       'stream-submitted-logical-calls': 95, 'encrypted-logical-calls': 80,
       signaling: 100, 'last-seen': 174 },
-    grow: ['group-identity-name', 'group-identity-description', 'alias-group']
+    grow: ['group-identity-id', 'group-identity-description', 'alias-group']
   },
   radios: {
-    widths: { radio: 220, alias: 175, 'talker-alias': 175,
+    widths: { radio: 260,
       affiliation: 210, 'confirmed-channel': 260, 'logical-calls': 90,
       'encrypted-logical-calls': 90, 'last-seen': 174 },
-    grow: ['alias', 'talker-alias', 'affiliation', 'confirmed-channel']
+    grow: ['radio', 'affiliation', 'confirmed-channel']
   },
   'group-identity-radios': {
-    widths: { radio: 220, alias: 175, 'talker-alias': 175,
+    widths: { radio: 260,
       'confirmed-channel': 260, 'logical-calls': 90,
       'encrypted-logical-calls': 90, 'last-seen': 174 },
-    grow: ['alias', 'talker-alias', 'confirmed-channel']
+    grow: ['radio', 'confirmed-channel']
+  },
+  'radio-groups': {
+    widths: { 'group-identity-id': 240, 'group-identity-description': 240 },
+    grow: ['group-identity-id', 'group-identity-description']
   },
   'talker-aliases': {
-    widths: { radio: 220, 'talker-alias': 190, 'radio-alias': 190,
+    widths: { radio: 260,
       'logical-calls': 90, 'encrypted-logical-calls': 90, 'last-seen': 174 },
-    grow: ['talker-alias', 'radio-alias']
+    grow: ['radio']
   },
   'channel-radios': {
-    widths: { radio: 220, 'radio-alias': 190, 'talkgroup-name': 190,
-      'last-peer': 220, 'peer-alias': 190, 'last-talkgroup': 100 },
-    grow: ['radio-alias', 'talkgroup-name', 'peer-alias']
+    widths: { radio: 260, 'last-peer': 240, 'last-talkgroup': 240 },
+    grow: ['radio', 'last-talkgroup', 'last-peer']
   },
   'channel-group-identities': {
-    widths: { source: 220, 'source-alias': 190 },
-    grow: ['group-identity-name', 'group-identity-description', 'source-alias']
+    widths: { 'group-identity-id': 240, source: 260 },
+    grow: ['group-identity-id', 'group-identity-description', 'source']
   },
   'channel-top-groups': {
-    widths: { group: 190, 'group-identity-name': 190 },
-    grow: ['group', 'group-identity-name']
+    widths: { 'group-identity-id': 240, group: 190 },
+    grow: ['group-identity-id', 'group']
   },
   'alias-observed-group-identities': {
     widths: { 'group-identity-id': 190, source: 280, calls: 80,

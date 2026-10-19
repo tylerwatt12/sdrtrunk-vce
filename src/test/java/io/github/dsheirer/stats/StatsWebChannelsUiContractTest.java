@@ -192,8 +192,8 @@ class StatsWebChannelsUiContractTest
         assertTrue(tabs.contains("['AM', 'NBFM']"));
         assertTrue(tabs.contains("if (!analog && channelCapability(channel, 'group_identities'))"));
         assertTrue(groupColumns.contains("groupIdentityLabel(row)"));
-        assertTrue(groupColumns.contains("render: (row) => groupIdentityLink(row)"));
-        assertTrue(groupColumns.contains("render: (row) => groupIdentityAliasLink(row)"));
+        assertTrue(groupColumns.contains("render: (row) => groupIdentityValue(row)"));
+        assertFalse(groupColumns.contains("id: 'group-identity-name'"));
         assertTrue(groupColumns.contains("key: 'timeslot'"));
         assertTrue(groupColumns.contains("label: 'Slot'"));
     }
@@ -205,17 +205,18 @@ class StatsWebChannelsUiContractTest
         String groupColumns = function(source, "function channelGroupIdentityColumns()");
         String radioColumns = function(source, "function channelRadioColumns()");
 
-        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id, undefined, row.last_source_entity_ref, 'last_source')"));
-        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id, row.last_source_alias_name,"));
-        assertTrue(groupColumns.contains("row.last_source_entity_ref ?? null, 'last_source')"));
-        assertTrue(radioColumns.contains("render: (row) => radioLink(row)"));
-        assertTrue(radioColumns.contains("radioLink(row, undefined, aliasLabel(row))"));
-        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id, undefined, row.last_talkgroup_entity_ref, 'last_talkgroup')"));
-        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name,"));
-        assertTrue(radioColumns.contains("row.last_talkgroup_entity_ref ?? null, 'last_talkgroup')"));
+        assertTrue(groupColumns.contains("radioIdentityValue(row, { id: row.last_source_radio_id, alias: row.last_source_alias_name,"));
+        assertTrue(groupColumns.contains("reference: row.last_source_entity_ref, prefix: 'last_source'"));
+        assertFalse(groupColumns.contains("id: 'source-alias'"));
+        assertTrue(radioColumns.contains("render: (row) => radioIdentityValue(row)"));
+        assertTrue(radioColumns.contains("groupIdentityValue(row, { id: row.last_talkgroup_id, alias: row.last_talkgroup_alias_name,"));
+        assertTrue(radioColumns.contains("reference: row.last_talkgroup_entity_ref, prefix: 'last_talkgroup'"));
+        assertFalse(radioColumns.contains("id: 'radio-alias'"));
+        assertFalse(radioColumns.contains("id: 'talkgroup-name'"));
+        assertFalse(radioColumns.contains("id: 'peer-alias'"));
         assertTrue(radioColumns.contains("canonical_identity: row.last_peer_canonical_identity"));
-        assertTrue(radioColumns.contains("row.last_peer_radio_id, undefined, row.last_peer_entity_ref)"));
-        assertTrue(radioColumns.contains("row.last_peer_radio_id, row.last_peer_alias_name, row.last_peer_entity_ref)"));
+        assertTrue(radioColumns.contains("alias: row.last_peer_alias_name, talkerAlias: row.last_peer_talker_alias"));
+        assertTrue(radioColumns.contains("reference: row.last_peer_entity_ref"));
     }
 
     private static String source() throws Exception

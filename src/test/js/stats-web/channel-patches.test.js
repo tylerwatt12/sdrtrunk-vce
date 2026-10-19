@@ -32,9 +32,10 @@ assert.deepEqual(members.get(700).map((row) => row.local_talkgroup_id), [303]);
 assert.equal(members.has(undefined), false, 'Malformed rows must not collapse into one undefined patch group');
 
 const patchRenderer = functionSource('renderTrunkedChannel', 'specialIdentifierLabel');
-assert.match(patchRenderer, /groupIdentityLink\(row, row\.local_patch_group_id\)/);
-assert.match(patchRenderer, /groupIdentityLink\(member, member\.local_talkgroup_id\)/);
-assert.match(patchRenderer, /radioLink\(member, member\.local_radio_id\)/);
+assert.match(patchRenderer, /groupIdentityValue\(row, \{ id: row\.local_patch_group_id, alias: row\.patch_alias_name \}\)/);
+assert.match(patchRenderer, /groupIdentityValue\(member, \{ id: member\.local_talkgroup_id \}\)/);
+assert.match(patchRenderer, /radioIdentityValue\(member, \{ id: member\.local_radio_id \}\)/);
+assert.doesNotMatch(patchRenderer, /id: '(?:patch-name|member-talkgroup-names|member-radio-names)'/);
 assert.match(patchRenderer, /value !== null && value !== undefined && value !== ''/);
 assert.match(patchRenderer, /omittedMembers\(row, 'talkgroups'\)/);
 assert.match(patchRenderer, /pager\(patchPage, 'bottom', 'Patch groups'\)/);
