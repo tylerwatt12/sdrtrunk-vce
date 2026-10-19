@@ -235,6 +235,10 @@ public class ReceiverActivitySchema
     /** Adds shared message definitions and prospective command counters without reclassifying retained history. */
     public static void upgradeFrom59(Connection connection) throws SQLException
     {
+        for(String table: List.of("receiver_activity_event", "radio_system_identity_summary",
+            "trunked_radio_group_summary", "conventional_activity_summary", "trunked_signaling_activity_bucket",
+            "conventional_activity_bucket"))
+            ActivityMessageSchemaMigration.requirePopulatedBoundary(connection, table);
         ActivityMessageCatalog.create(connection);
         try(Statement statement = connection.createStatement())
         {
@@ -246,20 +250,18 @@ public class ReceiverActivitySchema
                 definition.name().equals("trunked_radio_group_summary"))
                 ActivityMessageSchemaMigration.rebuild(connection, definition.name(), definition.sql());
         }
-        ActivityMessageSchemaMigration.rebuild(connection, "receiver_activity_event", currentReceiverActivityEventSql());
+        ActivityMessageSchemaMigration.relaxEventConstraints(connection, format59ReceiverActivityEventSql(),
+            currentReceiverActivityEventSql());
+        List<String> appendedCounters = NEW_ACTION_COUNT_COLUMNS.stream().map(column -> column +
+            " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column + ") = 'integer' AND " + column + " >= 0)").toList();
         ActivityMessageSchemaMigration.rebuild(connection, "conventional_activity_summary",
-            createConventionalActivitySummarySql(ReceiverActivityCodes.eventTypeCodes()));
+            createConventionalActivitySummarySql(ReceiverActivityCodes.eventTypeCodes()), appendedCounters);
+        ActivityMessageSchemaMigration.rebuild(connection, "trunked_signaling_activity_bucket",
+            createTrunkedSignalingActivityBucketSql(), appendedCounters);
+        ActivityMessageSchemaMigration.rebuild(connection, "conventional_activity_bucket",
+            createConventionalActivityBucketSql(), appendedCounters);
         try(Statement statement = connection.createStatement())
         {
-            for(String table: List.of("trunked_signaling_activity_bucket", "conventional_activity_summary",
-                "conventional_activity_bucket"))
-            {
-                for(String column: NEW_ACTION_COUNT_COLUMNS)
-                {
-                    statement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column +
-                        " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column + ") = 'integer' AND " + column + " >= 0)");
-                }
-            }
             statement.executeUpdate(createCurrentResolvedViewSql());
         }
     }
@@ -2806,7 +2808,12 @@ public class ReceiverActivitySchema
         statement.executeUpdate(createTrunkedLogicalCallIdentityBucketSql());
         statement.executeUpdate(createP25SiteCallBucketSql());
         statement.executeUpdate(createP25SiteCallIdentityBucketSql(explicitWorkingAddresses));
-        statement.executeUpdate("""
+        statement.executeUpdate(createTrunkedSignalingActivityBucketSql());
+    }
+
+    private static String createTrunkedSignalingActivityBucketSql()
+    {
+        return """
             CREATE TABLE IF NOT EXISTS trunked_signaling_activity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
                     CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
@@ -2816,7 +2823,7 @@ public class ReceiverActivitySchema
                 %s,
                 PRIMARY KEY(channel_id, radio_system_id, bucket_start_ms)
             ) WITHOUT ROWID
-            """.formatted(TRUNKED_SIGNALING_ACTION_COUNT_DEFINITIONS));
+            """.formatted(TRUNKED_SIGNALING_ACTION_COUNT_DEFINITIONS);
     }
 
     private static String createTrunkedLogicalCallBucketSql()
@@ -2937,7 +2944,12 @@ public class ReceiverActivitySchema
         throws SQLException
     {
         statement.executeUpdate(createConventionalActivitySummarySql(eventTypes));
-        statement.executeUpdate("""
+        statement.executeUpdate(createConventionalActivityBucketSql());
+    }
+
+    private static String createConventionalActivityBucketSql()
+    {
+        return """
             CREATE TABLE IF NOT EXISTS conventional_activity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
                     CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
@@ -2951,7 +2963,7 @@ public class ReceiverActivitySchema
                 streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
                 PRIMARY KEY(channel_id, frequency_hz, timeslot, bucket_start_ms)
             )
-            """.formatted(ACTION_COUNT_DEFINITIONS));
+            """.formatted(ACTION_COUNT_DEFINITIONS);
     }
 
     private static String createConventionalActivitySummarySql(

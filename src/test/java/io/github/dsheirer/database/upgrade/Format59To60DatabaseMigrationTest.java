@@ -99,6 +99,75 @@ class Format59To60DatabaseMigrationTest
         }
     }
 
+    @Test void populatedEventConstraintRelaxationPreservesBtreesAndReloadsCachedStatements() throws Exception
+    {
+        Path database = Format59TestDatabase.create(directory.resolve("event-btrees.sqlite"));
+        try(var connection = open(database); var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=OFF");
+            connection.setAutoCommit(false);
+            statement.executeUpdate("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<10000) " +
+                "INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code,event_type_code) " +
+                "SELECT (SELECT channel_id FROM receiver_activity_event LIMIT 1),100000+i,1,1 FROM n");
+            // A deleted high ID proves that preserving max(id) alone would lose the allocator state.
+            statement.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,observed_at_ms,action_code,event_type_code) " +
+                "SELECT 9000000001,channel_id,observed_at_ms,1,1 FROM receiver_activity_event LIMIT 1");
+            statement.executeUpdate("DELETE FROM receiver_activity_event WHERE id=9000000001");
+            statement.execute("ANALYZE");
+            connection.commit();
+            var fields = columns(connection);
+            var before = snapshot(connection, fields);
+            var btrees = eventBtrees(connection);
+            try(var cached = connection.prepareStatement("INSERT INTO receiver_activity_event(" +
+                "channel_id,observed_at_ms,action_code,event_type_code) SELECT channel_id,observed_at_ms+1,?,? " +
+                "FROM receiver_activity_event LIMIT 1"))
+            {
+                cached.setInt(1, 25); cached.setInt(2, 63);
+                assertThrows(SQLException.class, cached::executeUpdate);
+                DatabaseMigrationChain.migrate(connection);
+                assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(before, snapshot(connection, fields), "Rows, statistics and deleted-ID allocator survive.");
+                assertEquals(btrees, eventBtrees(connection), "No event table or index b-tree is rebuilt.");
+                assertEquals(0, scalar(connection, "PRAGMA writable_schema"));
+                assertEquals(1, cached.executeUpdate(), "The previously prepared statement sees the relaxed CHECKs.");
+                cached.setInt(1, 999); cached.setInt(2, 63);
+                assertThrows(SQLException.class, cached::executeUpdate);
+                cached.setInt(1, 25); cached.setInt(2, 999);
+                assertThrows(SQLException.class, cached::executeUpdate);
+                connection.rollback();
+                assertEquals(59, DatabaseFormatCatalog.inspect(connection).version());
+                assertEquals(before, snapshot(connection, fields));
+                assertEquals(btrees, eventBtrees(connection));
+                cached.setInt(1, 25); cached.setInt(2, 63);
+                assertThrows(SQLException.class, cached::executeUpdate, "Rollback restores the old cached CHECKs.");
+                DatabaseMigrationChain.migrate(connection);
+                connection.commit();
+                assertEquals(btrees, eventBtrees(connection));
+                assertEquals(1, cached.executeUpdate());
+                connection.commit();
+                integrity(connection);
+            }
+        }
+        try(var connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+            ReceiverActivitySchema.validate(connection);
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE action_code=25 AND event_type_code=63"));
+            assertEquals(9000000002L, scalar(connection, "SELECT max(id) FROM receiver_activity_event"));
+            integrity(connection);
+        }
+    }
+
+    private static Map<String,Long> eventBtrees(Connection connection) throws SQLException
+    {
+        Map<String,Long> result = new LinkedHashMap<>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "SELECT name,rootpage FROM sqlite_schema WHERE tbl_name='receiver_activity_event' " +
+                "AND type IN ('table','index') ORDER BY name"))
+        { while(rows.next()) result.put(rows.getString(1), rows.getLong(2)); }
+        return result;
+    }
+
     @Test void friendlyDatabaseTextIsAuthoritativeWhileStableCodesAndKindsAreValidated() throws Exception
     {
         Path database = Format60TestDatabase.create(directory.resolve("catalogue.sqlite"));
