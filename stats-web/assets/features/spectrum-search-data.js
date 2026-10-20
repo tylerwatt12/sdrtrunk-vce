@@ -58,4 +58,3 @@ export function spectrumSearchGroupKey(candidate) {
     (identity.wacn != null && identity.system != null ? `p25:${identity.wacn}:${identity.system}` :
       `candidate:${candidate.candidate_id}`);
 }
-
