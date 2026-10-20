@@ -64,7 +64,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     }
     label = 'Updated receiver operation';
     await page.getByRole('button', { name: '6h', exact: true }).click();
-    await page.getByRole('link', { name: 'Radio Activity Chart', exact: true }).click();
+    await page.getByRole('link', { name: 'Radio Activity', exact: true }).click();
     await expect(page.locator('.dashboard-activity-legend').getByRole('button', { name: /Updated receiver operation.*12/ })).toBeVisible();
     expect(definitionRequests).toBeGreaterThan(1);
     expect(fixture.pageErrors).toEqual([]);

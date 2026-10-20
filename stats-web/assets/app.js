@@ -14,6 +14,7 @@ import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints } from './core/icon-hints.js?v=5';
 import { createFormWorkflow } from './core/form-workflows.js?v=4';
+import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
@@ -35,7 +36,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=13';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=18';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=19';
 import { createAlertsWorkspace } from './features/alerts.js?v=18';
 import { createCallRelations } from './features/call-relations.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
@@ -546,6 +547,7 @@ function installTimeChartHover(wrapper, svg, options) {
   const tooltip = node('div', 'chart-tooltip');
   tooltip.hidden = true;
   tooltip.setAttribute('role', 'tooltip');
+  if (options.keyboard) tooltip.setAttribute('aria-live', 'polite');
   const guide = svgNode('line', {
     y1: margin.top,
     y2: height - margin.bottom,
@@ -562,7 +564,7 @@ function installTimeChartHover(wrapper, svg, options) {
     markerGroup.setAttribute('visibility', 'hidden');
   };
 
-  const show = (event) => {
+  const showPoint = (point) => {
     const bounds = svg.getBoundingClientRect();
     const scale = Math.min(bounds.width / width, bounds.height / height);
     if (!Number.isFinite(scale) || scale <= 0) return;
@@ -570,12 +572,6 @@ function installTimeChartHover(wrapper, svg, options) {
     const renderedHeight = height * scale;
     const renderedLeft = bounds.left + (bounds.width - renderedWidth) / 2;
     const renderedTop = bounds.top + (bounds.height - renderedHeight) / 2;
-    const chartX = (event.clientX - renderedLeft) / scale;
-    const hoveredTimestamp = from + Math.max(0, Math.min(1,
-      (chartX - margin.left) / plotWidth)) * range;
-    const point = points.reduce((nearest, candidate) =>
-      Math.abs(timestamp(candidate) - hoveredTimestamp) < Math.abs(timestamp(nearest) - hoveredTimestamp) ?
-        candidate : nearest);
     const visibleMarkers = markers(point).filter((marker) =>
       Number.isFinite(marker.x) && Number.isFinite(marker.y));
     if (!visibleMarkers.length) return;
@@ -586,7 +582,7 @@ function installTimeChartHover(wrapper, svg, options) {
     guide.setAttribute('x2', pointX);
     guide.removeAttribute('visibility');
     markerGroup.replaceChildren(...visibleMarkers.map((marker) => {
-      const circle = svgNode('circle', { cx: marker.x, cy: marker.y, r: marker.radius || 4,
+      const circle = svgNode('circle', { cx: marker.x, cy: marker.y, r: marker.radius ?? 4,
         class: 'chart-hover-point' });
       if (marker.color) circle.style.stroke = marker.color;
       return circle;
@@ -609,6 +605,35 @@ function installTimeChartHover(wrapper, svg, options) {
     tooltip.style.left = `${Math.max(4, left)}px`;
     tooltip.style.top = `${Math.max(4, top)}px`;
   };
+
+  const show = (event) => {
+    const bounds = svg.getBoundingClientRect();
+    const scale = Math.min(bounds.width / width, bounds.height / height);
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const renderedLeft = bounds.left + (bounds.width - width * scale) / 2;
+    const chartX = (event.clientX - renderedLeft) / scale;
+    const hoveredTimestamp = from + Math.max(0, Math.min(1,
+      (chartX - margin.left) / plotWidth)) * range;
+    const point = points.reduce((nearest, candidate) =>
+      Math.abs(timestamp(candidate) - hoveredTimestamp) < Math.abs(timestamp(nearest) - hoveredTimestamp) ?
+        candidate : nearest);
+    showPoint(point);
+  };
+
+  if (options.keyboard) {
+    const state = options.keyboardState || { index: 0 };
+    svg.setAttribute('tabindex', '0');
+    svg.addEventListener('focus', () => showPoint(points[state.index]));
+    svg.addEventListener('blur', hide);
+    svg.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { hide(); return; }
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      state.index = event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1 :
+        Math.max(0, Math.min(points.length - 1, state.index + (event.key === 'ArrowRight' ? 1 : -1)));
+      showPoint(points[state.index]);
+    });
+  }
 
   const surface = svgNode('rect', {
     x: margin.left,
@@ -8302,109 +8327,142 @@ function roundedChartMaximum(maximum) {
 
 function countTimeSeriesChart(rows, configurations, options = {}) {
   const values = (rows || []).map((row) => ({ ...row,
-    time_ms: Number(row[options.timeField || 'time_ms']) }));
+    time_ms: Number(row[options.timeField || 'time_ms']) }))
+    .filter((row) => Number.isFinite(row.time_ms))
+    .sort((left, right) => left.time_ms - right.time_ms);
   if (!values.length) return node('div', 'empty', options.emptyMessage || 'No hourly activity data');
 
   const series = (configurations || []).filter((configuration) => configuration && configuration.field);
   if (!series.length) return node('div', 'empty', 'No activity series selected');
-
-  const width = Number(options.width || 960);
-  const height = Number(options.height || 270);
-  const margin = options.margin || { top: 18, right: 20, bottom: 42, left: 55 };
-  const plotWidth = width - margin.left - margin.right;
-  const plotHeight = height - margin.top - margin.bottom;
-  const maximum = Math.max(1, ...series.flatMap((configuration) =>
-    values.map((value) => value[configuration.field])
-      .filter((value) => !options.preserveNulls || value !== null)
-      .map((value) => Number(value || 0))));
+  const countFor = (row, configuration) => {
+    const raw = row[configuration.field];
+    if (options.preserveNulls && (raw === null || raw === undefined)) return null;
+    const value = Number(raw || 0);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+  const countsFor = (row) => series.map((configuration) => countFor(row, configuration));
+  const totalFor = (row) => {
+    const counts = countsFor(row).filter((value) => value !== null);
+    return counts.length ? counts.reduce((sum, value) => sum + value, 0) : null;
+  };
+  // Protocol buckets are disjoint. Outcome metrics can overlap and stay side by side.
+  const combined = options.combineSeries === true;
+  const maximum = Math.max(1, ...values.flatMap((row) =>
+    combined ? [totalFor(row) || 0] : countsFor(row).filter((value) => value !== null)));
   const roundedMaximum = roundedChartMaximum(maximum);
+  const inferredBucket = values.slice(1).reduce((shortest, row, index) => {
+    const interval = row.time_ms - values[index].time_ms;
+    return interval > 0 ? Math.min(shortest, interval) : shortest;
+  }, Number.POSITIVE_INFINITY);
+  const bucket = Number(options.bucketMs) > 0 ? Number(options.bucketMs) :
+    Number.isFinite(inferredBucket) ? inferredBucket : 3_600_000;
+  const hourly = bucket === 3_600_000;
+  const intervalLabel = hourly ? 'hour' : bucket % 3_600_000 === 0 ?
+    `${number(bucket / 3_600_000)} hours` : `${number(bucket / 60_000)} minutes`;
+  const axisLabel = options.yAxisLabel || `${options.countLabel || 'Count'} per ${intervalLabel}`;
   const from = Number(options.from ?? values[0].time_ms);
-  const to = Math.max(from + 1, Number(options.to ?? values.at(-1).time_ms));
-  const xFor = (timestamp) => margin.left + plotWidth * Math.max(0, Math.min(1,
-    (timestamp - from) / (to - from)));
-  const yFor = (value) => margin.top + plotHeight - plotHeight * Number(value || 0) / roundedMaximum;
-  const svg = svgNode('svg', {
-    class: 'activity-line-svg',
-    viewBox: `0 0 ${width} ${height}`,
-    role: 'img',
-    'aria-label': options.ariaLabel || 'Call activity by time'
-  });
-  svg.style.height = `${height}px`;
+  const to = Math.max(from + bucket, Number(options.to ?? values.at(-1).time_ms + bucket));
+  const wrapper = node('div', 'count-time-chart');
+  const canvas = node('div', 'count-time-chart-canvas');
+  const heading = node('p', 'count-time-chart-caption', options.caption ||
+    (hourly ? (combined ? 'Hourly totals for the selected protocols' :
+      'Hourly counts for the selected activity types') :
+      (combined ? `Totals per ${intervalLabel} for the selected protocols` :
+        `Counts per ${intervalLabel} for the selected activity types`)));
+  wrapper.append(heading, canvas);
+  let lastWidth = 0;
+  const keyboardState = { index: 0 };
 
-  for (let index = 0; index <= 4; index += 1) {
-    const value = roundedMaximum * index / 4;
-    const y = yFor(value);
-    svg.append(svgNode('line', { x1: margin.left, y1: y, x2: width - margin.right, y2: y,
-      class: 'chart-grid-line' }));
-    svg.append(svgNode('text', { x: margin.left - 10, y: y + 4, class: 'chart-axis-label',
-      'text-anchor': 'end' }, number(value)));
-  }
-
-  series.forEach((configuration) => {
-    const points = values.map((value) => ({ timestamp: value.time_ms,
-      count: options.preserveNulls && value[configuration.field] === null ?
-        null : Number(value[configuration.field] || 0) }));
-    let connected = false;
-    const path = points.flatMap((point) => {
-      if (point.count === null) {
-        connected = false;
-        return [];
-      }
-      const command = connected ? 'L' : 'M';
-      connected = true;
-      return `${command} ${xFor(point.timestamp).toFixed(2)} ${yFor(point.count).toFixed(2)}`;
-    }).join(' ');
-    if (path) {
-      if (options.fillFirstSeries && configuration === series[0]) {
-        const first = points.find((point) => point.count !== null);
-        const last = points.findLast((point) => point.count !== null);
-        const baseline = yFor(0).toFixed(2);
-        const area = svgNode('path', { d: `${path} L ${xFor(last.timestamp).toFixed(2)} ${baseline}` +
-          ` L ${xFor(first.timestamp).toFixed(2)} ${baseline} Z`, class: 'activity-line-area' });
-        area.style.fill = configuration.color;
-        svg.append(area);
-      }
-      const line = svgNode('path', { d: path, class: 'activity-line-path' });
-      line.style.stroke = configuration.color;
-      svg.append(line);
+  const draw = (availableWidth) => {
+    const width = Math.max(180, Math.round(availableWidth || Number(options.width || 960)));
+    if (width === lastWidth) return;
+    lastWidth = width;
+    const height = width < 500 ? 220 : Number(options.height || 260);
+    const left = Math.max(48, String(number(roundedMaximum)).length * 7 + 20);
+    const margin = { top: 28, right: 12, bottom: 36, left };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const xFor = (time) => margin.left + plotWidth * Math.max(0, Math.min(1, (time - from) / (to - from)));
+    const yFor = (count) => margin.top + plotHeight * (1 - Number(count || 0) / roundedMaximum);
+    const slot = plotWidth * Math.min(bucket, to - from) / (to - from);
+    const groupWidth = Math.max(.01, slot - Math.min(6, slot * .25));
+    const barCount = combined ? 1 : series.length;
+    const gap = barCount > 1 ? Math.min(2, groupWidth * .08) : 0;
+    const barWidth = Math.max(.001, (groupWidth - gap * (barCount - 1)) / barCount);
+    const svg = svgNode('svg', { class: 'count-time-chart-svg', viewBox: `0 0 ${width} ${height}`,
+      role: 'img', 'aria-label': (options.ariaLabel || 'Hourly activity counts') +
+        `. Use left and right arrow keys to inspect each ${hourly ? 'hour' : 'interval'}.` });
+    svg.style.height = `${height}px`;
+    svg.append(svgNode('title', {}, options.ariaLabel || 'Hourly activity counts'));
+    svg.append(svgNode('text', { x: margin.left, y: 13, class: 'chart-axis-label' },
+      axisLabel));
+    for (let index = 0; index <= 4; index += 1) {
+      const count = roundedMaximum * index / 4;
+      const y = yFor(count);
+      svg.append(svgNode('line', { x1: margin.left, x2: width - margin.right, y1: y, y2: y,
+        class: 'chart-grid-line' }));
+      svg.append(svgNode('text', { x: margin.left - 10, y: y + 4,
+        class: 'chart-axis-label', 'text-anchor': 'end' }, number(count)));
     }
-    if (values.length <= 96) {
-      points.filter((point) => point.count !== null).forEach((point) => {
-        const circle = svgNode('circle', { cx: xFor(point.timestamp), cy: yFor(point.count),
-          r: values.length <= 48 ? 3 : 1.8, class: 'activity-line-point' });
-        circle.style.stroke = configuration.color;
-        svg.append(circle);
+    values.forEach((row) => {
+      if (row.time_ms < from || row.time_ms >= to) return;
+      const rowSlot = xFor(row.time_ms + bucket) - xFor(row.time_ms);
+      const widthScale = Math.min(1, rowSlot / slot);
+      const start = xFor(row.time_ms) + (rowSlot - groupWidth * widthScale) / 2;
+      const counts = combined ? [totalFor(row)] : countsFor(row);
+      counts.forEach((count, index) => {
+        if (count === null) return;
+        const bar = svgNode('rect', { x: start + index * (barWidth + gap) * widthScale, y: yFor(count),
+          width: barWidth * widthScale, height: Math.max(0, yFor(0) - yFor(count)), rx: 2,
+          class: 'count-time-chart-bar' });
+        if (!combined && series.length > 1 && series[index].color) bar.style.fill = series[index].color;
+        bar.append(svgNode('title', {}, new Date(row.time_ms).toLocaleString() + ' · ' +
+          (combined ? 'Total' : series[index].label) + ': ' + number(count)));
+        svg.append(bar);
       });
+    });
+    const tickCount = Math.min(values.length, width < 500 ? 3 : (options.maxTimeTicks || 6));
+    const indices = [...new Set(Array.from({ length: tickCount }, (_, index) =>
+      Math.round(index * (values.length - 1) / Math.max(1, tickCount - 1))))];
+    indices.forEach((index, position) => {
+      const time = values[index].time_ms;
+      if (time < from || time >= to) return;
+      const label = to - from > 2 * 86_400_000 ? new Date(time).toLocaleString([], {
+        month: 'short', day: 'numeric', hour: 'numeric'
+      }) : new Date(time).toLocaleTimeString([], { hour: 'numeric' });
+      svg.append(svgNode('text', { x: xFor(time + bucket / 2), y: height - 12,
+        class: 'chart-axis-label', 'text-anchor': position === 0 ? 'start' :
+          position === indices.length - 1 ? 'end' : 'middle' }, label));
+    });
+    const restoreFocus = canvas.contains(document.activeElement);
+    canvas.replaceChildren(svg);
+    installTimeChartHover(canvas, svg, {
+      width, height, margin, from, to, points: values, keyboard: true, keyboardState,
+      timestamp: (point) => point.time_ms + bucket / 2,
+      markers: (point) => combined ? [{ x: xFor(point.time_ms + bucket / 2),
+        y: yFor(totalFor(point)), radius: totalFor(point) === null ? 0 : 4, color: 'var(--accent)' }] :
+        series.map((configuration) => ({ x: xFor(point.time_ms + bucket / 2),
+          y: yFor(countFor(point, configuration)), radius: countFor(point, configuration) === null ? 0 : 4,
+          color: series.length === 1 ? 'var(--accent)' : configuration.color
+        })),
+      tooltipText: (point) => [new Date(point.time_ms).toLocaleString(),
+        ...(combined ? [`Total: ${totalFor(point) === null ? 'Unavailable' : number(totalFor(point))}`] : []),
+        ...series.map((configuration) => `${configuration.label}: ${countFor(point, configuration) === null ?
+          'Unavailable' : number(countFor(point, configuration))}`),
+        ...(combined && countsFor(point).some((count) => count === null) && totalFor(point) !== null ?
+          ['Partial history'] : [])]
+    });
+    if (restoreFocus) svg.focus({ preventScroll: true });
+  };
+  draw(Number(options.width || 960));
+  requestAnimationFrame(() => {
+    if (!wrapper.isConnected) return;
+    draw(canvas.getBoundingClientRect().width);
+    if ('ResizeObserver' in window) {
+      const observer = new ResizeObserver((entries) => draw(entries[0]?.contentRect.width));
+      observer.observe(canvas);
+      pageObservers.set(observer, wrapper);
     }
-  });
-
-  const tickStep = Math.max(1, Math.ceil(values.length / (options.maxTimeTicks || 6)));
-  values.forEach((value, index) => {
-    if (index % tickStep !== 0 && index !== values.length - 1) return;
-    const longRange = to - from > 2 * 86_400_000;
-    const label = longRange ? new Date(value.time_ms).toLocaleString([], {
-      month: 'short', day: 'numeric', hour: 'numeric'
-    }) : new Date(value.time_ms).toLocaleTimeString([], { hour: 'numeric' });
-    svg.append(svgNode('text', { x: xFor(value.time_ms), y: height - 15,
-      class: 'chart-axis-label', 'text-anchor': 'middle' }, label));
-  });
-
-  const wrapper = node('div', 'activity-line-chart');
-  wrapper.style.minHeight = `${height}px`;
-  wrapper.append(svg);
-  installTimeChartHover(wrapper, svg, {
-    width, height, margin, from, to, points: values,
-    timestamp: (point) => point.time_ms,
-    markers: (point) => series.map((configuration) => ({
-      x: xFor(point.time_ms),
-      y: options.preserveNulls && point[configuration.field] === null ?
-        Number.NaN : yFor(point[configuration.field]),
-      color: configuration.color
-    })),
-    tooltipText: (point) => [new Date(point.time_ms).toLocaleString(),
-      ...series.map((configuration) =>
-        `${configuration.label}: ${options.preserveNulls && point[configuration.field] === null ?
-          'Unavailable' : number(point[configuration.field] || 0)}`)]
   });
   return wrapper;
 }
@@ -8570,6 +8628,7 @@ function dashboardCallActivityChart(activity) {
   wrapper.append(controls, protocolLegend, chartHost);
 
   const draw = () => {
+    disconnectPageObserversWithin(chartHost);
     chartHost.replaceChildren();
     protocolLegend.replaceChildren();
     const available = configurations.filter((configuration) =>
@@ -8624,8 +8683,10 @@ function dashboardCallActivityChart(activity) {
     chartHost.append(countTimeSeriesChart(values, visible, {
       from: activity?.from_ms,
       to: activity?.to_ms,
-      height: 300,
-      margin: { top: 18, right: 20, bottom: 48, left: 55 },
+      height: 260,
+      combineSeries: true,
+      bucketMs: activity?.bucket_ms,
+      countLabel: selectedMetric.label,
       ariaLabel: `${selectedMetric.label} by protocol for ` +
         `${selectedChannelKind === 'ALL' ? 'all channel types' : selectedChannelKind.toLowerCase()}`,
       emptyMessage: 'No call activity data is available',
@@ -8705,6 +8766,7 @@ function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel) {
   wrapper.append(legend, chartHost);
 
   const draw = () => {
+    disconnectPageObserversWithin(chartHost);
     chartHost.replaceChildren();
     const visible = configurations.filter((series) => selected.has(series.field));
     if (!visible.length) {
@@ -8722,7 +8784,9 @@ function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel) {
       margin: smallScreen ? { top: 18, right: 10, bottom: 40, left: 36 } :
         { top: 18, right: 20, bottom: 48, left: 55 },
       maxTimeTicks: smallScreen ? 2 : 6,
-      fillFirstSeries: true,
+      bucketMs: response.bucket_ms,
+      countLabel: 'Calls',
+      preserveNulls: true,
       ariaLabel,
       emptyMessage: 'No activity data is available for this range'
     }));
@@ -8987,45 +9051,61 @@ function qualityChartPanel(title, description, chart) {
 
 function updateSignalCurrentTile(tile, channel) {
   const state = signalChannelState(channel);
-  const decodeOnly = channel?.remote_origin?.remote === true;
+  const remote = channel?.remote_origin?.remote === true;
+  const tone = state.className === 'healthy' ? 'success' :
+    state.className === 'degraded' ? 'warning' : state.className === 'poor' ? 'danger' : 'neutral';
+  const next = node('article', 'signal-current-tile ui-surface ui-surface-soft');
+  next.dataset.configurationId = channel.configuration_id || '';
   const header = node('div', 'signal-current-header');
-  const labels = node('div', 'signal-current-labels');
-  labels.append(channelNameSummary(channel));
-  const system = node('div', 'signal-current-system');
-  system.append(dashboardChannelContext(channel));
-  labels.append(system);
-  const tone = state.className === 'healthy' ? 'ui-pill-success' :
-    state.className === 'degraded' ? 'ui-pill-warning' :
-      state.className === 'poor' ? 'ui-pill-danger' : '';
-  const statePill = decodeOnly ? uiPill(state.label, tone.replace('ui-pill-', '') || 'neutral', 'icon-cloud') :
-    badge(state.label, tone);
+  header.append(node('span', 'signal-current-protocol', protocolFamily(channel) || channel.protocol || 'Trunked site'));
+  const status = node('div', 'signal-current-status');
+  if (remote) status.append(remoteOriginIcon(channel.remote_origin));
+  const statePill = uiPill(state.label, tone);
   statePill.classList.add('signal-state');
-  if (decodeOnly) {
-    const decodeLabel = Number.isFinite(optionalNumber(channel.decode_health_pct)) ?
-      `${percentNumber(channel.decode_health_pct)} decode quality` : 'Decode quality unavailable';
-    statePill.title = `Remote source · ${decodeLabel}`;
-    statePill.setAttribute('aria-label', `Remote source · ${state.label}`);
-  }
-  header.append(labels, statePill);
+  status.append(statePill);
+  header.append(status);
+
+  const labels = node('div', 'signal-current-labels');
+  const configured = node('strong', 'signal-current-name');
+  const name = channel.name || 'Unnamed channel';
+  configured.append(capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+    anchor(name, href('channel', { configuration_id: channel.configuration_id })) : name);
+  labels.append(configured);
+  const site = String(channel.site_name || '').trim();
+  const system = String(channel.system_name || channel.system || '').trim();
+  // Friendly saved names belong here; protocol IDs remain available in channel details.
+  if (site) labels.append(node('span', 'signal-current-context', site));
+  if (system) labels.append(node('span', 'signal-current-context signal-current-system', system));
+
   const power = node('div', 'signal-current-power');
-  if (decodeOnly) {
-    power.append(node('strong', '', percentNumber(channel.decode_health_pct)),
-      node('span', '', 'Decode quality'));
-  } else {
-    power.append(node('strong', '', signalNumber(channel.signal_dbfs)),
-      node('span', '', `30s avg ${signalNumber(channel.average_signal_dbfs)}`));
-  }
-  const details = node('div', 'signal-current-details');
-  const qualityFrequency = channel.quality_frequency_hz || channel.current_control_hz;
+  if (!remote) {
+    power.append(node('strong', '', signalNumber(channel.signal_dbfs).replace(/\s*dBFS$/, '')),
+      node('span', '', 'dBFS'));
+    power.title = `30s average ${signalNumber(channel.average_signal_dbfs)}`;
+  } else power.setAttribute('aria-hidden', 'true');
   const decode = optionalNumber(channel.decode_health_pct);
-  const decodeClass = !Number.isFinite(decode) ? '' :
-    (decode >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
-      (decode >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'quality-warn' : 'quality-bad'));
-  if (!decodeOnly) details.append(node('span', decodeClass, `Decode ${percentNumber(channel.decode_health_pct)}`));
-  details.append(node('span', '', Number(qualityFrequency) ? `${frequency(qualityFrequency)} MHz` : 'Frequency unavailable'),
-    node('span', '', elapsedLabel(channel.last_observed_ms)));
-  tile.dataset.configurationId = channel.configuration_id || '';
-  tile.replaceChildren(header, power, details);
+  const meter = node('meter', 'ui-quality-meter');
+  meter.min = 0;
+  meter.max = 100;
+  meter.low = DECODE_DEGRADED_MINIMUM_PERCENT;
+  meter.high = DECODE_HEALTHY_MINIMUM_PERCENT;
+  meter.optimum = 100;
+  meter.value = Number.isFinite(decode) ? Math.max(0, Math.min(100, decode)) : 0;
+  meter.setAttribute('aria-label', 'Decode quality');
+  meter.setAttribute('aria-valuetext', percentNumber(channel.decode_health_pct));
+  meter.hidden = remote || !Number.isFinite(decode);
+  const details = node('div', 'signal-current-details');
+  details.append(node('span', '', `Decode ${percentNumber(channel.decode_health_pct)}`));
+  next.append(header, labels, power, meter, details);
+  patchElementTree(tile, next);
+  // Meter state is a property, so it also needs updating when its DOM is retained.
+  const retainedMeter = tile.querySelector('meter');
+  retainedMeter.min = meter.min;
+  retainedMeter.max = meter.max;
+  retainedMeter.low = meter.low;
+  retainedMeter.high = meter.high;
+  retainedMeter.optimum = meter.optimum;
+  retainedMeter.value = meter.value;
   return tile;
 }
 
@@ -9107,7 +9187,7 @@ async function signalHealthSection() {
   const tiles = node('div', 'signal-current-grid');
   currentPanel.append(currentToolbar, tiles);
   host.append(currentPanel);
-  const block = section('Signal quality', host, exportCsvLink('signal-health'));
+  const block = section('Trunked site signal quality', host, exportCsvLink('signal-health'));
   let currentResponse = null;
   const tileNodes = new Map();
   let loading = false;
@@ -9115,6 +9195,7 @@ async function signalHealthSection() {
   const renderCurrent = () => {
     const now = Date.now();
     const channels = sortSignalChannels((currentResponse?.rows || []).filter((channel) =>
+      String(channel.channel_kind || '').toUpperCase() === 'TRUNKED' &&
       canonicalConfigurationId(channel?.configuration_id) &&
       now - Number(channel.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
     const healthy = channels.filter((channel) =>
@@ -9129,7 +9210,7 @@ async function signalHealthSection() {
       return Number.isFinite(decode) && decode < DECODE_DEGRADED_MINIMUM_PERCENT;
     }).length;
     const unknown = channels.length - healthy - degraded - poor;
-    summary.textContent = `${number(channels.length)} reporting · ${number(healthy)} healthy · ` +
+    summary.textContent = `${number(channels.length)} sites reporting · ${number(healthy)} healthy · ` +
       `${number(degraded)} degraded · ${number(poor)} poor${unknown ? ` · ${number(unknown)} unknown` : ''}`;
 
     const activeKeys = new Set();
@@ -9142,8 +9223,8 @@ async function signalHealthSection() {
       return tile;
     });
     [...tileNodes.keys()].filter((key) => !activeKeys.has(key)).forEach((key) => tileNodes.delete(key));
-    tiles.replaceChildren(...orderedTiles);
-    if (!channels.length) tiles.append(node('div', 'empty', 'No receiver channels are currently reporting'));
+    reconcileKeyedChildren(tiles, orderedTiles, 'configurationId', () => {});
+    if (!channels.length) tiles.append(node('div', 'empty', 'No trunked sites are currently reporting.'));
   };
 
   const logging = statsLoggingState();
@@ -9297,6 +9378,7 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
       historyHost.replaceChildren(node('div', 'loading', 'Loading activity totals'));
+      disconnectPageObserversWithin(chartHost);
       chartHost.replaceChildren(node('div', 'loading', 'Loading call activity'));
       signalingHost.replaceChildren(node('div', 'loading', 'Loading signaling totals'));
     }
@@ -9307,6 +9389,7 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
       historyHost.replaceChildren(
         groupIdentityHistoryTotals(response.totals), callCountDates(response, 'selected'),
         node('p', 'ui-section-note', systemCallTitle(scopeParameters)));
+      disconnectPageObserversWithin(chartHost);
       chartHost.replaceChildren(groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
         'Group calls and call outcomes by time'));
       signalingHost.replaceChildren(signalingMetrics(signalingCounts(response.totals || {})),
@@ -9317,6 +9400,7 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
       if (pageOwned) rethrowPageHandlingError(error);
       if (sequence === loadingSequence) {
         historyHost.replaceChildren(node('div', 'error', error.message));
+        disconnectPageObserversWithin(chartHost);
         chartHost.replaceChildren();
         signalingHost.replaceChildren();
       }
@@ -12790,21 +12874,36 @@ function radioTableType(baseType, columns, system) {
 
 async function renderDashboard() {
   const renderContext = captureRenderContext();
-  const requestedTab = route.get('tab') || 'health';
-  const tab = ['health', 'calls', 'activity'].includes(requestedTab) ? requestedTab : 'health';
-  const dashboard = tab === 'health' ? {} : await api('/api/v1/dashboard');
+  // Preserve links to the former directory perspective after promoting inventory.
+  const requestedTab = route.get('directory_view') === 'coverage' ? 'inventory' : route.get('tab') || 'health';
+  const tab = ['health', 'calls', 'activity', 'inventory'].includes(requestedTab) ? requestedTab : 'health';
+  const dashboard = ['health', 'inventory'].includes(tab) ? {} : await api('/api/v1/dashboard');
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
-  if (!beginPage(renderContext,
-    pageHeader(tab === 'health' ? 'Main' : 'Dashboard', tab === 'health' ?
-      'Signal quality and radio directory' : tab === 'activity' ?
-        'Signaling events heard on P25, DMR, and NXDN channels.' : dashboard.last_seen_ms ?
-        fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
-    tabs([
-      { id: 'health', label: 'Main', href: href('dashboard', { tab: 'health' }) },
-      { id: 'calls', label: 'Call Statistics', href: href('dashboard', { tab: 'calls' }) },
-      { id: 'activity', label: 'Radio Activity Chart', href: href('dashboard', { tab: 'activity' }) }
-    ], tab))) return;
+  const descriptions = {
+    health: 'Check signal quality and browse systems and channels.',
+    calls: 'See call totals, activity over time, and the most active sources and destinations.',
+    activity: 'Explore radio signaling events and see which radios sent them.',
+    inventory: 'Browse aliases, see which have been heard, and find activity without a matching alias.'
+  };
+  const navigation = tabs([
+    { id: 'health', label: 'Overview', href: href('dashboard', { tab: 'health' }) },
+    { id: 'calls', label: 'Call Statistics', href: href('dashboard', { tab: 'calls' }) },
+    { id: 'activity', label: 'Radio Activity', href: href('dashboard', { tab: 'activity' }) },
+    ...(capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? [
+      { id: 'inventory', label: 'Alias Inventory', href: href('dashboard', { tab: 'inventory' }) }
+    ] : [])
+  ], tab);
+  navigation.classList.add('ui-page-nav-tabs');
+  navigation.setAttribute('aria-label', 'Main sections');
+  if (!beginPage(renderContext, pageHeader('Main'), navigation,
+    node('p', 'ui-page-description', descriptions[tab]))) return;
+
+  if (tab === 'inventory') {
+    if (capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) await renderAliasCoverageDirectory(renderContext, true);
+    else content.append(node('p', 'ui-feedback ui-feedback-error', 'Alias inventory is not available with your access.'));
+    return;
+  }
 
   if (tab === 'health') {
     const signalHost = node('div', 'ui-feedback ui-feedback-loading', 'Loading signal quality…');
@@ -18749,17 +18848,25 @@ function liveConventionalChannelValue(row) {
 }
 
 function liveRemoteOriginLabel(origin) {
-  return origin?.remote === true ? 'Remote source' : '';
+  return origin?.remote === true ? 'Received from another receiver.' : '';
 }
 
-function liveRemoteOriginBadge(origin, showLabel = false) {
+function remoteOriginIcon(origin, { focusable = true } = {}) {
   const label = liveRemoteOriginLabel(origin);
   if (!label) return null;
-  const badge = node('span', 'live-remote-origin');
+  const badge = node('span', 'ui-origin-indicator');
   badge.title = label;
+  badge.dataset.uiHint = label;
+  badge.setAttribute('role', 'img');
   badge.setAttribute('aria-label', label);
+  if (focusable) badge.tabIndex = 0;
   badge.append(iconGlyph('icon-cloud'));
-  if (showLabel) badge.append(node('span', '', 'Remote'));
+  return badge;
+}
+
+function liveRemoteOriginBadge(origin) {
+  const badge = remoteOriginIcon(origin);
+  badge?.classList.add('live-remote-origin');
   return badge;
 }
 
@@ -19440,8 +19547,8 @@ function liveChannelsSection(onSelectionChange) {
         const tone = !available ? '' :
           (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'success' :
             (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'warning' : 'danger'));
-        quality.className = 'channels-tab-quality live-remote-origin' +
-          (tone ? ` live-remote-origin-${tone}` : '');
+        quality.className = 'channels-tab-quality ui-origin-indicator' +
+          (tone ? ` ui-origin-indicator-${tone}` : '');
         const qualityLabel = !available ? 'Decode quality unavailable' :
           `${decodeQuality.toFixed(1)}% decode quality`;
         quality.title = `${qualityLabel}${originSuffix}`;
@@ -19470,6 +19577,8 @@ function liveChannelsSection(onSelectionChange) {
           `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}${originSuffix}`);
         stateLabel.textContent = operatingState;
       }
+      if (remoteLabel) select.dataset.uiHint = select.getAttribute('aria-label');
+      else delete select.dataset.uiHint;
       tab.classList.toggle('stopped', stopped);
     }
     const requestedMatch = liveRequestedChannelMatch(value, requestedChannel);
@@ -23843,13 +23952,8 @@ function channelSummaryCards(catalog, editable) {
 function channelOriginName(label, row, compact = false) {
   if (row?.remote_origin?.remote !== true) return label;
   const line = node('span', `channel-origin-line${compact ? ' channel-name-line' : ''}`);
-  const origin = compact ? node('span', 'channel-origin-icon ui-muted') : uiPill('Remote', 'neutral', 'icon-cloud');
-  if (compact) origin.append(iconGlyph('icon-cloud'));
-  else origin.classList.add('ui-pill-compact');
-  origin.title = 'Remote channel; depends on another receiver';
-  origin.dataset.uiHint = origin.title;
-  origin.setAttribute('aria-label', origin.title);
-  if (compact) origin.setAttribute('role', 'img');
+  const origin = remoteOriginIcon(row.remote_origin);
+  origin.classList.add('channel-origin-icon');
   line.append(label, origin);
   return line;
 }
@@ -24134,20 +24238,6 @@ function channelCatalogAfterAutoStartMove(catalog, configurationId, direction) {
   };
 }
 
-function radioDirectoryAliasLists(row) {
-  const entries = Array.isArray(row.alias_lists) ? row.alias_lists : [];
-  if (!entries.length && row.alias_list_name) {
-    return aliasListLink(row.alias_list_name, row.alias_list_id) || node('span', 'muted', '—');
-  }
-  if (!entries.length) return node('span', 'muted', '—');
-  const values = node('span', 'radio-directory-alias-lists');
-  entries.forEach((entry, index) => {
-    if (index) values.append(node('span', 'muted', ' · '));
-    values.append(aliasListLink(entry.name, entry.id));
-  });
-  return values;
-}
-
 function radioDirectoryTrunkedGroups(catalog, systems) {
   const channels = (catalog.channels || []).filter((row) =>
     String(row.channel_kind || '').toUpperCase() === 'TRUNKED');
@@ -24156,7 +24246,7 @@ function radioDirectoryTrunkedGroups(catalog, systems) {
   const groups = (systems.rows || []).map((system) => {
     const children = (system.channel_preview || []).map((preview) => {
       const channel = byId.get(String(preview.configuration_id));
-      if (!channel) return null;
+      if (!channel || assigned.has(String(channel.configuration_id))) return null;
       assigned.add(String(channel.configuration_id));
       return { ...preview, ...channel, directory_type: 'channel' };
     }).filter(Boolean);
@@ -24246,125 +24336,128 @@ function radioDirectoryConventionalGroups(rows) {
   });
 }
 
-function radioDirectoryLiveState(row) {
-  if (row.processing_state !== 'RUNNING') {
-    return node('span', 'muted radio-directory-live-state', 'Stopped');
-  }
-  const channelName = row.name || 'channel';
-  const link = anchor('Live', href('live', { channel: row.configuration_id }),
-    'ui-button ui-button-secondary radio-directory-live-action');
-  link.classList.add('ui-button-state-success');
-  link.prepend(iconGlyph('icon-play'));
-  link.setAttribute('aria-label', `Open ${channelName} in Live; channel is running`);
-  link.title = `Open ${channelName} in Live · Running`;
-  return link;
+function radioDirectoryCompare(left, right) {
+  return String(left.name || left.site || left.site_name || '').localeCompare(
+    String(right.name || right.site || right.site_name || ''), undefined,
+    { numeric: true, sensitivity: 'base' }) ||
+    String(left.configuration_id || '').localeCompare(String(right.configuration_id || ''));
 }
 
-function radioDirectorySystemMetadata(row) {
-  const metadata = node('div', 'radio-directory-system-meta');
-  metadata.append(
-    node('span', '', row.protocol_label || protocolFamily(row) || 'Unknown protocol'),
-    node('span', 'radio-directory-meta-separator', '·'),
-    node('span', '', `${number(row.child_count || 0)} ${Number(row.child_count) === 1 ? 'site' : 'sites'}`),
-    node('span', 'radio-directory-meta-separator', '·'));
-  const aliases = node('span', 'radio-directory-system-aliases');
-  aliases.append('Alias List: ', radioDirectoryAliasLists(row));
-  metadata.append(aliases);
-  return metadata;
+function radioDirectoryField(element, field) {
+  element.dataset.directoryField = field;
+  return element;
 }
 
-function radioDirectorySiteRow(row) {
-  const site = node('div', 'radio-directory-site-row');
-  const identity = node('div', 'radio-directory-item-identity');
-  const name = anchor(row.name || 'Unnamed site', href('channel', {
+function radioDirectoryLiveLink(children) {
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) return null;
+  const running = children.filter((row) => row.processing_state === 'RUNNING');
+  const target = running[0];
+  const link = anchor('Live', href('live', target ? { channel: target.configuration_id } : {}),
+    'ui-button ui-button-secondary ui-button-compact radio-directory-live-action');
+  const label = target?.name || target?.site || target?.site_name || 'channel';
+  link.title = target ? `Open ${label} in Live${running.length > 1 ? '; first running channel in this panel' : ''}` :
+    'Open Live; this panel has no running channels';
+  link.dataset.uiHint = link.title;
+  link.setAttribute('aria-label', target ? `Open ${label} in Live` : 'Open Live');
+  return radioDirectoryField(link, 'live');
+}
+
+function radioDirectorySiteRow(row, conventional = false) {
+  const site = node('div', `radio-directory-site-row${conventional ? ' radio-directory-conventional-row' : ''}`);
+  site.dataset.directoryRowKey = String(row.configuration_id);
+  const identity = radioDirectoryField(node('div', 'radio-directory-item-identity'), 'identity');
+  const name = anchor(row.name || 'Unnamed channel', href('channel', {
     configuration_id: row.configuration_id
   }), 'channel-name-link');
-  identity.append(channelOriginName(name, row), node('span', 'channel-row-context',
-    row.site || row.site_name || 'Site not identified'));
-  const frequencies = node('span', 'radio-directory-frequency-list',
-    channelAdminFrequencyList(row.frequencies_hz) || 'No frequencies configured');
-  site.append(identity, frequencies, radioDirectoryLiveState(row));
+  const context = String(row.site || row.site_name || '').trim();
+  identity.append(channelOriginName(name, row));
+  if (context && context !== String(row.name || '').trim())
+    identity.append(node('span', 'channel-row-context', context));
+  const running = row.processing_state === 'RUNNING';
+  // Only the catalog's fresh active-control result is a confirmed current control frequency.
+  const current = running && row.display_frequency_source === 'active-control' ?
+    Number(row.display_frequency_hz) : null;
+  const configured = (row.frequencies_hz || []).map(Number).find((value) => Number.isFinite(value) && value > 0);
+  const frequencyHz = conventional ? configured : current;
+  const reading = radioDirectoryField(node('span', 'radio-directory-frequency'), 'frequency');
+  reading.append(node('small', '', conventional ? 'Frequency' : 'Current control'),
+    node('strong', '', Number.isFinite(frequencyHz) && frequencyHz > 0 ?
+      `${frequency(frequencyHz)} MHz` : 'Unavailable'));
+  const status = radioDirectoryField(uiStatus(running ? 'Running' : 'Stopped',
+    running ? 'success' : 'neutral'), 'status');
+  status.classList.add('radio-directory-live-state');
+  site.append(identity, reading, status);
   return site;
 }
 
-function radioDirectorySystemCard(row) {
-  const card = node('article', 'ui-surface radio-directory-system-card');
+function radioDirectorySystemCard(row, conventional = false) {
+  const children = [...(row.children || [])].sort(radioDirectoryCompare);
+  const systemName = conventional ? row.system_name || 'Other channels' :
+    radioSystemDisplayName(row) || row.system_name || 'Trunked system';
+  const card = node('article', `ui-surface ui-surface-soft radio-directory-system-card${
+    conventional ? ' radio-directory-conventional-card' : ''}`);
+  card.dataset.directoryCardKey = conventional ? `conventional:${String(systemName).trim().toLowerCase()}` :
+    `trunked:${row.radio_system_key || row.entity_ref?.key ||
+      `configured:${String(systemName).trim().toLowerCase()}`}`;
   const header = node('header', 'radio-directory-system-header');
-  const identity = node('div', 'radio-directory-system-identity');
-  const heading = node('h3');
-  heading.append(radioSystemLink(row.entity_ref, radioSystemDisplayName(row) || 'Trunked system'));
-  identity.append(heading, radioDirectorySystemMetadata(row));
-  const headingGroup = node('div', 'radio-directory-system-heading');
-  headingGroup.append(uiIconTile('icon-trunked'), identity);
-  const total = Number(row.child_count || row.children?.length || 0);
-  const running = Number(row.running_count || 0);
-  const statusLabel = running === total && total > 0 ? `${number(running)} running` :
-    running > 0 ? `${number(running)} of ${number(total)} running` : 'Stopped';
-  header.append(headingGroup, uiStatus(statusLabel, running > 0 ? 'success' : 'neutral'));
+  const heading = radioDirectoryField(node('h3', 'radio-directory-system-name'), 'system-name');
+  heading.append(conventional ? systemName : radioSystemLink(row.entity_ref, systemName));
+  header.append(heading);
+  const live = radioDirectoryLiveLink(children);
+  if (live) header.append(live);
   const sites = node('div', 'radio-directory-site-list');
-  (row.children || []).forEach((channel) => sites.append(radioDirectorySiteRow(channel)));
+  children.forEach((channel) => sites.append(radioDirectorySiteRow(channel, conventional)));
   card.append(header, sites);
   return card;
 }
 
-function radioDirectoryConventionalRow(row) {
-  const channel = node('div', 'radio-directory-site-row radio-directory-conventional-row');
-  const identity = node('div', 'radio-directory-item-identity');
-  identity.append(anchor(row.name || 'Unnamed channel', href('channel', {
-    configuration_id: row.configuration_id
-  }), 'channel-name-link'), node('span', 'channel-row-context', row.site || row.site_name || 'Site not specified'));
-  const aliases = node('span', 'radio-directory-channel-alias');
-  aliases.append('Alias List: ', aliasListLink(row.alias_list_name, row.alias_list_id) || '—');
-  identity.append(aliases);
-  const technical = node('span', 'radio-directory-channel-technical');
-  technical.append(node('span', 'radio-directory-frequency-list',
-    channelAdminFrequencyList(row.frequencies_hz) || 'No frequency'),
-    node('span', 'radio-directory-meta-separator', '·'),
-    node('span', '', row.protocol_label || protocolFamily(row) || 'Unknown protocol'));
-  channel.append(identity, technical, radioDirectoryLiveState(row));
-  return channel;
-}
-
-function radioDirectoryConventionalSystemCard(row) {
-  const card = node('article', 'ui-surface radio-directory-system-card radio-directory-conventional-card');
-  const header = node('header', 'radio-directory-system-header');
-  const identity = node('div', 'radio-directory-system-identity');
-  identity.append(node('h3', '', row.system_name || 'Other channels'));
-  const metadata = node('div', 'radio-directory-system-meta');
-  metadata.append(
-    node('span', '', `${number(row.child_count || 0)} ${Number(row.child_count) === 1 ? 'channel' : 'channels'}`),
-    node('span', 'radio-directory-meta-separator', '·'),
-    node('span', '', (row.protocol_labels || []).join(', ') || 'Unknown protocol'),
-    node('span', 'radio-directory-meta-separator', '·'));
-  const aliases = node('span', 'radio-directory-system-aliases');
-  aliases.append(`${(row.alias_lists || []).length === 1 ? 'Alias List' : 'Alias Lists'}: `,
-    radioDirectoryAliasLists(row));
-  metadata.append(aliases);
-  identity.append(metadata);
-  const headingGroup = node('div', 'radio-directory-system-heading');
-  headingGroup.append(uiIconTile('icon-conventional', 'secondary'), identity);
-  const total = Number(row.child_count || row.children?.length || 0);
-  const running = Number(row.running_count || 0);
-  const statusLabel = running === total && total > 0 ? `${number(running)} running` :
-    running > 0 ? `${number(running)} of ${number(total)} running` : 'Stopped';
-  header.append(headingGroup, uiStatus(statusLabel, running > 0 ? 'success' : 'neutral'));
-  const channels = node('div', 'radio-directory-site-list');
-  (row.children || []).forEach((channel) => channels.append(radioDirectoryConventionalRow(channel)));
-  card.append(header, channels);
-  return card;
-}
-
-function radioDirectoryCardSection(title, rows, kind, emptyText, summary = null) {
+function radioDirectoryCardSection(title, rows, kind, emptyText) {
   const sectionElement = node('section', 'radio-directory-section');
+  sectionElement.dataset.directorySectionKey = kind;
   const header = node('header', 'radio-directory-section-header');
-  const countLabel = summary || `${number(rows.length)} ${rows.length === 1 ? 'system' : 'systems'} shown`;
-  header.append(node('h2', '', title), node('span', 'muted', countLabel));
+  header.append(node('h2', '', title));
   const grid = node('div', 'radio-directory-system-grid');
-  if (rows.length) rows.forEach((row) => grid.append(kind === 'conventional' ?
-    radioDirectoryConventionalSystemCard(row) : radioDirectorySystemCard(row)));
+  const cards = rows.map((row) => radioDirectorySystemCard(row, kind === 'conventional'));
+  cards.sort((left, right) => left.querySelector('h3').textContent.localeCompare(
+    right.querySelector('h3').textContent, undefined, { numeric: true, sensitivity: 'base' }) ||
+    left.dataset.directoryCardKey.localeCompare(right.dataset.directoryCardKey));
+  if (cards.length) grid.append(...cards);
   else grid.append(node('div', 'empty radio-directory-empty', emptyText));
   sectionElement.append(header, grid);
   return sectionElement;
+}
+
+function radioDirectoryPatchFields(current, next) {
+  for (const field of next.querySelectorAll('[data-directory-field]')) {
+    const previous = current.querySelector(`[data-directory-field="${field.dataset.directoryField}"]`);
+    if (previous) patchElementTree(previous, field);
+  }
+}
+
+function radioDirectoryPatchCard(current, next) {
+  radioDirectoryPatchFields(current.querySelector('.radio-directory-system-header'),
+    next.querySelector('.radio-directory-system-header'));
+  reconcileKeyedChildren(current.querySelector('.radio-directory-site-list'),
+    [...next.querySelector('.radio-directory-site-list').children], 'directoryRowKey', radioDirectoryPatchFields);
+}
+
+function radioDirectoryPatchSection(current, next) {
+  patchElementTree(current.querySelector('.radio-directory-section-header'),
+    next.querySelector('.radio-directory-section-header'));
+  const grid = current.querySelector('.radio-directory-system-grid');
+  const fresh = [...next.querySelector('.radio-directory-system-grid').children];
+  if (!fresh[0]?.dataset.directoryCardKey) {
+    if (grid.children.length === 1 && grid.firstElementChild?.classList.contains('radio-directory-empty'))
+      patchElementTree(grid.firstElementChild, fresh[0]);
+    else grid.replaceChildren(...fresh);
+    return;
+  }
+  grid.querySelectorAll(':scope > .radio-directory-empty').forEach((element) => element.remove());
+  reconcileKeyedChildren(grid, fresh, 'directoryCardKey', radioDirectoryPatchCard);
+}
+
+function radioDirectoryReconcile(host, ...sections) {
+  reconcileKeyedChildren(host, sections, 'directorySectionKey', radioDirectoryPatchSection);
 }
 
 function radioDirectoryPerspectiveControl(activeView) {
@@ -24372,7 +24465,7 @@ function radioDirectoryPerspectiveControl(activeView) {
     { value: 'systems', label: 'Systems & channels' },
     { value: 'coverage', label: 'Alias inventory' }
   ], activeView, (value) => navigateTo(href('dashboard', value === 'coverage' ?
-    { tab: 'health', directory_view: 'coverage' } : { tab: 'health' })));
+    { tab: 'inventory' } : { tab: 'health' })));
   control.classList.add('radio-directory-perspective');
   control.setAttribute('aria-label', 'Radio Directory view');
   return control;
@@ -24380,8 +24473,8 @@ function radioDirectoryPerspectiveControl(activeView) {
 
 function radioDirectoryEmbeddedPanel(view, directory) {
   const body = node('div', 'radio-directory-panel-body');
-  body.append(radioDirectoryPerspectiveControl(view), directory);
-  return section('Radio directory', body);
+  body.append(directory);
+  return section(view === 'coverage' ? 'Alias inventory' : 'Systems & channels', body);
 }
 
 function renderNestedRadioDirectory(renderContext) {
@@ -24394,18 +24487,36 @@ function renderNestedRadioDirectory(renderContext) {
   content.append(radioDirectoryEmbeddedPanel('systems', loading.element));
 
   const loadDirectory = async (options = {}) => {
-    const [catalog, systems] = await Promise.all([
+    const parameters = { limit: 25, sort: 'system_id', direction: 'asc', includeChannelPreview: true };
+    const [catalog, firstSystems] = await Promise.all([
       requestChannelConfigurationJson('/api/v1/channel-catalog', { csrf: false, ...options }),
-      apiPage('/api/v1/radio-systems', { limit: 25, includeChannelPreview: true }, options)
+      apiPage('/api/v1/radio-systems', parameters, options)
     ]);
-    return { catalog, systems };
+    // Activity-ranked top pages can change membership on every poll. Read the stable system order
+    // completely; each request retains the server's bounded channel-preview/page size.
+    const rows = [...firstSystems.rows];
+    let page = firstSystems;
+    if (page.has_more && !Number.isInteger(firstSystems.total_count))
+      throw new Error('Radio systems could not be loaded. Try refreshing the page.');
+    while (page.has_more && page.next_offset < firstSystems.total_count) {
+      if (!Number.isInteger(page.next_offset) || page.next_offset <= page.offset)
+        throw new Error('Radio systems could not be loaded. Try refreshing the page.');
+      const offset = page.next_offset;
+      page = await apiPage('/api/v1/radio-systems', { ...parameters, offset }, options);
+      if (page.offset !== offset)
+        throw new Error('Radio systems could not be loaded. Try refreshing the page.');
+      rows.push(...page.rows);
+    }
+    const unique = [...new Map(rows.map((row, index) => [
+      row.radio_system_key || row.entity_ref?.key || index, row
+    ])).values()];
+    return { catalog, systems: { ...firstSystems, rows: unique } };
   };
 
   return loading.load(() => loadDirectory(), (initial) => {
     let directory = initial;
     const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
     wrapper.dataset.uiDensity = 'compact';
-    const summaryHost = node('div');
     const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
     const searchWrap = node('label', 'ui-search');
     searchWrap.append(iconGlyph('icon-search'));
@@ -24451,18 +24562,15 @@ function renderNestedRadioDirectory(renderContext) {
       const conventionalRows = (directory.catalog.channels || []).filter((row) =>
         String(row.channel_kind || '').toUpperCase() === 'CONVENTIONAL' && matchesState(row) && matches(row, term));
       const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
-      summaryHost.replaceChildren(channelSummaryCards(directory.catalog, false));
-      directoryHost.replaceChildren(
+      radioDirectoryReconcile(directoryHost,
         radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
           'No trunked systems or sites match this search'),
         radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
-          'No conventional channels match this search',
-          `${number(conventionalSystems.length)} ${conventionalSystems.length === 1 ? 'system' : 'systems'} · ` +
-          `${number(conventionalRows.length)} ${conventionalRows.length === 1 ? 'channel' : 'channels'} shown`)
+          'No conventional channels match this search')
       );
     };
     search.addEventListener('input', draw);
-    wrapper.append(summaryHost, toolbar, directoryHost);
+    wrapper.append(toolbar, directoryHost);
     draw();
 
     let refreshInFlight = false;
@@ -26583,7 +26691,8 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       if (!link || !tableSection.contains(link)) return;
       const target = routeFoundation.localTarget(window.location, link.href);
       if (target?.searchParams.get('view') !== 'dashboard' ||
-          target.searchParams.get('directory_view') !== 'coverage') return;
+          (target.searchParams.get('directory_view') !== 'coverage' &&
+           target.searchParams.get('tab') !== 'inventory')) return;
       event.preventDefault();
       navigateCoverage(link.href, { scrollToTable: Boolean(link.closest('.pager')) });
     });
@@ -30280,7 +30389,7 @@ async function renderStreaming() {
 
 function renderAdminRemoteLinks(renderContext) {
   const workspace = createRemoteLinksWorkspace({
-    node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, createFormWorkflow,
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, remoteOriginIcon, createFormWorkflow,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
   });
   const close = () => workspace.close();

@@ -171,10 +171,6 @@
   font-size: var(--font-size-section-title);
 }
 
-.radio-directory-section-header > span {
-  font-size: var(--font-size-meta);
-}
-
 .radio-directory-system-grid {
   min-width: 0;
   display: grid;
@@ -188,7 +184,7 @@
 }
 
 .radio-directory-system-card {
-  overflow: hidden;
+  padding: var(--space-4);
 }
 
 .radio-directory-system-header {
@@ -197,114 +193,74 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--space-3);
 }
 
-.radio-directory-system-identity,
+.radio-directory-system-name {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body);
+}
+
+.radio-directory-site-list,
 .radio-directory-item-identity {
   min-width: 0;
   display: grid;
 }
 
-.radio-directory-system-heading {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.radio-directory-system-identity {
-  gap: 5px;
-}
-
-.radio-directory-system-identity h3 {
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--font-size-body);
-  line-height: 1.25;
-}
-
-.radio-directory-system-meta,
-.radio-directory-channel-technical {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 7px;
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-}
-
-.radio-directory-system-aliases,
-.radio-directory-channel-alias {
-  min-width: 0;
-}
-
-.radio-directory-meta-separator {
-  color: var(--line-dark);
-}
-
 .radio-directory-site-list {
-  min-width: 0;
-  display: grid;
+  gap: var(--space-3);
 }
 
 .radio-directory-site-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(118px, 1fr) minmax(150px, 1.3fr) max-content;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 10px var(--space-3);
-}
-
-.radio-directory-site-row + .radio-directory-site-row {
-  border-top: 1px solid var(--line);
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: start;
+  gap: var(--space-1) var(--space-3);
 }
 
 .radio-directory-item-identity {
-  gap: 3px;
-}
-
-.radio-directory-frequency-list {
-  min-width: 0;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-micro);
-  line-height: 1.5;
+  grid-column: 1;
+  grid-row: 1;
+  gap: var(--space-1);
   overflow-wrap: anywhere;
 }
 
+.radio-directory-frequency {
+  min-width: 0;
+  min-height: var(--control-height-compact);
+  display: grid;
+  grid-column: 1;
+  grid-row: 2;
+  align-content: start;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-micro);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.radio-directory-frequency > small,
+.radio-directory-frequency > strong {
+  font: inherit;
+}
+
 .radio-directory-live-action {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
 .radio-directory-live-state {
-  font-size: var(--font-size-meta);
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  justify-self: end;
   white-space: nowrap;
-}
-
-.radio-directory-channel-alias {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-}
-
-@media (max-width: 1180px) {
-  .radio-directory-site-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
-  }
-
-  .radio-directory-site-row .radio-directory-frequency-list,
-  .radio-directory-channel-technical {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .radio-directory-site-row > .radio-directory-live-action,
-  .radio-directory-site-row > .radio-directory-live-state {
-    grid-row: 1 / 3;
-  }
 }
 
 @media (max-width: 760px) {
@@ -350,26 +306,6 @@
 }
 
 @media (max-width: 520px) {
-  .radio-directory-system-header {
-    flex-direction: column;
-  }
-
-  .radio-directory-site-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .radio-directory-site-row .radio-directory-frequency-list,
-  .radio-directory-channel-technical {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
-  .radio-directory-site-row > .radio-directory-live-action,
-  .radio-directory-site-row > .radio-directory-live-state {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
   .radio-directory-perspective,
   .radio-directory-perspective .ui-segmented-option {
     width: 100%;

@@ -162,11 +162,11 @@ for (const [width, dark] of [[1280, false], [320, true]]) {
     if (dark) await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     if (width <= 900) await page.locator('.live-picker-toggle').click();
     const pickerRow = page.locator('.channels-live-tab[data-table-id="remote-site"]');
-    await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/live-remote-origin-success/);
+    await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/ui-origin-indicator-success/);
     await expect(pickerRow.locator('.channels-tab-quality')).not.toHaveClass(/ui-quality-bars/);
     await expect(pickerRow.locator('.channels-tab-quality use')).toHaveAttribute('href', '#icon-cloud');
-    await expect(pickerRow.locator('.channels-tab-quality')).toHaveAttribute('title', /98\.7% decode quality.*Remote source/);
-    await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /98\.7% decode quality.*Remote source/);
+    await expect(pickerRow.locator('.channels-tab-quality')).toHaveAttribute('title', /98\.7% decode quality.*Received from another receiver./);
+    await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /98\.7% decode quality.*Received from another receiver./);
     await expect(pickerRow.getByRole('tab')).not.toHaveAttribute('aria-label', /signal strength/i);
     await expect(pickerRow.locator('.channels-tab-title .live-remote-origin')).toHaveCount(0);
     await expect(page.locator('.live-selected-view-title .live-remote-origin')).toHaveCount(0);
@@ -183,9 +183,9 @@ for (const [width, dark] of [[1280, false], [320, true]]) {
       const row = page.locator(`.channels-live-tab[data-table-id="${id}"]`);
       const cloud = row.locator('.channels-tab-quality');
       await expect(cloud.locator('use')).toHaveAttribute('href', '#icon-cloud');
-      if (tone) await expect(cloud).toHaveClass(new RegExp(`live-remote-origin-${tone}`));
+      if (tone) await expect(cloud).toHaveClass(new RegExp(`ui-origin-indicator-${tone}`));
       else {
-        await expect(cloud).not.toHaveClass(/live-remote-origin-(success|warning|danger)/);
+        await expect(cloud).not.toHaveClass(/ui-origin-indicator-(success|warning|danger)/);
         await expect(row.getByRole('tab')).toHaveAttribute('aria-label', /Decode quality unavailable/);
       }
     }
@@ -205,9 +205,9 @@ test('remote picker keeps stale decode samples unavailable', async ({ page }) =>
   Object.assign(remote.rows[0], { role: 'CURRENT_CONTROL', quality_observed_at_ms: Date.now() - 120_000, decode_health_pct: 99 });
   await openLive(page, false, liveSnapshot);
   const pickerRow = page.locator('.channels-live-tab[data-table-id="remote-site"]');
-  await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass('channels-tab-quality live-remote-origin');
+  await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass('channels-tab-quality ui-origin-indicator');
   await expect(pickerRow.locator('.channels-tab-quality use')).toHaveAttribute('href', '#icon-cloud');
-  await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /Decode quality unavailable.*Remote source/);
+  await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /Decode quality unavailable.*Received from another receiver./);
 });
 
 test('remote Live title omits the duplicate cloud and mixed rows retain their origin', async ({ page }, testInfo) => {
@@ -254,7 +254,7 @@ test('dedicated remote Live detail has one origin cue; mixed rows retain theirs'
   const selected = page.locator('.live-channels-section');
   await expect(selected.locator('.live-selected-view-title')).toContainText('Metro North');
   await expect(selected.locator('.live-selected-view-title .live-remote-origin')).toHaveCount(0);
-  await expect(selected.locator('.live-selected-view-meta')).not.toContainText('Remote source');
+  await expect(selected.locator('.live-selected-view-meta')).not.toContainText('Received from another receiver.');
   await expect(selected.locator('td[data-column="channel"]')).toHaveCount(2);
   await expect(selected.locator('td[data-column="channel"] .live-remote-origin')).toHaveCount(0);
   await expect(selected).toHaveScreenshot('live-selected-remote-detail-light.png');

@@ -1,5 +1,9 @@
 /* Original blue-gray palette by default; custom hue affects only theme colors, never status colors. */
 :root {
+  --main-page-width: 1120px;
+  --page-nav-tab-rule: 3px;
+  --quality-meter-height: 4px;
+  --signal-readout-height: 36px;
   --navigation-menu-width: 690px;
   --navigation-menu-compact-width: 420px;
   --navigation-item-min-height: 80px;
@@ -157,6 +161,9 @@
   --table-hover: #f2f7f8;
   --table-overflow-cue-width: var(--space-3);
   --table-overflow-cue-ink: color-mix(in srgb, var(--ink) 20%, transparent);
+  --count-chart-height: 260px;
+  --count-chart-phone-height: 220px;
+  --count-chart-focus-width: 2px;
   --chart-grid: #d7dde2;
   --chart-decode: #3d64b1;
   --chart-call: #0b7168;

@@ -1,40 +1,61 @@
-.activity-line-chart {
-  position: relative;
-  width: 100%;
-  min-height: 270px;
-  padding: 8px 10px 2px;
-  overflow-x: auto;
+/* Shared hourly count charts on Main, channel, talkgroup and radio details. */
+.count-time-chart {
+  min-width: 0;
+  padding: var(--space-4);
 }
 
-.activity-line-svg {
+.count-time-chart-canvas {
+  position: relative;
+  min-width: 0;
+}
+
+.count-time-chart-caption {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-body);
+}
+
+.count-time-chart-svg {
   display: block;
   width: 100%;
-  min-width: 680px;
-  height: 270px;
+  height: var(--count-chart-height);
+  font-family: inherit;
+}
+
+.count-time-chart-svg:focus-visible {
+  outline: var(--count-chart-focus-width) solid var(--focus-ring);
+  outline-offset: var(--space-1);
+  border-radius: var(--radius-control);
+}
+
+.count-time-chart-bar {
+  fill: var(--accent);
+  stroke: none;
 }
 
 .chart-grid-line {
-  stroke: var(--chart-grid);
+  stroke: var(--line);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .chart-axis-label {
   fill: var(--muted);
-  font-size: var(--font-size-meta);
+  font-family: inherit;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-normal);
+  font-variant-numeric: tabular-nums;
 }
 
-.activity-line-path {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
+@media (max-width: 560px) {
+  .count-time-chart {
+    padding: var(--space-3);
+  }
 
-.activity-line-point {
-  fill: var(--surface);
-  stroke: var(--accent);
-  stroke-width: 2;
+  .count-time-chart-svg {
+    height: var(--count-chart-phone-height);
+  }
 }
 
 .activity-series-legend {
@@ -112,7 +133,7 @@
   border: 1px solid color-mix(in srgb, var(--line-dark) 28%, transparent);
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-surface);
-  font-size: var(--font-size-meta);
+  font-size: var(--font-size-label);
   font-variant-numeric: tabular-nums;
   line-height: 1.45;
   white-space: pre-line;
@@ -132,7 +153,7 @@
 
 .chart-window-label {
   fill: var(--ink);
-  font-size: var(--font-size-meta);
+  font-size: var(--font-size-label);
   font-weight: var(--font-weight-control);
 }
 

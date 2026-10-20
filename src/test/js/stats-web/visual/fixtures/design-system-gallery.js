@@ -1390,10 +1390,10 @@ if(view === 'radio-directory-panel') {
   panel.className = 'section ui-section';
   const title = document.createElement('div');
   title.className = 'section-title ui-section-title';
-  title.textContent = 'Radio directory';
+  title.textContent = 'Alias inventory';
   const body = document.createElement('div');
   body.className = 'radio-directory-panel-body';
-  body.append(example.querySelector('.radio-directory-perspective'), example.querySelector('.alias-coverage'));
+  body.append(example.querySelector('.alias-coverage'));
   panel.append(title, body);
   example.replaceChildren(panel);
 }

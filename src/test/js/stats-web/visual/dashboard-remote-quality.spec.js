@@ -16,7 +16,7 @@ const qualityRow = (configurationId, name, overrides = {}) => ({
 
 for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]]) {
-  test(`Dashboard remote quality cards use decode quality in ${theme}`, async ({ page }, testInfo) => {
+  test(`Main trunked site tiles show friendly identities and decode quality in ${theme}`, async ({ page }, testInfo) => {
     const fixture = await installSiteStyleApplication(page, theme);
     await page.setViewportSize(viewport);
     const rows = [qualityRow(channelId, channelName),
@@ -38,45 +38,67 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
     await expect(remote.getByRole('link', { name: channelName, exact: true })).toHaveAttribute('href',
       new RegExp(`view=channel.*configuration_id=${channelId}`));
     await expect(remote.locator('.signal-current-system')).toHaveText(systemName);
-    await expect(remote.locator('.identity-summary-context')).toHaveText('North');
-    await expect(remote.locator('.signal-current-power strong')).toHaveText('99.3%');
-    await expect(remote.locator('.signal-current-power span')).toHaveText('Decode quality');
-    await expect(remote.locator('.signal-current-details')).toContainText('851.01250 MHz');
-    await expect(remote.locator('.signal-current-details')).not.toContainText('Decode');
-    await expect(remote).not.toContainText(/No signal|30s avg|dBFS/);
-    await expect(remote.locator('.signal-state')).toHaveText('Healthy');
-    await expect(remote.locator('.signal-state')).toHaveClass(/ui-pill-success/);
-    await expect(card(id(2)).locator('.signal-state')).toHaveText('Degraded');
-    await expect(card(id(2)).locator('.signal-state')).toHaveClass(/ui-pill-warning/);
-    await expect(card(id(3)).locator('.signal-state')).toHaveText('Poor');
-    await expect(card(id(3)).locator('.signal-state')).toHaveClass(/ui-pill-danger/);
-    await expect(card(id(4)).locator('.signal-state')).toHaveText('Monitoring');
-    await expect(card(id(4)).locator('.signal-state')).not.toHaveClass(/ui-pill-(success|warning|danger)/);
-    await expect(card(id(4)).locator('.signal-current-power strong')).toHaveText('—');
-    for (const configurationId of [channelId, id(2), id(3), id(4)]) {
+    await expect(remote.locator('.signal-current-context').first()).toHaveText('North');
+    await expect(page.locator('.section-title').filter({ hasText: 'Trunked site signal quality' })).toBeVisible();
+    await expect(remote.locator('.signal-current-power')).toBeEmpty();
+    await expect(remote.locator('.signal-current-power')).toHaveAttribute('aria-hidden', 'true');
+    await expect(remote.locator('meter')).toBeHidden();
+    await expect(remote.locator('.signal-current-details')).toHaveText('Decode 99.3%');
+    await expect(remote).not.toContainText(/No signal|30s avg|dBFS|RFSS|NAC|ago/);
+    for (const [configurationId, label, tone] of [[channelId, 'Healthy', 'success'],
+      [id(2), 'Degraded', 'warning'], [id(3), 'Poor', 'danger'], [id(4), 'Monitoring', 'neutral']]) {
       const pill = card(configurationId).locator('.signal-state');
-      await expect(pill.locator('svg')).toHaveCount(1);
-      await expect(pill.locator('svg use')).toHaveAttribute('href', '#icon-cloud');
-      await expect(pill).toHaveAttribute('aria-label', /^Remote source · /);
-      expect(await pill.evaluate(element => getComputedStyle(element.querySelector('svg')).color ===
-        getComputedStyle(element).color)).toBe(true);
+      await expect(pill).toHaveText(label);
+      if (tone !== 'neutral') await expect(pill).toHaveClass(new RegExp(`ui-pill-${tone}`));
+      const cloud = card(configurationId).getByRole('img', { name: 'Received from another receiver.' });
+      await expect(cloud.locator('svg use')).toHaveAttribute('href', '#icon-cloud');
+      await expect(cloud).toHaveAttribute('data-ui-hint', 'Received from another receiver.');
     }
-    await expect(remote.locator('.signal-state')).toHaveAttribute('title', 'Remote source · 99.3% decode quality');
-    await expect(card(id(4)).locator('.signal-state')).toHaveAttribute('title', 'Remote source · Decode quality unavailable');
+    await expect(card(id(4)).locator('.signal-current-details')).toHaveText('Decode —');
     await expect(card(id(6))).toHaveCount(0);
     await expect(card(id(7))).toHaveCount(0);
     const localNoRf = card(id(5));
     await expect(localNoRf.locator('.signal-state')).toHaveText('No signal');
     await expect(localNoRf.locator('.signal-state svg')).toHaveCount(0);
     await expect(localNoRf.locator('.signal-current-power strong')).toHaveText('—');
-    await expect(localNoRf.locator('.signal-current-power span')).toHaveText('30s avg —');
+    await expect(localNoRf.locator('.signal-current-power span')).toHaveText('dBFS');
     await expect(localNoRf.locator('.signal-current-details')).toContainText('Decode 99.3%');
-    await expect(card(id(8)).locator('.signal-current-power strong')).toHaveText('-51.0 dBFS');
-    await expect(card(id(8)).locator('.signal-current-power span')).toHaveText('30s avg -52.0 dBFS');
+    await expect(card(id(8)).locator('.signal-current-power strong')).toHaveText('-51.0');
+    await expect(card(id(8)).locator('.signal-current-power span')).toHaveText('dBFS');
     await expect(card(id(8)).locator('.signal-state svg')).toHaveCount(0);
+    await expect(card(id(8)).locator('meter')).toHaveJSProperty('value', 99.3);
     await remote.screenshot({ path: testInfo.outputPath(`remote-quality-card-${theme}.png`) });
     await page.locator('.signal-health').screenshot({ path: testInfo.outputPath(`signal-quality-cards-${theme}.png`) });
     expect(fixture.unexpected).toEqual([]);
     expect(fixture.pageErrors).toEqual([]);
   });
 }
+
+test('Trunked signal refresh preserves tiles, order, and focused names', async ({ page }) => {
+  await page.clock.install({ time: sampleTime });
+  const fixture = await installSiteStyleApplication(page, 'light');
+  let polls = 0;
+  await page.route('**/api/v1/quality?**', route => {
+    polls++;
+    const rows = [qualityRow(id(2), polls === 1 ? 'Zulu site' : 'A renamed site'),
+      qualityRow(channelId, channelName, { decode_health_pct: polls === 1 ? 99 : 82 }),
+      qualityRow(id(3), 'Conventional quality', { channel_kind: 'CONVENTIONAL' })];
+    if (polls > 1) rows.reverse();
+    return route.fulfill({ json: { data: { rows, limit: 60, offset: 0, has_more: false } } });
+  });
+  await page.goto('/app.html?view=dashboard');
+  await expect(page.locator('.signal-current-tile')).toHaveCount(2);
+  const link = page.locator(`[data-configuration-id="${channelId}"] .signal-current-name a`);
+  await link.focus();
+  const tile = await link.evaluateHandle(element => element.closest('.signal-current-tile'));
+  const order = await page.locator('.signal-current-tile').evaluateAll(elements => elements.map(e => e.dataset.configurationId));
+  await page.clock.fastForward(10_100);
+  await expect.poll(() => polls).toBeGreaterThan(1);
+  await expect(link).toBeFocused();
+  expect(await link.evaluate((element, previous) => element.closest('.signal-current-tile') === previous, tile)).toBe(true);
+  expect(await page.locator('.signal-current-tile').evaluateAll(elements => elements.map(e => e.dataset.configurationId))).toEqual(order);
+  await expect(page.locator(`[data-configuration-id="${channelId}"] .signal-current-details`)).toHaveText('Decode 82.0%');
+  await expect(page.getByText('A renamed site', { exact: true })).toBeVisible();
+  expect(fixture.pageErrors).toEqual([]);
+  expect(fixture.unexpected).toEqual([]);
+});

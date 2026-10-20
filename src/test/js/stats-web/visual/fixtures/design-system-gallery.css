@@ -467,26 +467,22 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   background: var(--chart-encrypted);
 }
 
-.visual-entity-details-example .activity-line-area {
-  fill: var(--chart-call);
+.visual-chart-recorded {
+  fill: var(--chart-recorded);
 }
 
-.visual-entity-chart-mobile {
+.visual-count-chart-mobile {
   display: none;
 }
 
 @media (max-width: 560px) {
-  .visual-entity-details-example .visual-entity-chart-desktop {
+  .visual-count-chart-desktop {
     display: none;
   }
 
-  .visual-entity-details-example .visual-entity-chart-mobile {
+  .visual-count-chart-mobile {
     display: block;
     height: 220px;
-  }
-
-  .visual-entity-details-example .activity-line-chart {
-    min-height: 220px;
   }
 }
 

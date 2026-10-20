@@ -125,16 +125,6 @@
   flex-wrap: nowrap;
 }
 
-.channel-origin-icon {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.channel-origin-icon > svg {
-  width: var(--catalog-action-glyph-size);
-  height: var(--catalog-action-glyph-size);
-}
-
 .channel-site-context {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);

@@ -105,28 +105,6 @@
   --ui-control-height: var(--control-height-compact);
 }
 
-.group-identity-activity-chart .activity-line-chart {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-}
-
-.group-identity-activity-chart .activity-line-svg {
-  min-width: 0;
-}
-
-.group-identity-activity-chart .activity-line-area {
-  opacity: .13;
-}
-
-.group-identity-activity-chart .activity-line-path {
-  stroke-width: 3;
-}
-
-.group-identity-activity-chart .activity-line-point {
-  fill: var(--surface-2);
-}
-
 @media (max-width: 900px) {
   .entity-info-layout {
     grid-template-columns: minmax(0, 1fr);

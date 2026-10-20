@@ -71,7 +71,7 @@ test('Dashboard Main marks a remote site even when no signal samples exist', asy
   await expect(remote).toBeVisible();
   await expect(local).toBeVisible();
   await expect(page.locator('.signal-current-tile')).toHaveCount(0);
-  await expect(remote.getByLabel('Remote channel; depends on another receiver')).toHaveText('Remote');
+  await expect(remote.getByLabel('Received from another receiver.')).toHaveText('');
   await expect(remote.locator('.channel-origin-line svg')).toHaveCount(1);
   await expect(local.locator('.channel-origin-line')).toHaveCount(0);
   await expect(page.locator('.radio-directory-system-header .channel-origin-line')).toHaveCount(0);
@@ -85,10 +85,15 @@ test('Channel Setup marks remote configurations with an accessible cloud and no 
   const local = page.locator('tr').filter({ has: page.getByRole('button', { name: 'West Control' }) });
   await expect(remote).toBeVisible();
   await expect(local).toBeVisible();
-  const cloud = remote.getByLabel('Remote channel; depends on another receiver');
+  const cloud = remote.getByLabel('Received from another receiver.');
   await expect(cloud).toBeVisible();
   await expect(cloud).toHaveText('');
   await expect(cloud.locator('svg')).toHaveCount(1);
+  await expect(page.locator('#icon-cloud path')).toHaveAttribute('fill', 'none');
+  await expect(page.locator('#icon-cloud path')).toHaveAttribute('stroke', 'currentColor');
+  await cloud.focus();
+  await expect(page.getByRole('tooltip')).toHaveText('Received from another receiver.');
+  await page.keyboard.press('Escape');
   const cloudBounds = await cloud.boundingBox();
   expect(cloudBounds.width).toBeLessThanOrEqual(20);
   expect(cloudBounds.height).toBeLessThanOrEqual(20);

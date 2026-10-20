@@ -144,6 +144,34 @@
   stroke-linejoin: round;
 }
 
+.ui-origin-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+.ui-origin-indicator > svg {
+  display: block;
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ui-origin-indicator:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: var(--space-1);
+  border-radius: var(--radius-control);
+}
+
+.ui-origin-indicator-success { color: var(--success); }
+.ui-origin-indicator-warning { color: var(--warning); }
+.ui-origin-indicator-danger { color: var(--danger); }
+
 .ui-button-state-success > svg {
   color: var(--success);
   fill: currentColor;
@@ -1572,3 +1600,28 @@
 .ui-navigation-link.access-locked .ui-navigation-label {
   color: var(--muted);
 }
+/* Compact native meter with shared health colors and an accessible value. */
+.ui-quality-meter {
+  width: 100%;
+  height: var(--quality-meter-height);
+  display: block;
+  margin-block: var(--space-2);
+  appearance: none;
+  background: var(--line);
+  border: 0;
+  border-radius: var(--radius-control);
+}
+
+.ui-quality-meter::-webkit-meter-bar {
+  height: var(--quality-meter-height);
+  background: var(--line);
+  border: 0;
+  border-radius: var(--radius-control);
+}
+
+.ui-quality-meter::-webkit-meter-optimum-value { background: var(--accent); }
+.ui-quality-meter::-webkit-meter-suboptimum-value { background: var(--warning); }
+.ui-quality-meter::-webkit-meter-even-less-good-value { background: var(--danger); }
+.ui-quality-meter::-moz-meter-bar { background: var(--accent); }
+.ui-quality-meter:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--warning); }
+.ui-quality-meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--danger); }

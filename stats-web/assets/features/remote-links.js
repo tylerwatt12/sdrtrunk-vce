@@ -6,7 +6,7 @@ const POLL_MS = 3000;
 // ui-toggle-field, ui-field, ui-select-frame, ui-notice and the shared modal lifecycle
 // provide the visual language. This feature owns only Remote Links layout geometry.
 export function createRemoteLinksWorkspace(deps) {
-  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
+  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, remoteOriginIcon,
     openReadOnlyModal, confirmAction, createFormWorkflow, requestJson, modalFooter, signal } = deps;
   const host = node('div', 'remote-links-page data-workspace');
   const message = node('div');
@@ -198,7 +198,7 @@ export function createRemoteLinksWorkspace(deps) {
     const card = node('article', 'remote-links-feed-card ui-record-section');
     const header = node('header', 'remote-links-feed-header');
     const title = node('div', 'remote-links-feed-title');
-    title.append(iconGlyph('icon-cloud'), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
+    title.append(remoteOriginIcon({ remote: true }), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
     header.append(title);
     if (stateKey(feed.state) !== 'CONNECTED') header.append(status(feed.state));
     const managed = Boolean(feed.channel_configuration_id);

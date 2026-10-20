@@ -6,15 +6,15 @@
 .signal-current-panel,
 .site-signal-history {
   min-width: 0;
-  padding: 10px;
+  padding: var(--space-3);
 }
 
 .signal-current-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 9px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .signal-health-summary {
@@ -25,49 +25,61 @@
 .signal-current-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .signal-current-tile {
   min-width: 0;
-  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
 }
 
 .signal-current-header {
   display: flex;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
+}
+
+.signal-current-protocol {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+}
+
+.signal-current-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .signal-current-labels {
   min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  overflow-wrap: anywhere;
 }
 
-.signal-current-labels .identity-summary-primary,
-.signal-current-labels .identity-summary-context {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.signal-current-name {
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
 }
 
-.signal-current-system {
-  margin-top: 2px;
+.signal-current-context {
   color: var(--muted);
   font-size: var(--font-size-meta);
 }
 
-.signal-state {
-  flex: 0 0 auto;
-}
-
 .signal-current-power {
+  min-width: 0;
+  min-height: var(--signal-readout-height);
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 9px;
-  margin: 8px 0 7px;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 var(--space-1);
 }
 
 .signal-current-power strong {
@@ -79,20 +91,13 @@
 .signal-current-power span {
   color: var(--muted);
   font-size: var(--font-size-meta);
-  white-space: nowrap;
 }
 
 .signal-current-details {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 10px;
+  margin-top: auto;
   color: var(--muted);
   font-size: var(--font-size-meta);
   font-variant-numeric: tabular-nums;
-}
-
-.signal-current-details span:first-child {
-  margin-right: auto;
 }
 
 .signal-range-controls {
@@ -244,7 +249,6 @@
 }
 
 @media (max-width: 900px) {
-  .signal-current-grid,
   .signal-history-overview,
   .signal-history-overview.without-identity {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -261,7 +265,6 @@
     flex-direction: column;
   }
 
-  .signal-current-grid,
   .signal-history-overview,
   .signal-history-overview.without-identity {
     grid-template-columns: 1fr;
@@ -270,4 +273,12 @@
   .signal-history-overview.without-identity.decode-only {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 850px) {
+  .signal-current-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 380px) {
+  .signal-current-grid { grid-template-columns: minmax(0, 1fr); }
 }

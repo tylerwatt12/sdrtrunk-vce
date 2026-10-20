@@ -571,7 +571,50 @@ async function checkAlertTopicsAvailability() {
   assert.equal(requests.length, 5, 'A hidden document does not refresh topic availability.');
 }
 
+async function checkStableDirectoryReconciliation() {
+  const { reconcileKeyedChildren } = await loadModule('dom-reconcile');
+  const parent = {
+    children: [], insertions: 0,
+    get firstElementChild() { return this.children[0] || null; },
+    insertBefore(element, cursor) {
+      this.insertions += 1;
+      element.remove();
+      const index = cursor ? this.children.indexOf(cursor) : this.children.length;
+      this.children.splice(index, 0, element);
+      element.parent = this;
+    }
+  };
+  const member = (key, value = key) => ({
+    dataset: { key }, value, parent: null,
+    get nextElementSibling() {
+      return this.parent?.children[this.parent.children.indexOf(this) + 1] || null;
+    },
+    remove() {
+      if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1);
+      this.parent = null;
+    }
+  });
+  const original = [member('north'), member('west')];
+  const update = (current, next) => { current.value = next.value; };
+  reconcileKeyedChildren(parent, original, 'key', update);
+  parent.insertions = 0;
+  reconcileKeyedChildren(parent, [member('west', 'new west'), member('north', 'new north')], 'key', update);
+  assert.deepEqual(parent.children, original, 'Activity-ranked refreshes retain existing members and displayed order.');
+  assert.equal(parent.insertions, 0, 'Polling unchanged membership does not move DOM nodes or disturb focus.');
+  assert.equal(original[0].value, 'new north', 'Existing members still receive current data.');
+  const east = member('east');
+  const south = member('south');
+  reconcileKeyedChildren(parent, [east, member('west', 'latest west'), south], 'key', update);
+  assert.deepEqual(parent.children, [original[1], east, south],
+    'Removed members leave; new members append without moving an existing member.');
+  assert.equal(original[0].parent, null);
+  assert.equal(original[1].value, 'latest west');
+  reconcileKeyedChildren(parent, [], 'key', update);
+  assert.equal(parent.children.length, 0, 'An empty result removes all previous members.');
+}
+
 async function main() {
+  await checkStableDirectoryReconciliation();
   await checkAlertTopicsAvailability();
   await require('./radioreference-locality-cache.test').checkLocalityCache(
     path.resolve(core, '../features/radioreference-locality-cache.js'));
@@ -1258,7 +1301,10 @@ async function main() {
     /\{ value: 'coverage', label: 'Alias inventory' \}/);
   assert.match(embeddedDirectoryPanel, /radio-directory-panel-body/);
   assert.match(embeddedDirectoryPanel,
-    /body\.append\(radioDirectoryPerspectiveControl\(view\), directory\)/);
+    /body\.append\(directory\)/);
+  assert.doesNotMatch(embeddedDirectoryPanel, /radioDirectoryPerspectiveControl\(view\)/);
+  assert.match(functionBinding(appSource, 'renderDashboard'), /label: 'Alias Inventory'/);
+  assert.match(functionBinding(appSource, 'renderDashboard'), /ui-page-nav-tabs/);
   assert.match(coverageSource, /radioDirectoryEmbeddedPanel\('coverage', directory\.element\)/);
   assert.match(coverageSource, /alias-coverage ui-catalog data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
   assert.doesNotMatch(coverageSource, /aliasCoverageGuidance\(\)/);
@@ -1337,17 +1383,17 @@ async function main() {
   assert.match(aliasTransferSource, /node\('header', 'ui-table-titlebar'\)/);
   assert.match(aliasTransferSource, /layoutMenuHost: changeActions/);
   assert.match(functionBinding(appSource, 'radioDirectorySystemCard'),
-    /ui-surface radio-directory-system-card[\s\S]+uiIconTile\('icon-trunked'\)/);
-  assert.match(functionBinding(appSource, 'radioDirectoryConventionalSystemCard'),
-    /ui-surface radio-directory-system-card radio-directory-conventional-card[\s\S]+uiIconTile\('icon-conventional', 'secondary'\)/);
-  assert.match(functionBinding(appSource, 'radioDirectoryConventionalRow'),
-    /radio-directory-site-row radio-directory-conventional-row/);
-  const radioDirectoryLiveStateSource = functionBinding(appSource, 'radioDirectoryLiveState');
-  assert.match(radioDirectoryLiveStateSource,
-    /row\.processing_state !== 'RUNNING'[\s\S]+muted radio-directory-live-state[\s\S]+Stopped/);
-  assert.match(radioDirectoryLiveStateSource, /classList\.add\('ui-button-state-success'\)/);
-  assert.match(radioDirectoryLiveStateSource, /channel is running/);
-  assert.doesNotMatch(radioDirectoryLiveStateSource, /channel is stopped/);
+    /ui-surface ui-surface-soft radio-directory-system-card/);
+  const radioDirectorySiteSource = functionBinding(appSource, 'radioDirectorySiteRow');
+  assert.match(radioDirectorySiteSource,
+    /running && row\.display_frequency_source === 'active-control'/);
+  assert.doesNotMatch(radioDirectorySiteSource, /channelAdminFrequencyList|quality_frequency_hz/);
+  const radioDirectoryLiveLinkSource = functionBinding(appSource, 'radioDirectoryLiveLink');
+  assert.match(radioDirectoryLiveLinkSource, /capabilityAllowed\(ACCESS_CAPABILITIES\.LIVE\)/);
+  assert.match(radioDirectoryLiveLinkSource, /href\('live', target \? \{ channel: target\.configuration_id \} : \{\}\)/);
+  assert.match(radioDirectorySource, /radioDirectoryReconcile\(directoryHost,/);
+  assert.doesNotMatch(radioDirectorySource, /directoryHost\.replaceChildren/);
+  assert.doesNotMatch(functionBinding(appSource, 'radioDirectoryCardSection'), /countLabel|summary/);
   assert.doesNotMatch(appSource, /function radioDirectoryStatus\(/);
   assert.match(appCssSource,
     /\.ui-button-state-success > svg \{[^}]*color: var\(--success\);[^}]*fill: currentColor/s);

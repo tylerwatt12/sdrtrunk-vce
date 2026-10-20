@@ -112,7 +112,7 @@ assert.equal(behavior.activityTargetKind({ target_kind: 'talkgroup' }), 'talkgro
 assert.equal(behavior.activityTargetKind({ target_kind: 'radio' }), 'radio');
 assert.equal(behavior.activityTargetKind({ target_kind: 'channel' }), '');
 assert.equal(behavior.liveRemoteOriginLabel({ remote: true, sender_id: 'private-sender',
-  feed_id: 'private-feed', state: 'CONNECTED', dependency_state: 'READY' }), 'Remote source');
+  feed_id: 'private-feed', state: 'CONNECTED', dependency_state: 'READY' }), 'Received from another receiver.');
 assert.equal(behavior.liveRemoteOriginLabel({ remote: false }), '');
 assert.equal(behavior.liveRemoteOriginLabel(null), '');
 assert.equal(behavior.decodeQualityBarLevel(null), 0);
@@ -418,8 +418,8 @@ assert.match(channels, /if \(remoteLabel && value\.table_id !== 'conventional'\)
   'A remote Live system must replace the signal bars with its cloud quality indicator');
 assert.match(channels, /const available = !stopped && decodeQuality !== null/,
   'Stopped remote sites must keep their cloud neutral even with a recent decode sample');
-assert.match(channels, /quality\.className = 'channels-tab-quality live-remote-origin'/,
-  'Remote quality must reuse the existing cloud geometry and semantic colors');
+assert.match(channels, /quality\.className = 'channels-tab-quality ui-origin-indicator'/,
+  'Remote quality must use the shared outline cloud and semantic colors');
 assert.match(channels, /const originSuffix = remoteLabel \? ` · \$\{remoteLabel\}` : ''/,
   'A generic remote marker must remain available in pointer and accessible picker labels');
 assert.match(channels, /sortable: false/,
