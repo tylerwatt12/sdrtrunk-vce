@@ -91,23 +91,16 @@ final class StatsApiV1Payload
         return transform(source(value), StatsApiProtocol.UNKNOWN);
     }
 
-    /** Trim only after shared name/canonical/Alias presentation so the compact graph preserves its labels. */
-    static JsonNode p25Visualizer(Object value)
-    {
-        JsonNode rows = source(value);
-        for(JsonNode row: rows)
-        {
-            if(row instanceof ObjectNode object) object.retain(P25_VISUALIZER_FIELDS);
-        }
-        return rows;
-    }
-
     /** Identical compact public rows for saved seeds, committed deltas and cursor recovery. */
     static java.util.List<Map<String,Object>> p25VisualizerRows(Object value)
     {
-        return OBJECT_MAPPER.convertValue(p25Visualizer(present(value)),
+        JsonNode rows = transform(value instanceof JsonNode tree ? tree : source(value), StatsApiProtocol.UNKNOWN);
+        for(JsonNode row: rows) if(row instanceof ObjectNode object) object.retain(P25_VISUALIZER_FIELDS);
+        return OBJECT_MAPPER.convertValue(rows,
             new com.fasterxml.jackson.core.type.TypeReference<java.util.List<Map<String,Object>>>() { });
     }
+
+    static Object mapperValue(JsonNode value) { return OBJECT_MAPPER.convertValue(value,Object.class); }
 
     /** Preserves producer field casing before optional read-side enrichment. */
     static JsonNode source(Object value)

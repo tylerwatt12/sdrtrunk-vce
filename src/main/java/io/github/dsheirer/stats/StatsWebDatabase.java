@@ -121,7 +121,7 @@ class StatsWebDatabase
             return Map.of("profiles", profiles, "known_systems", List.of());
         }
     }
-    private static final int MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT = 5_000;
+    private static final int MAX_ACTIVITY_SOURCE_LOOKUP_IDS = 5_000;
     private static final long CURRENT_STATE_WINDOW_MILLISECONDS = 6L * HOUR_MILLISECONDS;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int QUALITY_DEFAULT_POINTS = 240;
@@ -399,7 +399,7 @@ class StatsWebDatabase
           ON target_canonical.id = target_directory.p25_subscriber_identity_id
         """;
     /** Only graph identity, label and affiliation evidence; internal columns support the shared Alias resolver. */
-    private static final String P25_VISUALIZER_PROJECTION_SQL = """
+    private static final String P25_ACTIVITY_PROJECTION_SQL = """
         SELECT activity.id, activity.configuration_id, activity.observed_at_ms,
             activity.channel_kind, activity.protocol, activity.action,
             activity.source_observed_local_id AS source_radio_id,
@@ -431,11 +431,6 @@ class StatsWebDatabase
     static final String ACTIVITY_ORDER_SQL =
         " ORDER BY activity.observed_at_ms DESC, activity.id DESC LIMIT ?";
     private static final String ACTIVITY_FORWARD_ORDER_SQL = " ORDER BY activity.id ASC LIMIT ?";
-    static final String ACTIVITY_GLOBAL_WINDOW_FLOOR_SQL = """
-        SELECT MIN(id) AS minimum_id
-        FROM receiver_activity_event INDEXED BY idx_receiver_activity_event_retention
-        WHERE observed_at_ms >= ? AND observed_at_ms < ?
-        """;
     private static final List<String> CALL_ACTIVITY_FIELDS = List.of(
         "logical_call_count", "recorded_logical_call_count", "stream_submitted_logical_call_count",
         "encrypted_logical_call_count"
@@ -1356,9 +1351,14 @@ class StatsWebDatabase
             Long.toString(aliasListId))));
     }
 
+    private final java.util.concurrent.atomic.AtomicLong mAffiliationPresentationGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    long affiliationPresentationGeneration() { return mAffiliationPresentationGeneration.get(); }
+
     void invalidateAliasActivitySnapshots()
     {
         mAliasCatalog.invalidateActivitySnapshots();
+        mAffiliationPresentationGeneration.incrementAndGet();
     }
 
     List<Long> matchingAliasIds(StatsRequest request)
@@ -5064,13 +5064,6 @@ class StatsWebDatabase
 
     Map<String,Object> activity(StatsRequest request, Consumer<ActivityQuery> queryObserver)
     {
-        String projection = request.text("projection");
-        boolean p25Visualizer = "p25_visualizer".equals(projection);
-        if(projection != null && !p25Visualizer)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "projection must be p25_visualizer", "projection");
-        }
         long beforeId = request.beforeId();
         Long afterId = request.optionalLong("after_id");
         Long requestedWatermarkId = request.optionalLong("watermark_id");
@@ -5192,23 +5185,13 @@ class StatsWebDatabase
             sourceIdentityKey != null || targetIdentityKey != null || sourceId != null || targetId != null ||
             targetKind != null || frequencyHertz != null || lcn.band() != null || timeslot != null;
 
-        boolean globalActivityWindow = systemKey == null && configurationId == null &&
-            fromMilliseconds != null && toMilliseconds != null &&
-            toMilliseconds - fromMilliseconds <= DAY_MILLISECONDS && actionCodes != null;
-
-        if(p25Visualizer && (!globalActivityWindow || afterId == null))
+        if(hasNewFilter && systemKey == null && configurationId == null)
         {
             throw new StatsApiException(400, "invalid_parameter",
-                "p25_visualizer requires a bounded global forward Activity window", "projection");
+                "Activity filters require radio_system_key or configuration_id", "radio_system_key");
         }
 
-        if(hasNewFilter && systemKey == null && configurationId == null && !globalActivityWindow)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "Global Activity filters require from_ms, to_ms within 24 hours, and actions", "radio_system_key");
-        }
-
-        int limit = activityLimit(request, globalActivityWindow && afterId != null);
+        int limit = request.limit();
 
         return read(connection -> {
             WebConfiguredEntityRepository.ConfiguredChannel configured = configurationId != null ?
@@ -5272,23 +5255,6 @@ class StatsWebDatabase
                     cursorPage(List.of(), limit);
             }
 
-            Long forwardFloorId = null;
-
-            if(globalActivityWindow && afterId != null &&
-                activityCursorNeedsWindowFloor(connection, afterId, fromMilliseconds))
-            {
-                List<Map<String,Object>> floor = queryRows(connection, ACTIVITY_GLOBAL_WINDOW_FLOOR_SQL,
-                    fromMilliseconds, toMilliseconds);
-                Object minimumId = floor.isEmpty() ? null : floor.getFirst().get("minimum_id");
-
-                if(minimumId == null)
-                {
-                    return forwardCursorPage(List.of(), limit, watermarkId);
-                }
-
-                forwardFloorId = ((Number)minimumId).longValue();
-            }
-
             Long beforeTimestamp = null;
 
             if(beforeId != Long.MAX_VALUE)
@@ -5309,20 +5275,43 @@ class StatsWebDatabase
                 radioIdentitySummaryId, radioRole, sourceIdentitySummaryId, targetIdentitySummaryId,
                 fromMilliseconds, toMilliseconds, actionCode, actionCodes, eventTypeCode, encryption, sourceId, targetId,
                 targetKind, frequencyHertz, lcn.band(), lcn.number(), timeslot, hideGrants, beforeTimestamp,
-                beforeId, afterId, watermarkId, forwardFloorId, limit, p25Visualizer, hasTones);
+                beforeId, afterId, watermarkId, limit, hasTones);
             ActivityQuery query = buildActivityQuery(connection, filters);
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
-            if(!p25Visualizer) io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
-            if(!p25Visualizer)
-            {
-                enrichActivityEncryption(rows);
-                enrichActivityEntityReferences(rows);
-                enrichActivityCallSources(connection, rows);
-            }
+            io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
+            enrichActivityEncryption(rows);
+            enrichActivityEntityReferences(rows);
+            enrichActivityCallSources(connection, rows);
             return afterId != null ? forwardCursorPage(rows, limit, watermarkId) : cursorPage(rows, limit);
         });
+    }
+
+    private static final java.util.Set<String> P25_ACTIVITY_ACTIONS = java.util.Set.of("JOIN", "LOGOUT", "DENIAL",
+        "EMERGENCY", "CHECK", "PAGE", "BUSY", "QUEUED", "PATCH", "PATCH_CREATE", "PATCH_CANCEL", "CALL", "GRANT");
+    static final String RECENT_P25_ACTIVITY_SQL = """
+        WITH recent AS MATERIALIZED (
+            SELECT candidate.id,candidate.observed_at_ms
+            FROM receiver_activity_event candidate INDEXED BY idx_receiver_activity_event_retention
+            WHERE candidate.action_code IN (%s)
+              AND EXISTS (SELECT 1 FROM radio_system system WHERE system.id=candidate.radio_system_id
+                  AND system.protocol_code=1)
+              AND EXISTS (SELECT 1 FROM receiver_channel channel
+                  JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
+                  WHERE channel.id=candidate.channel_id AND config.channel_kind='TRUNKED')
+            ORDER BY candidate.observed_at_ms DESC,candidate.id DESC LIMIT 500
+        )
+        """.formatted(P25_ACTIVITY_ACTIONS.stream().map(ReceiverActivityFilterCatalog::actionCode)
+            .sorted().map(String::valueOf).collect(java.util.stream.Collectors.joining(","))) +
+        P25_ACTIVITY_PROJECTION_SQL + " FROM recent " +
+        " JOIN receiver_activity_event_resolved activity ON activity.id=recent.id " + ACTIVITY_RELATED_JOINS_SQL +
+        " ORDER BY recent.observed_at_ms DESC,recent.id DESC";
+
+    /** Most recent bounded saved P25 baseline; a reverse retention-index walk stops before public projection. */
+    List<Map<String,Object>> recentP25ActivityRows()
+    {
+        return p25ActivityQuery(RECENT_P25_ACTIVITY_SQL, List.of(), 100);
     }
 
     /** Feed reader only: exact primary-key seeks, a short independent deadline, and no history scan. */
@@ -5330,8 +5319,16 @@ class StatsWebDatabase
     {
         if(ids.isEmpty()) return List.of();
         if(ids.size() > 500) throw new IllegalArgumentException("Too many live Activity identifiers");
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        return p25ActivityQuery(P25_ACTIVITY_PROJECTION_SQL +
+            " FROM receiver_activity_event_resolved activity " + ACTIVITY_RELATED_JOINS_SQL +
+            " WHERE activity.id IN (" + placeholders + ") ORDER BY activity.id", ids, 250);
+    }
+
+    private List<Map<String,Object>> p25ActivityQuery(String sql, List<?> parameters, long budgetMilliseconds)
+    {
         return read(connection -> {
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(250);
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMilliseconds);
             try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
             org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
             {
@@ -5342,18 +5339,103 @@ class StatsWebDatabase
             });
             try
             {
-                String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
-                List<Map<String,Object>> rows = queryRows(connection, P25_VISUALIZER_PROJECTION_SQL +
-                    " FROM receiver_activity_event_resolved activity " + ACTIVITY_RELATED_JOINS_SQL +
-                    " WHERE activity.id IN (" + placeholders + ") ORDER BY activity.id", ids.toArray());
+                List<Map<String,Object>> rows = queryRows(connection, sql, parameters.toArray());
                 rows.removeIf(row -> StatsApiProtocol.fromName(String.valueOf(row.get("protocol"))) != StatsApiProtocol.P25 ||
                     !"TRUNKED_SITE".equalsIgnoreCase(String.valueOf(row.get("channel_kind"))) ||
-                    row.get("radio_system_key") == null || !java.util.Set.of("JOIN", "LOGOUT", "DENIAL", "EMERGENCY",
-                        "CHECK", "PAGE", "BUSY", "QUEUED", "PATCH", "PATCH_CREATE", "PATCH_CANCEL", "CALL", "GRANT")
-                        .contains(String.valueOf(row.get("action"))));
+                    row.get("radio_system_key") == null || !P25_ACTIVITY_ACTIONS.contains(String.valueOf(row.get("action"))));
                 mAliasResolver.enrichActivity(connection, rows);
-                return StatsApiV1Payload.p25VisualizerRows(
-                    new StatsSystemNameResolver(connection).enrich(StatsApiV1Payload.source(rows)));
+                return StatsApiV1Payload.p25VisualizerRows(new StatsSystemNameResolver(connection).enrich(rows));
+            }
+            finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+        });
+    }
+
+    static final String P25_AFFILIATION_CORE_SQL = """
+        SELECT system.system_key AS radio_system_key, system.protocol_code,
+            system.p25_wacn AS wacn,system.p25_system_id AS system_id,
+            config.configuration_id,config.alias_list_id,nullif(trim(config.system_name),'') AS system_name,
+            affiliation.confirmed_at_ms, 'APCO25' AS protocol,
+            %s AS source_identity_key, %s AS target_identity_key,
+            radio.identity_id AS source_native_id, talkgroup.identity_id AS target_native_id,
+            radio.home_wacn AS radio_home_wacn,radio.home_system_id AS radio_home_system_id,
+            talkgroup.home_wacn AS talkgroup_home_wacn,talkgroup.home_system_id AS talkgroup_home_system_id,
+            affiliation.radio_observed_local_id AS source_radio_id,
+            affiliation.talkgroup_observed_local_id AS target_id,1 AS target_kind_code,
+            affiliation.radio_observed_working_id AS source_observed_working_id,
+            radio.p25_subscriber_identity_id AS source_p25_subscriber_identity_id,
+            canonical.home_wacn AS source_canonical_wacn,
+            canonical.home_system_id AS source_canonical_system_id,
+            canonical.subscriber_id AS source_canonical_subscriber_id,
+            radio.last_talker_alias AS source_talker_alias
+        FROM trunked_radio_affiliation affiliation INDEXED BY idx_trunked_radio_affiliation_retention
+        JOIN radio_system system ON system.id=affiliation.radio_system_id AND system.protocol_code=1
+        JOIN radio_system_identity_summary radio ON radio.id=affiliation.radio_identity_id
+        JOIN radio_system_identity_summary talkgroup ON talkgroup.id=affiliation.talkgroup_identity_id
+        JOIN receiver_channel channel ON channel.id=affiliation.channel_id
+        JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
+        LEFT JOIN p25_subscriber_identity canonical ON canonical.id=radio.p25_subscriber_identity_id
+        ORDER BY affiliation.confirmed_at_ms,affiliation.radio_system_id,affiliation.radio_identity_id
+        LIMIT 10001
+        """.formatted(IDENTITY_KEY_SQL.formatted("radio"),IDENTITY_KEY_SQL.formatted("talkgroup"));
+
+    /** One skinny shared current-state scan; no retained Activity is visited or reconstructed. */
+    List<Map<String,Object>> p25AffiliationCoreRows()
+    {
+        return read(connection -> {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100);
+            try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
+            org.sqlite.ProgressHandler.setHandler(connection,1000,new org.sqlite.ProgressHandler()
+            {
+                @Override protected int progress()
+                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline ? 1 : 0; }
+            });
+            try { return queryRows(connection,P25_AFFILIATION_CORE_SQL); }
+            finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+        });
+    }
+
+    /** Enrich only changed current identities, using the same channel-owned Alias rules as Activity. */
+    List<Map<String,Object>> presentP25Affiliations(List<Map<String,Object>> core)
+    {
+        if(core.isEmpty()) return List.of();
+        return read(connection -> {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(250);
+            try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
+            org.sqlite.ProgressHandler.setHandler(connection,1000,new org.sqlite.ProgressHandler()
+            {
+                @Override protected int progress()
+                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline ? 1 : 0; }
+            });
+            try
+            {
+                List<Map<String,Object>> rows = core.stream().map(row -> (Map<String,Object>)new LinkedHashMap<>(row)).toList();
+                mAliasResolver.enrichActivity(connection,rows);
+                com.fasterxml.jackson.databind.JsonNode named = new StatsSystemNameResolver(connection).enrich(rows);
+                List<Map<String,Object>> result = new ArrayList<>();
+                for(com.fasterxml.jackson.databind.JsonNode row: named)
+                {
+                    Map<String,Object> value = new LinkedHashMap<>();
+                    for(String field: List.of("radio_system_key","configuration_id","confirmed_at_ms","wacn","system_id",
+                        "radio_home_wacn","radio_home_system_id","talkgroup_home_wacn","talkgroup_home_system_id",
+                        "system_name","system_names"))
+                        if(row.has(field)) value.put(field,StatsApiV1Payload.mapperValue(row.get(field)));
+                    value.put("protocol","p25");
+                    for(String[] field: new String[][]{{"radio_identity_key","source_identity_key"},
+                        {"talkgroup_identity_key","target_identity_key"},{"radio_id","source_native_id"},
+                        {"talkgroup_id","target_native_id"},{"radio_observed_local_id","source_radio_id"},
+                        {"talkgroup_observed_local_id","target_id"},{"radio_observed_working_id","source_observed_working_id"},
+                        {"radio_alias_name","source_alias_name"},{"radio_talker_alias","source_talker_alias"},
+                        {"talkgroup_alias_name","target_alias_name"},{"radio_home_system_name","source_home_system_name"},
+                        {"talkgroup_home_system_name","target_home_system_name"}})
+                        if(row.has(field[1])) value.put(field[0],StatsApiV1Payload.mapperValue(row.get(field[1])));
+                    if(row.hasNonNull("source_canonical_wacn") && row.hasNonNull("source_canonical_system_id") &&
+                        row.hasNonNull("source_canonical_subscriber_id"))
+                        value.put("radio_canonical_identity",Map.of("wacn",row.path("source_canonical_wacn").asInt(),
+                            "system_id",row.path("source_canonical_system_id").asInt(),
+                            "subscriber_id",row.path("source_canonical_subscriber_id").asInt()));
+                    result.add(java.util.Collections.unmodifiableMap(value));
+                }
+                return List.copyOf(result);
             }
             finally { org.sqlite.ProgressHandler.clearHandler(connection); }
         });
@@ -5373,7 +5455,7 @@ class StatsWebDatabase
     Map<Long,String> activitySourceCallReferences(List<Long> activityIds)
     {
         if(activityIds == null || activityIds.isEmpty()) return Map.of();
-        if(activityIds.size() > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
+        if(activityIds.size() > MAX_ACTIVITY_SOURCE_LOOKUP_IDS)
             throw new IllegalArgumentException("Too many Activity rows");
         List<Long> ids = activityIds.stream().distinct().toList();
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100);
@@ -5529,7 +5611,7 @@ class StatsWebDatabase
         }
 
         sql.append("\n)\n")
-            .append(filters.p25Visualizer() ? P25_VISUALIZER_PROJECTION_SQL : ACTIVITY_PROJECTION_SQL)
+            .append(ACTIVITY_PROJECTION_SQL)
             .append("FROM activity_candidates candidate_match\n")
             .append("JOIN receiver_activity_event_resolved activity ON activity.id = candidate_match.id\n")
             .append(ACTIVITY_RELATED_JOINS_SQL)
@@ -5605,24 +5687,6 @@ class StatsWebDatabase
             .append(fromClause).append("\nWHERE 1 = 1");
         List<Object> parameters = new ArrayList<>();
 
-        if(filters.p25Visualizer())
-        {
-            // Match Activity's event-owned API protocol and saved-channel kind before paging. A channel's
-            // current system assignment must not reassign retained history.
-            sql.append("""
-
-                  AND candidate.radio_system_id IS NOT NULL
-                  AND EXISTS (SELECT 1 FROM radio_system visualizer_system
-                      WHERE visualizer_system.id = candidate.radio_system_id
-                        AND visualizer_system.protocol_code = 1)
-                  AND EXISTS (SELECT 1 FROM receiver_channel visualizer_channel
-                      JOIN configuration_channel visualizer_config
-                        ON visualizer_config.configuration_id = visualizer_channel.configuration_id
-                      WHERE visualizer_channel.id = candidate.channel_id
-                        AND visualizer_config.channel_kind = 'TRUNKED')
-                """);
-        }
-
         appendActivityPredicate(sql, parameters, "candidate.radio_system_id = ?", filters.radioSystemId());
         appendActivityPredicate(sql, parameters, "candidate.channel_id = ?", filters.channelId());
         appendActivityPredicate(sql, parameters, "candidate.action_code = ?", filters.actionCode());
@@ -5682,7 +5746,6 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.lcn_band = ?", filters.lcnBand());
         appendActivityPredicate(sql, parameters, "candidate.lcn_number = ?", filters.lcnNumber());
         appendActivityPredicate(sql, parameters, "candidate.timeslot = ?", filters.timeslot());
-        appendActivityPredicate(sql, parameters, "candidate.id >= ?", filters.forwardFloorId());
 
         if(filters.beforeTimestamp() != null)
         {
@@ -5725,19 +5788,6 @@ class StatsWebDatabase
                 .append(String.join(",", java.util.Collections.nCopies(values.size(), "?"))).append(')');
             parameters.addAll(values);
         }
-    }
-
-    private static boolean activityCursorNeedsWindowFloor(Connection connection, long afterId,
-                                                          long fromMilliseconds) throws SQLException
-    {
-        if(afterId == 0)
-        {
-            return true;
-        }
-
-        List<Map<String,Object>> cursor = queryRows(connection,
-            "SELECT observed_at_ms FROM receiver_activity_event WHERE id = ?", afterId);
-        return cursor.isEmpty() || number(cursor.getFirst().get("observed_at_ms")) < fromMilliseconds;
     }
 
     private static Long positiveActivityLong(StatsRequest request, String field)
@@ -5797,25 +5847,6 @@ class StatsWebDatabase
         }
 
         return List.copyOf(codes);
-    }
-
-    private static int activityLimit(StatsRequest request, boolean globalForward)
-    {
-        if(!globalForward)
-        {
-            return request.limit();
-        }
-
-        Integer requested = request.optionalInt("limit");
-        int value = requested != null ? requested : StatsRequest.DEFAULT_LIMIT;
-
-        if(value < 1 || value > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "limit must be between 1 and " + MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT, "limit");
-        }
-
-        return value;
     }
 
     private static Integer activityEncryption(String value)
@@ -8282,8 +8313,7 @@ class StatsWebDatabase
                                    Integer encryption, Integer sourceId,
                                    Integer targetId, Integer targetKind, Long frequencyHertz, Integer lcnBand,
                                    Integer lcnNumber, Integer timeslot, boolean hideGrants, Long beforeTimestamp,
-                                   long beforeId, Long afterId, long watermarkId, Long forwardFloorId, int limit,
-                                   boolean p25Visualizer, boolean hasTones)
+                                   long beforeId, Long afterId, long watermarkId, int limit, boolean hasTones)
     {
     }
 

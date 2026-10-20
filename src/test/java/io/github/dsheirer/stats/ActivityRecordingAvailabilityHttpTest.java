@@ -70,7 +70,7 @@ class ActivityRecordingAvailabilityHttpTest
     }
 
     @Test
-    void catalogFailureKeepsActivityReadableAndTheVisualizerSkipsAvailability() throws Exception
+    void catalogFailureKeepsActivityReadableAndRetiredProjectionIsRejected() throws Exception
     {
         try(var fixture = new Fixture(directory))
         {
@@ -84,14 +84,10 @@ class ActivityRecordingAvailabilityHttpTest
             assertEquals(1, fixture.sourceReads);
             assertEquals(1, fixture.catalogReads);
 
-            var compact = fixture.get("?from_ms=1&to_ms=5000&actions=CALL&after_id=0&hide_grants=false" +
-                "&limit=20&projection=p25_visualizer");
-            assertEquals(200, compact.statusCode(), compact.body());
-            assertEquals(2, data(compact).size());
+            var retired = fixture.get("?projection=p25_visualizer");
+            assertEquals(400, retired.statusCode(), retired.body());
             assertEquals(1, fixture.sourceReads);
-            assertEquals(1, fixture.catalogReads, "Visualizer traffic must not query the recording catalog");
-            for(JsonNode row: data(compact)) assertFalse(row.has("has_recording"));
-            assertPrivateReferencesAbsent(compact);
+            assertEquals(1, fixture.catalogReads);
         }
     }
 

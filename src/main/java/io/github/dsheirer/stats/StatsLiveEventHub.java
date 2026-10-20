@@ -175,6 +175,13 @@ final class StatsLiveEventHub implements AutoCloseable
             mMarkers = markers;
         }
 
+        static LiveEvent prepared(String name, Object data, int topic) throws java.io.IOException
+        {
+            LiveEvent event = new LiveEvent(name, data);
+            event.mFrame = LiveMultiplexFrame.preparedJson(topic, name, data);
+            return event;
+        }
+
         String name()
         {
             return mName;

@@ -2,6 +2,7 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.stats.activity.ActivityCommitJournal;
+import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -22,9 +23,15 @@ import org.slf4j.LoggerFactory;
 /** One demand-driven reader/encoder for committed P25 Activity, shared by every browser. */
 final class P25ActivityLiveService implements AutoCloseable
 {
+    private static final java.util.concurrent.atomic.AtomicLong AFFILIATION_REVISIONS = new java.util.concurrent.atomic.AtomicLong();
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLiveService.class);
     static final int TOPIC = 7;
     static final int PAGE_LIMIT = 500;
+    static final int SEED_LIMIT = 500;
+    private static final long SEED_LIFETIME_NANOS = TimeUnit.SECONDS.toNanos(2);
+    private static final int MAXIMUM_SEED_BYTES = 12 * 1024 * 1024;
+    static final int MAXIMUM_AFFILIATIONS = 10_000;
+    private static final int MAXIMUM_AFFILIATION_BYTES = 8 * 1024 * 1024;
     private static final int MAXIMUM_PENDING_CATCHUPS = 256;
     private static final int MAXIMUM_IDS_PER_TICK = 2_000;
     private static final int MAXIMUM_PART_IDS = 100;
@@ -32,6 +39,10 @@ final class P25ActivityLiveService implements AutoCloseable
     interface Source
     {
         List<Map<String,Object>> rows(List<Long> ids);
+        List<Map<String,Object>> recentRows();
+        default long presentationGeneration() { return 0; }
+        List<Map<String,Object>> affiliationRows();
+        List<Map<String,Object>> presentAffiliations(List<Map<String,Object>> rows);
     }
     record State(long revision, boolean initialized, String epoch, long sequence, int timeout, boolean enabled)
     {
@@ -42,16 +53,32 @@ final class P25ActivityLiveService implements AutoCloseable
                 "traffic_grant_age_out_milliseconds", timeout, "collection_enabled", enabled);
         }
     }
-    private record CatchupKey(String epoch, long after, Long through, long afterId, int limit) { }
-    private record Catchup(String epoch, long after, Long through, long afterId, int limit,
-                           CompletableFuture<Map<String,Object>> result) { }
+    private record RadioKey(String system, String radio)
+    {
+        Map<String,Object> payload() { return Map.of("radio_system_key",system,"radio_identity_key",radio); }
+    }
+    private record Recent(ActivityCommitJournal journal,String epoch,long sequence,long preparedAt,long capturedAt,
+                          List<Map<String,Object>> rows) { }
+    private record Seed(ActivityCommitJournal journal, String epoch, long sequence, long preparedAt,
+                        ApiHttpResponse.PreparedJson response) { }
+    private record CatchupResult(Map<String,Object> data, ApiHttpResponse.PreparedJson response) { }
+    private record CatchupKey(String epoch, long after, Long through, long afterId, int limit, long affiliationRevision) { }
+    private record Catchup(String epoch, long after, Long through, long afterId, int limit, long affiliationRevision,
+                           CompletableFuture<CatchupResult> result) { }
     private final Supplier<ActivityCommitJournal> mJournalSupplier;
     private final Source mSource;
     private final IntSupplier mTimeout;
     private final BooleanSupplier mEnabled;
     private final StatsLiveEventHub mHub;
+    private final ArrayBlockingQueue<CompletableFuture<ApiHttpResponse.PreparedJson>> mSeeds =
+        new ArrayBlockingQueue<>(MAXIMUM_PENDING_CATCHUPS);
+    private Seed mSeed;
+    private Recent mRecent;
+    private final java.util.concurrent.atomic.AtomicBoolean mRefreshPresentation = new java.util.concurrent.atomic.AtomicBoolean();
+    private long mLastPresentationRefresh;
     private final ArrayBlockingQueue<Catchup> mCatchups = new ArrayBlockingQueue<>(MAXIMUM_PENDING_CATCHUPS);
-    private volatile State mState = new State(0, false, "unavailable", 0, 1_000, false);
+    private final String mFallbackEpoch = java.util.UUID.randomUUID().toString();
+    private volatile State mState = new State(0, false, "", 0, 1_000, false);
     private volatile boolean mClosed;
     private Thread mReader;
     private ActivityCommitJournal mJournal;
@@ -61,6 +88,19 @@ final class P25ActivityLiveService implements AutoCloseable
     private List<Long> mPendingIds = List.of();
     private int mPendingOffset;
     private boolean mFailed;
+    private boolean mSeedFailed;
+    private long mAffiliationPollAt;
+    private long mAffiliationPresentationGeneration = -1;
+    private volatile long mAffiliationRevision;
+    private Map<RadioKey,Integer> mAffiliationRowBytes = Map.of();
+    private long mAffiliationBytes;
+    private boolean mAffiliationsAvailable;
+    private boolean mAffiliationsComplete;
+    private boolean mAffiliationExposed;
+    private boolean mAffiliationFailed;
+    private Map<RadioKey,Map<String,Object>> mAffiliationCore = Map.of();
+    private Map<RadioKey,Map<String,Object>> mAffiliations = Map.of();
+    private List<Map<String,Object>> mAffiliationRows = List.of();
 
     P25ActivityLiveService(Supplier<ActivityCommitJournal> journal, Source source, IntSupplier timeout,
                            BooleanSupplier enabled)
@@ -92,12 +132,44 @@ final class P25ActivityLiveService implements AutoCloseable
 
     State state() { return mState; }
 
+    ApiHttpResponse.PreparedJson seed() { return seed(false); }
+
+    ApiHttpResponse.PreparedJson seed(boolean refresh)
+    {
+        CompletableFuture<ApiHttpResponse.PreparedJson> request = new CompletableFuture<>();
+        if(mClosed || !mHub.hasSubscribers() || !mSeeds.offer(request))
+            throw new StatsApiException(503, "Live Activity is busy; retry shortly");
+        if(refresh) mRefreshPresentation.set(true);
+        try { return request.get(5, TimeUnit.SECONDS); }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+            request.cancel(false);
+            throw new StatsApiException(503, "Recent Activity loading was interrupted");
+        }
+        catch(java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException exception)
+        {
+            request.cancel(false);
+            throw new StatsApiException(503, "Recent Activity is temporarily unavailable");
+        }
+    }
+
     Map<String,Object> catchup(String epoch, long after, Long through, long afterId, int limit)
     {
-        if(epoch == null || epoch.length() > 128 || after < 0 || afterId < 0 || through != null && through < after ||
+        return requestCatchup(epoch, after, through, afterId, limit, mAffiliationRevision).data();
+    }
+
+    ApiHttpResponse.PreparedJson preparedCatchup(String epoch, long after, Long through, long afterId, int limit, long affiliationRevision)
+    {
+        return requestCatchup(epoch, after, through, afterId, limit, affiliationRevision).response();
+    }
+
+    private CatchupResult requestCatchup(String epoch, long after, Long through, long afterId, int limit, long affiliationRevision)
+    {
+        if(epoch == null || epoch.length() > 128 || affiliationRevision < 0 || after < 0 || afterId < 0 || through != null && through < after ||
             limit < 1 || limit > PAGE_LIMIT) throw new StatsApiException(400, "Live Activity cursor is invalid");
-        CompletableFuture<Map<String,Object>> result = new CompletableFuture<>();
-        if(mClosed || !mHub.hasSubscribers() || !mCatchups.offer(new Catchup(epoch, after, through, afterId, limit, result)))
+        CompletableFuture<CatchupResult> result = new CompletableFuture<>();
+        if(mClosed || !mHub.hasSubscribers() || !mCatchups.offer(new Catchup(epoch, after, through, afterId, limit, affiliationRevision, result)))
             throw new StatsApiException(503, "Live Activity is busy; retry shortly");
         try { return result.get(5, TimeUnit.SECONDS); }
         catch(InterruptedException exception)
@@ -122,15 +194,21 @@ final class P25ActivityLiveService implements AutoCloseable
                 if(mHub.hasSubscribers())
                 {
                     bind();
+                    pollAffiliations();
                     if(mJournal != null) drain();
                     refreshMetadata();
                     processCatchups();
+                    processSeeds();
                 }
                 else
                 {
                     // Keep the writer's bounded receipts, but perform no database or wire work without viewers.
                     mJournal = null;
+                    mSeed = null;
                     mPendingIds = List.of();
+                    CompletableFuture<ApiHttpResponse.PreparedJson> seed;
+                    while((seed = mSeeds.poll()) != null)
+                        seed.completeExceptionally(new IllegalStateException("No live Activity viewers"));
                     Catchup request;
                     while((request = mCatchups.poll()) != null)
                         request.result().completeExceptionally(new IllegalStateException("No live Activity viewers"));
@@ -158,11 +236,30 @@ final class P25ActivityLiveService implements AutoCloseable
         ActivityCommitJournal journal = mJournalSupplier.get();
         ActivityCommitJournal.Boundary boundary = journal != null ? journal.boundary() : null;
         if(journal == mJournal && (boundary != null && boundary.sourceEpoch().equals(mEpoch) ||
-            boundary == null && "unavailable".equals(mEpoch))) return;
+            boundary == null && mFallbackEpoch.equals(mEpoch))) return;
+        String epoch = boundary != null ? boundary.sourceEpoch() : mFallbackEpoch;
+        boolean sourceChanged = !Objects.equals(mEpoch,epoch);
         mJournal = journal;
+        mAffiliationPollAt = 0;
+        if(sourceChanged)
+        {
+            mAffiliationPresentationGeneration = -1;
+            mAffiliationRevision = AFFILIATION_REVISIONS.incrementAndGet();
+            mRecent = null;
+            mAffiliationsAvailable = false;
+            mAffiliationsComplete = false;
+            mAffiliationExposed = false;
+            mAffiliationFailed = false;
+            mAffiliationCore = Map.of();
+            mAffiliations = Map.of();
+            mAffiliationRows = List.of();
+            mAffiliationRowBytes = Map.of();
+            mAffiliationBytes = 0;
+        }
+        mSeed = null;
         mPendingIds = List.of();
         mPendingOffset = 0;
-        mEpoch = boundary != null ? boundary.sourceEpoch() : "unavailable";
+        mEpoch = epoch;
         mCursor = boundary != null ? boundary.sequence() : 0;
         mState = new State(mState.revision() + 1, true, mEpoch, mCursor, Math.max(100, mTimeout.getAsInt()), mEnabled.getAsBoolean());
         mFailed = false;
@@ -203,7 +300,7 @@ final class P25ActivityLiveService implements AutoCloseable
             data.put("removed_ids", removed(ids, rows));
             data.put("part", mPendingOffset / MAXIMUM_PART_IDS);
             data.put("parts", totalParts);
-            StatsLiveEventHub.LiveEvent event = new StatsLiveEventHub.LiveEvent("activity_delta", Map.copyOf(data));
+            StatsLiveEventHub.LiveEvent event = StatsLiveEventHub.LiveEvent.prepared("activity_delta", Map.copyOf(data), TOPIC);
             LiveMultiplexFrame frame = event.frame(TOPIC);
             if(frame.bytes(false).length > StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC)
                 throw new IOException("P25 Activity frame exceeds its byte budget");
@@ -229,7 +326,199 @@ final class P25ActivityLiveService implements AutoCloseable
         int timeout = Math.max(100, mTimeout.getAsInt());
         boolean enabled = mEnabled.getAsBoolean();
         if(previous.timeout() != timeout || previous.enabled() != enabled)
+        {
+            mSeed = null;
             mState = new State(previous.revision() + 1, previous.initialized(), previous.epoch(), previous.sequence(), timeout, enabled);
+        }
+    }
+
+    private void addAffiliations(Map<String,Object> payload)
+    {
+        mAffiliationExposed = true;
+        payload.put("affiliation_revision",mAffiliationRevision);
+        payload.put("affiliations_available",mAffiliationsAvailable);
+        payload.put("affiliations_complete",mAffiliationsComplete);
+        payload.put("affiliations",mAffiliationRows);
+    }
+
+    private boolean affiliationSourceCurrent()
+    {
+        ActivityCommitJournal current = mJournalSupplier.get();
+        return !mClosed && mHub.hasSubscribers() && current == mJournal && (current == null ? mFallbackEpoch.equals(mEpoch) :
+            current.boundary().sourceEpoch().equals(mEpoch));
+    }
+
+    /** Independent current-state revision: optional Activity rows never establish or clear an affiliation. */
+    private void pollAffiliations() throws IOException
+    {
+        if(System.nanoTime() < mAffiliationPollAt) return;
+        mAffiliationPollAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        try
+        {
+            List<Map<String,Object>> rows = mSource.affiliationRows();
+            if(rows.size() > MAXIMUM_AFFILIATIONS) throw new IllegalStateException("Current affiliation row budget exceeded");
+            Map<RadioKey,Map<String,Object>> core = new LinkedHashMap<>();
+            for(Map<String,Object> row: rows)
+            {
+                RadioKey key = new RadioKey((String)row.get("radio_system_key"),(String)row.get("source_identity_key"));
+                if(key.system() == null || key.radio() == null || core.put(key,row) != null)
+                    throw new IllegalStateException("Current affiliation identity is invalid");
+            }
+            if(!affiliationSourceCurrent()) return;
+            long presentation = mSource.presentationGeneration();
+            List<Map<String,Object>> changed = core.entrySet().stream()
+                .filter(entry -> presentation != mAffiliationPresentationGeneration || !entry.getValue().equals(mAffiliationCore.get(entry.getKey())))
+                .map(Map.Entry::getValue).toList();
+            List<RadioKey> removed = mAffiliations.keySet().stream().filter(key -> !core.containsKey(key)).toList();
+            if(changed.isEmpty() && removed.isEmpty() && mAffiliationsAvailable) return;
+            List<Map<String,Object>> upserts = mSource.presentAffiliations(changed);
+            if(upserts.size() != changed.size()) throw new IllegalStateException("Current affiliation projection is incomplete");
+            Map<RadioKey,Map<String,Object>> publicRows = new LinkedHashMap<>(mAffiliations);
+            Map<RadioKey,Integer> rowBytes = new LinkedHashMap<>(mAffiliationRowBytes);
+            long bytes = mAffiliationBytes;
+            for(RadioKey key: removed)
+            {
+                publicRows.remove(key);
+                bytes -= rowBytes.remove(key);
+            }
+            for(Map<String,Object> row: upserts)
+            {
+                RadioKey key = new RadioKey((String)row.get("radio_system_key"),(String)row.get("radio_identity_key"));
+                if(!core.containsKey(key)) throw new IllegalStateException("Current affiliation projection changed its identity");
+                publicRows.put(key,row);
+                int encoded = ApiHttpResponse.encodeNormalizedPayload(row).length;
+                Integer oldBytes = rowBytes.put(key,encoded);
+                bytes += encoded - (oldBytes != null ? oldBytes : 0);
+                if(bytes + publicRows.size() + 2 > MAXIMUM_AFFILIATION_BYTES)
+                    throw new IllegalStateException("Current affiliation byte budget exceeded");
+            }
+            List<Map<String,Object>> complete = List.copyOf(publicRows.values());
+            if(!affiliationSourceCurrent()) return;
+            long previous = mAffiliationRevision;
+            mAffiliationPresentationGeneration = presentation;
+            mAffiliationCore = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(core));
+            mAffiliations = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(publicRows));
+            mAffiliationRows = complete;
+            mAffiliationRowBytes = java.util.Collections.unmodifiableMap(rowBytes);
+            mAffiliationBytes = bytes;
+            mAffiliationsAvailable = true;
+            mAffiliationsComplete = true;
+            mAffiliationFailed = false;
+            mAffiliationRevision = AFFILIATION_REVISIONS.incrementAndGet();
+            mSeed = null;
+            if(mAffiliationExposed) publishAffiliations(previous,upserts,removed);
+        }
+        catch(RuntimeException exception)
+        {
+            if(!affiliationSourceCurrent()) return;
+            if(!mAffiliationFailed) mLog.warn("Current P25 affiliations are temporarily unavailable",exception);
+            mAffiliationFailed = true;
+            if(mAffiliationsAvailable)
+            {
+                long previous = mAffiliationRevision;
+                mAffiliationsAvailable = false;
+                mAffiliationRevision = AFFILIATION_REVISIONS.incrementAndGet();
+                mSeed = null;
+                if(mAffiliationExposed) publishAffiliations(previous,List.of(),List.of());
+            }
+        }
+    }
+
+    private void publishAffiliations(long previous, List<Map<String,Object>> upserts, List<RadioKey> removed)
+        throws IOException
+    {
+        int changes = upserts.size() + removed.size();
+        int parts = Math.max(1,(changes + MAXIMUM_PART_IDS - 1) / MAXIMUM_PART_IDS);
+        for(int part = 0; part < parts; part++)
+        {
+            int start = part * MAXIMUM_PART_IDS, end = Math.min(changes,start + MAXIMUM_PART_IDS);
+            List<Map<String,Object>> rows = upserts.subList(Math.min(start,upserts.size()),Math.min(end,upserts.size()));
+            List<Map<String,Object>> deleted = removed.subList(Math.max(0,start-upserts.size()),Math.max(0,end-upserts.size()))
+                .stream().map(RadioKey::payload).toList();
+            StatsLiveEventHub.LiveEvent event = StatsLiveEventHub.LiveEvent.prepared("affiliation_delta",Map.of(
+                "source_epoch",mEpoch,"base_affiliation_revision",previous,"affiliation_revision",mAffiliationRevision,
+                "affiliations_available",mAffiliationsAvailable,"upserts",rows,"removed_radio_keys",deleted,
+                "part",part,"parts",parts),TOPIC);
+            LiveMultiplexFrame frame = event.frame(TOPIC);
+            if(frame.bytes(false).length > StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC)
+                throw new IOException("Current affiliation frame exceeds its byte budget");
+            frame.bytes(true);
+            if(!affiliationSourceCurrent()) return;
+            mHub.publish(event);
+        }
+    }
+
+    private void processSeeds()
+    {
+        if(mSeeds.isEmpty()) return;
+        List<CompletableFuture<ApiHttpResponse.PreparedJson>> requests = new ArrayList<>();
+        mSeeds.drainTo(requests, MAXIMUM_PENDING_CATCHUPS);
+        if(requests.stream().allMatch(CompletableFuture::isCancelled)) return;
+        try
+        {
+            if(mRefreshPresentation.getAndSet(false) && System.nanoTime() - mLastPresentationRefresh >= SEED_LIFETIME_NANOS)
+            {
+                mLastPresentationRefresh = System.nanoTime();
+                mAffiliationPresentationGeneration = -1;
+                mAffiliationPollAt = 0;
+                pollAffiliations();
+                mSeed = null;
+                mRecent = null;
+            }
+            Seed seed = mSeed;
+            if(seed == null || System.nanoTime() - seed.preparedAt() >= SEED_LIFETIME_NANOS ||
+                !seedCurrent(seed))
+            {
+                Recent recent = mRecent;
+                if(recent == null || System.nanoTime() - recent.preparedAt() >= SEED_LIFETIME_NANOS ||
+                    !recentCurrent(recent))
+                {
+                    ActivityCommitJournal journal = mJournal;
+                    ActivityCommitJournal.Boundary boundary = journal != null ? journal.boundary() : null;
+                    String epoch = boundary != null ? boundary.sourceEpoch() : mFallbackEpoch;
+                    long sequence = boundary != null ? boundary.sequence() : 0;
+                    long captured = System.currentTimeMillis();
+                    List<Map<String,Object>> rows = mSource.recentRows();
+                    if(rows.size() > SEED_LIMIT) throw new IllegalStateException("Recent Activity exceeded its row budget");
+                    recent = new Recent(journal,epoch,sequence,System.nanoTime(),captured,rows);
+                    if(!recentCurrent(recent)) throw new IllegalStateException("Recent Activity source changed while loading");
+                    mRecent = recent;
+                }
+                Map<String,Object> payload = new LinkedHashMap<>(Map.of(
+                    "source_epoch", recent.epoch(), "sequence", recent.sequence(), "rows", recent.rows(), "captured_at_ms", recent.capturedAt(),
+                    "traffic_grant_age_out_milliseconds", mState.timeout(), "collection_enabled", mState.enabled()));
+                addAffiliations(payload);
+                ApiHttpResponse.PreparedJson prepared = ApiHttpResponse.prepareNormalizedData(payload);
+                if(prepared.identity().length > MAXIMUM_SEED_BYTES)
+                    throw new IllegalStateException("Recent Activity exceeded its byte budget");
+                seed = new Seed(recent.journal(),recent.epoch(),recent.sequence(),recent.preparedAt(),prepared);
+                if(!seedCurrent(seed)) throw new IllegalStateException("Recent Activity source changed while loading");
+                mSeed = seed;
+            }
+            for(var request: requests) request.complete(seed.response());
+            mSeedFailed = false;
+        }
+        catch(RuntimeException | IOException exception)
+        {
+            mSeed = null;
+            if(!mSeedFailed) mLog.warn("Recent P25 Activity seed is temporarily unavailable", exception);
+            mSeedFailed = true;
+            for(var request: requests) request.completeExceptionally(exception);
+        }
+    }
+
+    private boolean recentCurrent(Recent recent)
+    {
+        if(mClosed || !mHub.hasSubscribers() || mJournalSupplier.get() != recent.journal()) return false;
+        return recent.journal() == null ? mFallbackEpoch.equals(mEpoch) && mEpoch.equals(recent.epoch()) :
+            recent.journal().range(recent.epoch(),recent.sequence(),null).available();
+    }
+
+    private boolean seedCurrent(Seed seed)
+    {
+        if(mClosed || !mHub.hasSubscribers() || mJournalSupplier.get() != seed.journal()) return false;
+        return seed.journal() == null ? mFallbackEpoch.equals(mEpoch) && mEpoch.equals(seed.epoch()) :
+            seed.journal().range(seed.epoch(), seed.sequence(), null).available();
     }
 
     private void processCatchups()
@@ -241,7 +530,7 @@ final class P25ActivityLiveService implements AutoCloseable
         {
             if(!request.result().isCancelled())
                 groups.computeIfAbsent(new CatchupKey(request.epoch(), request.after(), request.through(),
-                    request.afterId(), request.limit()), ignored -> new ArrayList<>()).add(request);
+                    request.afterId(), request.limit(),request.affiliationRevision()), ignored -> new ArrayList<>()).add(request);
         }
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(25);
         boolean processed = false;
@@ -257,9 +546,10 @@ final class P25ActivityLiveService implements AutoCloseable
             try
             {
                 Map<String,Object> page = catchupPage(group.getFirst());
-                for(Catchup request: group) request.result().complete(page);
+                CatchupResult result = new CatchupResult(page, ApiHttpResponse.prepareNormalizedData(page));
+                for(Catchup request: group) request.result().complete(result);
             }
-            catch(RuntimeException exception)
+            catch(RuntimeException | IOException exception)
             {
                 for(Catchup request: group) request.result().completeExceptionally(exception);
             }
@@ -271,11 +561,12 @@ final class P25ActivityLiveService implements AutoCloseable
     {
         if(mJournal == null)
         {
-            if(!"unavailable".equals(request.epoch()) || request.after() != 0 ||
+            if(!affiliationSourceCurrent() || !Objects.equals(mEpoch,request.epoch()) || request.after() != 0 ||
                 request.through() != null && request.through() != 0) return resetPage();
             Map<String,Object> page = new LinkedHashMap<>(resetPage());
             page.put("resync_required", false);
             page.put("server_time_ms", System.currentTimeMillis());
+            addAffiliationRecovery(page,request);
             return Map.copyOf(page);
         }
         ActivityCommitJournal.Range range = mJournal.range(request.epoch(), request.after(), request.through());
@@ -293,17 +584,26 @@ final class P25ActivityLiveService implements AutoCloseable
         page.put("removed_ids", removed(ids, rows));
         page.put("next_after_id", ids.isEmpty() ? request.afterId() : ids.getLast());
         page.put("has_more", more);
+        if(!more) addAffiliationRecovery(page,request);
         page.put("resync_required", false);
         page.put("server_time_ms", System.currentTimeMillis());
         page.put("traffic_grant_age_out_milliseconds", Math.max(100, mTimeout.getAsInt()));
         return Map.copyOf(page);
     }
 
+    private void addAffiliationRecovery(Map<String,Object> page,Catchup request)
+    {
+        page.put("affiliation_revision",mAffiliationRevision);
+        page.put("affiliations_available",mAffiliationsAvailable);
+        page.put("affiliations_complete",mAffiliationsComplete);
+        page.put("affiliations_refresh_required",request.affiliationRevision() != mAffiliationRevision);
+    }
+
     private Map<String,Object> resetPage()
     {
         ActivityCommitJournal journal = mJournalSupplier.get();
         ActivityCommitJournal.Boundary boundary = journal != null ? journal.boundary() : null;
-        return Map.of("source_epoch", boundary != null ? boundary.sourceEpoch() : "unavailable",
+        return Map.of("source_epoch", boundary != null ? boundary.sourceEpoch() : mFallbackEpoch,
             "through_sequence", boundary != null ? boundary.sequence() : 0, "rows", List.of(),
             "removed_ids", List.of(), "next_after_id", 0, "has_more", false, "resync_required", true);
     }
@@ -331,6 +631,9 @@ final class P25ActivityLiveService implements AutoCloseable
     {
         mClosed = true;
         mHub.close();
+        CompletableFuture<ApiHttpResponse.PreparedJson> seed;
+        while((seed = mSeeds.poll()) != null)
+            seed.completeExceptionally(new IllegalStateException("Live Activity closed"));
         if(mReader != null) mReader.interrupt();
         Catchup request;
         while((request = mCatchups.poll()) != null)

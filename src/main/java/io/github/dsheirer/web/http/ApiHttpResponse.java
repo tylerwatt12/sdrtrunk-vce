@@ -18,6 +18,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.util.zip.GZIPOutputStream;
+import java.util.zip.Deflater;
 import java.io.OutputStream;
 import java.util.Iterator;
 import java.util.Map;
@@ -127,6 +130,43 @@ public final class ApiHttpResponse
         {
             outputStream.write(body);
         }
+    }
+
+    /** Canonical public data prepared once by a shared reader; callers retain these immutable byte arrays. */
+    public record PreparedJson(byte[] identity, byte[] gzip)
+    {
+        public void send(HttpExchange exchange, int status) throws IOException
+        {
+            HttpContentEncoding.Encoding encoding = HttpContentEncoding.choose(
+                exchange.getRequestHeaders().get("Accept-Encoding"), identity.length, gzip != null ? gzip.length : null);
+            if(encoding == HttpContentEncoding.Encoding.UNACCEPTABLE)
+            {
+                sendError(exchange, 406, "encoding_unavailable", "The requested response encoding is unavailable");
+                return;
+            }
+            exchange.getResponseHeaders().set("Vary", "Accept-Encoding");
+            if(encoding == HttpContentEncoding.Encoding.GZIP) exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+            sendPreparedJson(exchange, status, encoding == HttpContentEncoding.Encoding.GZIP ? gzip : identity);
+        }
+    }
+
+    /** The caller has already applied public presentation and canonical field names. */
+    public static byte[] encodeNormalizedPayload(Object value) throws IOException
+    {
+        return OBJECT_MAPPER.writeValueAsBytes(value);
+    }
+
+    /** Prepare both representations away from request/receiver producers, without cloning public row trees. */
+    public static PreparedJson prepareNormalizedData(Object value) throws IOException
+    {
+        byte[] identity = encodeNormalizedPayload(Map.of("data", value));
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(identity.length / 2);
+        try(GZIPOutputStream output = new GZIPOutputStream(buffer)
+        {
+            { def.setLevel(Deflater.BEST_SPEED); }
+        }) { output.write(identity); }
+        byte[] gzip = buffer.toByteArray();
+        return new PreparedJson(identity, gzip.length < identity.length ? gzip : null);
     }
 
     private static JsonNode normalize(JsonNode value)

@@ -61,6 +61,12 @@ final class LiveMultiplexFrame
             ApiHttpResponse.encodePayload(Map.of("event", event, "data", data)));
     }
 
+    static LiveMultiplexFrame preparedJson(int topic, String event, Object data) throws IOException
+    {
+        return new LiveMultiplexFrame(1, topic,
+            ApiHttpResponse.encodeNormalizedPayload(Map.of("event", event, "data", data)));
+    }
+
     static LiveMultiplexFrame diagnostic(int topic, byte[] payload)
     {
         return new LiveMultiplexFrame(2, topic, payload);

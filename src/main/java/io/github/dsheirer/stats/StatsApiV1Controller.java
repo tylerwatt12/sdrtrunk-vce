@@ -185,32 +185,38 @@ final class StatsApiV1Controller
         server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protect(WebCapability.RADIO_VIEW,
             mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
+                if(segments.equals(List.of("live", "seed")))
+                {
+                    request.requireOnly("refresh");
+                    if(mP25ActivityLiveService == null) throw new StatsApiException(503, "Live Activity is unavailable");
+                    return mP25ActivityLiveService.seed(request.booleanValue("refresh", false));
+                }
                 if(segments.equals(List.of("live")))
                 {
-                    request.requireOnly("source_epoch", "after_sequence", "through_sequence", "after_id", "limit");
+                    request.requireOnly("source_epoch", "after_sequence", "through_sequence", "after_id", "limit", "affiliation_revision");
                     if(mP25ActivityLiveService == null) throw new StatsApiException(503, "Live Activity is unavailable");
                     Long after = request.optionalLong("after_sequence");
                     Long afterId = request.optionalLong("after_id");
                     Integer limit = request.optionalInt("limit");
                     if(after == null) throw new StatsApiException(400, "after_sequence is required");
-                    return new PreparedJson(preparedData(mP25ActivityLiveService.catchup(request.text("source_epoch"), after,
+                    Long affiliationRevision = request.optionalLong("affiliation_revision");
+                    if(affiliationRevision == null) throw new StatsApiException(400, "affiliation_revision is required");
+                    return mP25ActivityLiveService.preparedCatchup(request.text("source_epoch"), after,
                         request.optionalLong("through_sequence"), afterId != null ? afterId : 0,
-                        limit != null ? limit : P25ActivityLiveService.PAGE_LIMIT)));
+                        limit != null ? limit : P25ActivityLiveService.PAGE_LIMIT, affiliationRevision);
                 }
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "after_id", "watermark_id", "group_identity_key", "radio_identity_key",
                     "radio_system_key", "configuration_id", "hide_grants", "has_tones", "limit", "from_ms", "to_ms",
                     "action", "actions", "event_type", "encryption", "radio_role", "group_match", "source_identity_key",
                     "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
-                    "timeslot", "projection");
+                    "timeslot");
                 Map<String,Object> activity = new LinkedHashMap<>(mDatabase.activity(request));
-                boolean visualizer = "p25_visualizer".equals(request.text("projection"));
-                if(!visualizer && mActivityRecordingAvailability != null)
+                if(mActivityRecordingAvailability != null)
                     mActivityRecordingAvailability.enrich(activity,
                         mRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.RECORDINGS_VIEW));
                 activity.put("traffic_grant_age_out_milliseconds", mTrafficGrantAgeOutMilliseconds.getAsInt());
-                JsonBody body = page(activity);
-                return visualizer ? new JsonBody(body.data(), body.meta(), true) : body;
+                return page(activity);
             }))));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {
@@ -564,7 +570,11 @@ final class StatsApiV1Controller
             Object result = route.handle(request, segments(exchange.getRequestURI(), prefix));
             request.requireFullyConsumed();
 
-            if(result instanceof PreparedJson body)
+            if(result instanceof ApiHttpResponse.PreparedJson body)
+            {
+                body.send(exchange, 200);
+            }
+            else if(result instanceof PreparedJson body)
             {
                 ApiHttpResponse.sendPreparedJson(exchange, 200, body.bytes());
             }
@@ -572,7 +582,6 @@ final class StatsApiV1Controller
             {
                 Object data = StatsApiV1Payload.present(
                     mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data())));
-                if(body.p25Visualizer()) data = StatsApiV1Payload.p25Visualizer(data);
                 ApiHttpResponse.sendDataWithMeta(exchange, 200,
                     data, StatsApiV1Payload.present(body.meta()));
             }
@@ -1004,11 +1013,5 @@ final class StatsApiV1Controller
         Object handle(StatsRequest request, List<String> segments);
     }
 
-    private record JsonBody(Object data, Map<String,Object> meta, boolean p25Visualizer)
-    {
-        private JsonBody(Object data, Map<String,Object> meta)
-        {
-            this(data, meta, false);
-        }
-    }
+    private record JsonBody(Object data, Map<String,Object> meta) { }
 }

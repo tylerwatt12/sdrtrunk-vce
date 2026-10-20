@@ -141,8 +141,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 
 Common statistics collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100
 and must be between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
-Bounded global forward Activity reads are the sole exception and allow up to 5,000 rows. Every database materializer
-also has a 20,000-row emergency ceiling. Normal endpoint and export limits are lower.
+Every database materializer also has a 20,000-row emergency ceiling. Normal endpoint and export limits are lower.
 
 ### Radio-system directory
 
@@ -244,13 +243,10 @@ ascending insertion ID and returns `next_after_id`, `watermark_id`, and `has_mor
 that snapshot. On its final page, `next_after_id` advances to the watermark. A later poll starts from that cursor and
 omits the old watermark. Forward pages include `reset_required`. It is normally false; true means the supplied cursor
 is newer than the current Activity store, such as after a database replacement, and the consumer must discard that
-cursor and rebuild its selected history window. Global reads require inclusive `from_ms`, exclusive `to_ms`, a window
-no larger than 24 hours, and a nonempty `actions` whitelist. `action` and `actions` are mutually exclusive. This mode
-reads the existing retained Activity table and does not introduce a second history store.
-
-P25 Visualizer seeds use `projection=p25_visualizer` to retain the graph's identities, names and observation facts
-without unrelated Activity fields. Forward paging pins insertion IDs; it does not detect later changes to an
-existing event. Use the `p25_activity` subscription and its catchup route for those changes.
+cursor and rebuild its selected history window. Filtered and forward reads require `radio_system_key` or
+`configuration_id`. `action` and `actions` are mutually exclusive. This mode reads the existing retained Activity table.
+Forward paging pins insertion IDs; it does not detect later changes to an existing event. The P25 Visualizer uses
+the bounded recent seed and `p25_activity` subscription described below.
 
 Owner-scoped Activity reads also accept `has_tones=true`, independently of `action` and `event_type`.
 The tone filter applies before cursor paging. A call containing tones keeps its original classification, such as
@@ -324,21 +320,54 @@ transport control. Parameters use `snake_case`. Channel-owned subscriptions use 
 diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object, an optional
 `subscription_id`, and `markers: true` for compact tuner-marker rows.
 
-`p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before loading the selected
-saved-history window. Its `source_change` boundary includes `subscription_id`, `source_epoch`, `sequence`,
+`p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before loading the recent
+saved baseline. Its `source_change` boundary includes `subscription_id`, `source_epoch`, `sequence`,
 `server_time_ms`, `traffic_grant_age_out_milliseconds`, and `collection_enabled`. A changed `source_epoch` requires a new seed.
+
+`GET /api/v1/activity/live/seed` accepts optional `refresh=true` for an explicit user Refresh and requires an active `p25_activity` subscription. Its `data`
+contains `source_epoch`, `sequence`, `rows`, `captured_at_ms`, `traffic_grant_age_out_milliseconds`,
+`collection_enabled`, `affiliation_revision`, `affiliations_available`, `affiliations_complete`, and `affiliations`. It returns at most the 500 most recent saved P25 trunked Activity facts, ordered by descending
+`observed_at_ms`, then `id`, with compact public identities and labels. The shared plain/gzip response is reused for up
+to two seconds. Current-state changes invalidate combined prepared bytes while reusing that bounded saved baseline. `captured_at_ms` describes that saved snapshot; use a fresh stream boundary's `server_time_ms` for clock
+alignment. There is no historical window or seed pagination. The Visualizer keeps at most 5,000 recent facts while open.
 
 `activity_delta` carries `source_epoch`, `base_sequence`, `sequence`, `rows`, `removed_ids`, and zero-based `part` /
 `parts`. Rows fully replace saved events by `id`, including later corrections. Apply all parts atomically only when
-the base sequence matches the last complete sequence. Buffer updates while loading the initial history.
+the base sequence matches the last complete sequence. Buffer updates while loading the seed.
 
-After loading, request `/api/v1/activity/live` with the boundary's `source_epoch` and `after_sequence`, `after_id=0`,
-and `limit` from 1 through 500. The response's `data` contains `source_epoch`, `rows`, `removed_ids`, `through_sequence`,
-`next_after_id`, `has_more`, and `resync_required`. Follow pages with the original `after_sequence`, the first page's
-`through_sequence`, and the returned `next_after_id`. Overlay the completed catchup on the seed, then apply buffered
-updates newer than that boundary. A brief connection loss can use the same catchup without reloading history.
-`resync_required` means the source or retained range changed and a new seed is required; a `transport_gap` first
-attempts catchup. Collection being off leaves retained history readable. Closing the view releases its subscription.
+Current affiliations use the authoritative saved current-state table, independently of the recent facts. `affiliations`
+is a complete native array keyed by `(radio_system_key, radio_identity_key)` with `talkgroup_identity_key`,
+`configuration_id`, `confirmed_at_ms`, canonical/native identity facts, and available Alias/system names. It includes
+older still-known associations even when detailed Activity collection is off. Explicit logout, retention and site clears
+remove associations. A temporary read failure sets `affiliations_available:false` while retaining the last complete map;
+the UI marks that state unavailable. `affiliations_complete` is true after a successful whole-state read, including a
+valid empty result, and stays true when that complete result is retained after a failure. Before the first successful
+read it is false: an empty array then means unknown and must not erase the client’s previous complete state in the
+same epoch. The client fetches a complete shared seed before applying later state deltas. A changed source epoch
+clears the old map. There is no partial complete snapshot.
+
+Topic 7 `affiliation_delta` contains `source_epoch`, `base_affiliation_revision`, `affiliation_revision`,
+`affiliations_available`, `upserts`, `removed_radio_keys`, `part`, and `parts`. Upserts replace native affiliation rows;
+removed keys are objects with `radio_system_key` and `radio_identity_key`. Apply multipart revisions atomically and
+require an exact base revision. Revisions are monotonic within an epoch and may jump. They are independent of Activity
+sequence numbers. The server shares one current-state read per second while viewers are connected.
+
+After loading, request `/api/v1/activity/live` with the **seed response's** `source_epoch` and `sequence` as
+`after_sequence`, the current `affiliation_revision`, `after_id=0`, and `limit` from 1 through 500. Always use the returned
+seed sequence even if it precedes or follows the subscription boundary. Pages contain `rows`, `removed_ids`,
+`through_sequence`, `next_after_id`, `has_more`, and `resync_required`. Preserve the original `after_sequence`, first
+page's `through_sequence`, and returned `next_after_id` while paging. Overlay completed event catchup on saved facts,
+then apply buffered event updates newer than that boundary.
+
+Only the final catchup page adds `affiliation_revision`, `affiliations_available`, `affiliations_complete`, and
+`affiliations_refresh_required`.
+Recovery never embeds the complete affiliation map for each event cursor. If current state is missing or its revision
+has a gap, fetch the same shared seed for **affiliations only**, preserving existing event facts and cursor. Replace
+current state with that returned revision/map, discard older state frames, then apply contiguous newer state updates.
+The returned state revision may be newer than the recovery flag. Collection being off leaves retained saved facts and
+current affiliations readable. A source or retained event-range change returns `resync_required` and requires a new
+seed; a brief transport loss first tries catchup. Seed loading can return transient 503 while busy or after a source
+change. Closing the view releases its subscription and shared read demand.
 
 The framed envelope is version 2. Metadata topics use bounded FIFOs; dense diagnostic topics use replaceable
 latest-value slots. Slow clients can lose stale diagnostic frames or be disconnected, but never apply backpressure to
