@@ -121,6 +121,27 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void mainReturnsCurrentPageDataWithoutCallRankingsOrInternalIdentifiers() throws Exception
+    {
+        HttpResponse<String> response = get(StatsApiV1.DASHBOARD + "/main");
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode data = OBJECT_MAPPER.readTree(response.body()).path("data");
+        assertTrue(data.path("quality").path("current").isArray());
+        assertTrue(data.path("directory").path("systems").isArray());
+        assertTrue(data.path("directory").path("channels").isArray());
+        assertFalse(data.has("top_sources"));
+        assertFalse(data.has("call_activity"));
+        for(JsonNode channel: data.path("quality").path("current"))
+        {
+            assertFalse(channel.has("channel_id"));
+            assertFalse(channel.has("radio_system_id"));
+            assertFalse(channel.has("series"));
+        }
+        assertTrue(OBJECT_MAPPER.readTree(get(StatsApiV1.STATUS).body()).path("data")
+            .path("p25_visualizer_available").isBoolean());
+    }
+
+    @Test
     void currentIssiRoutesUseSnapshotMetadataAndRejectInvalidFilters() throws Exception
     {
         String base = StatsApiV1.RADIO_SYSTEMS + "/p25%3A00001%3A047/issi";

@@ -18,6 +18,29 @@ import org.junit.jupiter.api.Test;
 class SavedActivityLiveServiceTest
 {
     @Test
+    void twoHundredBrowsersShareOneSavedActivityRead() throws Exception
+    {
+        FakeSource source = new FakeSource(10);
+        List<StatsLiveEventHub.Subscription> subscriptions = new ArrayList<>();
+        try(SavedActivityLiveService service = new SavedActivityLiveService(source, ignored -> {}, () -> 1500,
+            () -> true))
+        {
+            for(int index = 0; index < 200; index++)
+            {
+                var subscription = service.subscribe();
+                assertNotNull(subscription);
+                subscriptions.add(subscription);
+            }
+            awaitInitialized(service);
+            source.maximum.set(11);
+            service.signalCommit();
+            for(var subscription: subscriptions) assertEquals(11L, rowId(subscription.poll(2, TimeUnit.SECONDS)));
+            assertEquals(1, source.reads.get(), "Visitors must not multiply SQLite readers");
+        }
+        finally { subscriptions.forEach(StatsLiveEventHub.Subscription::close); }
+    }
+
+    @Test
     void startsAtLiveEdgeAndSharesOneReaderWhileDemandTracksLastViewer() throws Exception
     {
         FakeSource source = new FakeSource(10);

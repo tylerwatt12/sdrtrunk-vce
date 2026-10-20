@@ -64,7 +64,7 @@ final class SavedActivityLiveService implements AutoCloseable
     SavedActivityLiveService(Source source, Consumer<Boolean> demand, IntSupplier grantTimeout,
                             BooleanSupplier collectionEnabled)
     {
-        this(source, demand, grantTimeout, collectionEnabled, 32, 64);
+        this(source, demand, grantTimeout, collectionEnabled, StatsLiveEventHub.MAXIMUM_BROWSER_SUBSCRIBERS, 64);
     }
 
     SavedActivityLiveService(Source source, Consumer<Boolean> demand, IntSupplier grantTimeout,

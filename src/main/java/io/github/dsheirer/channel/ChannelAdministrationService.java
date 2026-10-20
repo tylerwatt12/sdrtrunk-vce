@@ -103,14 +103,7 @@ public final class ChannelAdministrationService
 
     public Catalog catalog()
     {
-        Catalog catalog = onConfigurationThread(() ->
-        {
-            List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
-            Map<String,Integer> order = effectiveAutoStartOrder(channels);
-            List<ChannelSummary> summaries = channels.stream().map(channel -> summary(channel,
-                order.get(channel.getConfigurationId()))).toList();
-            return new Catalog(revision(), summaries);
-        });
+        Catalog catalog = currentCatalog();
         //History belongs to the request worker, outside the configuration/FX boundary and all receiver callbacks.
         Map<String,Long> lastControl = ChannelControlFrequencyHistory.read(
             mConfigurationManager.getDatabasePath(), catalog.channels());
@@ -119,6 +112,19 @@ public final class ChannelAdministrationService
             Long frequency = lastControl.get(channel.configurationId());
             return frequency != null ? channel.withDisplayFrequency(frequency, "last-control") : channel;
         }).toList());
+    }
+
+    /** Current configured channels and running state, without a separate historical frequency lookup. */
+    public Catalog currentCatalog()
+    {
+        return onConfigurationThread(() ->
+        {
+            List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
+            Map<String,Integer> order = effectiveAutoStartOrder(channels);
+            List<ChannelSummary> summaries = channels.stream().map(channel -> summary(channel,
+                order.get(channel.getConfigurationId()))).toList();
+            return new Catalog(revision(), summaries);
+        });
     }
 
     public Entry get(String configurationId)

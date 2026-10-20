@@ -30,7 +30,8 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.web.http.StreamingAdminHttpController;
 import io.github.dsheirer.web.http.TopicAlertsHttpController;
 import io.github.dsheirer.web.http.PagingToneHttpController;
-import io.github.dsheirer.controller.NamingThreadFactory;
+import io.github.dsheirer.channel.ChannelAdministrationService;
+import io.github.dsheirer.web.http.WebRequestExecutor;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterCatalog;
@@ -115,8 +116,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -134,10 +133,9 @@ public class StatsWebServerService implements AutoCloseable
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebServerService.class);
     private static final long AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES = 1;
     private static final long AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES = TimeUnit.HOURS.toMinutes(12);
-    private static final int REQUEST_MAXIMUM_THREADS = 96;
-    private static final int REQUEST_QUEUE_CAPACITY = 256;
+    private static final int MAXIMUM_ACTIVE_REQUESTS = 512;
     private static final int MAXIMUM_WEB_INDEX_BYTES = 64 * 1024;
-    private static final int MAXIMUM_MULTIPLEX_CLIENTS = 32;
+    private static final int MAXIMUM_MULTIPLEX_CLIENTS = StatsLiveEventHub.MAXIMUM_BROWSER_SUBSCRIBERS;
     private static final int MAXIMUM_MULTIPLEX_CONTROL_BYTES = 32 * 1024;
     private static final int MAXIMUM_MULTIPLEX_PARAMETER_VALUES = 64;
     private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
@@ -177,6 +175,7 @@ public class StatsWebServerService implements AutoCloseable
     private boolean mClosed;
 
     private final ReceiverWebServices mServices;
+    private final StatsWebSnapshot<List<ChannelAdministrationService.ChannelSummary>> mWebChannelCatalog;
     private boolean mStarted;
 
     public StatsWebServerService(UserPreferences preferences, ReceiverWebServices services)
@@ -184,6 +183,8 @@ public class StatsWebServerService implements AutoCloseable
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = Objects.requireNonNull(preferences);
         mServices = Objects.requireNonNull(services);
+        mWebChannelCatalog = new StatsWebSnapshot<>(Duration.ofSeconds(2), () ->
+            mServices.mChannelAdministrationService.currentCatalog().channels());
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(preferences);
         mTlsMaterialService = new WebTlsMaterialService(
             preferences.getDirectoryPreference().getDirectoryApplicationRoot());
@@ -464,12 +465,8 @@ public class StatsWebServerService implements AutoCloseable
 
     private WebListener startListener(PreparedConfiguration configuration) throws IOException
     {
-        ExecutorService executor = new ThreadPoolExecutor(REQUEST_MAXIMUM_THREADS, REQUEST_MAXIMUM_THREADS,
-            60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(REQUEST_QUEUE_CAPACITY),
-            new NamingThreadFactory("stats web server"), (task, pool) -> {
-                mWebDiagnosticLogService.event("request_queue_full", Map.of());
-                throw new RejectedExecutionException("Web request capacity is in use");
-            });
+        ExecutorService executor = new WebRequestExecutor(MAXIMUM_ACTIVE_REQUESTS,
+            () -> mWebDiagnosticLogService.event("request_capacity_full", Map.of()));
         String webClientRevision = readWebClientRevision(configuration.requested().assetRoot());
         WebListener listener = WebListener.open(configuration, executor, server ->
             registerContexts(WebDiagnosticHttpFilter.instrumentContexts(server, mWebDiagnosticLogService),
@@ -685,7 +682,7 @@ public class StatsWebServerService implements AutoCloseable
             mServices.mReceiverHealthService::snapshot, mServices.mP25AssignmentService,
             mUserPreferences.getNowPlayingPreference()::getTrafficGrantAgeOutMilliseconds,
             mServices.mRemoteLinkAdministrationService,
-            new ActivityRecordingAvailability(mServices.mDatabase, () -> mServices.mManagedRecordingCatalog))
+            new ActivityRecordingAvailability(mServices.mDatabase, () -> mServices.mManagedRecordingCatalog), mWebChannelCatalog)
             .register(server);
         RetainedStatisticsAdminHttpController retainedStatistics = new RetainedStatisticsAdminHttpController(
             mServices.mRetainedStatisticsCatalog, mServices.mRetainedStatisticsJobs);
@@ -885,7 +882,7 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext(path, mWebRequestSecurity.protect(capability, handler));
     }
 
-    private synchronized Map<String,Object> status()
+    private Map<String,Object> status()
     {
         Map<String,Object> status = new LinkedHashMap<>();
         WebServerRuntimeState runtimeState = mRuntimeState;
@@ -935,6 +932,11 @@ public class StatsWebServerService implements AutoCloseable
         status.put("server", server);
         status.put("database", mServices.mDatabase.status());
         status.put("stats_logging", statsLoggingStatusResponse());
+        ReceiverActivityStatus logging = statsLoggingStatus();
+        status.put("p25_visualizer_available", logging.summaryActive() && logging.detailedHistoryActive() &&
+            mWebChannelCatalog.get().stream().anyMatch(channel -> "TRUNKED".equals(channel.channelKind()) &&
+                channel.processingState() == ChannelAdministrationService.ProcessingState.RUNNING &&
+                Set.of("p25-phase1", "p25-phase2").contains(channel.protocolId())));
         return status;
     }
 

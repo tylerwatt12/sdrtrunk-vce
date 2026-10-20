@@ -386,7 +386,7 @@ public final class WebAccessSessionManager implements AutoCloseable
 
         public static Configuration defaults()
         {
-            return new Configuration(64, 32);
+            return new Configuration(256, 32);
         }
     }
 

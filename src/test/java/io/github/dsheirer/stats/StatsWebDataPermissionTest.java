@@ -6,6 +6,8 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -77,6 +79,28 @@ class StatsWebDataPermissionTest
 
             server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.PUBLIC);
             assertEquals(200, server.get(StatsApiV1.ACTIVITY, null).statusCode());
+        }
+    }
+
+    @Test
+    void mainKeepsRadioDirectoryAccessSeparateFromDashboardAccess() throws Exception
+    {
+        try(TestServer server = startServer("main-permissions.sqlite"))
+        {
+            server.access().setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.PUBLIC);
+            server.access().setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.USER);
+            var publicResponse = server.get(StatsApiV1.DASHBOARD + "/main", null);
+            assertEquals(200, publicResponse.statusCode(), publicResponse.body());
+            var publicData = OBJECT_MAPPER.readTree(publicResponse.body()).path("data");
+            assertTrue(publicData.has("quality"));
+            assertFalse(publicData.has("directory"));
+            var listenerResponse = server.get(StatsApiV1.DASHBOARD + "/main", server.login());
+            assertEquals(200, listenerResponse.statusCode(), listenerResponse.body());
+            assertTrue(OBJECT_MAPPER.readTree(listenerResponse.body()).path("data").has("directory"));
+            assertFalse(OBJECT_MAPPER.readTree(server.get(StatsApiV1.DASHBOARD + "/main", null).body())
+                .path("data").has("directory"), "Shared reads must never share a visitor's permissions");
+            assertEquals(400, server.get(StatsApiV1.DASHBOARD + "/main?unused=true", null).statusCode());
+            assertEquals(404, server.get(StatsApiV1.DASHBOARD + "/main/extra", null).statusCode());
         }
     }
 

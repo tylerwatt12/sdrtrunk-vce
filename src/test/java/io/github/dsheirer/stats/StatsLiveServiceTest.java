@@ -29,6 +29,7 @@ import io.github.dsheirer.remote.RemoteLinkAdministrationService;
 import io.github.dsheirer.remote.RemoteOriginLookup;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -37,6 +38,30 @@ import org.junit.jupiter.api.Test;
 
 class StatsLiveServiceTest
 {
+    @Test
+    void twoHundredBrowsersShareTheSameProjectedActivityEvent() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        List<StatsLiveEventHub.Subscription> subscriptions = new ArrayList<>();
+        try(StatsLiveService service = StatsLiveService.fromActivitySource(source, null))
+        {
+            service.start();
+            for(int index = 0; index < 200; index++)
+            {
+                var subscription = service.subscribeChannelActivity();
+                assertNotNull(subscription);
+                subscriptions.add(subscription);
+            }
+            source.publish(namedDigitalActivity("Serving system", "p25:bee00:349"));
+            StatsLiveEventHub.LiveEvent shared = subscriptions.getFirst().poll(1, TimeUnit.SECONDS);
+            assertNotNull(shared);
+            for(int index = 1; index < subscriptions.size(); index++)
+                org.junit.jupiter.api.Assertions.assertSame(shared, subscriptions.get(index).poll(1, TimeUnit.SECONDS),
+                    "Projection is shared across browsers");
+        }
+        finally { subscriptions.forEach(StatsLiveEventHub.Subscription::close); }
+    }
+
     @Test
     void catalogNamesUseCapturedSystemsAndNeverReplaceSavedLabels() throws Exception
     {

@@ -15,6 +15,8 @@ import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import com.fasterxml.jackson.databind.JsonNode;
+import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.WebRequestSecurity;
@@ -25,6 +27,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,7 +52,6 @@ final class StatsApiV1Controller
         WebCapability.DASHBOARD_VIEW, WebCapability.RADIO_VIEW, WebCapability.ADMIN_ALIASES);
 
     private final StatsWebDatabase mDatabase;
-    private final Supplier<Map<String,Object>> mStatusSupplier;
     private final WebRequestSecurity mRequestSecurity;
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
@@ -57,6 +59,10 @@ final class StatsApiV1Controller
     private final IntSupplier mTrafficGrantAgeOutMilliseconds;
     private final RemoteOriginLookup mRemoteOriginLookup;
     private final ActivityRecordingAvailability mActivityRecordingAvailability;
+    private final StatsWebSnapshot<JsonNode> mStatus;
+    private final StatsWebSnapshot<MainSnapshot> mMain;
+    private final StatsWebSnapshot<JsonNode> mDashboard;
+    private final StatsWebSnapshot<JsonNode> mMessageTypes;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
@@ -99,7 +105,7 @@ final class StatsApiV1Controller
                          IntSupplier trafficGrantAgeOutMilliseconds, RemoteOriginLookup remoteOriginLookup)
     {
         this(database, statusSupplier, requestSecurity, tunerDiagnosticService, receiverHealthSupplier,
-            p25AssignmentService, trafficGrantAgeOutMilliseconds, remoteOriginLookup, null);
+            p25AssignmentService, trafficGrantAgeOutMilliseconds, remoteOriginLookup, null, List::of);
     }
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
@@ -107,10 +113,10 @@ final class StatsApiV1Controller
                          Supplier<Map<String,Object>> receiverHealthSupplier,
                          StatsP25AssignmentService p25AssignmentService,
                          IntSupplier trafficGrantAgeOutMilliseconds, RemoteOriginLookup remoteOriginLookup,
-                         ActivityRecordingAvailability activityRecordingAvailability)
+                         ActivityRecordingAvailability activityRecordingAvailability,
+                         Supplier<List<ChannelAdministrationService.ChannelSummary>> channelSupplier)
     {
         mDatabase = database;
-        mStatusSupplier = statusSupplier;
         mRequestSecurity = requestSecurity;
         mTunerDiagnosticService = tunerDiagnosticService;
         mReceiverHealthSupplier = receiverHealthSupplier;
@@ -118,6 +124,17 @@ final class StatsApiV1Controller
         mTrafficGrantAgeOutMilliseconds = trafficGrantAgeOutMilliseconds;
         mRemoteOriginLookup = remoteOriginLookup != null ? remoteOriginLookup : RemoteOriginLookup.EMPTY;
         mActivityRecordingAvailability = activityRecordingAvailability;
+        mStatus = new StatsWebSnapshot<>(Duration.ofSeconds(2), () -> StatsApiV1Payload.present(statusSupplier.get()));
+        mMain = new StatsWebSnapshot<>(Duration.ofSeconds(2), () -> {
+            JsonNode full = StatsApiV1Payload.present(mDatabase.dashboardMain(channelSupplier.get()));
+            var quality = full.deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode)quality).remove("directory");
+            return new MainSnapshot(full, quality);
+        });
+        mDashboard = new StatsWebSnapshot<>(Duration.ofSeconds(2), () ->
+            StatsApiV1Payload.present(mDatabase.enrichSystemNames(mDatabase.dashboard())));
+        mMessageTypes = new StatsWebSnapshot<>(Duration.ofMinutes(5), () ->
+            StatsApiV1Payload.present(mDatabase.activityMessageTypes()));
     }
 
     void register(HttpServer server)
@@ -126,14 +143,22 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.STATUS, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly();
-                return mStatusSupplier.get();
+                return new PresentedJson(mStatus.get());
             }));
         create(server, StatsApiV1.DASHBOARD, WebCapability.DASHBOARD_VIEW,
+            mRequestSecurity.protectAny(Set.of(WebCapability.DASHBOARD_VIEW, WebCapability.RADIO_VIEW),
             exchange -> handleJson(exchange, StatsApiV1.DASHBOARD, (request, segments) -> {
+                if(segments.equals(List.of("main")))
+                {
+                    request.requireOnly();
+                    MainSnapshot snapshot = mMain.get();
+                    return new PresentedJson(mRequestSecurity.isRequestStillAuthorized(exchange,
+                        WebCapability.RADIO_VIEW) ? snapshot.full() : snapshot.quality());
+                }
                 requireNoSegments(segments);
                 request.requireOnly();
-                return mDatabase.dashboard();
-            }));
+                return new PresentedJson(mDashboard.get());
+            })));
         create(server, StatsApiV1.QUALITY, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.QUALITY, (request, segments) -> {
                 requireNoSegments(segments);
@@ -180,7 +205,7 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_MESSAGE_TYPES, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly();
-                return collection(Map.of("rows", mDatabase.activityMessageTypes()), "rows");
+                return new PresentedJson(mMessageTypes.get());
             }));
         server.createContext(StatsApiV1.EXPORTS,
             mRequestSecurity.protectAny(CSV_ROUTE_CAPABILITIES, this::handleCsvExport));
@@ -204,8 +229,9 @@ final class StatsApiV1Controller
                 requireNoSegments(segments);
                 request.requireOnly();
                 Map<String,Object> health = mReceiverHealthSupplier.get();
-                return Map.of("accepted_calls", counterValue(health.get("radioresolve_accepted_calls")),
-                    "started_at_ms", counterValue(health.get("started_at_ms")));
+                return new PresentedJson(StatsApiV1Payload.source(Map.of("accepted_calls",
+                    counterValue(health.get("radioresolve_accepted_calls")),
+                    "started_at_ms", counterValue(health.get("started_at_ms")))));
             });
         });
 
@@ -524,7 +550,11 @@ final class StatsApiV1Controller
             Object result = route.handle(request, segments(exchange.getRequestURI(), prefix));
             request.requireFullyConsumed();
 
-            if(result instanceof JsonBody body)
+            if(result instanceof PresentedJson body)
+            {
+                ApiHttpResponse.sendData(exchange, 200, body.data());
+            }
+            else if(result instanceof JsonBody body)
             {
                 Object data = StatsApiV1Payload.present(
                     mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data())));
@@ -549,6 +579,9 @@ final class StatsApiV1Controller
             ApiHttpResponse.sendError(exchange, 500, "internal_error", "The request could not be completed");
         }
     }
+
+    private record PresentedJson(JsonNode data) {}
+    private record MainSnapshot(JsonNode full, JsonNode quality) {}
 
     private static long counterValue(Object value)
     {

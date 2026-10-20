@@ -26,6 +26,7 @@ import java.util.function.Predicate;
  */
 final class StatsLiveEventHub implements AutoCloseable
 {
+    static final int MAXIMUM_BROWSER_SUBSCRIBERS = 256;
     private volatile int mMaximumSubscribers;
     private final int mQueueCapacity;
     private final Set<Subscription> mSubscriptions = ConcurrentHashMap.newKeySet();

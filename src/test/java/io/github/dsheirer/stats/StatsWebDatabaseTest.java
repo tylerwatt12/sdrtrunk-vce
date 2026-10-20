@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -2542,6 +2544,91 @@ class StatsWebDatabaseTest
         assertTrue(csv.contains(DMR_TRUNKED_CHANNEL));
         assertTrue(csv.contains(NXDN_TRUNKED_CHANNEL));
         assertFalse(csv.contains("channel_id"));
+    }
+
+    @Test
+    void dashboardLastSeenUsesIndexedMaximaAndOmitsUnusedCollections() throws Exception
+    {
+        String prior = """
+            SELECT MAX(last_seen_ms) FROM (
+                SELECT last_seen_ms FROM p25_site_snapshot
+                UNION ALL SELECT last_seen_ms FROM radio_system
+                UNION ALL SELECT last_seen_ms FROM radio_system_identity_summary
+                UNION ALL SELECT last_seen_ms FROM p25_site_frequency_band_summary
+                UNION ALL SELECT last_seen_ms FROM conventional_activity_summary
+                UNION ALL SELECT last_seen_ms FROM trunked_site_snapshot
+            )
+            """;
+        long expected;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            try(ResultSet original = statement.executeQuery(prior))
+            {
+                assertTrue(original.next());
+                expected = original.getLong(1);
+            }
+            try(ResultSet current = statement.executeQuery(StatsWebDatabase.DASHBOARD_LAST_SEEN_SQL))
+            {
+                assertTrue(current.next());
+                assertEquals(expected, current.getLong(1));
+            }
+            List<String> plan = explain(connection, StatsWebDatabase.DASHBOARD_LAST_SEEN_SQL);
+            for(String table: List.of("p25_site_snapshot", "radio_system_identity_summary",
+                "p25_site_frequency_band_summary", "trunked_site_snapshot"))
+            {
+                assertTrue(plan.stream().anyMatch(detail -> detail.startsWith("SEARCH " + table + " ") &&
+                    detail.contains("COVERING INDEX")), () -> "Last activity must seek the indexed maximum: " + plan);
+                assertFalse(plan.stream().anyMatch(detail -> detail.startsWith("SCAN " + table + " ")),
+                    () -> "Last activity must not scan retained summaries: " + plan);
+            }
+            expected += 100_000;
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET last_seen_ms=" + expected);
+        }
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        assertEquals(expected, number(dashboard.get("last_seen_ms")));
+        assertEquals(Set.of("last_seen_ms", "top_destinations", "top_sources", "call_activity",
+            "source_activity_24h"), dashboard.keySet());
+    }
+
+    @Test
+    void mainUsesConfiguredOwnersAliasesAndCurrentControlWithoutActivityRankings()
+    {
+        var running = ChannelAdministrationService.ProcessingState.RUNNING;
+        var stopped = ChannelAdministrationService.ProcessingState.STOPPED;
+        List<ChannelAdministrationService.ChannelSummary> channels = List.of(
+            new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_A, "p25-phase1", "P25", "TRUNKED",
+                "Shared P25", "North", "North Control", List.of(851012500L), running, 1, 71, "County A", true,
+                null, null, 853012500L, "active-control"),
+            new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_B, "p25-phase1", "P25", "TRUNKED",
+                "Shared P25", "South", "South Control", List.of(852012500L), stopped, null, 72, "County B", true,
+                null, Map.of("remote", true), 852012500L, "configured"),
+            new ChannelAdministrationService.ChannelSummary(ANALOG_CHANNEL, "nbfm", "FM", "CONVENTIONAL",
+                "County Fire", "", "County Fire Dispatch", List.of(154310000L), running, 2, 73, "Analog County", true,
+                null, null, 154310000L, "configured"),
+            new ChannelAdministrationService.ChannelSummary(DMR_CHANNEL, "unsupported", "Unsupported", "UNSUPPORTED",
+                "Other", "", "Unsupported", List.of(), stopped, null, 74, "DMR County", false,
+                null, null, null, "configured"));
+        Map<String,Object> response = mDatabase.dashboardMain(channels);
+        assertEquals(Set.of("quality", "directory"), response.keySet());
+        Map<String,Object> directory = map(response, "directory");
+        List<Map<String,Object>> systems = rowsFrom(directory, "systems");
+        assertEquals(1, systems.size());
+        Map<String,Object> system = systems.getFirst();
+        assertEquals(RADIO_SYSTEM_KEY, system.get("radio_system_key"));
+        assertEquals("radio_system", map(system, "entity_ref").get("kind"));
+        assertEquals(List.of("County A", "County B"), rowsFrom(system, "alias_lists").stream()
+            .map(row -> row.get("name")).toList());
+        assertEquals(2, rowsFrom(system, "children").size());
+        assertEquals(ANALOG_CHANNEL, rowsFrom(directory, "channels").getFirst().get("configuration_id"));
+        List<Map<String,Object>> quality = rowsFrom(map(response, "quality"), "current");
+        assertEquals(853012500L, ((Number)rowWith(quality, "configuration_id", P25_CHANNEL_A)
+            .get("current_control_hz")).longValue());
+        assertEquals(Map.of("remote", true), rowWith(quality, "configuration_id", P25_CHANNEL_B).get("remote_origin"));
+        assertFalse(rowWith(quality, "configuration_id", P25_CHANNEL_B).containsKey("current_control_hz"),
+            "A stopped channel's previous observation is not an active control frequency");
+        assertFalse(response.containsKey("top_sources"));
+        assertFalse(quality.stream().anyMatch(row -> row.containsKey("series")));
     }
 
     @Test

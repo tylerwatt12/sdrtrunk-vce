@@ -40,7 +40,6 @@ import java.util.concurrent.locks.LockSupport;
  */
 final class StatsLiveService implements AutoCloseable
 {
-    private static final int MAXIMUM_LIVE_SUBSCRIBERS = 32;
     private static final int LIVE_SUBSCRIBER_QUEUE_CAPACITY = 256;
     static final int MAXIMUM_LIVE_TABLES = 128;
     static final int MAXIMUM_ROWS_PER_TABLE = 256;
@@ -58,7 +57,7 @@ final class StatsLiveService implements AutoCloseable
     private final RemoteOriginLookup mRemoteOriginLookup;
     private final Function<String,String> mCatalogNames;
     private final StatsLiveEventHub mChannelActivityHub =
-        new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
+        new StatsLiveEventHub(StatsLiveEventHub.MAXIMUM_BROWSER_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
     private final AtomicLong mProjectionFailures = new AtomicLong();
     private final AtomicLong mRunGeneration = new AtomicLong();

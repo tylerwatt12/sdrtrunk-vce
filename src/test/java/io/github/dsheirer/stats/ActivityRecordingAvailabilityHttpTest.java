@@ -169,7 +169,7 @@ class ActivityRecordingAvailabilityHttpTest
             });
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             new StatsApiV1Controller(new StatsWebDatabase(new UserPreferences(), file), Map::of, security,
-                null, Map::of, null, () -> 2500, RemoteOriginLookup.EMPTY, availability).register(server);
+                null, Map::of, null, () -> 2500, RemoteOriginLookup.EMPTY, availability, List::of).register(server);
             server.start();
             origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
         }
