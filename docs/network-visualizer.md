@@ -18,8 +18,9 @@ saved activity; the Updated time shows when the displayed history was loaded.
 Use **← System** to leave a talkgroup view and **← All systems** to return to the overview. The fullscreen control
 gives the scene more room.
 
-Detailed activity history must be enabled under **Administration > Activity settings**, and your account must have
-access to radio activity. Conventional channels, DMR, and NXDN are not included in this P25 view.
+Your account must have access to radio activity. Enable detailed activity history under
+**Administration > Activity settings** to collect new history. Previously saved history remains available while
+detailed logging is off. Conventional channels, DMR, and NXDN are not included in this P25 view.
 
 ## Read the scene
 
