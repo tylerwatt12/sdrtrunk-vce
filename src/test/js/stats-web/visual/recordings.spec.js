@@ -2264,3 +2264,172 @@ test('an aborted search cannot replace the new recordings page results or search
   await expect(page.locator('.recordings-search-timing')).toHaveText(timing);
   await expect(page.locator('.recordings-results')).not.toContainText('Obsolete search result');
 });
+
+// A pending search is a reminder to apply filters, not a loading animation.
+const searchButton = page => page.getByRole('button', { name: 'Search recordings', exact: true });
+async function expectSearchHalo(button, active) {
+  if (active) {
+    await expect.poll(() => button.evaluate(element => getComputedStyle(element, '::after').animationName)).toBe('ui-button-awaiting-apply-halo');
+    await expect.poll(() => button.evaluate(element => getComputedStyle(element, '::after').animationIterationCount)).toBe('infinite');
+  } else {
+    await expect.poll(() => button.evaluate(element => getComputedStyle(element, '::after').animationName)).toBe('none');
+  }
+}
+
+test('search halo repeats continuously for unapplied filters and clears on reversion, Undo or Discard', async ({ page }, testInfo) => {
+  const state = await openRecordings(page);
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  const submit = searchButton(page);
+  const fullText = page.getByRole('searchbox', { name: 'Full text', exact: true });
+  await expectSearchHalo(submit, false);
+  const interest = page.locator('.recordings-interest');
+  await interest.click();
+  await expectSearchHalo(submit, true);
+  const repeated = await submit.evaluate(element => {
+    const animation = element.getAnimations({ subtree: true }).find(item => item.effect?.getTiming().iterations === Infinity);
+    if (!animation) return null;
+    const duration = Number(animation.effect.getTiming().duration);
+    animation.currentTime = duration * 3.25;
+    return { duration, playState: animation.playState, iteration: animation.effect.getComputedTiming().currentIteration };
+  });
+  expect(repeated.duration).toBeGreaterThan(0);
+  expect(repeated.playState).toBe('running');
+  expect(repeated.iteration).toBeGreaterThanOrEqual(3);
+  await expectSearchHalo(submit, true);
+  await submit.evaluate(element => {
+    const animation = element.getAnimations({ subtree: true }).find(item => item.effect?.getTiming().iterations === Infinity);
+    animation.pause(); animation.currentTime = 400;
+  });
+  await page.locator('.recordings-search-panel').screenshot({ path: testInfo.outputPath('search-halo-desktop-midpulse.png'), animations: 'allow' });
+  await submit.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => animation.play()));
+  expect(state.requestedFilters).toHaveLength(1);
+
+  await interest.click();
+  await expectSearchHalo(submit, false);
+  await fullText.fill('dispatch');
+  await searchNow(page, state);
+  await expectSearchHalo(submit, false);
+  const chips = page.locator('.recordings-selected-filters');
+  await chips.getByRole('button', { name: 'Remove Full text: dispatch filter', exact: true }).click();
+  await expectSearchHalo(submit, true);
+  await chips.getByRole('button', { name: 'Undo removal of Full text: dispatch filter', exact: true }).click();
+  await expectSearchHalo(submit, false);
+
+  let picker = await openPicker(page);
+  await picker.locator('.recordings-picker-choice').filter({ hasText: 'Fire Dispatch' }).getByRole('checkbox').check();
+  await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expectSearchHalo(submit, false);
+  picker = await openPicker(page);
+  await picker.locator('.recordings-picker-choice').filter({ hasText: 'Fire Dispatch' }).getByRole('checkbox').check();
+  await picker.getByRole('button', { name: 'Use selection', exact: true }).click();
+  await expectSearchHalo(submit, true);
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expectSearchHalo(searchButton(page), false);
+});
+
+test('search halo stops on the search attempt including validation and request failures, and new edits rearm it', async ({ page }) => {
+  const state = await openRecordings(page);
+  await expect(page.locator('.recordings-call')).toHaveCount(1);
+  const submit = searchButton(page);
+  const range = page.getByRole('combobox', { name: 'Time range', exact: true });
+  await range.selectOption('custom');
+  await expectSearchHalo(submit, true);
+  await submit.click();
+  await expect(page.locator('.recordings-search-error')).toContainText('Choose a date range');
+  await expectSearchHalo(submit, false);
+  expect(state.requestedFilters).toHaveLength(1);
+  const from = page.getByLabel('From', { exact: true });
+  const to = page.getByLabel('To', { exact: true });
+  // Seconds violate datetime-local's native minute step, before form submit fires.
+  await from.fill('2026-09-28T10:08:42');
+  await to.fill('2026-09-28T11:08:42');
+  await expect.poll(() => from.evaluate(element => element.validity.stepMismatch)).toBe(true);
+  await expectSearchHalo(submit, true);
+  await submit.click();
+  await expectSearchHalo(submit, false);
+  expect(state.requestedFilters).toHaveLength(1);
+  await from.fill('2026-09-28T10:08');
+  await to.fill('2026-09-28T11:08');
+  await range.selectOption('7d');
+  await expectSearchHalo(submit, true);
+
+  state.errorNext = true;
+  state.delayCalls = 350;
+  await submit.click();
+  await expectSearchHalo(submit, false);
+  await expect(page.locator('.recordings-result-status')).toContainText('Previous results');
+  await expectSearchHalo(submit, false);
+  await range.selectOption('30d');
+  await expectSearchHalo(submit, true);
+  await range.selectOption('7d');
+  await expectSearchHalo(submit, true);
+  const fullText = page.getByRole('searchbox', { name: 'Full text', exact: true });
+  await fullText.fill('dispatch');
+  await expectSearchHalo(submit, true);
+  await fullText.press('Enter');
+  await expectSearchHalo(submit, false);
+  await expect(page.locator('.recordings-selected-filters')).toContainText('Full text: dispatch');
+  await expectSearchHalo(submit, false);
+});
+
+test('paging, page size and sort preserve the search halo for an unapplied draft', async ({ page }) => {
+  const state = await openRecordings(page, { calls: browsingCalls(), paginate: true });
+  await expect(page.locator('.recordings-call')).toHaveCount(25);
+  const submit = searchButton(page);
+  await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('unsubmitted draft');
+  await expectSearchHalo(submit, true);
+  await page.locator('.recordings-pager-top').getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.recordings-pager-top .ui-browse-pager-count')).toHaveText('Page 2');
+  await expectSearchHalo(submit, true);
+  await page.getByRole('combobox', { name: 'Calls per page', exact: true }).selectOption('50');
+  await expect(page.locator('.recordings-call')).toHaveCount(50);
+  await expectSearchHalo(submit, true);
+  await page.getByRole('combobox', { name: 'Sort calls', exact: true }).selectOption('asc');
+  await expect.poll(() => state.requestedFilters.at(-1).sort).toBe('asc');
+  await expectSearchHalo(submit, true);
+  expect(state.requestedFilters.every(filters => !filters.transcript)).toBe(true);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`search halo respects reduced motion, all schemes and keyboard focus on a 320px ${theme} page`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openRecordings(page, { theme });
+    await expect(page.locator('.recordings-call')).toHaveCount(1);
+    const submit = searchButton(page);
+    const before = await submit.evaluate(element => getComputedStyle(element, '::after').boxShadow);
+    await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('dispatch');
+    await submit.scrollIntoViewIfNeeded();
+    await expectSearchHalo(submit, false);
+    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::after').boxShadow)).not.toBe(before);
+    const palettes = await submit.evaluate(async element => {
+      const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
+      const root = document.documentElement;
+      return APPEARANCE_SCHEMES.map(scheme => {
+        applyThemeHue(scheme.hue, root);
+        const style = getComputedStyle(element, '::after');
+        return { name: scheme.name, shadow: style.boxShadow, animation: style.animationName };
+      });
+    });
+    expect(palettes).toHaveLength(8);
+    expect(new Set(palettes.map(palette => palette.shadow)).size).toBe(8);
+    for (const palette of palettes) {
+      expect(palette.shadow, palette.name).not.toBe('none');
+      expect(palette.animation, palette.name).toBe('none');
+    }
+    await submit.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(submit).toBeFocused();
+    await expect(submit).toHaveCSS('outline-style', 'solid');
+    const bounds = await submit.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await page.locator('.recordings-search-panel').screenshot({ path: testInfo.outputPath(`search-halo-${theme}-320.png`) });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await expectSearchHalo(submit, true);
+    await submit.press('Enter');
+    await expectSearchHalo(submit, false);
+  });
+}

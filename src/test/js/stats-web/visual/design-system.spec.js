@@ -19,6 +19,62 @@ for(const [name, theme, viewport] of galleryCases) {
 }
 
 for (const [, theme, viewport] of galleryCases) {
+  test(`awaiting apply halo ${theme} ${viewport.width} remains distinct from keyboard focus`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=awaiting-apply`);
+    const example = page.locator('.visual-awaiting-apply-example');
+    const search = example.getByRole('button', { name: 'Search recordings', exact: true });
+    await expect(search).toHaveClass(/ui-button-awaiting-apply/);
+    const before = await search.boundingBox();
+    await expect.poll(() => search.evaluate((button) => {
+      const style = getComputedStyle(button, '::after');
+      return { name: style.animationName, duration: style.animationDuration,
+        repeats: style.animationIterationCount, pointerEvents: style.pointerEvents };
+    })).toEqual({ name: 'ui-button-awaiting-apply-halo', duration: '1.4s',
+      repeats: 'infinite', pointerEvents: 'none' });
+    await search.evaluate((button) => {
+      for (const animation of button.getAnimations({ subtree: true })) {
+        if (animation.animationName === 'ui-button-awaiting-apply-halo') {
+          animation.pause(); animation.currentTime = 350;
+        }
+      }
+    });
+    await expectNoHorizontalOverflow(page);
+    await expect(example).toHaveScreenshot(`awaiting-apply-${theme}-${viewport.width}.png`, { animations: 'allow' });
+    await search.hover();
+    await search.focus();
+    await expect(search).toBeFocused();
+    await expect(search).toHaveCSS('outline-style', 'solid');
+    await expect(search).toHaveCSS('outline-width', '2px');
+    await expect(search).toHaveCSS('transform', 'none');
+    expect(await search.boundingBox()).toEqual(before);
+    await search.click();
+    await expect(search).not.toHaveClass(/ui-button-awaiting-apply/);
+    await expect(example.getByRole('status')).toHaveText('Results updated');
+    await expect.poll(() => search.evaluate(button => getComputedStyle(button, '::after').animationName)).toBe('none');
+    await example.getByRole('button', { name: 'Change filters', exact: true }).click();
+    await expect(search).toHaveClass(/ui-button-awaiting-apply/);
+  });
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`awaiting apply halo ${theme} reduced motion retains a steady theme ring`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/design-system.html?theme=${theme}&view=awaiting-apply&hue=280`);
+    const example = page.locator('.visual-awaiting-apply-example');
+    const search = example.getByRole('button', { name: 'Search recordings', exact: true });
+    await expect.poll(() => search.evaluate((button) => ({
+      animation: getComputedStyle(button, '::after').animationName,
+      shadow: getComputedStyle(button, '::after').boxShadow !== 'none'
+    }))).toEqual({ animation: 'none', shadow: true });
+    await expect(example).toHaveScreenshot(`awaiting-apply-${theme}-reduced-motion.png`);
+    await search.click();
+    await expect(search).not.toHaveClass(/ui-button-awaiting-apply/);
+  });
+}
+
+for (const [, theme, viewport] of galleryCases) {
   test(`dual range ${theme} ${viewport.width} shows normal disabled and focus states`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=gallery`);

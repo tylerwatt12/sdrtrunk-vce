@@ -107,6 +107,26 @@
   font-size: var(--font-size-meta);
 }
 
+/* A pending query keeps its reminder separate from hover and keyboard focus. */
+.ui-button-awaiting-apply {
+  position: relative;
+}
+
+.ui-button-awaiting-apply::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: var(--shadow-apply-attention-ring);
+  animation: ui-button-awaiting-apply-halo var(--apply-attention-duration) ease-out infinite;
+}
+
+@keyframes ui-button-awaiting-apply-halo {
+  from { box-shadow: var(--shadow-apply-attention-pulse-start); }
+  to { box-shadow: var(--shadow-apply-attention-pulse-end); }
+}
+
 .ui-button svg,
 .ui-choice-card-with-icon > svg,
 .ui-segmented-option-icon svg,

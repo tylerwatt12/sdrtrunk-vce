@@ -409,7 +409,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
+const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'comparison-table',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -424,6 +424,35 @@ document.body.dataset.galleryView = view;
 const modalSize = parameters.get('modal-size');
 if (['small', 'medium'].includes(modalSize)) {
   document.querySelector('.visual-modal-example .read-only-modal')?.classList.add(`modal-size-${modalSize}`);
+}
+
+if (view === 'awaiting-apply') {
+  const example = document.createElement('main');
+  example.className = 'visual-feature-example visual-awaiting-apply-example';
+  example.innerHTML = `<section class="ui-section">
+    <header class="ui-section-title"><h1>Search reminder</h1></header>
+    <div class="ui-section-body editor-workspace">
+      <p class="ui-muted" role="status">Changes ready to search</p>
+      <div class="ui-action-row ui-action-row-start">
+        <button type="button" class="ui-button ui-button-primary ui-button-awaiting-apply" data-awaiting-search>
+          <svg aria-hidden="true"><use href="#visual-icon-search"></use></svg>Search recordings
+        </button>
+        <button type="button" class="ui-button ui-button-secondary" data-edit-search>Change filters</button>
+        <button type="button" class="ui-button ui-button-primary" disabled>Finding calls…</button>
+      </div>
+    </div>
+  </section>`;
+  const search = example.querySelector('[data-awaiting-search]');
+  const feedback = example.querySelector('[role="status"]');
+  search.addEventListener('click', () => {
+    search.classList.remove('ui-button-awaiting-apply');
+    feedback.textContent = 'Results updated';
+  });
+  example.querySelector('[data-edit-search]').addEventListener('click', () => {
+    search.classList.add('ui-button-awaiting-apply');
+    feedback.textContent = 'Changes ready to search';
+  });
+  document.body.append(example);
 }
 
 if (view === 'comparison-table') {

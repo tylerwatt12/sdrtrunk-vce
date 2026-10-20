@@ -499,6 +499,9 @@ export function createRecordingsFeature(deps) {
   let appliedRange = '24h';
   let appliedSearch = null;
   let draftFeedback = null;
+  let searchSubmit = null;
+  let observedSearchDraft = null;
+  let searchDraftAcknowledged = false;
   let searchError = null;
   let resultScope = null;
   const channelLabels = new Map();
@@ -615,10 +618,22 @@ export function createRecordingsFeature(deps) {
   }
 
   function updateDraftFeedback() {
-    const dirty = appliedSearch && JSON.stringify(search) !== JSON.stringify(appliedSearch);
+    const draft = JSON.stringify(search);
+    if (draft !== observedSearchDraft) {
+      observedSearchDraft = draft;
+      searchDraftAcknowledged = false;
+    }
+    const dirty = appliedSearch && draft !== JSON.stringify(appliedSearch);
+    searchSubmit?.classList.toggle('ui-button-awaiting-apply', Boolean(dirty && !searchDraftAcknowledged));
     if (draftFeedback) draftFeedback.textContent = dirty ? 'Changes ready to search' : '';
     pageHost?.querySelector('#recordings-discard')?.toggleAttribute('hidden', !dirty);
     drawSelectedFilters();
+  }
+
+  function acknowledgeSearchDraft() {
+    observedSearchDraft = JSON.stringify(search);
+    searchDraftAcknowledged = true;
+    searchSubmit?.classList.remove('ui-button-awaiting-apply');
   }
 
   function searchPeriodLabel(filters = search) {
@@ -649,8 +664,11 @@ export function createRecordingsFeature(deps) {
   }
 
   function submitSearch() {
+    acknowledgeSearchDraft();
     if (!validateSearch()) return false;
     Object.assign(search, recordingDiscoveryPeriod(search));
+    // Expanding a relative time range belongs to the same acknowledged search.
+    acknowledgeSearchDraft();
     const submission = { filters: effectiveFilters(), search: { ...search }, suggestions: new Map(selectedSuggestions) };
     void loadPage(0, submission);
     return true;
@@ -2334,6 +2352,9 @@ export function createRecordingsFeature(deps) {
     draftFeedback = node('p', 'recordings-draft-feedback'); draftFeedback.setAttribute('aria-live', 'polite');
     searchError = node('div', 'recordings-search-error'); searchError.setAttribute('role', 'alert');
     const submit = addGlyph(button(node, 'Search recordings', null, 'recordings-primary-action'), 'icon-search', 'recordings-control-icon'); submit.type = 'submit'; submit.disabled = searchLoading;
+    searchSubmit = submit;
+    // Native form validation can prevent the submit event after a click.
+    submit.addEventListener('click', acknowledgeSearchDraft);
     const clear = button(node, 'Clear filters', () => { Object.keys(search).forEach(key => { search[key] = ''; }); search.range = '24h'; selectedSuggestions.clear(); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action');
     const discard = button(node, 'Discard changes', () => { if (appliedSearch) Object.assign(search, appliedSearch); selectedSuggestions.clear(); appliedSuggestions.forEach((value, key) => selectedSuggestions.set(key, value)); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action'); discard.id = 'recordings-discard'; discard.hidden = true;
     actions.append(draftFeedback, searchError, submit, clear, discard);

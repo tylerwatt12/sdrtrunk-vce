@@ -1,5 +1,10 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
+  .ui-button-awaiting-apply::after {
+    animation: none;
+    box-shadow: var(--shadow-apply-attention-ring);
+  }
+
   .audio-dock-motion { display: none; }
   .ui-disclosure-button > svg,
   .ui-disclosure-toggle::before {

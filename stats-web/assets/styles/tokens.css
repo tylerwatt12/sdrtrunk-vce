@@ -281,6 +281,10 @@
   --shadow-button-pressed: none;
   --shadow-inset-group: none;
   --shadow-focus: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 25%, transparent);
+  --apply-attention-duration: 1400ms;
+  --shadow-apply-attention-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+  --shadow-apply-attention-pulse-start: var(--shadow-apply-attention-ring), 0 0 4px 0 color-mix(in srgb, var(--accent) 38%, transparent);
+  --shadow-apply-attention-pulse-end: var(--shadow-apply-attention-ring), 0 0 4px 6px transparent;
   --shadow-choice: 0 0 0 2px var(--accent-soft);
   --shadow-selection-inset: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
   --shadow-selected: none;
