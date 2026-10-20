@@ -411,7 +411,7 @@ const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
-  'signal-quality-detail', 'radioreference-results', 'radioreference-connect',
+  'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'comparison-table',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alerts', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'call-matching', 'receiving-windows', 'live-notice', 'live-filter', 'tuner-frequency-popover',
@@ -424,6 +424,52 @@ document.body.dataset.galleryView = view;
 const modalSize = parameters.get('modal-size');
 if (['small', 'medium'].includes(modalSize)) {
   document.querySelector('.visual-modal-example .read-only-modal')?.classList.add(`modal-size-${modalSize}`);
+}
+
+if (view === 'comparison-table') {
+  const form = document.querySelector('#visual-comparison-table-template').content.firstElementChild.cloneNode(true);
+  const cancel = form.querySelector('[data-comparison-cancel]');
+  const retry = form.querySelector('[data-comparison-retry]');
+  const details = form.querySelector('[data-comparison-details]');
+  const feedback = form.querySelector('[data-comparison-feedback]');
+  const submit = form.querySelector('[type="submit"]');
+  if (parameters.get('comparison-content') === 'long') {
+    form.querySelector('[data-comparison-current-name]').textContent =
+      'NorthCountyRegionalEmergencyServicesPrimarySimulcast';
+    form.querySelector('[data-comparison-suggested-name]').textContent =
+      'North County Regional Emergency Services Communications Network (P25) · Greater Metropolitan Simulcast';
+  }
+  const foundation = await createGalleryModalFoundation();
+  const modal = foundation.openReadOnlyModal('Review RadioReference names', form, {
+    id: 'gallery-comparison-table', className: 'modal-size-medium'
+  });
+  await modal.ready;
+  const workflow = createFormWorkflow({ form, submit, feedback,
+    modal: { setBusy: modal.setBusy, setDirty: () => {} } });
+  cancel.addEventListener('click', () => modal.close());
+  retry.addEventListener('click', () => { window.location.search =
+    new URLSearchParams({ theme, view: 'comparison-table' }).toString(); });
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void workflow.save(() => parameters.get('comparison-state') === 'busy' ? new Promise(() => {}) :
+      Promise.resolve(), { saving: 'Saving RadioReference names…', onSuccess: () => modal.close() });
+  });
+  const state = parameters.get('comparison-state');
+  if (state === 'empty' || state === 'loading') {
+    const message = document.createElement('p');
+    message.className = `ui-feedback ui-feedback-${state}`;
+    message.textContent = state === 'empty' ? 'Names are already up to date.' :
+      'Looking up this channel in RadioReference…';
+    details.replaceChildren(message);
+    workflow.setReady(false);
+  } else if (state === 'error') {
+    workflow.showFeedback('error',
+      'The names could not be saved. Look up this channel again to review a fresh comparison.');
+    workflow.setReady(false);
+    retry.hidden = false;
+  }
+  modal.focus(cancel);
+  if (state === 'busy') form.requestSubmit();
 }
 
 if (view === 'radioreference-connect') {

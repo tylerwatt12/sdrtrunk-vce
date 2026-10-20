@@ -655,6 +655,63 @@ for(const theme of ['light', 'dark']) {
   });
 }
 
+for (const [theme, width, content] of [
+  ['light', 1280, 'normal'], ['dark', 1280, 'normal'],
+  ['light', 390, 'normal'], ['dark', 320, 'long']
+]) {
+  test(`comparison-table-${theme}-${width}-${content}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`/design-system.html?theme=${theme}&view=comparison-table&comparison-content=${content}`);
+    const dialog = page.getByRole('dialog', { name: 'Review RadioReference names' });
+    const table = dialog.getByRole('table', { name: 'Proposed name changes' });
+    await expect(dialog).toBeVisible();
+    await expect(table.getByRole('columnheader')).toHaveText(['Field', 'Current', 'Suggested']);
+    await expect(table.getByRole('rowheader')).toHaveText(['Site', 'Channel name']);
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await expectNoHorizontalOverflow(page);
+    expect(await table.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    if (width < 560) {
+      await expect(table.locator('.ui-comparison-label').first()).toBeVisible();
+      const site = table.getByRole('row').nth(1);
+      const [field, current, suggested] = await Promise.all([
+        site.getByRole('rowheader').boundingBox(), site.getByRole('cell').nth(0).boundingBox(),
+        site.getByRole('cell').nth(1).boundingBox()
+      ]);
+      expect(current.y).toBeGreaterThanOrEqual(field.y + field.height);
+      expect(suggested.y).toBeGreaterThanOrEqual(current.y + current.height);
+    } else {
+      await expect(table.locator('.ui-comparison-label').first()).toBeHidden();
+      expect((await dialog.boundingBox()).width).toBe(680);
+    }
+    await expect(dialog).toHaveScreenshot(`comparison-table-${theme}-${width}-${content}.png`);
+  });
+}
+
+for (const state of ['loading', 'empty', 'error', 'busy']) {
+  test(`comparison-table preserves ${state} feedback and actions`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/design-system.html?theme=dark&view=comparison-table&comparison-state=${state}`);
+    const dialog = page.getByRole('dialog', { name: 'Review RadioReference names' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+    await expectNoHorizontalOverflow(page);
+    if (state === 'busy') {
+      await expect(dialog).toHaveAttribute('aria-busy', 'true');
+      await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+      await expect(dialog.getByRole('button', { name: 'Close Review RadioReference names' })).toBeDisabled();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeVisible();
+    } else if (state === 'error') {
+      await expect(dialog.getByRole('alert')).toContainText('Look up this channel again');
+      await expect(dialog.getByRole('button', { name: 'Look up again' })).toBeEnabled();
+    } else {
+      await expect(dialog.getByRole('table')).toHaveCount(0);
+      await expect(dialog).toContainText(state === 'empty' ? 'Names are already up to date.' :
+        'Looking up this channel in RadioReference…');
+    }
+  });
+}
+
 test('radio-directory-coverage-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=radio-directory-coverage');

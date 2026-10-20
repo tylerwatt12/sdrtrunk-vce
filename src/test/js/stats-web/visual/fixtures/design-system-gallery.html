@@ -448,6 +448,29 @@
     </div>
   </div>
 
+  <template id="visual-comparison-table-template">
+    <form class="editor-workspace">
+      <div class="ui-editor-sections" data-comparison-details>
+        <nav class="ui-action-row ui-action-row-start" aria-label="RadioReference sources">
+          <span class="ui-label ui-muted">RadioReference</span>
+          <a class="ui-button ui-button-link" href="https://www.radioreference.com/" target="_blank" rel="noopener noreferrer">System<svg aria-hidden="true"><use href="#visual-icon-open-details"></use></svg></a>
+          <a class="ui-button ui-button-link" href="https://www.radioreference.com/" target="_blank" rel="noopener noreferrer">Site<svg aria-hidden="true"><use href="#visual-icon-open-details"></use></svg></a>
+        </nav>
+        <div><table class="ui-comparison-table" aria-label="Proposed name changes" role="table">
+          <colgroup><col class="ui-comparison-field"><col class="ui-comparison-current"><col class="ui-comparison-suggested"></colgroup>
+          <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Field</th><th scope="col" role="columnheader">Current</th><th scope="col" role="columnheader">Suggested</th></tr></thead>
+          <tbody role="rowgroup">
+            <tr role="row"><th scope="row" role="rowheader">Site</th><td role="cell"><span class="ui-comparison-label" aria-hidden="true">Current</span><span class="ui-muted">Lorain</span></td><td role="cell"><span class="ui-comparison-label" aria-hidden="true">Suggested</span><span class="ui-comparison-value">Simulcast</span></td></tr>
+            <tr role="row"><th scope="row" role="rowheader">Channel name</th><td role="cell"><span class="ui-comparison-label" aria-hidden="true">Current</span><span class="ui-muted" data-comparison-current-name>5City-Simulcast</span></td><td role="cell"><span class="ui-comparison-label" aria-hidden="true">Suggested</span><span class="ui-comparison-value" data-comparison-suggested-name>5-City Radio System (P25) · Simulcast</span></td></tr>
+          </tbody>
+        </table></div>
+        <div class="ui-notice ui-notice-warning">Saving briefly pauses this channel, then resumes it.</div>
+      </div>
+      <div data-comparison-feedback></div>
+      <footer class="ui-modal-footer ui-action-row"><button class="ui-button ui-button-secondary" type="button" data-comparison-cancel>Cancel</button><button class="ui-button ui-button-secondary" type="button" data-comparison-retry hidden>Look up again</button><button class="ui-button ui-button-primary" type="submit">Save changes</button></footer>
+    </form>
+  </template>
+
   <div class="visual-alias-list-create-modal-example">
     <div class="modal-backdrop">
       <section class="read-only-modal modal-size-small alias-list-create-modal" role="dialog" aria-modal="true" aria-labelledby="visual-alias-list-create-title">

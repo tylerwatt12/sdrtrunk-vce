@@ -78,6 +78,92 @@
   margin-left: auto;
 }
 
+/* Flat before/after reviews keep each field and both values together on phones. */
+.ui-comparison-table {
+  width: 100%;
+  margin: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+  color: var(--ink);
+  line-height: var(--line-height-body);
+}
+
+.ui-comparison-table .ui-comparison-field { width: 20%; }
+.ui-comparison-table .ui-comparison-current { width: 28%; }
+.ui-comparison-table .ui-comparison-suggested { width: 52%; }
+
+.ui-comparison-table :is(th, td) {
+  min-width: 0;
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--table-rule);
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ui-comparison-table thead th {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-comparison-table tbody th,
+.ui-comparison-table .ui-comparison-value {
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-comparison-table tr > :first-child { padding-left: 0; }
+.ui-comparison-table tr > :last-child { padding-right: 0; }
+.ui-comparison-table tbody tr:last-child > :is(th, td) { border-bottom: 0; }
+.ui-comparison-table .ui-comparison-label { display: none; }
+
+@media (max-width: 560px) {
+  .ui-comparison-table,
+  .ui-comparison-table tbody,
+  .ui-comparison-table tbody tr {
+    display: block;
+    min-width: 0;
+  }
+
+  .ui-comparison-table colgroup { display: none; }
+  .ui-comparison-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .ui-comparison-table tbody tr {
+    padding-block: var(--space-3);
+    border-bottom: 1px solid var(--table-rule);
+  }
+
+  .ui-comparison-table tbody tr:first-child { padding-top: 0; }
+  .ui-comparison-table tbody tr:last-child { border-bottom: 0; }
+  .ui-comparison-table tbody th {
+    display: block;
+    padding: 0 0 var(--space-2);
+    border: 0;
+  }
+
+  .ui-comparison-table tbody td {
+    display: grid;
+    grid-template-columns: calc(var(--space-4) * 5) minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+    border: 0;
+  }
+
+  .ui-comparison-table .ui-comparison-label {
+    display: block;
+    color: var(--muted);
+    font-size: var(--font-size-secondary);
+  }
+}
+
 .ui-data-table.resizable-table {
   table-layout: fixed;
 }

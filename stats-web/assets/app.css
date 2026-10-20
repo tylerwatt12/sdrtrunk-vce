@@ -12,7 +12,7 @@
 @import url("./styles/components/controls.css?v=39") layer(components);
 @import url("./styles/components/audio-controls.css?v=11") layer(components);
 @import url("./styles/compositions/workspaces.css?v=31") layer(compositions);
-@import url("./styles/compositions/tables.css?v=15") layer(compositions);
+@import url("./styles/compositions/tables.css?v=16") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=20") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=20") layer(compositions);

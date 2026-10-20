@@ -25548,16 +25548,16 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
   if (!parent.dialog.isConnected || parent.isDirty() || parent.state.isBusy()) return;
   const lookupController = new AbortController();
   const form = node('form', 'editor-workspace');
-  const details = node('div', 'ui-section-body');
+  const details = node('div', 'ui-editor-sections');
   const message = node('div');
   const cancel = uiActionButton('Cancel', null, () => modal.close(), 'ui-button ui-button-secondary');
   const retry = uiActionButton('Look up again', 'icon-refresh', () => void lookup(), 'ui-button ui-button-secondary');
   retry.hidden = true;
-  const save = uiActionButton('Save', 'icon-edit', () => {}, 'ui-button ui-button-primary');
+  const save = uiActionButton('Save changes', null, () => {}, 'ui-button ui-button-primary');
   save.type = 'submit';
   form.append(details, message, aliasModalFooter(cancel, retry, save));
   const modal = openReadOnlyModal('Review RadioReference names', form, {
-    id: 'channel-radioreference-enrichment', stack: 'child',
+    id: 'channel-radioreference-enrichment', className: 'modal-size-medium', stack: 'child',
     returnFocusSelector: '[data-channel-enrichment-trigger]', cleanup: () => lookupController.abort()
   });
   if (!modal || (modal.ready && !await modal.ready)) return;
@@ -25566,22 +25566,50 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
   // Cancel discards this review directly; names change only after Save succeeds.
   const workflow = createFormWorkflow({ form, submit: save, feedback: message, ready: false,
     modal: { setBusy: modal.setBusy, setDirty: () => {} } });
-  const comparisons = node('div', 'ui-editor-sections');
+  const comparisons = node('div');
   const refreshChanges = () => {
     comparisons.replaceChildren();
     const changes = channelEnrichmentChanges(preview);
+    const table = node('table', 'ui-comparison-table');
+    table.setAttribute('role', 'table');
+    table.setAttribute('aria-label', 'Proposed name changes');
+    const columns = node('colgroup');
+    ['field', 'current', 'suggested'].forEach((column) =>
+      columns.append(node('col', `ui-comparison-${column}`)));
+    const head = node('thead');
+    head.setAttribute('role', 'rowgroup');
+    const headings = node('tr');
+    headings.setAttribute('role', 'row');
+    ['Field', 'Current', 'Suggested'].forEach((label) => {
+      const cell = node('th', '', label);
+      cell.scope = 'col';
+      cell.setAttribute('role', 'columnheader');
+      headings.append(cell);
+    });
+    head.append(headings);
+    const body = node('tbody');
+    body.setAttribute('role', 'rowgroup');
     for (const change of changes) {
-      const label = { system: 'System', site: 'Site', name: 'Name' }[change.field];
-      const section = node('section', 'ui-form-section');
-      section.append(node('h3', 'ui-section-title', label));
-      const facts = node('dl', 'ui-fact-list');
-      facts.append(node('dt', '', 'Current'), node('dd', '', change.before || 'Empty'),
-        node('dt', '', change.field === 'name' ? 'Suggested' : 'RadioReference'),
-        node('dd', '', change.after || 'Empty'));
-      section.append(facts);
-      comparisons.append(section);
+      const row = node('tr');
+      row.setAttribute('role', 'row');
+      const label = node('th', '', { system: 'System', site: 'Site', name: 'Channel name' }[change.field]);
+      label.scope = 'row';
+      label.setAttribute('role', 'rowheader');
+      row.append(label);
+      for (const [heading, value, className] of [
+        ['Current', change.before, 'ui-muted'], ['Suggested', change.after, 'ui-comparison-value']
+      ]) {
+        const cell = node('td');
+        cell.setAttribute('role', 'cell');
+        const mobileLabel = node('span', 'ui-comparison-label', heading);
+        mobileLabel.setAttribute('aria-hidden', 'true');
+        cell.append(mobileLabel, node('span', className, value || 'Empty'));
+        row.append(cell);
+      }
+      body.append(row);
     }
-    if (!changes.length) comparisons.append(node('p', 'ui-feedback ui-feedback-empty',
+    table.append(columns, head, body);
+    comparisons.append(changes.length ? table : node('p', 'ui-feedback ui-feedback-empty',
       'Names are already up to date.'));
     workflow.setReady(Boolean(preview?.preview_id) && changes.length > 0);
   };
@@ -25615,15 +25643,21 @@ async function openChannelEnrichment({ channel, revision, parent, onSaved }) {
         return;
       }
       details.replaceChildren();
-      const links = node('div', 'ui-action-row');
-      if (loaded.system_url) links.append(externalAnchor('RadioReference system', loaded.system_url,
-        'ui-button ui-button-secondary'));
-      if (loaded.site_url) links.append(externalAnchor('RadioReference site', loaded.site_url,
-        'ui-button ui-button-secondary'));
-      if (links.childNodes.length) details.append(links);
+      const links = node('nav', 'ui-action-row ui-action-row-start');
+      links.setAttribute('aria-label', 'RadioReference sources');
+      for (const [label, target] of [['System', loaded.system_url], ['Site', loaded.site_url]]) {
+        if (!target) continue;
+        const link = externalAnchor(label, target, 'ui-button ui-button-link');
+        link.append(iconGlyph('icon-open-details'));
+        links.append(link);
+      }
+      if (links.childNodes.length) {
+        links.prepend(node('span', 'ui-label ui-muted', 'RadioReference'));
+        details.append(links);
+      }
       details.append(comparisons);
-      if (loaded.running) details.append(node('p', 'ui-notice ui-notice-warning',
-        'Saving briefly stops this channel and restores its running state.'));
+      if (loaded.running) details.append(node('div', 'ui-notice ui-notice-warning',
+        'Saving briefly pauses this channel, then resumes it.'));
       refreshChanges();
       modal.focus(cancel);
     } catch (error) {

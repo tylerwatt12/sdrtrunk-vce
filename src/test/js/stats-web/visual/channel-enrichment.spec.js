@@ -98,15 +98,28 @@ test('remote P25 compares names, preserves cancelled choices and saves only revi
     name: 'Update from RadioReference', exact: true })).toBeVisible();
   let preview = await state.openPreview();
   await expect(preview.getByRole('checkbox', { name: 'Replace channel name' })).toHaveCount(0);
-  await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toBeVisible();
-  await expect(preview.getByText('P25 BEE00-348', { exact: true })).toBeVisible();
-  await expect(preview.getByText('Countywide Public Safety Radio System', { exact: true })).toBeVisible();
+  const comparison = preview.getByRole('table');
+  await expect(comparison.getByRole('columnheader')).toHaveText(['Field', 'Current', 'Suggested']);
+  await expect(comparison.getByRole('rowheader')).toHaveText(['System', 'Site', 'Channel name']);
+  for (const [index, change] of state.changes.entries()) {
+    await expect(comparison.getByRole('row').nth(index + 1).getByRole('cell'))
+      .toHaveText([change.before, change.after], { useInnerText: true });
+  }
+  for (const [label, destination] of [['System', 'sid/123'], ['Site', 'site/456']]) {
+    const link = preview.getByRole('link', { name: label, exact: true });
+    await expect(link).toHaveAttribute('href', `https://www.radioreference.com/db/${destination}`);
+    await expect(link).toHaveAttribute('target', '_blank');
+  }
+  await expect(preview.getByText('Saving briefly pauses this channel, then resumes it.')).toHaveCount(0);
+  const bounds = await preview.boundingBox();
+  expect(bounds.width).toBeLessThanOrEqual(680);
+  expect(bounds.height).toBeLessThanOrEqual(520);
   await preview.screenshot({ path: test.info().outputPath('enrichment-light-desktop.png') });
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.original.name);
   expect(state.applies).toHaveLength(0);
   preview = await state.openPreview();
-  await preview.getByRole('button', { name: 'Save', exact: true }).click();
+  await preview.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(preview).toHaveCount(0);
   await expect(state.editor.getByLabel('System', { exact: true })).toHaveValue(state.changes[0].after);
   await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.changes[2].after);
@@ -126,10 +139,10 @@ test('name-only changes can be saved and saving locks duplicate submits and dism
   const state = await openEditor(page, { theme: 'dark', running: true });
   state.changes = state.changes.filter((change) => change.field === 'name');
   const preview = await state.openPreview();
-  const save = preview.getByRole('button', { name: 'Save', exact: true });
-  await expect(preview.getByRole('heading', { name: 'Name', exact: true })).toBeVisible();
+  const save = preview.getByRole('button', { name: 'Save changes', exact: true });
+  await expect(preview.getByRole('table').getByRole('rowheader')).toHaveText(['Channel name']);
   await expect(save).toBeEnabled();
-  await expect(preview.getByText('Saving briefly stops this channel and restores its running state.')).toBeVisible();
+  await expect(preview.getByText('Saving briefly pauses this channel, then resumes it.')).toBeVisible();
   expect(await preview.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await preview.screenshot({ path: test.info().outputPath('enrichment-dark-phone.png') });
   let release;
@@ -191,7 +204,7 @@ test('lookup states and stale saves keep the parent intact and require a fresh r
   state.previewState = 'ambiguous';
   const preview = await state.openPreview();
   await expect(preview.getByText('More than one RadioReference site matches this identity.')).toBeVisible();
-  await expect(preview.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
   state.previewState = 'no_match';
   await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
   await expect(preview.getByText('No matching RadioReference site was found.')).toBeVisible();
@@ -200,11 +213,11 @@ test('lookup states and stale saves keep the parent intact and require a fresh r
   await expect(preview.getByText('RadioReference is unavailable. Try again.')).toBeVisible();
   state.previewState = 'matched';
   await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
-  await expect(preview.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
   state.failApply = true;
-  await preview.getByRole('button', { name: 'Save', exact: true }).click();
+  await preview.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(preview.getByRole('alert')).toContainText('This comparison has expired.');
-  await expect(preview.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
   await expect(preview.getByRole('button', { name: 'Look up again', exact: true })).toBeEnabled();
   state.previewState = 'no_changes';
   state.revision = 2;
@@ -223,7 +236,7 @@ test('location requirement links to existing RadioReference settings', async ({ 
   const link = preview.getByRole('link', { name: 'Open RadioReference settings' });
   await expect(link).toHaveAttribute('href', /view=radioreference/);
   await expect(link).toHaveAttribute('target', '_blank');
-  await expect(preview.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toBeFocused();
 });
