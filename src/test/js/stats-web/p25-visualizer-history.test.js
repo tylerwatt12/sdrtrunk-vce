@@ -376,7 +376,47 @@ async function main() {
   assert.equal(unknownDenial.systems.size, 0,
     'a denial without a scoped radio must not create a system or fabricated entity');
 
-  const overlap = history.applyP25ActivityRows(state, [row(7, 'DENIAL')]);
+  const corrected = history.createP25HistoryState();
+  history.applyP25ActivityRows(corrected, [row(90, 'JOIN'), row(91, 'LOGOUT')], { initial: true });
+  const correction = history.applyP25ActivityRows(corrected, [row(90, 'JOIN', {
+    source_identity_key: 'v1-r-8001', source_radio_id: 8001, source_alias_name: 'Corrected source'
+  })], { atMs: 2_000_000_000_000 });
+  assert.equal(correction.rebuilt, true);
+  assert.deepEqual(correction.focusCandidates, [], 'source enrichment does not replay camera attention');
+  assert.equal(corrected.radios.get(`${SYSTEM_A}:v1-r-8001`).label, 'Corrected source');
+  assert.equal(corrected.radios.get(`${SYSTEM_A}:v1-r-7001`).visualGroupKey, '',
+    'a corrected older join must not resurrect the original radio after its logout tombstone');
+  const deletion = history.applyP25ActivityRows(corrected, [], { removedIds: [90] });
+  assert.equal(deletion.changed, true);
+  assert.equal(corrected.radios.has(`${SYSTEM_A}:v1-r-8001`), false,
+    'removing a saved row removes the facts it contributed');
+  history.applyP25ActivityRows(corrected, [], { fromMs: 1_700_000_001_000 });
+  assert.equal(corrected.systems.size, 0, 'the rolling history window expires graph facts locally');
+
+  const mixedCorrection = history.createP25HistoryState();
+  history.applyP25ActivityRows(mixedCorrection, [row(100, 'JOIN')], { initial: true });
+  const mixed = history.applyP25ActivityRows(mixedCorrection, [row(100, 'JOIN', {
+    source_identity_key: 'v1-r-8001', source_radio_id: 8001
+  }), row(101, 'EMERGENCY', { source_identity_key: 'v1-r-8001', source_radio_id: 8001,
+    observed_at_ms: 1_700_000_001_000 })], { atMs: 1_700_000_001_100, highlightAtObservationTime: true });
+  assert.equal(mixed.rebuilt, true);
+  assert.deepEqual(mixed.focusCandidates.map((event) => event.category), ['emergency'],
+    'a mixed replacement/new batch preserves fresh attention without replaying the replaced row');
+  assert.equal(mixedCorrection.radios.has(`${SYSTEM_A}:v1-r-7001`), false);
+  assert.equal(history.buildP25Graph(mixedCorrection, SYSTEM_A, 1_700_000_001_100).nodes
+    .find((node) => node.id === `${SYSTEM_A}:v1-r-8001`).signalAction, 'emergency');
+  const changedClouds = history.createP25HistoryState();
+  history.applyP25ActivityRows(changedClouds, [row(110, 'JOIN'), row(111, 'JOIN', {
+    source_identity_key: 'v1-r-8001', target_identity_key: 'v1-g-202', target_id: 202
+  })], { initial: true });
+  history.applyP25ActivityRows(changedClouds, [row(110, 'JOIN', {
+    target_identity_key: 'v1-g-303', target_id: 303
+  })], { initial: true });
+  const clouds = history.buildP25Graph(changedClouds, SYSTEM_A).nodes.filter((node) => node.type === 'talkgroup');
+  assert.ok(Math.hypot(clouds[0].x - clouds[1].x, clouds[0].y - clouds[1].y,
+    clouds[0].z - clouds[1].z) > 104, 'new cloud ordinals cannot overlap preserved old anchors');
+
+  const overlap = history.applyP25ActivityRows(state, [state.savedRows.get(7)]);
   assert.equal(overlap.accepted, 0);
   assert.equal(overlap.ignored, 1, 'overlapping forward pages must deduplicate by stored row ID');
 

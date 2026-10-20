@@ -3,8 +3,8 @@
 P25 Visualizer shows P25 systems, talkgroups, radios, and their observed relationships in an interactive 3D scene.
 Open **Listen > P25 Visualizer** to explore activity saved by your receiver.
 
-This guide describes current Nightly. The scene is a saved-history snapshot. Select **Refresh** to load the latest
-saved activity; the Updated time shows when the displayed history was loaded.
+This guide describes current Nightly. The scene starts with saved history and updates automatically as the receiver
+saves new activity. The status shows whether updates are live, reconnecting, or paused while the tab is hidden.
 
 ## Get started
 
@@ -13,14 +13,14 @@ saved activity; the Updated time shows when the displayed history was loaded.
 3. Open **Events** to read noteworthy activity.
 4. Choose **Auto** to let the camera follow selected new events, or **Manual** to explore at your own pace.
 5. Use **Settings** to choose which recent saved events highlight the scene or move the automatic camera.
-6. Select **Refresh** when you want to update the displayed history.
+6. Use **Refresh** if you want to reload the selected history; normal updates arrive automatically.
 
 Use **← System** to leave a talkgroup view and **← All systems** to return to the overview. The fullscreen control
 gives the scene more room.
 
 Your account must have access to radio activity. Enable detailed activity history under
 **Administration > Activity settings** to collect new history. Previously saved history remains available while
-detailed logging is off. Conventional channels, DMR, and NXDN are not included in this P25 view.
+detailed logging is off, and the status reads **Saved history · Collection off**. Conventional channels, DMR, and NXDN are not included in this P25 view.
 
 ## Read the scene
 
@@ -50,7 +50,7 @@ Calls and grants are highlighted by default, with automatic camera attention dis
 show heard activity separately from accepted affiliations. Turn off both Calls and grants choices to exclude routine
 activity from the visualizer.
 
-In **Auto**, the camera slowly orbits inside a system while idle. A recent saved event loaded by Refresh can briefly focus its radio or
+In **Auto**, the camera slowly orbits inside a system while idle. A new saved event can briefly focus its radio or
 talkgroup before returning to the centered view. Attention stays inside the system you are viewing.
 
 In **Manual**, the camera stays under your control. Focus the scene, then use:
@@ -99,10 +99,13 @@ not create empty system spheres.
 <summary>How history updates and automatic attention work</summary>
 
 The visualizer reads retained Activity history rather than live decoder messages, channel snapshots, or audio.
-Initial history builds the current scene without replaying old camera animations. Refresh and changes to the
-1h/24h scope load a new complete snapshot, including later details added to previously saved events. The scene does
-not subscribe to activity updates or request history in the background. A failed Refresh keeps the previous scene
-visible so you can try again.
+Initial history builds the current scene without replaying old camera animations. New saved activity and later
+corrections to existing records update the scene automatically. Highlights use the time an event was observed, so
+delayed details do not look like a new radio event. Older activity leaves the selected rolling 1h/24h window.
+
+A brief connection loss recovers missed updates automatically. If the receiver replaces its saved history or the
+missed range is no longer available, the view reloads the selected history. A failed reload keeps the previous scene
+visible while retrying. Hidden tabs pause their subscription and recover when you return.
 The existing `?view=network-visualizer` URL remains valid.
 
 After loading, the view automatically enters the system with the most supported activity. Changing the time range
@@ -115,7 +118,7 @@ equal- or lower-priority attention; a higher-priority event can interrupt. Suppr
 suppress the saved graph or Events panel.
 
 The visualizer does not change receiver decoding, Hold/Avoid, Scan Lists, aliases, or stored history. Leaving the
-page cancels any outstanding history request and releases its rendering resources.
+page cancels outstanding history requests, unsubscribes from updates, and releases its rendering resources.
 
 </details>
 

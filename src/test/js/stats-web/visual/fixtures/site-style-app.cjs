@@ -406,7 +406,18 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       source_identity_key: radioKey, source_alias_name: 'Engine 4', target_id: 1201, target_native_id: 1201,
       target_identity_key: groupKey, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }]),
       watermark_id: 1, next_after_id: 1 });
-    if (p === '/api/v1/live/multiplex/control') return respond({ accepted: true });
+    if (p === '/api/v1/activity/live') return respond({ source_epoch: 'fixture-p25',
+      through_sequence: Number(url.searchParams.get('after_sequence')) || 0,
+      rows: [], removed_ids: [], next_after_id: 0, has_more: false });
+    if (p === '/api/v1/live/multiplex/control') {
+      const subscription = request.postDataJSON()?.subscriptions?.p25_activity;
+      if (subscription) await page.evaluate((subscriptionId) => {
+        window.fixtureSendLiveFrame?.(7, 'source_change', { subscription_id: subscriptionId,
+          source_epoch: 'fixture-p25', sequence: 0, watermark_id: 1,
+          server_time_ms: Date.now(), traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true });
+      }, subscription.subscription_id);
+      return respond({ accepted: true });
+    }
     if (p === '/api/v1/scan-lists' || p === '/api/v1/admin/scan-lists') return respond({ revision: 1,
       scan_lists: scanLists.map(item => ({ ...item, alias_count: 2, unmatched_alias_list_count: 1, published: true })) });
     if (p === '/api/v1/calls/feed') {

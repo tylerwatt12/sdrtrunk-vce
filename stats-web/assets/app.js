@@ -9971,6 +9971,7 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   4: 'channel_diagnostics',
   5: 'tuner_diagnostics',
   6: 'frequency_audio',
+  7: 'p25_activity',
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -19535,7 +19536,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=48');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=49');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19552,6 +19553,19 @@ async function renderP25Visualizer() {
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
+    requestActivityCatchup: (parameters, options) => api('/api/v1/activity/live', parameters, options),
+    openActivityStream: (callbacks) => {
+      const source = liveConnection('p25_activity', { subscription_id: randomLiveClientId() }, false);
+      [['source_change', 'boundary'], ['activity_delta', 'delta'], ['resync_required', 'resync'],
+        ['live_gap', 'resync']].forEach(([eventName, callbackName]) => {
+        source.addEventListener(eventName, (event) => {
+          try { callbacks[callbackName]?.(JSON.parse(event.data)); }
+          catch (_) { callbacks.resync?.({ reason: 'transport_gap' }); }
+        });
+      });
+      source.onerror = () => callbacks.error?.();
+      return source;
+    },
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     historyStatus: statsLoggingState(),

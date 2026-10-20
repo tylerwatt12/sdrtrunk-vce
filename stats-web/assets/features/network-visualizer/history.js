@@ -11,7 +11,7 @@ const P25_ROUTINE_ACTIONS = Object.freeze(['CALL', 'GRANT']);
 
 const ACTIONS = new Set([...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS]);
 const MAX_EVENTS = 120;
-const MAX_SEEN_IDS = 30_000;
+const MAX_SAVED_ROWS = 250_000;
 const MAX_PRIOR_GROUPS = 3;
 const MAX_AFFILIATION_ORDER_SCOPES = 64;
 const REPEAT_FOCUS_MS = 60_000;
@@ -215,7 +215,7 @@ function createP25HistoryState(options = {}) {
     radios: new Map(),
     events: new Map(),
     seenIds: new Set(),
-    seenOrder: [],
+    savedRows: new Map(),
     latestId: 0,
     truncated: false,
     maximumRadios: Math.max(100, Number(options.maximumRadios) || 20_000),
@@ -226,9 +226,7 @@ function createP25HistoryState(options = {}) {
 function rememberId(state, id) {
   if (!Number.isSafeInteger(id) || id < 1 || state.seenIds.has(id)) return false;
   state.seenIds.add(id);
-  state.seenOrder.push(id);
   state.latestId = Math.max(state.latestId, id);
-  while (state.seenOrder.length > MAX_SEEN_IDS) state.seenIds.delete(state.seenOrder.shift());
   return true;
 }
 
@@ -324,6 +322,7 @@ function trimEvents(state) {
 
 function upsertEvent(state, value) {
   const previous = state.events.get(value.key);
+  if (previous && previous.observedAtMs > value.observedAtMs) return false;
   state.events.set(value.key, { ...previous, ...value,
     firstObservedAtMs: previous?.firstObservedAtMs || value.observedAtMs });
   trimEvents(state);
@@ -490,8 +489,11 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   const group = groupIdentity ? ensureGroup(state, system, row, groupIdentity) : null;
   const radio = radioIdentity ? ensureRadio(state, system, row, radioIdentity, role) : null;
   if (!radio && !group) return;
-  if (radio && group) radio.activityGroupKey = group.key;
   const atMs = finite(row.observed_at_ms);
+  if (radio && group && atMs >= (radio.activityAtMs || 0)) {
+    radio.activityGroupKey = group.key;
+    radio.activityAtMs = atMs;
+  }
   const entity = group || radio;
   const event = { key: `call:${entity.key}`, category: 'call',
     title: state.actionLabel(action),
@@ -507,7 +509,7 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   if (!initial && focusEligible) result.focusCandidates.push(event);
 }
 
-function applyP25ActivityRows(state, rows, options = {}) {
+function appendP25ActivityRows(state, rows, options = {}) {
   if (!state?.systems || !state?.groups || !state?.radios) throw new TypeError('P25 history state is required.');
   const initial = options.initial === true;
   const ingestedAtMs = finite(options.atMs, Date.now());
@@ -532,16 +534,17 @@ function applyP25ActivityRows(state, rows, options = {}) {
       continue;
     }
     const system = ensureSystem(state, row);
+    const rowInitial = initial && !options.attentionIds?.has(id);
     const highlightAtMs = options.highlightAtObservationTime === true ?
       Math.min(ingestedAtMs, finite(row.observed_at_ms, ingestedAtMs)) : ingestedAtMs;
     const rowShouldHighlight = (category) => shouldHighlight(category) &&
       (options.highlightAtObservationTime !== true || highlightAtMs + highlightDuration(category) > ingestedAtMs);
-    if (action === 'JOIN') applyJoin(state, system, row, result, initial, highlightAtMs, rowShouldHighlight);
-    else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, highlightAtMs, rowShouldHighlight);
+    if (action === 'JOIN') applyJoin(state, system, row, result, rowInitial, highlightAtMs, rowShouldHighlight);
+    else if (action === 'LOGOUT') applyLogout(state, system, row, result, rowInitial, highlightAtMs, rowShouldHighlight);
     else if (P25_ROUTINE_ACTIONS.includes(action)) {
-      applyRoutineActivity(state, system, row, result, initial, action, highlightAtMs, rowShouldHighlight,
+      applyRoutineActivity(state, system, row, result, rowInitial, action, highlightAtMs, rowShouldHighlight,
         grantActivityTimeoutMs);
-    } else applySignal(state, system, row, result, initial, action, highlightAtMs, rowShouldHighlight);
+    } else applySignal(state, system, row, result, rowInitial, action, highlightAtMs, rowShouldHighlight);
     result.accepted += 1;
     result.changed = true;
   }
@@ -558,6 +561,74 @@ function applyP25ActivityRows(state, rows, options = {}) {
   result.focusCandidates.sort((left, right) => right.priority - left.priority ||
     right.observedAtMs - left.observedAtMs);
   return result;
+}
+
+
+// Retain the bounded saved rows so a correction can remove its old graph facts.
+// New rows append incrementally; replacements, deletions and window expiry rebuild once per batch.
+function applyP25ActivityRows(state, rows, options = {}) {
+  const savedRows = state.savedRows;
+  const incoming = Array.isArray(rows) ? rows : [];
+  let rebuild = false, ignored = 0, accepted = 0;
+  const additions = [];
+  const remove = (id) => { if (savedRows.delete(Number(id))) rebuild = true; };
+  (options.removedIds || []).forEach(remove);
+  for (const row of incoming) {
+    const id = Number(row?.id);
+    const previous = savedRows.get(id);
+    if (!Number.isSafeInteger(id) || id < 1 || !isP25Trunked(row) || !ACTIONS.has(actionOf(row))) {
+      if (previous) remove(id);
+      ignored++;
+      continue;
+    }
+    if (previous && JSON.stringify(previous) === JSON.stringify(row)) { ignored++; continue; }
+    savedRows.set(id, row);
+    accepted++;
+    if (previous) rebuild = true;
+    else additions.push(row);
+  }
+  if (Number.isFinite(options.fromMs)) {
+    for (const [id, row] of savedRows) if (finite(row.observed_at_ms) < options.fromMs) remove(id);
+  }
+  if (savedRows.size > MAX_SAVED_ROWS) {
+    const oldest = [...savedRows.values()].sort((a, b) => finite(a.observed_at_ms) - finite(b.observed_at_ms) || a.id - b.id);
+    oldest.slice(0, savedRows.size - MAX_SAVED_ROWS).forEach((row) => remove(row.id));
+    state.truncated = true;
+  }
+  if (!rebuild) {
+    const result = appendP25ActivityRows(state, additions, options);
+    result.ignored += ignored;
+    return result;
+  }
+  const previous = { systems: state.systems, groups: state.groups, radios: state.radios };
+  const next = createP25HistoryState({ actionLabel: state.actionLabel,
+    maximumRadios: state.maximumRadios, maximumGroups: state.maximumGroups });
+  next.savedRows = savedRows;
+  next.truncated = state.truncated;
+  const replay = appendP25ActivityRows(next, [...savedRows.values()], { ...options, initial: true,
+    attentionIds: options.initial === true ? new Set() : new Set(additions.map((row) => Number(row.id))) });
+  const sameKeys = (left, right) => left.size === right.size && [...left.keys()].every((key) => right.has(key));
+  const stableSystems = sameKeys(previous.systems, next.systems);
+  // Preserve anchors only when the relevant clouds retain the same layout slots.
+  // A removed/introduced cloud otherwise needs its rebuilt ordinal to avoid overlap.
+  for (const type of ['systems', 'groups', 'radios']) {
+    for (const [key, entity] of next[type]) {
+      const prior = previous[type].get(key);
+      if (!prior) continue;
+      const stableGroups = type === 'systems' || sameKeys(previous.systems.get(entity.systemKey).groupKeys,
+        next.systems.get(entity.systemKey).groupKeys);
+      if (stableSystems && stableGroups) {
+        for (const field of ['x', 'y', 'z', 'radius']) if (Number.isFinite(prior[field])) entity[field] = prior[field];
+      }
+      if (!entity.highlightUntilMs && prior.highlightUntilMs > finite(options.atMs, Date.now())) {
+        entity.signalAction = prior.signalAction; entity.highlightUntilMs = prior.highlightUntilMs;
+      }
+    }
+  }
+  Object.assign(state, next);
+  // A correction is authoritative, but it is not another radio observation.
+  return { changed: true, accepted, ignored, rebuilt: true, focusCandidates: replay.focusCandidates,
+    affiliationChanges: replay.affiliationChanges };
 }
 
 function visibleSignal(entity, atMs, highlighted) {

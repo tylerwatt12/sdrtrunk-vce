@@ -126,6 +126,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/channels/{configuration_id}/neighbors` | Paged RF-site neighbors learned by that channel. |
 | `GET /api/v1/channels/{configuration_id}/patch-groups` | Bounded P25 patch groups and members learned by that channel. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
+| `GET /api/v1/activity/live` | Bounded catchup for a subscribed P25 Activity consumer. |
 | `GET /api/v1/activity/actions` | Activity action totals for a selected time range. Dashboard access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
@@ -247,6 +248,10 @@ cursor and rebuild its selected history window. Global reads require inclusive `
 no larger than 24 hours, and a nonempty `actions` whitelist. `action` and `actions` are mutually exclusive. This mode
 reads the existing retained Activity table and does not introduce a second history store.
 
+P25 Visualizer seeds use `projection=p25_visualizer` to retain the graph's identities, names and observation facts
+without unrelated Activity fields. Forward paging pins insertion IDs; it does not detect later changes to an
+existing event. Use the `p25_activity` subscription and its catchup route for those changes.
+
 Owner-scoped Activity reads also accept `has_tones=true`, independently of `action` and `event_type`.
 The tone filter applies before cursor paging. A call containing tones keeps its original classification, such as
 `CALL` / `CALL_GROUP`, and includes an optional `paging_tone_summary` with ordered frequencies or DTMF symbols,
@@ -313,11 +318,27 @@ Pages share one multiplexed connection per browser document:
   `revision` and a `subscriptions` object.
 
 Subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`,
-`tuner_diagnostics`, and `frequency_audio`. Their numeric topic IDs are respectively 1 through 6; topic 0 is
+`tuner_diagnostics`, `frequency_audio`, and `p25_activity`. Their numeric topic IDs are respectively 1 through 7; topic 0 is
 transport control. Parameters use `snake_case`. Channel-owned subscriptions use `configuration_id`.
 `decode_messages` also requires positive `frequency_hz`; `timeslot` is supported by decoder events and channel
 diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object, an optional
 `subscription_id`, and `markers: true` for compact tuner-marker rows.
+
+`p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before loading the selected
+saved-history window. Its `source_change` boundary includes `subscription_id`, `source_epoch`, `sequence`,
+`server_time_ms`, `traffic_grant_age_out_milliseconds`, and `collection_enabled`. A changed `source_epoch` requires a new seed.
+
+`activity_delta` carries `source_epoch`, `base_sequence`, `sequence`, `rows`, `removed_ids`, and zero-based `part` /
+`parts`. Rows fully replace saved events by `id`, including later corrections. Apply all parts atomically only when
+the base sequence matches the last complete sequence. Buffer updates while loading the initial history.
+
+After loading, request `/api/v1/activity/live` with the boundary's `source_epoch` and `after_sequence`, `after_id=0`,
+and `limit` from 1 through 500. The response's `data` contains `source_epoch`, `rows`, `removed_ids`, `through_sequence`,
+`next_after_id`, `has_more`, and `resync_required`. Follow pages with the original `after_sequence`, the first page's
+`through_sequence`, and the returned `next_after_id`. Overlay the completed catchup on the seed, then apply buffered
+updates newer than that boundary. A brief connection loss can use the same catchup without reloading history.
+`resync_required` means the source or retained range changed and a new seed is required; a `transport_gap` first
+attempts catchup. Collection being off leaves retained history readable. Closing the view releases its subscription.
 
 The framed envelope is version 2. Metadata topics use bounded FIFOs; dense diagnostic topics use replaceable
 latest-value slots. Slow clients can lose stale diagnostic frames or be disconnected, but never apply backpressure to
