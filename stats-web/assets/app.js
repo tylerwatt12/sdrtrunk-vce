@@ -2564,10 +2564,7 @@ async function requestServiceStatus() {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     beginServiceStatusRequest();
     try {
-      const value = await api('/api/v1/status', {}, {
-        page: false,
-        onResponse: (response) => reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'))
-      });
+      const value = await api('/api/v1/status', {}, { page: false });
       acceptServiceStatus(value);
       return value;
     } catch (error) {
@@ -9493,7 +9490,7 @@ async function requestJson(path, options = {}) {
       keepalive: options.keepalive === true,
       signal: controller.signal
     });
-    options.onResponse?.(response);
+    reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'));
     const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
     if (response.status !== 204) {
       if (contentType.includes('json')) result = await response.json().catch((error) => {
@@ -33957,7 +33954,7 @@ function loggingAvailabilitySignature() {
 
 function reloadForWebClientRevision(revision) {
   const serverRevision = String(revision || '').trim();
-  if (!WEB_CLIENT_REVISION || !serverRevision || serverRevision === WEB_CLIENT_REVISION ||
+  if (!WEB_CLIENT_REVISION || !/^[A-Za-z0-9._-]{1,64}$/.test(serverRevision) || serverRevision === WEB_CLIENT_REVISION ||
       webClientReloadAttempted) return false;
 
   webClientReloadAttempted = true;
@@ -34043,10 +34040,18 @@ const recordingsFeature = createRecordingsFeature({
 });
 
 async function openCallRelations(kind, id) {
-  const [{ createCallRelations }] = await Promise.all([
-    import('./features/call-relations.js?v=4'), loadActivityMessageTypes()
-  ]);
-  const showCallRelations = createCallRelations({
+  const renderContext = captureRenderContext();
+  let relationsModule;
+  try {
+    [relationsModule] = await Promise.all([
+      import('./features/call-relations.js?v=4'), loadActivityMessageTypes()
+    ]);
+  } catch (error) {
+    if (!renderIsCurrent(renderContext)) return;
+    throw error;
+  }
+  if (!renderIsCurrent(renderContext)) return;
+  const showCallRelations = relationsModule.createCallRelations({
     node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
     radioIdentifierText, groupIdentifierText,
     activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',

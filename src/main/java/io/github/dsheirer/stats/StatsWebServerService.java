@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.eventbus.Subscribe;
+import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -469,8 +470,11 @@ public class StatsWebServerService implements AutoCloseable
             () -> mWebDiagnosticLogService.event("request_capacity_full", Map.of()));
         String webClientRevision = readWebClientRevision(configuration.requested().assetRoot());
         WebListener listener = WebListener.open(configuration, executor, server ->
-            registerContexts(WebDiagnosticHttpFilter.instrumentContexts(server, mWebDiagnosticLogService),
-                configuration.requested().assetRoot(), webClientRevision));
+            registerContexts(WebDiagnosticHttpFilter.instrumentContexts(server, mWebDiagnosticLogService,
+                Filter.beforeHandler("Published web client revision", exchange -> {
+                    if(webClientRevision != null)
+                        exchange.getResponseHeaders().set("X-Sdrtrunk-Web-Revision", webClientRevision);
+                })), configuration.requested().assetRoot(), webClientRevision));
         mWebDiagnosticLogService.event("listener_started", Map.of());
         return listener;
     }

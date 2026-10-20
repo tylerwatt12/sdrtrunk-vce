@@ -38,6 +38,10 @@ sort fields, ambiguous identifiers, and invalid booleans are rejected. Repeated 
 a resource explicitly accepts them, such as `scan_list_id` on the browser call feed. Path segments are decoded once.
 A literal `+` remains a plus, and encoded separators are rejected.
 
+Responses include `X-Sdrtrunk-Web-Revision` when the listener serves a versioned web client. The browser uses this
+header on its existing API requests to detect a deployed update, including responses that require authentication.
+API clients can ignore it; it does not version the API or its data.
+
 ## Identity model
 
 The API has two top-level radio resources:

@@ -33,6 +33,9 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.web.auth.AccessTier;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebCapability;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -119,6 +122,58 @@ class StatsApiV1HttpContractTest
         {
             System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, mPreviousAssetOverride);
         }
+    }
+
+    @Test
+    void revisionHeaderMatchesAssetsOnApiSuccessAndErrors() throws Exception
+    {
+        String revision = get("/").headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow();
+        assertEquals("test-revision", revision);
+        for(String path: List.of(StatsApiV1.STATUS, "/api/v1/auth/session", StatsApiV1.ALIAS_LISTS,
+            StatsApiV1.STATUS + "?unknown=true"))
+        {
+            HttpResponse<String> response = get(path);
+            assertEquals(revision, response.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow(), path);
+            if(path.equals(StatsApiV1.ALIAS_LISTS)) assertEquals(401, response.statusCode());
+            else if(path.contains("?")) assertEquals(400, response.statusCode());
+            else assertEquals(200, response.statusCode());
+        }
+    }
+
+    @Test
+    void authSessionCarriesRevisionWithoutDashboardAccess() throws Exception
+    {
+        mService.provisionOrResetPrimaryAdmin("revision-fixture-password".toCharArray());
+        Field field = StatsWebServerService.class.getDeclaredField("mWebAccessService");
+        field.setAccessible(true);
+        ((WebAccessService)field.get(mService)).setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.ADMIN);
+        HttpResponse<String> session = get("/api/v1/auth/session");
+        assertEquals(200, session.statusCode());
+        assertFalse(OBJECT_MAPPER.readTree(session.body()).at("/data/capabilities/dashboard").booleanValue());
+        assertEquals("test-revision", session.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+        HttpResponse<String> denied = get(StatsApiV1.STATUS);
+        assertEquals(401, denied.statusCode());
+        assertEquals("test-revision", denied.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+    }
+
+    @Test
+    void revisionHeaderUsesTheListenerSnapshotAndOmitsMissingRevision() throws Exception
+    {
+        Path index = mTemporaryDirectory.resolve("assets/index.html");
+        Files.writeString(index, "<meta name=\"sdrtrunk-web-revision\" content=\"next-revision\">");
+        assertEquals("test-revision", get("/api/v1/auth/session").headers()
+            .firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+        WebServerRuntimeState reloaded = mService.reloadActiveListener();
+        assertTrue(reloaded.running(), reloaded.statusMessage());
+        mOrigin = URI.create("http://127.0.0.1:" + reloaded.port());
+        for(String path: List.of("/", StatsApiV1.STATUS, "/api/v1/auth/session"))
+            assertEquals("next-revision", get(path).headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+
+        Files.writeString(index, "<!doctype html><title>API fixture without a revision</title>");
+        reloaded = mService.reloadActiveListener();
+        assertTrue(reloaded.running(), reloaded.statusMessage());
+        mOrigin = URI.create("http://127.0.0.1:" + reloaded.port());
+        assertTrue(get("/api/v1/auth/session").headers().firstValue("X-Sdrtrunk-Web-Revision").isEmpty());
     }
 
     @Test

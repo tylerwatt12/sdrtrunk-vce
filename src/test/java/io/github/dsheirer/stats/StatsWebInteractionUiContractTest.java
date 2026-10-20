@@ -343,6 +343,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String reload = function(source, "function reloadForWebClientRevision(revision)");
         String status = function(source, "async function requestServiceStatus()");
+        String requestJson = function(source, "async function requestJson(path, options = {})");
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
@@ -353,8 +354,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(reload.contains("window.location.reload()"));
         assertFalse(reload.contains("fetch("));
         assertTrue(status.contains("api('/api/v1/status'"));
-        assertTrue(status.contains("onResponse: (response) => reloadForWebClientRevision("));
-        assertTrue(status.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
+        assertFalse(status.contains("onResponse"));
+        assertTrue(requestJson.contains("reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'))"));
         assertTrue(groupIdentity.contains("api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey))"));
         assertFalse(source.contains("/api/talkgroup"));
     }
