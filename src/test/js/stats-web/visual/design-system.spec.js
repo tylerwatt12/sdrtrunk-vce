@@ -384,7 +384,11 @@ for (const theme of ['light', 'dark']) {
         application.indexOf('function applyPreferredTableWidths('));
       const limits = application.match(/^const TABLE_WIDTH_(?:MINIMUM|MAXIMUM) = \d+;/gm).join('\n');
       const measure = new Function('node', `${limits}\n${source}\nreturn measureTableColumnContentWidth;`)(
-        (tag) => document.createElement(tag));
+        (tag, className = '') => {
+          const element = document.createElement(tag);
+          element.className = className;
+          return element;
+        });
       const table = document.createElement('table');
       table.className = 'data-table resizable-table ui-data-table channels-live-table '
         + 'ui-data-table-compact ui-mobile-cards';

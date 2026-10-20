@@ -240,7 +240,7 @@
 
 .identity-summary-inline > .identity-summary-context {
   flex: 0 0 auto;
-  max-width: 60%;
+  max-width: calc(100% - var(--space-1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

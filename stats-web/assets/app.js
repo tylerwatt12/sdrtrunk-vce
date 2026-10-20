@@ -2934,26 +2934,40 @@ function setTableColumnWidths(element, columnElements, widths, fixed = false) {
 function measureTableColumnContentWidth(element, header, index) {
   const sourceCells = [header];
   [...element.tBodies].forEach((tableBody) => [...tableBody.rows].forEach((row) => {
+    if (row.hidden || row.classList.contains('ui-table-row-group') || !row.getClientRects().length) return;
     const cell = row.cells[index];
-    if (cell && !cell.classList.contains('empty')) sourceCells.push(cell);
+    if (cell && cell.colSpan === 1 && !cell.classList.contains('empty') &&
+        cell.getClientRects().length) sourceCells.push(cell);
   }));
   const measurement = element.cloneNode(false);
   measurement.removeAttribute('id');
   measurement.removeAttribute('style');
   measurement.classList.add('table-column-autofit-measurement');
-  const measurementBody = node('tbody');
+  const sections = new Map();
   sourceCells.forEach((sourceCell) => {
-    const row = sourceCell.parentElement?.cloneNode(false) || node('tr');
+    const sourceRow = sourceCell.parentElement;
+    const sourceSection = sourceRow.parentElement;
+    let section = sections.get(sourceSection);
+    if (!section) {
+      section = sourceSection.cloneNode(false);
+      section.removeAttribute('id');
+      sections.set(sourceSection, section);
+      measurement.append(section);
+    }
+    const row = sourceRow.cloneNode(false);
     row.removeAttribute('id');
     const cell = sourceCell.cloneNode(true);
     cell.removeAttribute('id');
     cell.querySelectorAll('[id]').forEach((candidate) => candidate.removeAttribute('id'));
     cell.querySelectorAll('.column-resizer').forEach((candidate) => candidate.remove());
-    row.append(cell);
-    measurementBody.append(row);
+    // Keep column position selectors without measuring neighboring columns.
+    [...sourceRow.cells].forEach((sibling) => {
+      if (sibling === sourceCell) row.append(cell);
+      else row.append(node(sibling.localName, 'table-column-autofit-placeholder'));
+    });
+    section.append(row);
   });
-  measurement.append(measurementBody);
-  document.body.append(measurement);
+  (element.parentElement || document.body).append(measurement);
   let width;
   try {
     width = Math.ceil(measurement.getBoundingClientRect().width);
@@ -3050,6 +3064,15 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
       const startingX = event.clientX;
       let resizedWidths = startingWidths;
       const updateWidth = (clientX) => {
+        if (clientX === startingX) {
+          if (resizedWidths !== startingWidths) {
+            resizedWidths = startingWidths;
+            setTableColumnWidths(element, columnElements, startingWidths,
+              Boolean(tableDefaults.fit(tableType)));
+            handle.setAttribute('aria-valuenow', String(startingWidths[index]));
+          }
+          return;
+        }
         resizedWidths = resizeColumns(index, startingWidths, clientX - startingX);
         handle.setAttribute('aria-valuenow', String(Math.round(resizedWidths[index])));
       };
@@ -3366,6 +3389,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   let layoutMenuFocus = () => null;
   let setLayoutMenuBusy = () => {};
   let layoutMutationPending = false;
+  let tableWidthRefreshPending = false;
   const setTableLayoutBusy = (busy) => {
     setLayoutMenuBusy(busy);
     element.classList.toggle('table-layout-busy', Boolean(busy));
@@ -3381,6 +3405,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const endLayoutMutation = () => {
     layoutMutationPending = false;
     setTableLayoutBusy(false);
+    if (tableWidthRefreshPending) applyWidths();
   };
   const rebuildTable = (nextLayout, reopenLayoutMenu = false, restoreLayoutFocus = null) => {
     if (!wrapper.isConnected) return;
@@ -3568,7 +3593,13 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   }
   wrapper.append(element);
   const applyWidths = () => {
-    if (!options.recordList) applyPreferredTableWidths(element, wrapper, columns, columnElements,
+    if (options.recordList) return;
+    if (layoutMutationPending) {
+      tableWidthRefreshPending = true;
+      return;
+    }
+    tableWidthRefreshPending = false;
+    applyPreferredTableWidths(element, wrapper, columns, columnElements,
       layout, tableType, options.widthVariant);
   };
   applyWidths();
@@ -3581,7 +3612,13 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     }
   });
   if (!options.recordList && tableDefaults.fit(tableType) && typeof ResizeObserver !== 'undefined') {
-    tableController.widthObserver = new ResizeObserver(applyWidths);
+    let observedWidth = wrapper.clientWidth;
+    tableController.widthObserver = new ResizeObserver(() => {
+      const nextWidth = wrapper.clientWidth;
+      if (nextWidth === observedWidth) return;
+      observedWidth = nextWidth;
+      applyWidths();
+    });
     tableController.widthObserver.observe(wrapper);
     const observer = tableController.widthObserver;
     activeRenderController?.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
