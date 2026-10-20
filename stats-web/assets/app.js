@@ -23830,6 +23830,24 @@ function channelAdminFrequencyList(values) {
   return (values || []).map((value) => frequency(value)).filter(Boolean).join(', ');
 }
 
+function uiLinkTile(label, context = '', target = '', fullLabel = '') {
+  const tile = target ? anchor('', target, 'ui-link-tile') : node('div', 'ui-link-tile');
+  if (fullLabel) {
+    tile.setAttribute('aria-label', fullLabel);
+    tile.dataset.uiHint = fullLabel;
+  }
+  const copy = node('span', 'ui-link-tile-copy');
+  copy.append(node('span', 'ui-link-tile-label', label));
+  if (context) copy.append(node('small', 'ui-link-tile-context', context));
+  tile.append(copy);
+  if (target) {
+    const icon = iconGlyph('icon-open-details');
+    icon.classList.add('ui-link-tile-icon');
+    tile.append(icon);
+  }
+  return tile;
+}
+
 function uiActionButton(label, iconId, action, className = 'ui-button ui-button-secondary') {
   const button = node('button', className);
   button.type = 'button';
@@ -26515,29 +26533,40 @@ function aliasCoverageSummaryCards(totals, unassigned, countFailed = false, anal
 function aliasCoverageScope(overview) {
   const rows = Array.isArray(overview.channels) ? overview.channels : [];
   const systems = Number(overview.correlated_radio_system_count || 0);
-  const scope = node('section', 'ui-surface alias-coverage-scope');
-  const header = node('header', 'alias-coverage-section-header');
-  const copy = node('div');
-  copy.append(node('h2', '', 'Channels using this Alias List'),
-    node('p', 'muted', rows.length ?
-      `${number(rows.length)} channel${rows.length === 1 ? '' : 's'}${systems > 0 ?
-        ` across ${number(systems)} radio system${systems === 1 ? '' : 's'}` : ''}` :
-      'No configured channels currently reference this Alias List'));
-  header.append(copy);
-  const list = node('div', 'alias-coverage-scope-list');
+  const scope = node('details', 'ui-section-disclosure alias-coverage-scope');
+  const header = node('summary', 'ui-section-summary');
+  header.append(node('span', '', 'Channels using this Alias List'),
+    node('small', 'muted', `${number(rows.length)} channel${rows.length === 1 ? '' : 's'}${systems > 0 ?
+      ` · ${number(systems)} radio system${systems === 1 ? '' : 's'}` : ''}`));
+  const list = node('div', 'ui-section-body alias-coverage-scope-list');
+  const groups = new Map();
   rows.forEach((row) => {
-    const item = node('div', 'alias-coverage-scope-row');
-    const channelTarget = entityTarget(row.channel_entity_ref);
     const systemTarget = entityRefHref(row.radio_system_entity_ref);
-    const channelLabel = row.name || row.site_name || row.configuration_id;
-    const channel = node('strong', '');
-    channel.append(channelTarget ? anchor(channelLabel, channelTarget) : channelLabel);
-    const context = node('span', 'muted');
-    const systemLabel = configuredAliasAssignment(row) ? radioSystemPrimaryName(row) : radioSystemDisplayName(row);
-    if (systemLabel) context.append(systemTarget ? anchor(systemLabel, systemTarget) : systemLabel);
-    if (row.site_name && row.site_name !== channelLabel) context.append(` · ${row.site_name}`);
-    item.append(channel, context);
-    list.append(item);
+    const key = row.radio_system_key ? `system:${row.radio_system_key}` :
+      systemTarget || `channel:${row.configuration_id}`;
+    if (!groups.has(key)) groups.set(key, { row, systemTarget, channels: [] });
+    groups.get(key).channels.push(row);
+  });
+  groups.forEach(({ row, systemTarget, channels }) => {
+    const group = node('section', 'ui-heading-group alias-coverage-scope-group');
+    const systemLabel = (configuredAliasAssignment(row) ? radioSystemPrimaryName(row) :
+      radioSystemDisplayName(row)) || 'Channels without a radio system';
+    const heading = node('h3', 'ui-section-heading');
+    heading.append(systemTarget ? anchor(systemLabel, systemTarget) : systemLabel);
+    const tiles = node('div', 'alias-coverage-channel-grid');
+    channels.forEach((channel) => {
+      const target = entityTarget(channel.channel_entity_ref);
+      const savedName = channel.name || channel.site_name || channel.configuration_id;
+      const prefix = `${radioSystemPrimaryName(channel) || systemLabel} · `;
+      const label = target && savedName.startsWith(prefix) && savedName.length > prefix.length ?
+        savedName.slice(prefix.length) : savedName;
+      const context = sameSiteText(channel.site_name, label) ? '' : channel.site_name || '';
+      const item = uiLinkTile(label, context, target, label !== savedName ? savedName : '');
+      item.classList.add('alias-coverage-scope-row');
+      tiles.append(item);
+    });
+    group.append(heading, tiles);
+    list.append(group);
   });
   if (!rows.length) list.append(node('div', 'empty alias-coverage-empty',
     'Assign this Alias List to a channel to connect future activity.'));
@@ -26699,9 +26728,10 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       event.preventDefault();
       navigateCoverage(link.href, { scrollToTable: Boolean(link.closest('.pager')) });
     });
-    wrapper.append(toolbar, summary, analog ? node('p', 'ui-section-note',
-      'Calls include saved history since alias tracking began. Heard within filters when each assignment was last heard.') : null,
-      aliasCoverageScope(overview), tableSection);
+    wrapper.append(toolbar, summary);
+    if (analog) wrapper.append(node('p', 'ui-section-note',
+      'Calls include saved history since alias tracking began. Heard within filters when each assignment was last heard.'));
+    wrapper.append(aliasCoverageScope(overview), tableSection);
     return wrapper;
   };
 

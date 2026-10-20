@@ -24,11 +24,35 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
     { alias_list_id: 4, name: 'City Services', family: 'DMR', alias_count: 1 },
     { alias_list_id: 5, name: 'Regional', family: 'NXDN', alias_count: 1 }
   ]);
+  const channelIds = [
+    '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+    '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444',
+    '55555555-5555-4555-8555-555555555555'
+  ];
+  const systemKeys = ['p25:00001:001', 'p25:00002:001'];
   const overview = { totals: { configured_alias_count: 2, active_alias_count: 1,
     zero_call_alias_count: 1, never_heard_alias_count: 1 },
-    correlated_radio_system_count: 1,
-    channels: [{ configuration_id: 'channel-1', name: 'County Simulcast',
-      system_name: 'County System' }] };
+    correlated_radio_system_count: 2,
+    channels: [
+      { configuration_id: channelIds[0], name: 'County Simulcast', site_name: 'Central',
+        system_name: 'County System', radio_system_key: systemKeys[0], protocol: 'P25',
+        channel_entity_ref: { kind: 'channel', key: channelIds[0] },
+        radio_system_entity_ref: { kind: 'radio_system', key: systemKeys[0] } },
+      { configuration_id: channelIds[1], name: 'North Control', site_name: 'North Control',
+        system_name: 'County System', radio_system_key: systemKeys[0], protocol: 'P25',
+        channel_entity_ref: { kind: 'channel', key: channelIds[1] },
+        radio_system_entity_ref: { kind: 'radio_system', key: systemKeys[0] } },
+      { configuration_id: channelIds[2], name: 'County System · West Dispatch', site_name: 'West',
+        system_name: 'County System', radio_system_key: systemKeys[1], protocol: 'P25',
+        channel_entity_ref: { kind: 'channel', key: channelIds[2] },
+        radio_system_entity_ref: { kind: 'radio_system', key: systemKeys[1] } },
+      { configuration_id: channelIds[3], name: 'Fireground Conventional', site_name: 'Local',
+        system_name: 'County Fireground', protocol: 'P25',
+        channel_entity_ref: { kind: 'channel', key: channelIds[3] } },
+      { configuration_id: channelIds[4], name: 'Local Monitor', site_name: 'Local Monitor',
+        system_name: 'County System', radio_system_key: systemKeys[0], protocol: 'P25',
+        radio_system_entity_ref: { kind: 'radio_system', key: systemKeys[0] } }
+    ] };
   const aliases = pageOf([
     { alias_id: 21, name: 'Fire Dispatch', matcher_label: 'Talkgroup',
       identity_display: '101', identity_type: 'talkgroup', value: 101,
@@ -83,13 +107,64 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
 
   await listSelect.selectOption('2');
   await expect(inventory.locator('.alias-coverage-summary')).toBeVisible();
-  await expect(inventory.getByRole('heading', { name: 'Channels using this Alias List' })).toBeVisible();
+  const channelScope = inventory.locator('details.alias-coverage-scope');
+  const channelScopeSummary = channelScope.locator(':scope > summary.ui-section-summary');
+  await expect(channelScopeSummary).toContainText('Channels using this Alias List');
+  await expect(channelScopeSummary).toContainText(/5 channels.*2 radio systems/);
+  await expect(channelScope).not.toHaveAttribute('open');
+  await expect(channelScope.locator('.alias-coverage-channel-grid').first()).toBeHidden();
+  expect(await inventory.evaluate((element) => [...element.childNodes]
+    .filter((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim() === 'null')
+    .map((child) => child.textContent))).toEqual([]);
+  await channelScopeSummary.focus();
+  await page.keyboard.press('Enter');
+  await expect(channelScope).toHaveAttribute('open', '');
+  const channelGroups = channelScope.locator('.alias-coverage-scope-group');
+  await expect(channelGroups).toHaveCount(3);
+  const systemLinks = channelGroups.locator('h3 a');
+  await expect(systemLinks).toHaveText(['County System', 'County System']);
+  for (const [index, key] of systemKeys.entries()) {
+    const target = new URL(await systemLinks.nth(index).getAttribute('href'), page.url());
+    expect(target.searchParams.get('view')).toBe('radio-system');
+    expect(target.searchParams.get('radio_system_key')).toBe(key);
+  }
+  await expect(channelScope.locator('table')).toHaveCount(0);
+  await expect(channelScope.locator('.ui-link-tile')).toHaveCount(5);
+  await expect(channelScope.locator('a.ui-link-tile .ui-link-tile-icon')).toHaveCount(4);
+  await expect(channelGroups.nth(0).locator('.alias-coverage-scope-row')).toHaveCount(3);
+  await expect(channelGroups.nth(0).locator('.ui-link-tile-context')).toHaveText(['Central']);
+  await expect(channelGroups.nth(1).locator('.ui-link-tile-context')).toHaveText(['West']);
+  await expect(channelGroups.nth(2)).toContainText('County Fireground');
+  await expect(channelGroups.nth(2).locator('.ui-link-tile-context')).toHaveText(['Local']);
+  const unlinked = channelScope.locator('div.ui-link-tile');
+  await expect(unlinked).toHaveText('Local Monitor');
+  await expect(unlinked.locator('a, .ui-link-tile-icon')).toHaveCount(0);
+  const shortened = channelScope.locator('a.ui-link-tile')
+    .filter({ has: page.getByText('West Dispatch', { exact: true }) });
+  await expect(shortened.locator('.ui-link-tile-label')).toHaveText('West Dispatch');
+  await expect(shortened).toHaveAttribute('aria-label', 'County System · West Dispatch');
+  await expect(shortened).toHaveAttribute('data-ui-hint', 'County System · West Dispatch');
+  for (const [index, name] of ['County Simulcast', 'North Control', 'West Dispatch',
+    'Fireground Conventional'].entries()) {
+    const channelLink = channelScope.locator('a.ui-link-tile')
+      .filter({ has: page.getByText(name, { exact: true }) });
+    await expect(channelLink).toBeVisible();
+    const target = new URL(await channelLink.getAttribute('href'), page.url());
+    expect(target.searchParams.get('view')).toBe('channel');
+    expect(target.searchParams.get('configuration_id')).toBe(channelIds[index]);
+  }
+  await channelScopeSummary.focus();
+  await page.keyboard.press('Space');
+  await expect(channelScope).not.toHaveAttribute('open');
   await expect(inventory.getByRole('heading', { name: 'Alias inventory' })).toBeVisible();
   await expect(inventory.getByRole('button', { name: 'Other', exact: true })).toBeVisible();
   await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
   await expect(inventory.locator('.alias-coverage-summary')).toContainText('Loading…');
   releaseUnassignedCount();
   await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Loading…');
+  expect(await inventory.evaluate((element) => [...element.childNodes]
+    .filter((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim() === 'null')
+    .map((child) => child.textContent))).toEqual([]);
   await expect(inventory.getByRole('button', { name: /^Unknown aliases(?: \(0\))?$/ })).toBeVisible();
   await expect(inventory.getByRole('button', { name: /Unassigned observations/ })).toHaveCount(0);
   await expect(inventory.getByRole('link', { name: 'Discover', exact: true })).toHaveCount(0);

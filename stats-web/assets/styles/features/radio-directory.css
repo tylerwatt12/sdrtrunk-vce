@@ -49,7 +49,6 @@
   white-space: nowrap;
 }
 
-.alias-coverage-scope,
 .alias-coverage-table-section {
   overflow: hidden;
 }
@@ -58,14 +57,11 @@
   scroll-margin-top: var(--space-3);
 }
 
-.alias-coverage-section-header h2,
-.alias-coverage-section-header p,
 .alias-coverage-table-header h2,
 .alias-coverage-table-header p {
   margin: 0;
 }
 
-.alias-coverage-section-header h2,
 .alias-coverage-table-header h2 {
   font-size: var(--font-size-subheading);
 }
@@ -75,7 +71,6 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.alias-coverage-section-header,
 .alias-coverage-table-header {
   min-width: 0;
   display: flex;
@@ -96,31 +91,15 @@
   width: auto;
 }
 
-.alias-coverage-scope-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.alias-coverage-scope-row {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-  padding: 10px var(--space-3);
-  border-bottom: 1px solid var(--line);
-}
-
-.alias-coverage-scope-row:nth-child(odd) {
-  border-right: 1px solid var(--line);
-}
-
-.alias-coverage-scope-row:nth-last-child(-n + 2) {
-  border-bottom: 0;
-}
-
-.alias-coverage-scope-row strong,
-.alias-coverage-scope-row span {
+.alias-coverage-scope-group {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.alias-coverage-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
 }
 
 .alias-coverage-empty {
@@ -283,7 +262,7 @@
     justify-self: start;
   }
 
-  .alias-coverage-summary {
+.alias-coverage-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -321,19 +300,8 @@
   }
 
   .alias-coverage-summary,
-  .alias-coverage-scope-list {
+  .alias-coverage-channel-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .alias-coverage-scope-row,
-  .alias-coverage-scope-row:nth-child(odd),
-  .alias-coverage-scope-row:nth-last-child(-n + 2) {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .alias-coverage-scope-row:last-child {
-    border-bottom: 0;
   }
 
   .alias-coverage-search {

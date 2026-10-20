@@ -1097,6 +1097,64 @@
   display: none;
 }
 
+/* Compact navigation tiles keep linked names and their context together. */
+.ui-link-tile {
+  min-width: 0;
+  min-height: var(--control-height-comfortable);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  color: var(--ink);
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.ui-link-tile {
+  color: var(--link);
+}
+
+a.ui-link-tile:hover {
+  background: var(--accent-soft);
+  text-decoration: none;
+}
+
+a.ui-link-tile:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.ui-link-tile-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ui-link-tile-label {
+  font-size: var(--font-size-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-link-tile-context {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+}
+
+.ui-link-tile-icon {
+  width: var(--font-size-body);
+  height: var(--font-size-body);
+  flex: 0 0 auto;
+  color: var(--muted);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .ui-toggle-field {
   min-width: 0;
   display: flex;

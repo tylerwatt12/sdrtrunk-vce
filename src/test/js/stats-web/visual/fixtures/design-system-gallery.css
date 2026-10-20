@@ -510,7 +510,7 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   background: var(--chart-data);
 }
 
-.visual-radio-directory-coverage-example table {
+.visual-radio-directory-coverage-example .alias-coverage-table-section table {
   min-width: 680px;
 }
 

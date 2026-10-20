@@ -838,6 +838,74 @@ test('radio-directory-coverage-light-desktop', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-coverage-light-desktop.png', { fullPage: true });
 });
 
+for (const [, theme, viewport] of galleryCases) {
+  test(`alias channel disclosure ${theme} ${viewport.width} remains compact and keyboard accessible`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=radio-directory-coverage`);
+    const scope = page.locator('.visual-radio-directory-coverage-example details.alias-coverage-scope');
+    const summary = scope.locator(':scope > summary.ui-section-summary');
+    await expect(summary).toContainText('Channels using this Alias List');
+    await expect(summary).toContainText('4 channels · 2 radio systems');
+    await expect(scope).not.toHaveAttribute('open');
+    await expect(scope.locator('.alias-coverage-scope-list')).toBeHidden();
+    await expectNoHorizontalOverflow(page);
+    await summary.focus();
+    await summary.press('Enter');
+    await expect(scope).toHaveAttribute('open', '');
+    await expect(summary).toBeFocused();
+    await expect(scope.locator('.alias-coverage-scope-group')).toHaveCount(3);
+    await expect(scope.locator('h3 a')).toHaveText(['Regional Public Safety', 'Municipal DMR']);
+    await expect(scope.locator('table')).toHaveCount(0);
+    await expect(scope.locator('.alias-coverage-channel-grid')).toHaveCount(3);
+    await expect(scope.locator('.ui-link-tile')).toHaveCount(4);
+    await expect(scope.locator('.ui-link-tile-label')).toHaveText([
+      'County Simulcast', 'North Control', 'City Services', 'Fireground Conventional'
+    ]);
+    await expect(scope.locator('.ui-link-tile-context')).toHaveText(['Central', 'North', 'Operations']);
+    await expect(scope.locator('a.ui-link-tile .ui-link-tile-icon')).toHaveCount(3);
+    const unlinked = scope.locator('div.ui-link-tile');
+    await expect(unlinked).toHaveText('Fireground Conventional');
+    await expect(unlinked).not.toHaveAttribute('tabindex');
+    await expect(unlinked.locator('a, .ui-link-tile-icon')).toHaveCount(0);
+    const firstGridTiles = scope.locator('.alias-coverage-channel-grid').first().locator('.ui-link-tile');
+    const [first, second] = await firstGridTiles.evaluateAll((tiles) => tiles.map((tile) => {
+      const bounds = tile.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, width: bounds.width };
+    }));
+    if (viewport.width < 820) {
+      expect(second.top).toBeGreaterThanOrEqual(first.bottom);
+      expect(second.left).toBeCloseTo(first.left, 0);
+    } else {
+      expect(second.top).toBeCloseTo(first.top, 0);
+      expect(second.left).toBeGreaterThanOrEqual(first.right);
+    }
+    expect(second.width).toBeCloseTo(first.width, 0);
+    const expectScopeFits = async () => {
+      expect(await scope.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return [...element.querySelectorAll('.ui-link-tile, .ui-link-tile-copy, .ui-link-tile-label, .ui-link-tile-context')]
+          .every((item) => {
+          const rectangle = item.getBoundingClientRect();
+          return rectangle.left >= bounds.left && rectangle.right <= bounds.right;
+        });
+      })).toBe(true);
+    };
+    await expectScopeFits();
+    await expectNoHorizontalOverflow(page);
+    await scope.locator('a.ui-link-tile').first().focus();
+    await expect(scope.locator('a.ui-link-tile').first()).toBeFocused();
+    await expect(scope).toHaveScreenshot(`alias-channel-disclosure-${theme}-${viewport.width}.png`);
+    const longName = 'Regional Public Safety and Emergency Services · North County Simulcast';
+    const channel = scope.locator('.ui-link-tile-label').first();
+    await channel.evaluate((element, name) => { element.textContent = name; }, longName);
+    await expect(channel).toHaveText(longName);
+    await expectScopeFits();
+    await summary.press('Space');
+    await expect(scope).not.toHaveAttribute('open');
+    await expect(summary).toBeFocused();
+  });
+}
+
 for(const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`radio-directory-panel-${theme}-${width === 390 ? 'mobile' : 'desktop'}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
