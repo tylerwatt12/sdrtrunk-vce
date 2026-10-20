@@ -285,6 +285,7 @@ async function checkSelectedHistory() {
     groupIdentityApiPath: () => '/group/activity',
     api: async () => response,
     groupIdentityActivityChart: () => node('chart'),
+    disconnectPageObserversWithin() {},
     signalingMetrics: () => node('signals'),
     signalingCounts: () => [],
     activityMetricGuide: () => node('help'),

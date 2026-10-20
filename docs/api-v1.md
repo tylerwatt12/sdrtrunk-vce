@@ -122,7 +122,6 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/channels/{configuration_id}/patch-groups` | Bounded P25 patch groups and members learned by that channel. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
 | `GET /api/v1/activity/actions` | Activity action totals for a selected time range. Dashboard access is required. |
-| `GET /api/v1/activity/radios` | Paged SOURCE-radio aggregation across retained matching activity events. Radio access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
 | `GET /api/v1/recordings/status` | Recording mode, catalog availability, and whether indexed recordings exist. |
@@ -140,11 +139,6 @@ Bounded global forward Activity reads are the sole exception and allow up to 5,0
 also has a 20,000-row emergency ceiling. Normal endpoint and export limits are lower.
 
 ### Radio-system directory
-
-`GET /api/v1/radio-systems` accepts `include_channel_preview=true`. Preview requests are limited to 25 parent systems
-and a fixed number of channels per system. Metadata reports `channel_preview_limit_per_system`. The browser adds its
-own `directory_type` while flattening system rows and their channel previews; that display-only field is not part of
-the API resource.
 
 The complete channel collection is always available at
 `/api/v1/radio-systems/{radio_system_key}/channels`. Radio-system responses report every distinct Alias List assigned
@@ -233,12 +227,9 @@ points require a channel-specific request.
 ### Activity and affiliations
 
 `GET /api/v1/activity/actions` accepts `range=1h|6h|24h|7d|30d`. Its metadata includes `range`, `from_ms`, `to_ms`,
-and `total`. The response omits `CONTINUE`.
-
-`GET /api/v1/activity/radios` accepts `range`, required `action`, and normal `limit`/`offset` paging. `CONTINUE` is
-rejected because continuation events are not retained as detailed SOURCE-radio events. SQLite aggregates every
-retained matching event before paging. Rows use `radio_system_key` for trunked activity or `configuration_id` for
-channel-owned activity, so the same numeric radio ID on different systems or channels remains separate.
+and `total_observation_count`. The response omits `CONTINUE`. Totals use compact hourly buckets and share a prepared
+response for up to two seconds per range. Detailed Activity remains scoped through the existing channel, system,
+group and radio views; the dashboard does not aggregate retained detailed events into a source-radio ranking.
 
 `GET /api/v1/activity` retains its newest-first `before_id` paging contract. It also supports a history-consumer mode
 with comma-separated canonical `actions`, `after_id`, and optional `watermark_id`. Forward mode orders rows by
@@ -390,6 +381,12 @@ cursor as `cursor` with the same filters to continue. The search returns at most
 `from_ms`, `to_ms`, `system_key`, `channel_id`, `talkgroup_id`, `radio_id`, `protocol`, `q`, and `transcript`.
 Without a time range, it searches the previous 24 hours. Labels are resolved from current Alias configuration;
 `transcript` searches stored transcript text.
+
+Browse status, searches and filter suggestions may share an identical prepared response for up to two seconds.
+Exact submitted time bounds, filters and cursors remain part of the request identity. Replacement catalogs use a
+separate cache, and successful recording administration updates invalidate browse responses immediately.
+Concurrent distinct requests wait for the existing bounded metadata-read capacity; a prolonged busy read returns
+`503 browse_busy` so the caller can retry. Audio responses and recording production do not use this browse cache.
 
 `GET /api/v1/recordings/calls/{id}` includes a `transcription` object. Its displayed status can be `pending`,
 `complete`, `failed`, `disabled`, or `too_short`; stored text is present when transcription has completed. Browsing

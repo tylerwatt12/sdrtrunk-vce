@@ -25,11 +25,10 @@ class StatsWebPageLifecycleUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
-        int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
         int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=");
 
         assertTrue(lifecycle >= 0);
-        assertTrue(lifecycle < systems);
+        assertFalse(source.contains("import * as radioSystemsDirectory"));
         assertTrue(application >= 0);
         assertFalse(html.contains("<script src=\"/assets/core/page-lifecycle.js"));
         assertFalse(html.contains("<script src=\"/assets/features/radio-systems-directory.js"));
@@ -61,7 +60,7 @@ class StatsWebPageLifecycleUiContractTest
             "content.setAttribute('aria-busy', 'false');");
 
         String system = function(source, "async function renderRadioSystem()");
-        assertOrdered(system, "const response = await api(radioSystemApiPath(radioSystem.radio_system_key));",
+        assertOrdered(system, "api(radioSystemApiPath(radioSystem.radio_system_key))",
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(system, "if (!renderIsCurrent(renderContext)) return;", "window.history.replaceState");
         assertTrue(system.contains("createAsyncSection('Groups'"));
@@ -74,9 +73,10 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(system.contains("loadingMessage: 'Loading talker aliases…'"));
 
         String admin = function(source, "async function renderAdmin()");
-        assertOrdered(admin, "else await renderAdminUsers(renderContext);",
+        String completion = admin.substring(admin.indexOf("else await renderAdminUsers(renderContext);"));
+        assertOrdered(completion, "else await renderAdminUsers(renderContext);",
             "if (!renderIsCurrent(renderContext)) return;");
-        assertOrdered(admin, "if (!renderIsCurrent(renderContext)) return;",
+        assertOrdered(completion, "if (!renderIsCurrent(renderContext)) return;",
             "while (shell.nextSibling) body.append(shell.nextSibling);");
         assertTrue(function(source, "async function renderAdminUsers(renderContext = captureRenderContext())")
             .contains("if (!renderIsCurrent(renderContext)) return;"));
@@ -122,7 +122,9 @@ class StatsWebPageLifecycleUiContractTest
     void preventsObsoleteTimersAndStreamsFromEscapingRouteCleanup() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String signalHealth = function(source, "async function signalHealthSection()");
+        String signalHealth = function(source, "function signalHealthSection(currentChannels)");
+        String dashboard = function(source, "async function renderDashboard()");
+        String mainRefresh = dashboard.substring(dashboard.indexOf("const snapshot = await loadMainDashboard();"));
         String channelSignal = function(source, "async function channelSignalHistorySection(channel)");
         String groupIdentityHistory = function(source,
             "async function groupIdentityActivityHistorySection(scopeParameters)");
@@ -132,8 +134,13 @@ class StatsWebPageLifecycleUiContractTest
         String qualityChart = function(source,
             "function qualityHistoryChart(channel, response, metric, domain, decodeOnly = false)");
 
-        assertOrdered(signalHealth, "await loadCurrent(true, true);",
-            "if (renderIsCurrent(renderContext)) pageInterval(loadCurrent, 10_000);");
+        assertFalse(signalHealth.contains("pageInterval("));
+        assertFalse(signalHealth.contains("api("));
+        assertOrdered(mainRefresh, "const snapshot = await loadMainDashboard();",
+            "if (!renderIsCurrent(renderContext)) return;");
+        assertTrue(mainRefresh.contains("if (refreshing || !renderIsCurrent(renderContext)) return;"));
+        assertTrue(mainRefresh.contains("directory?.update(updated.directory)"));
+        assertTrue(mainRefresh.contains("}, 5_000)"));
         assertOrdered(channelSignal, "await load(rangeControl.buttons, true, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");
         assertOrdered(groupIdentityHistory, "await load(rangeControl.buttons, true, true);",

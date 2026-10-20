@@ -215,15 +215,10 @@ body[data-view="dashboard"] .content {
   margin: 0 var(--space-4) var(--space-3);
 }
 
-.dashboard-activity-radio-status {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-}
-
-.dashboard-activity-radio-result > .ui-section-note {
-  border-top: 0;
+@media (max-width: 1500px) {
+  .dashboard-identity-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 900px) {

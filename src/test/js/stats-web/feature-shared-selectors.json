@@ -118,12 +118,6 @@
     "declarations": "margin: 0 var(--space-4) var(--space-3);"
   },
   {
-    "file": "features/dashboard.css",
-    "atRules": [],
-    "selector": ".dashboard-activity-radio-result > .ui-section-note",
-    "declarations": "border-top: 0;"
-  },
-  {
     "file": "features/radioreference.css",
     "atRules": [],
     "selector": ".radioreference-result-actions .ui-button",

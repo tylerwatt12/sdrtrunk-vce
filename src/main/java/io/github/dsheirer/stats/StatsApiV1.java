@@ -31,7 +31,6 @@ public final class StatsApiV1
     public static final String CHANNELS = ROOT + "/channels";
     public static final String ACTIVITY = ROOT + "/activity";
     public static final String ACTIVITY_ACTIONS = ACTIVITY + "/actions";
-    public static final String ACTIVITY_RADIOS = ACTIVITY + "/radios";
     public static final String ACTIVITY_MESSAGE_TYPES = ACTIVITY + "/message-types";
     public static final String EXPORTS = ROOT + "/exports";
     public static final String TUNER_DIAGNOSTICS = ROOT + "/diagnostics/tuners";

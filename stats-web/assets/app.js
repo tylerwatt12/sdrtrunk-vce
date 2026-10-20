@@ -4,8 +4,8 @@ import { formatSourceName } from './core/source-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
-import * as tableLayouts from './core/table-layout.js?v=4';
-import * as tableDefaults from './core/table-defaults.js?v=27';
+import * as tableLayouts from './core/table-layout.js?v=5';
+import * as tableDefaults from './core/table-defaults.js?v=28';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -24,7 +24,6 @@ import {
   receiverHealthAlertIds,
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
-import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
@@ -12435,8 +12434,8 @@ function dashboardActivityActionConfiguration(action) {
 }
 
 function dashboardActivityActionRows(response) {
-  return (response?.rows || []).map((row, index) => {
-    const configuration = dashboardActivityActionConfiguration(row.action, index);
+  return (response?.rows || []).map((row) => {
+    const configuration = dashboardActivityActionConfiguration(row.action);
     return {
       ...row,
       ...configuration,
@@ -12446,7 +12445,7 @@ function dashboardActivityActionRows(response) {
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
 }
 
-function dashboardActivityMix(response, selectedAction, onSelect) {
+function dashboardActivityMix(response) {
   const actions = dashboardActivityActionRows(response);
   if (!actions.length) return node('div', 'empty', 'No radio activity was saved for this time range.');
   const summedTotal = actions.reduce((sum, row) => sum + row.count, 0);
@@ -12472,7 +12471,7 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   legend.setAttribute('aria-label', 'Activity types');
   let offset = 0;
 
-  const updateSelection = (action, notify = true) => {
+  const updateSelection = (action) => {
     const selected = actions.find((row) => row.action === action) || null;
     wrapper.querySelectorAll('[data-action]').forEach((element) => {
       const active = element.dataset.action === selected?.action;
@@ -12481,7 +12480,6 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
     });
     centerCount.textContent = number(selected?.count ?? total);
     centerLabel.textContent = selected?.label || 'Events';
-    if (notify && selected) onSelect(selected);
   };
 
   actions.forEach((row) => {
@@ -12522,245 +12520,44 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   svg.append(centerCount, centerLabel);
   chart.append(svg);
   wrapper.append(chart, legend);
-  updateSelection(actions.some((row) => row.action === selectedAction) ? selectedAction : '', false);
+  updateSelection('');
   return wrapper;
 }
-
-function dashboardActivitySystem(row) {
-  const scopedSystem = row.radio_system_key ? radioSystemDisplayName(row) : '';
-  const label = radioSystemPrimaryName(row) || row.name || scopedSystem || row.source_label ||
-    row.radio_system_key || '—';
-  const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
-  return target ? anchor(label, target) : node('span', '', label);
-}
-
-function dashboardActivityRadio(row) {
-  return radioIdentityValue(row, { reference: row.radio_entity_ref,
-    context: String(row.alias_description || '').trim(), fallback: '—' });
-}
-
-const dashboardActivityRadioColumns = [
-  { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
-  { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'alias-cell' },
-  { id: 'observations', label: 'Events', render: (row) => number(row.observation_count),
-    className: 'numeric' },
-  { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
-];
 
 function dashboardActivityRangeLabel(range) {
   return DASHBOARD_ACTIVITY_RANGES.find(([value]) => value === range)?.[1] || range;
 }
 
-function dashboardActivityRadioPager(page, onOffset) {
-  const navigation = browsingWorkflows.createBrowsingPager({ node,
-    className: 'dashboard-activity-radio-pager', ariaLabel: 'Source radio pagination',
-    countText: browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
-      total: page.total_count, label: 'Source radios', format: number }),
-    previous: { enabled: page.offset > 0, onClick: () => onOffset(Math.max(0, page.offset - page.limit)) },
-    next: { enabled: page.has_more, onClick: () => onOffset(page.next_offset) }
-  });
-  navigation.tabIndex = -1;
-  return navigation;
-}
-
-function dashboardActivityRadioNote(page, actionLabel) {
-  return node('p', 'ui-section-note',
-    `Events in this time range: ${number(page.action_observation_count)}. ` +
-    `Saved event details: ${number(page.retained_observation_count)}; ` +
-    `${number(page.identified_observation_count)} identify a source radio and ` +
-    `${number(page.unknown_source_observation_count)} do not.`);
-}
-
 async function renderDashboardActivity(renderContext) {
   const messageTypes = loadActivityMessageTypes();
   let selectedRange = '24h';
-  let selectedAction = '';
-  let selectedActionLabel = '';
-  let selectedOffset = 0;
   let summarySequence = 0;
-  let radioSequence = 0;
-  let summaryRequest = null;
-  let radioRequest = null;
-  let radioHost = null;
-  let radioStatus = null;
-  let radioTitle = null;
-  let radioTitleActions = null;
-  const radioTableController = {};
   const toolbar = node('div', 'ui-surface dashboard-activity-page-controls');
   toolbar.setAttribute('aria-label', 'Radio activity controls');
   toolbar.append(node('span', 'dashboard-control-label', 'Time range'));
   const host = node('div', 'dashboard-activity-view');
   const rangeControl = rangeControls(DASHBOARD_ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
-    selectedAction = '';
-    selectedActionLabel = '';
-    selectedOffset = 0;
     await loadSummary(buttons);
   });
   toolbar.append(rangeControl.controls);
   content.append(toolbar, host);
 
-  const nextRequest = (previous) => {
-    previous?.controller.abort();
-    previous?.unlink();
-    const controller = new AbortController();
-    let linked = false;
-    const abortFromPage = () => controller.abort(renderContext.signal?.reason);
-    if (renderContext.signal?.aborted) controller.abort(renderContext.signal.reason);
-    else if (renderContext.signal) {
-      renderContext.signal.addEventListener('abort', abortFromPage, { once: true });
-      linked = true;
-    }
-    return {
-      controller,
-      unlink: () => {
-        if (!linked) return;
-        renderContext.signal.removeEventListener('abort', abortFromPage);
-        linked = false;
-      }
-    };
-  };
-
-  const showRadioPrompt = () => {
-    if (!radioHost || !radioStatus || !radioTitle) return;
-    radioTitle.textContent = 'Source radios';
-    radioStatus.textContent = '';
-    radioStatus.hidden = true;
-    const historyNotice = detailedHistoryNotice();
-    if (!detailedHistoryAvailable()) {
-      radioHost.setAttribute('aria-busy', 'false');
-      cleanupTableLayoutMenu(radioTableController);
-      radioHost.replaceChildren(historyNotice);
-      return;
-    }
-    radioHost.setAttribute('aria-busy', 'false');
-    cleanupTableLayoutMenu(radioTableController);
-    radioHost.replaceChildren(node('div', 'empty', 'Select an activity type to see its source radios.'));
-  };
-
-  const loadRadios = async (offset = 0, restorePagingFocus = false) => {
-    if (!selectedAction || !radioHost || !radioStatus || !radioTitle) return;
-    selectedOffset = Math.max(0, Number(offset) || 0);
-    const sequence = ++radioSequence;
-    const action = selectedAction;
-    const actionLabel = selectedActionLabel || activityOptionLabel(action);
-    radioTitle.textContent = `${actionLabel} · Source radios`;
-    radioStatus.hidden = false;
-    const historyNotice = detailedHistoryNotice();
-    if (!detailedHistoryAvailable()) {
-      radioStatus.textContent = 'Saved event details are unavailable.';
-      radioHost.setAttribute('aria-busy', 'false');
-      cleanupTableLayoutMenu(radioTableController);
-      radioHost.replaceChildren(historyNotice);
-      return;
-    }
-    if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
-      radioRequest?.controller.abort();
-      radioRequest?.unlink();
-      radioRequest = null;
-      radioStatus.textContent = '';
-      radioStatus.hidden = true;
-      radioHost.setAttribute('aria-busy', 'false');
-      cleanupTableLayoutMenu(radioTableController);
-      radioHost.replaceChildren(node('div', 'empty',
-        'Your account cannot view radios.'));
-      return;
-    }
-    const request = nextRequest(radioRequest);
-    radioRequest = request;
-    radioStatus.textContent = '';
-    radioStatus.hidden = true;
-    radioHost.setAttribute('aria-busy', 'true');
-    cleanupTableLayoutMenu(radioTableController);
-    radioHost.replaceChildren(node('div', 'loading', 'Loading source radios…'));
-    try {
-      const page = await apiPage('/api/v1/activity/radios', {
-        range: selectedRange, action, limit: 100, offset: selectedOffset
-      }, { signal: request.controller.signal });
-      if (sequence !== radioSequence || action !== selectedAction ||
-          !renderIsCurrent(renderContext) || !host.isConnected) return;
-      selectedOffset = page.offset;
-      radioStatus.textContent = `${number(page.total_count)} source radio` +
-        `${Number(page.total_count) === 1 ? '' : 's'} found for ${actionLabel}.`;
-      radioStatus.hidden = false;
-      const result = node('div', 'dashboard-activity-radio-result');
-      const pager = dashboardActivityRadioPager(page,
-        (nextOffset) => void loadRadios(nextOffset, true));
-      if (historyNotice) result.append(historyNotice);
-      result.append(dashboardActivityRadioNote(page, actionLabel),
-        table(page.rows, dashboardActivityRadioColumns,
-          `No source radios were identified in saved ${actionLabel.toLowerCase()} events.`,
-          {
-            type: 'dashboard-activity-radios', sortable: false,
-            controller: radioTableController, layoutMenuHost: radioTitleActions
-          }),
-        pager);
-      radioHost.replaceChildren(result);
-      if (restorePagingFocus) pager.focus();
-    } catch (error) {
-      if (error?.name === 'AbortError' || sequence !== radioSequence ||
-          !renderIsCurrent(renderContext) || !host.isConnected) return;
-      if (error?.status === 401 || error?.status === 403) {
-        await refreshAccessSession(false);
-        if (sequence === radioSequence && renderIsCurrent(renderContext) && host.isConnected) await render();
-        return;
-      }
-      radioStatus.textContent = 'Source radios could not be loaded. Try again.';
-      radioStatus.hidden = false;
-      const failure = asyncSectionFailure(error, 'Source radios could not be loaded. Try again.',
-        () => loadRadios(selectedOffset, restorePagingFocus));
-      cleanupTableLayoutMenu(radioTableController);
-      radioHost.replaceChildren(failure);
-      if (restorePagingFocus) failure.querySelector('.async-section-retry')?.focus();
-    } finally {
-      request.unlink();
-      if (radioRequest === request) radioRequest = null;
-      if (sequence === radioSequence && renderIsCurrent(renderContext) && host.isConnected) {
-        radioHost.setAttribute('aria-busy', 'false');
-      }
-    }
-  };
-
-  const renderSummary = (response) => {
-    const mixBody = node('div', 'dashboard-activity-mix-body');
-    mixBody.append(dashboardActivityMix(response, selectedAction, (row) => {
-      selectedAction = row.action;
-      selectedActionLabel = row.label;
-      selectedOffset = 0;
-      void loadRadios(0);
-    }), node('p', 'ui-section-note',
-      'A call or radio can produce several signaling events.'));
-    const mix = section(`Activity types · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
-    const radioBody = node('div', 'dashboard-activity-radio-body');
-    radioStatus = node('p', 'dashboard-activity-radio-status');
-    radioStatus.setAttribute('aria-live', 'polite');
-    radioHost = node('div', 'dashboard-activity-radio-host');
-    radioBody.append(radioStatus, radioHost);
-    radioTitleActions = sectionActionHost();
-    const radios = section('Source radios', radioBody, radioTitleActions);
-    radioTitle = radios.querySelector('.section-title').firstChild;
-    host.replaceChildren(mix, radios, activityMetricGuide());
-    showRadioPrompt();
-  };
-
   const loadSummary = async (buttons = rangeControl.buttons) => {
     const sequence = ++summarySequence;
-    radioSequence += 1;
-    radioRequest?.controller.abort();
-    radioRequest?.unlink();
-    radioRequest = null;
-    cleanupTableLayoutMenu(radioTableController);
-    const request = nextRequest(summaryRequest);
-    summaryRequest = request;
     buttons.forEach((button) => { button.disabled = true; });
     host.setAttribute('aria-busy', 'true');
     host.replaceChildren(node('div', 'loading', 'Loading radio activity…'));
     try {
       const [response] = await Promise.all([
-        api('/api/v1/activity/actions', { range: selectedRange }, { signal: request.controller.signal }), messageTypes
+        api('/api/v1/activity/actions', { range: selectedRange }, { signal: renderContext.signal }), messageTypes
       ]);
       if (sequence !== summarySequence || !renderIsCurrent(renderContext) || !host.isConnected) return;
-      renderSummary(response);
+      const mixBody = node('div', 'dashboard-activity-mix-body');
+      mixBody.append(dashboardActivityMix(response), node('p', 'ui-section-note',
+        'A call or radio can produce several signaling events.'));
+      host.replaceChildren(section(`Activity types · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody),
+        activityMetricGuide());
     } catch (error) {
       if (error?.name === 'AbortError' || sequence !== summarySequence ||
           !renderIsCurrent(renderContext) || !host.isConnected) return;
@@ -12772,8 +12569,6 @@ async function renderDashboardActivity(renderContext) {
       host.replaceChildren(asyncSectionFailure(error, 'Radio activity could not be loaded. Try again.',
         () => loadSummary(buttons)));
     } finally {
-      request.unlink();
-      if (summaryRequest === request) summaryRequest = null;
       if (sequence === summarySequence && renderIsCurrent(renderContext) && host.isConnected) {
         host.setAttribute('aria-busy', 'false');
         buttons.forEach((button) => { button.disabled = false; });
@@ -12859,7 +12654,8 @@ async function renderDashboard() {
   const descriptions = {
     health: 'Check signal quality and browse systems and channels.',
     calls: 'See call totals, activity over time, and the most active sources and destinations.',
-    activity: 'Explore radio signaling events and see which radios sent them.'
+    activity: 'Explore radio signaling events and see which radios sent them.',
+    inventory: 'Browse aliases, see which have been heard, and find activity without a matching alias.'
   };
   const navigation = tabs([
     { id: 'health', label: 'Overview', href: href('dashboard', { tab: 'health' }) },

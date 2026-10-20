@@ -59,12 +59,12 @@ final class StatsApiV1Controller
     private final IntSupplier mTrafficGrantAgeOutMilliseconds;
     private final RemoteOriginLookup mRemoteOriginLookup;
     private final ActivityRecordingAvailability mActivityRecordingAvailability;
-    private final StatsWebSnapshot<JsonNode> mStatus;
+    private final StatsWebSnapshot<byte[]> mStatus;
     private final StatsWebSnapshot<MainSnapshot> mMain;
-    private final StatsWebSnapshot<JsonNode> mDashboard;
-    private final StatsWebSnapshot<JsonNode> mMessageTypes;
+    private final StatsWebSnapshot<byte[]> mDashboard;
+    private final StatsWebSnapshot<byte[]> mMessageTypes;
+    private final StatsBrowseReadCache mActivityActions = new StatsBrowseReadCache(1);
     private final Semaphore mCsvExportPermit = new Semaphore(1);
-    private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
                          WebRequestSecurity requestSecurity, TunerDiagnosticService tunerDiagnosticService)
@@ -124,17 +124,17 @@ final class StatsApiV1Controller
         mTrafficGrantAgeOutMilliseconds = trafficGrantAgeOutMilliseconds;
         mRemoteOriginLookup = remoteOriginLookup != null ? remoteOriginLookup : RemoteOriginLookup.EMPTY;
         mActivityRecordingAvailability = activityRecordingAvailability;
-        mStatus = new StatsWebSnapshot<>(Duration.ofSeconds(2), () -> StatsApiV1Payload.present(statusSupplier.get()));
+        mStatus = new StatsWebSnapshot<>(Duration.ofSeconds(2), () -> preparedData(StatsApiV1Payload.present(statusSupplier.get())));
         mMain = new StatsWebSnapshot<>(Duration.ofSeconds(2), () -> {
             JsonNode full = StatsApiV1Payload.present(mDatabase.dashboardMain(channelSupplier.get()));
             var quality = full.deepCopy();
             ((com.fasterxml.jackson.databind.node.ObjectNode)quality).remove("directory");
-            return new MainSnapshot(full, quality);
+            return new MainSnapshot(preparedData(full), preparedData(quality));
         });
         mDashboard = new StatsWebSnapshot<>(Duration.ofSeconds(2), () ->
-            StatsApiV1Payload.present(mDatabase.enrichSystemNames(mDatabase.dashboard())));
+            preparedData(StatsApiV1Payload.present(mDatabase.enrichSystemNames(mDatabase.dashboard()))));
         mMessageTypes = new StatsWebSnapshot<>(Duration.ofMinutes(5), () ->
-            StatsApiV1Payload.present(mDatabase.activityMessageTypes()));
+            preparedData(StatsApiV1Payload.present(mDatabase.activityMessageTypes())));
     }
 
     void register(HttpServer server)
@@ -143,7 +143,7 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.STATUS, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly();
-                return new PresentedJson(mStatus.get());
+                return new PreparedJson(mStatus.get());
             }));
         create(server, StatsApiV1.DASHBOARD, WebCapability.DASHBOARD_VIEW,
             mRequestSecurity.protectAny(Set.of(WebCapability.DASHBOARD_VIEW, WebCapability.RADIO_VIEW),
@@ -152,12 +152,12 @@ final class StatsApiV1Controller
                 {
                     request.requireOnly();
                     MainSnapshot snapshot = mMain.get();
-                    return new PresentedJson(mRequestSecurity.isRequestStillAuthorized(exchange,
+                    return new PreparedJson(mRequestSecurity.isRequestStillAuthorized(exchange,
                         WebCapability.RADIO_VIEW) ? snapshot.full() : snapshot.quality());
                 }
                 requireNoSegments(segments);
                 request.requireOnly();
-                return new PresentedJson(mDashboard.get());
+                return new PreparedJson(mDashboard.get());
             })));
         create(server, StatsApiV1.QUALITY, WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.QUALITY, (request, segments) -> {
@@ -197,15 +197,31 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("range");
-                return collection(mDatabase.dashboardActivityActions(request), "rows");
+                String range = request.text("range");
+                range = range != null ? range.toLowerCase(java.util.Locale.ROOT) : "24h";
+                if(!Set.of("1h", "6h", "24h", "7d", "30d").contains(range))
+                    throw new StatsApiException(400, "range must be one of 1h, 6h, 24h, 7d, or 30d");
+                URI key = URI.create(StatsApiV1.ACTIVITY_ACTIONS + "?range=" + range);
+                try
+                {
+                    return new PreparedJson(mActivityActions.get(mDatabase, key, () -> {
+                        JsonBody body = collection(mDatabase.dashboardActivityActions(request), "rows");
+                        return ApiHttpResponse.prepareDataWithMeta(StatsApiV1Payload.present(body.data()),
+                            StatsApiV1Payload.present(body.meta()));
+                    }));
+                }
+                catch(IOException | java.sql.SQLException exception)
+                {
+                    LOGGER.warn("Unable to prepare shared Activity totals", exception);
+                    throw new StatsApiException(503, "activity_unavailable",
+                        "Radio activity is temporarily unavailable. Try again shortly.");
+                }
             }));
-        create(server, StatsApiV1.ACTIVITY_RADIOS, WebCapability.RADIO_VIEW,
-            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_RADIOS, this::dashboardActivityRadios));
         create(server, StatsApiV1.ACTIVITY_MESSAGE_TYPES, WebCapability.WEB_ACCESS,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_MESSAGE_TYPES, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly();
-                return new PresentedJson(mMessageTypes.get());
+                return new PreparedJson(mMessageTypes.get());
             }));
         server.createContext(StatsApiV1.EXPORTS,
             mRequestSecurity.protectAny(CSV_ROUTE_CAPABILITIES, this::handleCsvExport));
@@ -229,9 +245,9 @@ final class StatsApiV1Controller
                 requireNoSegments(segments);
                 request.requireOnly();
                 Map<String,Object> health = mReceiverHealthSupplier.get();
-                return new PresentedJson(StatsApiV1Payload.source(Map.of("accepted_calls",
+                return new PreparedJson(preparedData(StatsApiV1Payload.source(Map.of("accepted_calls",
                     counterValue(health.get("radioresolve_accepted_calls")),
-                    "started_at_ms", counterValue(health.get("started_at_ms")))));
+                    "started_at_ms", counterValue(health.get("started_at_ms"))))));
             });
         });
 
@@ -298,27 +314,6 @@ final class StatsApiV1Controller
         throw notFound();
     }
 
-    private JsonBody dashboardActivityRadios(StatsRequest request, List<String> segments)
-    {
-        requireNoSegments(segments);
-        request.requireOnly("range", "action", "limit", "offset");
-
-        if(!mActivityRadioPermit.tryAcquire())
-        {
-            throw new StatsApiException(429, "activity_query_busy",
-                "Another exact activity query is already running");
-        }
-
-        try
-        {
-            return page(mDatabase.dashboardActivityRadios(request));
-        }
-        finally
-        {
-            mActivityRadioPermit.release();
-        }
-    }
-
     private Object aliases(StatsRequest request, List<String> segments)
     {
         if(segments.isEmpty())
@@ -348,7 +343,7 @@ final class StatsApiV1Controller
     {
         if(segments.isEmpty())
         {
-            request.requireOnly("q", "sort", "direction", "include_channel_preview", "limit", "offset");
+            request.requireOnly("q", "sort", "direction", "limit", "offset");
             return page(mDatabase.radioSystemDirectory(request));
         }
 
@@ -550,9 +545,9 @@ final class StatsApiV1Controller
             Object result = route.handle(request, segments(exchange.getRequestURI(), prefix));
             request.requireFullyConsumed();
 
-            if(result instanceof PresentedJson body)
+            if(result instanceof PreparedJson body)
             {
-                ApiHttpResponse.sendData(exchange, 200, body.data());
+                ApiHttpResponse.sendPreparedJson(exchange, 200, body.bytes());
             }
             else if(result instanceof JsonBody body)
             {
@@ -580,8 +575,14 @@ final class StatsApiV1Controller
         }
     }
 
-    private record PresentedJson(JsonNode data) {}
-    private record MainSnapshot(JsonNode full, JsonNode quality) {}
+    private static byte[] preparedData(Object value)
+    {
+        try { return ApiHttpResponse.prepareData(value); }
+        catch(IOException exception) { throw new IllegalStateException("Unable to prepare shared web data", exception); }
+    }
+
+    private record PreparedJson(byte[] bytes) {}
+    private record MainSnapshot(byte[] full, byte[] quality) {}
 
     private static long counterValue(Object value)
     {

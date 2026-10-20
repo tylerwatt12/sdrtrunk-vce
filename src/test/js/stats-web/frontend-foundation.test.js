@@ -1269,12 +1269,10 @@ async function main() {
   assert.match(dashboardCallChart, /ui-button ui-button-secondary activity-series-button/);
   assert.match(functionBinding(appSource, 'dashboardActivityMix'),
     /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
-  assert.match(functionBinding(appSource, 'dashboardActivityRadioPager'),
-    /browsingWorkflows\.createBrowsingPager\([\s\S]+dashboard-activity-radio-pager/);
   const dashboardActivity = functionBinding(appSource, 'renderDashboardActivity');
-  assert.match(dashboardActivity,
-    /radioStatus\.textContent = '';\s*radioStatus\.hidden = true;[\s\S]+Loading source radios…/,
-    'Dashboard activity must show one loading or prompt treatment instead of duplicate status rows');
+  assert.match(dashboardActivity, /api\('\/api\/v1\/activity\/actions'/);
+  assert.doesNotMatch(dashboardActivity, /apiPage\(|Source radios|source radios|radioRequest/,
+    'The activity chart only reads lightweight activity totals.');
   const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
   assert.match(tunerSpectrumPanel,
     /iconButton\('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button'\)/);
@@ -1551,7 +1549,7 @@ async function main() {
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 20, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
   const issiRenderer = functionBinding(appSource, 'renderRadioSystemIssi');
   assert.match(issiRenderer, /layoutMenuHost: groupAssociationActions, controller: groupAssociationController/,
     'Talkgroup association refreshes must retain their own table controls');
@@ -1585,7 +1583,7 @@ async function main() {
   });
   [
     'radioSystemChannelColumns', 'dashboardCallSourceColumns',
-    'dashboardActivityRadioColumns', 'groupIdentityColumns'
+    'groupIdentityColumns'
   ].forEach((name) => {
     const ids = [...arrayBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
       .map((match) => match[1]);

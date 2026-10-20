@@ -128,7 +128,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String loggingNotice = function(source, "function databaseLoggingNotice(view)");
-        String signalHealth = function(source, "async function signalHealthSection()");
+        String signalHealth = function(source, "function signalHealthSection(currentChannels)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertFalse(loggingNotice.contains("Live Channels"));
@@ -329,21 +329,20 @@ class StatsWebInteractionUiContractTest
     void reloadsStaleWebClientsWithoutRestoringLegacyGroupIdentityReads() throws Exception
     {
         String source = source();
-        String reload = function(source, "async function reloadForWebClientRevision()");
-        String status = function(source, "async function loadStatus(refreshCurrentView = false)");
+        String reload = function(source, "function reloadForWebClientRevision(revision)");
+        String status = function(source, "async function requestServiceStatus()");
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
         assertTrue(index.matches("(?s).*<meta name=\"sdrtrunk-web-revision\" content=\"[1-9][0-9]*\">.*"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
-        assertTrue(reload.contains("const response = await fetch('/', {"));
-        assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
-        assertTrue(reload.contains("signal: controller.signal"));
-        assertTrue(reload.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
+        assertTrue(reload.contains("serverRevision === WEB_CLIENT_REVISION"));
+        assertTrue(reload.contains("webClientReloadAttempted"));
         assertTrue(reload.contains("window.location.reload()"));
-        assertTrue(status.contains("if (await reloadForWebClientRevision()) return;"));
-        assertTrue(status.indexOf("await reloadForWebClientRevision()") <
-            status.indexOf("capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)"));
+        assertFalse(reload.contains("fetch("));
+        assertTrue(status.contains("api('/api/v1/status'"));
+        assertTrue(status.contains("onResponse: (response) => reloadForWebClientRevision("));
+        assertTrue(status.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
         assertTrue(groupIdentity.contains("api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey))"));
         assertFalse(source.contains("/api/talkgroup"));
     }
@@ -365,11 +364,14 @@ class StatsWebInteractionUiContractTest
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String source = source();
-        String directory = function(source, "function renderNestedRadioDirectory(renderContext)");
+        String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory)");
         assertFalse(source.contains("function renderRadioSystems()"));
         assertFalse(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
-        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', loading.element)"));
-        assertTrue(directory.contains("radioDirectoryTrunkedGroups(directory.catalog, directory.systems)"));
+        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', body)"));
+        assertTrue(directory.contains("directory.systems.forEach((parent)"));
+        assertTrue(directory.contains("parent.children.filter((row)"));
+        assertTrue(directory.contains("update(updated) { directory = updated; draw(); }"));
+        assertFalse(directory.contains("await api("));
         assertTrue(directory.contains("radioDirectoryConventionalGroups(conventionalRows)"));
         assertTrue(directory.contains("value: 'running'"));
         assertTrue(directory.contains("value: 'stopped'"));
@@ -1755,7 +1757,7 @@ class StatsWebInteractionUiContractTest
                 "parent: 'tuner-spectrum', access: 'admin-tuner'"));
         assertTrue(tunerPage.contains("pageConnections.add(spectrum)"));
         assertTrue(tunerPage.contains("pageHeader('Browse Spectrum'"));
-        assertTrue(html.contains("<span>Browser Spectrum</span>"));
+        assertTrue(html.contains("id=\"nav-tuner-spectrum-label\">Browser Spectrum</span>"));
         assertTrue(tunerPage.contains("for (const next of ['live', 'setup'])"));
         assertTrue(tunerPage.contains("node('div', 'ui-segmented')"));
         assertTrue(tunerPage.contains("if (next === 'setup') void takeOverSelectedTuner()"));

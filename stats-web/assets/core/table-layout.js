@@ -266,11 +266,6 @@
         'affiliation', 'observed-on', 'registrations', 'affiliations', 'logical-calls',
         'last-mapping-seen', 'last-seen'],
       { 'canonical-subscriber': ['talker-alias', 'canonical-subscriber'] }),
-    'dashboard-activity-radios': {
-      previous: ['system', 'radio', 'alias', 'observations', 'last-seen'],
-      current: ['system', 'radio', 'observations', 'last-seen'],
-      merged: { radio: ['alias', 'radio'] }
-    },
     activity: {
       previous: ['time', 'duration', 'action', 'event', 'tones', 'source', 'source-alias',
         'source-ota-alias', 'target', 'target-alias', 'channel', 'encryption', 'related'],

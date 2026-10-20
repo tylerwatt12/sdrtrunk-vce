@@ -25,20 +25,20 @@ class StatsWebDashboardUiContractTest
     {
         String dashboard = function(Files.readString(APP_JAVASCRIPT), "async function renderDashboard()");
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
-        assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
+        assertTrue(dashboard.contains("['health', 'calls', 'activity', 'inventory'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Call Statistics'"));
-        assertTrue(dashboard.contains("{ id: 'health', label: 'Main'"));
-        assertTrue(dashboard.contains("{ id: 'activity', label: 'Radio Activity Chart'"));
-        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Main'") <
+        assertTrue(dashboard.contains("{ id: 'health', label: 'Overview'"));
+        assertTrue(dashboard.contains("{ id: 'activity', label: 'Radio Activity'"));
+        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Overview'") <
             dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'"));
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'") <
-            dashboard.indexOf("{ id: 'activity', label: 'Radio Activity Chart'"));
+            dashboard.indexOf("{ id: 'activity', label: 'Radio Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
-        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext)"));
+        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, snapshot.directory)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
         assertTrue(dashboard.contains("await renderDashboardActivity(renderContext)"));
-        assertTrue(dashboard.indexOf("if (tab === 'health')") <
-            dashboard.indexOf("const signalPromise = signalHealthSection()"));
+        assertTrue(dashboard.contains("const snapshot = await loadMainDashboard()"));
+        assertTrue(dashboard.contains("signalHealthSection(snapshot.quality.current)"));
         assertFalse(dashboard.contains("'Monitored Coverage'"));
         assertFalse(dashboard.contains("'Recent Channels'"));
         assertFalse(dashboard.contains("dashboard.recent_channels"));
@@ -59,94 +59,38 @@ class StatsWebDashboardUiContractTest
     }
 
     @Test
-    void rendersBoundedAccessibleActivityAnalytics() throws Exception
+    void rendersAccessibleActivityTotalsWithoutDetailedHistoryRanking() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String actionRows = function(source, "function dashboardActivityActionRows(response)");
-        String mix = function(source, "function dashboardActivityMix(response, selectedAction, onSelect)");
+        String mix = function(source, "function dashboardActivityMix(response)");
         String activity = function(source, "async function renderDashboardActivity(renderContext)");
-        String system = function(source, "function dashboardActivitySystem(row)");
-        String radio = function(source, "function dashboardActivityRadio(row)");
-        String columns = declaration(source, "const dashboardActivityRadioColumns = [");
-        String pager = function(source, "function dashboardActivityRadioPager(page, onOffset)");
-        String sharedPager = Files.readString(Path.of("stats-web", "assets", "core", "browsing-workflows.js"));
-        String note = function(source, "function dashboardActivityRadioNote(page, actionLabel)");
         String failure = function(source, "function asyncSectionFailure(error, fallbackMessage, retry)");
-
         assertTrue(source.contains("['6h', '6h'], ['24h', '24h'], ['7d', '7d']"));
-        assertTrue(source.contains("function activitySignalingSeries()"));
-        assertTrue(source.contains("activityOptionLabel(normalized)"));
         assertTrue(actionRows.contains("row.action !== 'CONTINUE'"));
         assertTrue(mix.contains("class: 'dashboard-activity-donut'"));
         assertTrue(mix.contains("role: 'button', tabindex: 0"));
         assertTrue(mix.contains("setAttribute('aria-pressed'"));
         assertTrue(mix.contains("event.key !== 'Enter' && event.key !== ' '"));
-        assertTrue(mix.contains("const total = summedTotal"));
         assertTrue(mix.contains("selected?.label || 'Events'"));
-        assertFalse(mix.contains("response?.total"));
+        assertTrue(mix.contains("updateSelection(row.action)"));
+        assertFalse(mix.contains("api("));
         assertTrue(activity.contains("api('/api/v1/activity/actions'"));
-        assertTrue(activity.contains("apiPage('/api/v1/activity/radios'"));
-        assertTrue(activity.contains("range: selectedRange, action, limit: 100, offset: selectedOffset"));
-        assertTrue(activity.contains("Select an activity type to see its source radios."));
-        assertTrue(activity.contains("selectedAction = ''"));
-        assertTrue(activity.contains("selectedOffset = 0"));
-        assertTrue(activity.contains("const loadRadios = async (offset = 0, restorePagingFocus = false)"));
-        assertTrue(activity.contains("(nextOffset) => void loadRadios(nextOffset, true)"));
-        assertTrue(activity.contains("if (restorePagingFocus) pager.focus()"));
-        assertTrue(activity.contains("failure.querySelector('.async-section-retry')?.focus()"));
-        assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
-        assertTrue(activity.contains("Your account cannot view radios."));
+        assertTrue(activity.contains("signal: renderContext.signal"));
         assertTrue(activity.contains("renderIsCurrent(renderContext)"));
-        assertTrue(activity.contains("new AbortController()"));
-        assertTrue(activity.contains("removeEventListener('abort', abortFromPage)"));
         assertTrue(activity.contains("error?.name === 'AbortError'"));
         assertTrue(activity.contains("error?.status === 401 || error?.status === 403"));
         assertTrue(activity.contains("await refreshAccessSession(false)"));
-        assertTrue(activity.contains("await render()"));
-        assertTrue(activity.contains("aria-live"));
         assertTrue(activity.contains("setAttribute('aria-busy'"));
         assertTrue(activity.contains("asyncSectionFailure(error"));
         assertTrue(failure.contains("setAttribute('role', 'alert')"));
-        assertTrue(columns.contains("label: 'System / Channel'"));
-        assertTrue(columns.contains("label: 'Radio'"));
-        assertFalse(columns.contains("label: 'Alias'"));
-        assertTrue(radio.contains("radioIdentityValue(row, { reference: row.radio_entity_ref"));
-        assertTrue(columns.contains("label: 'Events'"));
-        assertTrue(columns.contains("label: 'Last Seen'"));
-        assertTrue(system.contains("row.name"));
-        assertFalse(system.contains("row.resolved_channel_name"));
-        assertTrue(system.contains("radioSystemPrimaryName(row) || row.name || scopedSystem"));
-        assertTrue(system.contains("entityReferenceAllowed(row.entity_ref)"));
-        assertTrue(system.contains("entityTarget(row.entity_ref)"));
-        assertFalse(system.contains("context_key"));
-        assertTrue(system.contains("radioSystemDisplayName(row)"));
-        assertFalse(system.contains("dashboard-identity-context"));
-        assertTrue(radio.contains("row.radio_entity_ref"));
-        String identityParts = function(source, "function tableIdentityParts(row, kind, options)");
-        assertTrue(identityParts.contains("entityTarget(reference, { channel: radio ? 'radios' : 'groups' })"));
-        assertFalse(radio.contains("radioLink(row"));
-        assertTrue(pager.contains("browsingWorkflows.createBrowsingPager({ node"));
-        assertTrue(sharedPager.contains("[['previous', 'Previous'], ['next', 'Next']]"));
-        assertTrue(sharedPager.contains("'ui-button ui-button-secondary'"));
-        assertTrue(pager.contains("previous: { enabled: page.offset > 0"));
-        assertTrue(pager.contains("next: { enabled: page.has_more"));
-        assertTrue(pager.contains("page.has_more"));
-        assertTrue(pager.contains("page.next_offset"));
-        assertTrue(pager.contains("page.total_count"));
-        assertTrue(pager.contains("navigation.tabIndex = -1"));
-        assertTrue(note.contains("Events in this time range:"));
-        assertTrue(note.contains("page.action_observation_count"));
-        assertTrue(note.contains("page.retained_observation_count"));
-        assertTrue(note.contains("page.identified_observation_count"));
-        assertTrue(note.contains("page.unknown_source_observation_count"));
-        assertFalse(activity.contains("/api/v1/activity-analytics"));
-        assertFalse(activity.contains("group_by"));
-        assertTrue(activity.contains("detailedHistoryAvailable()"));
-        assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));
-        assertTrue(activity.contains("Saved event details are unavailable."));
-        assertFalse(activity.contains("Retained-detail sample"));
-        assertFalse(activity.contains("openReadOnlyModal"));
+        assertTrue(activity.contains("activityMetricGuide()"));
+        assertFalse(activity.contains("apiPage("));
+        assertFalse(activity.contains("source radios"));
+        assertFalse(activity.contains("detailedHistoryAvailable()"));
         assertFalse(activity.contains("pageInterval"));
+        assertFalse(source.contains("function dashboardActivityRadio("));
+        assertFalse(source.contains("const dashboardActivityRadioColumns = ["));
     }
 
     @Test
@@ -255,7 +199,7 @@ class StatsWebDashboardUiContractTest
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String sorter = function(source, "function sortSignalChannels(channels)");
-        String section = function(source, "async function signalHealthSection()");
+        String section = function(source, "function signalHealthSection(currentChannels)");
         assertTrue(sorter.contains("channelLabel(left).localeCompare(channelLabel(right)"));
         assertTrue(sorter.contains("left.configuration_id"));
         assertFalse(sorter.contains("decode_health_pct"));
@@ -265,8 +209,10 @@ class StatsWebDashboardUiContractTest
         assertTrue(section.contains("const key = canonicalConfigurationId(channel.configuration_id)"));
         assertFalse(section.contains("channel.configuration_id || channelLabel(channel)"));
         String tile = function(source, "function updateSignalCurrentTile(tile, channel)");
-        assertTrue(tile.contains("channelNameSummary(channel)"));
-        assertTrue(tile.contains("dashboardChannelContext(channel)"));
+        assertTrue(tile.contains("channel.name || 'Unnamed channel'"));
+        assertTrue(tile.contains("channel.site_name || ''"));
+        assertTrue(tile.contains("channel.system_name || channel.system || ''"));
+        assertTrue(tile.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         String context = function(source, "function dashboardChannelContext(row)");
         assertTrue(context.contains("dashboardChannelKind(row)"));
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
@@ -290,8 +236,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains(".dashboard-activity-layout"));
         assertTrue(css.contains(".dashboard-activity-donut"));
         assertTrue(css.contains(".dashboard-activity-segment:focus-visible"));
-        assertTrue(css.contains(".dashboard-activity-radio-status"));
-        assertTrue(css.contains(".dashboard-activity-radio-result > .ui-section-note"));
+        assertFalse(css.contains(".dashboard-activity-radio-status"));
+        assertFalse(css.contains(".dashboard-activity-radio-result > .ui-section-note"));
         assertTrue(css.contains("--chart-grant: #2d6f9f"));
         assertTrue(css.contains("--chart-grant: #78b7e5"));
         assertFalse(css.contains(".dashboard-activity-breakdown-toolbar"));

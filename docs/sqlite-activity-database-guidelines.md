@@ -82,8 +82,8 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 - Keep chart payloads coarse and predictable. Zero-fill missing buckets in the bounded API response rather than storing
   empty database rows.
 - Use summaries and buckets for dashboard totals, charts, and directory activity. Do not scan unrelated detailed
-  history. The existing action-specific radio ranking and historical Alias evidence paths below document their
-  bounded, indexed exceptions.
+  history. Historical Alias evidence paths below document their bounded, indexed fallback when compact evidence is
+  unavailable.
 
 ### Shared Activity message definitions (application format 60)
 
@@ -357,7 +357,7 @@ approximately 10 ms rather than 28 ms with the index and split. These are warm p
 page timings. For that sparse canonical-source query, widening both existing source/target indexes achieved similar
 query time but added roughly 6 MiB in the projection and was omitted from format 33. A second sparse working-evidence
 target index had no measured benefit and remains omitted. Format 38 addresses the separate broad local/target
-evidence and exact Activity ranking paths described below.
+evidence and the historical action-ranking measurements described below.
 
 ### Covering Activity lookup replacements
 
@@ -396,17 +396,15 @@ Representative plans report `SEARCH event USING COVERING INDEX idx_receiver_acti
 a temporary sorting B-tree. The format-33 sparse positive-Working-ID source index remains unchanged because it avoids
 examining local-only events for qualified canonical subscribers.
 
-The saved-channel/action index serves the existing exact Dashboard Activity radio ranking. That view is an explicit
-exception to the aggregate-only dashboard rule: its chosen action/hour projection needs exact source identity and
-local-address counts, including conventional channel ownership, that the existing signaling buckets do not store.
-It uses bounded channel/action/time seeks instead of scanning unrelated event history, and its representative plan
+The saved-channel/action index serves selected-channel Activity filtering and paging. Its representative plan
 reports `SEARCH event USING COVERING INDEX idx_receiver_activity_event_channel_action_time
-(channel_id=? AND action_code=? AND observed_at_ms>? AND observed_at_ms<?)`. The replacement introduces no new
-history dependency, event collection, summary, or receiver callback. Other Dashboard totals and charts retain their
-summary and bucket paths.
+(channel_id=? AND action_code=? AND observed_at_ms>? AND observed_at_ms<?)`. The former dashboard source-radio ranking
+also used this cover, but aggregating all matching retained events remained expensive; that ranking and its API have
+been removed. Dashboard totals and charts use summaries and buckets. The existing index remains unchanged for scoped
+Activity reads; no schema, collection, writer, retention or receiver-callback change accompanies this removal.
 
-An isolated 300,000-event integer-only projection returned identical results for seven evidence, ranking, and
-Activity-order probes. Five warm-run medians reduced correlated unmatched source evidence from 606 ms to 35 ms,
+The original format-38 evaluation used an isolated 300,000-event integer-only projection and returned identical
+results for seven evidence, ranking, and Activity-order probes. Five warm-run medians reduced correlated unmatched source evidence from 606 ms to 35 ms,
 target local/Working-ID CASE evidence from 21 ms to 1.2 ms, and an action-slice radio grouping from 24 ms to 6.4 ms.
 These are SQL projection timings, not full production-page results. The source and target ordered probes retained
 their time/ID seek without a temporary sort. Placing payload columns before the implicit ID instead would require a

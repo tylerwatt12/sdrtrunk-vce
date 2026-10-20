@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /** Protects the shared navigation, compact header, and playback-popover contracts. */
@@ -31,7 +33,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.matches("(?s).*/assets/app\\.css\\?v=[1-9][0-9]*\".*"));
         assertFalse(html.contains("/assets/web-call-player.js"));
         assertTrue(html.matches("(?s).*<script type=\"module\" src=\"/assets/app\\.js\\?v=[1-9][0-9]*\"></script>.*"));
-        assertTrue(html.contains("<span>Main</span>"));
+        assertTrue(html.contains("id=\"nav-dashboard-label\">Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
@@ -42,14 +44,14 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("data-view=\"streaming\" href=\"/?view=streaming\""));
         assertTrue(html.contains("data-view=\"tuners\" href=\"/?view=tuners\""));
         assertTrue(html.contains("data-view=\"map\" href=\"/?view=map\""));
-        assertTrue(html.contains("<use href=\"#icon-map\"></use></svg><span>Map</span>"));
+        assertTrue(fragment(html, "data-view=\"map\"", "</a>").contains("<use href=\"#icon-map\"></use>"));
         assertFalse(html.contains("data-view=\"rf-planner\""));
         assertFalse(source.contains("renderRfPlanner"));
         assertTrue(source.contains("buildRadioResolvePlannerUrl(snapshot)"));
         assertTrue(source.contains("map: renderListenMap"));
         assertTrue(readText(Path.of("stats-web", "assets", "core", "routes.js"))
             .contains("{ id: 'map', label: 'Map', title: 'Map', parent: 'map', capability: 'call-audio'"));
-        assertTrue(html.contains("<span>RadioReference</span><svg class=\"nav-lock\""));
+        assertTrue(fragment(html, "data-view=\"radioreference\"", "</a>").contains("class=\"nav-lock\""));
         assertFalse(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertFalse(html.contains("<span>Recording</span><small>Coming soon</small>"));
         assertFalse(source.contains("{ id: 'recording', label: 'Recording' }"));
@@ -87,18 +89,19 @@ class StatsWebNavigationHeaderUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String access = block(source, "function updateNavigationAccess()");
 
-        int position = 0;
+        Matcher navigationLinks = Pattern.compile("<a\\b[^>]*data-view=\"([^\"]+)\"[^>]*>.*?</a>",
+            Pattern.DOTALL).matcher(html);
         int links = 0;
-        while((position = html.indexOf("<a data-view=", position)) >= 0)
+        while(navigationLinks.find())
         {
-            int end = html.indexOf("</a>", position);
-            assertTrue(end > position);
-            String link = html.substring(position, end);
+            String link = navigationLinks.group();
+            String view = navigationLinks.group(1);
             assertTrue(link.contains("class=\"nav-lock\""));
-            String openingTag = html.substring(position, html.indexOf('>', position));
-            assertEquals(openingTag.contains("data-view=\"settings\""), openingTag.contains(" hidden"));
+            assertTrue(link.contains("id=\"nav-" + view + "-label\""));
+            assertTrue(link.contains("id=\"nav-" + view + "-description\""));
+            String openingTag = link.substring(0, link.indexOf('>'));
+            assertEquals("settings".equals(view), openingTag.contains(" hidden"));
             links++;
-            position = end + 4;
         }
         assertTrue(links >= 10);
         assertFalse(html.contains("nav-group-protected"));

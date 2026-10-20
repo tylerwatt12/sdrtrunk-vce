@@ -455,22 +455,6 @@ class StatsApiV1PayloadTest
     }
 
     @Test
-    void presentsBoundedChannelPreviewsWithoutDatabaseIds()
-    {
-        JsonNode system = StatsApiV1Payload.present(Map.ofEntries(
-            Map.entry("radio_system_id", 1), Map.entry("radio_system_key", "p25:bee00:348"),
-            Map.entry("protocol_code", 1), Map.entry("channels", 26),
-            Map.entry("channel_preview_truncated", true),
-            Map.entry("channel_preview", List.of(Map.of("channel_id", 1, "protocol_code", 1,
-                "configuration_id", "channel-5", "rfss", 2, "site_id", 7)))));
-        assertEquals("p25", system.path("protocol").textValue());
-        assertTrue(system.path("channel_preview").isArray());
-        assertEquals("channel-5", system.at("/channel_preview/0/configuration_id").textValue());
-        assertTrue(system.path("channel_preview_truncated").booleanValue());
-        assertNoInternalFields(system);
-    }
-
-    @Test
     void presentsAliasEnumsFlagsAndNeighborTypes()
     {
         JsonNode alias = StatsApiV1Payload.present(Map.of(

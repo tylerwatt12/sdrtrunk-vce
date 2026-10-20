@@ -36,9 +36,15 @@ public final class ApiHttpResponse
     /** Sends one explicitly selected resource value in the shared success envelope. */
     public static void sendData(HttpExchange exchange, int status, Object value) throws IOException
     {
+        sendPreparedJson(exchange, status, prepareData(value));
+    }
+
+    /** Prepares a shareable response without retaining a request, session or exchange. */
+    public static byte[] prepareData(Object value) throws IOException
+    {
         ObjectNode response = OBJECT_MAPPER.createObjectNode();
         response.set("data", normalize(OBJECT_MAPPER.valueToTree(value)));
-        sendJson(exchange, status, response);
+        return OBJECT_MAPPER.writeValueAsBytes(response);
     }
 
     /** Sends a complete endpoint-owned JSON document without the shared data envelope. */
@@ -51,6 +57,11 @@ public final class ApiHttpResponse
     public static void sendDataWithMeta(HttpExchange exchange, int status, Object data, Object meta)
         throws IOException
     {
+        sendPreparedJson(exchange, status, prepareDataWithMeta(data, meta));
+    }
+
+    public static byte[] prepareDataWithMeta(Object data, Object meta) throws IOException
+    {
         ObjectNode response = OBJECT_MAPPER.createObjectNode();
         response.set("data", normalize(OBJECT_MAPPER.valueToTree(data)));
         JsonNode normalizedMeta = normalize(OBJECT_MAPPER.valueToTree(meta));
@@ -60,7 +71,7 @@ public final class ApiHttpResponse
             response.set("meta", normalizedMeta);
         }
 
-        sendJson(exchange, status, response);
+        return OBJECT_MAPPER.writeValueAsBytes(response);
     }
 
     public static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException
@@ -100,7 +111,12 @@ public final class ApiHttpResponse
 
     private static void sendJson(HttpExchange exchange, int status, JsonNode value) throws IOException
     {
-        byte[] body = OBJECT_MAPPER.writeValueAsBytes(value);
+        sendPreparedJson(exchange, status, OBJECT_MAPPER.writeValueAsBytes(value));
+    }
+
+    /** Sends only trusted JSON bytes produced by this response encoder. */
+    public static void sendPreparedJson(HttpExchange exchange, int status, byte[] body) throws IOException
+    {
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", "application/json; charset=utf-8");
         headers.set("Cache-Control", "no-store");
