@@ -345,9 +345,13 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       username: 'fixture-admin', tier: 'admin', primary: true, csrf_token: 'fixture-csrf',
       guide_dismissal_scope: state.guideDismissalScope ?? 'account-1-100',
       capabilities: Object.fromEntries(policies.map(({ id }) => [id, true])) });
-    if (p === '/api/v1/status') return respond({ stats_logging: { summary_configured: true,
+    if (p === '/api/v1/status') return respond({ p25_visualizer_available: true,
+      stats_logging: { summary_configured: true,
       summary_active: true, detailed_history_configured: true, detailed_history_active: true },
       database: { database_exists: true, database_bytes: 1048576, detailed_history_available: true, logger: [] } });
+    if (p === '/api/v1/dashboard/main') return respond({ quality: { current: [quality] },
+      directory: { systems: [{ ...identity, entity_ref: { kind: 'radio_system', key: systemKey },
+        children: [channel], child_count: 1, running_count: 1 }], channels: [] } });
     if (p === '/api/v1/receiver-health') return respond(health);
     if (p === '/api/v1/remote-support') return respond({ enabled: false, connected: false, code: '',
       expires_at_ms: 0, unlimited: false, can_start: true });
@@ -470,7 +474,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       topics: alertTopics, rules: alertRules, options: {} });
     if (p === '/api/v1/admin/alerts/config') return respond({ revision: 1, enabled: true, mode: 'proxy', site_url: '',
       sender_label: 'VCE installation', registration: { status: 'pending', sender_id: 'fixture-sender' } });
-    if (p === '/api/v1/alerts/topics') return respond({ topics: alertTopics.filter(topic => topic.visible), mode: 'proxy', push_enabled: false });
+    if (p === '/api/v1/alerts/topics') return respond({ enabled: true,
+      topics: alertTopics.filter(topic => topic.visible), mode: 'proxy', push_enabled: true });
     if (p === '/api/v1/alerts/history') return respond({ items: [{ id: 'fire-alert', topic_id: 'fire', title: 'Fire Tactical is active',
       body: 'Engine 12 transmitted on Fire Tactical.', created_at_ms: now }], total: 1, limit: 30, offset: 0 });
     if (p === '/api/v1/admin/tuners') return respond({ tuners: [operatorTuner({ spectrum_target_id: 'target-a', spectrum_available: true })] });

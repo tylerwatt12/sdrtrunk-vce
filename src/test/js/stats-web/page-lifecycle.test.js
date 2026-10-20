@@ -120,6 +120,22 @@ async function verifyDetailPageOrientation() {
   current.reject(new Error('The channel could not be loaded.'));
   await currentRender;
   assert.equal(heading(), 'Channel Details');
+
+  let catalogRequests = 0;
+  let pageRenders = 0;
+  context.loadActivityMessageTypes = async () => { catalogRequests += 1; };
+  for (const view of ['credits', 'settings', 'dashboard', 'recordings']) {
+    context.applicationRoutes[view] = { id: view, allowed: () => true,
+      handler: async () => { pageRenders += 1; } };
+    context.route = new URLSearchParams(`view=${view}`);
+    await context.render();
+  }
+  assert.equal(pageRenders, 4);
+  assert.equal(catalogRequests, 0, 'Pages without signaling data do not wait for the message catalog.');
+  context.applicationRoutes.live = { id: 'live', allowed: () => true, handler: async () => {} };
+  context.route = new URLSearchParams('view=live');
+  await context.render();
+  assert.equal(catalogRequests, 1, 'Live filters load receiver-owned message definitions before mounting.');
 }
 
 async function main() {

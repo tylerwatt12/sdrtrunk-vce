@@ -40,9 +40,10 @@ async function openApp(page, view, theme = 'light') {
     } else if (pathname === '/api/v1/status') {
       await respond({ stats_logging: { summary_configured: true, summary_active: true,
         detailed_history_configured: false, detailed_history_active: false }, database: {} });
-    } else if (pathname === '/api/v1/quality') {
-      await respond({ rows: [], total_count: 0, limit: 60, offset: 0,
-        has_more: false, next_offset: null });
+    } else if (pathname === '/api/v1/dashboard/main') {
+      await respond({ quality: { current: [] }, directory: { systems: [{ system_name: 'Metro',
+        alias_lists: [{ id: 1, name: 'Metro P25' }], children: catalog.channels,
+        child_count: 2, running_count: 2 }], channels: [] } });
     } else if (pathname === '/api/v1/channel-catalog' || pathname === '/api/v1/admin/channels') {
       await respond(catalog);
     } else if (pathname === '/api/v1/radio-systems') {

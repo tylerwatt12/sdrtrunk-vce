@@ -2,17 +2,13 @@
 
 const { expect, test } = require('@playwright/test');
 
-const p25Trunked = (protocol = 'p25-phase1', state = 'RUNNING') => ({
-  configuration_id: '11111111-1111-4111-8111-111111111111',
-  protocol_id: protocol, channel_kind: 'TRUNKED', processing_state: state
-});
-
-async function openMenu(page, initial, { delayCatalog = false } = {}) {
-  let current = initial;
+async function openMenu(page, available, { delayStatus = false } = {}) {
+  let current = available;
+  let failed = false;
   let statusRequests = 0;
   let catalogRequests = 0;
-  let releaseCatalog;
-  const catalogReady = delayCatalog ? new Promise((resolve) => { releaseCatalog = resolve; }) : null;
+  let releaseStatus;
+  const statusReady = delayStatus ? new Promise((resolve) => { releaseStatus = resolve; }) : null;
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const respond = (data) => route.fulfill({ json: { data } });
@@ -23,91 +19,57 @@ async function openMenu(page, initial, { delayCatalog = false } = {}) {
       await route.fulfill({ json: { revision: 1, preferences: {} } });
     } else if (pathname === '/api/v1/status') {
       statusRequests += 1;
-      await respond({ stats_logging: { summary_active: current.summaryActive,
-        detailed_history_active: current.historyActive }, database: {} });
-    } else if (pathname === '/api/v1/channel-catalog') {
-      catalogRequests += 1;
-      if (catalogReady) await catalogReady;
-      if (current.catalogUnavailable) {
-        await route.fulfill({ status: 503, json: { error: { message: 'Unavailable' } } });
-      } else {
-        await respond({ revision: 1, channels: current.channels });
-      }
+      if (statusReady) await statusReady;
+      if (failed) await route.fulfill({ status: 503, json: { error: { message: 'Unavailable' } } });
+      else await respond({ p25_visualizer_available: current, stats_logging: {}, database: {} });
     } else {
+      if (pathname === '/api/v1/channel-catalog') catalogRequests += 1;
       await route.fulfill({ status: 404, json: { error: { message: 'Unavailable' } } });
     }
   });
   await page.goto('/app.html?view=credits');
   return {
-    change: (next) => { current = { ...current, ...next }; },
-    releaseCatalog: () => releaseCatalog?.(),
-    statusRequests: () => statusRequests,
-    catalogRequests: () => catalogRequests
+    change: (next) => { current = next; }, fail: () => { failed = true; },
+    releaseStatus: () => releaseStatus?.(),
+    statusRequests: () => statusRequests, catalogRequests: () => catalogRequests
   };
 }
 
 const menuLink = (page) => page.locator('.primary-nav a[data-view="network-visualizer"]');
 const menuHidden = (page) => menuLink(page).evaluate((link) => link.hidden);
 
-for (const [description, state, visible] of [
-  ['running P25 Phase 1 with full logging', { channels: [p25Trunked()],
-    summaryActive: true, historyActive: true }, true],
-  ['running P25 Phase 2 with full logging', { channels: [p25Trunked('p25-phase2')],
-    summaryActive: true, historyActive: true }, true],
-  ['stopped P25 system', { channels: [p25Trunked('p25-phase1', 'STOPPED')],
-    summaryActive: true, historyActive: true }, false],
-  ['P25 conventional channel', { channels: [{ ...p25Trunked(), channel_kind: 'CONVENTIONAL' }],
-    summaryActive: true, historyActive: true }, false],
-  ['running non-P25 system', { channels: [p25Trunked('dmr')],
-    summaryActive: true, historyActive: true }, false],
-  ['activity summaries off', { channels: [p25Trunked()],
-    summaryActive: false, historyActive: true }, false],
-  ['full activity history off', { channels: [p25Trunked()],
-    summaryActive: true, historyActive: false }, false]
-]) {
-  test(`P25 Visualizer menu ${visible ? 'appears' : 'stays hidden'} for ${description}`, async ({ page }) => {
-    const app = await openMenu(page, state);
-    await expect.poll(() => menuHidden(page)).toBe(!visible);
-    if (visible) expect(app.catalogRequests()).toBe(1);
+for (const available of [true, false]) {
+  test(`P25 Visualizer menu follows receiver availability ${available}`, async ({ page }) => {
+    const app = await openMenu(page, available);
+    await expect.poll(() => menuHidden(page)).toBe(!available);
+    expect(app.catalogRequests()).toBe(0);
   });
 }
 
-test('P25 Visualizer menu waits for a confirmed channel catalog', async ({ page }) => {
-  const app = await openMenu(page, { channels: [p25Trunked()],
-    summaryActive: true, historyActive: true }, { delayCatalog: true });
-  await expect.poll(app.catalogRequests).toBe(1);
+test('P25 Visualizer menu waits for confirmed receiver status', async ({ page }) => {
+  const app = await openMenu(page, true, { delayStatus: true });
+  await expect.poll(app.statusRequests).toBe(1);
   expect(await menuHidden(page)).toBe(true);
-  app.releaseCatalog();
+  app.releaseStatus();
   await expect.poll(() => menuHidden(page)).toBe(false);
+  expect(app.catalogRequests()).toBe(0);
 });
 
-test('P25 Visualizer menu follows refreshed channel and logging state', async ({ page }) => {
+test('P25 Visualizer menu follows refreshed availability and failed status', async ({ page }) => {
   await page.clock.install();
-  const app = await openMenu(page, { channels: [p25Trunked()],
-    summaryActive: true, historyActive: true });
+  const app = await openMenu(page, true);
   await expect.poll(() => menuHidden(page)).toBe(false);
-
-  app.change({ channels: [p25Trunked('dmr')] });
-  const firstCatalogCount = app.catalogRequests();
+  for (const available of [false, true]) {
+    app.change(available);
+    const before = app.statusRequests();
+    await page.clock.runFor(10_100);
+    await expect.poll(app.statusRequests).toBeGreaterThan(before);
+    await expect.poll(() => menuHidden(page)).toBe(!available);
+  }
+  app.fail();
+  const before = app.statusRequests();
   await page.clock.runFor(10_100);
-  await expect.poll(app.catalogRequests).toBeGreaterThan(firstCatalogCount);
+  await expect.poll(app.statusRequests).toBeGreaterThan(before);
   await expect.poll(() => menuHidden(page)).toBe(true);
-
-  app.change({ channels: [p25Trunked()], historyActive: false });
-  const firstStatusCount = app.statusRequests();
-  await page.clock.runFor(10_100);
-  await expect.poll(app.statusRequests).toBeGreaterThan(firstStatusCount);
-  await expect.poll(() => menuHidden(page)).toBe(true);
-
-  app.change({ historyActive: true });
-  const secondCatalogCount = app.catalogRequests();
-  await page.clock.runFor(10_100);
-  await expect.poll(app.catalogRequests).toBeGreaterThan(secondCatalogCount);
-  await expect.poll(() => menuHidden(page)).toBe(false);
-
-  app.change({ catalogUnavailable: true });
-  const thirdCatalogCount = app.catalogRequests();
-  await page.clock.runFor(10_100);
-  await expect.poll(app.catalogRequests).toBeGreaterThan(thirdCatalogCount);
-  await expect.poll(() => menuHidden(page)).toBe(true);
+  expect(app.catalogRequests()).toBe(0);
 });

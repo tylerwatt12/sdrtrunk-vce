@@ -72,7 +72,8 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
     } : pathname === '/api/v1/status' ? {
       stats_logging: { summary_configured: true, summary_active: true,
         detailed_history_configured: false, detailed_history_active: false }, database: {}
-    } : pathname === '/api/v1/quality' ? pageOf([]) :
+    } : pathname === '/api/v1/dashboard/main' ? { quality: { current: [] },
+      directory: { systems: [], channels: [] } } :
       pathname === '/api/v1/channel-catalog' ? { revision: 1, channels: [] } :
         pathname === '/api/v1/radio-systems' ? pageOf([]) :
           pathname === '/api/v1/identities/lists' ? lists :

@@ -294,6 +294,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
     captureRenderContext: () => ({ epoch }), renderIsCurrent: (renderContext) => renderContext.epoch === epoch,
     requiredRadioSystem: () => ({ radio_system_key: radioSystemKey }), requiredIdentityKey: () => identityKey,
     api: async () => ({ native_id: 23, alias_name: 'Dispatch' }),
+    loadActivityMessageTypes: async () => {},
     apiPage: (path, parameters) => { requests.push({ path, parameters }); return pending.shift().promise; },
     rowGroupIdentityKind: () => 'talkgroup', identityNumber: (_row, value) => String(value),
     groupIdentifierText: (_row, value) => String(value),
@@ -628,6 +629,7 @@ async function main() {
   await require('./message-types.test').checkMessageTypes(core, appSource);
   await require('./guide-persistence.test').checkGuidePersistence(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
+  await require('./dashboard-data.test').checkDashboardData(appSource, functionBinding);
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
@@ -1374,8 +1376,9 @@ async function main() {
     { q: 'Dispatch', limit: 100, offset: '100', sort: 'system', direction: 'asc' },
     'The selected Unassigned page retains search, paging, and sorting');
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
-  assert.match(radioDirectorySource, /radioDirectoryEmbeddedPanel\('systems', loading\.element\)/);
-  assert.match(radioDirectorySource, /bare: true/);
+  assert.match(radioDirectorySource, /radioDirectoryEmbeddedPanel\('systems', wrapper\)/);
+  assert.doesNotMatch(radioDirectorySource, /apiPage\(|requestChannelConfigurationJson\(|pageInterval\(/,
+    'Main owns the directory snapshot and refresh lifecycle.');
   assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext, true\)/);
   assert.match(radioDirectorySource,
     /radioDirectoryCardSection\('Trunked Systems', trunkedSystems, 'system'/);

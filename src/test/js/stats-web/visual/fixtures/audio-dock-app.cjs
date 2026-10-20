@@ -152,6 +152,8 @@ async function openAudioApp(page, options = {}) {
       return fulfill(state.transcript);
     }
     if (p === '/api/v1/channel-catalog') return fulfill({ revision: 1, channels: options.channelCatalog || [] });
+    if (p === '/api/v1/dashboard/main') return fulfill({ quality: { current: [] },
+      directory: { systems: [], channels: [] } });
     if (p === '/api/v1/admin/channels') return fulfill({ revision: 1, channels: [] });
     if (p === '/api/v1/dashboard') return fulfill({ last_seen_ms: started, call_activity: { totals: {}, buckets: [] },
       top_destinations: [], top_sources: [], source_activity_24h: [] });

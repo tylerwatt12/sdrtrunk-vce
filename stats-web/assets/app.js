@@ -25,33 +25,23 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=12';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=8';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=31';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
-import { createStreamingWorkspace } from './features/streaming.js?v=13';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=20';
-import { createAlertsWorkspace } from './features/alerts.js?v=19';
-import { createCallRelations } from './features/call-relations.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=55';
-import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=31';
+import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createAudioDock } from './core/audio-dock.js?v=28';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
-import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
-import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
 import { createRemoteSupportWorkspace } from './features/remote-support.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
@@ -272,8 +262,6 @@ const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
 let serviceStatus = null;
 let serviceStatusRequestPending = false;
 let serviceStatusConsecutiveFailures = 0;
-let p25VisualizerCatalogHasRunningSystem = false;
-let p25VisualizerCatalogRequest = null;
 let alertPushEnabled = null;
 let alertTopicsAvailabilityRefreshedAt = 0;
 let alertTopicsAvailabilityVersion = 0;
@@ -2539,41 +2527,7 @@ function statsLoggingState() {
 }
 
 function p25VisualizerMenuAvailable() {
-  const logging = statsLoggingState();
-  return Boolean(serviceStatus) && serviceStatusConsecutiveFailures === 0 &&
-    logging.summaryActive && logging.historyActive && p25VisualizerCatalogHasRunningSystem;
-}
-
-function catalogHasRunningP25System(catalog) {
-  return Array.isArray(catalog?.channels) && catalog.channels.some((channel) =>
-    channel?.channel_kind === 'TRUNKED' && channel.processing_state === 'RUNNING' &&
-    ['p25-phase1', 'p25-phase2'].includes(String(channel.protocol_id || '').toLowerCase()));
-}
-
-function refreshP25VisualizerMenu() {
-  p25VisualizerCatalogRequest?.abort();
-  p25VisualizerCatalogRequest = null;
-  if (!serviceStatus || serviceStatusConsecutiveFailures !== 0 ||
-      !statsLoggingState().summaryActive || !statsLoggingState().historyActive) {
-    p25VisualizerCatalogHasRunningSystem = false;
-    updateNavigationAccess();
-    return;
-  }
-  updateNavigationAccess();
-  const controller = new AbortController();
-  p25VisualizerCatalogRequest = controller;
-  void requestJson('/api/v1/channel-catalog', { csrf: false, page: false, signal: controller.signal,
-    timeoutMs: 5_000 }).then((catalog) => {
-    if (p25VisualizerCatalogRequest === controller) {
-      p25VisualizerCatalogHasRunningSystem = catalogHasRunningP25System(catalog);
-    }
-  }).catch(() => {
-    if (p25VisualizerCatalogRequest === controller) p25VisualizerCatalogHasRunningSystem = false;
-  }).finally(() => {
-    if (p25VisualizerCatalogRequest !== controller) return;
-    p25VisualizerCatalogRequest = null;
-    updateNavigationAccess();
-  });
+  return serviceStatus?.p25_visualizer_available === true && serviceStatusConsecutiveFailures === 0;
 }
 
 function beginServiceStatusRequest() {
@@ -2611,7 +2565,10 @@ async function requestServiceStatus() {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     beginServiceStatusRequest();
     try {
-      const value = await api('/api/v1/status', {}, { page: false });
+      const value = await api('/api/v1/status', {}, {
+        page: false,
+        onResponse: (response) => reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'))
+      });
       acceptServiceStatus(value);
       return value;
     } catch (error) {
@@ -9190,8 +9147,7 @@ function rethrowPageHandlingError(error) {
   if (pageLifecycle.requiresPageHandling(error)) throw error;
 }
 
-async function signalHealthSection() {
-  const renderContext = captureRenderContext();
+function signalHealthSection(currentChannels) {
   const host = node('div', 'signal-health');
   const currentPanel = node('div', 'signal-current-panel');
   const currentToolbar = node('div', 'signal-current-toolbar');
@@ -9201,13 +9157,11 @@ async function signalHealthSection() {
   currentPanel.append(currentToolbar, tiles);
   host.append(currentPanel);
   const block = section('Trunked site signal quality', host, exportCsvLink('signal-health'));
-  let currentResponse = null;
   const tileNodes = new Map();
-  let loading = false;
 
   const renderCurrent = () => {
     const now = Date.now();
-    const channels = sortSignalChannels((currentResponse?.rows || []).filter((channel) =>
+    const channels = sortSignalChannels(currentChannels.filter((channel) =>
       String(channel.channel_kind || '').toUpperCase() === 'TRUNKED' &&
       canonicalConfigurationId(channel?.configuration_id) &&
       now - Number(channel.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
@@ -9250,27 +9204,16 @@ async function signalHealthSection() {
     }
     tiles.append(message);
   } else {
-    const loadCurrent = async (initial = false, pageOwned = false) => {
-      if (loading) return;
-      loading = true;
-      if (initial) summary.textContent = 'Loading current signal quality…';
-      try {
-        currentResponse = await apiPage('/api/v1/quality', {
-          range: '1h', points: 60, include_history: false
-        });
-        renderCurrent();
-      } catch (error) {
-        if (pageOwned) rethrowPageHandlingError(error);
-        summary.textContent = currentResponse ? `Signal quality update failed: ${error.message}` : '';
-        if (!currentResponse) tiles.replaceChildren(node('div', 'error', error.message));
-      } finally {
-        loading = false;
-      }
-    };
-    await loadCurrent(true, true);
-    if (renderIsCurrent(renderContext)) pageInterval(loadCurrent, 10_000);
+    renderCurrent();
   }
-  return block;
+  return {
+    element: block,
+    update(channels) {
+      currentChannels = channels;
+      if (!logging.available || logging.summaryActive) renderCurrent();
+    },
+    failed(error) { summary.textContent = `Signal quality update failed: ${error.message}`; }
+  };
 }
 
 async function channelSignalHistorySection(channel) {
@@ -9550,6 +9493,7 @@ async function requestJson(path, options = {}) {
       keepalive: options.keepalive === true,
       signal: controller.signal
     });
+    options.onResponse?.(response);
     const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
     if (response.status !== 204) {
       if (contentType.includes('json')) result = await response.json().catch((error) => {
@@ -12628,6 +12572,7 @@ function dashboardActivityRadioNote(page, actionLabel) {
 }
 
 async function renderDashboardActivity(renderContext) {
+  const messageTypes = loadActivityMessageTypes();
   let selectedRange = '24h';
   let selectedAction = '';
   let selectedActionLabel = '';
@@ -12811,8 +12756,9 @@ async function renderDashboardActivity(renderContext) {
     host.setAttribute('aria-busy', 'true');
     host.replaceChildren(node('div', 'loading', 'Loading radio activity…'));
     try {
-      const response = await api('/api/v1/activity/actions', { range: selectedRange },
-        { signal: request.controller.signal });
+      const [response] = await Promise.all([
+        api('/api/v1/activity/actions', { range: selectedRange }, { signal: request.controller.signal }), messageTypes
+      ]);
       if (sequence !== summarySequence || !renderIsCurrent(renderContext) || !host.isConnected) return;
       renderSummary(response);
     } catch (error) {
@@ -12892,12 +12838,22 @@ function radioTableType(baseType, columns, system) {
   return tableLayouts.tableId(`${baseType}.${variant}`);
 }
 
+async function loadMainDashboard() {
+  const snapshot = await api('/api/v1/dashboard/main');
+  if (!Array.isArray(snapshot?.quality?.current) || capabilityAllowed(ACCESS_CAPABILITIES.RADIO) &&
+      (!Array.isArray(snapshot?.directory?.systems) || !Array.isArray(snapshot?.directory?.channels) ||
+        !snapshot.directory.systems.every((system) => Array.isArray(system.children)))) {
+    throw new Error('Main could not be loaded. Reload the page to try again.');
+  }
+  return snapshot;
+}
+
 async function renderDashboard() {
   const renderContext = captureRenderContext();
   // Preserve links to the former directory perspective after promoting inventory.
   const requestedTab = route.get('directory_view') === 'coverage' ? 'inventory' : route.get('tab') || 'health';
   const tab = ['health', 'calls', 'activity', 'inventory'].includes(requestedTab) ? requestedTab : 'health';
-  const dashboard = ['health', 'inventory'].includes(tab) ? {} : await api('/api/v1/dashboard');
+  const dashboard = tab === 'calls' ? await api('/api/v1/dashboard') : {};
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const descriptions = {
@@ -12925,19 +12881,28 @@ async function renderDashboard() {
   }
 
   if (tab === 'health') {
-    const signalHost = node('div', 'ui-feedback ui-feedback-loading', 'Loading signal quality…');
-    content.append(signalHost);
-    const signalPromise = signalHealthSection();
-    const directoryPromise = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
-      renderNestedRadioDirectory(renderContext) : Promise.resolve();
-    try {
-      const signalHealth = await signalPromise;
-      if (renderIsCurrent(renderContext)) signalHost.replaceWith(signalHealth);
-    } catch (error) {
-      if (renderIsCurrent(renderContext)) signalHost.replaceWith(
-        node('div', 'ui-feedback ui-feedback-error', error.message));
-    }
-    await directoryPromise;
+    const loading = node('div', 'ui-feedback ui-feedback-loading', 'Loading signal quality…');
+    content.append(loading);
+    const snapshot = await loadMainDashboard();
+    if (!renderIsCurrent(renderContext)) return;
+    const signal = signalHealthSection(snapshot.quality.current);
+    loading.replaceWith(signal.element);
+    const directory = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+      await renderNestedRadioDirectory(renderContext, snapshot.directory) : null;
+    if (!renderIsCurrent(renderContext)) return;
+    let refreshing = false;
+    pageInterval(async () => {
+      if (refreshing || !renderIsCurrent(renderContext)) return;
+      refreshing = true;
+      try {
+        const updated = await loadMainDashboard();
+        if (!renderIsCurrent(renderContext)) return;
+        signal.update(updated.quality.current);
+        directory?.update(updated.directory);
+      } catch (error) {
+        if (renderIsCurrent(renderContext)) signal.failed(error);
+      } finally { refreshing = false; }
+    }, 5_000);
     return;
   }
 
@@ -19760,7 +19725,7 @@ function saveP25VisualizerEventSettings(value) {
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
   p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=46');
-  const visualizerModule = await p25VisualizerModulePromise;
+  const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
     node,
@@ -20976,7 +20941,9 @@ async function renderRadioSystemIssi(system, renderContext) {
 async function renderRadioSystem() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
-  const response = await api(radioSystemApiPath(radioSystem.radio_system_key));
+  const [response] = await Promise.all([
+    api(radioSystemApiPath(radioSystem.radio_system_key)), loadActivityMessageTypes()
+  ]);
   if (!renderIsCurrent(renderContext)) return;
   const system = response;
   const requestedTab = route.get('tab') || 'info';
@@ -21109,7 +21076,9 @@ async function renderGroupIdentity() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
   const identityKey = requiredIdentityKey();
-  const response = await api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey));
+  const [response] = await Promise.all([
+    api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey)), loadActivityMessageTypes()
+  ]);
   const groupIdentity = response;
   const kind = rowGroupIdentityKind(groupIdentity);
   const tab = route.get('tab') || 'info';
@@ -21314,7 +21283,9 @@ async function renderRadio() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
   const identityKey = requiredIdentityKey();
-  const response = await api(`${radioSystemApiPath(radioSystem.radio_system_key, 'radios')}/${encodeURIComponent(identityKey)}`);
+  const [response] = await Promise.all([
+    api(`${radioSystemApiPath(radioSystem.radio_system_key, 'radios')}/${encodeURIComponent(identityKey)}`), loadActivityMessageTypes()
+  ]);
   const radio = response;
   const tab = route.get('tab') || 'info';
   const permanentIdentity = p25CanonicalSubscriber(radio);
@@ -24278,57 +24249,18 @@ function channelCatalogAfterAutoStartMove(catalog, configurationId, direction) {
   };
 }
 
-function radioDirectoryTrunkedGroups(catalog, systems) {
-  const channels = (catalog.channels || []).filter((row) =>
-    String(row.channel_kind || '').toUpperCase() === 'TRUNKED');
-  const byId = new Map(channels.map((row) => [String(row.configuration_id), row]));
-  const assigned = new Set();
-  const groups = (systems.rows || []).map((system) => {
-    const children = (system.channel_preview || []).map((preview) => {
-      const channel = byId.get(String(preview.configuration_id));
-      if (!channel || assigned.has(String(channel.configuration_id))) return null;
-      assigned.add(String(channel.configuration_id));
-      return { ...preview, ...channel, directory_type: 'channel' };
-    }).filter(Boolean);
-    return {
-      ...system,
-      directory_type: 'radio_system',
-      children,
-      child_count: children.length,
-      running_count: children.filter((row) => row.processing_state === 'RUNNING').length
-    };
+function radioDirectoryAliasLists(row) {
+  const entries = Array.isArray(row.alias_lists) ? row.alias_lists : [];
+  if (!entries.length && row.alias_list_name) {
+    return aliasListLink(row.alias_list_name, row.alias_list_id) || node('span', 'muted', '—');
+  }
+  if (!entries.length) return node('span', 'muted', '—');
+  const values = node('span', 'radio-directory-alias-lists');
+  entries.forEach((entry, index) => {
+    if (index) values.append(node('span', 'muted', ' · '));
+    values.append(aliasListLink(entry.name, entry.id));
   });
-
-  // The system directory preview is intentionally bounded. Keep every configured trunked channel visible.
-  const unmatched = channels.filter((row) => !assigned.has(String(row.configuration_id)));
-  const unmatchedBySystem = new Map();
-  unmatched.forEach((row) => {
-    const key = String(row.system || 'Other trunked channels');
-    const rows = unmatchedBySystem.get(key) || [];
-    rows.push({ ...row, directory_type: 'channel' });
-    unmatchedBySystem.set(key, rows);
-  });
-  unmatchedBySystem.forEach((children, systemName) => {
-    const existing = groups.find((group) => String(group.system_name || '').trim().toLowerCase() ===
-      String(systemName).trim().toLowerCase());
-    if (existing) {
-      existing.children.push(...children);
-      existing.child_count = existing.children.length;
-      existing.running_count = existing.children.filter((row) => row.processing_state === 'RUNNING').length;
-      return;
-    }
-    const aliasLists = [...new Map(children.filter((row) => row.alias_list_name).map((row) => [
-      String(row.alias_list_id || row.alias_list_name), { id: row.alias_list_id, name: row.alias_list_name }
-    ])).values()];
-    groups.push({
-      directory_type: 'radio_system', system_name: systemName, protocol: children[0]?.protocol_id,
-      children, child_count: children.length,
-      running_count: children.filter((row) => row.processing_state === 'RUNNING').length,
-      alias_lists: aliasLists, local_catalog_group: true
-    });
-  });
-  return groups.sort((left, right) => String(left.system_name || radioSystemLabel(left)).localeCompare(
-    String(right.system_name || radioSystemLabel(right))));
+  return values;
 }
 
 function radioDirectoryConventionalGroups(rows) {
@@ -24518,117 +24450,76 @@ function radioDirectoryEmbeddedPanel(view, directory) {
   return section('Systems & channels', body);
 }
 
-function renderNestedRadioDirectory(renderContext) {
+function renderNestedRadioDirectory(renderContext, directory) {
   if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
-  const loading = createAsyncSection('Radio Directory', {
-    bare: true,
-    loadingMessage: 'Loading radio systems and channels…',
-    errorMessage: 'The radio directory could not be loaded.'
-  });
-  content.append(radioDirectoryEmbeddedPanel('systems', loading.element));
+  const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
+  wrapper.dataset.uiDensity = 'compact';
+  const summaryHost = node('div');
+  const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
+  const searchWrap = node('label', 'ui-search');
+  searchWrap.append(iconGlyph('icon-search'));
+  const search = node('input', 'ui-input');
+  search.type = 'search';
+  search.placeholder = 'Search systems, sites, channels, frequencies, protocols, or alias lists';
+  search.setAttribute('aria-label', search.placeholder);
+  searchWrap.append(search);
+  let activeView = 'running';
+  const filters = uiSegmentedControl([
+    { value: 'running', label: 'Running' },
+    { value: 'stopped', label: 'Stopped' },
+    { value: 'all', label: 'All' }
+  ], activeView, (value) => { activeView = value; draw(); });
+  filters.setAttribute('aria-label', 'Filter radio directory');
+  const exportLink = exportCsvLink('channels');
+  const refresh = uiActionButton('', 'icon-refresh', () => render(),
+    'ui-button ui-button-secondary ui-icon-button');
+  refresh.title = 'Refresh radio directory';
+  refresh.setAttribute('aria-label', refresh.title);
+  toolbar.append(searchWrap, filters, exportLink, refresh);
+  const directoryHost = node('div', 'radio-directory-content');
 
-  const loadDirectory = async (options = {}) => {
-    const parameters = { limit: 25, sort: 'system_id', direction: 'asc', includeChannelPreview: true };
-    const [catalog, firstSystems] = await Promise.all([
-      requestChannelConfigurationJson('/api/v1/channel-catalog', { csrf: false, ...options }),
-      apiPage('/api/v1/radio-systems', parameters, options)
-    ]);
-    // Activity-ranked top pages can change membership on every poll. Read the stable system order
-    // completely; each request retains the server's bounded channel-preview/page size.
-    const rows = [...firstSystems.rows];
-    let page = firstSystems;
-    if (page.has_more && !Number.isInteger(firstSystems.total_count))
-      throw new Error('Radio systems could not be loaded. Try refreshing the page.');
-    while (page.has_more && page.next_offset < firstSystems.total_count) {
-      if (!Number.isInteger(page.next_offset) || page.next_offset <= page.offset)
-        throw new Error('Radio systems could not be loaded. Try refreshing the page.');
-      const offset = page.next_offset;
-      page = await apiPage('/api/v1/radio-systems', { ...parameters, offset }, options);
-      if (page.offset !== offset)
-        throw new Error('Radio systems could not be loaded. Try refreshing the page.');
-      rows.push(...page.rows);
-    }
-    const unique = [...new Map(rows.map((row, index) => [
-      row.radio_system_key || row.entity_ref?.key || index, row
-    ])).values()];
-    return { catalog, systems: { ...firstSystems, rows: unique } };
+  const matches = (row, term) => !term || [row.system_name, row.system, row.site_name, row.site,
+    row.name, row.protocol, row.protocol_label, row.alias_list_name,
+    ...(Array.isArray(row.alias_lists) ? row.alias_lists.map((entry) => entry.name) : []),
+    channelAdminFrequencyList(row.frequencies_hz)]
+    .some((value) => String(value || '').toLowerCase().includes(term));
+  const draw = () => {
+    const term = search.value.trim().toLowerCase();
+    const matchesState = (row) => activeView === 'all' ||
+      activeView === 'running' && row.processing_state === 'RUNNING' ||
+      activeView === 'stopped' && row.processing_state !== 'RUNNING';
+    const trunkedSystems = [];
+    directory.systems.forEach((parent) => {
+      const parentMatches = matches(parent, term);
+      const children = parent.children.filter((row) => matchesState(row) && (parentMatches || matches(row, term)));
+      if (children.length) {
+        trunkedSystems.push({ ...parent, children, child_count: children.length,
+          running_count: children.filter((row) => row.processing_state === 'RUNNING').length });
+      }
+    });
+    const conventionalRows = directory.channels.filter((row) => matchesState(row) && matches(row, term));
+    const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
+    summaryHost.replaceChildren(channelSummaryCards({ channels: [...directory.channels,
+      ...directory.systems.flatMap((system) => system.children)] }, false));
+    radioDirectoryReconcile(directoryHost,
+      radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
+        'No trunked systems or sites match this search'),
+      radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
+        'No conventional channels match this search',
+        `${number(conventionalSystems.length)} ${conventionalSystems.length === 1 ? 'system' : 'systems'} · ` +
+        `${number(conventionalRows.length)} ${conventionalRows.length === 1 ? 'channel' : 'channels'} shown`)
+    );
   };
+  search.addEventListener('input', draw);
+  wrapper.append(summaryHost, toolbar, directoryHost);
+  draw();
 
-  return loading.load(() => loadDirectory(), (initial) => {
-    let directory = initial;
-    const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
-    wrapper.dataset.uiDensity = 'compact';
-    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
-    const searchWrap = node('label', 'ui-search');
-    searchWrap.append(iconGlyph('icon-search'));
-    const search = node('input', 'ui-input');
-    search.type = 'search';
-    search.placeholder = 'Search systems, sites, channels, frequencies, protocols, or alias lists';
-    search.setAttribute('aria-label', search.placeholder);
-    searchWrap.append(search);
-    let activeView = 'running';
-    const filters = uiSegmentedControl([
-      { value: 'running', label: 'Running' },
-      { value: 'stopped', label: 'Stopped' },
-      { value: 'all', label: 'All' }
-    ], activeView, (value) => { activeView = value; draw(); });
-    filters.setAttribute('aria-label', 'Filter radio directory');
-    const exportLink = exportCsvLink('channels');
-    const refresh = uiActionButton('', 'icon-refresh', () => renderDashboard(),
-      'ui-button ui-button-secondary ui-icon-button');
-    refresh.title = 'Refresh radio directory';
-    refresh.setAttribute('aria-label', refresh.title);
-    toolbar.append(searchWrap, filters, exportLink, refresh);
-    const directoryHost = node('div', 'radio-directory-content');
-
-    const matches = (row, term) => !term || [row.system_name, row.system, row.site_name, row.site,
-      row.name, row.protocol, row.protocol_label, row.alias_list_name,
-      ...(Array.isArray(row.alias_lists) ? row.alias_lists.map((entry) => entry.name) : []),
-      channelAdminFrequencyList(row.frequencies_hz)]
-      .some((value) => String(value || '').toLowerCase().includes(term));
-    const draw = () => {
-      const term = search.value.trim().toLowerCase();
-      const matchesState = (row) => activeView === 'all' ||
-        activeView === 'running' && row.processing_state === 'RUNNING' ||
-        activeView === 'stopped' && row.processing_state !== 'RUNNING';
-      const trunkedSystems = [];
-      radioDirectoryTrunkedGroups(directory.catalog, directory.systems).forEach((parent) => {
-        const parentMatches = matches(parent, term);
-        const children = parent.children.filter((row) => matchesState(row) && (parentMatches || matches(row, term)));
-        if (children.length) {
-          trunkedSystems.push({ ...parent, children, child_count: children.length,
-            running_count: children.filter((row) => row.processing_state === 'RUNNING').length });
-        }
-      });
-      const conventionalRows = (directory.catalog.channels || []).filter((row) =>
-        String(row.channel_kind || '').toUpperCase() === 'CONVENTIONAL' && matchesState(row) && matches(row, term));
-      const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
-      radioDirectoryReconcile(directoryHost,
-        radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
-          'No trunked systems or sites match this search'),
-        radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
-          'No conventional channels match this search')
-      );
-    };
-    search.addEventListener('input', draw);
-    wrapper.append(toolbar, directoryHost);
-    draw();
-
-    let refreshInFlight = false;
-    pageInterval(async () => {
-      if (refreshInFlight || !renderIsCurrent(renderContext) || !wrapper.isConnected || document.hidden) return;
-      refreshInFlight = true;
-      try {
-        directory = await loadDirectory({ page: false });
-        draw();
-      } catch (_) { /* Preserve the last confirmed directory until the next refresh. */ }
-      finally { refreshInFlight = false; }
-    }, 5_000);
-    return wrapper;
-  }, renderContext);
+  content.append(radioDirectoryEmbeddedPanel('systems', wrapper));
+  return { update(updated) { directory = updated; draw(); } };
 }
 
 async function renderModernChannelCatalog(renderContext, revealId = null) {
+  if (!renderIsCurrent(renderContext)) return;
   const loading = createAsyncSection('Channels', {
     bare: true,
     loadingMessage: 'Loading channel configuration…',
@@ -24706,26 +24597,30 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     newChannelButton.dataset.guideTarget = 'channel-new';
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
-      'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
-        uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
-        channelEditorControl, channelEditorFieldValue, protocols,
-        connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null }, {
-        prepareReceiver: async (tuner) => {
-          const count = Math.max(0, Number(tuner.channel_count) || 0);
-          const stop = count > 0 || /channel|serving/i.test(String(tuner.reason || ''));
-          const name = tuner.name || 'This receiver';
-          const message = stop ? `${name} is running ${count ? `${count} active channel${count === 1 ? '' : 's'}` :
-            'active channels'}. Stopping them will end any calls in progress; those calls will not resume. ` +
-            'VCE will restart the same configured channels when you finish or close the search.' :
-            `${name} has Lock center on. VCE will unlock it temporarily and restore the lock when you finish or close the search.`;
-          if (!await confirmAction(message, { title: stop ? 'Stop channels for this search?' :
-            'Unlock center temporarily?', confirmLabel: stop ? 'Stop channels and search' : 'Unlock and search',
-            cancelLabel: 'Cancel', tone: 'primary' })) return null;
-          return requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/browse`, {
-            method: 'POST', body: { takeover: true }, page: false
-          });
-        }
-      }), 'ui-button ui-button-primary') : null;
+      'icon-scan-search', async () => {
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=31');
+        if (!renderIsCurrent(renderContext)) return;
+        return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
+          uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
+          channelEditorControl, channelEditorFieldValue, protocols,
+          connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null }, {
+          prepareReceiver: async (tuner) => {
+            const count = Math.max(0, Number(tuner.channel_count) || 0);
+            const stop = count > 0 || /channel|serving/i.test(String(tuner.reason || ''));
+            const name = tuner.name || 'This receiver';
+            const message = stop ? `${name} is running ${count ? `${count} active channel${count === 1 ? '' : 's'}` :
+              'active channels'}. Stopping them will end any calls in progress; those calls will not resume. ` +
+              'VCE will restart the same configured channels when you finish or close the search.' :
+              `${name} has Lock center on. VCE will unlock it temporarily and restore the lock when you finish or close the search.`;
+            if (!await confirmAction(message, { title: stop ? 'Stop channels for this search?' :
+              'Unlock center temporarily?', confirmLabel: stop ? 'Stop channels and search' : 'Unlock and search',
+              cancelLabel: 'Cancel', tone: 'primary' })) return null;
+            return requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/browse`, {
+              method: 'POST', body: { takeover: true }, page: false
+            });
+          }
+        });
+      }, 'ui-button ui-button-primary') : null;
     if (findSystemsButton) {
       findSystemsButton.dataset.guideTarget = 'channel-discover';
       creationActions.append(findSystemsButton);
@@ -27082,7 +26977,9 @@ async function renderChannel() {
   const renderContext = captureRenderContext();
   const configurationId = String(route.get('configuration_id') || '').trim();
   if (!configurationId) throw new Error('Channel configuration ID is missing from the URL');
-  const data = await api(channelApiPath(configurationId));
+  const [data] = await Promise.all([
+    api(channelApiPath(configurationId)), loadActivityMessageTypes()
+  ]);
   let channel = data?.channel;
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
     throw new Error('The channel response is invalid');
@@ -27960,6 +27857,8 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=31');
+  if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, pageHeader('RadioReference',
     'Browse systems and agencies, compare changes, and import'))) return;
   const page = node('div', 'radioreference-page');
@@ -30294,6 +30193,8 @@ async function renderSettings() {
 
 async function renderStreaming() {
   const renderContext = captureRenderContext();
+  const { createStreamingWorkspace } = await import('./features/streaming.js?v=13');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createStreamingWorkspace({
     node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table, browsingWorkflows,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
@@ -30310,7 +30211,9 @@ async function renderStreaming() {
   }
 }
 
-function renderAdminRemoteLinks(renderContext) {
+async function renderAdminRemoteLinks(renderContext) {
+  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=20');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
@@ -30320,7 +30223,9 @@ function renderAdminRemoteLinks(renderContext) {
   content.append(workspace.element);
 }
 
-function alertsWorkspace(renderContext, view) {
+async function alertsWorkspace(renderContext, view) {
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=19');
+  if (!renderIsCurrent(renderContext)) return;
   return createAlertsWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
@@ -30338,9 +30243,10 @@ function alertsWorkspace(renderContext, view) {
   });
 }
 
-function renderPublicAlertTopics() {
+async function renderPublicAlertTopics() {
   const renderContext = captureRenderContext();
-  const workspace = alertsWorkspace(renderContext, 'public');
+  const workspace = await alertsWorkspace(renderContext, 'public');
+  if (!workspace) return;
   if (!beginPage(renderContext, pageHeader('Topics', 'Follow alerts published by this VCE installation'), workspace.element)) {
     workspace.close();
     return;
@@ -30348,9 +30254,10 @@ function renderPublicAlertTopics() {
   pageConnections.add(workspace);
 }
 
-function renderAlertManagement() {
+async function renderAlertManagement() {
   const renderContext = captureRenderContext();
-  const workspace = alertsWorkspace(renderContext, 'manage');
+  const workspace = await alertsWorkspace(renderContext, 'manage');
+  if (!workspace) return;
   if (!beginPage(renderContext, pageHeader('Alerts',
     'Create topics and choose the activity that publishes alerts.'), workspace.element)) {
     workspace.close();
@@ -30359,7 +30266,9 @@ function renderAlertManagement() {
   pageConnections.add(workspace);
 }
 
-function renderAdminApplicationLog(renderContext) {
+async function renderAdminApplicationLog(renderContext) {
+  const { createApplicationLogWorkspace } = await import('./core/application-log.js?v=5');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createApplicationLogWorkspace({
     node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton, uiActionButton,
     api, signal: renderContext.signal
@@ -30368,7 +30277,9 @@ function renderAdminApplicationLog(renderContext) {
   pageConnections.add(workspace);
 }
 
-function renderAdminWebDiagnosticLog(renderContext) {
+async function renderAdminWebDiagnosticLog(renderContext) {
+  const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=3');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createWebDiagnosticLogWorkspace({
     node, section, sectionActionHost, formField, uiSelectFrame, uiToggleField, setUiToggle,
     uiStatus, iconButton, setIconButton, uiActionButton, api, requestJson, signal: renderContext.signal
@@ -30377,8 +30288,10 @@ function renderAdminWebDiagnosticLog(renderContext) {
   pageConnections.add(workspace);
 }
 
-function renderListenMap() {
+async function renderListenMap() {
   const renderContext = captureRenderContext();
+  const { createListenMap } = await import('./features/listen-map.js?v=12');
+  if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,
     fetchSnapshot: () => api('/api/v1/listen/map', {}, { signal: renderContext.signal }),
@@ -33981,8 +33894,8 @@ async function renderAdmin() {
   if (active === 'health') await renderAdminHealth();
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
   else if (active === 'tuner-allocation') await renderAdminTunerAllocation(renderContext);
-  else if (active === 'application-log') renderAdminApplicationLog(renderContext);
-  else if (active === 'web-diagnostic-log') renderAdminWebDiagnosticLog(renderContext);
+  else if (active === 'application-log') await renderAdminApplicationLog(renderContext);
+  else if (active === 'web-diagnostic-log') await renderAdminWebDiagnosticLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
   else if (active === 'remote-support') await renderAdminRemoteSupport(body, renderContext);
   else if (active === 'display') {
@@ -33999,14 +33912,17 @@ async function renderAdmin() {
       display.append(personal);
     }
   }
-  else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
+  else if (active === 'remote-links') await renderAdminRemoteLinks(renderContext);
   else if (active === 'push-setup') {
-    const workspace = alertsWorkspace(renderContext, 'setup');
+    const workspace = await alertsWorkspace(renderContext, 'setup');
+    if (!workspace) return;
     content.append(workspace.element);
     pageConnections.add(workspace);
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
+    const { createPagingToneDetectionSettings } = await import('./features/paging-tone-detection.js?v=4');
+    if (!renderIsCurrent(renderContext)) return;
     const pagingTones = createPagingToneDetectionSettings({ node, section, sectionActionHost, uiToggleField,
       setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
       isCurrent: () => renderIsCurrent(renderContext) });
@@ -34045,6 +33961,8 @@ async function renderAdmin() {
   }
   else if (active === 'transcription') await recordingsFeature.renderAdminTranscription();
   else if (active === 'retained-statistics') {
+    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=11');
+    if (!renderIsCurrent(renderContext)) return;
     content.append(createRetainedStatisticsWorkspace({
       node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,
       table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
@@ -34222,22 +34140,8 @@ function loggingAvailabilitySignature() {
     serviceStatusWarningRequired()].join('|');
 }
 
-async function reloadForWebClientRevision() {
-  let serverRevision = '';
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 5_000);
-  try {
-    const response = await fetch('/', {
-      method: 'HEAD', cache: 'no-store', credentials: 'same-origin', signal: controller.signal
-    });
-    if (!response.ok) return false;
-    serverRevision = String(response.headers.get('X-Sdrtrunk-Web-Revision') || '').trim();
-  } catch (error) {
-    return false;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-
+function reloadForWebClientRevision(revision) {
+  const serverRevision = String(revision || '').trim();
   if (!WEB_CLIENT_REVISION || !serverRevision || serverRevision === WEB_CLIENT_REVISION ||
       webClientReloadAttempted) return false;
 
@@ -34253,11 +34157,10 @@ async function reloadForWebClientRevision() {
 
 async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
-  if (await reloadForWebClientRevision()) return;
   void refreshAlertTopicsNavigation();
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     clearServiceStatus();
-    refreshP25VisualizerMenu();
+    updateNavigationAccess();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Status restricted';
     return;
@@ -34270,7 +34173,7 @@ async function loadStatus(refreshCurrentView = false) {
     const status = document.getElementById('global-status');
     if (status) status.textContent = serviceStatus ? 'Receiver status stale' : 'Receiver status unavailable';
   }
-  refreshP25VisualizerMenu();
+  updateNavigationAccess();
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && currentView === 'admin' && ['health', 'activity'].includes(route.get('tab') || 'health')) {
@@ -34324,20 +34227,24 @@ const recordingsFeature = createRecordingsFeature({
   }
 });
 
-const showCallRelations = createCallRelations({
-  node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
-  radioIdentifierText, groupIdentifierText,
-  activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
-    row.source_entity_ref, true, 'source'),
-  activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
-  activityChannel: row => activityChannel(row),
-  activityEventLabel: row => row.event_type ? activityOptionLabel(row.event_type, 'EVENT') : activityOptionLabel(row.action),
-  playback: recordingsFeature.playback,
-  canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
-  canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
-});
-
-function openCallRelations(kind, id) { return showCallRelations(kind, id); }
+async function openCallRelations(kind, id) {
+  const [{ createCallRelations }] = await Promise.all([
+    import('./features/call-relations.js?v=4'), loadActivityMessageTypes()
+  ]);
+  const showCallRelations = createCallRelations({
+    node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
+    radioIdentifierText, groupIdentifierText,
+    activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
+      row.source_entity_ref, true, 'source'),
+    activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
+    activityChannel: row => activityChannel(row),
+    activityEventLabel: row => row.event_type ? activityOptionLabel(row.event_type, 'EVENT') : activityOptionLabel(row.action),
+    playback: recordingsFeature.playback,
+    canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
+    canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
+  });
+  return showCallRelations(kind, id);
+}
 
 const audioDock = createAudioDock({
   node, iconButton, uiToggleField, recordings: recordingsFeature.playback,
@@ -34470,7 +34377,9 @@ async function render() {
       renderAccessDenied(effectiveView, renderContext);
       return;
     }
-    await loadActivityMessageTypes();
+    if (['live', 'aliases'].includes(effectiveView)) {
+      await loadActivityMessageTypes();
+    }
     if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;
     await entry.handler();
     if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;

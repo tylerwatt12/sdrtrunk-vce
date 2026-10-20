@@ -492,6 +492,7 @@ const pageContext = {
   requiredRadioSystem: () => ({ radio_system_key: 'p25:bee00:348' }),
   requiredIdentityKey: () => 'v1-g-bee00-348-7',
   api: async () => pageResponse, channelApiPath: () => '/', radioSystemApiPath: () => '/',
+  loadActivityMessageTypes: async () => {},
   groupIdentityApiPath: () => '/',
   pageHeader: (title, subtitle) => { pageHeaders.push({ title, subtitle }); return null; },
   beginPage: () => false, fragment: (...values) => values,
