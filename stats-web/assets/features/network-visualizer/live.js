@@ -1,9 +1,11 @@
 'use strict';
 
-const MAX_BUFFERED_ROWS = 250_000;
+const MAX_BUFFERED_ROWS = 65_536;
+const MAX_SEED_ROWS = 500;
+const MAX_AFFILIATIONS = 10_000;
 const MAX_BUFFERED_FRAMES = 2_048;
 
-// One page-scoped subscription, with a bounded saved-history seed and journal catchup.
+// One page-scoped subscription, with a shared recent seed and bounded journal catchup.
 // The stream starts first. Catchup reads fresh row values after the seed has completed.
 function createP25ActivityFeed(options) {
   let closed = false;
@@ -12,19 +14,25 @@ function createP25ActivityFeed(options) {
   let attempt = 0;
   let epoch = '';
   let sequence = 0;
+  let affiliationRevision = 0;
+  let affiliationsComplete = false;
+  let affiliationController = null;
   let seeded = false;
   let syncing = false;
   let needsSeed = true;
   let retryTimer = 0;
   let retryDelay = 500;
+  let nextSeedOptions = {};
   let bufferedRows = 0;
   const buffered = new Map();
+  const affiliationBuffer = new Map();
   const hidden = () => options.isHidden?.() === true;
   const status = (value) => { if (!closed) options.onStatus?.(value); };
 
-  function clearBuffer() { buffered.clear(); bufferedRows = 0; }
+  function clearBuffer() { buffered.clear(); affiliationBuffer.clear(); bufferedRows = 0; }
   function stopSource() { const previous = source; source = null; previous?.close(); }
-  function cancel() { attempt++; controller?.abort(); controller = null; syncing = false; }
+  function cancel() { attempt++; controller?.abort(); controller = null; syncing = false;
+    affiliationController?.abort(); affiliationController = null; }
   function scheduleRetry(reseed = false) {
     needsSeed ||= reseed;
     cancel();
@@ -86,6 +94,83 @@ function createP25ActivityFeed(options) {
     }
   }
 
+  function affiliationSnapshot(value, sourceEpoch) {
+    if (!Number.isSafeInteger(value?.affiliation_revision) || value.affiliation_revision < 0 ||
+        typeof value.affiliations_available !== 'boolean' || typeof value.affiliations_complete !== 'boolean' || !Array.isArray(value.affiliations) ||
+        value.affiliations.length > MAX_AFFILIATIONS || !value.affiliations_complete &&
+        (value.affiliations_available || value.affiliations.length)) throw new Error('Invalid current P25 affiliations.');
+    return { source_epoch: sourceEpoch, revision: value.affiliation_revision,
+      available: value.affiliations_available, complete: value.affiliations_complete, rows: value.affiliations };
+  }
+
+  function discardAffiliationsThrough(through) {
+    for (const revision of affiliationBuffer.keys()) if (revision <= through) affiliationBuffer.delete(revision);
+  }
+
+  function collectAffiliations(value) {
+    const revision = value?.affiliation_revision, base = value?.base_affiliation_revision;
+    if (value?.source_epoch !== epoch || revision <= affiliationRevision) return;
+    const part = value.part ?? 0, parts = value.parts ?? 1;
+    if (!Number.isSafeInteger(revision) || !Number.isSafeInteger(base) || base < 0 || revision <= base ||
+        typeof value.affiliations_available !== 'boolean' || !Array.isArray(value.upserts) || !Array.isArray(value.removed_radio_keys) ||
+        !Number.isInteger(part) || !Number.isInteger(parts) || parts < 1 || parts > 1_024 || part < 0 || part >= parts) {
+      throw new Error('Invalid current P25 affiliation update.');
+    }
+    let batch = affiliationBuffer.get(revision);
+    if (!batch) { batch = { base, parts, available: value.affiliations_available, frames: new Map() }; affiliationBuffer.set(revision, batch); }
+    if (batch.base !== base || batch.parts !== parts || batch.available !== value.affiliations_available) {
+      throw new Error('Invalid P25 affiliation parts.');
+    }
+    batch.frames.set(part, value);
+    let count = 0;
+    for (const item of affiliationBuffer.values()) for (const frame of item.frames.values()) count += frame.upserts.length + frame.removed_radio_keys.length;
+    if (count > MAX_BUFFERED_ROWS || affiliationBuffer.size > MAX_BUFFERED_FRAMES) throw new Error('P25 affiliation buffer is full.');
+  }
+
+  function drainAffiliations() {
+    if (!seeded || needsSeed || closed || hidden()) return;
+    discardAffiliationsThrough(affiliationRevision);
+    if (!affiliationsComplete && affiliationBuffer.size) { void refreshAffiliations(); return; }
+    for (;;) {
+      const revision = [...affiliationBuffer.keys()].sort((a, b) => a - b)[0];
+      const batch = affiliationBuffer.get(revision);
+      if (!batch || batch.frames.size !== batch.parts) return;
+      if (batch.base !== affiliationRevision) { void refreshAffiliations(); return; }
+      const frames = [...batch.frames.entries()].sort((a, b) => a[0] - b[0]).map((entry) => entry[1]);
+      options.onAffiliations(frames.flatMap((frame) => frame.upserts), {
+        removedRadioKeys: frames.flatMap((frame) => frame.removed_radio_keys), available: batch.available,
+        revision, source_epoch: epoch });
+      affiliationRevision = revision;
+      discardAffiliationsThrough(revision);
+      status('live');
+    }
+  }
+
+  async function refreshAffiliations() {
+    if (closed || hidden() || affiliationController) return;
+    const request = new AbortController(), fromEpoch = epoch;
+    affiliationController = request;
+    try {
+      const document = await options.loadSeed(request.signal, {});
+      if (request.signal.aborted || closed || epoch !== fromEpoch) return;
+      if (document?.source_epoch !== fromEpoch) { scheduleRetry(true); return; }
+      const snapshot = affiliationSnapshot(document, fromEpoch);
+      if (snapshot.revision >= affiliationRevision) {
+        options.onAffiliations(snapshot.rows, { replace: true, initial: true, available: snapshot.available, complete: snapshot.complete,
+          revision: snapshot.revision, source_epoch: epoch });
+        affiliationRevision = snapshot.revision; affiliationsComplete = snapshot.complete;
+        discardAffiliationsThrough(affiliationRevision);
+        const next = [...affiliationBuffer.values()][0];
+        if (affiliationsComplete && next && next.base > affiliationRevision) { scheduleRetry(false); return; }
+        status('live');
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError' && !request.signal.aborted && !closed) scheduleRetry(false);
+    } finally {
+      if (affiliationController === request) { affiliationController = null; if (affiliationsComplete) drainAffiliations(); }
+    }
+  }
+
   async function synchronize(reseed) {
     if (closed || hidden() || syncing) return;
     syncing = true;
@@ -93,17 +178,32 @@ function createP25ActivityFeed(options) {
     const signalController = new AbortController();
     controller = signalController;
     const signal = signalController.signal;
-    const fromSequence = sequence;
+    let fromSequence = sequence;
     const fromEpoch = epoch;
     const seed = reseed || needsSeed || !seeded;
     status(seed ? (seeded ? 'refreshing' : 'loading') : 'reconnecting');
     try {
-      const rows = seed ? await options.loadSeed(signal) : null;
+      const seedOptions = nextSeedOptions; nextSeedOptions = {};
+      const seedDocument = seed ? await options.loadSeed(signal, seedOptions) : null;
+      if (closed || localAttempt !== attempt || signal.aborted) return;
+      if (seed) {
+        if (seedDocument?.source_epoch !== fromEpoch) { scheduleRetry(true); return; }
+        if (!Array.isArray(seedDocument.rows) || seedDocument.rows.length > MAX_SEED_ROWS ||
+            !Number.isSafeInteger(seedDocument.sequence) || seedDocument.sequence < 0) {
+          throw new Error('Invalid recent P25 activity.');
+        }
+        // Shared prepared seeds may precede or follow this subscription's boundary.
+        // Recover from the seed's own saved sequence, never the subscription time.
+        fromSequence = seedDocument.sequence;
+        affiliationSnapshot(seedDocument, fromEpoch);
+      }
       let afterId = 0, throughSequence = null;
       const changes = [], removed = [];
+      let currentAffiliations = seed ? affiliationSnapshot(seedDocument, fromEpoch) : null;
+      let requiredAffiliationRevision = affiliationRevision, recoveryComplete = affiliationsComplete;
       do {
         const page = await options.requestCatchup({ source_epoch: fromEpoch,
-          after_sequence: fromSequence, ...(throughSequence === null ? {} : { through_sequence: throughSequence }),
+          after_sequence: fromSequence, affiliation_revision: seed ? currentAffiliations.revision : affiliationRevision, ...(throughSequence === null ? {} : { through_sequence: throughSequence }),
           after_id: afterId, limit: 500 }, { signal });
         if (closed || localAttempt !== attempt) return;
         if (page?.resync_required || page?.source_epoch !== fromEpoch) {
@@ -125,22 +225,40 @@ function createP25ActivityFeed(options) {
           throw new Error('P25 activity recovery did not advance.');
         }
         afterId = nextId;
-        if (!page.has_more) break;
+        if (!page.has_more) {
+          if (!Number.isSafeInteger(page.affiliation_revision) || page.affiliation_revision < 0 ||
+              typeof page.affiliations_available !== 'boolean' || typeof page.affiliations_complete !== 'boolean' || typeof page.affiliations_refresh_required !== 'boolean') {
+            throw new Error('Invalid current P25 affiliation recovery.');
+          }
+          requiredAffiliationRevision = page.affiliation_revision; recoveryComplete = page.affiliations_complete;
+          break;
+        }
       } while (!signal.aborted);
       if (closed || localAttempt !== attempt || signal.aborted) return;
-      if (seed) await options.onSeed(rows, changes, removed, signal);
-      else options.onDelta(changes, removed);
+      if (seed) {
+        currentAffiliations.preserve = seeded && currentAffiliations.revision < affiliationRevision;
+        await options.onSeed(seedDocument.rows, changes, removed, signal, currentAffiliations);
+      } else options.onRecovery(changes, removed);
       if (closed || localAttempt !== attempt || signal.aborted) return;
       sequence = throughSequence;
+      if (seed && !currentAffiliations.preserve) { affiliationRevision = currentAffiliations.revision; affiliationsComplete = currentAffiliations.complete; }
+      discardAffiliationsThrough(affiliationRevision);
       seeded = true; needsSeed = false; retryDelay = 500;
       discardThrough(sequence);
+      if (!recoveryComplete && requiredAffiliationRevision >= affiliationRevision) {
+        affiliationRevision = requiredAffiliationRevision; affiliationsComplete = false;
+        discardAffiliationsThrough(affiliationRevision);
+        options.onAffiliations([], { available: false, complete: false, revision: affiliationRevision, source_epoch: epoch });
+      }
+      drainAffiliations();
+      if (recoveryComplete && (requiredAffiliationRevision > affiliationRevision || !affiliationsComplete)) void refreshAffiliations();
       status('live');
     } catch (error) {
       if (error?.name === 'AbortError' || closed || localAttempt !== attempt) return;
       options.onError?.(error);
       scheduleRetry(seed);
     } finally {
-      if (localAttempt === attempt) { syncing = false; controller = null; drain(); }
+      if (localAttempt === attempt) { syncing = false; controller = null; drain(); drainAffiliations(); }
     }
   }
 
@@ -149,7 +267,7 @@ function createP25ActivityFeed(options) {
         !Number.isSafeInteger(value.sequence) || value.sequence < 0) return;
     options.onBoundary?.(value);
     const changed = epoch !== value.source_epoch;
-    if (changed || needsSeed) { cancel(); clearBuffer(); epoch = value.source_epoch; sequence = value.sequence; needsSeed = true; }
+    if (changed || needsSeed) { cancel(); clearBuffer(); if (changed) { affiliationRevision = 0; affiliationsComplete = false; } epoch = value.source_epoch; sequence = value.sequence; needsSeed = true; }
     if (!syncing) void synchronize(changed || needsSeed);
   }
 
@@ -162,6 +280,10 @@ function createP25ActivityFeed(options) {
         if (closed || hidden()) return;
         if (value?.source_epoch !== epoch) return;
         try { assemble(value); drain(); } catch (_) { scheduleRetry(false); }
+      },
+      affiliations(value) {
+        if (closed || hidden()) return;
+        try { collectAffiliations(value); drainAffiliations(); } catch (_) { scheduleRetry(false); }
       },
       resync(value) {
         if (value?.reason === 'transport_gap') {
@@ -179,8 +301,9 @@ function createP25ActivityFeed(options) {
   }
 
   const feed = {
-    reseed() {
+    reseed(requestOptions = {}) {
       if (closed) return;
+      nextSeedOptions = requestOptions;
       needsSeed = true;
       cancel(); clearBuffer();
       if (retryTimer) options.clearTimeout(retryTimer);

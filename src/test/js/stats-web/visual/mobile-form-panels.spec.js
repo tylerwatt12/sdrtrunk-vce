@@ -34,6 +34,24 @@ async function mockApplication(page, theme) {
     source_identity_key: `v1-r-00001-001-${30914 + i}`, source_alias_name: `Engine ${i + 1}`,
     target_id: 1201, target_native_id: 1201, target_identity_key: 'v1-g-00001-001-1201',
     target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }));
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    window.fetch = (input, options) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.pathname !== '/api/v1/live/multiplex') return original(input, options);
+      const frame = (topic, event, data) => {
+        const payload = new TextEncoder().encode(JSON.stringify({ event, data }));
+        const bytes = new Uint8Array(16 + payload.length), header = new DataView(bytes.buffer);
+        header.setUint32(0, 0x534c4d58); header.setUint8(4, 2); header.setUint8(5, 1);
+        header.setUint16(6, topic); header.setUint32(8, payload.length); bytes.set(payload, 16);
+        return bytes;
+      };
+      return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
+        window.mobileP25Frame = (event, data) => controller.enqueue(frame(7, event, data));
+      } }), { status: 200 }));
+    };
+  });
   const writes = [];
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), url = new URL(request.url()), p = url.pathname;
@@ -68,6 +86,15 @@ async function mockApplication(page, theme) {
     else if (p === '/api/v1/admin/streaming/destination/aliases') {
       const offset = Number(url.searchParams.get('offset')) || 0;
       data = { revision: 'assignments-1', total: 51, limit: 50, items: assignments.slice(offset, offset + 50) };
+    } else if (p === '/api/v1/activity/live/seed') data = {
+      source_epoch: 'mobile-p25', affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations: [], sequence: 0, rows: activity, captured_at_ms: now,
+      traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true };
+    else if (p === '/api/v1/activity/live') data = {
+      source_epoch: 'mobile-p25', affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations_refresh_required: false, through_sequence: 0, rows: [], removed_ids: [], next_after_id: 0, has_more: false };
+    else if (p === '/api/v1/live/multiplex/control') {
+      if (request.postDataJSON()?.subscriptions?.p25_activity) await page.evaluate(() => window.mobileP25Frame?.('source_change', {
+        source_epoch: 'mobile-p25', sequence: 0, server_time_ms: Date.now(), collection_enabled: true }));
+      data = { accepted: true };
     } else if (p === '/api/v1/activity') data = {
       rows: Number(url.searchParams.get('after_id')) > 0 ? [] : activity,
       watermark_id: 16, next_after_id: 16, has_more: false };

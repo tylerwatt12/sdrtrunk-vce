@@ -36,6 +36,14 @@ function row(id, action, overrides = {}) {
   };
 }
 
+function affiliation(value) {
+  return { radio_system_key: value.radio_system_key, radio_identity_key: value.source_identity_key,
+    talkgroup_identity_key: value.target_identity_key, configuration_id: value.configuration_id,
+    confirmed_at_ms: value.observed_at_ms, protocol: 'p25', wacn: value.wacn, system_id: value.system_id,
+    system_name: value.system_name, radio_id: value.source_radio_id, talkgroup_id: value.target_id,
+    radio_alias_name: value.source_alias_name, talkgroup_alias_name: value.target_alias_name };
+}
+
 async function main() {
   const history = await import(`${pathToFileURL(path.join(feature, 'history.js')).href}?history-test=1`);
   const settings = await import(`${pathToFileURL(path.join(feature, 'settings.js')).href}?settings-test=1`);
@@ -55,6 +63,8 @@ async function main() {
   assert.equal(settings.enabledP25EventCategories(callsEnabled, 'autoZoom').has('call'), false);
 
   const state = history.createP25HistoryState();
+  history.applyP25Affiliations(state, [affiliation(row(4, 'JOIN', { target_identity_key: 'v1-g-202',
+    target_id: 202, target_alias_name: 'Tactical' }))], { initial: true });
   const seed = history.applyP25ActivityRows(state, [
     row(4, 'JOIN', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' }),
     row(1, 'ACTIVE'),
@@ -148,7 +158,7 @@ async function main() {
     state: timingState, selectedSystemKey: SYSTEM_A, selectedGroupKey: '', highlightedCategories,
     buildP25Graph: history.buildP25Graph, nextP25HighlightExpiry: history.nextP25HighlightExpiry,
     renderer: { setData: (graph) => frames.push(graph) }, renderEvents: () => {},
-    highlightTimer: 0, closed: false, serverTimeOffsetMs: 0, Set, Date: { now: () => now },
+    status: {}, partialView: false, feedStatus: 'loading', highlightTimer: 0, closed: false, serverTimeOffsetMs: 0, Set, Date: { now: () => now },
     window: {
       setTimeout: (callback, delay) => { scheduled.set(++timerId, { callback, at: now + delay }); return timerId; },
       clearTimeout: (id) => scheduled.delete(id)
@@ -268,6 +278,7 @@ async function main() {
     target_alias_name: `Group ${300 + index}`
   }));
   const cloudState = history.createP25HistoryState();
+  history.applyP25Affiliations(cloudState, cloudRows.map(affiliation), { initial: true });
   history.applyP25ActivityRows(cloudState, cloudRows, { initial: true });
   const cloudGraph = history.buildP25Graph(cloudState, SYSTEM_A, Number.MAX_SAFE_INTEGER);
   const cloudGroups = cloudGraph.nodes.filter((node) => node.type === 'talkgroup');
@@ -288,6 +299,7 @@ async function main() {
     assert.equal(nearest.id, parent.id, 'a radio should remain closest to its own talkgroup cloud anchor');
   });
   const repeatState = history.createP25HistoryState();
+  history.applyP25Affiliations(repeatState, cloudRows.map(affiliation), { initial: true });
   history.applyP25ActivityRows(repeatState, cloudRows, { initial: true });
   const repeatedGroups = history.buildP25Graph(repeatState, SYSTEM_A, Number.MAX_SAFE_INTEGER).nodes
     .filter((node) => node.type === 'talkgroup').map(({ id, x, y, z }) => ({ id, x, y, z }));
@@ -385,13 +397,13 @@ async function main() {
   assert.deepEqual(correction.focusCandidates, [], 'source enrichment does not replay camera attention');
   assert.equal(corrected.radios.get(`${SYSTEM_A}:v1-r-8001`).label, 'Corrected source');
   assert.equal(corrected.radios.get(`${SYSTEM_A}:v1-r-7001`).visualGroupKey, '',
-    'a corrected older join must not resurrect the original radio after its logout tombstone');
+    'Activity corrections cannot create a canonical current association');
   const deletion = history.applyP25ActivityRows(corrected, [], { removedIds: [90] });
   assert.equal(deletion.changed, true);
   assert.equal(corrected.radios.has(`${SYSTEM_A}:v1-r-8001`), false,
     'removing a saved row removes the facts it contributed');
-  history.applyP25ActivityRows(corrected, [], { fromMs: 1_700_000_001_000 });
-  assert.equal(corrected.systems.size, 0, 'the rolling history window expires graph facts locally');
+  history.applyP25ActivityRows(corrected, [], { removedIds: [91] });
+  assert.equal(corrected.systems.size, 0, 'deleting the remaining saved row removes its graph facts');
 
   const mixedCorrection = history.createP25HistoryState();
   history.applyP25ActivityRows(mixedCorrection, [row(100, 'JOIN')], { initial: true });
@@ -416,6 +428,26 @@ async function main() {
   assert.ok(Math.hypot(clouds[0].x - clouds[1].x, clouds[0].y - clouds[1].y,
     clouds[0].z - clouds[1].z) > 104, 'new cloud ordinals cannot overlap preserved old anchors');
 
+  const bounded = history.createP25HistoryState();
+  history.applyP25ActivityRows(bounded, Array.from({ length: 5_001 }, (_, index) => row(index + 1, 'GRANT', {
+    source_identity_key: `v1-r-${index + 1}`, source_radio_id: index + 1,
+    observed_at_ms: 1_700_000_000_000 + Math.floor(index / 2)
+  })), { initial: true });
+  assert.equal(bounded.savedRows.size, 5_000, 'recent model retains at most 5,000 saved records');
+  assert.equal(bounded.seenIds.size, 5_000);
+  assert.equal(bounded.savedRows.has(1), false, 'lowest ID leaves first when oldest observation times tie');
+  assert.equal(bounded.savedRows.has(2), true);
+  assert.equal(bounded.radios.has(`${SYSTEM_A}:v1-r-1`), false, 'trimmed rows do not leave graph facts behind');
+  const lateOld = history.applyP25ActivityRows(bounded, [row(9_000, 'GRANT', {
+    observed_at_ms: 1_600_000_000_000, source_identity_key: 'v1-r-9000', source_radio_id: 9000
+  })]);
+  assert.equal(bounded.savedRows.size, 5_000);
+  assert.equal(bounded.savedRows.has(9_000), false, 'late old evidence cannot evict more recent saved facts');
+  assert.equal(bounded.radios.has(`${SYSTEM_A}:v1-r-9000`), false);
+  assert.deepEqual(lateOld.focusCandidates, [], 'trimmed old facts cannot replay camera attention');
+  assert.doesNotMatch(indexSource, /historyHours|pruneHistory|setInterval|requestForwardPage|from_ms|to_ms/,
+    'the Visualizer has no history scope, background expiry or generic Activity seed paging');
+
   const overlap = history.applyP25ActivityRows(state, [state.savedRows.get(7)]);
   assert.equal(overlap.accepted, 0);
   assert.equal(overlap.ignored, 1, 'overlapping forward pages must deduplicate by stored row ID');
@@ -434,20 +466,21 @@ async function main() {
 
   const firstOnly = history.createP25HistoryState();
   history.applyP25ActivityRows(firstOnly, [row(20, 'JOIN')], { initial: true });
-  assert.equal(history.groupedP25Events(firstOnly).length, 0,
-    'the first affiliation in the window is placement, not an invented movement');
+  assert.equal(history.groupedP25Events(firstOnly)[0].title, 'Affiliation observed',
+    'saved JOIN is an observed event rather than a fabricated current movement');
+  assert.equal([...firstOnly.radios.values()][0].visualGroupKey, '', 'Activity never supplies current links');
 
   const incompatibleScopes = history.createP25HistoryState();
   history.applyP25ActivityRows(incompatibleScopes, [
     row(30, 'JOIN', { configuration_id: 'site-a' }),
     row(31, 'JOIN', { configuration_id: 'site-b', target_identity_key: 'v1-g-202', target_id: 202 })
   ], { initial: true });
-  assert.equal(history.groupedP25Events(incompatibleScopes).length, 0,
-    'different observation scopes must not fabricate an affiliation change');
+  assert.equal(history.groupedP25Events(incompatibleScopes)[0].title, 'Affiliation observed',
+    'different event scopes must not fabricate a canonical affiliation change');
   history.applyP25ActivityRows(incompatibleScopes, [row(32, 'LOGOUT', { configuration_id: 'site-b' })],
     { initial: true });
-  assert.equal([...incompatibleScopes.radios.values()][0].visualGroupKey, `${SYSTEM_A}:v1-g-101`,
-    'a logout clears only its compatible observation scope');
+  assert.equal([...incompatibleScopes.radios.values()][0].visualGroupKey, '',
+    'JOIN and LOGOUT events do not compete with canonical state');
 
   for (const [serving_system_key, expected] of [[null, '7001 (Local TG ID 77)'],
     ['p25:bee00:348', '7001 (Local TG ID 77)'], ['p25:00001:047', 'County Radio · 7001 (Local TG ID 77)']]) {

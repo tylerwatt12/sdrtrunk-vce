@@ -19536,7 +19536,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=49');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=50');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19552,11 +19552,11 @@ async function renderP25Visualizer() {
     saveEventSettings: saveP25VisualizerEventSettings,
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
-    requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
+    requestActivitySeed: (parameters, options) => api('/api/v1/activity/live/seed', parameters, options),
     requestActivityCatchup: (parameters, options) => api('/api/v1/activity/live', parameters, options),
     openActivityStream: (callbacks) => {
       const source = liveConnection('p25_activity', { subscription_id: randomLiveClientId() }, false);
-      [['source_change', 'boundary'], ['activity_delta', 'delta'], ['resync_required', 'resync'],
+      [['source_change', 'boundary'], ['activity_delta', 'delta'], ['affiliation_delta', 'affiliations'], ['resync_required', 'resync'],
         ['live_gap', 'resync']].forEach(([eventName, callbackName]) => {
         source.addEventListener(eventName, (event) => {
           try { callbacks[callbackName]?.(JSON.parse(event.data)); }
@@ -19568,7 +19568,6 @@ async function renderP25Visualizer() {
     },
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
-    historyStatus: statsLoggingState(),
     signal: renderContext.signal
   });
   if (!renderIsCurrent(renderContext)) {
