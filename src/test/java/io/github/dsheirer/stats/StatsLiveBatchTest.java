@@ -5,16 +5,78 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.remote.RemoteOriginLookup;
+import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class StatsLiveBatchTest
 {
+    @Test
+    void unattendedResyncSkipsWireEncodingAndLaterViewerGetsTheCurrentBoundary() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        source.publish(update("a", 0));
+        var origins = new AtomicReference<>(RemoteOriginLookup.OriginSnapshot.EMPTY);
+        AtomicInteger changedOriginReads = new AtomicInteger();
+        CountDownLatch afterResync = new CountDownLatch(1);
+        try(StatsLiveService service = StatsLiveService.fromActivitySource(source, null, () -> {
+            var current = origins.get();
+            if(current.revision() == 1 && Thread.currentThread().getName().startsWith("stats live projection") &&
+                changedOriginReads.incrementAndGet() == 2) afterResync.countDown();
+            return current;
+        }))
+        {
+            service.start();
+            assertEquals(1, service.snapshotWire().revision());
+            var mapperField = ApiHttpResponse.class.getDeclaredField("OBJECT_MAPPER");
+            mapperField.setAccessible(true);
+            var factory = ((com.fasterxml.jackson.databind.ObjectMapper)mapperField.get(null)).getFactory();
+            var constraints = factory.streamWriteConstraints();
+            try
+            {
+                // Make any attempted wire sizing fail, without adding a production counter or serializer hook.
+                factory.setStreamWriteConstraints(com.fasterxml.jackson.core.StreamWriteConstraints.builder()
+                    .maxNestingDepth(1).build());
+                assertThrows(java.io.IOException.class, () -> ApiHttpResponse.encodePayload(
+                    Map.of("outer", Map.of("inner", Map.of("value", 1)))));
+                source.publish(update("b", 2));
+                origins.set(new RemoteOriginLookup.OriginSnapshot(1, Map.of()));
+                assertTrue(afterResync.await(3, TimeUnit.SECONDS), "The observer must return after resynchronizing");
+                assertEquals(0, service.projectionFailures(), "Unattended resync must not serialize a wire document");
+                factory.setStreamWriteConstraints(constraints);
+
+                // Match the HTTP ordering: subscribe first, then capture the already-published boundary.
+                try(var subscription = service.subscribeChannelActivity())
+                {
+                    var snapshot = service.snapshotWire();
+                    assertEquals(2, snapshot.revision());
+                    byte[] bytes = snapshot.frame().bytes(false);
+                    var data = new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                        java.util.Arrays.copyOfRange(bytes, LiveMultiplexFrame.HEADER_BYTES, bytes.length)).path("data");
+                    assertEquals(2, data.path("tables").size());
+                    assertEquals("0", data.at("/tables/0/rows/0/source_id").asText());
+                    assertEquals("2", data.at("/tables/1/rows/0/source_id").asText());
+                    source.publish(update("a", 3));
+                    var following = subscription.poll(2, TimeUnit.SECONDS);
+                    assertNotNull(following);
+                    assertEquals("activity_batch", following.name());
+                    assertEquals(2L, ((Map<?,?>)following.data()).get("base_revision"));
+                    assertEquals(3L, ((Map<?,?>)following.data()).get("revision"));
+                }
+            }
+            finally { factory.setStreamWriteConstraints(constraints); }
+        }
+    }
+
     @Test
     void publishesWhileNotificationsContinueWithoutWaitingForSourceQuiescence() throws Exception
     {

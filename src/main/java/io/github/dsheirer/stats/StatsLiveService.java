@@ -465,6 +465,8 @@ final class StatsLiveService implements AutoCloseable
         // Sample activity after the navigation/origin references and retain those exact references. A catalog
         // change during projection stays visible to the next refresh instead of being silently adopted.
         rebuildBaseline(run, currentSnapshotSet(), navigation, origins);
+        // A later viewer subscribes before reading this published boundary; no wire document is needed yet.
+        if(!mChannelActivityHub.hasSubscribers()) return;
         Map<String,Object> authoritative = boundedSnapshot(run.mPublishedState);
         synchronized(mLifecycleLock)
         {
