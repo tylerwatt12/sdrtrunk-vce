@@ -593,8 +593,8 @@ if (view === 'setup-guide') {
     if (text !== null) element.textContent = String(text);
     return element;
   };
-  const headingActions = example.querySelector('.channel-heading-actions');
-  const [newChannel, findSystems] = headingActions.querySelectorAll('button');
+  const creationActions = example.querySelector('.channel-creation-actions');
+  const [newChannel, findSystems] = creationActions.querySelectorAll('button');
   const { openReadOnlyModal } = await createGalleryModalFoundation();
   const introduction = openSetupGuide({ node, openReadOnlyModal }, {
     title: 'Add your first channel', choices: [

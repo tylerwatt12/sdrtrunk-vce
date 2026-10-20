@@ -24488,9 +24488,6 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
   loading.element.classList.add('channel-catalog-section');
   const heading = pageHeader('Channel Setup', 'Manage channels and their startup order.');
   heading.classList.add('channel-setup-page-header');
-  const headingActions = sectionActionHost();
-  headingActions.classList.add('channel-heading-actions');
-  heading.append(headingActions);
   if (!beginPage(renderContext, heading, loading.element)) return;
   await loading.load(async () => {
     const [catalog, protocols, options] = await Promise.all([
@@ -24506,9 +24503,10 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     let pageIndex = 0;
     const wrapper = node('div', 'channel-admin-catalog ui-catalog editor-workspace');
     wrapper.dataset.uiDensity = 'comfortable';
-    const summaryHost = node('div');
+    const summaryHost = node('div', 'channel-summary-text');
     summaryHost.append(channelSetupSummary(catalog));
     const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar ui-catalog-toolbar-flat');
+    const creationActions = node('div', 'channel-creation-actions ui-action-row ui-action-row-start');
     const tools = node('div', 'channel-catalog-tools ui-action-row');
     const searchWrap = node('label', 'ui-search');
     searchWrap.append(iconGlyph('icon-search'));
@@ -24555,7 +24553,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     statusHost.setAttribute('aria-live', 'polite');
     const newChannelButton = uiActionButton('New channel', 'icon-plus', () =>
       openChannelCreationChoice({ protocols, options }), 'ui-button ui-button-primary');
-    headingActions.replaceChildren(newChannelButton);
+    creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
         uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -24577,7 +24575,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
           });
         }
       }), 'ui-button ui-button-primary') : null;
-    if (findSystemsButton) headingActions.append(findSystemsButton);
+    if (findSystemsButton) creationActions.append(findSystemsButton);
     const setupGuide = createChannelSetupGuide({ ui: { node, openReadOnlyModal }, account: accessSession.username,
       dismissalScope: accessSession.guideDismissalScope,
       channels: () => state.catalog.channels,
@@ -24596,6 +24594,10 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     tools.append(exportLink, refresh);
     const summaryRow = node('div', 'channel-summary-row');
     summaryRow.append(summaryHost, tools);
+    const overview = node('div', 'channel-catalog-overview');
+    overview.append(creationActions, summaryRow);
+    const catalogHeader = node('div', 'channel-catalog-header');
+    catalogHeader.append(overview, toolbar);
 
     const tableHost = node('div', 'channel-catalog-table-host');
     const tableController = {};
@@ -24830,7 +24832,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     };
     search.addEventListener('input', () => { pageIndex = 0; draw(); });
     draw({ rebuild: true, revealId: revealId || route.get('channel') });
-    wrapper.append(toolbar, summaryRow, statusHost, selectedBar, tableHost, navigation);
+    wrapper.append(catalogHeader, statusHost, selectedBar, tableHost, navigation);
     updateSelection();
     pageTimeout(() => { void setupGuide.refresh(); }, 0);
 
@@ -25628,7 +25630,7 @@ async function openChannelCreationChoice(prefetched = null) {
   }
   modal = openReadOnlyModal('How would you like to create a channel?', body, {
     id: 'create-channel-choice', className: 'modal-size-small',
-    returnFocusSelector: '.channel-heading-actions .ui-button-primary'
+    returnFocusSelector: '.channel-creation-actions .ui-button-primary'
   });
   if (!modal || !await modal.ready) return;
   modal.focus(body.querySelector('button:not([disabled])'));
@@ -25824,7 +25826,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
     returnFocusSelector: editing ?
       `tr[data-id="${CSS.escape(configurationId)}"] .channel-edit-name` :
-      '.channel-heading-actions .ui-button-primary',
+      '.channel-creation-actions .ui-button-primary',
     cleanup: () => {
       squelchTuner?.close(); removeSectionLayout?.(); enrichmentAccountController.abort();
     }

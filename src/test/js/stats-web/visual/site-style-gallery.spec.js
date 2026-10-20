@@ -58,7 +58,7 @@ for (const view of galleryViews) {
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
       if (view === 'setup-guide') {
         const dismiss = await page.getByRole('button', { name: 'Dismiss setup guide', exact: true }).boundingBox();
-        for (const action of await page.locator('.channel-heading-actions > button').all()) {
+        for (const action of await page.locator('.channel-creation-actions > button').all()) {
           const bounds = await action.boundingBox();
           expect(dismiss.x < bounds.x + bounds.width && dismiss.x + dismiss.width > bounds.x &&
             dismiss.y < bounds.y + bounds.height && dismiss.y + dismiss.height > bounds.y).toBe(false);
@@ -66,9 +66,21 @@ for (const view of galleryViews) {
       }
       if (view === 'channels') {
         await expect(example.locator('.channel-admin-toolbar')).toHaveClass(/ui-catalog-toolbar-flat/);
-        const headingActions = example.locator('.channel-heading-actions');
-        await expect(headingActions.locator(':scope > button')).toHaveText(['New channel', 'Find Trunked Systems']);
-        for (const action of await headingActions.locator(':scope > button').all()) {
+        const creationActions = example.locator('.channel-creation-actions');
+        await expect(example.locator('.channel-setup-page-header button')).toHaveCount(0);
+        await expect(example.locator('.channel-catalog-header > .channel-catalog-overview > .channel-creation-actions'))
+          .toHaveCount(1);
+        await expect(example.locator('.channel-catalog-header > .channel-catalog-overview > .channel-summary-row'))
+          .toHaveCount(1);
+        await expect(example.locator('.channel-catalog-header > .channel-admin-toolbar')).toHaveCount(1);
+        const actionsBounds = await creationActions.boundingBox();
+        const toolbarBounds = await example.locator('.channel-admin-toolbar').boundingBox();
+        expect(actionsBounds.x).toBeCloseTo(toolbarBounds.x, 0);
+        const filterGap = toolbarBounds.y - actionsBounds.y - actionsBounds.height;
+        expect(filterGap).toBeGreaterThanOrEqual(8);
+        expect(filterGap).toBeLessThanOrEqual(presentation.viewport.width >= 760 ? 8 : 64);
+        await expect(creationActions.locator(':scope > button')).toHaveText(['New channel', 'Find Trunked Systems']);
+        for (const action of await creationActions.locator(':scope > button').all()) {
           await expect(action).toHaveClass(/\bui-button-primary\b/);
           await expect(action).toHaveCSS('height', '40px');
         }

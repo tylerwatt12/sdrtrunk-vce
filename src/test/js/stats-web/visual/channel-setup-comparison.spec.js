@@ -155,18 +155,24 @@ for (const theme of ['light', 'dark']) {
     }
     const heading = page.locator('.channel-setup-page-header');
     await expect(heading.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
-    await expect(heading.getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
+    await expect(heading.getByRole('button')).toHaveCount(0);
+    const creationActions = page.locator('.channel-catalog-overview > .channel-creation-actions');
+    await expect(creationActions.getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
     await expect(page.locator('.channel-admin-toolbar').getByRole('button', { name: 'New channel', exact: true }))
       .toHaveCount(0);
     const toolbar = page.locator('.channel-admin-toolbar');
     await expect(toolbar).toHaveClass(/ui-catalog-toolbar-flat/);
     await expect(toolbar).toHaveCSS('border-top-width', '0px');
     await expect(toolbar).toHaveCSS('box-shadow', 'none');
-    const [headingBox, tableBox, toolbarBox] = await Promise.all([
-      heading.boundingBox(), page.locator('.channel-catalog-table-wrap').boundingBox(), toolbar.boundingBox()
+    const [headingBox, tableBox, toolbarBox, actionsBox] = await Promise.all([
+      heading.boundingBox(), page.locator('.channel-catalog-table-wrap').boundingBox(), toolbar.boundingBox(),
+      creationActions.boundingBox()
     ]);
     expect(Math.abs(headingBox.x - tableBox.x), 'Heading and table share the same left edge').toBeLessThanOrEqual(1);
     expect(Math.abs(headingBox.x - toolbarBox.x), 'Heading and filters share the same left edge').toBeLessThanOrEqual(1);
+    expect(actionsBox.x, 'Creation actions align with the table').toBeCloseTo(tableBox.x, 0);
+    expect(toolbarBox.y - (actionsBox.y + actionsBox.height), 'Creation actions sit immediately above the filters')
+      .toBe(8);
     await expect(table.locator('thead th[data-column="status"]')).toContainText('State');
     await expect(table.locator('thead th[data-column="auto-start"]')).toContainText('Auto start');
     const geometry = await table.evaluate((element) => {

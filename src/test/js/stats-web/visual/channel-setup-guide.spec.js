@@ -5,7 +5,7 @@ const eligibleTuner = { ...operatorTuner({ spectrum_target_id: 'target-a', spect
   eligible: true, source_type: 'receiver', channel_count: 0, center_frequency_hz: 851012500,
   usable_bandwidth_hz: 9000000, minimum_frequency_hz: 24000000, maximum_frequency_hz: 1800000000 };
 const guide = page => page.getByRole('dialog', { name: 'Add your first channel', exact: true });
-const toolbarAction = (page, name) => page.locator('.channel-heading-actions')
+const toolbarAction = (page, name) => page.locator('.channel-creation-actions')
   .getByRole('button', { name, exact: true });
 const actionNames = ['Find Trunked Systems', 'New channel'];
 const dismissalKey = 'sdrtrunk-vce-channel-setup-guide-dismissed:v2:fixture-admin:account-1-100';
@@ -99,13 +99,13 @@ async function openChannels(page, options = {}) {
 
 for (const theme of ['light', 'dark']) {
   for (const width of [1280, 390, 320]) {
-    test(`Channel Setup creation actions are adjacent equals at ${width}px ${theme}`, async ({ page }) => {
+    test(`Channel Setup creation actions sit with the catalog at ${width}px ${theme}`, async ({ page }, testInfo) => {
       const viewport = { width, height: 900 };
       await page.setViewportSize(viewport);
       const { fixture } = await openChannels(page, { theme, channels: [{ configuration_id: 'saved',
         name: 'County Simulcast', protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1',
         processing_state: 'STOPPED', frequencies_hz: [851012500], editable: true }] });
-      const actions = page.locator('.channel-heading-actions');
+      const actions = page.locator('.channel-creation-actions');
       await expect(actions.locator(':scope > button')).toHaveText(['New channel', 'Find Trunked Systems']);
       const styles = [];
       for (const name of ['New channel', 'Find Trunked Systems']) {
@@ -120,6 +120,22 @@ for (const theme of ['light', 'dark']) {
       }
       expect(styles[0]).toEqual(styles[1]);
       expect(styles[0].height).toBe(40);
+      await page.screenshot({ path: testInfo.outputPath(`catalog-actions-${width}-${theme}.png`), fullPage: true });
+      await expect(page.locator('.channel-setup-page-header button')).toHaveCount(0);
+      await expect(page.locator('.channel-catalog-header > .channel-catalog-overview > .channel-creation-actions'))
+        .toHaveCount(1);
+      await expect(page.locator('.channel-catalog-header > .channel-catalog-overview > .channel-summary-row'))
+        .toHaveCount(1);
+      await expect(page.locator('.channel-catalog-header > .channel-admin-toolbar')).toHaveCount(1);
+      const actionBounds = await actions.boundingBox();
+      const filterBounds = await page.locator('.channel-admin-toolbar').boundingBox();
+      const tableBounds = await page.locator('.channel-catalog-table-host').boundingBox();
+      expect(actionBounds.x).toBeCloseTo(filterBounds.x, 0);
+      expect(actionBounds.x).toBeCloseTo(tableBounds.x, 0);
+      const actionFilterGap = filterBounds.y - (actionBounds.y + actionBounds.height);
+      expect(actionFilterGap).toBeGreaterThanOrEqual(8);
+      expect(actionFilterGap).toBeLessThanOrEqual(width >= 760 ? 8 : 64);
+      expect(tableBounds.y - (filterBounds.y + filterBounds.height)).toBeLessThanOrEqual(16);
       if (width >= 390) {
         const buttons = await actions.locator(':scope > button').all();
         const [first, second] = await Promise.all(buttons.map(button => button.boundingBox()));
