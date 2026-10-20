@@ -11,7 +11,7 @@ const P25_ROUTINE_ACTIONS = Object.freeze(['CALL', 'GRANT']);
 
 const ACTIONS = new Set([...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS]);
 const MAX_EVENTS = 120;
-const MAX_SAVED_ROWS = 5_000;
+const MAX_RECENT_ROWS = 500;
 const MAX_PRIOR_GROUPS = 3;
 const MAX_CURRENT_AFFILIATIONS = 10_000;
 const REPEAT_FOCUS_MS = 60_000;
@@ -214,22 +214,16 @@ function createP25HistoryState(options = {}) {
     groups: new Map(),
     radios: new Map(),
     events: new Map(),
-    seenIds: new Set(),
-    savedRows: new Map(),
+    recentRows: new Map(),
     currentAffiliations: new Map(),
-    affiliationsAvailable: true,
-    latestId: 0,
+    available: true,
+    affiliationsTruncated: false,
+    highestSavedId: 0,
+    includeRoutine: true,
     truncated: false,
     maximumRadios: Math.max(100, Number(options.maximumRadios) || 20_000),
     maximumGroups: Math.max(50, Number(options.maximumGroups) || 5_000)
   };
-}
-
-function rememberId(state, id) {
-  if (!Number.isSafeInteger(id) || id < 1 || state.seenIds.has(id)) return false;
-  state.seenIds.add(id);
-  state.latestId = Math.max(state.latestId, id);
-  return true;
 }
 
 function ensureSystem(state, row, atMs = finite(row.observed_at_ms)) {
@@ -449,7 +443,7 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   if (!initial && focusEligible) result.focusCandidates.push(event);
 }
 
-function appendP25ActivityRows(state, rows, options = {}) {
+function projectActivityRows(state, rows, options = {}) {
   if (!state?.systems || !state?.groups || !state?.radios) throw new TypeError('P25 history state is required.');
   const initial = options.initial === true;
   const ingestedAtMs = finite(options.atMs, Date.now());
@@ -458,19 +452,16 @@ function appendP25ActivityRows(state, rows, options = {}) {
   const shouldHighlight = (category) => !highlighted || highlighted.has(category);
   const highlightDuration = (category) => category === 'call' ? grantActivityTimeoutMs :
     category === 'emergency' ? 12_000 : category === 'movement' ? 8_000 : 7_000;
-  const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [], affiliationChanges: [] };
+  const result = { focusCandidates: [] };
   const ordered = (Array.isArray(rows) ? rows : []).slice().sort((left, right) =>
     finite(left?.observed_at_ms) - finite(right?.observed_at_ms) || finite(left?.id) - finite(right?.id));
   for (const row of ordered) {
     const id = Number(row?.id);
     const action = actionOf(row);
-    if (!isP25Trunked(row) || !ACTIONS.has(action) || !rememberId(state, id)) {
-      result.ignored += 1;
+    if (!isP25Trunked(row) || !ACTIONS.has(action)) {
       continue;
     }
     if (action === 'DENIAL' && !targetRadioKey(row) && !sourceRadioKey(row)) {
-      result.accepted += 1;
-      result.changed = true;
       continue;
     }
     const system = ensureSystem(state, row);
@@ -485,93 +476,17 @@ function appendP25ActivityRows(state, rows, options = {}) {
       applyRoutineActivity(state, system, row, result, rowInitial, action, highlightAtMs, rowShouldHighlight,
         grantActivityTimeoutMs);
     } else applySignal(state, system, row, result, rowInitial, action, highlightAtMs, rowShouldHighlight);
-    result.accepted += 1;
-    result.changed = true;
   }
   if (options.highlightAtObservationTime === true) {
     result.focusCandidates = result.focusCandidates.filter((event) => {
       return event.observedAtMs + highlightDuration(event.category) > ingestedAtMs;
     });
-    result.affiliationChanges = result.affiliationChanges.filter((change) =>
-      change.observedAtMs + highlightDuration('movement') > ingestedAtMs);
   }
-  result.affiliationChanges = result.affiliationChanges.map((change) => ({ ...change,
-    remainingMs: options.highlightAtObservationTime === true ?
-      Math.max(0, change.observedAtMs + highlightDuration('movement') - ingestedAtMs) : 8_000 }));
   result.focusCandidates.sort((left, right) => right.priority - left.priority ||
     right.observedAtMs - left.observedAtMs);
-  return result;
+  return result.focusCandidates;
 }
 
-
-// Retain the bounded saved rows so a correction can remove its old graph facts.
-// New rows append incrementally; corrections, deletions and oldest-record trimming rebuild once per batch.
-function applyP25ActivityRows(state, rows, options = {}) {
-  const savedRows = state.savedRows;
-  const incoming = Array.isArray(rows) ? rows : [];
-  let rebuild = false, ignored = 0, accepted = 0;
-  const additions = [];
-  const remove = (id) => { if (savedRows.delete(Number(id))) rebuild = true; };
-  (options.removedIds || []).forEach(remove);
-  for (const row of incoming) {
-    const id = Number(row?.id);
-    const previous = savedRows.get(id);
-    if (!Number.isSafeInteger(id) || id < 1 || !isP25Trunked(row) || !ACTIONS.has(actionOf(row))) {
-      if (previous) remove(id);
-      ignored++;
-      continue;
-    }
-    if (previous && JSON.stringify(previous) === JSON.stringify(row)) { ignored++; continue; }
-    savedRows.set(id, row);
-    accepted++;
-    if (previous) rebuild = true;
-    else additions.push(row);
-  }
-  if (savedRows.size > MAX_SAVED_ROWS) {
-    const oldest = [...savedRows.values()].sort((a, b) => finite(a.observed_at_ms) - finite(b.observed_at_ms) || a.id - b.id);
-    oldest.slice(0, savedRows.size - MAX_SAVED_ROWS).forEach((row) => remove(row.id));
-  }
-  if (!rebuild) {
-    const result = appendP25ActivityRows(state, additions, options);
-    result.ignored += ignored;
-    return result;
-  }
-  const previous = { systems: state.systems, groups: state.groups, radios: state.radios };
-  const next = createP25HistoryState({ actionLabel: state.actionLabel,
-    maximumRadios: state.maximumRadios, maximumGroups: state.maximumGroups });
-  next.savedRows = savedRows;
-  next.currentAffiliations = state.currentAffiliations;
-  next.affiliationsAvailable = state.affiliationsAvailable;
-  hydrateCurrentAffiliations(next);
-  const replay = appendP25ActivityRows(next, [...savedRows.values()], { ...options, initial: true,
-    attentionIds: options.initial === true ? new Set() : new Set(additions.map((row) => Number(row.id))) });
-  const sameKeys = (left, right) => left.size === right.size && [...left.keys()].every((key) => right.has(key));
-  const stableSystems = sameKeys(previous.systems, next.systems);
-  // Preserve anchors only when the relevant clouds retain the same layout slots.
-  // A removed/introduced cloud otherwise needs its rebuilt ordinal to avoid overlap.
-  for (const type of ['systems', 'groups', 'radios']) {
-    for (const [key, entity] of next[type]) {
-      const prior = previous[type].get(key);
-      if (!prior) continue;
-      const stableGroups = type === 'systems' || sameKeys(previous.systems.get(entity.systemKey).groupKeys,
-        next.systems.get(entity.systemKey).groupKeys);
-      if (stableSystems && stableGroups) {
-        for (const field of ['x', 'y', 'z', 'radius']) if (Number.isFinite(prior[field])) entity[field] = prior[field];
-      }
-      if (type === 'radios') entity.priorGroupKeys = [...new Set([...entity.priorGroupKeys, ...prior.priorGroupKeys])]
-        .filter((groupKey) => next.groups.has(groupKey)).slice(0, MAX_PRIOR_GROUPS);
-      if (!entity.highlightUntilMs && prior.highlightUntilMs > finite(options.atMs, Date.now())) {
-        entity.signalAction = prior.signalAction; entity.highlightUntilMs = prior.highlightUntilMs;
-      }
-    }
-  }
-  for (const event of state.events.values()) if (event.key.startsWith('movement:') && !next.events.has(event.key) &&
-      event.focusKeys.some((key) => next.radios.has(key) || next.groups.has(key))) upsertEvent(next, event);
-  Object.assign(state, next);
-  // A correction is authoritative, but it is not another radio observation.
-  return { changed: true, accepted, ignored, rebuilt: true, focusCandidates: replay.focusCandidates,
-    affiliationChanges: replay.affiliationChanges };
-}
 
 // Native current-state fields use the existing identity label helpers without inventing Activity rows.
 function affiliationLabelContext(fact) {
@@ -601,65 +516,73 @@ function hydrateCurrentAffiliations(state) {
   }
 }
 
-function applyP25Affiliations(state, rows, options = {}) {
-  const result = { changed: false, focusCandidates: [], affiliationChanges: [] };
-  const available = options.available !== false && options.complete !== false;
-  const availabilityChanged = state.affiliationsAvailable !== available;
-  state.affiliationsAvailable = available;
-  if (options.complete === false || !available && !options.replace) return { ...result, availabilityChanged };
-  if (!Array.isArray(rows) || rows.length > MAX_CURRENT_AFFILIATIONS) throw new Error('Invalid current P25 affiliations.');
-  const before = state.currentAffiliations;
-  const current = options.replace ? new Map() : new Map(before);
-  for (const key of options.removedRadioKeys || []) current.delete(entityKey(key.radio_system_key, key.radio_identity_key));
-  for (const fact of rows) {
+// The server owns both complete maps. Apply a combined revision and project the scene once.
+function applyP25State(state, update = {}, options = {}) {
+  const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [], affiliationChanges: [] };
+  const available = update.available !== false;
+  const affiliationsTruncated = update.affiliations_truncated ?? state.affiliationsTruncated;
+  if (!options.replace && !available) { state.available = false; state.affiliationsTruncated = affiliationsTruncated; return result; }
+  const recent = options.replace ? new Map() : new Map(state.recentRows);
+  const current = options.replace ? new Map() : new Map(state.currentAffiliations);
+  for (const id of update.removed_ids || []) recent.delete(Number(id));
+  for (const row of update.rows || []) {
+    const id = Number(row?.id);
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid recent P25 record.');
+    if (isP25Trunked(row) && ACTIONS.has(actionOf(row)) && JSON.stringify(state.recentRows.get(id)) !== JSON.stringify(row)) result.accepted++;
+    else result.ignored++;
+    recent.set(id, row);
+  }
+  for (const key of update.removed_radio_keys || []) current.delete(entityKey(key.radio_system_key, key.radio_identity_key));
+  for (const fact of update.affiliations || []) {
     if (!text(fact?.radio_system_key) || !text(fact?.radio_identity_key) || !text(fact?.talkgroup_identity_key) ||
         !Number.isFinite(Number(fact.confirmed_at_ms))) throw new Error('Invalid current P25 affiliation.');
     current.set(entityKey(fact.radio_system_key, fact.radio_identity_key), fact);
   }
-  if (current.size > MAX_CURRENT_AFFILIATIONS) throw new Error('Too many current P25 affiliations.');
-  if (current.size === before.size && [...current].every(([key, fact]) =>
-    JSON.stringify(before.get(key)) === JSON.stringify(fact))) return { ...result, availabilityChanged };
-  const presentation = (fact) => JSON.stringify({ ...fact, confirmed_at_ms: undefined });
-  if (current.size === before.size && [...current].every(([key, fact]) =>
-      before.has(key) && presentation(before.get(key)) === presentation(fact))) {
-    state.currentAffiliations = current;
+  if (recent.size > MAX_RECENT_ROWS || current.size > MAX_CURRENT_AFFILIATIONS) throw new Error('P25 state exceeds its bounds.');
+  const equal = (a, b, projection = JSON.stringify) => a.size === b.size && [...a].every(([key, value]) =>
+    b.has(key) && projection(value) === projection(b.get(key)));
+  const includeRoutine = options.includeRoutine !== false;
+  if (state.includeRoutine === includeRoutine && equal(recent, state.recentRows) &&
+      equal(current, state.currentAffiliations, (fact) => JSON.stringify({ ...fact, confirmed_at_ms: undefined }))) {
+    state.currentAffiliations = current; state.available = available; state.affiliationsTruncated = affiliationsTruncated;
     for (const [key, fact] of current) {
       const atMs = finite(fact.confirmed_at_ms), radio = state.radios.get(key);
       const group = state.groups.get(entityKey(fact.radio_system_key, fact.talkgroup_identity_key));
       if (radio) radio.lastAtMs = Math.max(radio.lastAtMs, atMs);
       if (group) group.lastAtMs = Math.max(group.lastAtMs, atMs);
     }
-    return { ...result, availabilityChanged };
+    return result;
   }
-  const priorEntities = { systems: state.systems, groups: state.groups, radios: state.radios };
-  state.currentAffiliations = current;
-  // The same bounded replay removes nodes supplied only by an old canonical association.
+  const previous = { systems: state.systems, groups: state.groups, radios: state.radios };
   const next = createP25HistoryState({ actionLabel: state.actionLabel,
     maximumRadios: state.maximumRadios, maximumGroups: state.maximumGroups });
-  next.savedRows = state.savedRows; next.currentAffiliations = current; next.affiliationsAvailable = available;
+  next.recentRows = recent; next.currentAffiliations = current; next.available = available; next.affiliationsTruncated = affiliationsTruncated; next.includeRoutine = includeRoutine;
+  next.highestSavedId = Math.max(state.highestSavedId, ...recent.keys());
   hydrateCurrentAffiliations(next);
-  appendP25ActivityRows(next, [...next.savedRows.values()], { ...options, initial: true });
+  const attentionIds = new Set(options.initial ? [] : [...recent.keys()].filter((id) => id > state.highestSavedId));
+  result.focusCandidates = projectActivityRows(next, [...recent.values()].filter((row) => includeRoutine || !P25_ROUTINE_ACTIONS.includes(actionOf(row))),
+    { ...options, initial: true, attentionIds });
   const sameKeys = (a, b) => a.size === b.size && [...a.keys()].every((key) => b.has(key));
-  const stableSystems = sameKeys(next.systems, priorEntities.systems);
+  const stableSystems = sameKeys(next.systems, previous.systems);
   for (const type of ['systems', 'groups', 'radios']) for (const [key, entity] of next[type]) {
-    const prior = priorEntities[type].get(key);
+    const prior = previous[type].get(key);
     if (!prior) continue;
     if (stableSystems && (type === 'systems' || sameKeys(next.systems.get(entity.systemKey).groupKeys,
-        priorEntities.systems.get(entity.systemKey).groupKeys))) {
+        previous.systems.get(entity.systemKey).groupKeys))) {
       for (const field of ['x', 'y', 'z', 'radius']) if (Number.isFinite(prior[field])) entity[field] = prior[field];
     }
-    entity.signalAction = prior.signalAction; entity.highlightUntilMs = prior.highlightUntilMs;
+    if (!entity.highlightUntilMs) { entity.signalAction = prior.signalAction; entity.highlightUntilMs = prior.highlightUntilMs; }
     if (type === 'radios') entity.priorGroupKeys = [...new Set([...entity.priorGroupKeys, ...prior.priorGroupKeys])]
       .filter((groupKey) => next.groups.has(groupKey)).slice(0, MAX_PRIOR_GROUPS);
   }
   const now = finite(options.atMs, Date.now());
   if (!options.initial) for (const [key, fact] of current) {
-    const previous = before.get(key);
-    if (!previous || previous.talkgroup_identity_key === fact.talkgroup_identity_key ||
-        !text(fact.configuration_id) || fact.configuration_id !== previous.configuration_id ||
-        finite(fact.confirmed_at_ms) <= finite(previous.confirmed_at_ms) || finite(fact.confirmed_at_ms) + 8_000 <= now) continue;
+    const priorFact = state.currentAffiliations.get(key);
+    if (!priorFact || priorFact.talkgroup_identity_key === fact.talkgroup_identity_key ||
+        !text(fact.configuration_id) || fact.configuration_id !== priorFact.configuration_id ||
+        finite(fact.confirmed_at_ms) <= finite(priorFact.confirmed_at_ms) || finite(fact.confirmed_at_ms) + 8_000 <= now) continue;
     const radio = next.radios.get(key), group = next.groups.get(entityKey(fact.radio_system_key, fact.talkgroup_identity_key));
-    const previousGroup = priorEntities.groups.get(entityKey(previous.radio_system_key, previous.talkgroup_identity_key));
+    const previousGroup = previous.groups.get(entityKey(priorFact.radio_system_key, priorFact.talkgroup_identity_key));
     const system = next.systems.get(fact.radio_system_key);
     if (!radio || !group || !previousGroup) continue;
     const event = { key: `movement:${key}`, category: 'movement', title: 'Observed affiliation change',
@@ -668,7 +591,7 @@ function applyP25Affiliations(state, rows, options = {}) {
       affiliationRadioKey: next.groups.has(previousGroup.key) ? key : '' };
     upsertEvent(next, event); result.focusCandidates.push(event);
     if (next.groups.has(previousGroup.key) && sameKeys(next.systems.get(system.key).groupKeys,
-        priorEntities.systems.get(system.key).groupKeys)) result.affiliationChanges.push({ id: `affiliation:${options.revision}:${key}`, radioKey: key,
+        previous.systems.get(system.key).groupKeys)) result.affiliationChanges.push({ id: `affiliation:${options.sequence}:${key}`, radioKey: key,
       systemKey: system.key, fromGroupKey: previousGroup.key, toGroupKey: group.key,
       from: radioPosition(radio, previousGroup, previousGroup.key, system.radius),
       target: radioPosition(radio, group, group.key, system.radius), observedAtMs: event.observedAtMs,
@@ -680,7 +603,7 @@ function applyP25Affiliations(state, rows, options = {}) {
   for (const event of state.events.values()) if (event.key.startsWith('movement:') && !next.events.has(event.key) &&
       event.focusKeys.some((key) => next.radios.has(key) || next.groups.has(key))) upsertEvent(next, event);
   Object.assign(state, next);
-  return { ...result, changed: true, availabilityChanged };
+  return { ...result, changed: true, rebuilt: true };
 }
 
 function visibleSignal(entity, atMs, highlighted) {
@@ -787,8 +710,7 @@ export {
   P25_ROUTINE_ACTIONS,
   CAMERA_PRIORITY,
   createP25HistoryState,
-  applyP25ActivityRows,
-  applyP25Affiliations,
+  applyP25State,
   buildP25Graph,
   nextP25HighlightExpiry,
   groupedP25Events,

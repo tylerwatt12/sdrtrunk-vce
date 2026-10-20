@@ -87,10 +87,8 @@ async function mockApplication(page, theme) {
       const offset = Number(url.searchParams.get('offset')) || 0;
       data = { revision: 'assignments-1', total: 51, limit: 50, items: assignments.slice(offset, offset + 50) };
     } else if (p === '/api/v1/activity/live/seed') data = {
-      source_epoch: 'mobile-p25', affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations: [], sequence: 0, rows: activity, captured_at_ms: now,
+      source_epoch: 'mobile-p25', available: true, affiliations_truncated: false, affiliations: [], sequence: 0, rows: activity, captured_at_ms: now,
       traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true };
-    else if (p === '/api/v1/activity/live') data = {
-      source_epoch: 'mobile-p25', affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations_refresh_required: false, through_sequence: 0, rows: [], removed_ids: [], next_after_id: 0, has_more: false };
     else if (p === '/api/v1/live/multiplex/control') {
       if (request.postDataJSON()?.subscriptions?.p25_activity) await page.evaluate(() => window.mobileP25Frame?.('source_change', {
         source_epoch: 'mobile-p25', sequence: 0, server_time_ms: Date.now(), collection_enabled: true }));

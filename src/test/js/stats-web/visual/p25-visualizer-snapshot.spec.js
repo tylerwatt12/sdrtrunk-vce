@@ -11,17 +11,12 @@ const activity = (alias = 'Engine 4', overrides = {}) => ({ id: 1, observed_at_m
   configuration_id: channelId, source_identity_key: radioKey, source_radio_id: 30914,
   source_alias_name: alias, target_identity_key: groupKey, target_kind: 'talkgroup',
   target_id: 1201, target_alias_name: 'Fire Dispatch', ...overrides });
-const snapshot = (row) => ({ data: { source_epoch: 'fixture-p25', sequence: 0, rows: [row], ...p25Affiliations([row]),
+const snapshot = (row) => ({ data: { source_epoch: 'fixture-p25', sequence: 0, available: true, affiliations_truncated: false, rows: [row], ...p25Affiliations([row]),
   captured_at_ms: now, traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true } });
-const send = (page, sequence, rows, removed = []) => page.evaluate(({ sequence, rows, removed }) =>
-  window.fixtureSendLiveFrame(7, 'activity_delta', { source_epoch: 'fixture-p25',
-    base_sequence: sequence - 1, sequence, rows, removed_ids: removed, part: 0, parts: 1 }), { sequence, rows, removed });
-
-const sendAffiliations = (page, revision, upserts = [], removed = [], available = true) =>
-  page.evaluate(({ revision, upserts, removed, available }) => window.fixtureSendLiveFrame(7, 'affiliation_delta', {
-    source_epoch: 'fixture-p25', base_affiliation_revision: revision - 1, affiliation_revision: revision,
-    affiliations_available: available, upserts, removed_radio_keys: removed, part: 0, parts: 1
-  }), { revision, upserts, removed, available });
+const send = (page, sequence, changes = {}) => page.evaluate(({ sequence, changes }) =>
+  window.fixtureSendLiveFrame(7, 'p25_state_delta', { source_epoch: 'fixture-p25',
+    base_sequence: sequence - 1, sequence, rows: [], removed_ids: [], affiliations: [], removed_radio_keys: [],
+    available: true, affiliations_truncated: false, collection_enabled: true, part: 0, parts: 1, ...changes }), { sequence, changes });
 
 test('current state and saved corrections update independently without Refresh', async ({ page }, testInfo) => {
   const fixture = await installSiteStyleApplication(page);
@@ -36,27 +31,26 @@ test('current state and saved corrections update independently without Refresh',
   await expect(radio).toHaveText('Engine 4');
   await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live · Updated /);
   const corrected = activity('Corrected Engine', { source_identity_key: correctedRadio, source_radio_id: 30915 });
-  await send(page, 1, [corrected]);
+  await send(page, 1, { rows: [corrected] });
   await expect(radio).toHaveCount(2, 'correcting event identity does not erase canonical current state');
-  await sendAffiliations(page, 1, p25Affiliations([corrected]).affiliations,
-    [{ radio_system_key: systemKey, radio_identity_key: radioKey }]);
+  await send(page, 2, { ...p25Affiliations([corrected]),
+    removed_radio_keys: [{ radio_system_key: systemKey, radio_identity_key: radioKey }] });
   await expect(radio).toHaveCount(1);
   await expect(radio).toHaveText('Corrected Engine');
   const emergency = { ...corrected, id: 2, observed_at_ms: now, action: 'EMERGENCY' };
-  await send(page, 2, [emergency]);
+  await send(page, 3, { rows: [emergency] });
   await expect(page.locator('.network-visualizer-auto-focus')).toBeVisible();
   await expect(page.locator('.network-visualizer-auto-focus-title')).toContainText(/emergency/i);
   await page.getByRole('button', { name: 'Events', exact: true }).click();
   await expect(page.locator('.network-visualizer-event-list .network-visualizer-event')).toHaveCount(2);
-  await send(page, 2, [emergency]);
+  await send(page, 3, { rows: [emergency] });
   await expect(page.locator('.network-visualizer-event-list .network-visualizer-event')).toHaveCount(2);
-  await page.evaluate(() => window.fixtureSendLiveFrame(7, 'source_change', {
-    source_epoch: 'fixture-p25', sequence: 2, collection_enabled: false, server_time_ms: Date.now() }));
+  await send(page, 4, { collection_enabled: false });
   await expect(page.locator('.network-visualizer-status')).toHaveText('Live affiliations · Activity collection off');
-  await sendAffiliations(page, 2, [], [], false);
-  await expect(page.locator('.network-visualizer-status')).toHaveText('Affiliations unavailable · Showing last known state');
+  await send(page, 5, { available: false, collection_enabled: false });
+  await expect(page.locator('.network-visualizer-status')).toHaveText('P25 data unavailable · Showing previous data');
   await expect(radio).toHaveText('Corrected Engine');
-  await sendAffiliations(page, 3, p25Affiliations([{ ...corrected, source_alias_name: 'Current Engine' }]).affiliations);
+  await send(page, 6, { ...p25Affiliations([{ ...corrected, source_alias_name: 'Current Engine' }]), collection_enabled: false });
   await expect(radio).toHaveText('Current Engine');
   await expect(page.locator('.network-visualizer-status')).toHaveText('Live affiliations · Activity collection off');
   expect(historyRequests).toBe(1, 'normal stream delivery never reloads the recent seed');
@@ -79,9 +73,6 @@ test('a failed reload retains the scene and automatically recovers on a dark pho
   let historyRequests = 0, releaseRetry;
   const retry = new Promise((resolve) => { releaseRetry = resolve; });
   let currentRow = activity();
-  await page.route('**/api/v1/activity/live?**', (route) => route.fulfill({ json: { data: {
-    source_epoch: 'fixture-p25', through_sequence: 0, rows: [], removed_ids: [], next_after_id: 0, has_more: false,
-    affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations_refresh_required: false } } }));
   await page.route('**/api/v1/activity/live/seed*', async (route) => {
     historyRequests++;
     expect(new URL(route.request().url()).searchParams.has('refresh')).toBe(historyRequests === 2);
@@ -110,11 +101,9 @@ test('a failed reload retains the scene and automatically recovers on a dark pho
 test('current affiliation survives deletion of every recent Activity row', async ({ page }) => {
   const fixture = await installSiteStyleApplication(page);
   await page.route('**/api/v1/activity/live/seed*', (route) => route.fulfill({ json: snapshot(activity()) }));
-  await page.route('**/api/v1/activity/live?**', (route) => route.fulfill({ json: { data: {
-    source_epoch: 'fixture-p25', through_sequence: 1, rows: [], removed_ids: [1], next_after_id: 1, has_more: false, affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations_refresh_required: false
-  } } }));
   await page.goto('/app.html?view=network-visualizer');
   await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live · Updated /);
+  await send(page, 1, { removed_ids: [1] });
   await expect(page.locator('.network-visualizer-label[data-type="radio"]:not([hidden])')).toHaveText('Engine 4');
   await expect(page.locator('.network-visualizer-empty')).toBeHidden();
   expect(fixture.pageErrors).toEqual([]);
@@ -132,5 +121,24 @@ test('current-only state visibly marks a bounded partial scene', async ({ page }
   await expect(page.locator('.network-visualizer-canvas canvas')).toBeVisible();
   await expect(page.locator('.network-visualizer-status')).toHaveAttribute('title', /900 radios and 220 talkgroups/);
   await expect(page.locator('.network-visualizer-empty')).toBeHidden();
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('server-bounded current affiliations visibly identify their partial inventory on a phone', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = await installSiteStyleApplication(page, 'dark');
+  const current = p25Affiliations(Array.from({ length: 10_000 }, (_, index) => activity(`Unit ${index}`, {
+    source_identity_key: `v1-r-${index}`, source_radio_id: index })));
+  await page.route('**/api/v1/activity/live/seed*', (route) => route.fulfill({ json: { data: {
+    ...snapshot(activity()).data, rows: [], ...current, affiliations_truncated: true } } }));
+  await page.goto('/app.html?view=network-visualizer');
+  const status = page.locator('.network-visualizer-status');
+  await expect(status).toContainText('Partial view');
+  await expect(status).toHaveAttribute('title', /most recently confirmed 10,000 affiliations/);
+  await expect(page.locator('.network-visualizer-empty')).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('server-partial-affiliations-dark-phone.png') });
+  await send(page, 1, { affiliations_truncated: false });
+  await expect(status).toHaveAttribute('title', /^Showing up to 900 radios and 220 talkgroups/);
+  await expect(status).toContainText('Partial view');
   expect(fixture.pageErrors).toEqual([]);
 });

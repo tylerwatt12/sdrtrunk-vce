@@ -360,17 +360,10 @@ public final class ConfigurationRepository
     {
         try(Connection connection = SdrTrunkDatabase.openWriteTransaction(mDatabasePath))
         {
-            boolean[] activityRemoved = {false};
-            ((org.sqlite.SQLiteConnection)connection).addUpdateListener((type, database, table, id) -> {
-                if(type == org.sqlite.SQLiteUpdateListener.Type.DELETE && "main".equals(database) &&
-                    "receiver_activity_event".equals(table)) activityRemoved[0] = true;
-            });
             try
             {
                 T result = operation.apply(connection);
                 SdrTrunkDatabase.commitWriteTransaction(connection);
-                if(activityRemoved[0]) io.github.dsheirer.eventbus.MyEventBus.getGlobalEventBus().post(
-                    new ActivityHistoryInvalidation(mDatabasePath));
                 afterCommit.run();
                 return result;
             }

@@ -126,7 +126,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/channels/{configuration_id}/neighbors` | Paged RF-site neighbors learned by that channel. |
 | `GET /api/v1/channels/{configuration_id}/patch-groups` | Bounded P25 patch groups and members learned by that channel. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
-| `GET /api/v1/activity/live` | Bounded catchup for a subscribed P25 Activity consumer. |
+| `GET /api/v1/activity/live/seed` | Shared latest-500 saved P25 facts and bounded current affiliations. |
 | `GET /api/v1/activity/actions` | Activity action totals for a selected time range. Dashboard access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
@@ -320,54 +320,41 @@ transport control. Parameters use `snake_case`. Channel-owned subscriptions use 
 diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object, an optional
 `subscription_id`, and `markers: true` for compact tuner-marker rows.
 
-`p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before loading the recent
-saved baseline. Its `source_change` boundary includes `subscription_id`, `source_epoch`, `sequence`,
-`server_time_ms`, `traffic_grant_age_out_milliseconds`, and `collection_enabled`. A changed `source_epoch` requires a new seed.
+`p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before requesting the
+shared baseline. Its `source_change` boundary includes `subscription_id`, opaque `source_epoch`, `sequence`,
+`server_time_ms`, `traffic_grant_age_out_milliseconds`, `collection_enabled`, `available`, and `affiliations_truncated`. A service restart or
+replacement of the saved source changes the epoch. Use the fresh boundary time for clock alignment.
 
-`GET /api/v1/activity/live/seed` accepts optional `refresh=true` for an explicit user Refresh and requires an active `p25_activity` subscription. Its `data`
-contains `source_epoch`, `sequence`, `rows`, `captured_at_ms`, `traffic_grant_age_out_milliseconds`,
-`collection_enabled`, `affiliation_revision`, `affiliations_available`, `affiliations_complete`, and `affiliations`. It returns at most the 500 most recent saved P25 trunked Activity facts, ordered by descending
-`observed_at_ms`, then `id`, with compact public identities and labels. The shared plain/gzip response is reused for up
-to two seconds. Current-state changes invalidate combined prepared bytes while reusing that bounded saved baseline. `captured_at_ms` describes that saved snapshot; use a fresh stream boundary's `server_time_ms` for clock
-alignment. There is no historical window or seed pagination. The Visualizer keeps at most 5,000 recent facts while open.
+`GET /api/v1/activity/live/seed` requires an active `p25_activity` subscription. Optional `refresh=true` requests an
+explicit user Refresh; ordinary startup and reconnect omit it. The `data` object contains `source_epoch`, `sequence`,
+`rows`, `affiliations`, `available`, `affiliations_truncated`, `captured_at_ms`, `traffic_grant_age_out_milliseconds`, and `collection_enabled`.
+`rows` is exactly the latest supported saved P25 trunked Activity scope, capped at 500 facts and ordered by descending
+`observed_at_ms`, then `id`. Rows use compact public identities and available labels. The server shares one immutable
+prepared plain/gzip response for the current revision. `captured_at_ms` describes the cached snapshot and is not a clock
+sample. Full saved Activity remains available through the ordinary Activity cursor and export APIs.
 
-`activity_delta` carries `source_epoch`, `base_sequence`, `sequence`, `rows`, `removed_ids`, and zero-based `part` /
-`parts`. Rows fully replace saved events by `id`, including later corrections. Apply all parts atomically only when
-the base sequence matches the last complete sequence. Buffer updates while loading the seed.
+`affiliations` is the authoritative current-state array within a bounded scope, independently of those recent facts. Each row is keyed
+by `(radio_system_key, radio_identity_key)` and includes `talkgroup_identity_key`, `configuration_id`, `confirmed_at_ms`,
+canonical/native identity facts, and available Alias/system names. Older still-known associations remain present when
+recent facts leave the 500-row scope or detailed Activity collection is off. Explicit logout, retention, corrections,
+and site clears update this map. It contains up to the 10,000 most recently confirmed associations (then descending
+system/radio database key for ties). `affiliations_truncated:true` explicitly marks that a larger table has been limited;
+consumers should show a partial-view indicator. There is no total-count query or pagination. The combined seed is bounded to 12 MiB.
 
-Current affiliations use the authoritative saved current-state table, independently of the recent facts. `affiliations`
-is a complete native array keyed by `(radio_system_key, radio_identity_key)` with `talkgroup_identity_key`,
-`configuration_id`, `confirmed_at_ms`, canonical/native identity facts, and available Alias/system names. It includes
-older still-known associations even when detailed Activity collection is off. Explicit logout, retention and site clears
-remove associations. A temporary read failure sets `affiliations_available:false` while retaining the last complete map;
-the UI marks that state unavailable. `affiliations_complete` is true after a successful whole-state read, including a
-valid empty result, and stays true when that complete result is retained after a failure. Before the first successful
-read it is false: an empty array then means unknown and must not erase the client’s previous complete state in the
-same epoch. The client fetches a complete shared seed before applying later state deltas. A changed source epoch
-clears the old map. There is no partial complete snapshot.
+Topic 7 `p25_state_delta` contains `source_epoch`, `base_sequence`, `sequence`, `rows`, `removed_ids`, `affiliations`,
+`removed_radio_keys`, `available`, `affiliations_truncated`, `collection_enabled`, `traffic_grant_age_out_milliseconds`, `part`, and `parts`.
+`rows` fully replaces saved facts by numeric `id`; `affiliations` fully replaces native rows by their composite key.
+`removed_ids` removes facts leaving the exact recent scope. Native removals also include identities leaving the newest-10,000 scope. `removed_radio_keys` contains objects with
+`radio_system_key` and `radio_identity_key`. Parts are zero-based and contain at most 100 total typed changes; apply
+all parts atomically only when their base matches the last complete sequence. Buffer deltas during seed loading,
+replace both maps with the seed, discard revisions at or below its sequence, and apply contiguous newer revisions.
+The server installs the new shared seed before broadcasting its delta.
 
-Topic 7 `affiliation_delta` contains `source_epoch`, `base_affiliation_revision`, `affiliation_revision`,
-`affiliations_available`, `upserts`, `removed_radio_keys`, `part`, and `parts`. Upserts replace native affiliation rows;
-removed keys are objects with `radio_system_key` and `radio_identity_key`. Apply multipart revisions atomically and
-require an exact base revision. Revisions are monotonic within an epoch and may jump. They are independent of Activity
-sequence numbers. The server shares one current-state read per second while viewers are connected.
-
-After loading, request `/api/v1/activity/live` with the **seed response's** `source_epoch` and `sequence` as
-`after_sequence`, the current `affiliation_revision`, `after_id=0`, and `limit` from 1 through 500. Always use the returned
-seed sequence even if it precedes or follows the subscription boundary. Pages contain `rows`, `removed_ids`,
-`through_sequence`, `next_after_id`, `has_more`, and `resync_required`. Preserve the original `after_sequence`, first
-page's `through_sequence`, and returned `next_after_id` while paging. Overlay completed event catchup on saved facts,
-then apply buffered event updates newer than that boundary.
-
-Only the final catchup page adds `affiliation_revision`, `affiliations_available`, `affiliations_complete`, and
-`affiliations_refresh_required`.
-Recovery never embeds the complete affiliation map for each event cursor. If current state is missing or its revision
-has a gap, fetch the same shared seed for **affiliations only**, preserving existing event facts and cursor. Replace
-current state with that returned revision/map, discard older state frames, then apply contiguous newer state updates.
-The returned state revision may be newer than the recovery flag. Collection being off leaves retained saved facts and
-current affiliations readable. A source or retained event-range change returns `resync_required` and requires a new
-seed; a brief transport loss first tries catchup. Seed loading can return transient 503 while busy or after a source
-change. Closing the view releases its subscription and shared read demand.
+One shared reader snapshots both datasets about once per second while viewers are connected. The first seed is
+available only after both bounded reads succeed; a failed first read returns 503. A later read failure retains both maps and publishes `available:false`; consumers should mark the retained data unavailable.
+A recovery read updates the same combined sequence. Any source change, sequence gap, reconnect, or `resync_required`
+requests the same seed and atomically replaces both maps. There is no separate catchup endpoint or event-history
+replay. Closing the view releases its subscription and shared read demand.
 
 The framed envelope is version 2. Metadata topics use bounded FIFOs; dense diagnostic topics use replaceable
 latest-value slots. Slow clients can lose stale diagnostic frames or be disconnected, but never apply backpressure to

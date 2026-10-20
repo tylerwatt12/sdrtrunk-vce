@@ -1106,29 +1106,25 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void p25LiveCatchupRouteIsBoundedAndRetainedSeedWorksWithNoCurrentWriter() throws Exception
+    void combinedP25SeedWorksWithoutCurrentWriterAndRetiredCatchupIsAbsent() throws Exception
     {
-        assertEquals(400, get(StatsApiV1.ACTIVITY + "/live?source_epoch=unknown").statusCode());
-        assertEquals(400, get(StatsApiV1.ACTIVITY +
-            "/live?source_epoch=unknown&after_sequence=0&limit=501").statusCode());
+        assertEquals(404, get(StatsApiV1.ACTIVITY + "/live").statusCode());
+        assertEquals(404, get(StatsApiV1.ACTIVITY + "/live?source_epoch=unknown&after_sequence=0").statusCode());
         Field field = StatsWebServerService.class.getDeclaredField("mP25ActivityLiveService");
         field.setAccessible(true);
         P25ActivityLiveService live = (P25ActivityLiveService)field.get(mService);
         try(var subscriber = live.subscribe())
         {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-            while(!live.state().initialized() && System.nanoTime() < deadline) Thread.sleep(10);
-            String epoch = live.state().epoch();
-            HttpResponse<String> response = get(StatsApiV1.ACTIVITY +
-                "/live?source_epoch=" + epoch + "&after_sequence=0&after_id=0&limit=500&affiliation_revision=0");
+            HttpResponse<String> response = get(StatsApiV1.ACTIVITY + "/live/seed");
             assertEquals(200, response.statusCode(), response.body());
-            JsonNode page = OBJECT_MAPPER.readTree(response.body()).path("data");
-            assertEquals(epoch, page.path("source_epoch").textValue());
-            assertNotNull(java.util.UUID.fromString(epoch));
-            assertFalse(page.path("resync_required").booleanValue());
-            assertTrue(page.path("rows").isArray());
-            assertTrue(page.path("removed_ids").isArray());
-            assertTrue(page.path("affiliations_complete").isBoolean());
+            JsonNode seed = OBJECT_MAPPER.readTree(response.body()).path("data");
+            assertNotNull(java.util.UUID.fromString(seed.path("source_epoch").asText()));
+            assertTrue(seed.path("available").asBoolean());
+            assertTrue(seed.path("rows").isArray());
+            assertTrue(seed.path("affiliations").isArray());
+            assertTrue(seed.path("affiliations_truncated").isBoolean());
+            assertFalse(seed.has("affiliation_revision"));
+            assertFalse(seed.has("affiliations_complete"));
         }
         assertEquals(WebCapability.RADIO_VIEW, StatsWebServerService.capabilityForTopic("p25_activity"));
     }
@@ -1146,10 +1142,10 @@ class StatsApiV1HttpContractTest
             JsonNode seed = OBJECT_MAPPER.readTree(response.body()).path("data");
             assertEquals(live.state().epoch(), seed.path("source_epoch").asText());
             assertNotNull(java.util.UUID.fromString(seed.path("source_epoch").asText()));
-            assertEquals(0, seed.path("sequence").asLong());
+            assertTrue(seed.path("sequence").asLong() > 0);
             assertTrue(seed.path("captured_at_ms").asLong() > 0);
             assertFalse(seed.has("server_time_ms"));
-            assertTrue(seed.path("affiliations_complete").asBoolean());
+            assertTrue(seed.path("available").asBoolean());
             assertEquals(1, seed.path("rows").size());
             JsonNode row = seed.path("rows").get(0);
             assertEquals("p25", row.path("protocol").asText());
@@ -1164,9 +1160,9 @@ class StatsApiV1HttpContractTest
             Field databaseField = StatsWebServerService.class.getDeclaredField("mDatabase");
             databaseField.setAccessible(true);
             StatsWebDatabase database = (StatsWebDatabase)databaseField.get(mService);
-            var liveRows = database.p25ActivityRows(List.of(row.path("id").asLong()));
+            var liveRows = database.presentP25ActivityRows(database.p25RawSnapshot().rows());
             assertEquals(seed.path("rows"), OBJECT_MAPPER.readTree(OBJECT_MAPPER.writeValueAsBytes(liveRows)));
-            byte[] frame = StatsLiveEventHub.LiveEvent.prepared("activity_delta", Map.of("rows", liveRows), 7).frame(7).bytes(false);
+            byte[] frame = StatsLiveEventHub.LiveEvent.prepared("p25_state_delta", Map.of("rows", liveRows), 7).frame(7).bytes(false);
             JsonNode delta = OBJECT_MAPPER.readTree(java.util.Arrays.copyOfRange(frame, LiveMultiplexFrame.HEADER_BYTES, frame.length));
             assertEquals(seed.path("rows"), delta.at("/data/rows"));
             HttpRequest compressed = HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.ACTIVITY + "/live/seed"))

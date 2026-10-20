@@ -101,7 +101,7 @@ async function holdVendor(page) {
 }
 
 async function fulfillSeed(route, rows, epoch = 'fixture-p25') {
-  await route.fulfill({ json: { data: { source_epoch: epoch, sequence: 0, rows, ...p25Affiliations(rows),
+  await route.fulfill({ json: { data: { source_epoch: epoch, sequence: 0, available: true, affiliations_truncated: false, rows, ...p25Affiliations(rows),
     captured_at_ms: now, traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true } } });
 }
 
@@ -194,10 +194,6 @@ test('source replacement before renderer readiness discards the obsolete seed on
   let epoch = 'fixture-p25';
   await page.route('**/api/v1/activity/live/seed*', (route) => fulfillSeed(route,
     epoch === 'fixture-p25' ? [activity(1)] : [otherActivity(4)], epoch));
-  await page.route('**/api/v1/activity/live?**', (route) => route.fulfill({ json: { data: {
-    source_epoch: new URL(route.request().url()).searchParams.get('source_epoch'), through_sequence: 0,
-    rows: [], removed_ids: [], next_after_id: 0, has_more: false, affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations_refresh_required: false
-  } } }));
   try {
     await page.goto('/app.html?view=network-visualizer', { waitUntil: 'domcontentloaded' });
     await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter((value) => value.finished).length)).toBe(1);

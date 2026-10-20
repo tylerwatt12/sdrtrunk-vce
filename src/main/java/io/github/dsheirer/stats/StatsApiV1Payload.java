@@ -91,7 +91,7 @@ final class StatsApiV1Payload
         return transform(source(value), StatsApiProtocol.UNKNOWN);
     }
 
-    /** Identical compact public rows for saved seeds, committed deltas and cursor recovery. */
+    /** Identical compact public rows for the shared saved baseline and state deltas. */
     static java.util.List<Map<String,Object>> p25VisualizerRows(Object value)
     {
         JsonNode rows = transform(value instanceof JsonNode tree ? tree : source(value), StatsApiProtocol.UNKNOWN);

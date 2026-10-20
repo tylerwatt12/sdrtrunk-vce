@@ -4,7 +4,7 @@ P25 Visualizer shows P25 systems, talkgroups, radios, and their observed relatio
 Open **Listen > P25 Visualizer** to explore current observed affiliations and activity saved by your receiver.
 
 This guide describes current Nightly. The scene loads the receiver’s current accepted P25 affiliations plus the
-latest 500 saved P25 activity records, then updates automatically. An open view keeps up to 5,000 recent Activity
+latest 500 saved P25 activity records, then updates automatically. The recent event set stays at the latest 500 Activity
 records; current affiliations are kept separately. Use the Activity pages to browse retained history. The status
 shows live updates, reconnection, or a pause while the tab is hidden.
 
@@ -41,8 +41,7 @@ describe observations; they do not replace that current state. A fresh current-s
 observation channel can appear as an **Observed affiliation change**. A request, denial, or ordinary voice call does
 not prove that change.
 
-The current-state snapshot supports up to 10,000 associations. If it becomes unavailable, the view marks the last
-complete state as stale until it recovers. A system scene displays at most 900 radios and 220 talkgroups; **Partial
+Larger inventories show the most recently confirmed 10,000 associations and a **Partial view** indicator. If a data read fails, the view keeps the last complete snapshot and marks it stale until it recovers. A system scene displays at most 900 radios and 220 talkgroups; **Partial
 view** indicates that some nodes are omitted. Select a talkgroup to narrow the scene.
 
 Positions represent radio relationships. They do not show geography, coverage, or proof that a radio is currently
@@ -107,11 +106,11 @@ not create empty system spheres.
 The visualizer starts from shared current affiliation state and a small set of recent saved Activity records. It
 builds the scene without replaying old camera animations. New saved activity and corrections to existing records update the scene
 automatically. Highlights use the time an event was observed, so delayed details do not look like a new radio event.
-When the open view reaches 5,000 records, the oldest observations leave as newer records arrive. This does not
-erase current associations or their radio and talkgroup nodes.
+As new records enter the latest 500, older observations leave the scene and Events panel. On busy systems this
+can cover a short time. Current associations and their radio and talkgroup nodes remain independent of that limit.
 
-A brief connection loss recovers missed updates automatically. If the receiver replaces its saved history or the
-missed range is no longer available, the view reloads current state and the latest 500 records. A failed reload keeps the previous scene
+A connection loss or missed update reloads one shared complete snapshot of current state and the latest 500
+records, without replaying missed camera animations. A failed reload keeps the previous scene
 visible while retrying. Hidden tabs pause their subscription and recover when you return.
 The existing `?view=network-visualizer` URL remains valid.
 

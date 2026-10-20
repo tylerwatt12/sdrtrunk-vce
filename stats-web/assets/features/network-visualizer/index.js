@@ -1,16 +1,14 @@
 'use strict';
 
 import {
-  P25_ROUTINE_ACTIONS,
   createP25HistoryState,
-  applyP25ActivityRows,
-  applyP25Affiliations,
+  applyP25State,
   buildP25Graph,
   nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=17';
-import { createP25ActivityFeed } from './live.js?v=2';
+} from './history.js?v=18';
+import { createP25ActivityFeed } from './live.js?v=3';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=8';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=4';
@@ -39,7 +37,7 @@ function formatTime(value) {
 function createP25Visualizer(dependencies = {}) {
   const required = ['node', 'iconGlyph', 'iconButton', 'requestActivitySeed', 'openReadOnlyModal',
     'preferenceCheckbox', 'settingsCard', 'settingsCardGrid', 'modalFooter',
-    'loadEventSettings', 'saveEventSettings', 'openActivityStream', 'requestActivityCatchup'];
+    'loadEventSettings', 'saveEventSettings', 'openActivityStream'];
   required.forEach((name) => {
     if (typeof dependencies[name] !== 'function') throw new TypeError(`P25 Visualizer dependency ${name} is required.`);
   });
@@ -100,7 +98,8 @@ function createP25Visualizer(dependencies = {}) {
     node('p', '', 'New saved activity appears automatically.'));
   const legend = node('div', 'network-visualizer-legend');
   legend.append(node('span', '', 'Sphere · system'), node('span', '', 'Cube · talkgroup'),
-    node('span', '', 'Triangle · radio'), node('span', '', 'Faint line · earlier affiliation'),
+    node('span', '', 'Triangle · radio'), node('span', '', 'Solid line · last accepted affiliation'),
+    node('span', '', 'Faint line · earlier affiliation'),
     node('span', '', 'Dashed line · call activity'));
   const events = node('aside', 'network-visualizer-events');
   events.hidden = true;
@@ -265,7 +264,8 @@ function createP25Visualizer(dependencies = {}) {
         highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
         autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
       }, { saving: 'Saving visualizer choices…',
-        onSuccess: () => { if (modal.close()) void loadSnapshot(); },
+        onSuccess: () => { if (modal.close()) acceptState({ rows: [...state.recentRows.values()],
+          affiliations: [...state.currentAffiliations.values()], available: state.available }, true); },
         onError: (error) => ({ state: 'error', message: error?.message ||
           'Visualizer choices could not be saved in this browser.' }) });
     });
@@ -277,7 +277,6 @@ function createP25Visualizer(dependencies = {}) {
       { highlightCategories: highlightedCategories });
     partialView = graph.truncated;
     if (feedStatus === 'live') setLiveStatus('live');
-    status.title = partialView ? 'Showing up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '';
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate, affiliationChanges });
     renderEvents();
@@ -405,11 +404,6 @@ function createP25Visualizer(dependencies = {}) {
       highlightCategories: highlightedCategories, grantActivityTimeoutMs };
   }
 
-  function includedRows(rows) {
-    return routineP25ActivityEnabled(eventSettings) ? rows : rows.filter((row) =>
-      !P25_ROUTINE_ACTIONS.includes(String(row.action || '').toUpperCase()));
-  }
-
   function updateScene(result, replace = false) {
     if (scenePresented && !selectedSystemKey && !replace && state.systems.size) {
       empty.hidden = true;
@@ -451,55 +445,25 @@ function createP25Visualizer(dependencies = {}) {
     applyAttention(result.focusCandidates);
   }
 
-  async function acceptSeed(rows, changes, removedIds, signal, affiliations) {
-    await waitForRenderer(signal);
-    if (closed || signal.aborted) return;
-    const next = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
-    const retainCurrent = affiliations.preserve || !affiliations.complete;
-    const currentRows = sourceEpoch === affiliations.source_epoch && retainCurrent && state.currentAffiliations.size ?
-      [...state.currentAffiliations.values()] : affiliations.rows;
-    sourceEpoch = affiliations.source_epoch;
-    applyP25Affiliations(next, currentRows, { ...activityOptions(true), replace: true,
-      available: affiliations.preserve ? state.affiliationsAvailable : affiliations.available, revision: affiliations.revision });
-    applyP25ActivityRows(next, includedRows(rows), activityOptions(true));
-    const included = includedRows(changes);
-    const includedIds = new Set(included.map((row) => row.id));
-    const excluded = changes.filter((row) => !includedIds.has(row.id)).map((row) => row.id);
-    applyP25ActivityRows(next, included, { ...activityOptions(true), removedIds: [...removedIds, ...excluded] });
-    state = next;
-    snapshotLoadedAtMs = Date.now();
-    updateScene({ focusCandidates: [], affiliationChanges: [] }, true);
-  }
-
-  function acceptDelta(rows, removedIds) {
-    const included = includedRows(rows);
-    const includedIds = new Set(included.map((row) => row.id));
-    const excluded = rows.filter((row) => !includedIds.has(row.id)).map((row) => row.id);
-    const result = applyP25ActivityRows(state, included, {
-      ...activityOptions(), removedIds: [...removedIds, ...excluded] });
-    if (result.changed) { snapshotLoadedAtMs = Date.now(); updateScene(result); }
-  }
-
-  function acceptAffiliations(rows, options) {
-    const result = applyP25Affiliations(state, rows, { ...activityOptions(), ...options });
-    if (result.changed) { snapshotLoadedAtMs = Date.now(); updateScene(result); }
-  }
-
-  function acceptRecovery(rows, removedIds) {
-    const included = includedRows(rows), ids = new Set(included.map((row) => row.id));
-    const excluded = rows.filter((row) => !ids.has(row.id)).map((row) => row.id);
-    const result = applyP25ActivityRows(state, included, { ...activityOptions(true), removedIds: [...removedIds, ...excluded] });
-    if (result.changed) { snapshotLoadedAtMs = Date.now(); updateScene(result); }
+  function acceptState(document, replace = false) {
+    collectionEnabled = document.collection_enabled ?? collectionEnabled;
+    const timing = document.traffic_grant_age_out_milliseconds;
+    if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
+    const result = applyP25State(state, document, { ...activityOptions(replace), replace,
+      sequence: document.sequence, includeRoutine: routineP25ActivityEnabled(eventSettings) });
+    if (result.changed || replace) { snapshotLoadedAtMs = Date.now(); updateScene(result, replace); }
   }
 
   function setLiveStatus(value) {
     feedStatus = value;
     refresh.disabled = value === 'loading' || value === 'refreshing';
     if (value === 'live') {
-      const label = !state.affiliationsAvailable ? (state.currentAffiliations.size ?
-        'Affiliations unavailable · Showing last known state' : 'Current affiliations unavailable') :
+      const label = !state.available ? 'P25 data unavailable · Showing previous data' :
         collectionEnabled ? `Live · Updated ${formatTime(snapshotLoadedAtMs || Date.now())}` : 'Live affiliations · Activity collection off';
-      setStatus(label + (partialView ? ' · Partial view' : ''), state.affiliationsAvailable ? 'current' : 'stale');
+      const partial = partialView || state.affiliationsTruncated;
+      status.title = (state.affiliationsTruncated ? 'Includes the most recently confirmed 10,000 affiliations. ' : '') +
+        (partial ? 'Showing up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '');
+      setStatus(label + (partial ? ' · Partial view' : ''), state.available ? 'current' : 'stale');
     }
     else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
     else if (value === 'loading') setStatus('Loading recent activity', 'stale');
@@ -630,9 +594,11 @@ function createP25Visualizer(dependencies = {}) {
   const rendererReady = initialize();
   feed = createP25ActivityFeed({
     openStream: dependencies.openActivityStream,
-    requestCatchup: dependencies.requestActivityCatchup,
-    loadSeed, onSeed: acceptSeed, onDelta: acceptDelta, onRecovery: acceptRecovery,
-    onAffiliations: acceptAffiliations, onStatus: setLiveStatus,
+    loadSeed, onDelta: acceptState, onStatus: setLiveStatus,
+    onSeed: async (document, signal) => {
+      await waitForRenderer(signal);
+      if (!closed && !signal.aborted) acceptState(document, true);
+    },
     onBoundary: (boundary) => {
       if (sourceEpoch && sourceEpoch !== boundary.source_epoch) {
         state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });

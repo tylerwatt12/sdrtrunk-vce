@@ -3153,9 +3153,15 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,radio_system_id," +
                 "observed_at_ms,action_code) VALUES(12002,71,99,14501,4)");
+            // A much newer unrelated protocol history must not be walked to find sparse P25 facts.
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
+                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<100000)
+                SELECT 500000+n,71,99,900000+n,4 FROM rows
+                """);
             statement.executeUpdate("ANALYZE");
         }
-        List<Map<String,Object>> actual = mDatabase.recentP25ActivityRows();
+        List<Map<String,Object>> actual = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
         assertTrue(actual.size() < 500);
         assertFalse(actual.stream().anyMatch(row -> number(row.get("id")) > 10000 && number(row.get("id")) < 12001));
         assertFalse(actual.stream().anyMatch(row -> number(row.get("id")) == 12002));
@@ -3168,22 +3174,28 @@ class StatsWebDatabaseTest
         assertEquals(777, StatsApiV1Payload.present(north).at("/source_canonical_identity/subscriber_id").intValue());
         assertFalse(north.containsKey("frequency_hz"));
         assertFalse(north.containsKey("event_type"));
-        for(Map<String,Object> row: actual)
-            assertEquals(List.of(row), mDatabase.p25ActivityRows(List.of(number(row.get("id")))),
-                "Seed, delta and catchup must share exact public rows");
+        assertEquals(actual, mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows()),
+            "Every shared seed and delta uses the same compact projection");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            List<String> plan = explain(connection, StatsWebDatabase.RECENT_P25_ACTIVITY_SQL);
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_receiver_activity_event_retention")),
-                () -> "Recent selection must walk the existing time index: " + plan);
+            List<String> plan = explain(connection, StatsWebDatabase.RECENT_P25_ACTIVITY_IDS_SQL,71,0L);
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_receiver_activity_event_system_time")),
+                () -> "Recent selection must use the per-system time index: " + plan);
+            List<String> projectionPlan = explain(connection, StatsWebDatabase.P25_ACTIVITY_PROJECTION_SQL +
+                " FROM receiver_activity_event_resolved activity " + StatsWebDatabase.ACTIVITY_RELATED_JOINS_SQL +
+                " WHERE activity.id IN (?,?,?) ORDER BY activity.observed_at_ms DESC,activity.id DESC", 1, 2, 12001);
+            assertTrue(projectionPlan.stream().anyMatch(detail -> detail.contains("SEARCH") &&
+                detail.contains("INTEGER PRIMARY KEY")), () -> "Recent rows must use saved-ID point reads: " + projectionPlan);
+            assertFalse(projectionPlan.stream().anyMatch(detail -> detail.startsWith("SCAN event") ||
+                detail.startsWith("SCAN activity")), () -> "Resolved projection cannot scan Activity history: " + projectionPlan);
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<501)
                 SELECT 20000+n,71,71,20000+n,4 FROM rows
                 """);
         }
-        List<Map<String,Object>> bounded = mDatabase.recentP25ActivityRows();
+        List<Map<String,Object>> bounded = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
         assertEquals(500, bounded.size());
         assertEquals(20501, number(bounded.getFirst().get("id")));
         assertEquals(20002, number(bounded.getLast().get("id")));
@@ -3208,7 +3220,7 @@ class StatsWebDatabaseTest
             assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_trunked_radio_affiliation_retention")));
             assertFalse(plan.stream().anyMatch(detail -> detail.contains("receiver_activity_event")));
         }
-        List<Map<String,Object>> core = mDatabase.p25AffiliationCoreRows();
+        List<Map<String,Object>> core = mDatabase.p25RawSnapshot().affiliations();
         assertEquals(1,core.size());
         Map<String,Object> row = mDatabase.presentP25Affiliations(core).getFirst();
         assertEquals(RADIO_SYSTEM_KEY,row.get("radio_system_key"));
@@ -3228,13 +3240,13 @@ class StatsWebDatabaseTest
                 "VALUES(9901,0x12345,0x123,777)");
             statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=9901 WHERE id=7102");
         }
-        List<Map<String,Object>> corrected = mDatabase.p25AffiliationCoreRows();
+        List<Map<String,Object>> corrected = mDatabase.p25RawSnapshot().affiliations();
         assertFalse(core.equals(corrected),"same current radio key must notice canonical corrections");
         assertEquals(777,((Map<?,?>)mDatabase.presentP25Affiliations(corrected).getFirst().get("radio_canonical_identity")).get("subscriber_id"));
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         { statement.executeUpdate("DELETE FROM trunked_radio_affiliation"); }
-        assertTrue(mDatabase.p25AffiliationCoreRows().isEmpty(),"logout/retention/site-clear absence is authoritative");
+        assertTrue(mDatabase.p25RawSnapshot().affiliations().isEmpty(),"logout/retention/site-clear absence is authoritative");
     }
 
     @Test

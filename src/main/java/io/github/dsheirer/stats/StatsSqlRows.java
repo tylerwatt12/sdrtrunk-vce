@@ -47,6 +47,11 @@ final class StatsSqlRows
             {
                 ResultSetMetaData metaData = resultSet.getMetaData();
                 int columnCount = metaData.getColumnCount();
+                String[] columnLabels = new String[columnCount];
+                for(int column = 1; column <= columnCount; column++)
+                {
+                    columnLabels[column - 1] = metaData.getColumnLabel(column);
+                }
                 List<Map<String,Object>> rows = new ArrayList<>();
 
                 while(resultSet.next())
@@ -61,7 +66,7 @@ final class StatsSqlRows
 
                     for(int column = 1; column <= columnCount; column++)
                     {
-                        row.put(metaData.getColumnLabel(column), resultSet.getObject(column));
+                        row.put(columnLabels[column - 1], resultSet.getObject(column));
                     }
 
                     rows.add(row);

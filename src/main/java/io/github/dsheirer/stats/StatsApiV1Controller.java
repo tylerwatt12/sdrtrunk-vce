@@ -191,20 +191,6 @@ final class StatsApiV1Controller
                     if(mP25ActivityLiveService == null) throw new StatsApiException(503, "Live Activity is unavailable");
                     return mP25ActivityLiveService.seed(request.booleanValue("refresh", false));
                 }
-                if(segments.equals(List.of("live")))
-                {
-                    request.requireOnly("source_epoch", "after_sequence", "through_sequence", "after_id", "limit", "affiliation_revision");
-                    if(mP25ActivityLiveService == null) throw new StatsApiException(503, "Live Activity is unavailable");
-                    Long after = request.optionalLong("after_sequence");
-                    Long afterId = request.optionalLong("after_id");
-                    Integer limit = request.optionalInt("limit");
-                    if(after == null) throw new StatsApiException(400, "after_sequence is required");
-                    Long affiliationRevision = request.optionalLong("affiliation_revision");
-                    if(affiliationRevision == null) throw new StatsApiException(400, "affiliation_revision is required");
-                    return mP25ActivityLiveService.preparedCatchup(request.text("source_epoch"), after,
-                        request.optionalLong("through_sequence"), afterId != null ? afterId : 0,
-                        limit != null ? limit : P25ActivityLiveService.PAGE_LIMIT, affiliationRevision);
-                }
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "after_id", "watermark_id", "group_identity_key", "radio_identity_key",
                     "radio_system_key", "configuration_id", "hide_grants", "has_tones", "limit", "from_ms", "to_ms",

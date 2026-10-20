@@ -306,7 +306,7 @@ function p25Affiliations(rows) {
       system_name: row.system_name, radio_id: row.source_radio_id, talkgroup_id: row.target_id,
       radio_alias_name: row.source_alias_name, talkgroup_alias_name: row.target_alias_name });
   }
-  return { affiliation_revision: 0, affiliations_available: true, affiliations_complete: true, affiliations: [...facts.values()] };
+  return { affiliations: [...facts.values()] };
 }
 const defaultP25Affiliations = p25Affiliations([{ id: 1, observed_at_ms: now,
   radio_system_key: systemKey, source_identity_key: radioKey, target_identity_key: groupKey,
@@ -422,17 +422,13 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       source_identity_key: radioKey, source_alias_name: 'Engine 4', target_id: 1201, target_native_id: 1201,
       target_identity_key: groupKey, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }]),
       watermark_id: 1, next_after_id: 1 });
-    if (p === '/api/v1/activity/live/seed') return respond({ source_epoch: 'fixture-p25', sequence: 0, ...defaultP25Affiliations,
+    if (p === '/api/v1/activity/live/seed') return respond({ source_epoch: 'fixture-p25', sequence: 0, available: true, affiliations_truncated: false, ...defaultP25Affiliations,
       captured_at_ms: now, traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true,
       rows: [{ id: 1, observed_at_ms: now, action: 'GRANT', protocol: 'P25', channel_kind: 'TRUNKED_SITE',
         radio_system_key: systemKey, system_name: systemName, configuration_id: channelId,
         source_radio_id: 30914, source_native_id: 30914, source_identity_key: radioKey, source_alias_name: 'Engine 4',
         target_id: 1201, target_native_id: 1201, target_identity_key: groupKey,
         target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }] });
-    if (p === '/api/v1/activity/live') return respond({ source_epoch: 'fixture-p25',
-      through_sequence: Number(url.searchParams.get('after_sequence')) || 0,
-      rows: [], removed_ids: [], next_after_id: 0, has_more: false, affiliation_revision: Number(url.searchParams.get('affiliation_revision')) || 0,
-      affiliations_available: true, affiliations_complete: true, affiliations_refresh_required: false });
     if (p === '/api/v1/live/multiplex/control') {
       const subscription = request.postDataJSON()?.subscriptions?.p25_activity;
       if (subscription) await page.evaluate((subscriptionId) => {

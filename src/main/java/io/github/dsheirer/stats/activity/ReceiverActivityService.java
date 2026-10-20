@@ -118,22 +118,6 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private Path mCurrentDatabasePath;
     private ReceiverActivityWriter.WriterStatus mLastWriterStatus;
 
-    /** Current writer journal; replacement naturally supplies a new process-local source epoch. */
-    public ActivityCommitJournal activityCommitJournal()
-    {
-        ReceiverActivityWriter writer = mWriter;
-        return writer != null ? writer.activityCommitJournal() : null;
-    }
-
-    @Subscribe
-    public void receiveActivityHistoryInvalidation(
-        io.github.dsheirer.database.configuration.ActivityHistoryInvalidation event)
-    {
-        ReceiverActivityWriter writer = mWriter;
-        if(writer != null && writer.getDatabasePath().toAbsolutePath().normalize().equals(event.databasePath()))
-            writer.requestActivityHistoryInvalidation();
-    }
-
     public ReceiverActivityService(UserPreferences userPreferences)
     {
         this(userPreferences, DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS, null, null,
