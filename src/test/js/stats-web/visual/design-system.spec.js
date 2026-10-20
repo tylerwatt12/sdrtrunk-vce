@@ -1739,7 +1739,7 @@ test('Live selected-view actions use compact icons with shared hints', async ({ 
   const labeled = rows.nth(1);
   const fallback = rows.nth(3);
   await expect(rows).toHaveCount(5);
-  await expect(control.locator('[data-column="channel"]')).toHaveText('LCN 1-1772');
+  await expect(control.locator('[data-column="channel"]')).toHaveText('1-1772');
   await expect(control.locator('[data-column="channel"]')).toBeVisible();
   await expect(labeled.locator('[data-column="source"]')).toBeVisible();
   await expect(labeled.locator('[data-column="target"]')).toBeVisible();
@@ -1853,7 +1853,7 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   const labeled = rows.nth(1);
   const otaLabeled = rows.nth(2);
   const fallback = rows.nth(3);
-  await expect(control.locator('[data-column="channel"]')).toHaveText('LCN 1-1772');
+  await expect(control.locator('[data-column="channel"]')).toHaveText('1-1772');
   await expect(control.locator('[data-column="channel"]')).toBeHidden();
   await expect(labeled.locator('[data-column="source"] .identity-summary-primary')).toHaveText('Engine 4');
   await expect(labeled.locator('[data-column="source"] .identity-summary-context')).toHaveText('30412');

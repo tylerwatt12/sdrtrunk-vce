@@ -11,7 +11,7 @@
 @import url("./styles/components/semantic-text.css?v=6") layer(components);
 @import url("./styles/components/controls.css?v=39") layer(components);
 @import url("./styles/components/audio-controls.css?v=11") layer(components);
-@import url("./styles/compositions/workspaces.css?v=30") layer(compositions);
+@import url("./styles/compositions/workspaces.css?v=31") layer(compositions);
 @import url("./styles/compositions/tables.css?v=15") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=20") layer(compositions);
@@ -23,7 +23,7 @@
 @import url("./styles/features/about.css?v=2") layer(features);
 @import url("./styles/features/channels.css?v=22") layer(features);
 @import url("./styles/features/entity-details.css?v=12") layer(features);
-@import url("./styles/features/live.css?v=22") layer(features);
+@import url("./styles/features/live.css?v=23") layer(features);
 @import url("./styles/features/radio-directory.css?v=8") layer(features);
 @import url("./styles/features/tuner-spectrum.css?v=34") layer(features);
 @import url("./styles/features/tuners.css?v=12") layer(features);

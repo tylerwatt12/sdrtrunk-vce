@@ -221,6 +221,31 @@
   font-size: var(--font-size-meta);
 }
 
+.identity-summary-inline {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  max-width: 100%;
+  overflow: hidden;
+  line-height: inherit;
+  vertical-align: bottom;
+}
+
+.identity-summary-inline > .identity-summary-primary {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity-summary-inline > .identity-summary-context {
+  flex: 0 0 auto;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ui-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

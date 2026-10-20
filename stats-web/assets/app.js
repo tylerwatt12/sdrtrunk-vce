@@ -12761,8 +12761,8 @@ async function renderDashboard() {
         fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
     tabs([
       { id: 'health', label: 'Main', href: href('dashboard', { tab: 'health' }) },
-      { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
-      { id: 'activity', label: 'Radio Activity', href: href('dashboard', { tab: 'activity' }) }
+      { id: 'calls', label: 'Call Statistics', href: href('dashboard', { tab: 'calls' }) },
+      { id: 'activity', label: 'Radio Activity Chart', href: href('dashboard', { tab: 'activity' }) }
     ], tab))) return;
 
   if (tab === 'health') {
@@ -18695,8 +18695,10 @@ function liveIdentityValue(row, kind) {
   const text = (value) => value instanceof Node ? value.textContent.trim() : String(value || '').trim();
   const nameText = text(name);
   const idText = text(identifier);
-  return identitySummaryValue(nameText ? name : identifier,
+  const summary = identitySummaryValue(nameText ? name : identifier,
     nameText && idText && nameText !== idText ? identifier : '');
+  if (summary instanceof Node) summary.classList.add('identity-summary-inline');
+  return summary;
 }
 
 function liveConventionalChannelValue(row) {
@@ -18723,11 +18725,11 @@ function liveRemoteOriginBadge(origin, showLabel = false) {
 function liveChannelValue(row, showRemoteOrigin = true) {
   const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
   const value = conventional ? liveConventionalChannelValue(row) :
-    (row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`);
+    (row.lcn == null || row.lcn === '' ? '' : String(row.lcn));
   const remote = showRemoteOrigin ? liveRemoteOriginBadge(row.remote_origin) : null;
   if (!remote) return value;
   const wrapper = node('span', 'live-channel-origin');
-  if (value) wrapper.append(value);
+  if (value) wrapper.append(value instanceof Node ? value : node('span', 'live-channel-label', value));
   wrapper.append(remote);
   return wrapper;
 }

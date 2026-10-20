@@ -1082,7 +1082,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
 
   .channels-live-table tbody td:empty {
-    display: none;
+    min-height: 1lh;
   }
 
   .channels-live-table tbody td.empty {
@@ -1128,8 +1128,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
     text-align: right;
   }
 
-  .channels-live-table td[data-column="source"],
-  .channels-live-table td[data-column="target"] {
+  .channels-live-table tbody td[data-column="source"],
+  .channels-live-table tbody td[data-column="target"] {
+    display: flex;
+    align-items: baseline;
+    min-height: 1lh;
     order: 20;
     font-size: var(--font-size-body);
     font-weight: var(--font-weight-medium);
@@ -1193,8 +1196,9 @@ body[data-view="live"] .channel-diagnostic-readouts {
   .channels-live-table td[data-column="signal"] {
     grid-column: 1 / span 6;
   }
-  .channels-live-table td[data-column="decode-health"] {
+  .channels-live-table tbody td[data-column="decode-health"] {
     grid-column: 7 / span 6;
+    min-height: calc(1lh + var(--space-1));
     text-align: right;
   }
   .channels-live-table td[data-column="decode-health"]::before { content: "Quality"; }
@@ -1260,7 +1264,23 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .live-channel-origin {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  height: 1lh;
+  overflow: hidden;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.live-channel-origin > .live-channel-link,
+.live-channel-origin > .live-channel-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-channel-origin > .live-remote-origin {
+  flex-shrink: 0;
 }
 
 .live-remote-origin {

@@ -19,13 +19,14 @@ test.beforeAll(async () => {
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
 });
 
-async function openLive(page, theme, { hidden = [], row = {}, sourceMode = 'both' } = {}) {
+async function openLive(page, theme, { hidden = [], row = {}, sourceMode = 'both', density = 'normal' } = {}) {
   const snapshot = { revision: 1, tables: [{ table_id: channelId, configuration_id: channelId,
     title: 'Identity columns', channel_running: true, rows: [{ ...baseRow, ...row }] }] };
   const fixture = await installSiteStyleApplication(page, theme, snapshot);
   let preferences = structuredClone(defaults), revision = 1;
   preferences.appearance.theme = theme;
   preferences.presentation.source_name_display = sourceMode;
+  preferences.presentation.live_row_density = density;
   preferences.tables['live-channels'] = { schema, column_order: schema,
     column_widths: {}, hidden_columns: hidden, collapsed_groups: [] };
   const writes = [];
@@ -83,26 +84,43 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     });
   }
 
-  test(`Live combined identities update alias metadata and clear on idle in ${theme}`, async ({ page }) => {
+  for (const density of ['normal', 'dense']) test(`Live identities keep row height through detail changes in ${theme} ${density}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    const app = await openLive(page, theme);
+    const quality = { vc_quality_pct: 97, vc_decoded_frames: 120 };
+    const app = await openLive(page, theme, { density, row: quality });
+    const height = (await app.row.boundingBox()).height;
+    const expectStableHeight = async () => expect.poll(async () =>
+      Math.abs((await app.row.boundingBox()).height - height)).toBeLessThanOrEqual(1);
+    for (const role of ['source', 'target']) {
+      const name = await cell(app.row, role).locator('.identity-summary-primary').boundingBox();
+      const id = await cell(app.row, role).locator('.identity-summary-context').boundingBox();
+      expect(id.x).toBeGreaterThanOrEqual(name.x + name.width - 1);
+    }
+    await expect(cell(app.row, 'channel')).toHaveText('12');
     const update = async (revision, values) => {
       const snapshot = { ...app.snapshot, revision, tables: [{ ...app.snapshot.tables[0],
         rows: [{ ...baseRow, ...values }] }] };
       await page.evaluate(snapshot => window.fixtureSendLiveSnapshot(snapshot), snapshot);
     };
     await expectParty(app.row, 'source', 'Portable 6 · Operator 6', '65536');
+    await expect(cell(app.row, 'decode-health').getByRole('img')).toBeVisible();
     await update(2, { source_alias: ' ', talker_alias: '', target_alias: '' });
     await expectParty(app.row, 'source', '', '65536');
     await expectParty(app.row, 'target', '', '54321');
-    await update(3, { source_alias: '', talker_alias: 'New operator', target_alias: '', target_aliases: [
+    await expect(cell(app.row, 'decode-health')).toBeEmpty();
+    await expectStableHeight();
+    const longName = 'New operator with a long changing over-the-air name';
+    await update(3, { ...quality, source_alias: '', talker_alias: longName, target_alias: '', remote_origin: { remote: true }, target_aliases: [
       { alias_id: 101, alias_list_id: 1, name: 'Dispatch East' }] });
-    await expectParty(app.row, 'source', 'New operator', '65536');
+    await expectParty(app.row, 'source', longName, '65536');
     await expectParty(app.row, 'target', 'Dispatch East', '54321');
-    // Same row key, with stale call metadata still present in the snapshot: idle presentation clears both lines.
+    await expectStableHeight();
+    // Stale call metadata in the same row clears without collapsing its visible detail slots.
     await update(4, { status: 'IDLE' });
     await expect(cell(app.row, 'source')).toBeEmpty();
     await expect(cell(app.row, 'target')).toBeEmpty();
+    await expectStableHeight();
+    await expectNoHorizontalOverflow(page);
     expectClean(app.fixture);
   });
 }
@@ -139,6 +157,7 @@ test('Live combined source preserves the formatted foreign P25 identity', async 
     source_home_system_name_source: 'system', source_canonical_identity: { wacn: 2, system_id: 2, subscriber_id: 65536 },
     source_working_subscriber_id: 1001 } });
   await expectParty(app.row, 'source', 'Portable 6 · Operator 6', 'West County · 65536 (Working ID 1001)');
+  await expectNoHorizontalOverflow(page);
   expectClean(app.fixture);
 });
 

@@ -61,7 +61,7 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
 
   await page.goto('/app.html?view=dashboard&tab=health');
   const sectionNavigation = page.getByRole('navigation', { name: 'Section navigation' });
-  await expect(sectionNavigation.getByRole('link', { name: 'Radio Activity' })).toBeVisible();
+  await expect(sectionNavigation.getByRole('link', { name: 'Radio Activity Chart', exact: true })).toBeVisible();
   await page.getByRole('group', { name: 'Radio Directory view' })
     .getByRole('button', { name: 'Alias inventory' }).click();
 

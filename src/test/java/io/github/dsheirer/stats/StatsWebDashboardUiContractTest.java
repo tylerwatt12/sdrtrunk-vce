@@ -26,13 +26,13 @@ class StatsWebDashboardUiContractTest
         String dashboard = function(Files.readString(APP_JAVASCRIPT), "async function renderDashboard()");
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
         assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
-        assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
+        assertTrue(dashboard.contains("{ id: 'calls', label: 'Call Statistics'"));
         assertTrue(dashboard.contains("{ id: 'health', label: 'Main'"));
-        assertTrue(dashboard.contains("{ id: 'activity', label: 'Radio Activity'"));
+        assertTrue(dashboard.contains("{ id: 'activity', label: 'Radio Activity Chart'"));
         assertTrue(dashboard.indexOf("{ id: 'health', label: 'Main'") <
-            dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
-        assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
-            dashboard.indexOf("{ id: 'activity', label: 'Radio Activity'"));
+            dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'"));
+        assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'") <
+            dashboard.indexOf("{ id: 'activity', label: 'Radio Activity Chart'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
         assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
