@@ -64,6 +64,17 @@ class StatsWebDatabase
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
     private static final int MAX_ACTIVITY_ACTION_FILTERS = ReceiverActivityFilterCatalog.actions().size();
     private static final int MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS = 1_000;
+    private static final Set<String> MAIN_QUALITY_FIELDS = Set.of(
+        "configuration_id", "channel_kind", "name", "site_name", "system_name", "system_name_source",
+        "protocol", "signal_dbfs", "average_signal_dbfs", "decode_health_pct", "last_observed_ms",
+        "remote_origin", "radio_system_key", "wacn", "system_id", "rfss", "site_id", "ran");
+    private static final Set<String> MAIN_SYSTEM_FIELDS = Set.of(
+        "system_name", "system_name_source", "radio_system_key", "entity_ref", "protocol", "protocol_label",
+        "wacn", "system_id", "network_id", "model", "location_category", "alias_lists", "children");
+    private static final Set<String> MAIN_CHANNEL_FIELDS = Set.of(
+        "configuration_id", "name", "site_name", "system_name", "system_name_source", "protocol",
+        "protocol_label", "alias_list_id", "alias_list_name", "processing_state", "frequencies_hz",
+        "display_frequency_hz", "display_frequency_source", "remote_origin", "radio_system_key");
     static final String DASHBOARD_LAST_SEEN_SQL = """
         SELECT MAX(last_seen_ms) FROM (
             SELECT MAX(last_seen_ms) AS last_seen_ms FROM p25_site_snapshot
@@ -2089,7 +2100,6 @@ class StatsWebDatabase
                 row.put("name", channel.name());
                 row.put("system_name", channel.system());
                 row.put("site_name", channel.site());
-                row.put("protocol_id", channel.protocolId());
                 row.put("protocol_label", channel.protocolLabel());
                 row.put("channel_kind", channel.channelKind());
                 row.put("frequencies_hz", channel.frequenciesHz());
@@ -2097,8 +2107,6 @@ class StatsWebDatabase
                 row.put("alias_list_id", channel.aliasListId());
                 row.put("alias_list_name", channel.aliasListName());
                 if(channel.remoteOrigin() != null) row.put("remote_origin", channel.remoteOrigin());
-                if("active-control".equals(channel.displayFrequencySource()))
-                    row.put("current_control_hz", channel.displayFrequencyHz());
                 byConfiguration.put(channel.configurationId(), row);
                 if(!"TRUNKED".equals(channel.channelKind()))
                 {
@@ -2142,19 +2150,35 @@ class StatsWebDatabase
             List<Map<String,Object>> quality = querySignalHealthExport(connection, Math.max(1, configured.size()))
                 .stream().filter(row -> "TRUNKED".equals(row.get("channel_kind"))).toList();
             quality.forEach(row -> {
-                row.remove("current_control_hz");
                 Map<String,Object> current = byConfiguration.get(row.get("configuration_id"));
-                if(current != null)
-                {
-                    for(String field: List.of("remote_origin", "current_control_hz"))
-                        if(current.containsKey(field)) row.put(field, current.get(field));
-                }
+                if(current != null && current.containsKey("remote_origin"))
+                    row.put("remote_origin", current.get("remote_origin"));
             });
             Map<String,Object> response = new LinkedHashMap<>();
             response.put("quality", Map.of("current", quality));
             response.put("directory", Map.of("systems", List.copyOf(systems.values()), "channels", conventional));
-            return new StatsSystemNameResolver(connection).enrichMap(response);
+            return dashboardMainFields(new StatsSystemNameResolver(connection).enrichMap(response));
         });
+    }
+
+    /** Preserve shared friendly-name resolution, then send only the Main cards' fields. */
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> dashboardMainFields(Map<String,Object> response)
+    {
+        Map<String,Object> quality = (Map<String,Object>)response.get("quality");
+        ((List<Map<String,Object>>)quality.get("current")).forEach(row -> row.keySet().retainAll(MAIN_QUALITY_FIELDS));
+        Map<String,Object> directory = (Map<String,Object>)response.get("directory");
+        ((List<Map<String,Object>>)directory.get("systems")).forEach(system -> {
+            system.keySet().retainAll(MAIN_SYSTEM_FIELDS);
+            ((List<Map<String,Object>>)system.get("children"))
+                .forEach(row -> row.keySet().retainAll(MAIN_CHANNEL_FIELDS));
+        });
+        ((List<Map<String,Object>>)directory.get("channels")).forEach(row -> {
+            row.keySet().retainAll(MAIN_CHANNEL_FIELDS);
+            row.remove("display_frequency_hz");
+            row.remove("display_frequency_source");
+        });
+        return response;
     }
 
     /**

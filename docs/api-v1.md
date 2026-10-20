@@ -87,6 +87,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/status` | Server, database, logging, and live-stream status. |
 | `GET /api/v1/me/preferences` | The signed-in user's bounded browser preference document and revision. |
 | `GET /api/v1/dashboard` | Bounded summary counts, recent channels, call activity, and top identities. |
+| `GET /api/v1/dashboard/main` | Shared current signal quality and configured system/channel cards for Main. Includes names, aliases, navigation references and confirmed display frequencies; omits history, rankings and export-only fields. |
 | `GET /api/v1/quality` | Current quality across a bounded channel page. Global requests cannot include history. |
 | `GET /api/v1/identities` | Bounded directory of recently active talkgroups, patch groups, and radios. |
 | `GET /api/v1/alias-lists` | Paged Alias List catalog. |

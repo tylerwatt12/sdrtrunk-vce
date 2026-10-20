@@ -53,6 +53,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -131,12 +132,18 @@ class StatsApiV1HttpContractTest
         assertTrue(data.path("directory").path("channels").isArray());
         assertFalse(data.has("top_sources"));
         assertFalse(data.has("call_activity"));
+        assertFalse(data.path("quality").path("current").isEmpty());
         for(JsonNode channel: data.path("quality").path("current"))
         {
-            assertFalse(channel.has("channel_id"));
-            assertFalse(channel.has("radio_system_id"));
-            assertFalse(channel.has("series"));
+            Set<String> fields = new java.util.HashSet<>();
+            channel.fieldNames().forEachRemaining(fields::add);
+            assertEquals(Set.of("configuration_id", "channel_kind", "name", "site_name", "system_name", "protocol",
+                "signal_dbfs", "average_signal_dbfs", "decode_health_pct", "last_observed_ms", "radio_system_key",
+                "wacn", "system_id", "rfss", "site_id", "ran"), fields);
         }
+        for(String unused: List.of("system_identity", "system_names", "radio_system_entity_ref", "channel_name",
+            "channel_id", "radio_system_id", "series", "valid_frames", "corrected_bits", "sample_age_seconds"))
+            assertTrue(data.findValues(unused).isEmpty(), unused + " must not reappear in the Main wire response");
         assertTrue(OBJECT_MAPPER.readTree(get(StatsApiV1.STATUS).body()).path("data")
             .path("p25_visualizer_available").isBoolean());
     }

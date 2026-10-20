@@ -2527,13 +2527,32 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void mainUsesConfiguredOwnersAliasesAndCurrentControlWithoutActivityRankings()
+    void mainUsesOnlyCardFieldsAndPreservesNamesAliasesAndCurrentFrequencies() throws Exception
     {
+        long now = System.currentTimeMillis();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            seedTrunkedDmrAndNxdn(statement);
+            statement.executeUpdate("UPDATE configuration_channel SET system_name='Shared P25 alternate' " +
+                "WHERE configuration_id='" + P25_CHANNEL_B + "'");
+            statement.executeUpdate("""
+                INSERT INTO trunked_control_channel_quality (
+                    channel_id, frequency_hz, bucket_start_ms, observed_at_ms,
+                    signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
+                    decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
+                    dropped_bits, last_valid_decode_ms
+                ) VALUES
+                    (71, 851012500, %1$d, %1$d, -45, -46, -50, -42, 97, 100, 2, 3, 4, 5, %1$d),
+                    (78, 451012500, %1$d, %1$d, -52, -53, -58, -49, 94, 200, 2, 3, 4, 5, %1$d),
+                    (79, 155012500, %1$d, %1$d, -61, -62, -66, -58, 88, 300, 2, 3, 4, 5, %1$d)
+                """.formatted(now));
+        }
         var running = ChannelAdministrationService.ProcessingState.RUNNING;
         var stopped = ChannelAdministrationService.ProcessingState.STOPPED;
         List<ChannelAdministrationService.ChannelSummary> channels = List.of(
             new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_A, "p25-phase1", "P25", "TRUNKED",
-                "Shared P25", "North", "North Control", List.of(851012500L), running, 1, 71, "County A", true,
+                "", "North", "North Control", List.of(851012500L), running, 1, 71, "County A", true,
                 null, null, 853012500L, "active-control"),
             new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_B, "p25-phase1", "P25", "TRUNKED",
                 "Shared P25", "South", "South Control", List.of(852012500L), stopped, null, 72, "County B", true,
@@ -2543,27 +2562,68 @@ class StatsWebDatabaseTest
                 null, null, 154310000L, "configured"),
             new ChannelAdministrationService.ChannelSummary(DMR_CHANNEL, "unsupported", "Unsupported", "UNSUPPORTED",
                 "Other", "", "Unsupported", List.of(), stopped, null, 74, "DMR County", false,
-                null, null, null, "configured"));
+                null, null, null, "configured"),
+            new ChannelAdministrationService.ChannelSummary(DMR_TRUNKED_CHANNEL, "dmr", "DMR", "TRUNKED",
+                "Metro DMR", "Central", "DMR Control", List.of(451012500L), running, 3, 78, "DMR Trunked", true,
+                null, null, 451012500L, "active-control"),
+            new ChannelAdministrationService.ChannelSummary(NXDN_TRUNKED_CHANNEL, "nxdn", "NXDN", "TRUNKED",
+                "Regional NXDN", "West", "NXDN Control", List.of(155012500L), running, 4, 79, "NXDN Trunked", true,
+                null, null, 155012500L, "active-control"));
         Map<String,Object> response = mDatabase.dashboardMain(channels);
         assertEquals(Set.of("quality", "directory"), response.keySet());
         Map<String,Object> directory = map(response, "directory");
         List<Map<String,Object>> systems = rowsFrom(directory, "systems");
-        assertEquals(1, systems.size());
+        assertEquals(3, systems.size());
         Map<String,Object> system = systems.getFirst();
         assertEquals(RADIO_SYSTEM_KEY, system.get("radio_system_key"));
+        assertEquals("Shared P25 / Shared P25 alternate", system.get("system_name"));
         assertEquals("radio_system", map(system, "entity_ref").get("kind"));
         assertEquals(List.of("County A", "County B"), rowsFrom(system, "alias_lists").stream()
             .map(row -> row.get("name")).toList());
         assertEquals(2, rowsFrom(system, "children").size());
         assertEquals(ANALOG_CHANNEL, rowsFrom(directory, "channels").getFirst().get("configuration_id"));
+        assertEquals(154310000L, number(((List<?>)rowsFrom(directory, "channels").getFirst()
+            .get("frequencies_hz")).getFirst()));
+        assertFalse(rowsFrom(directory, "channels").getFirst().containsKey("display_frequency_hz"));
+        assertFalse(rowsFrom(directory, "channels").getFirst().containsKey("display_frequency_source"));
         List<Map<String,Object>> quality = rowsFrom(map(response, "quality"), "current");
-        assertEquals(853012500L, ((Number)rowWith(quality, "configuration_id", P25_CHANNEL_A)
-            .get("current_control_hz")).longValue());
+        assertEquals(4, quality.size());
+        assertEquals(97, number(rowWith(quality, "configuration_id", P25_CHANNEL_A).get("decode_health_pct")));
+        assertEquals(94, number(rowWith(quality, "configuration_id", DMR_TRUNKED_CHANNEL).get("decode_health_pct")));
+        assertEquals(88, number(rowWith(quality, "configuration_id", NXDN_TRUNKED_CHANNEL).get("decode_health_pct")));
         assertEquals(Map.of("remote", true), rowWith(quality, "configuration_id", P25_CHANNEL_B).get("remote_origin"));
-        assertFalse(rowWith(quality, "configuration_id", P25_CHANNEL_B).containsKey("current_control_hz"),
-            "A stopped channel's previous observation is not an active control frequency");
-        assertFalse(response.containsKey("top_sources"));
-        assertFalse(quality.stream().anyMatch(row -> row.containsKey("series")));
+        assertEquals(0xBEE00, number(rowWith(quality, "configuration_id", P25_CHANNEL_A).get("wacn")));
+        assertEquals(0x49F, number(rowWith(quality, "configuration_id", P25_CHANNEL_A).get("system_id")));
+
+        // Verify the final API presentation, not just the database maps: native facts cannot recreate rich exports.
+        JsonNode presented = StatsApiV1Payload.present(response);
+        assertEquals(Set.of("configuration_id", "channel_kind", "name", "site_name", "system_name", "protocol",
+            "signal_dbfs", "average_signal_dbfs", "decode_health_pct", "last_observed_ms", "radio_system_key",
+            "wacn", "system_id", "rfss", "site_id", "ran"),
+            fieldNames(presented.path("quality").path("current").get(0)));
+        assertEquals(Set.of("system_name", "radio_system_key", "entity_ref", "protocol", "protocol_label",
+            "wacn", "system_id", "alias_lists", "children"),
+            fieldNames(presented.path("directory").path("systems").get(0)));
+        assertEquals(Set.of("configuration_id", "name", "site_name", "system_name", "protocol", "protocol_label",
+            "alias_list_id", "alias_list_name", "processing_state", "frequencies_hz", "display_frequency_hz",
+            "display_frequency_source", "radio_system_key"),
+            fieldNames(presented.path("directory").path("systems").get(0).path("children").get(0)));
+        for(String unused: List.of("system_identity", "system_names", "radio_system_entity_ref", "channel_name",
+            "valid_frames", "invalid_frames", "minimum_signal_dbfs", "maximum_signal_dbfs", "corrected_bits",
+            "sync_loss_bits", "dropped_bits", "last_valid_decode_ms", "sample_age_seconds", "current_control_hz"))
+            assertTrue(presented.findValues(unused).isEmpty(), unused + " is not consumed by the Main cards");
+
+        String export = new String(mDatabase.csvExport("signal-health", request("/")).content(), StandardCharsets.UTF_8);
+        assertTrue(export.contains("valid_frames_rolling_30s"));
+        assertTrue(export.contains("minimum_signal_dbfs"));
+        assertTrue(export.contains("corrected_bits_rolling_30s"));
+    }
+
+    private static Set<String> fieldNames(JsonNode object)
+    {
+        Set<String> fields = new java.util.HashSet<>();
+        object.fieldNames().forEachRemaining(fields::add);
+        return fields;
     }
 
     @Test
