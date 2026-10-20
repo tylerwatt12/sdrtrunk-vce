@@ -421,6 +421,45 @@ document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+
+if (view === 'app-chrome') {
+  const example = document.querySelector('.visual-app-chrome-example');
+  const navigation = example.querySelector('.primary-nav');
+  const toggle = example.querySelector('.navigation-toggle');
+  const backdrop = example.querySelector('.navigation-backdrop');
+  const groups = [...navigation.querySelectorAll('.nav-group')];
+  const drawerMedia = window.matchMedia('(max-width: 1180px)');
+  const selected = groups.find(group => group.dataset.navGroup === parameters.get('menu')) || groups[0];
+  function setDrawerOpen(open) {
+    const next = drawerMedia.matches && open;
+    document.body.classList.toggle('navigation-open', next);
+    toggle.setAttribute('aria-expanded', String(next));
+    toggle.setAttribute('aria-label', next ? 'Close navigation' : 'Open navigation');
+    backdrop.hidden = !next;
+    navigation.toggleAttribute('inert', drawerMedia.matches && !next);
+  }
+  groups.forEach(group => group.addEventListener('toggle', () => {
+    if (group.open) groups.forEach(other => { if (other !== group) other.open = false; });
+  }));
+  selected.open = true;
+  setDrawerOpen(true);
+  toggle.addEventListener('click', () => setDrawerOpen(!document.body.classList.contains('navigation-open')));
+  backdrop.addEventListener('click', () => setDrawerOpen(false));
+  navigation.addEventListener('click', event => {
+    if (event.target.closest('a')) event.preventDefault();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    if (document.body.classList.contains('navigation-open')) {
+      setDrawerOpen(false);
+      toggle.focus();
+    } else {
+      const group = groups.find(item => item.open);
+      if (group) { group.querySelector('summary').focus(); group.open = false; }
+    }
+  });
+  drawerMedia.addEventListener('change', () => setDrawerOpen(true));
+}
 const modalSize = parameters.get('modal-size');
 if (['small', 'medium'].includes(modalSize)) {
   document.querySelector('.visual-modal-example .read-only-modal')?.classList.add(`modal-size-${modalSize}`);

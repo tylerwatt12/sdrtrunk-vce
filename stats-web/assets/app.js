@@ -774,7 +774,8 @@ function updateNavigationAccess() {
     link.classList.toggle('access-locked', locked);
     const lock = link.querySelector('.nav-lock');
     if (lock) lock.toggleAttribute('hidden', !locked);
-    const label = link.querySelector('span')?.textContent?.trim() || routeViewLabel(link.dataset.view);
+    const label = link.querySelector('.ui-navigation-label')?.textContent?.trim() || routeViewLabel(link.dataset.view);
+    link.setAttribute('aria-describedby', `nav-${link.dataset.view}-description${locked ? ` nav-${link.dataset.view}-access` : ''}`);
     link.title = locked ? `${label}: access required` : '';
   });
   document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
@@ -1076,7 +1077,7 @@ function openNavigationGroup(group) {
 
 function firstUsableNavigationControl(navigation) {
   return [...navigation.querySelectorAll('.nav-group > summary, a[href]')]
-    .find((control) => !control.hidden) || null;
+    .find((control) => control.getClientRects().length > 0) || null;
 }
 
 function drawerNavigationFocusTargets(navigation, toggle) {
@@ -1124,7 +1125,10 @@ function initializeNavigation() {
   });
   backdrop.addEventListener('click', () => setNavigationOpen(false, true));
   navigation.addEventListener('click', (event) => {
-    if (event.target.closest('a[href]')) setNavigationOpen(false, navigationUsesDrawer());
+    if (event.target.closest('a[href]')) {
+      setNavigationOpen(false, navigationUsesDrawer());
+      closeNavigationGroups();
+    }
   });
   groups.forEach((group) => {
     const summary = group.querySelector(':scope > summary');
@@ -34128,11 +34132,13 @@ function renderCredits() {
 }
 
 function activateNavigation(view) {
-  const parent = applicationRoutes?.[view]?.parent || null;
+  const parent = applicationRoutes?.[view]?.parent || view;
   const activeTab = route.get('tab');
   document.querySelectorAll('.primary-nav a').forEach((link) => {
     const active = link.dataset.view === parent && (!link.dataset.navTab || link.dataset.navTab === activeTab);
     link.classList.toggle('active', active);
+    if (active && link.dataset.view === view) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
   });
   let activeGroup = null;
   document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {

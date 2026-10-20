@@ -66,6 +66,7 @@ for (const theme of ['light', 'dark']) {
         }
         // A real pointer action on the formerly obscured last destination must navigate.
         await toggle.click();
+        await navigation.locator('[data-nav-group="settings"] > summary').click();
         const about = navigation.getByRole('link', { name: 'About', exact: true });
         await expectPointerReachable(about);
         await about.click();
@@ -86,6 +87,7 @@ for (const viewport of viewports) {
       await toggle.click();
       await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       const navigation = page.locator('#primary-navigation');
+      await navigation.locator('[data-nav-group="settings"] > summary').click();
       await expect(navigation.getByRole('link', { name: 'Administration', exact: true })).toBeHidden();
       const settings = navigation.getByRole('link', { name: 'My Settings', exact: true });
       await expectPointerReachable(settings);
@@ -93,6 +95,10 @@ for (const viewport of viewports) {
       await expect(page).toHaveURL(/view=settings/);
       await expect(page.getByRole('heading', { name: 'My Settings', exact: true })).toBeVisible();
       await expect(page.locator('#navigation-toggle')).toHaveAttribute('aria-expanded', 'false');
+      await toggle.click();
+      await expect(settings).toHaveAttribute('aria-current', 'page');
+      await expect(navigation.locator('[data-nav-group="settings"]')).toHaveAttribute('open');
+      await page.keyboard.press('Escape');
       const statusIcon = page.getByRole('button', { name: 'Change Status Icon', exact: true });
       const reset = page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true });
       const personalActions = page.locator('.user-settings-summary > .ui-action-row');
@@ -120,10 +126,14 @@ test('My Settings drawer entry follows authentication and user-settings access',
   await page.unroute('**/api/v1/**');
   await openAudioApp(page, { admin: false, capabilities: { 'user-settings': false } });
   await page.locator('#navigation-toggle').click();
+  await page.locator('#primary-navigation [data-nav-group="settings"] > summary').click();
   const settings = page.locator('#primary-navigation a[data-view="settings"]');
   await expect(settings).toBeVisible();
   await expect(settings).toHaveClass(/access-locked/);
   await expect(settings.locator('.nav-lock')).toBeVisible();
+  await expect(settings).toHaveAccessibleName('My Settings');
+  await expect(settings).toHaveAccessibleDescription(
+    'Adjust your display and personal listening preferences. Access required');
   await settings.click();
   await expect(page.getByRole('heading', { name: 'Access denied', exact: true })).toBeVisible();
   await expect(page.getByText('fixture-listener is signed in with User access, which does not include My Settings.',
@@ -131,10 +141,18 @@ test('My Settings drawer entry follows authentication and user-settings access',
   await expect(page.getByRole('heading', { name: 'My Settings', exact: true })).toHaveCount(0);
 });
 
-test('desktop retains the account Settings entry without duplicating navigation', async ({ page }) => {
+test('desktop Settings menu and account shortcut both reach My Settings', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openAudioApp(page, { admin: false });
-  await expect(page.locator('#primary-navigation a[data-view="settings"]')).toBeHidden();
+  const navigation = page.locator('#primary-navigation');
+  await navigation.locator('[data-nav-group="settings"] > summary').click();
+  const personal = navigation.getByRole('link', { name: 'My Settings', exact: true, includeHidden: true });
+  await expect(personal).toHaveCount(1);
+  await expectPointerReachable(personal);
+  await personal.click();
+  await expect(page.getByRole('heading', { name: 'My Settings', exact: true })).toBeVisible();
+  await expect(personal).toHaveAttribute('aria-current', 'page');
+  await expect(navigation.locator('[data-nav-group="settings"]')).toHaveClass(/active/);
   const settings = page.getByRole('button', { name: 'Open My Settings for fixture-listener', exact: true });
   await expect(settings).toBeVisible();
   await settings.click();

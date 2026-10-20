@@ -790,3 +790,11 @@ body:not([data-gallery-view="control-states"]) .visual-control-states-example {
 .visual-workflows-example .settings-card {
   margin: 0;
 }
+
+.visual-app-chrome-example {
+  min-height: 100vh;
+}
+
+.visual-app-chrome-context {
+  padding: var(--space-4);
+}

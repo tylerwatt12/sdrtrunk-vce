@@ -1500,3 +1500,75 @@
   cursor: default;
   font-size: var(--font-size-label);
 }
+
+/* Descriptive destination rows shared by desktop menus and the navigation drawer. */
+.ui-navigation-link {
+  min-width: 0;
+  min-height: var(--navigation-item-min-height);
+  display: grid;
+  grid-template-columns: var(--navigation-icon-column) minmax(0, 1fr) max-content;
+  align-items: start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  line-height: var(--line-height-body);
+  text-decoration: none;
+}
+
+.ui-navigation-link:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+  border-color: var(--line);
+  text-decoration: none;
+}
+
+.ui-navigation-link.active {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.ui-navigation-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-navigation-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ui-navigation-label {
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-navigation-description {
+  color: var(--muted);
+  font-size: var(--navigation-description-size);
+  overflow-wrap: anywhere;
+}
+
+.ui-navigation-link > .nav-icon,
+.ui-navigation-trailing {
+  margin-top: var(--space-1);
+  color: var(--muted);
+}
+
+.ui-navigation-link.active > .nav-icon {
+  color: var(--accent);
+}
+
+.ui-navigation-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ui-navigation-link.access-locked .ui-navigation-label {
+  color: var(--muted);
+}

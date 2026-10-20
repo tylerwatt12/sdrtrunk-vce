@@ -1,5 +1,12 @@
 /* Original blue-gray palette by default; custom hue affects only theme colors, never status colors. */
 :root {
+  --navigation-menu-width: 690px;
+  --navigation-menu-compact-width: 420px;
+  --navigation-item-min-height: 80px;
+  --navigation-menu-viewport-inset: 64px;
+  --navigation-icon-column: 24px;
+  --navigation-drawer-width: min(92vw, 410px);
+  --navigation-description-size: var(--font-size-secondary);
   --audio-ink: var(--ink);
   --audio-surface: var(--surface);
   --audio-raised: color-mix(in srgb, var(--accent-soft) 50%, var(--surface));

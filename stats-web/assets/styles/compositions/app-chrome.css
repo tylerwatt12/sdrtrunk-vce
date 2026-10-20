@@ -62,22 +62,6 @@
   overflow: visible;
 }
 
-.primary-nav a {
-  display: flex;
-  align-items: center;
-  padding: 0 13px;
-  color: var(--header-muted);
-  border-bottom: 3px solid transparent;
-}
-
-.primary-nav a:hover,
-.primary-nav a.active {
-  color: var(--header-ink);
-  background: var(--header-control);
-  border-bottom-color: var(--header-nav-active);
-  text-decoration: none;
-}
-
 .header-controls {
   display: inline-flex;
   align-items: center;
@@ -563,16 +547,7 @@
 .nav-lock {
   width: 13px;
   height: 13px;
-  margin-left: 4px;
   opacity: .7;
-}
-
-.primary-nav a.access-locked {
-  color: color-mix(in srgb, var(--header-muted) 60%, var(--header));
-}
-
-.primary-nav a.access-locked:hover {
-  color: var(--header-muted);
 }
 
 .icon-button {
@@ -596,8 +571,7 @@
   align-items: stretch;
 }
 
-.nav-group > summary,
-.primary-nav .nav-direct {
+.nav-group > summary {
   min-height: 48px;
   display: flex;
   align-items: center;
@@ -627,16 +601,14 @@
 
 .nav-group:hover > summary,
 .nav-group[open] > summary,
-.nav-group.active > summary,
-.primary-nav .nav-direct:hover,
-.primary-nav .nav-direct.active {
+.nav-group.active > summary {
   color: var(--header-ink);
   background: var(--header-control);
   border-bottom-color: var(--header-nav-active);
   text-decoration: none;
 }
 
-.primary-nav .nav-account {
+.nav-group-icon {
   display: none;
 }
 
@@ -645,43 +617,29 @@
   top: calc(100% - 1px);
   left: 0;
   z-index: 60;
-  min-width: 220px;
+  width: var(--navigation-menu-compact-width);
+  max-width: calc(100vw - var(--space-5));
+  max-height: calc(100dvh - var(--navigation-menu-viewport-inset));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-1);
   padding: var(--space-2);
-  background: var(--header);
-  border: 1px solid var(--header-line);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 0 0 var(--radius-card) var(--radius-card);
   box-shadow: var(--shadow-modal);
 }
 
+.nav-group-wide > .nav-group-links {
+  width: var(--navigation-menu-width);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .nav-group:not([open]) > .nav-group-links {
   display: none;
-}
-
-.primary-nav .nav-group-links a {
-  min-height: 40px;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  color: var(--header-muted);
-  border: 0;
-  border-radius: var(--radius-control);
-}
-
-.primary-nav .nav-group-links a:hover,
-.primary-nav .nav-group-links a.active {
-  color: var(--header-ink);
-  background: var(--header-control-hover);
-  border: 0;
-}
-
-.nav-group-links a small {
-  color: var(--header-muted);
-  font-size: var(--font-size-micro);
-  white-space: nowrap;
 }
 
 .navigation-backdrop[hidden] {
@@ -729,12 +687,12 @@
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 110;
-    width: min(88vw, 330px);
+    width: var(--navigation-drawer-width);
     display: block;
     padding: 64px 10px 18px;
     overflow-y: auto;
-    color: var(--header-ink);
-    background: var(--header);
+    color: var(--ink);
+    background: var(--surface);
     box-shadow: var(--shadow-modal);
     transform: translateX(-105%);
     transition: transform 160ms ease-out;
@@ -764,34 +722,44 @@
     display: block;
   }
 
-  .nav-group > summary,
-  .primary-nav .nav-direct {
+  .nav-group > summary {
     min-height: 46px;
     width: 100%;
-    padding: 8px 10px;
+    padding: var(--space-2) var(--space-3);
+    color: var(--ink);
+    gap: var(--space-2);
     border: 0;
     border-radius: var(--radius-control);
   }
 
-  .primary-nav .nav-account:not([hidden]) {
-    display: flex;
+  .nav-group-icon {
+    display: block;
+  }
+
+  .nav-group:hover > summary,
+  .nav-group[open] > summary,
+  .nav-group.active > summary {
+    color: var(--accent);
+    background: var(--accent-soft);
   }
 
   .nav-group > summary::after {
     margin-left: auto;
   }
 
-  .nav-group-links {
+  .nav-group-links,
+  .nav-group-wide > .nav-group-links {
     position: static;
+    width: 100%;
+    max-width: none;
+    max-height: none;
     min-width: 0;
-    padding: 3px 0 7px 12px;
+    overflow: visible;
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-1) 0 var(--space-2);
     background: transparent;
     border: 0;
     box-shadow: none;
-  }
-
-  .primary-nav .nav-group-links a {
-    min-height: 43px;
   }
 
   .desktop-playback-slot {

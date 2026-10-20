@@ -125,7 +125,7 @@ async function openAudioApp(page, options = {}) {
       }
       return route.fulfill({ json: { revision: state.preferenceRevision, preferences } });
     }
-    if (p === '/api/v1/status') return fulfill({});
+    if (p === '/api/v1/status') return fulfill(options.serviceStatus || {});
     if (p === '/api/v1/scan-lists') return fulfill({ revision: 1, scan_lists: scanLists });
     if (p === '/api/v1/calls/feed') {
       state.feedRequests++;
@@ -151,7 +151,8 @@ async function openAudioApp(page, options = {}) {
       state.transcript = { status: 'PENDING', text: null };
       return fulfill(state.transcript);
     }
-    if (p === '/api/v1/channel-catalog' || p === '/api/v1/admin/channels') return fulfill({ revision: 1, channels: [] });
+    if (p === '/api/v1/channel-catalog') return fulfill({ revision: 1, channels: options.channelCatalog || [] });
+    if (p === '/api/v1/admin/channels') return fulfill({ revision: 1, channels: [] });
     if (p === '/api/v1/dashboard') return fulfill({ last_seen_ms: started, call_activity: { totals: {}, buckets: [] },
       top_destinations: [], top_sources: [], source_activity_24h: [] });
     if (p === '/api/v1/tuners') return fulfill({ revision: 1, tuners: [] });
