@@ -20973,8 +20973,6 @@ async function renderGroupIdentity() {
       blocks.push(section('Current State', metrics(currentState, true)));
     }
     blocks.push(section('Last-known Facts', keyValues([
-      ['Last Source', radioLink(groupIdentity, groupIdentity.last_source_radio_id, undefined,
-        groupIdentity.last_source_entity_ref, 'last_source')],
       ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(groupIdentity.last_encryption_algorithm_name,
         groupIdentity.last_encryption_algorithm_id)],
       ['Last Encryption Key ID', hexDecimalPair(groupIdentity.last_encryption_key_id)]
