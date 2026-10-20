@@ -12385,6 +12385,14 @@ function dashboardIdentitySortValue(row) {
     dashboardIdentityOptions(row)).primary;
 }
 
+function dashboardIdentitySystem(row) {
+  const scopedSystem = row.radio_system_key ? radioSystemDisplayName(row) : '';
+  const label = radioSystemPrimaryName(row) || row.name || scopedSystem || row.source_label ||
+    row.radio_system_key || '—';
+  const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
+  return target ? anchor(label, target) : node('span', '', label);
+}
+
 const dashboardCallSourceColumns = [
   { id: 'receiver', label: 'Conventional Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
@@ -12405,7 +12413,7 @@ function dashboardIdentityColumns(identityLabel) {
   return [
     { id: 'identity', label: identityLabel, render: dashboardIdentity, className: 'alias-cell',
       sortValue: dashboardIdentitySortValue },
-    { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
+    { id: 'system', label: 'System / Channel', render: dashboardIdentitySystem, className: 'alias-cell' },
     { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
       render: dashboardMode, sortValue: dashboardModeLabel },
     { id: 'logical-calls', label: 'Calls', fullLabel: 'Calls',
