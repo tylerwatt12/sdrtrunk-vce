@@ -28,11 +28,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -41,9 +41,9 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Optional, bounded diagnostic observer. Producers perform one lock-free queue attempt with immutable references;
- * projection, redaction, correlation, rotation and all disk work belong to the lower-priority worker. Overload loses
- * diagnostic records instead of delaying radio delivery. No appender is installed on receiver logging callbacks.
+ * Optional, bounded diagnostic observer. HTTP, listener and transport workers offer immutable records without
+ * waiting for queue capacity. Projection, redaction, correlation, rotation and disk work belong to the lower-priority
+ * worker. Receiver health has a separate latest-sample slot; no queue producer runs on a receiver callback.
  */
 public final class WebDiagnosticLogService implements AutoCloseable
 {
@@ -82,9 +82,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private final ApplicationLogService mReader;
     private final Semaphore mDownloadReader = new Semaphore(1);
     private final Semaphore mActiveDownloads = new Semaphore(2);
-    private final AtomicReferenceArray<Pending> mQueue = new AtomicReferenceArray<>(QUEUE_CAPACITY);
-    private final AtomicLong mHead = new AtomicLong();
-    private final AtomicLong mTail = new AtomicLong();
+    private final ArrayBlockingQueue<Pending> mQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicLong mGeneration = new AtomicLong(1);
     private final AtomicLong mRequestSequence = new AtomicLong();
     private final AtomicLong mDropped = new AtomicLong();
@@ -164,7 +162,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     public Status status()
     {
         return new Status(mEnabled, mEnabled && mActive, FILE_NAME, RETENTION_DAYS, mMaximumBytes,
-            (int)Math.min(QUEUE_CAPACITY + 1, Math.max(0, mTail.get() - mHead.get()) + (mLatestHealth.get() != null ? 1 : 0)), mDropped.get(), mWritten.get(),
+            mQueue.size() + (mLatestHealth.get() != null ? 1 : 0), mDropped.get(), mWritten.get(),
             mLastError, mCanDownload);
     }
 
@@ -209,7 +207,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
             requestId, durationNanos, responseCode, failed));
     }
 
-    /** Fields must be immutable and bounded by the caller; only the explicit safe field set reaches disk. */
+    /** HTTP/listener/transport workers only; immutable bounded fields are projected on the diagnostic worker. */
     public void event(String kind, Map<String,Object> fields)
     {
         if(mEnabled && !mClosed.get())
@@ -260,28 +258,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
 
     private void submit(Pending pending)
     {
-        long tail = mTail.get();
-        // One CAS attempt, no spinning and no blocking admission. Contention itself is safe diagnostic loss.
-        if(tail - mHead.get() >= QUEUE_CAPACITY || !mTail.compareAndSet(tail, tail + 1))
+        if(!mQueue.offer(pending))
         {
             dropped(pending);
             return;
         }
-        mQueue.set((int)(tail % QUEUE_CAPACITY), pending);
         LockSupport.unpark(mWorker);
-    }
-
-    private Pending poll()
-    {
-        long head = mHead.get();
-        if(head >= mTail.get()) return null;
-        int index = (int)(head % QUEUE_CAPACITY);
-        Pending pending = mQueue.get(index);
-        // A producer may have reserved but not yet published its slot. The worker retries after yielding.
-        if(pending == null) return null;
-        mQueue.set(index, null);
-        mHead.set(head + 1);
-        return pending;
     }
 
     private void run()
@@ -320,7 +302,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
                         maintenanceAt = now + 60_000;
                     }
                     Pending pending = carried != null ? carried : mLatestHealth.getAndSet(null);
-                    if(pending == null) pending = poll();
+                    if(pending == null) pending = mQueue.poll();
                     carried = null;
                     long currentGeneration = mGeneration.get();
                     if(currentGeneration != generation)

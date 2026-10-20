@@ -3,8 +3,16 @@ package io.github.dsheirer.support;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.web.http.WebDiagnosticHttpFilter;
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,7 +21,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -78,6 +88,82 @@ class WebDiagnosticLogServiceTest
             assertTrue(read().contains("request_finished"));
         }
         finally { release.countDown(); }
+    }
+
+    @Test
+    void parallelHttpRequestsBelowCapacityRetainEveryDiagnosticRecord() throws Exception
+    {
+        int requests = 200;
+        CountDownLatch projecting = new CountDownLatch(1);
+        CountDownLatch releaseWriter = new CountDownLatch(1);
+        CountDownLatch requestsEntered = new CountDownLatch(requests);
+        CountDownLatch releaseRequests = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), requests);
+        try(TestPreferences prefs = new TestPreferences();
+            var executor = Executors.newVirtualThreadPerTaskExecutor();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value,
+                System::currentTimeMillis, WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {
+                    projecting.countDown();
+                    try { releaseWriter.await(15, TimeUnit.SECONDS); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                }))
+        {
+            service.setEnabled(true);
+            service.event("listener_started", Map.of());
+            assertTrue(projecting.await(2, TimeUnit.SECONDS));
+            server.setExecutor(executor);
+            WebDiagnosticHttpFilter.instrumentContexts(server, service,
+                Filter.beforeHandler("Align concurrent HTTP requests", exchange -> {
+                    requestsEntered.countDown();
+                    try
+                    {
+                        if(!releaseRequests.await(10, TimeUnit.SECONDS))
+                            throw new IllegalStateException("Parallel requests did not start");
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(exception);
+                    }
+                })).createContext("/fixture", exchange -> {
+                    exchange.sendResponseHeaders(204, -1);
+                    exchange.close();
+                });
+            server.start();
+            try(HttpClient client = HttpClient.newHttpClient())
+            {
+                URI target = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/fixture");
+                List<CompletableFuture<HttpResponse<Void>>> responses = new ArrayList<>();
+                for(int index = 0; index < requests; index++)
+                    responses.add(client.sendAsync(HttpRequest.newBuilder(target).build(),
+                        HttpResponse.BodyHandlers.discarding()));
+                assertTrue(requestsEntered.await(10, TimeUnit.SECONDS));
+                releaseRequests.countDown();
+                CompletableFuture.allOf(responses.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+                for(var response: responses) assertEquals(204, response.join().statusCode());
+                await(() -> service.status().queueDepth() == requests * 2);
+                assertEquals(requests * 2, service.status().queueDepth());
+                assertEquals(0, service.status().droppedRecords(),
+                    "Concurrent requests must not lose records while capacity is available");
+                releaseWriter.countDown();
+                await(() -> read().lines().filter(line -> line.contains(" - request_finished ")).count() == requests);
+                assertEquals(requests,
+                    read().lines().filter(line -> line.contains(" - request_started ")).count());
+                assertFalse(read().contains("diagnostic_gap"));
+            }
+            finally
+            {
+                releaseWriter.countDown();
+                releaseRequests.countDown();
+                server.stop(0);
+            }
+        }
+        finally
+        {
+            releaseWriter.countDown();
+            releaseRequests.countDown();
+            server.stop(0);
+        }
     }
 
     @Test
