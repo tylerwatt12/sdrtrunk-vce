@@ -5325,6 +5325,40 @@ class StatsWebDatabase
         });
     }
 
+    /** Feed reader only: exact primary-key seeks, a short independent deadline, and no history scan. */
+    List<Map<String,Object>> p25ActivityRows(List<Long> ids)
+    {
+        if(ids.isEmpty()) return List.of();
+        if(ids.size() > 500) throw new IllegalArgumentException("Too many live Activity identifiers");
+        return read(connection -> {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(250);
+            try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
+            org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
+            {
+                @Override protected int progress()
+                {
+                    return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline ? 1 : 0;
+                }
+            });
+            try
+            {
+                String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+                List<Map<String,Object>> rows = queryRows(connection, P25_VISUALIZER_PROJECTION_SQL +
+                    " FROM receiver_activity_event_resolved activity " + ACTIVITY_RELATED_JOINS_SQL +
+                    " WHERE activity.id IN (" + placeholders + ") ORDER BY activity.id", ids.toArray());
+                rows.removeIf(row -> StatsApiProtocol.fromName(String.valueOf(row.get("protocol"))) != StatsApiProtocol.P25 ||
+                    !"TRUNKED_SITE".equalsIgnoreCase(String.valueOf(row.get("channel_kind"))) ||
+                    row.get("radio_system_key") == null || !java.util.Set.of("JOIN", "LOGOUT", "DENIAL", "EMERGENCY",
+                        "CHECK", "PAGE", "BUSY", "QUEUED", "PATCH", "PATCH_CREATE", "PATCH_CANCEL", "CALL", "GRANT")
+                        .contains(String.valueOf(row.get("action"))));
+                mAliasResolver.enrichActivity(connection, rows);
+                return StatsApiV1Payload.p25VisualizerRows(
+                    new StatsSystemNameResolver(connection).enrich(StatsApiV1Payload.source(rows)));
+            }
+            finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+        });
+    }
+
     /** Resolves only the exact persisted call association. Historical/unrelated rows have no source. */
     String activitySourceCallReference(long activityId)
     {

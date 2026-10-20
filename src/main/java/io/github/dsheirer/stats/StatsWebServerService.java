@@ -142,9 +142,9 @@ public class StatsWebServerService implements AutoCloseable
     private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
     private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "decode_events",
-        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio");
+        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio", "p25_activity");
     static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
-        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN);
+        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN, WebCapability.RADIO_VIEW);
 
     private final UserPreferences mUserPreferences;
     private final WebDiagnosticLogService mWebDiagnosticLogService;
@@ -2281,6 +2281,10 @@ public class StatsWebServerService implements AutoCloseable
         private final long[] mObservedOutputDrops = new long[TOPIC_MAXIMUM + 1];
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
+        private StatsLiveEventHub.Subscription mP25Activity;
+        private String mP25SubscriptionId;
+        private long mP25StateRevision = -1;
+        private long mP25Drops;
         private StatsLiveEventHub.Subscription mDecodeEvents;
         private DecodeEventViewService.Scope mDecodeEventScope;
         private DecodeMessageViewService.Session mDecodeMessages;
@@ -2358,6 +2362,8 @@ public class StatsWebServerService implements AutoCloseable
         {
             boolean wrote = reconcile(output);
             wrote |= pumpEvents(output, TOPIC_CHANNEL_ACTIVITY, mChannelActivity);
+            wrote |= pumpP25ActivityState(output);
+            wrote |= pumpEvents(output, TOPIC_P25_ACTIVITY, mP25Activity);
             wrote |= pumpEvents(output, TOPIC_DECODE_EVENTS, mDecodeEvents);
 
             long now = System.nanoTime();
@@ -2441,6 +2447,20 @@ public class StatsWebServerService implements AutoCloseable
         private boolean recoverStatefulGaps(LiveMultiplexOutput output) throws IOException, InterruptedException
         {
             boolean wrote = false;
+            if(mP25Activity != null)
+            {
+                long queueDrops = mP25Activity.droppedCount();
+                long p25OutputDrops = output.eventDrops(TOPIC_P25_ACTIVITY);
+                if(queueDrops != mP25Drops || p25OutputDrops != mObservedOutputDrops[TOPIC_P25_ACTIVITY])
+                {
+                    mP25Drops = queueDrops;
+                    observeOutputDrops(output, TOPIC_P25_ACTIVITY);
+                    P25ActivityLiveService.State state = mP25ActivityLiveService.state();
+                    writeMultiplexRecoveryJson(output, TOPIC_P25_ACTIVITY, "resync_required",
+                        Map.of("reason", "transport_gap", "source_epoch", state.epoch(), "sequence", state.sequence()));
+                    wrote = true;
+                }
+            }
             long activityDrops = mChannelActivity != null ? mChannelActivity.droppedCount() : 0;
             long ingressDrops = mServices.mLiveService.droppedActivityIngressEvents();
             long outputDrops = output.eventDrops(TOPIC_CHANNEL_ACTIVITY);
@@ -2661,6 +2681,14 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivityBaselineRevision = snapshot.revision();
                     mChannelActivityTableBaselines.clear();
                     observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
+                }
+                case "p25_activity" -> {
+                    mP25SubscriptionId = requiredMultiplexText(parameters, "subscription_id");
+                    mP25Activity = requiredSubscription(mP25ActivityLiveService.subscribe(), topic);
+                    mP25StateRevision = -1;
+                    mP25Drops = mP25Activity.droppedCount();
+                    observeOutputDrops(output, TOPIC_P25_ACTIVITY);
+                    pumpP25ActivityState(output);
                 }
                 case "decode_events" -> {
                     DecodeEventRequest request = (DecodeEventRequest)parameters;
@@ -2898,6 +2926,12 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivityMarkers = false;
                     mChannelActivityTableBaselines.clear();
                 }
+                case "p25_activity" -> {
+                    mP25Activity = closeSubscription(mP25Activity);
+                    mP25SubscriptionId = null;
+                    mP25StateRevision = -1;
+                    mP25Drops = 0;
+                }
                 case "decode_events" -> closeDecodeEvents();
                 case "decode_messages" -> closeDecodeMessages();
                 case "channel_diagnostics" -> closeChannelDiagnostics();
@@ -3116,6 +3150,7 @@ public class StatsWebServerService implements AutoCloseable
         {
             case "tuner_diagnostics" -> WebCapability.TUNER_SPECTRUM_VIEW;
             case "frequency_audio" -> WebCapability.WEB_AUDIO_LISTEN;
+            case "p25_activity" -> WebCapability.RADIO_VIEW;
             default -> WebCapability.LIVE_VIEW;
         };
     }
@@ -3152,6 +3187,7 @@ public class StatsWebServerService implements AutoCloseable
             case "channel_diagnostics" -> TOPIC_CHANNEL_DIAGNOSTICS;
             case "tuner_diagnostics" -> TOPIC_TUNER_DIAGNOSTICS;
             case "frequency_audio" -> TOPIC_FREQUENCY_AUDIO;
+            case "p25_activity" -> TOPIC_P25_ACTIVITY;
             default -> TOPIC_CONTROL;
         };
     }

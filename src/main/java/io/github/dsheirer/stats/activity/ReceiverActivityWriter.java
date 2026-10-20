@@ -52,7 +52,7 @@ class ReceiverActivityWriter implements AutoCloseable
     /* Queue entries are observations that may fan out to multiple SQL statements, not changed-row counts. */
     private static final int BATCH_SIZE = 1250;
     /* Normal 40-100 observation/second traffic reaches the deadline before this bounded safety cap. */
-    private static final long BATCH_COLLECTION_MILLISECONDS = 10000;
+    private static final long BATCH_COLLECTION_MILLISECONDS = 1000;
     private static final long BATCH_COLLECTION_POLL_MILLISECONDS = 100;
     private static final long POLL_TIMEOUT_MILLISECONDS = 1000;
     private static final long CLEANUP_YIELD_MILLISECONDS = 25;
@@ -67,6 +67,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private static final int MAXIMUM_RESOLVED_CALLS = 65_536;
 
     private final Path mDatabasePath;
+    private final ActivityCommitJournal mActivityCommitJournal = new ActivityCommitJournal();
     private final ArrayBlockingQueue<QueuedRecord> mQueue;
     private final int mBatchSize;
     private final long mBatchCollectionMilliseconds;
@@ -79,6 +80,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private final Object mQueueOrderingLock = new Object();
     private final AtomicBoolean mRunning = new AtomicBoolean();
     private final AtomicBoolean mRetentionCleanupRequested = new AtomicBoolean();
+    private final AtomicBoolean mExternalHistoryInvalidated = new AtomicBoolean();
     private final AtomicLong mEnqueueSequence = new AtomicLong();
     private final AtomicLong mDroppedRecords = new AtomicLong();
     private final AtomicLong mQueueOverflowDrops = new AtomicLong();
@@ -237,6 +239,16 @@ class ReceiverActivityWriter implements AutoCloseable
     long getWrittenRecords()
     {
         return mWrittenRecords.get();
+    }
+
+    ActivityCommitJournal activityCommitJournal()
+    {
+        return mActivityCommitJournal;
+    }
+
+    void requestActivityHistoryInvalidation()
+    {
+        mExternalHistoryInvalidated.set(true);
     }
 
     Path getDatabasePath()
@@ -463,6 +475,7 @@ class ReceiverActivityWriter implements AutoCloseable
             while(mRunning.get() || pendingRecord != null || !mQueue.isEmpty() || !mMaintenanceQueue.isEmpty() ||
                 !mDeletionJobs.isEmpty())
             {
+                if(mExternalHistoryInvalidated.getAndSet(false)) mActivityCommitJournal.invalidate();
                 if(!mRunning.get()) interruptDeletionJobs();
                 observeCleanupQueues();
                 MaintenanceCommand command = mMaintenanceQueue.peek();
@@ -642,15 +655,19 @@ class ReceiverActivityWriter implements AutoCloseable
         request.observeWriter(mQueue.size(), mDroppedRecords.get());
         try
         {
+            mActivityCommitJournal.begin();
             ReceiverActivityMaintenance.Result result = mRunning.get() ?
                 ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, mDatabasePath, request,
                     mDroppedRecords.get()) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
+            mActivityCommitJournal.committed();
             request.observeWriter(mQueue.size(), mDroppedRecords.get());
             if(result == null) mDeletionJobs.addLast(request);
             else request.result().complete(result);
         }
         catch(Exception failure)
         {
+            // A maintenance pass may have committed progress before reporting a later failure.
+            mActivityCommitJournal.invalidate();
             if(failure instanceof SQLException sql && isDatabaseBusy(sql)) request.databaseBusy();
             request.setResumable(true);
             request.observeWriter(mQueue.size(), mDroppedRecords.get());
@@ -704,6 +721,7 @@ class ReceiverActivityWriter implements AutoCloseable
             try
             {
                 StatsDatabaseMaintenanceRequest request = command.request();
+                mActivityCommitJournal.begin();
                 ReceiverActivityMaintenance.Result result;
 
                 if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS)
@@ -736,10 +754,15 @@ class ReceiverActivityWriter implements AutoCloseable
                     mP25CallRecoveryFloor = System.currentTimeMillis();
                 }
 
+                if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS ||
+                    request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS)
+                    mActivityCommitJournal.invalidate();
+                else mActivityCommitJournal.committed();
                 return result;
             }
             catch(SQLException e)
             {
+                mActivityCommitJournal.invalidate();
                 if(!isDatabaseBusy(e) || !pauseBeforeDatabaseBusyRetry())
                 {
                     throw e;
@@ -774,6 +797,7 @@ class ReceiverActivityWriter implements AutoCloseable
                     statement.execute("PRAGMA busy_timeout=" + mDatabaseBusyTimeoutMilliseconds);
                 }
 
+                ((org.sqlite.SQLiteConnection)connection).addUpdateListener(mActivityCommitJournal::updated);
                 return connection;
             }
             catch(SQLException e)
@@ -826,6 +850,7 @@ class ReceiverActivityWriter implements AutoCloseable
             catch(SQLException exception)
             {
                 connection.rollback();
+                mActivityCommitJournal.rolledBack();
                 if(!isDatabaseBusy(exception) || !pauseBeforeDatabaseBusyRetry())
                 {
                     throw exception;
@@ -955,7 +980,9 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             try
             {
+                mActivityCommitJournal.begin();
                 ReceiverActivityMaintenance.RetentionResult result = cleanupRetention(connection);
+                mActivityCommitJournal.committed();
                 if(result.moreWorkLikely())
                 {
                     mRetentionCleanupRequested.set(true);
@@ -964,6 +991,7 @@ class ReceiverActivityWriter implements AutoCloseable
             }
             catch(SQLException e)
             {
+                mActivityCommitJournal.invalidate();
                 if(!isDatabaseBusy(e) || !pauseBeforeDatabaseBusyRetry())
                 {
                     throw e;
@@ -1026,6 +1054,7 @@ class ReceiverActivityWriter implements AutoCloseable
         }
 
         boolean previousAutoCommit = connection.getAutoCommit();
+        mActivityCommitJournal.begin();
         connection.setAutoCommit(false);
 
         try
@@ -1206,6 +1235,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 Long.toString(successfulWrite));
 
             connection.commit();
+            mActivityCommitJournal.committed();
             mActivityToneAssociations = toneAssociations;
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
             for(ToneReceipt receipt: acceptedToneSequences) mCompletedToneReceipts.put(receipt, successfulWrite);
@@ -1226,6 +1256,7 @@ class ReceiverActivityWriter implements AutoCloseable
             try
             {
                 connection.rollback();
+                mActivityCommitJournal.rolledBack();
             }
             catch(SQLException rollbackException)
             {
@@ -1248,6 +1279,7 @@ class ReceiverActivityWriter implements AutoCloseable
         }
         finally
         {
+            mActivityCommitJournal.rolledBack();
             connection.setAutoCommit(previousAutoCommit);
         }
     }

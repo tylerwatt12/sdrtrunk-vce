@@ -52,6 +52,7 @@ final class StatsApiV1Controller
         WebCapability.DASHBOARD_VIEW, WebCapability.RADIO_VIEW, WebCapability.ADMIN_ALIASES);
 
     private final StatsWebDatabase mDatabase;
+    private P25ActivityLiveService mP25ActivityLiveService;
     private final WebRequestSecurity mRequestSecurity;
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
@@ -137,6 +138,12 @@ final class StatsApiV1Controller
             preparedData(StatsApiV1Payload.present(mDatabase.activityMessageTypes())));
     }
 
+    StatsApiV1Controller withP25ActivityLiveService(P25ActivityLiveService service)
+    {
+        mP25ActivityLiveService = service;
+        return this;
+    }
+
     void register(HttpServer server)
     {
         create(server, StatsApiV1.STATUS, WebCapability.DASHBOARD_VIEW,
@@ -178,6 +185,18 @@ final class StatsApiV1Controller
         server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protect(WebCapability.RADIO_VIEW,
             mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
+                if(segments.equals(List.of("live")))
+                {
+                    request.requireOnly("source_epoch", "after_sequence", "through_sequence", "after_id", "limit");
+                    if(mP25ActivityLiveService == null) throw new StatsApiException(503, "Live Activity is unavailable");
+                    Long after = request.optionalLong("after_sequence");
+                    Long afterId = request.optionalLong("after_id");
+                    Integer limit = request.optionalInt("limit");
+                    if(after == null) throw new StatsApiException(400, "after_sequence is required");
+                    return new PreparedJson(preparedData(mP25ActivityLiveService.catchup(request.text("source_epoch"), after,
+                        request.optionalLong("through_sequence"), afterId != null ? afterId : 0,
+                        limit != null ? limit : P25ActivityLiveService.PAGE_LIMIT)));
+                }
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "after_id", "watermark_id", "group_identity_key", "radio_identity_key",
                     "radio_system_key", "configuration_id", "hide_grants", "has_tones", "limit", "from_ms", "to_ms",

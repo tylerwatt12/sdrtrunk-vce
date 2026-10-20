@@ -1106,6 +1106,31 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void p25LiveCatchupRouteIsBoundedAndRetainedSeedWorksWithNoCurrentWriter() throws Exception
+    {
+        assertEquals(400, get(StatsApiV1.ACTIVITY + "/live?source_epoch=unavailable").statusCode());
+        assertEquals(400, get(StatsApiV1.ACTIVITY +
+            "/live?source_epoch=unavailable&after_sequence=0&limit=501").statusCode());
+        Field field = StatsWebServerService.class.getDeclaredField("mP25ActivityLiveService");
+        field.setAccessible(true);
+        P25ActivityLiveService live = (P25ActivityLiveService)field.get(mService);
+        try(var subscriber = live.subscribe())
+        {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while(!live.state().initialized() && System.nanoTime() < deadline) Thread.sleep(10);
+            HttpResponse<String> response = get(StatsApiV1.ACTIVITY +
+                "/live?source_epoch=unavailable&after_sequence=0&after_id=0&limit=500");
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode page = OBJECT_MAPPER.readTree(response.body()).path("data");
+            assertEquals("unavailable", page.path("source_epoch").textValue());
+            assertFalse(page.path("resync_required").booleanValue());
+            assertTrue(page.path("rows").isArray());
+            assertTrue(page.path("removed_ids").isArray());
+        }
+        assertEquals(WebCapability.RADIO_VIEW, StatsWebServerService.capabilityForTopic("p25_activity"));
+    }
+
+    @Test
     void p25VisualizerProjectionReturnsCompactEquivalentLabelsAndForwardMetadata() throws Exception
     {
         String query = "?from_ms=1&to_ms=86400001&actions=GRANT&after_id=0&limit=5000";
@@ -1117,6 +1142,18 @@ class StatsApiV1HttpContractTest
         assertEquals(1, compact.path("data").size());
         assertEquals(StatsApiV1Payload.p25Visualizer(ordinary.path("data")), compact.path("data"));
         assertEquals(ordinary.path("meta"), compact.path("meta"));
+        Field databaseField = StatsWebServerService.class.getDeclaredField("mDatabase");
+        databaseField.setAccessible(true);
+        StatsWebDatabase database = (StatsWebDatabase)databaseField.get(mService);
+        long id = compact.at("/data/0/id").longValue();
+        assertEquals(compact.path("data"), OBJECT_MAPPER.readTree(OBJECT_MAPPER.writeValueAsBytes(database.p25ActivityRows(List.of(id)))),
+            "live and catchup rows must exactly match the saved seed's compact public projection");
+        var liveRows = database.p25ActivityRows(List.of(id));
+        byte[] deltaBytes = new StatsLiveEventHub.LiveEvent("activity_delta", Map.of("rows", liveRows))
+            .frame(7).bytes(false);
+        JsonNode deltaWire = OBJECT_MAPPER.readTree(java.util.Arrays.copyOfRange(deltaBytes,
+            LiveMultiplexFrame.HEADER_BYTES, deltaBytes.length));
+        assertEquals(compact.path("data"), deltaWire.at("/data/rows"));
         JsonNode row = compact.at("/data/0");
         assertEquals("p25", row.path("protocol").asText());
         assertEquals("trunked_site", row.path("channel_kind").asText());

@@ -76,6 +76,68 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void defaultStatisticsCadenceCommitsLowRateActivityWithoutViewerDemand() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("live-cadence.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+        String epoch = writer.activityCommitJournal().boundary().sourceEpoch();
+        writer.start();
+        try
+        {
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+            awaitWritten(writer, 1, 3);
+            assertEquals(List.of(1L), writer.activityCommitJournal().range(epoch, 0, null).ids());
+        }
+        finally { writer.close(); }
+    }
+
+    @Test
+    void committedConfigurationCascadeRequestsInvalidationOnTheWriterThread() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("config-invalidation.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1, 0);
+        java.util.concurrent.atomic.AtomicInteger notices = new java.util.concurrent.atomic.AtomicInteger();
+        Object listener = new Object()
+        {
+            @com.google.common.eventbus.Subscribe
+            public void changed(io.github.dsheirer.database.configuration.ActivityHistoryInvalidation event)
+            {
+                if(database.toAbsolutePath().normalize().equals(event.databasePath()))
+                {
+                    notices.incrementAndGet();
+                    writer.requestActivityHistoryInvalidation();
+                }
+            }
+        };
+        io.github.dsheirer.eventbus.MyEventBus.getGlobalEventBus().register(listener);
+        writer.start();
+        try
+        {
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+            awaitWritten(writer, 1);
+            String epoch = writer.activityCommitJournal().boundary().sourceEpoch();
+            new io.github.dsheirer.database.configuration.ConfigurationRepository(database)
+                .synchronizeChannelAndBroadcastConfiguration(List.of(), List.of());
+            assertEquals(1, notices.get(), "only an actual committed Activity cascade sends invalidation");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while(epoch.equals(writer.activityCommitJournal().boundary().sourceEpoch()) && System.nanoTime() < deadline)
+                Thread.sleep(10);
+            assertFalse(writer.activityCommitJournal().range(epoch, 0, null).available());
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            }
+        }
+        finally
+        {
+            writer.close();
+            io.github.dsheirer.eventbus.MyEventBus.getGlobalEventBus().unregister(listener);
+        }
+    }
+
+    @Test
     void closeDrainsAnAcceptedPartialBatch() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("drain.sqlite"));
@@ -153,6 +215,9 @@ class ReceiverActivityWriterTest
             assertEquals(1, scalar(connection,
                 "SELECT value FROM statistics_status WHERE key='constraint_rejection_drops'"));
         }
+        assertEquals(List.of(1L, 2L), writer.activityCommitJournal().range(
+            writer.activityCommitJournal().boundary().sourceEpoch(), 0, null).ids(),
+            "rolled-back attempts must not publish phantom Activity IDs");
         ReceiverActivityWriter restarted = new ReceiverActivityWriter(database, 30, true);
         restarted.start();
         restarted.enqueue(activity(ReceiverActivityRecords.Action.DENIAL, 1_700_000_000_213L));
@@ -804,6 +869,7 @@ class ReceiverActivityWriterTest
         insertConfiguredChannel(database);
         ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 32, 1_250,
             TimeUnit.SECONDS.toMillis(10));
+        String originalEpoch = writer.activityCommitJournal().boundary().sourceEpoch();
         writer.start();
         long before = 1_700_000_004_000L;
         long after = before + 1;
@@ -815,6 +881,7 @@ class ReceiverActivityWriterTest
         ReceiverActivityMaintenance.Result result = request.result().get(5, TimeUnit.SECONDS);
         assertEquals(ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS, result.operation());
         writer.close();
+        assertFalse(writer.activityCommitJournal().range(originalEpoch, 0, null).available());
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
@@ -872,6 +939,7 @@ class ReceiverActivityWriterTest
         }
         ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 32, 1_250,
             TimeUnit.SECONDS.toMillis(10));
+        String originalEpoch = writer.activityCommitJournal().boundary().sourceEpoch();
         writer.start();
         long before = 1_700_000_005_000L;
         long after = before + 1;
@@ -884,6 +952,7 @@ class ReceiverActivityWriterTest
         ReceiverActivityMaintenance.Result result = request.result().get(5, TimeUnit.SECONDS);
         assertEquals(ReceiverActivityMaintenance.Operation.RESET_STATS, result.operation());
         writer.close();
+        assertFalse(writer.activityCommitJournal().range(originalEpoch, 0, null).available());
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));

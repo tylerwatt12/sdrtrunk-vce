@@ -102,6 +102,13 @@ final class StatsApiV1Payload
         return rows;
     }
 
+    /** Identical compact public rows for saved seeds, committed deltas and cursor recovery. */
+    static java.util.List<Map<String,Object>> p25VisualizerRows(Object value)
+    {
+        return OBJECT_MAPPER.convertValue(p25Visualizer(present(value)),
+            new com.fasterxml.jackson.core.type.TypeReference<java.util.List<Map<String,Object>>>() { });
+    }
+
     /** Preserves producer field casing before optional read-side enrichment. */
     static JsonNode source(Object value)
     {
