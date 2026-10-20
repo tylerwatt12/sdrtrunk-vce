@@ -470,7 +470,7 @@ replacement session is delivered, the account password changes, the account is d
 administrator password is reset, the web server is disabled, or the session service shuts down. A receiver restart
 therefore ends every session.
 
-Session storage is bounded to 64 sessions with no per-account limit, and two slots are reserved for the primary
+Session storage is bounded to 256 sessions with no per-account limit, and two slots are reserved for the primary
 administrator. When a successful sign-in reaches an ordinary-user or global limit, the presented current session is
 reused when it already belongs to that account. Otherwise, the least-recently-used eligible session is replaced.
 Replacement prefers a session from the same account, then a non-primary session when ordinary-user capacity is full,
