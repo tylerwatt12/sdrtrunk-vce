@@ -11,7 +11,7 @@ import {
   mostActiveP25System
 } from './history.js?v=15';
 import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=7';
+import { createP25Renderer } from './renderer.js?v=8';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=4';
 import {
   P25_EVENT_SETTINGS,

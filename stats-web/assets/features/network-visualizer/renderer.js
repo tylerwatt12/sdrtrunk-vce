@@ -173,7 +173,8 @@ async function createP25Renderer(options = {}) {
     const dimOpacity = dimmed ? state === 'system' ? 0.12 : 0.05 : baseOpacity;
     const value = new library.MeshBasicMaterial({ color: colorFor(state), wireframe: true, transparent: true,
       opacity: baseOpacity + (dimOpacity - baseOpacity) * focusAmount, depthTest: true, depthWrite: false,
-      fog: !clear, side: optionsValue.side });
+      fog: !clear });
+    if (side === 'back') value.side = library.BackSide;
     value.userData.p25BaseOpacity = baseOpacity;
     value.userData.p25DimOpacity = dimOpacity;
     materials.set(key, value);
