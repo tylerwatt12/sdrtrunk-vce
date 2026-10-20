@@ -323,7 +323,8 @@ diagnostics, not decoder messages. `channel_activity` accepts an empty parameter
 `p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before requesting the
 shared baseline. Its `source_change` boundary includes `subscription_id`, opaque `source_epoch`, `sequence`,
 `server_time_ms`, `traffic_grant_age_out_milliseconds`, `collection_enabled`, `available`, and `affiliations_truncated`. A service restart or
-replacement of the saved source changes the epoch. Use the fresh boundary time for clock alignment.
+detected replacement of the saved source changes the epoch. Replace a saved database with the receiver stopped,
+then restart it afterward. Use the fresh boundary time for clock alignment.
 
 `GET /api/v1/activity/live/seed` requires an active `p25_activity` subscription. Optional `refresh=true` requests an
 explicit user Refresh; ordinary startup and reconnect omit it. The `data` object contains `source_epoch`, `sequence`,
