@@ -50,7 +50,9 @@ public final class WebDiagnosticLogService implements AutoCloseable
     public static final String FILE_NAME = "sdrtrunk_web.log";
     public static final int RETENTION_DAYS = 7;
     public static final long MAXIMUM_BYTES = 100L * 1024 * 1024;
-    static final int QUEUE_CAPACITY = 512;
+    // A simultaneous shutdown can enqueue 256 viewers * (7 topic closes + disconnect + request finish),
+    // plus start/finish records for 512 other admitted HTTP requests: 3,328 records before the writer drains.
+    static final int QUEUE_CAPACITY = 4_096;
     static final int CONTEXT_SAMPLES = 60;
     private static final int MAXIMUM_RECORD_BYTES = 64 * 1024;
     private static final int MAXIMUM_FILES = 128;
@@ -63,7 +65,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private static final Set<String> EVENT_FIELDS = Set.of("topic", "client_id", "active_clients", "reason", "count",
         "duration_ms", "enabled", "port", "tls", "https", "failure_count", "operation");
     private static final Set<String> EVENT_KINDS = Set.of("listener_started", "listener_stopped", "listener_failed",
-        "request_queue_full", "live_connected", "live_disconnected", "live_slow_disconnect", "stream_topic_open",
+        "request_capacity_full", "live_connected", "live_disconnected", "live_slow_disconnect", "stream_topic_open",
         "stream_topic_close", "stream_topic_failed");
     private static final Set<String> HEALTH_FIELDS = Set.of("generated_at_ms", "started_at_ms", "summary", "active",
         "measurements", "severity", "active_count", "warning_count", "critical_count", "occurrence_id", "code",

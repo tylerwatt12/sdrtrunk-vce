@@ -195,10 +195,24 @@ class WebDiagnosticLogServiceTest
             release.countDown();
             await(() -> service.status().queueDepth() == 0);
             await(() -> read().contains("diagnostic_gap"));
-            assertTrue(read().contains("\"dropped_records\":1024"));
+            assertTrue(read().contains("\"dropped_records\":" + WebDiagnosticLogService.QUEUE_CAPACITY * 2));
             assertTrue(read().contains("WARN web.diagnostic - diagnostic_gap"));
         }
         finally { release.countDown(); }
+    }
+
+    @Test
+    void preservesHttpAdmissionCapacityEventKind() throws Exception
+    {
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value))
+        {
+            service.setEnabled(true);
+            service.event("request_capacity_full", Map.of());
+            await(() -> read().contains(" - request_capacity_full "));
+            assertFalse(read().contains(" - web_event "));
+            assertFalse(read().contains("request_queue_full"));
+        }
     }
 
     @Test

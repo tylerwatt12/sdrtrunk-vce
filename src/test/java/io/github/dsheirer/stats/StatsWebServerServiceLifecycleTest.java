@@ -32,6 +32,8 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.stats.health.ReceiverHealthService;
+import io.github.dsheirer.support.WebDiagnosticLogService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
@@ -41,6 +43,8 @@ import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
 import java.net.InetAddress;
+import java.io.DataInputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.ServerSocket;
@@ -56,7 +60,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
@@ -210,6 +220,194 @@ class StatsWebServerServiceLifecycleTest
                 System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
             }
         }
+    }
+
+    @Test
+    void simultaneousTwoHundredMultiplexClosesRetainEveryDiagnosticRecord() throws Exception
+    {
+        int viewers = 200;
+        Path dataRoot = mTemporaryDirectory.resolve("multiplex-close-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = Files.createDirectories(mTemporaryDirectory.resolve("multiplex-close-assets"));
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        TestUserPreferences preferences = new TestUserPreferences(
+            new TestApplicationPreference(0, false, false, true), new TestDirectoryPreference(dataRoot));
+        CountDownLatch projecting = new CountDownLatch(1);
+        CountDownLatch releaseWriter = new CountDownLatch(1);
+        AtomicBoolean pauseWriter = new AtomicBoolean();
+        List<CompletableFuture<HttpResponse<InputStream>>> streams = new ArrayList<>();
+
+        try(StatsWebServerService service = new StatsWebServerService(preferences);
+            HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(5)).build();
+            var readers = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            try
+            {
+                var healthField = StatsWebServerService.class.getDeclaredField("mReceiverHealthService");
+                healthField.setAccessible(true);
+                // This fixture stalls only HTTP diagnostics. Latest-health coalescing has separate saturation coverage.
+                ((ReceiverHealthService)healthField.get(service)).setWebDiagnosticLogService(null);
+                var logField = StatsWebServerService.class.getDeclaredField("mWebDiagnosticLogService");
+                logField.setAccessible(true);
+                WebDiagnosticLogService diagnostics = (WebDiagnosticLogService)logField.get(service);
+                var projectionHook = WebDiagnosticLogService.class.getDeclaredField("mBeforeProjection");
+                projectionHook.setAccessible(true);
+                projectionHook.set(diagnostics, (Runnable)() -> {
+                    if(pauseWriter.get())
+                    {
+                        projecting.countDown();
+                        try { releaseWriter.await(); }
+                        catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                    }
+                });
+                URI origin = origin(service.getRuntimeState().port());
+                char[] password = "multiplex-close-lifecycle-password".toCharArray();
+                try { service.provisionOrResetPrimaryAdmin(password); }
+                finally { Arrays.fill(password, '\u0000'); }
+                String cookie = login(client, origin, "multiplex-close-lifecycle-password");
+                HttpResponse<String> session = client.send(HttpRequest.newBuilder(
+                        origin.resolve(WebSessionHttpController.SESSION_PATH)).header("Cookie", cookie).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, session.statusCode());
+                String csrf = OBJECT_MAPPER.readTree(session.body()).at("/data/csrf_token").textValue();
+                diagnostics.setEnabled(true);
+                Path log = preferences.getDirectoryPreference().getDirectoryApplicationLog()
+                    .resolve(WebDiagnosticLogService.FILE_NAME);
+                List<String> ids = new ArrayList<>();
+                for(int index = 0; index < viewers; index++)
+                {
+                    String id = UUID.randomUUID().toString();
+                    ids.add(id);
+                    streams.add(client.sendAsync(HttpRequest.newBuilder(origin.resolve(
+                            StatsApiV1.LIVE_MULTIPLEX + "?client_id=" + id)).header("Cookie", cookie).build(),
+                        HttpResponse.BodyHandlers.ofInputStream()));
+                }
+                CompletableFuture.allOf(streams.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+                List<DataInputStream> bodies = new ArrayList<>();
+                for(var stream: streams)
+                {
+                    assertEquals(200, stream.join().statusCode());
+                    bodies.add(new DataInputStream(stream.join().body()));
+                }
+                List<java.util.concurrent.Future<?>> ready = new ArrayList<>();
+                for(DataInputStream body: bodies)
+                    ready.add(readers.submit(() -> { assertMultiplexEvent(body, "ready"); return null; }));
+                for(var result: ready) result.get(10, TimeUnit.SECONDS);
+
+                List<CompletableFuture<HttpResponse<Void>>> controls = new ArrayList<>();
+                for(String id: ids)
+                    controls.add(client.sendAsync(multiplexControl(origin, cookie, csrf, id, 1,
+                        "{\"channel_activity\":{}}"), HttpResponse.BodyHandlers.discarding()));
+                CompletableFuture.allOf(controls.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+                for(var control: controls) assertEquals(200, control.join().statusCode());
+                ready.clear();
+                for(DataInputStream body: bodies)
+                    ready.add(readers.submit(() -> { assertMultiplexEvent(body, "snapshot"); return null; }));
+                for(var result: ready) result.get(10, TimeUnit.SECONDS);
+                awaitCondition(() -> diagnostics.status().queueDepth() == 0);
+                awaitCondition(() -> {
+                    try { return Files.readString(log).lines().filter(line ->
+                        line.contains(" - request_finished ")).count() == viewers; }
+                    catch(java.io.IOException exception) { return false; }
+                });
+                assertEquals(0, diagnostics.status().droppedRecords());
+
+                pauseWriter.set(true);
+                diagnostics.event("listener_started", Map.of("operation", "shutdown_test_barrier"));
+                assertTrue(projecting.await(3, TimeUnit.SECONDS));
+                controls.clear();
+                // Exercise the actual browser unsubscribe handshake, stream owner cleanup, HTTP filter and writer.
+                for(String id: ids)
+                    controls.add(client.sendAsync(multiplexControl(origin, cookie, csrf, id, 2, "{}"),
+                        HttpResponse.BodyHandlers.discarding()));
+                ready.clear();
+                for(DataInputStream body: bodies)
+                    ready.add(readers.submit(() -> {
+                        // The unsubscribe interrupts the stream owner; its final chunk may be closed abruptly.
+                        try { body.transferTo(OutputStream.nullOutputStream()); }
+                        catch(java.io.IOException expectedOnClose) { }
+                        return null;
+                    }));
+                CompletableFuture.allOf(controls.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+                for(var control: controls) assertEquals(200, control.join().statusCode());
+                for(var result: ready) result.get(10, TimeUnit.SECONDS);
+                // Per viewer: control start/finish, topic close, disconnect and long GET finish.
+                awaitCondition(() -> diagnostics.status().queueDepth() == viewers * 5);
+                assertEquals(0, diagnostics.status().droppedRecords());
+                releaseWriter.countDown();
+                awaitCondition(() -> diagnostics.status().queueDepth() == 0);
+                awaitCondition(() -> {
+                    try { return Files.readString(log).lines().filter(line ->
+                        line.contains(" - request_finished ")).count() == viewers * 3L; }
+                    catch(java.io.IOException exception) { return false; }
+                });
+                String written = Files.readString(log);
+                assertEquals(viewers, written.lines().filter(line -> line.contains(" - stream_topic_close ")).count());
+                assertEquals(viewers, written.lines().filter(line -> line.contains(" - live_disconnected ")).count());
+                assertEquals(viewers * 3L, written.lines().filter(line -> line.contains(" - request_started ")).count());
+                assertFalse(written.contains("diagnostic_gap"));
+                // A fresh client must establish a new TCP connection after every stream has closed.
+                try(HttpClient probe = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build())
+                {
+                    HttpResponse<String> afterClose = probe.send(HttpRequest.newBuilder(
+                            origin.resolve(WebSessionHttpController.SESSION_PATH)).timeout(Duration.ofSeconds(5))
+                        .header("Cookie", cookie).build(), HttpResponse.BodyHandlers.ofString());
+                    assertEquals(200, afterClose.statusCode(), afterClose.body());
+                    assertFalse(OBJECT_MAPPER.readTree(afterClose.body()).path("data").isMissingNode());
+                }
+                assertTrue(service.getRuntimeState().running());
+                assertEquals(0, diagnostics.status().droppedRecords());
+            }
+            finally
+            {
+                releaseWriter.countDown();
+                client.shutdownNow();
+                for(var stream: streams)
+                {
+                    if(stream.isDone() && !stream.isCompletedExceptionally()) stream.join().body().close();
+                }
+            }
+        }
+        finally
+        {
+            releaseWriter.countDown();
+            if(previousAssetOverride == null) System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            else System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+        }
+    }
+
+    private static HttpRequest multiplexControl(URI origin, String cookie, String csrf, String id, int revision,
+                                                String subscriptions)
+    {
+        return HttpRequest.newBuilder(origin.resolve(StatsApiV1.LIVE_MULTIPLEX_CONTROL))
+            .timeout(Duration.ofSeconds(10)).header("Cookie", cookie).header("Origin", origin.toString())
+            .header(WebRequestSecurity.CSRF_HEADER_NAME, csrf).header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString("{\"client_id\":\"" + id + "\",\"revision\":" + revision +
+                ",\"subscriptions\":" + subscriptions + "}")).build();
+    }
+
+    private static void assertMultiplexEvent(DataInputStream input, String event) throws Exception
+    {
+        assertEquals(0x534C4D58, input.readInt());
+        assertEquals(2, input.readUnsignedByte());
+        assertEquals(1, input.readUnsignedByte());
+        input.readUnsignedShort();
+        int bytes = input.readInt();
+        assertTrue(bytes > 0 && bytes <= 1_048_576);
+        assertEquals(0, input.readInt());
+        assertEquals(event, OBJECT_MAPPER.readTree(input.readNBytes(bytes)).path("event").textValue());
+    }
+
+    private static void awaitCondition(BooleanSupplier condition) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(condition.getAsBoolean(), "Condition did not become true within ten seconds");
     }
 
     @Test
