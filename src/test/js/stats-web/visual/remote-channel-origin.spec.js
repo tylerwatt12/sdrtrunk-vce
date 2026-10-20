@@ -78,14 +78,23 @@ test('Dashboard Main marks a remote site even when no signal samples exist', asy
   await expect(remote).toHaveScreenshot('dashboard-remote-site-light.png');
 });
 
-test('Channels marks only remote configurations with the same cue', async ({ page }) => {
+test('Channel Setup marks remote configurations with an accessible cloud and no Remote label', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openApp(page, 'channel-setup', 'dark');
   const remote = page.locator('tr').filter({ has: page.getByRole('button', { name: 'North Control' }) });
   const local = page.locator('tr').filter({ has: page.getByRole('button', { name: 'West Control' }) });
   await expect(remote).toBeVisible();
   await expect(local).toBeVisible();
-  await expect(remote.getByLabel('Remote channel; depends on another receiver')).toHaveText('Remote');
+  const cloud = remote.getByLabel('Remote channel; depends on another receiver');
+  await expect(cloud).toBeVisible();
+  await expect(cloud).toHaveText('');
+  await expect(cloud.locator('svg')).toHaveCount(1);
+  const cloudBounds = await cloud.boundingBox();
+  expect(cloudBounds.width).toBeLessThanOrEqual(20);
+  expect(cloudBounds.height).toBeLessThanOrEqual(20);
+  const nameBounds = await remote.getByRole('button', { name: 'North Control', exact: true }).boundingBox();
+  expect(nameBounds.width).toBeGreaterThan(40);
+  await expect(remote.getByText('Remote', { exact: true })).toHaveCount(0);
   await expect(local.locator('.channel-origin-line')).toHaveCount(0);
   await expect(remote.locator('.channel-origin-line')).toHaveScreenshot('channels-remote-name-dark.png');
 });

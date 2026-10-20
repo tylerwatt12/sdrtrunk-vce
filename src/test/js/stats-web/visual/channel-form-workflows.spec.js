@@ -85,7 +85,7 @@ async function openEditor(page, processingState = 'RUNNING', mode = 'edit') {
     await page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true })
       .getByRole('button', { name: 'Create a channel from scratch', exact: true }).click();
   } else {
-    await page.locator(`tr[data-id="${id}"]`).getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.locator(`tr[data-id="${id}"]`).getByRole('button', { name: state.channel.name, exact: true }).click();
   }
   const dialog = page.getByRole('dialog', {
     name: mode === 'create' ? 'Create Channel' : 'Edit County Dispatch', exact: true

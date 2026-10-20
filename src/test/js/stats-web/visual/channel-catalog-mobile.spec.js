@@ -12,10 +12,13 @@ async function openChannelCatalog(page, theme) {
   const preferences = structuredClone(defaults);
   preferences.appearance.theme = theme;
   let revision = 1;
+  const system = 'Countywide Public Safety and Regional Interoperability Communications System';
   const channel = {
     configuration_id: 'mobile-simulcast', protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1',
-    channel_kind: 'TRUNKED', name: 'County Simulcast', system: 'County Public Safety', site: 'Central Site',
+    channel_kind: 'TRUNKED', name: system, system,
+    site: 'Northeast County and Lake Shore Simulcast',
     frequencies_hz: [770306250, 772431250, 772781250, 773181250, 773431250, 774181250, 774431250],
+    display_frequency_hz: 772781250, display_frequency_source: 'active-control',
     processing_state: 'RUNNING', auto_start_order: 18, alias_list_id: 1, alias_list_name: 'County P25',
     editable: true
   };
@@ -92,6 +95,29 @@ for (const theme of ['light', 'dark']) {
       await expect(row).toBeVisible();
       await expectHeaderContentsCentered(table);
       const frequencies = row.locator('td[data-column="frequency"]');
+      await expect(frequencies).toContainText('772.78125');
+      await expect(frequencies).toContainText('Active control');
+      await expect(frequencies).not.toContainText('770.30625');
+      const site = row.locator('.channel-site-value');
+      await expect(site).toHaveText('Northeast County and Lake Shore Simulcast');
+      await expect(site).toHaveCSS('white-space', 'normal');
+      const siteGeometry = await site.evaluate((element) => ({
+        clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+        clientHeight: element.clientHeight, scrollHeight: element.scrollHeight,
+        textOverflow: getComputedStyle(element).textOverflow
+      }));
+      expect(siteGeometry.textOverflow).not.toBe('ellipsis');
+      expect(siteGeometry.scrollWidth).toBeLessThanOrEqual(siteGeometry.clientWidth + 1);
+      expect(siteGeometry.scrollHeight).toBeLessThanOrEqual(siteGeometry.clientHeight + 1);
+      await expect(row.locator('.channel-row-context')).toHaveCount(0);
+      await expect(row.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
+      for (const label of ['Details', 'Live']) {
+        const link = row.getByRole('link', { name: label, exact: true });
+        await expect(link).toBeVisible();
+        await expect(link).toHaveClass(/ui-link-text/);
+        await expect(link).not.toHaveClass(/ui-button/);
+      }
+      await expect(row.locator('.channel-row-links')).toHaveClass(/ui-muted/);
       const textGeometry = await frequencies.evaluate((cell) => {
         const bounds = cell.getBoundingClientRect();
         const range = document.createRange();

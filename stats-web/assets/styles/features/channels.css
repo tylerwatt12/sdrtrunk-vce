@@ -76,14 +76,28 @@
 }
 
 .channel-frequency-cell {
-  min-width: 150px;
-  max-width: 360px;
+  min-width: 138px;
+  max-width: 180px;
   white-space: normal;
+}
+
+.channel-setup-summary {
+  margin: 0;
+}
+
+.channel-frequency-summary {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.channel-frequency-value {
+  font-variant-numeric: tabular-nums;
 }
 
 .channel-name-actions,
 .channel-name-summary {
   display: grid;
+  min-width: 0;
   gap: var(--space-1);
 }
 
@@ -93,6 +107,36 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.channel-name-line {
+  display: flex;
+  flex-wrap: nowrap;
+}
+
+.channel-origin-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.channel-origin-icon > svg {
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
+}
+
+.channel-site-context {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-secondary);
+}
+
+.channel-site-value {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-weight: var(--font-weight-medium);
 }
 
 .channel-name-actions .link-button,
@@ -464,21 +508,12 @@
   }
 
   .channel-catalog-table .channel-row-links {
-    order: 1;
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
-    padding: var(--space-3);
-    border-top: 1px solid var(--table-rule);
+    display: flex;
+    gap: var(--space-4);
   }
 
-  .channel-catalog-table .channel-row-links:has(.channel-edit-button) {
-    grid-auto-flow: row;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .channel-catalog-table .channel-row-links .channel-edit-button {
-    grid-column: 1 / -1;
+  .channel-catalog-table td.channel-actions-cell {
+    display: block;
   }
 
   .channel-admin-catalog td.channel-startup-order {

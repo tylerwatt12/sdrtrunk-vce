@@ -55,7 +55,7 @@ class StatsWebPresentationUiContractTest
         String channelFrequencies = function(source,
             "async function renderTrunkedChannelFrequencies(channel, renderContext, host)");
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
-        String channels = function(source, "async function renderModernChannelCatalog(renderContext)");
+        String channels = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
 
         assertTrue(source.contains("const trigger = iconButton('icon-columns', menuLabels.trigger || 'Choose table columns'"));
         assertTrue(source.contains("function setIconButton(button, iconId, label)"));

@@ -585,7 +585,7 @@ class StatsWebInteractionUiContractTest
             .contains("exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id })"));
         assertTrue(function(source, "async function renderChannelNeighbors(channel, renderContext)")
             .contains("exportCsvLink('channel-neighbors', { configuration_id: channel.configuration_id })"));
-        assertTrue(function(source, "async function renderModernChannelCatalog(renderContext)")
+        assertTrue(function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)")
             .contains("exportCsvLink('channels')"));
         assertTrue(function(source, "async function renderChannelGroupIdentities(configurationId)")
             .contains("exportCsvLink('channel-group-identities', { configuration_id: configurationId })"));

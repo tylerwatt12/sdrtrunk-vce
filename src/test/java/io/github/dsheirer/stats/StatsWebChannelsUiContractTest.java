@@ -21,13 +21,13 @@ class StatsWebChannelsUiContractTest
     void usesOneModernCatalogForChannelAdministrators() throws Exception
     {
         String source = source();
-        String setup = function(source, "async function renderChannelSetup()");
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext)");
+        String setup = function(source, "async function renderChannelSetup(options = null)");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
         String configurationRequest = function(source,
             "async function requestChannelConfigurationJson(path, options = {})");
         String columns = function(source, "function channelAdminColumns(");
 
-        assertTrue(setup.contains("renderModernChannelCatalog(renderContext)"));
+        assertTrue(setup.contains("renderModernChannelCatalog(renderContext, typeof options?.revealId === 'string' ? options.revealId : null)"));
         assertFalse(source.contains("function renderRadioSystems()"));
         assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels'"));
         assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels/protocols'"));
@@ -36,7 +36,7 @@ class StatsWebChannelsUiContractTest
         assertTrue(configurationRequest.contains("CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS[attempt]"));
         assertTrue(configurationRequest.contains("waitForRequestRetry(delay, signal)"));
         assertTrue(catalog.contains("exportCsvLink('channels')"));
-        assertTrue(catalog.contains("channelSummaryCards(catalog, true)"));
+        assertTrue(catalog.contains("channelSetupSummary(catalog)"));
         assertTrue(catalog.contains("tableController.reconcileRows"));
         assertTrue(catalog.contains("layoutMenuHost: toolbar"));
         assertTrue(catalog.contains("type: 'channel-catalog-admin-v2'"));
@@ -66,14 +66,14 @@ class StatsWebChannelsUiContractTest
     void groupsChannelsByProtocolWithoutTheOldTopologySelector() throws Exception
     {
         String source = source();
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext)");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
         String protocolGroup = function(source, "function channelProtocolGroup(row)");
         String protocolOrder = function(source, "function channelProtocolOrder(left, right)");
         String table = function(source, "function table(rows, columns, emptyText = 'No rows', options = {})");
         String groupRow = function(source,
             "function renderTableRowGroup(group, count, columnCount, noun = 'row', collapsed = false,");
 
-        assertTrue(catalog.contains("pageHeader('Channels'"));
+        assertTrue(catalog.contains("pageHeader('Channel Setup'"));
         assertTrue(catalog.contains("label: 'All statuses'"));
         assertTrue(catalog.contains("statusFilter.setAttribute('aria-label', 'Filter channels by status')"));
         assertTrue(catalog.contains("rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'"));
@@ -108,7 +108,7 @@ class StatsWebChannelsUiContractTest
     void usesTheSharedHeaderOffsetForStickyChannelActions() throws Exception
     {
         String source = source();
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext)");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, revealId = null)");
         String stickyOffset = function(source, "function installStickyHeaderOffset()");
         String css = StatsWebStylesheetTestSupport.readAll();
 

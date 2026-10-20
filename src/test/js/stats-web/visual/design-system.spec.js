@@ -292,7 +292,7 @@ for (const [, theme, viewport] of galleryCases) {
     await page.setViewportSize(viewport);
     for (const [view, selector, count] of [
       ['gallery', '.visual-summary-grid', 3],
-      ['channels', '.visual-channels-example .channel-summary-grid', 3],
+      ['channels', '.visual-channels-example .channel-setup-summary', 0],
       ['radio-directory-coverage', '.visual-radio-directory-coverage-example .alias-coverage-summary', 4]
     ]) {
       await page.goto(`/design-system.html?theme=${theme}&view=${view}`);
@@ -300,7 +300,8 @@ for (const [, theme, viewport] of galleryCases) {
       await expect(summary.locator(':scope > .ui-metric')).toHaveCount(count);
       await expect(summary.locator('.ui-summary-card')).toHaveCount(0);
       await expect(summary.locator('.ui-metric-label .ui-metric-icon svg')).toHaveCount(count);
-      await expectMetricGridSpacing(summary, { inset: 0, sectionInset: false });
+      if (view === 'channels') await expect(summary).toHaveText('24 channels · 2 remote · 7 running · 12 auto start');
+      else await expectMetricGridSpacing(summary, { inset: 0, sectionInset: false });
       if (view === 'gallery') {
         const quality = page.locator('.design-system-gallery .scanner-call-quality-values');
         await expect(quality.locator('.ui-metric-compact')).toHaveCount(6);
@@ -1403,13 +1404,17 @@ test('channels-dark-desktop', async ({ page }) => {
     const navigation = row.locator('.channel-row-links');
     await expect(name).toHaveCSS('display', 'table-cell');
     await expect(row.locator('.channel-name-actions')).toHaveCSS('display', 'grid');
-    const [nameBox, summaryBox, navigationBox] = await Promise.all([
-      name.boundingBox(), summary.boundingBox(), navigation.boundingBox()
+    const actionCell = row.locator('td[data-column="actions"]');
+    await expect(actionCell).toBeVisible();
+    const [nameBox, navigationBox, actionBox] = await Promise.all([
+      name.boundingBox(), navigation.boundingBox(), actionCell.boundingBox()
     ]);
-    expect(navigationBox.y).toBeGreaterThanOrEqual(summaryBox.y + summaryBox.height);
-    expect(navigationBox.x).toBeGreaterThanOrEqual(nameBox.x);
-    expect(navigationBox.x + navigationBox.width).toBeLessThanOrEqual(nameBox.x + nameBox.width);
-    expect(navigationBox.y + navigationBox.height).toBeLessThanOrEqual(nameBox.y + nameBox.height);
+    expect(navigationBox.x).toBeGreaterThanOrEqual(nameBox.x + nameBox.width);
+    expect(navigationBox.x + navigationBox.width).toBeLessThanOrEqual(actionBox.x + actionBox.width);
+    expect(navigationBox.y + navigationBox.height).toBeLessThanOrEqual(actionBox.y + actionBox.height);
+    await expect(summary).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
+    await expect(navigation.locator('a')).toHaveClass([/ui-link-text/, /ui-link-text/]);
   }
   await expect(page.locator('body')).toHaveScreenshot('channels-dark-desktop.png', { fullPage: true });
 });
@@ -1421,32 +1426,30 @@ async function expectChannelMobileActions(page) {
   await expect(rows).toHaveCount(2);
   for (const row of await rows.all()) {
     const alias = row.locator('td[data-label="Alias List"]');
-    const edit = row.getByRole('button', { name: 'Edit', exact: true });
+    const name = row.locator('.channel-edit-name');
     const details = row.getByRole('link', { name: 'Details', exact: true });
     const live = row.getByRole('link', { name: 'Live', exact: true });
     const startup = row.locator('.channel-startup-order');
-    await expect(edit).toBeVisible();
+    await expect(name).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
     await expect(details).toBeVisible();
     await expect(live).toBeVisible();
     await expect(startup).toHaveCSS('text-align', 'left');
     expect(await startup.evaluate((cell) => getComputedStyle(cell, '::before').textAlign)).toBe('left');
-    const [aliasBox, editBox, detailsBox, liveBox, rowBox] = await Promise.all([
-      alias.boundingBox(), edit.boundingBox(), details.boundingBox(), live.boundingBox(), row.boundingBox()
+    const [aliasBox, nameBox, detailsBox, liveBox, rowBox] = await Promise.all([
+      alias.boundingBox(), name.boundingBox(), details.boundingBox(), live.boundingBox(), row.boundingBox()
     ]);
-    for (const actionBox of [editBox, detailsBox, liveBox]) {
+    expect(nameBox.y).toBeLessThan(aliasBox.y);
+    for (const actionBox of [detailsBox, liveBox]) {
       expect(actionBox.y).toBeGreaterThanOrEqual(aliasBox.y + aliasBox.height);
-      expect(actionBox.height).toBeGreaterThanOrEqual(40);
-      expect(actionBox.height).toBe(40);
+      expect(actionBox.height).toBeGreaterThan(0);
       expect(actionBox.x).toBeGreaterThanOrEqual(rowBox.x);
       expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width);
     }
-    expect(Math.abs(detailsBox.width - liveBox.width)).toBeLessThanOrEqual(1);
-    const actionGap = liveBox.x - detailsBox.x - detailsBox.width;
-    expect(Math.abs(editBox.width - detailsBox.width - actionGap - liveBox.width)).toBeLessThanOrEqual(1);
-    expect(Math.abs(editBox.x - detailsBox.x)).toBeLessThanOrEqual(1);
-    expect(detailsBox.y).toBeGreaterThan(editBox.y + editBox.height);
     expect(detailsBox.y).toBe(liveBox.y);
     expect(liveBox.x).toBeGreaterThan(detailsBox.x + detailsBox.width);
+    await expect(details).toHaveClass(/ui-link-text/);
+    await expect(live).toHaveClass(/ui-link-text/);
   }
   const startupControls = page.locator('.channel-order-controls');
   await expect(startupControls.getByRole('button', { name: 'Start earlier', exact: true })).toBeVisible();

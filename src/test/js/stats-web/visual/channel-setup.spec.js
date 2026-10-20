@@ -199,7 +199,7 @@ test('editing a channel opens and creates the selected Alias List without losing
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   const edit = page.locator(`tr[data-id="${configurationId}"]`)
-    .getByRole('button', { name: 'Edit', exact: true });
+    .getByRole('button', { name: 'Test channel', exact: true });
   await edit.focus();
   await page.keyboard.press('Enter');
   await expect(dialog).toBeVisible();
@@ -252,7 +252,8 @@ test('editing a channel opens and creates the selected Alias List without losing
   await expect(draft).toHaveValue('Unsaved channel name');
   await expect(select).toHaveValue('3');
   await expect(link).toHaveAttribute('href', /view=aliases&list=3$/);
-  expect(createdList).toMatchObject({ revision: 7, name: 'Local Analog', family: 'nbfm' });
+  expect(createdList).toMatchObject({ name: 'Local Analog', family: 'nbfm' });
+  expect(createdList).not.toHaveProperty('revision');
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/app.html?view=channel-setup');
@@ -330,7 +331,7 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   });
 
   await page.goto('/app.html?view=channel-setup');
-  await page.locator(`tr[data-id="${remoteId}"]`).getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.locator(`tr[data-id="${remoteId}"]`).getByRole('button', { name: 'Remote Control', exact: true }).click();
   const remoteDialog = page.getByRole('dialog', { name: 'Edit Remote Control' });
   await expect(remoteDialog).toBeVisible();
   await expect(remoteDialog.getByLabel('Maximum traffic channels')).toHaveValue('12');
@@ -347,7 +348,7 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   await remoteDialog.getByLabel('Name', { exact: true }).fill('Remote Control Renamed');
   await remoteDialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(remoteDialog).toHaveCount(0);
-  await expect(page.locator(`tr[data-id="${remoteId}"] .channel-edit-button`)).toBeFocused();
+  await expect(page.locator(`tr[data-id="${remoteId}"] .channel-edit-name`)).toBeFocused();
   expect(savedRemote).not.toBeNull();
   expect(savedRemote.name).toBe('Remote Control Renamed');
   expect(savedRemote.source).toMatchObject({ source_type: 'REMOTE', sender_id: senderId,
@@ -477,20 +478,22 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await expect(restrictedAliasCell).toHaveText('Aliases 2');
   await expect(restrictedAliasCell.locator('a')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Grouped', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(3);
-  await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked', 'DMR Trunked', 'FM']);
+  await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(1);
+  await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked']);
 
   await page.getByRole('button', { name: 'Startup order', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Startup order', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
   await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(0);
-  await expect(catalog.locator('tbody tr[data-id]')).toHaveCount(36);
+  await expect(catalog.locator('tbody tr[data-id]')).toHaveCount(8);
   await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-01');
-  await expect(catalog.locator('tbody tr[data-id]').nth(29)).toHaveAttribute('data-id', 'channel-30');
-  await expect(catalog.locator('tbody tr[data-id]').nth(30)).toHaveAttribute('data-id', 'channel-31');
+  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-08');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-09');
+  await page.getByRole('button', { name: 'Previous', exact: true }).click();
 
   const search = page.getByLabel('Search channels, systems, protocols, frequencies, or alias lists');
-  await search.fill('Channel');
+  await search.fill('Channel 2');
   const targetRow = catalog.locator('tr[data-id="channel-22"]');
   const targetHandle = await targetRow.elementHandle();
   const catalogHandle = await catalog.elementHandle();
@@ -502,8 +505,8 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await earlier.click();
 
   await expect.poll(() => moveRequest).toEqual({ revision: 40, direction: 'EARLIER' });
-  await expect(catalog.locator('tbody tr[data-id]').nth(20)).toHaveAttribute('data-id', 'channel-22');
-  await expect(catalog.locator('tbody tr[data-id]').nth(21)).toHaveAttribute('data-id', 'channel-21');
+  await expect(catalog.locator('tbody tr[data-id]').nth(1)).toHaveAttribute('data-id', 'channel-22');
+  await expect(catalog.locator('tbody tr[data-id]').nth(2)).toHaveAttribute('data-id', 'channel-21');
   await expect.poll(async () => (await orderHighlightEvents(targetRow))[0] || null).toMatchObject({
     type: 'added',
     animationName: 'channel-order-row-highlight',
@@ -513,7 +516,7 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await expect(targetRow).toHaveClass(/channel-order-row-moved/);
   await expect(targetRow.locator('.channel-order-number')).toHaveText('21');
   await expect(targetRow.getByRole('button', { name: 'Start earlier' })).toBeFocused();
-  await expect(search).toHaveValue('Channel');
+  await expect(search).toHaveValue('Channel 2');
   await expect(page.getByRole('button', { name: 'Startup order', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
 
@@ -556,6 +559,7 @@ test('startup-order view moves keyed rows without replacing the page or losing p
     .toEqual(['added', 'removed']);
 
   moveRequest = null;
+  await search.fill('');
   const firstRow = catalog.locator('tr[data-id="channel-01"]');
   await trackOrderHighlight(firstRow);
   await firstRow.getByRole('button', { name: 'Start earlier' }).click();

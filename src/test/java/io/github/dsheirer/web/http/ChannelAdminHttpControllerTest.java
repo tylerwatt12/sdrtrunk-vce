@@ -127,6 +127,8 @@ class ChannelAdminHttpControllerTest
                 .get(0).path("name").textValue());
             assertTrue(MAPPER.readTree(readOnlyCatalog.body()).path("data").path("channels")
                 .get(0).path("editable").booleanValue());
+            assertEquals(155_010_000L, MAPPER.readTree(readOnlyCatalog.body()).at("/data/channels/0/display_frequency_hz").asLong());
+            assertEquals("configured", MAPPER.readTree(readOnlyCatalog.body()).at("/data/channels/0/display_frequency_source").asText());
 
             HttpResponse<String> stoppedPreview = sendJson(client,
                 origin.resolve(ChannelAdminHttpController.PATH + "/" + channelId + "/squelch-preview"), "POST",

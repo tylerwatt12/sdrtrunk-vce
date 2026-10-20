@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
@@ -74,8 +75,10 @@ class ControlChannelQualityMonitorTest
         assertEquals(6, snapshot.correctedBits());
         assertEquals(320, snapshot.droppedBits());
         assertEquals(1_000L, snapshot.lastValidDecodeMs());
+        assertSame(snapshot, monitor.getCurrentSnapshot());
 
         monitor.getSourceEventListener().receive(SourceEvent.frequencyChange(null, 855_137_500L));
+        assertNull(monitor.getCurrentSnapshot(), "Retuning immediately invalidates the published control proof");
         awaitSnapshotCount(snapshots, 2);
         ControlChannelQualitySnapshot inactive = snapshots.getLast();
         assertFalse(inactive.active());
@@ -90,8 +93,13 @@ class ControlChannelQualityMonitorTest
         assertEquals(-30.0, rotated.averageSignalDbfs());
         assertNull(rotated.decodeHealthPercent());
         assertEquals(0, rotated.validFrames());
+        assertEquals(0, monitor.getCurrentSnapshot().lastValidDecodeMs(), "Hunting is not a confirmed control decode");
         monitor.stop();
+        assertNull(monitor.getCurrentSnapshot());
         assertFalse(snapshots.getLast().active());
+        monitor.start();
+        assertNull(monitor.getCurrentSnapshot(), "A new lifecycle cannot inherit the previous active proof");
+        monitor.stop();
     }
 
     @Test

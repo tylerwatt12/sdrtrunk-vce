@@ -83,6 +83,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     private volatile long mStateGeneration;
     private volatile long mLifecycleGeneration;
     private volatile boolean mRunning;
+    private volatile SnapshotPublication mLatestPublication;
     private volatile Runnable mBeforeAsyncPublication;
 
     private static Thread startPublicationWorker()
@@ -153,6 +154,18 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     public Listener<Heartbeat> getHeartbeatListener()
     {
         return mHeartbeatListener;
+    }
+
+    /**
+     * Request-side view of the last published active observation. A retune, stop or restart invalidates it
+     * immediately through the existing generation counters, without locking a receiver callback.
+     */
+    public ControlChannelQualitySnapshot getCurrentSnapshot()
+    {
+        SnapshotPublication publication = mLatestPublication;
+        return publication != null && mRunning && publication.snapshot().active() &&
+            publication.stateGeneration() == mStateGeneration &&
+            publication.lifecycleGeneration() == mLifecycleGeneration ? publication.snapshot() : null;
     }
 
     private void receive(SourceEvent event)
@@ -476,7 +489,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
 
             if(mRunning && currentLifecycle && (!publication.snapshot().active() || currentState))
             {
-                accept(publication.snapshot());
+                accept(publication);
             }
         }
         finally
@@ -500,7 +513,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             if(!mRunning && publication.lifecycleGeneration() == mLifecycleGeneration &&
                 publication.stateGeneration() == mStateGeneration)
             {
-                accept(publication.snapshot());
+                accept(publication);
             }
         }
         finally
@@ -509,11 +522,12 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         }
     }
 
-    private void accept(ControlChannelQualitySnapshot snapshot)
+    private void accept(SnapshotPublication publication)
     {
+        mLatestPublication = publication;
         try
         {
-            mConsumer.accept(snapshot);
+            mConsumer.accept(publication.snapshot());
         }
         catch(RuntimeException exception)
         {

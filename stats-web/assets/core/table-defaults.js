@@ -120,9 +120,9 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['name', 'frequency', 'alias-list']
   },
   'channel-catalog-admin-v2': {
-    widths: { select: 48, name: 320, frequency: 280,
-      status: 112, 'auto-start': 144, 'alias-list': 210 },
-    grow: ['name', 'frequency', 'alias-list']
+    widths: { select: 42, name: 250, frequency: 150,
+      status: 100, 'auto-start': 144, 'alias-list': 140, actions: 92 },
+    grow: ['name', 'alias-list']
   },
   'channel-catalog-readonly-v1': {
     widths: { name: 300, frequency: 260, protocol: 160, status: 112, 'alias-list': 190 },

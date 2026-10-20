@@ -14,6 +14,9 @@ package io.github.dsheirer.channel;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
@@ -115,7 +118,7 @@ public final class ChannelAdministrationService
 
     public Catalog catalog()
     {
-        return onConfigurationThread(() ->
+        Catalog catalog = onConfigurationThread(() ->
         {
             List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
             Map<String,Integer> order = effectiveAutoStartOrder(channels);
@@ -123,6 +126,14 @@ public final class ChannelAdministrationService
                 order.get(channel.getConfigurationId()))).toList();
             return new Catalog(revision(), summaries);
         });
+        //History belongs to the request worker, outside the configuration/FX boundary and all receiver callbacks.
+        Map<String,Long> lastControl = ChannelControlFrequencyHistory.read(
+            mConfigurationManager.getDatabasePath(), catalog.channels());
+        return new Catalog(catalog.revision(), catalog.channels().stream().map(channel ->
+        {
+            Long frequency = lastControl.get(channel.configurationId());
+            return frequency != null ? channel.withDisplayFrequency(frequency, "last-control") : channel;
+        }).toList());
     }
 
     public Entry get(String configurationId)
@@ -1184,12 +1195,16 @@ public final class ChannelAdministrationService
         try
         {
             ChannelDefinition definition = mCodec.fromChannel(channel);
+            String channelKind = ChannelConfigurationPolicy.requireChannelKind(channel).name();
+            Long activeFrequency = activeControlFrequency(channel, channelKind);
+            Long displayFrequency = activeFrequency != null ? activeFrequency :
+                definition.source().frequenciesHz().stream().filter(frequency -> frequency > 0).findFirst().orElse(null);
             return new ChannelSummary(channel.getConfigurationId(), definition.protocolId(),
                 mProtocolRegistry.require(definition.protocolId()).label(),
-                ChannelConfigurationPolicy.requireChannelKind(channel).name(), channel.getSystem(), channel.getSite(),
+                channelKind, channel.getSystem(), channel.getSite(),
                 channel.getName(), definition.source().frequenciesHz(), processingState(channel), autoStartOrder,
                 channel.getAliasListId(), aliasList != null ? aliasList.getName() : channel.getAliasListName(), true,
-                null, remoteOrigin);
+                null, remoteOrigin, displayFrequency, activeFrequency != null ? "active-control" : "configured");
         }
         catch(RuntimeException exception)
         {
@@ -1200,8 +1215,44 @@ public final class ChannelAdministrationService
                 processingState(channel), autoStartOrder, channel.getAliasListId(),
                 aliasList != null ? aliasList.getName() : channel.getAliasListName(), false,
                 "This compatibility channel can be viewed, started, stopped, reordered, cloned, or deleted, but " +
-                    "its decoder configuration cannot be edited on the web.", remoteOrigin);
+                    "its decoder configuration cannot be edited on the web.", remoteOrigin,
+                channel.getFrequencyList().stream().filter(frequency -> frequency > 0).findFirst().orElse(null),
+                "configured");
         }
+    }
+
+    private Long activeControlFrequency(Channel channel, String channelKind)
+    {
+        if(!"TRUNKED".equals(channelKind)) return null;
+        //Use the configured parent itself, never a temporary traffic chain sharing its configuration ID.
+        var chain = mConfigurationManager.getChannelProcessingManager().getProcessingChain(channel);
+        var source = chain != null && chain.isProcessing() ? chain.getSource() : null;
+        long frequency = source != null ? source.getFrequency() : 0;
+        if(frequency <= 0) return null;
+        long now = System.currentTimeMillis();
+        for(var module: chain.getModules())
+        {
+            if(module instanceof ControlChannelQualityMonitor monitor)
+            {
+                var quality = monitor.getCurrentSnapshot();
+                if(isConfirmedActiveControl(channel, frequency, quality, now) &&
+                    source.getFrequency() == frequency && monitor.getCurrentSnapshot() == quality)
+                {
+                    return frequency;
+                }
+            }
+        }
+        return null;
+    }
+
+    static boolean isConfirmedActiveControl(Channel channel, long frequency, ControlChannelQualitySnapshot quality,
+                                             long now)
+    {
+        return quality != null && quality.active() && quality.channel() == channel && quality.frequencyHz() == frequency &&
+            quality.lastValidDecodeMs() > 0 && quality.lastValidDecodeMs() <= now && quality.matchesCurrentChannel() &&
+            quality.observedAtMs() <= now &&
+            now - quality.observedAtMs() <= ControlChannelQualityRegistry.DEFAULT_FRESHNESS_MILLISECONDS &&
+            now - quality.lastValidDecodeMs() <= ControlChannelQualityRegistry.DEFAULT_FRESHNESS_MILLISECONDS;
     }
 
     private ProcessingState processingState(Channel channel)
@@ -1475,13 +1526,21 @@ public final class ChannelAdministrationService
                                  String system, String site, String name, List<Long> frequenciesHz,
                                  ProcessingState processingState, Integer autoStartOrder, long aliasListId,
                                  String aliasListName, boolean editable, String restrictionMessage,
-                                 Map<String,Boolean> remoteOrigin)
+                                 Map<String,Boolean> remoteOrigin, Long displayFrequencyHz,
+                                 String displayFrequencySource)
     {
         public ChannelSummary
         {
             frequenciesHz = List.copyOf(frequenciesHz);
             remoteOrigin = remoteOrigin != null && Boolean.TRUE.equals(remoteOrigin.get("remote")) ?
                 REMOTE_ORIGIN : null;
+        }
+
+        private ChannelSummary withDisplayFrequency(long frequency, String source)
+        {
+            return new ChannelSummary(configurationId, protocolId, protocolLabel, channelKind, system, site, name,
+                frequenciesHz, processingState, autoStartOrder, aliasListId, aliasListName, editable,
+                restrictionMessage, remoteOrigin, frequency, source);
         }
     }
 
