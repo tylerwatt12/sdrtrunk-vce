@@ -411,6 +411,51 @@ class StatsWebServerServiceLifecycleTest
     }
 
     @Test
+    void rejectsSavedHistorySubscriptionsWhileKeepingLiveControlsAvailable() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("history-snapshot-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = Files.createDirectories(mTemporaryDirectory.resolve("history-snapshot-assets"));
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        TestUserPreferences preferences = new TestUserPreferences(
+            new TestApplicationPreference(0, false, false, true), new TestDirectoryPreference(dataRoot));
+        try(StatsWebServerService service = new StatsWebServerService(preferences);
+            HttpClient client = HttpClient.newHttpClient())
+        {
+            URI origin = origin(service.getRuntimeState().port());
+            char[] password = "history-snapshot-password".toCharArray();
+            try { service.provisionOrResetPrimaryAdmin(password); }
+            finally { Arrays.fill(password, '\u0000'); }
+            String cookie = login(client, origin, "history-snapshot-password");
+            HttpResponse<String> session = client.send(HttpRequest.newBuilder(
+                    origin.resolve(WebSessionHttpController.SESSION_PATH)).header("Cookie", cookie).build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, session.statusCode());
+            String csrf = OBJECT_MAPPER.readTree(session.body()).at("/data/csrf_token").textValue();
+            String clientId = UUID.randomUUID().toString();
+            HttpResponse<String> retired = client.send(multiplexControl(origin, cookie, csrf, clientId, 1,
+                "{\"saved_activity\":{\"subscription_id\":\"" + UUID.randomUUID() + "\"}}"),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, retired.statusCode(), retired.body());
+
+            HttpResponse<String> supported = client.send(multiplexControl(origin, cookie, csrf, clientId, 2,
+                "{\"channel_activity\":{}}"), HttpResponse.BodyHandlers.ofString());
+            assertEquals(404, supported.statusCode(), supported.body());
+            assertEquals("client_not_found", OBJECT_MAPPER.readTree(supported.body()).at("/error/code").textValue(),
+                "A supported topic passes validation and requires an actual live connection");
+        }
+        finally
+        {
+            if(previousAssetOverride == null) System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            else System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+        }
+    }
+
+    @Test
     void activitySubscriptionIncarnationsRefreshBaselinesWithoutReopeningUnchangedConsumers() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("activity-incarnation-data");

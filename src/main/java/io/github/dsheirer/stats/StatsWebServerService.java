@@ -142,10 +142,9 @@ public class StatsWebServerService implements AutoCloseable
     private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
     private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "decode_events",
-        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio", "saved_activity");
+        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio");
     static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
-        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN, WebCapability.RADIO_VIEW,
-        WebCapability.DASHBOARD_VIEW);
+        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN);
 
     private final UserPreferences mUserPreferences;
     private final WebDiagnosticLogService mWebDiagnosticLogService;
@@ -2283,10 +2282,6 @@ public class StatsWebServerService implements AutoCloseable
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
         private StatsLiveEventHub.Subscription mDecodeEvents;
-        private StatsLiveEventHub.Subscription mSavedActivity;
-        private String mSavedActivitySubscriptionId;
-        private long mSavedActivityStateRevision = -1;
-        private long mSavedActivityDrops;
         private DecodeEventViewService.Scope mDecodeEventScope;
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
@@ -2343,8 +2338,7 @@ public class StatsWebServerService implements AutoCloseable
 
             for(String topic: MULTIPLEX_TOPICS)
             {
-                if(capabilitiesForTopic(topic).stream().noneMatch(capability ->
-                    mWebRequestSecurity.isRequestStillAuthorized(mExchange, capability)))
+                if(!mWebRequestSecurity.isRequestStillAuthorized(mExchange, capabilityForTopic(topic)))
                 {
                     denied.add(topic);
                 }
@@ -2363,8 +2357,6 @@ public class StatsWebServerService implements AutoCloseable
         private boolean pump(LiveMultiplexOutput output) throws IOException, InterruptedException
         {
             boolean wrote = reconcile(output);
-            wrote |= pumpSavedActivityState(output);
-            wrote |= pumpEvents(output, TOPIC_SAVED_ACTIVITY, mSavedActivity);
             wrote |= pumpEvents(output, TOPIC_CHANNEL_ACTIVITY, mChannelActivity);
             wrote |= pumpEvents(output, TOPIC_DECODE_EVENTS, mDecodeEvents);
 
@@ -2911,12 +2903,6 @@ public class StatsWebServerService implements AutoCloseable
                 case "channel_diagnostics" -> closeChannelDiagnostics();
                 case "tuner_diagnostics" -> closeTunerDiagnostics();
                 case "frequency_audio" -> closeFrequencyAudio();
-                case "saved_activity" -> {
-                    mSavedActivity = closeSubscription(mSavedActivity);
-                    mSavedActivitySubscriptionId = null;
-                    mSavedActivityStateRevision = -1;
-                    mSavedActivityDrops = 0;
-                }
                 default -> { }
             }
         }
@@ -3130,7 +3116,6 @@ public class StatsWebServerService implements AutoCloseable
         {
             case "tuner_diagnostics" -> WebCapability.TUNER_SPECTRUM_VIEW;
             case "frequency_audio" -> WebCapability.WEB_AUDIO_LISTEN;
-            case "saved_activity" -> WebCapability.RADIO_VIEW;
             default -> WebCapability.LIVE_VIEW;
         };
     }
@@ -3167,7 +3152,6 @@ public class StatsWebServerService implements AutoCloseable
             case "channel_diagnostics" -> TOPIC_CHANNEL_DIAGNOSTICS;
             case "tuner_diagnostics" -> TOPIC_TUNER_DIAGNOSTICS;
             case "frequency_audio" -> TOPIC_FREQUENCY_AUDIO;
-            case "saved_activity" -> TOPIC_SAVED_ACTIVITY;
             default -> TOPIC_CONTROL;
         };
     }

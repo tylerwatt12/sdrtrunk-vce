@@ -9971,7 +9971,6 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   4: 'channel_diagnostics',
   5: 'tuner_diagnostics',
   6: 'frequency_audio',
-  7: 'saved_activity'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -19536,7 +19535,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=47');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=48');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19553,24 +19552,6 @@ async function renderP25Visualizer() {
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
-    subscribeActivity: (callbacks) => {
-      const subscriptionId = randomLiveClientId();
-      const source = liveConnection('saved_activity', { subscription_id: subscriptionId });
-      for (const [event, callback] of [['source_change', callbacks.sourceChange],
-        ['activity_append', callbacks.activityAppend], ['live_gap', callbacks.gap]]) {
-        source.addEventListener(event, (value) => {
-          try {
-            const data = JSON.parse(value.data);
-            if (data?.subscription_id && data.subscription_id !== subscriptionId) return;
-            callback(data);
-          } catch (_) {
-            callbacks.gap();
-          }
-        });
-      }
-      source.onerror = callbacks.error;
-      return source;
-    },
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     historyStatus: statsLoggingState(),

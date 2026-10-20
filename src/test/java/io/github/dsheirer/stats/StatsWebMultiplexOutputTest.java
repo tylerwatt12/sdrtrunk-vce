@@ -288,50 +288,19 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
-    void savedActivityGapPreservesUnwrittenSourceBoundaryBeforeLaterAppends() throws Exception
-    {
-        RecordingOutputStream recording = new RecordingOutputStream(3);
-        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
-        var state = new SavedActivityLiveService.State(1, true, 11, 1, 1500, true);
-        try(output)
-        {
-            output.offerRecovery(7, LiveMultiplexFrame.json(7, "source_change", state.payload("view")).bytes(false));
-            output.offerEvent(7, LiveMultiplexFrame.json(7, "activity_append", Map.of("next_after_id", 11)).bytes(false));
-            StatsWebServerService.recoverSavedActivityGap(output, state, "view", 1);
-            output.offerEvent(7, LiveMultiplexFrame.json(7, "activity_append", Map.of("next_after_id", 12)).bytes(false));
-            output.start();
-            assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
-            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            List<String> events = new java.util.ArrayList<>();
-            for(byte[] envelope: recording.mEnvelopes)
-            {
-                var json = mapper.readTree(new String(envelope, LiveMultiplexFrame.HEADER_BYTES,
-                    envelope.length - LiveMultiplexFrame.HEADER_BYTES, StandardCharsets.UTF_8));
-                events.add(json.path("event").asText());
-                if("source_change".equals(json.path("event").asText()))
-                {
-                    assertEquals("view", json.at("/data/subscription_id").asText());
-                    assertEquals(1500, json.at("/data/traffic_grant_age_out_milliseconds").asInt());
-                }
-            }
-            assertEquals(List.of("live_gap", "source_change", "activity_append"), events);
-        }
-    }
-
-    @Test
-    void savedActivityRecoveryClearsItsOwnBoundedQueueAndLeavesOtherTopicsIntact() throws Exception
+    void eventRecoveryClearsItsOwnBoundedQueueAndLeavesOtherTopicsIntact() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
         LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         try(output)
         {
-            for(int index = 0; index < 128; index++) output.offerEvent(7, new byte[]{7});
+            for(int index = 0; index < 128; index++) output.offerEvent(2, new byte[]{7});
             output.offerEvent(3, new byte[]{3});
-            assertEquals(64, output.eventDrops(7));
+            assertEquals(64, output.eventDrops(2));
             assertEquals(0, output.eventDrops(3));
-            output.offerRecovery(7, new byte[]{8});
-            output.offerEvent(7, new byte[]{9});
-            assertEquals(1, output.pendingEventBytes(7));
+            output.offerRecovery(2, new byte[]{8});
+            output.offerEvent(2, new byte[]{9});
+            assertEquals(1, output.pendingEventBytes(2));
             assertEquals(1, output.pendingEventBytes(3));
             output.start();
             assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));

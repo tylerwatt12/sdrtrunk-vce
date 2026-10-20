@@ -323,56 +323,11 @@ class ReceiverActivityWriterTest
     }
 
     @Test
-    void liveActivityDemandCapsCollectionAndNotifiesAfterVisibleCommit() throws Exception
-    {
-        Path database = createDatabase(mTemporaryFolder.resolve("live-commit.sqlite"));
-        insertConfiguredChannel(database);
-        var committed = new java.util.concurrent.CountDownLatch(1);
-        var visibleRows = new java.util.concurrent.atomic.AtomicLong(-1);
-        var notifications = new java.util.concurrent.atomic.AtomicInteger();
-        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 10, 10_000);
-        writer.setLiveActivityObserver(() -> true, historyChanged -> {
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-            {
-                visibleRows.set(scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
-                notifications.incrementAndGet();
-            }
-            catch(Exception exception) { throw new IllegalStateException(exception); }
-            finally { committed.countDown(); }
-        });
-        writer.start();
-        try
-        {
-            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, 1_700_000_000_400L));
-            assertTrue(committed.await(2, TimeUnit.SECONDS), "A live viewer must not wait for the ten-second batch");
-            assertEquals(1, visibleRows.get(), "The observer sees only durable committed rows");
-            assertEquals(1, notifications.get());
-        }
-        finally { writer.close(); }
-        assertEquals(TimeUnit.MILLISECONDS.toNanos(10_000) + 50,
-            ReceiverActivityWriter.collectionDeadline(50, 10_000, false));
-        assertEquals(TimeUnit.MILLISECONDS.toNanos(200) + 50,
-            ReceiverActivityWriter.collectionDeadline(50, 10_000, true));
-        assertEquals(TimeUnit.MILLISECONDS.toNanos(100) + 50,
-            ReceiverActivityWriter.collectionDeadline(50, 100, true), "Existing shorter deadlines are preserved");
-    }
-
-    @Test
-    void p25SourceEnrichmentInvalidatesVisibleHistoryEvenWhenNewRowsCommitTogether() throws Exception
+    void p25SourceEnrichmentPreservesExistingHistoryWhenNewRowsCommitTogether() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("live-source-enrichment.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        List<Long> visibleRows = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, changed -> {
-            invalidations.add(changed);
-            try(Connection visible = DriverManager.getConnection("jdbc:sqlite:" + database))
-            {
-                visibleRows.add(scalar(visible, "SELECT count(*) FROM receiver_activity_event"));
-            }
-            catch(Exception exception) { throw new IllegalStateException(exception); }
-        });
         long now = System.currentTimeMillis();
         var initial = p25Call("late", now, null);
         var known = p25Call("late", now, 202);
@@ -384,20 +339,17 @@ class ReceiverActivityWriterTest
             assertEquals(202, scalar(connection,
                 "SELECT source_observed_local_id FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL"));
             writeBatch(writer, connection, List.of(update));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_activity_event"),
+                "Repeating enrichment does not insert or lose saved events");
         }
-        assertEquals(List.of(false, true, false), invalidations,
-            "Insert-only and unchanged snapshots append normally; an enriched retained row requires a reload");
-        assertEquals(List.of(1L, 2L, 2L), visibleRows, "Every signal follows a visible durable transaction");
     }
 
     @Test
-    void resolvedExactReferenceInvalidatesOnlyWhenItsSavedSourceActuallyChanges() throws Exception
+    void resolvedExactReferenceEnrichesOnlyItsRetainedSavedSource() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("live-resolved-source.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, invalidations::add);
         long now = System.currentTimeMillis();
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -409,9 +361,12 @@ class ReceiverActivityWriterTest
                 """));
             writeBatch(writer, connection, List.of(resolved(2, now, "exact")));
             writeBatch(writer, connection, List.of(resolved(3, now, "unrelated")));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(202, scalar(connection, """
+                SELECT identity.identity_id FROM receiver_activity_event event
+                JOIN radio_system_identity_summary identity ON identity.id = event.source_identity_summary_id
+                """));
         }
-        assertEquals(List.of(false, true, false, false), invalidations,
-            "Unchanged exact references and references without a retained row must not trigger reloads");
     }
 
     @Test
@@ -420,8 +375,6 @@ class ReceiverActivityWriterTest
         Path database = createDatabase(mTemporaryFolder.resolve("p25-call-duration.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, invalidations::add);
         long now = System.currentTimeMillis();
         var initial = p25Call("duration", now, null);
         var finalTiming = new ReceiverActivityRecords.P25CallObservation("duration",
@@ -443,7 +396,6 @@ class ReceiverActivityWriterTest
             assertEquals(202, scalar(connection, "SELECT source_observed_local_id FROM receiver_activity_event"));
             assertEquals(1, scalar(connection, "SELECT sum(logical_call_count) FROM trunked_logical_call_bucket"));
         }
-        assertEquals(List.of(false, true, true, false, false), invalidations);
     }
 
     @Test
@@ -452,8 +404,6 @@ class ReceiverActivityWriterTest
         Path database = createDatabase(mTemporaryFolder.resolve("exact-call-duration.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, invalidations::add);
         long now = System.currentTimeMillis();
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -474,7 +424,6 @@ class ReceiverActivityWriterTest
             assertEquals(2_500L, scalar(connection, "SELECT duration_ms FROM receiver_activity_event WHERE source_call_uuid='" +
                 SourceCallReference.fromToken("first") + "'"));
         }
-        assertEquals(List.of(false, false, false, true, false, false), invalidations);
     }
 
     private static ReceiverActivityRecords.ResolvedLogicalCall resolved(long sequence, long timestamp, String token)

@@ -50,8 +50,8 @@ public final class WebDiagnosticLogService implements AutoCloseable
     public static final String FILE_NAME = "sdrtrunk_web.log";
     public static final int RETENTION_DAYS = 7;
     public static final long MAXIMUM_BYTES = 100L * 1024 * 1024;
-    // A simultaneous shutdown can enqueue 256 viewers * (7 topic closes + disconnect + request finish),
-    // plus start/finish records for 512 other admitted HTTP requests: 3,328 records before the writer drains.
+    // A simultaneous shutdown can enqueue 256 viewers * (6 topic closes + disconnect + request finish),
+    // plus start/finish records for 512 other admitted HTTP requests: 3,072 records before the writer drains.
     static final int QUEUE_CAPACITY = 4_096;
     static final int CONTEXT_SAMPLES = 60;
     private static final int MAXIMUM_RECORD_BYTES = 64 * 1024;
