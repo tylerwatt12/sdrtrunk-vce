@@ -5,7 +5,8 @@ const eligibleTuner = { ...operatorTuner({ spectrum_target_id: 'target-a', spect
   eligible: true, source_type: 'receiver', channel_count: 0, center_frequency_hz: 851012500,
   usable_bandwidth_hz: 9000000, minimum_frequency_hz: 24000000, maximum_frequency_hz: 1800000000 };
 const guide = page => page.getByRole('dialog', { name: 'Add your first channel', exact: true });
-const toolbarAction = (page, name) => page.locator('.channel-admin-toolbar').getByRole('button', { name, exact: true });
+const toolbarAction = (page, name) => page.locator(name === 'New channel' ?
+  '.channel-setup-page-header' : '.channel-catalog-tools').getByRole('button', { name, exact: true });
 const actionNames = ['Find Trunked Systems', 'New channel'];
 const dismissalKey = 'sdrtrunk-vce-channel-setup-guide-dismissed:v2:fixture-admin:account-1-100';
 
@@ -88,7 +89,7 @@ async function openChannels(page, options = {}) {
     csrf_token: 'fixture-csrf', capabilities: { 'admin-channels': true, 'admin-tuners': true,
       'admin-aliases': false, 'user-settings': true } } } }));
   await page.goto('/app.html?view=channel-setup');
-  await expect(page.getByRole('heading', { name: 'Channels', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   return { fixture, state };
 }
 
@@ -157,7 +158,7 @@ test('setup guide keeps keyboard focus and remembers dismissal after reload', as
     .toMatch(/^(Dismiss setup guide|Find Trunked Systems|New channel)$/);
   await page.keyboard.press('Escape');
   await expect(guide(page)).toHaveCount(0);
-  await expect(page.locator('.channel-admin-toolbar').getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
+  await expect(toolbarAction(page, 'New channel')).toBeVisible();
   await page.reload();
   await expect(page.getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -177,7 +178,7 @@ test('a new install with the same username shows guidance despite an old install
   await page.screenshot({ path: test.info().outputPath('first-channel-guide-new-install.png') });
   await page.keyboard.press('Escape');
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Channels', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   await expect(guide(page)).toHaveCount(0);
   expect(fixture.pageErrors).toEqual([]);
 });
@@ -195,7 +196,7 @@ test('clicking the dimmed page dismisses the guide without activating its backgr
   await expect(guide(page)).toBeVisible();
   await page.mouse.click(8, 80);
   await expect(guide(page)).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Channels', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBe('1');
   for (const name of actionNames) await expect(toolbarAction(page, name)).toBeVisible();
   expect(fixture.pageErrors).toEqual([]);
@@ -219,7 +220,7 @@ for (const [action, destination] of [['New channel', 'Create Channel'], ['Find T
     else await expect(workflow.getByRole('heading', { name: 'Choose where to look', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(workflow).toHaveCount(0);
-    await expect(page.locator('.channel-admin-toolbar').getByRole('button', { name: action, exact: true })).toBeVisible();
+    await expect(toolbarAction(page, action)).toBeVisible();
     expect(fixture.pageErrors).toEqual([]);
   });
 }
@@ -330,7 +331,7 @@ test('tuner readiness changes automatically remove and restore guidance without 
   state.tuners = [];
   await page.clock.fastForward(5100);
   await expect(guide(page)).toHaveCount(0);
-  await expect(page.locator('.channel-admin-toolbar').getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
+  await expect(toolbarAction(page, 'New channel')).toBeVisible();
   expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
   state.tuners = [eligibleTuner];
   await page.clock.fastForward(5100);

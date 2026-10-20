@@ -634,3 +634,183 @@
   padding: var(--space-2);
   font-size: var(--font-size-label);
 }
+
+/* A spacious catalog keeps identity and site context together without a grid. */
+.ui-catalog-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--catalog-panel-radius);
+}
+
+.ui-data-table.ui-catalog-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ui-data-table.ui-catalog-table :is(th, td) {
+  padding: var(--catalog-row-padding-block) var(--catalog-row-padding-inline);
+  border-right: 0;
+  vertical-align: middle;
+}
+
+.ui-data-table.ui-catalog-table thead th {
+  padding-block: var(--catalog-heading-padding-block);
+  background: var(--surface);
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-data-table.ui-catalog-table tr > :first-child {
+  padding-left: var(--catalog-group-padding-inline);
+  padding-right: 0;
+}
+
+.ui-data-table.ui-catalog-table tbody tr.selected {
+  background: var(--accent-soft);
+}
+
+.ui-data-table.ui-catalog-table tbody tr:last-child > td {
+  border-bottom: 0;
+}
+
+.ui-data-table.ui-catalog-table .ui-table-row-group > th {
+  padding: 0;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-block: 1px solid var(--table-rule);
+  font-size: var(--font-size-label);
+  letter-spacing: var(--catalog-group-letter-spacing);
+}
+
+.ui-catalog-table .table-row-group-disclosure {
+  min-height: 0;
+  padding: var(--catalog-group-padding-block) var(--catalog-group-padding-inline);
+}
+
+.ui-catalog-table .table-row-group-disclosure:hover {
+  background: var(--table-hover);
+}
+
+.ui-catalog-table .table-row-group-label,
+.ui-catalog-table .table-row-group-count {
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-catalog-table .ui-row-action,
+.ui-catalog-table .ui-catalog-primary {
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-control);
+}
+
+.ui-catalog-table .ui-icon-button-compact {
+  --icon-action-size: var(--catalog-action-size);
+  --icon-glyph-size: var(--catalog-action-glyph-size);
+}
+
+.ui-catalog-table .ui-catalog-secondary-links,
+.ui-catalog-table .ui-catalog-alias {
+  color: var(--muted);
+  font-size: var(--font-size-label);
+}
+
+.ui-catalog-table .ui-status {
+  font-size: var(--font-size-label);
+}
+
+.ui-catalog-table .ui-catalog-secondary-links > a {
+  color: inherit;
+}
+
+.ui-catalog-table :is(.ui-catalog-secondary-links > a, .ui-catalog-alias):hover {
+  color: var(--link);
+}
+
+/* The same records become a continuous list, with selection in a left rail. */
+@media (max-width: 760px) {
+  .ui-catalog-table-wrap {
+    overflow: visible;
+  }
+
+  .ui-data-table.ui-catalog-table.ui-mobile-cards {
+    background: transparent;
+  }
+
+  .ui-catalog-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead {
+    margin: 0;
+  }
+
+  .ui-catalog-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead tr {
+    justify-content: flex-start;
+    padding: var(--space-1) var(--catalog-group-padding-inline);
+  }
+
+  .ui-catalog-table.ui-mobile-cards:has(thead th > input[type="checkbox"]) thead th:has(> input[type="checkbox"]) {
+    width: var(--catalog-phone-checkbox-width);
+    height: var(--catalog-action-size);
+    padding: 0;
+    border: 0;
+  }
+
+  .ui-catalog-table.ui-mobile-cards tbody {
+    display: block;
+  }
+
+  .ui-catalog-table.ui-mobile-cards tbody > tr:not(.ui-table-row-group) {
+    display: grid;
+    grid-template-columns: var(--catalog-phone-checkbox-width) minmax(0, 1fr);
+    gap: var(--catalog-phone-row-gap) var(--catalog-phone-column-gap);
+    padding: var(--catalog-phone-row-padding);
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--table-rule);
+    border-radius: 0;
+  }
+
+  .ui-catalog-table.ui-mobile-cards tbody > tr.selected {
+    background: var(--accent-soft);
+  }
+
+  .ui-data-table.ui-catalog-table.ui-mobile-cards .ui-table-row-group > th {
+    border: 0;
+    border-bottom: 1px solid var(--table-rule);
+    border-radius: 0;
+  }
+
+  .ui-data-table.ui-catalog-table.ui-mobile-cards tbody td {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: var(--catalog-phone-label-width) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0;
+    overflow: visible;
+    border: 0;
+  }
+
+  .ui-catalog-table.ui-mobile-cards tbody td::before {
+    font-size: var(--font-size-label);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ui-data-table.ui-catalog-table.ui-mobile-cards tbody td:has(> input[type="checkbox"]) {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: var(--space-1) 0 0;
+  }
+
+  .ui-data-table.ui-catalog-table.ui-mobile-cards tbody td:is([data-column="name"], [data-column="actions"]) {
+    display: block;
+  }
+
+  .ui-catalog-table.ui-mobile-cards tbody td:is([data-column="name"], [data-column="actions"])::before {
+    display: none;
+  }
+
+  .ui-catalog-table.ui-mobile-cards tbody tr:last-child {
+    border-bottom: 0;
+  }
+}

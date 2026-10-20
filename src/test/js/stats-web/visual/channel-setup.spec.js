@@ -1,5 +1,6 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const p25Phase1Profile = require(path.resolve(__dirname,
   '../../../../../src/main/resources/channel-protocols.json')).profiles
@@ -58,6 +59,8 @@ function channelFixture(index) {
 }
 
 test('channel editor refreshes the voice-module override and renders the effective toggle state', async ({ page }) => {
+  const { defaults: preferences } = await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/core/preference-schema.js')).href);
   let moduleLoaded = true;
   let protocolRequests = 0;
   const profile = {
@@ -110,6 +113,10 @@ test('channel editor refreshes the voice-module override and renders the effecti
     }
     if(path === '/api/v1/admin/channels' && request.method() === 'GET') {
       await respond({ revision: 1, channels: [] });
+      return;
+    }
+    if(path === '/api/v1/me/preferences') {
+      await route.fulfill({ json: { revision: 1, preferences } });
       return;
     }
     if(path === '/api/v1/admin/channels/options') {
@@ -411,7 +418,7 @@ test('bulk Clone is unavailable whenever the selection includes a remote channel
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
   let revision = 40;
-  const channels = Array.from({ length: 36 }, (_, index) => channelFixture(index + 1));
+  const channels = Array.from({ length: 60 }, (_, index) => channelFixture(index + 1));
   let moveRequest = null;
   let delayMoveResponse = null;
 
@@ -477,7 +484,9 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   const restrictedAliasCell = catalog.locator('tr[data-id="channel-01"] td[data-column="alias-list"]');
   await expect(restrictedAliasCell).toHaveText('Aliases 2');
   await expect(restrictedAliasCell.locator('a')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Grouped', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const startupOrder = page.getByRole('button', { name: 'Startup order', exact: true });
+  await expect(startupOrder).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Grouped', exact: true })).toHaveCount(0);
   await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(1);
   await expect(catalog.locator('.table-row-group-label')).toHaveText(['P25 Trunked']);
 
@@ -485,11 +494,12 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await expect(page.getByRole('button', { name: 'Startup order', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
   await expect(catalog.locator('.table-row-group-disclosure')).toHaveCount(0);
-  await expect(catalog.locator('tbody tr[data-id]')).toHaveCount(8);
+  await expect(catalog.locator('tbody tr[data-id]')).toHaveCount(20);
   await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-01');
-  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-08');
+  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-20');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-09');
+  await expect(catalog.locator('tbody tr[data-id]').first()).toHaveAttribute('data-id', 'channel-21');
+  await expect(catalog.locator('tbody tr[data-id]').last()).toHaveAttribute('data-id', 'channel-40');
   await page.getByRole('button', { name: 'Previous', exact: true }).click();
 
   const search = page.getByLabel('Search channels, systems, protocols, frequencies, or alias lists');

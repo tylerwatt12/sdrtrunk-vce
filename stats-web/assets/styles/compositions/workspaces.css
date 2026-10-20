@@ -870,6 +870,46 @@
   box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
+/* Browse controls sit directly on the page beside a calm catalog. */
+.ui-catalog-toolbar-flat {
+  gap: var(--space-2);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ui-catalog-toolbar-flat > .ui-search {
+  flex: 1 1 var(--catalog-search-basis);
+  width: auto;
+  min-width: var(--catalog-search-min-width);
+  max-width: var(--catalog-search-width);
+}
+
+.ui-catalog-toolbar-flat > .ui-select-frame {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .ui-catalog-toolbar-flat > .ui-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .ui-catalog-toolbar-flat > .ui-select-frame {
+    flex: 1 1 var(--catalog-filter-basis);
+    width: 0;
+    min-width: 0;
+  }
+
+  .ui-catalog-toolbar-flat > .ui-select-frame > .ui-select {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 /* Opt-in selection actions that remain available while a long catalog scrolls. */
 .ui-selection-bar {
   position: sticky;

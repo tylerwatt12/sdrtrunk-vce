@@ -7,12 +7,12 @@
 @layer reset, tokens, components, compositions, features, utilities;
 
 @import url("./styles/base.css?v=2") layer(reset);
-@import url("./styles/tokens.css?v=41") layer(tokens);
+@import url("./styles/tokens.css?v=42") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=6") layer(components);
 @import url("./styles/components/controls.css?v=41") layer(components);
 @import url("./styles/components/audio-controls.css?v=11") layer(components);
-@import url("./styles/compositions/workspaces.css?v=32") layer(compositions);
-@import url("./styles/compositions/tables.css?v=17") layer(compositions);
+@import url("./styles/compositions/workspaces.css?v=33") layer(compositions);
+@import url("./styles/compositions/tables.css?v=18") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=21") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=20") layer(compositions);
@@ -21,7 +21,7 @@
 @import url("./styles/compositions/settings.css?v=13") layer(compositions);
 @import url("./styles/features/access-landing.css?v=2") layer(features);
 @import url("./styles/features/about.css?v=2") layer(features);
-@import url("./styles/features/channels.css?v=23") layer(features);
+@import url("./styles/features/channels.css?v=24") layer(features);
 @import url("./styles/features/entity-details.css?v=12") layer(features);
 @import url("./styles/features/live.css?v=23") layer(features);
 @import url("./styles/features/radio-directory.css?v=8") layer(features);

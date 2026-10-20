@@ -5,7 +5,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js?v=4';
-import * as tableDefaults from './core/table-defaults.js?v=26';
+import * as tableDefaults from './core/table-defaults.js?v=27';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -23861,7 +23861,7 @@ function channelViewLabel(row, context = '') {
 }
 
 function channelInlineNavigation(row, nameLinksToDetails = false) {
-  const links = node('span', 'channel-row-links ui-muted ui-label');
+  const links = node('span', 'channel-row-links ui-catalog-secondary-links ui-muted ui-label');
   if (!nameLinksToDetails) {
     const details = anchor('Details',
       href('channel', { configuration_id: row.configuration_id }), 'ui-link-text');
@@ -23969,13 +23969,13 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       const summary = node('div', 'channel-name-summary');
       let name;
       if (row.editable !== false) {
-        const edit = node('button', 'link-button ui-row-action ui-text-truncate channel-edit-name', row.name || 'Unnamed channel');
+        const edit = node('button', 'link-button ui-row-action ui-text-truncate ui-catalog-primary channel-edit-name', row.name || 'Unnamed channel');
         edit.type = 'button';
         edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
         name = edit;
       } else {
         name = anchor(row.name || 'Unnamed channel',
-          href('channel', { configuration_id: row.configuration_id }), 'channel-name-link ui-link-text ui-text-truncate');
+          href('channel', { configuration_id: row.configuration_id }), 'channel-name-link ui-link-text ui-text-truncate ui-catalog-primary');
       }
       name.dataset.uiHint = row.name || 'Unnamed channel';
       summary.append(channelOriginName(name, row, true));
@@ -23998,13 +23998,12 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       actions.append(summary);
       return actions;
     }, sortValue: (row) => row.name || '' },
-    { id: 'frequency', label: 'Frequency', fullLabel: 'Frequency (MHz)', render: channelAdminFrequency,
+    { id: 'frequency', label: 'Frequency', fullLabel: 'Frequency', render: channelAdminFrequency,
       className: 'channel-frequency-cell', sortValue: (row) => channelAdminDisplayFrequency(row).value || 0 },
-    { id: 'status', label: 'Status', render: (row) => uiPill(
+    { id: 'status', label: 'State', render: (row) => uiStatus(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-      row.processing_state === 'RUNNING' ? 'success' : 'neutral',
-      row.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') },
-    { id: 'auto-start', label: 'Order', fullLabel: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
+      row.processing_state === 'RUNNING' ? 'success' : 'neutral') },
+    { id: 'auto-start', label: 'Auto start', fullLabel: 'Auto start', className: 'numeric channel-startup-order', render: (row) => {
       const controls = node('div', 'channel-order-controls');
       const restoreControls = () => {
         earlier.disabled = false;
@@ -24020,11 +24019,11 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
         } finally {
           focusGuard.release();
         }
-      }, 'ui-button ui-icon-button');
+      }, 'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
       earlier.dataset.channelOrderDirection = 'EARLIER';
       earlier.title = row.auto_start_order == null ? 'Enable auto start at the end' : 'Start earlier';
       earlier.setAttribute('aria-label', earlier.title);
-      const order = node('span', 'channel-order-number', row.auto_start_order == null ? '—' : row.auto_start_order);
+      const order = node('span', 'channel-order-number', row.auto_start_order == null ? 'Off' : row.auto_start_order);
       const later = uiActionButton('', 'icon-arrow-down', async () => {
         if (row.auto_start_order == null) return;
         const focusGuard = asyncControlFocusGuard(later);
@@ -24036,7 +24035,7 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
         } finally {
           focusGuard.release();
         }
-      }, 'ui-button ui-icon-button');
+      }, 'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
       later.dataset.channelOrderDirection = 'LATER';
       later.disabled = row.auto_start_order == null;
       later.title = 'Start later; moving the last channel later disables auto start';
@@ -24044,8 +24043,11 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       controls.append(earlier, order, later);
       return controls;
     }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order },
-    { id: 'alias-list', label: 'Alias List', key: 'alias_list_name', render: (row) =>
-      aliasListLink(row.alias_list_name, row.alias_list_id) || '—',
+    { id: 'alias-list', label: 'Alias List', key: 'alias_list_name', render: (row) => {
+      const link = aliasListLink(row.alias_list_name, row.alias_list_id);
+      if (link instanceof Element) link.classList.add('ui-link-text', 'ui-catalog-alias');
+      return link || '—';
+    },
       sortValue: (row) => row.alias_list_name || '' },
     { id: 'actions', label: '', layoutLabel: 'Channel actions', essential: true,
       className: 'channel-actions-cell', render: (row) => channelInlineNavigation(row, row.editable === false) }
@@ -24479,12 +24481,17 @@ function renderNestedRadioDirectory(renderContext) {
 
 async function renderModernChannelCatalog(renderContext, revealId = null) {
   const loading = createAsyncSection('Channels', {
+    bare: true,
     loadingMessage: 'Loading channel configuration…',
     errorMessage: 'Channel configuration could not be loaded.'
   });
   loading.element.classList.add('channel-catalog-section');
-  if (!beginPage(renderContext, pageHeader('Channel Setup',
-    'Manage channels and their startup order.'), loading.element)) return;
+  const heading = pageHeader('Channel Setup', 'Manage channels and their startup order.');
+  heading.classList.add('channel-setup-page-header');
+  const headingActions = sectionActionHost();
+  headingActions.classList.add('channel-heading-actions');
+  heading.append(headingActions);
+  if (!beginPage(renderContext, heading, loading.element)) return;
   await loading.load(async () => {
     const [catalog, protocols, options] = await Promise.all([
       requestChannelConfigurationJson('/api/v1/admin/channels', { csrf: false }),
@@ -24495,33 +24502,32 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
     const state = { revision: Number(catalog.revision), catalog, visibleRows: [], pageRows: [], selectionAnchor: null };
-    const pageSize = 8;
+    const pageSize = 20;
     let pageIndex = 0;
     const wrapper = node('div', 'channel-admin-catalog ui-catalog editor-workspace');
     wrapper.dataset.uiDensity = 'comfortable';
     const summaryHost = node('div');
     summaryHost.append(channelSetupSummary(catalog));
-    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
+    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar ui-catalog-toolbar-flat');
+    const tools = node('div', 'channel-catalog-tools ui-action-row');
     const searchWrap = node('label', 'ui-search');
     searchWrap.append(iconGlyph('icon-search'));
     const search = node('input', 'ui-input');
     search.type = 'search';
-    search.placeholder = 'Search channels, systems, protocols, frequencies, or alias lists';
-    search.setAttribute('aria-label', search.placeholder);
+    search.placeholder = 'Find a channel…';
+    search.setAttribute('aria-label', 'Search channels, systems, protocols, frequencies, or alias lists');
     searchWrap.append(search);
     let activeStatus = 'all';
     let activeProtocol = 'all';
     let activeCatalogView = 'grouped';
     let draw = () => {};
-    const viewToggle = uiSegmentedControl([
-      { value: 'grouped', label: 'Grouped' },
-      { value: 'auto-start', label: 'Startup order' }
-    ], activeCatalogView, (value) => {
-      activeCatalogView = value;
+    const viewToggle = uiActionButton('Startup order', 'icon-scan-lists', () => {
+      activeCatalogView = activeCatalogView === 'grouped' ? 'auto-start' : 'grouped';
+      viewToggle.setAttribute('aria-pressed', String(activeCatalogView === 'auto-start'));
       pageIndex = 0;
       draw({ rebuild: true });
-    });
-    viewToggle.setAttribute('aria-label', 'Channel table view');
+    }, 'ui-button ui-button-secondary channel-order-mode');
+    viewToggle.setAttribute('aria-pressed', 'false');
     const statusFilter = uiSelect([
       { value: 'all', label: 'All statuses' },
       { value: 'running', label: 'Running' },
@@ -24549,7 +24555,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     statusHost.setAttribute('aria-live', 'polite');
     const newChannelButton = uiActionButton('New channel', 'icon-plus', () =>
       openChannelCreationChoice({ protocols, options }), 'ui-button ui-button-primary');
-    toolbar.append(newChannelButton);
+    headingActions.replaceChildren(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
         uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -24570,8 +24576,8 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             method: 'POST', body: { takeover: true }, page: false
           });
         }
-      }), 'ui-button ui-button-secondary') : null;
-    if (findSystemsButton) toolbar.append(findSystemsButton);
+      }), 'ui-button ui-button-quiet') : null;
+    if (findSystemsButton) tools.append(findSystemsButton);
     const setupGuide = createChannelSetupGuide({ ui: { node, openReadOnlyModal }, account: accessSession.username,
       dismissalScope: accessSession.guideDismissalScope,
       channels: () => state.catalog.channels,
@@ -24580,12 +24586,16 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       loadTuners: () => requestJson('/api/v1/admin/spectrum-search/catalog', { csrf: false }),
       newChannelButton, findSystemsButton });
     const exportLink = exportCsvLink('channels');
-    const refresh = uiActionButton('', 'icon-refresh', () => renderChannelSetup(), 'ui-button ui-icon-button');
+    exportLink.classList.add('ui-button-quiet', 'ui-icon-button-compact');
+    const refresh = uiActionButton('', 'icon-refresh', () => renderChannelSetup(),
+      'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
     refresh.setAttribute('aria-label', 'Refresh channels');
     refresh.title = 'Refresh channels';
-    toolbar.append(searchWrap, viewToggle, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
-      uiSelectFrame(protocolFilter, 'channel-status-filter-frame'),
-      exportLink, refresh, statusHost);
+    toolbar.append(searchWrap, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
+      uiSelectFrame(protocolFilter, 'channel-status-filter-frame'), viewToggle);
+    tools.append(exportLink, refresh);
+    const summaryRow = node('div', 'channel-summary-row');
+    summaryRow.append(summaryHost, tools);
 
     const tableHost = node('div', 'channel-catalog-table-host');
     const tableController = {};
@@ -24782,7 +24792,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
         channelAdminColumns(selected, state, updateSelection, renderSelectionHeader,
           moveAutoStart),
         'No channels match this view', {
-          type: 'channel-catalog-admin-v2',
+          type: 'channel-catalog-admin-v3',
           sortable: false, controller: tableController,
           ...(activeCatalogView === 'grouped' ? {
             rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
@@ -24793,9 +24803,10 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             selected.has(row.configuration_id) ? 'selected' : '',
             highlightedOrderRows.has(row.configuration_id) ? 'channel-order-row-moved' : ''
           ].filter(Boolean).join(' '),
-          tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
+          tableClass: 'channel-catalog-table ui-data-table-quiet ui-data-table-calm ui-catalog-table',
+          wrapperClass: 'channel-catalog-table-wrap ui-catalog-table-wrap',
           mobileCards: true,
-          layoutMenuHost: toolbar,
+          layoutMenuHost: tools,
           wrapper: channelTable || undefined
         });
       if (!channelTable.parentElement) tableHost.append(channelTable);
@@ -24819,7 +24830,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     };
     search.addEventListener('input', () => { pageIndex = 0; draw(); });
     draw({ rebuild: true, revealId: revealId || route.get('channel') });
-    wrapper.append(toolbar, summaryHost, selectedBar, tableHost, navigation);
+    wrapper.append(toolbar, summaryRow, statusHost, selectedBar, tableHost, navigation);
     updateSelection();
     pageTimeout(() => { void setupGuide.refresh(); }, 0);
 
@@ -25617,7 +25628,7 @@ async function openChannelCreationChoice(prefetched = null) {
   }
   modal = openReadOnlyModal('How would you like to create a channel?', body, {
     id: 'create-channel-choice', className: 'modal-size-small',
-    returnFocusSelector: '.channel-admin-toolbar .ui-button-primary'
+    returnFocusSelector: '.channel-heading-actions .ui-button-primary'
   });
   if (!modal || !await modal.ready) return;
   modal.focus(body.querySelector('button:not([disabled])'));
@@ -25813,7 +25824,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
     returnFocusSelector: editing ?
       `tr[data-id="${CSS.escape(configurationId)}"] .channel-edit-name` :
-      '.channel-admin-toolbar .ui-button-primary',
+      '.channel-heading-actions .ui-button-primary',
     cleanup: () => {
       squelchTuner?.close(); removeSectionLayout?.(); enrichmentAccountController.abort();
     }

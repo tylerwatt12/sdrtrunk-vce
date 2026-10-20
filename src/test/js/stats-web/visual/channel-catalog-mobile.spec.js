@@ -86,13 +86,21 @@ async function expectHeaderContentsCentered(table) {
 }
 
 for (const theme of ['light', 'dark']) {
-  for (const width of [320, 390, 1280]) {
+  for (const width of [320, 390, 1024, 1280]) {
     test(`Channel Setup catalog centers headers and fits frequencies and startup controls ${theme} ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });
       const fixture = await openChannelCatalog(page, theme);
       const table = page.locator('.channel-catalog-table');
       const row = table.locator('tr[data-id="mobile-simulcast"]');
       await expect(row).toBeVisible();
+      if (width <= 680) {
+        const [checkboxBox, nameBox] = await Promise.all([
+          row.getByRole('checkbox', { name: 'Select Countywide Public Safety and Regional Interoperability Communications System', exact: true }).boundingBox(),
+          row.locator('.channel-edit-name').boundingBox()
+        ]);
+        expect(nameBox.x - checkboxBox.x - checkboxBox.width,
+          'The selection checkbox has space before the channel name').toBeGreaterThanOrEqual(6);
+      }
       await expectHeaderContentsCentered(table);
       const frequencies = row.locator('td[data-column="frequency"]');
       await expect(frequencies).toContainText('772.78125');
@@ -139,14 +147,25 @@ for (const theme of ['light', 'dark']) {
       for (const button of [earlier, later]) {
         await expectFullyContained(orderCell, button);
         await expectPointerReachable(button);
-        await expect(button).toHaveCSS('height', '40px');
+        await expect(button).toHaveCSS('height', '32px');
+        await expect(button).toHaveClass(/ui-button-quiet/);
+        await expect(button).toHaveClass(/ui-icon-button-compact/);
       }
       await earlier.click();
       await expect(row.locator('.channel-order-number')).toHaveText('17');
       await later.click();
       await expect(row.locator('.channel-order-number')).toHaveText('18');
+      const orderLines = await row.locator('.channel-order-number').evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+      });
+      expect(orderLines, 'Two-digit startup orders stay on one line').toBe(1);
       expect(fixture.moves).toEqual(['EARLIER', 'LATER']);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists', exact: true }).focus();
+      await page.mouse.move(0, 0);
+      await expect(row).not.toHaveClass(/channel-order-row-moved/);
       await table.screenshot({ path: test.info().outputPath(`channel-catalog-${theme}-${width}.png`) });
     });
   }

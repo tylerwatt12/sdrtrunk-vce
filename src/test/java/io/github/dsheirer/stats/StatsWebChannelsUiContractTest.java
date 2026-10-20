@@ -38,11 +38,15 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("exportCsvLink('channels')"));
         assertTrue(catalog.contains("channelSetupSummary(catalog)"));
         assertTrue(catalog.contains("tableController.reconcileRows"));
-        assertTrue(catalog.contains("layoutMenuHost: toolbar"));
-        assertTrue(catalog.contains("type: 'channel-catalog-admin-v2'"));
+        assertTrue(catalog.contains("layoutMenuHost: tools"));
+        assertTrue(catalog.contains("type: 'channel-catalog-admin-v3'"));
+        assertTrue(catalog.contains("const pageSize = 20"));
+        assertTrue(catalog.contains("bare: true"));
+        assertTrue(catalog.contains("headingActions.replaceChildren(newChannelButton)"));
         assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
         assertFalse(columns.contains("if (editable)"));
-        assertTrue(columns.contains("fullLabel: 'Startup order'"));
+        assertTrue(columns.contains("id: 'status', label: 'State', render: (row) => uiStatus("));
+        assertTrue(columns.contains("fullLabel: 'Auto start'"));
         assertTrue(columns.contains("row.alias_list_name"));
         assertTrue(columns.contains("row.editable !== false"));
         assertTrue(columns.contains("channelInlineNavigation(row"));
@@ -77,9 +81,10 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("label: 'All statuses'"));
         assertTrue(catalog.contains("statusFilter.setAttribute('aria-label', 'Filter channels by status')"));
         assertTrue(catalog.contains("rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'"));
-        assertTrue(catalog.contains("{ value: 'grouped', label: 'Grouped' }"));
-        assertTrue(catalog.contains("{ value: 'auto-start', label: 'Startup order' }"));
-        assertTrue(catalog.contains("viewToggle.setAttribute('aria-label', 'Channel table view')"));
+        assertTrue(catalog.contains("const viewToggle = uiActionButton('Startup order'"));
+        assertTrue(catalog.contains("activeCatalogView = activeCatalogView === 'grouped' ? 'auto-start' : 'grouped'"));
+        assertTrue(catalog.contains("viewToggle.setAttribute('aria-pressed', 'false')"));
+        assertTrue(catalog.contains("viewToggle.setAttribute('aria-pressed', String(activeCatalogView === 'auto-start'))"));
         assertTrue(catalog.contains("activeCatalogView === 'grouped' ?"));
         assertTrue(catalog.contains("activeCatalogView === 'auto-start' ? channelAutoStartOrder : " +
             "channelProtocolOrder"));
@@ -171,15 +176,16 @@ class StatsWebChannelsUiContractTest
         assertTrue(modal.contains("Save & restart"));
         assertFalse(modal.contains("action: 'STOP'"));
         assertTrue(css.contains(".ui-toggle input:checked + .ui-toggle-track"));
-        assertTrue(css.contains(".channel-catalog-table tbody tr.selected"));
+        assertTrue(css.contains(".ui-data-table.ui-catalog-table tbody tr.selected"));
         assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".channel-catalog-table-host {\n  width: 100%;\n  min-width: 0;\n" +
             "  max-width: 100%;\n  overflow: visible;"));
-        assertTrue(css.contains(".channel-catalog-table-wrap {\n  width: 100%;\n  min-width: 0;\n" +
-            "  max-width: 100%;\n  overflow-x: auto;\n  overflow-y: visible;"));
+        assertTrue(css.contains(".ui-catalog-table-wrap {\n  background: var(--surface);\n" +
+            "  border: 1px solid var(--line);\n  border-radius: var(--catalog-panel-radius);"));
+        assertTrue(css.contains(".ui-catalog-table-wrap {\n    overflow: visible;"));
         assertFalse(css.contains("max-height: min(70dvh, 720px);"));
         assertTrue(css.contains("@media (max-width: 720px)"));
-        assertTrue(css.contains(".channel-name-actions .link-button"));
+        assertTrue(css.contains(".channel-edit-name,\n.channel-name-link"));
     }
 
     @Test

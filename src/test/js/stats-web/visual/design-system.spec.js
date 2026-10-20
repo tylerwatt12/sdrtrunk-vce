@@ -1394,6 +1394,9 @@ test('alias-export-dark-mobile', async ({ page }) => {
 test('channels-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=channels');
+  await expect(page.locator('.channel-catalog-table thead')).toContainText('State');
+  await expect(page.locator('.channel-catalog-table thead')).toContainText('Auto start');
+  await expect(page.locator('.channel-order-controls button').first()).toHaveCSS('height', '32px');
   const rows = page.locator('.channel-catalog-table tbody tr').filter({
     has: page.locator('.channel-name-actions')
   });
@@ -1430,6 +1433,7 @@ async function expectChannelMobileActions(page) {
     const details = row.getByRole('link', { name: 'Details', exact: true });
     const live = row.getByRole('link', { name: 'Live', exact: true });
     const startup = row.locator('.channel-startup-order');
+    await expect(startup).toHaveAttribute('data-label', 'Auto start');
     await expect(name).toBeVisible();
     await expect(row.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
     await expect(details).toBeVisible();
@@ -1453,6 +1457,8 @@ async function expectChannelMobileActions(page) {
   }
   const startupControls = page.locator('.channel-order-controls');
   await expect(startupControls.getByRole('button', { name: 'Start earlier', exact: true })).toBeVisible();
+  await expect(startupControls.getByRole('button', { name: 'Start earlier', exact: true }))
+    .toHaveCSS('height', '32px');
   await expect(startupControls.locator('.channel-order-number')).toHaveText('1');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
     page.viewportSize().width);

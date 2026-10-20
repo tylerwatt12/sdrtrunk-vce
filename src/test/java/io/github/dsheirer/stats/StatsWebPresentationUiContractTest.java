@@ -77,7 +77,8 @@ class StatsWebPresentationUiContractTest
             channelGroups.indexOf("host.replaceChildren(node('div', 'loading'"));
         assertTrue(channelFrequencies.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
-        assertTrue(channels.contains("tableClass: 'channel-catalog-table'"));
+        assertTrue(channels.contains("tableClass: 'channel-catalog-table ui-data-table-quiet ui-data-table-calm ui-catalog-table'"));
+        assertTrue(channels.contains("layoutMenuHost: tools"));
         assertTrue(channels.contains("controller: tableController"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));
         assertTrue(source.contains("{ ...options, layoutMenuHost: actions,"));

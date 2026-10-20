@@ -173,11 +173,14 @@ assert.match(channelColumns, /state\.selectionAnchor = id/);
 assert.doesNotMatch(channelColumns, /id: 'protocol'/,
   'The Channels table must show protocol as a group heading instead of a repeated column');
 const channelCatalog = functionSource('async function renderModernChannelCatalog(');
-assert.match(channelCatalog, /channel-catalog-admin-v2/);
+assert.match(channelCatalog, /channel-catalog-admin-v3/);
 assert.match(channelCatalog, /rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'/);
 assert.match(channelCatalog, /revealRowGroups: \(\) => Boolean\(search\.value\.trim\(\)\)/);
-assert.match(channelCatalog, /value: 'grouped', label: 'Grouped'/);
-assert.match(channelCatalog, /value: 'auto-start', label: 'Startup order'/);
+assert.match(channelCatalog, /channel-order-mode/);
+assert.match(channelCatalog, /uiActionButton\('Startup order'/);
+assert.match(channelCatalog, /aria-pressed/);
+assert.doesNotMatch(channelCatalog, /label: 'Grouped'/,
+  'Grouped browsing is the default and should not require a competing toolbar segment');
 assert.match(channelCatalog, /activeCatalogView === 'grouped'/,
   'Only the grouped view should supply protocol row groups');
 assert.match(channelCatalog, /activeCatalogView === 'auto-start' \? channelAutoStartOrder : channelProtocolOrder/);

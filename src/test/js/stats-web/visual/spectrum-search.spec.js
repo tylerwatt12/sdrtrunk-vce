@@ -361,7 +361,7 @@ async function install(page, state = {}) {
   });
   await page.goto('/app.html?view=channel-setup');
   if (state.adminTuners === false || state.adminChannels === false) {
-    await expect(page.getByRole('heading', { name: state.adminChannels === false ? 'Access denied' : 'Channels', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: state.adminChannels === false ? 'Access denied' : 'Channel Setup', exact: true })).toBeVisible();
     return state;
   }
   await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toBeEnabled();

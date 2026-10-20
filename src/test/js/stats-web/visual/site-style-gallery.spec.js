@@ -56,6 +56,22 @@ for (const view of galleryViews) {
         await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Tuner allocation');
       }
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
+      if (view === 'channels') {
+        await expect(example.locator('.channel-admin-toolbar')).toHaveClass(/ui-catalog-toolbar-flat/);
+        await expect(example.locator('.channel-setup-page-header')
+          .getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
+        await expect(example.locator('.channel-catalog-table')).toHaveClass(/ui-catalog-table/);
+        await expect(example.locator('thead')).toContainText('State');
+        await expect(example.locator('thead')).toContainText('Auto start');
+        const startup = example.locator('td.channel-startup-order').first();
+        await expect(startup).toHaveAttribute('data-label', 'Auto start');
+        const arrows = startup.locator('button');
+        await expect(arrows).toHaveCount(2);
+        for (const arrow of await arrows.all()) {
+          await expect(arrow).toHaveClass(/ui-button-quiet/);
+          await expect(arrow).toHaveCSS('height', '32px');
+        }
+      }
       await expectNoHorizontalOverflow(page);
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
         if (view === 'scanner' && presentation.viewport.width <= 680) {
