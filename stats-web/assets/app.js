@@ -7765,9 +7765,9 @@ async function renderAliases() {
 
   const scanListMode = Boolean(requestedScanListId);
   const subtitle = scanListScope ?
-    `${number(scanListScope.alias_count || 0)} members across all alias lists · administrator editing enabled` :
-    (scanListMode ? 'Scan list unavailable · administrator editing enabled' :
-      `${number(lists.length)} alias lists · administrator editing enabled`);
+    `${number(scanListScope.alias_count || 0)} members across all alias lists` :
+    (scanListMode ? 'Scan list unavailable' :
+      `${number(lists.length)} alias lists`);
   const workspace = retainedWorkspace?.element || node('div', scanListMode ?
     'alias-editor-workspace scan-list-members-workspace data-workspace' :
     'alias-editor-workspace editor-workspace');
