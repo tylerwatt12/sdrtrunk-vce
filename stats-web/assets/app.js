@@ -12386,11 +12386,14 @@ function dashboardIdentitySortValue(row) {
 }
 
 function dashboardIdentitySystem(row) {
+  if (dashboardChannelKind(row) === 'CONVENTIONAL') {
+    return channelLink({ entity_ref: { kind: 'channel', key: row.configuration_id } },
+      row.name || row.source_label || radioSystemPrimaryName(row) || '—');
+  }
   const scopedSystem = row.radio_system_key ? radioSystemDisplayName(row) : '';
   const label = radioSystemPrimaryName(row) || row.name || scopedSystem || row.source_label ||
     row.radio_system_key || '—';
-  const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
-  return target ? anchor(label, target) : node('span', '', label);
+  return radioSystemLink({ kind: 'radio_system', key: row.radio_system_key }, label);
 }
 
 const dashboardCallSourceColumns = [
