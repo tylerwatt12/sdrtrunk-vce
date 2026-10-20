@@ -24576,8 +24576,8 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             method: 'POST', body: { takeover: true }, page: false
           });
         }
-      }), 'ui-button ui-button-quiet') : null;
-    if (findSystemsButton) tools.append(findSystemsButton);
+      }), 'ui-button ui-button-primary') : null;
+    if (findSystemsButton) headingActions.append(findSystemsButton);
     const setupGuide = createChannelSetupGuide({ ui: { node, openReadOnlyModal }, account: accessSession.username,
       dismissalScope: accessSession.guideDismissalScope,
       channels: () => state.catalog.channels,

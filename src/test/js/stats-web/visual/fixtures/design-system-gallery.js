@@ -576,6 +576,7 @@ if (view === 'radioreference-connect') {
 
 if (view === 'setup-guide') {
   const example = document.querySelector('.visual-channels-example');
+  example.classList.add('visual-setup-guide-example');
   example.querySelectorAll('.ui-metric strong').forEach(value => { value.textContent = '0'; });
   example.querySelector('.channel-selection-bar').remove();
   const rows = example.querySelector('tbody');
@@ -592,22 +593,8 @@ if (view === 'setup-guide') {
     if (text !== null) element.textContent = String(text);
     return element;
   };
-  const action = (name, icon, primary = false) => {
-    const button = node('button', `ui-button ui-button-${primary ? 'primary' : 'secondary'}`);
-    button.type = 'button';
-    const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-    glyph.setAttribute('aria-hidden', 'true');
-    use.setAttribute('href', `#visual-icon-${icon}`);
-    glyph.append(use);
-    button.append(glyph, document.createTextNode(name));
-    return button;
-  };
-  const toolbar = example.querySelector('.channel-admin-toolbar');
-  const newChannel = action('New channel', 'plus', true);
-  const findSystems = action('Find Trunked Systems', 'scan-search');
-  toolbar.querySelector('.ui-button-primary').replaceWith(newChannel);
-  newChannel.after(findSystems);
+  const headingActions = example.querySelector('.channel-heading-actions');
+  const [newChannel, findSystems] = headingActions.querySelectorAll('button');
   const { openReadOnlyModal } = await createGalleryModalFoundation();
   const introduction = openSetupGuide({ node, openReadOnlyModal }, {
     title: 'Add your first channel', choices: [

@@ -56,10 +56,22 @@ for (const view of galleryViews) {
         await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Tuner allocation');
       }
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
+      if (view === 'setup-guide') {
+        const dismiss = await page.getByRole('button', { name: 'Dismiss setup guide', exact: true }).boundingBox();
+        for (const action of await page.locator('.channel-heading-actions > button').all()) {
+          const bounds = await action.boundingBox();
+          expect(dismiss.x < bounds.x + bounds.width && dismiss.x + dismiss.width > bounds.x &&
+            dismiss.y < bounds.y + bounds.height && dismiss.y + dismiss.height > bounds.y).toBe(false);
+        }
+      }
       if (view === 'channels') {
         await expect(example.locator('.channel-admin-toolbar')).toHaveClass(/ui-catalog-toolbar-flat/);
-        await expect(example.locator('.channel-setup-page-header')
-          .getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
+        const headingActions = example.locator('.channel-heading-actions');
+        await expect(headingActions.locator(':scope > button')).toHaveText(['New channel', 'Find Trunked Systems']);
+        for (const action of await headingActions.locator(':scope > button').all()) {
+          await expect(action).toHaveClass(/\bui-button-primary\b/);
+          await expect(action).toHaveCSS('height', '40px');
+        }
         await expect(example.locator('.channel-catalog-table')).toHaveClass(/ui-catalog-table/);
         await expect(example.locator('thead')).toContainText('State');
         await expect(example.locator('thead')).toContainText('Auto start');

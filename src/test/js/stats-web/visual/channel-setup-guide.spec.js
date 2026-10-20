@@ -5,8 +5,8 @@ const eligibleTuner = { ...operatorTuner({ spectrum_target_id: 'target-a', spect
   eligible: true, source_type: 'receiver', channel_count: 0, center_frequency_hz: 851012500,
   usable_bandwidth_hz: 9000000, minimum_frequency_hz: 24000000, maximum_frequency_hz: 1800000000 };
 const guide = page => page.getByRole('dialog', { name: 'Add your first channel', exact: true });
-const toolbarAction = (page, name) => page.locator(name === 'New channel' ?
-  '.channel-setup-page-header' : '.channel-catalog-tools').getByRole('button', { name, exact: true });
+const toolbarAction = (page, name) => page.locator('.channel-heading-actions')
+  .getByRole('button', { name, exact: true });
 const actionNames = ['Find Trunked Systems', 'New channel'];
 const dismissalKey = 'sdrtrunk-vce-channel-setup-guide-dismissed:v2:fixture-admin:account-1-100';
 
@@ -37,6 +37,10 @@ async function expectSpotlightsFollowToolbar(page) {
     const overlap = panel.x < bounds.x + bounds.width && panel.x + panel.width > bounds.x &&
       panel.y < bounds.y + bounds.height && panel.y + panel.height > bounds.y;
     expect(overlap).toBe(false);
+    const dismiss = await guide(page).getByRole('button', { name: 'Dismiss setup guide', exact: true }).boundingBox();
+    expect(dismiss.x < bounds.x + bounds.width && dismiss.x + dismiss.width > bounds.x &&
+      dismiss.y < bounds.y + bounds.height && dismiss.y + dismiss.height > bounds.y,
+    `Dismiss control does not cover ${name}`).toBe(false);
   }
 }
 
@@ -91,6 +95,43 @@ async function openChannels(page, options = {}) {
   await page.goto('/app.html?view=channel-setup');
   await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   return { fixture, state };
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390, 320]) {
+    test(`Channel Setup creation actions are adjacent equals at ${width}px ${theme}`, async ({ page }) => {
+      const viewport = { width, height: 900 };
+      await page.setViewportSize(viewport);
+      const { fixture } = await openChannels(page, { theme, channels: [{ configuration_id: 'saved',
+        name: 'County Simulcast', protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1',
+        processing_state: 'STOPPED', frequencies_hz: [851012500], editable: true }] });
+      const actions = page.locator('.channel-heading-actions');
+      await expect(actions.locator(':scope > button')).toHaveText(['New channel', 'Find Trunked Systems']);
+      const styles = [];
+      for (const name of ['New channel', 'Find Trunked Systems']) {
+        const action = actions.getByRole('button', { name, exact: true });
+        await expect(action).toHaveClass(/\bui-button-primary\b/);
+        await expectWithinViewport(action, viewport);
+        styles.push(await action.evaluate(element => {
+          const style = getComputedStyle(element);
+          return { height: element.getBoundingClientRect().height, background: style.backgroundColor,
+            color: style.color, fontWeight: style.fontWeight, borderRadius: style.borderRadius };
+        }));
+      }
+      expect(styles[0]).toEqual(styles[1]);
+      expect(styles[0].height).toBe(40);
+      if (width >= 390) {
+        const buttons = await actions.locator(':scope > button').all();
+        const [first, second] = await Promise.all(buttons.map(button => button.boundingBox()));
+        expect(first.y).toBeCloseTo(second.y, 0);
+        expect(second.x).toBeGreaterThan(first.x + first.width);
+      }
+      await expect(page.locator('.channel-catalog-tools').getByRole('button',
+        { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      expect(fixture.pageErrors).toEqual([]);
+    });
+  }
 }
 
 for (const theme of ['light', 'dark']) {
@@ -306,7 +347,9 @@ for (const [name, options] of [
   test(`guide is absent with ${name}`, async ({ page }) => {
     const { fixture, state } = await openChannels(page, options);
     await expect(page.getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
-    if (!options.noTunerAccess) await expect.poll(() => state.catalogReads).toBeGreaterThan(0);
+    if (options.noTunerAccess) {
+      await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
+    } else await expect.poll(() => state.catalogReads).toBeGreaterThan(0);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await expect(guide(page)).toHaveCount(0);
     expect(fixture.pageErrors).toEqual([]);

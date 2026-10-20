@@ -378,6 +378,11 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   padding: 28px 0 48px;
 }
 
+/* The application header leaves this clearance above the real setup page. */
+.visual-feature-example.visual-setup-guide-example {
+  padding-top: calc(var(--control-height-comfortable) + var(--space-5));
+}
+
 .visual-table-exact-time {
   display: inline-block;
   white-space: nowrap;
