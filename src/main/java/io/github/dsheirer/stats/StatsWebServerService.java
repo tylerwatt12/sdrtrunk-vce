@@ -1334,15 +1334,14 @@ public class StatsWebServerService implements AutoCloseable
         return switch(name)
         {
             case "channel_activity" -> {
-                if(parameters.size() > 3) throw new StatsApiException(400, "Channel activity options are invalid");
+                if(parameters.size() > 2) throw new StatsApiException(400, "Channel activity options are invalid");
                 parameters.fields().forEachRemaining(field -> {
                     if("subscription_id".equals(field.getKey()))
                         UUID.fromString(requiredMultiplexText(parameters, "subscription_id"));
-                    else if(!Set.of("delta", "markers").contains(field.getKey()) || !field.getValue().isBoolean())
+                    else if(!"markers".equals(field.getKey()) || !field.getValue().isBoolean())
                         throw new StatsApiException(400, "Channel activity options are invalid");
                 });
-                yield new ActivitySubscription(parameters.path("delta").asBoolean(false),
-                    parameters.path("markers").asBoolean(false), parameters.has("subscription_id") ?
+                yield new ActivitySubscription(parameters.path("markers").asBoolean(false), parameters.has("subscription_id") ?
                     requiredMultiplexText(parameters, "subscription_id") : null);
             }
             case "decode_events" -> decodeEventRequest(request, false);
@@ -1400,7 +1399,7 @@ public class StatsWebServerService implements AutoCloseable
     sealed interface LiveSubscription permits ActivitySubscription, SavedActivitySubscription,
         DecodeEventRequest, DecodeMessageRequest, ChannelDiagnosticRequest, TunerDiagnosticRequest,
         FrequencyListenRequest { }
-    private record ActivitySubscription(boolean delta, boolean markers, String subscriptionId)
+    private record ActivitySubscription(boolean markers, String subscriptionId)
         implements LiveSubscription { }
     private record SavedActivitySubscription(String subscriptionId) implements LiveSubscription { }
 
@@ -2658,7 +2657,7 @@ public class StatsWebServerService implements AutoCloseable
                     ActivitySubscription activity = (ActivitySubscription)parameters;
                     mChannelActivityMarkers = activity.markers();
                     mChannelActivity = requiredSubscription(mServices.mLiveService.subscribeChannelActivity(
-                        activity.delta(), mChannelActivityMarkers), topic);
+                        mChannelActivityMarkers), topic);
                     long dropBaseline = mChannelActivity.droppedCount();
                     StatsLiveService.SnapshotWire snapshot = mServices.mLiveService.snapshotWire(mChannelActivityMarkers);
                     var recovery = new RecoveryCapture<>(dropBaseline, snapshot);
@@ -2859,17 +2858,23 @@ public class StatsWebServerService implements AutoCloseable
                     {
                         long revision = ((Number)data.get("revision")).longValue();
                         if(revision <= mChannelActivityBaselineRevision) continue;
-                        String tableId = String.valueOf(data.get("table_id"));
+                        @SuppressWarnings("unchecked")
+                        List<Map<String,Object>> changes = (List<Map<String,Object>>)data.get("changes");
                         StatsLiveEventHub.LiveEvent selected = event;
-                        if(event.baseline() != null && mChannelActivityTableBaselines.add(tableId))
+                        if(event.baseline() != null && changes.stream().anyMatch(change ->
+                            !"remove".equals(change.get("operation")) &&
+                                !mChannelActivityTableBaselines.contains(String.valueOf(change.get("table_id")))))
                         {
                             selected = event.baseline();
-                            if(mChannelActivityTableBaselines.size() > StatsLiveService.MAXIMUM_LIVE_TABLES)
-                            {
-                                mChannelActivityTableBaselines.remove(mChannelActivityTableBaselines.iterator().next());
-                            }
                         }
-                        if("remove".equals(data.get("operation"))) mChannelActivityTableBaselines.remove(tableId);
+                        for(Map<String,Object> change: changes)
+                        {
+                            String tableId = String.valueOf(change.get("table_id"));
+                            if("remove".equals(change.get("operation"))) mChannelActivityTableBaselines.remove(tableId);
+                            else mChannelActivityTableBaselines.add(tableId);
+                        }
+                        while(mChannelActivityTableBaselines.size() > StatsLiveService.MAXIMUM_LIVE_TABLES)
+                            mChannelActivityTableBaselines.remove(mChannelActivityTableBaselines.iterator().next());
                         output.offerEvent(topic, selected.frame(topic).bytes(output.gzipEnabled()));
                         mChannelActivityBaselineRevision = revision;
                     }

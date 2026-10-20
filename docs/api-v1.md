@@ -311,7 +311,8 @@ Subscription names are `channel_activity`, `decode_events`, `decode_messages`, `
 `tuner_diagnostics`, and `frequency_audio`. Their numeric topic IDs are respectively 1 through 6; topic 0 is
 transport control. Parameters use `snake_case`. Channel-owned subscriptions use `configuration_id`.
 `decode_messages` also requires positive `frequency_hz`; `timeslot` is supported by decoder events and channel
-diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object.
+diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object, an optional
+`subscription_id`, and `markers: true` for compact tuner-marker rows.
 
 The framed envelope is version 2. Metadata topics use bounded FIFOs; dense diagnostic topics use replaceable
 latest-value slots. Slow clients can lose stale diagnostic frames or be disconnected, but never apply backpressure to
@@ -322,6 +323,27 @@ For stateful `channel_activity`, loss in the receiver-to-model ingress, subscrib
 `live_gap` followed by a fresh authoritative `snapshot`. Active rows in that first post-gap snapshot restore current
 presentation conservatively without proving uninterrupted continuity or replaying a key-up: a dropped burst boundary
 can make an apparently active transmission uncertain.
+
+Channel activity is published as one shared batch at most every 200 ms. An initial `snapshot` contains `revision`
+and `tables`; its revision is a published batch boundary. Subsequent `activity_batch` events contain:
+
+```json
+{"base_revision":10,"revision":14,"changes":[{"operation":"upsert","table_id":"channel-id","replace":false,"rows":[{"key":"row-key"}]}]}
+```
+
+Each batch has one global revision pair. Apply it only when `base_revision` matches the current snapshot or batch
+revision and `revision` is greater. Validate every change before committing the batch, then advance the revision
+once. Revisions may skip values when receiver updates are coalesced. On a mismatch, obtain an authoritative
+snapshot; do not apply a partial batch.
+
+An `upsert` change has `table_id` and `replace`. With `replace: false`, optional `rows` fully replace changed rows
+by `key`; optional `removed_row_keys` remove rows, and optional `row_order` specifies the complete resulting order.
+Optional `table` replaces table metadata and never contains `rows`. With `replace: true`, `table` contains full
+metadata, `rows` contains the complete row baseline, and `row_order` lists every row key. This establishes first
+coverage and replaces a truncated baseline. A `remove` change has `table_id` and `replace: false` and removes the
+table. The same contract serves full Live tables and compact tuner markers. `activity_resync` supplies an
+authoritative `snapshot` at a published boundary after bounded loss. Old single-table activity event types and
+the `delta` subscription parameter are not supported.
 
 Channel-activity snapshots include `configuration_id`, protocol-neutral system/site/channel display labels, explicit
 navigation references, protocol facts, a proven `radio_system_key` when available, and structured P25 WACN, System,

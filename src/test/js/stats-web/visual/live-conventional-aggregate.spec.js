@@ -56,9 +56,9 @@ async function openLive(page, theme) {
 test('Live channels resume on visibility without a focus event', async ({ page }, testInfo) => {
   const app = await openLive(page, 'light');
   const signal = page.locator('.channels-live-table tr[data-id="source-0"] [data-column="signal"]');
-  const update = (revision, signal_dbfs) => app.send(1, 'activity_delta', {
-    table_id: 'conventional', operation: 'upsert', base_revision: revision - 1, revision,
-    rows: [{ ...snapshot.tables[0].rows[0], signal_dbfs }]
+  const update = (revision, signal_dbfs) => app.send(1, 'activity_batch', {
+    base_revision: revision - 1, revision, changes: [{ table_id: 'conventional', operation: 'upsert',
+      replace: false, rows: [{ ...snapshot.tables[0].rows[0], signal_dbfs }] }]
   });
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await update(2, -40);
@@ -133,9 +133,10 @@ test('High-rate Live messages retain ordering, capture, row focus and bounded pr
         window.fixtureSendLiveFrame(3, 'decode_message', { ...origin, message_id: String(2500 + index),
           timestamp_ms: 2501 + index, valid: true, timeslot: 1, filter_key: 'source/0/messages',
           text: `sample ${String(2500 + index).padStart(6, '0')}` });
-        window.fixtureSendLiveFrame(1, 'activity_delta', { table_id: 'conventional', operation: 'upsert',
-          base_revision: index + 1, revision: index + 2,
-          rows: [{ ...row, signal_dbfs: -70 + index % 10 }] });
+        if (delivered % 100 === 0) window.fixtureSendLiveFrame(1, 'activity_batch', {
+          base_revision: delivered / 100, revision: delivered / 100 + 1,
+          changes: [{ table_id: 'conventional', operation: 'upsert', replace: false,
+            rows: [{ ...row, signal_dbfs: -70 + index % 10 }] }] });
       }
       if (delivered === 1000) {
         clearInterval(timer);
@@ -153,7 +154,7 @@ test('High-rate Live messages retain ordering, capture, row focus and bounded pr
   const after = (await session.send('Performance.getMetrics')).metrics;
   const metric = (values, name) => values.find(value => value.name === name)?.value || 0;
   const result = await page.evaluate(() => ({ ...window.fixtureLivePaints }));
-  Object.assign(result, { variant: baseline ? 'baseline' : 'fixed', messageFrames: 1000, activityFrames: 1000,
+  Object.assign(result, { variant: baseline ? 'baseline' : 'fixed', messageFrames: 1000, activityFrames: 10,
     taskCpuSeconds: metric(after, 'TaskDuration') - metric(before, 'TaskDuration'),
     scriptCpuSeconds: metric(after, 'ScriptDuration') - metric(before, 'ScriptDuration'),
     layoutCpuSeconds: metric(after, 'LayoutDuration') - metric(before, 'LayoutDuration') });

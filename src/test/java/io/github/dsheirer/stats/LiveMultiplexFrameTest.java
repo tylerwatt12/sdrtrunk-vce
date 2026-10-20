@@ -15,9 +15,9 @@ import org.junit.jupiter.api.Test;
 class LiveMultiplexFrameTest
 {
     @Test
-    void negotiatedGzipIsLosslessAndSharedWhileLegacyWireStaysUnchanged() throws Exception
+    void negotiatedGzipIsLosslessAndSharedWithPlainWire() throws Exception
     {
-        StatsLiveEventHub.LiveEvent event = new StatsLiveEventHub.LiveEvent("activity_delta",
+        StatsLiveEventHub.LiveEvent event = new StatsLiveEventHub.LiveEvent("activity_batch",
             Map.of("revision", 17, "alias", "Fire Dispatch ".repeat(1_000)));
         LiveMultiplexFrame first = event.frame(1);
         assertSame(first, event.frame(1), "common JSON must be encoded once, not per visitor");
@@ -39,7 +39,7 @@ class LiveMultiplexFrameTest
     @Test
     void smallFramesKeepPlainFallbackWithoutCodecOverhead() throws Exception
     {
-        LiveMultiplexFrame frame = LiveMultiplexFrame.json(1, "activity_delta", Map.of("revision", 1));
+        LiveMultiplexFrame frame = LiveMultiplexFrame.json(1, "activity_batch", Map.of("revision", 1));
         assertSame(frame.bytes(false), frame.bytes(true));
     }
 
@@ -53,17 +53,20 @@ class LiveMultiplexFrameTest
         JsonNode snapshotRow = StatsApiV1Payload.present(Map.of("tables", List.of(table)))
             .path("tables").get(0).path("rows").get(0);
         ObjectMapper mapper = new ObjectMapper();
-        StatsLiveEventHub.LiveEvent full = new StatsLiveEventHub.LiveEvent("activity_table",
-            Map.of("table_id", "table-1", "table", table));
-        StatsLiveEventHub.LiveEvent delta = new StatsLiveEventHub.LiveEvent("activity_delta",
-            Map.of("table_id", "table-1", "rows", List.of(row)), full);
+        StatsLiveEventHub.LiveEvent full = new StatsLiveEventHub.LiveEvent("activity_batch",
+            Map.of("base_revision", 0, "revision", 1, "changes", List.of(Map.of(
+                "operation", "upsert", "table_id", "table-1", "replace", true,
+                "table", Map.of("table_id", "table-1"), "rows", List.of(row)))));
+        StatsLiveEventHub.LiveEvent delta = new StatsLiveEventHub.LiveEvent("activity_batch",
+            Map.of("base_revision", 0, "revision", 1, "changes", List.of(Map.of(
+                "operation", "upsert", "table_id", "table-1", "replace", false, "rows", List.of(row)))), full);
 
         byte[] fullBytes = full.frame(1).bytes(false);
         byte[] deltaBytes = delta.frame(1).bytes(false);
         JsonNode fullRow = mapper.readTree(fullBytes, LiveMultiplexFrame.HEADER_BYTES,
-            fullBytes.length - LiveMultiplexFrame.HEADER_BYTES).path("data").path("table").path("rows").get(0);
+            fullBytes.length - LiveMultiplexFrame.HEADER_BYTES).path("data").path("changes").get(0).path("rows").get(0);
         JsonNode deltaRow = mapper.readTree(deltaBytes, LiveMultiplexFrame.HEADER_BYTES,
-            deltaBytes.length - LiveMultiplexFrame.HEADER_BYTES).path("data").path("rows").get(0);
+            deltaBytes.length - LiveMultiplexFrame.HEADER_BYTES).path("data").path("changes").get(0).path("rows").get(0);
 
         assertEquals(snapshotRow, fullRow);
         assertEquals(snapshotRow, deltaRow);

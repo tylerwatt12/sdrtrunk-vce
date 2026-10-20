@@ -109,16 +109,28 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String synchronize = function(source, "function synchronizeLiveChannelActivitySource()");
         String snapshot = function(source, "function applyLiveChannelActivitySnapshot(snapshot)");
+        String batch = function(source, "function applyLiveChannelActivityBatch(batch)");
+        String change = function(source, "function mergeLiveChannelActivityChange(change, currentTable)");
 
         assertTrue(snapshot.contains("liveChannelActivityTables.clear()"));
         assertTrue(snapshot.contains("liveChannelActivityNeedsResync = false"));
-        assertTrue(synchronize.contains("revision !== liveChannelActivityRevision + 1"));
+        assertTrue(batch.contains("batch.base_revision !== liveChannelActivityRevision"));
+        assertTrue(batch.contains("Number.isSafeInteger(batch?.revision)"));
+        assertTrue(batch.contains("const tables = new Map(liveChannelActivityTables)"));
+        assertTrue(batch.indexOf("batch.changes.map") < batch.indexOf("liveChannelActivityTables.clear()"));
+        assertTrue(batch.indexOf("liveChannelActivityRevision = batch.revision") > batch.indexOf("batch.changes.map"));
+        assertTrue(batch.contains("Repeated activity table change."));
+        assertTrue(batch.contains("if (merged.operation === 'remove') tables.delete(merged.table_id)"));
+        assertTrue(change.contains("change.replace ? [] : currentTable.rows || []"));
+        assertTrue(change.contains("rows.set(key, row)"));
+        assertTrue(change.contains("change.row_order.length !== rows.size"));
         assertTrue(synchronize.contains("liveChannelActivityNeedsResync = true"));
-        assertTrue(synchronize.contains("if (update.operation === 'remove')"));
         assertTrue(synchronize.contains("source.addEventListener('activity_resync'"));
         assertTrue(synchronize.contains("applyLiveChannelActivitySnapshot(snapshot)"));
-        assertTrue(synchronize.contains("source.addEventListener('activity_delta'"));
-        assertTrue(synchronize.contains("Number(update.base_revision) !== liveChannelActivityRevision"));
+        assertTrue(synchronize.contains("source.addEventListener('activity_batch'"));
+        assertTrue(synchronize.contains("applyLiveChannelActivityBatch(JSON.parse(event.data))"));
+        assertFalse(synchronize.contains("source.addEventListener('activity_delta'"));
+        assertFalse(synchronize.contains("source.addEventListener('activity_table'"));
         assertTrue(synchronize.contains("source.addEventListener('live_gap'"));
         assertTrue(synchronize.contains("invokeLiveSubscriber(target, 'gap', detail)"));
     }
@@ -1869,9 +1881,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
         assertTrue(activity.contains("liveConnection('channel_activity', parameters, false)"));
-        assertTrue(activity.contains("const parameters = { delta: true, subscription_id: liveChannelActivitySubscriptionId }"));
+        assertTrue(activity.contains("const parameters = { subscription_id: liveChannelActivitySubscriptionId }"));
         assertTrue(activity.contains("if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true"));
-        assertTrue(activity.contains("liveChannelActivityTables"));
+        assertTrue(activity.contains("applyLiveChannelActivitySnapshot(JSON.parse(event.data))"));
+        assertTrue(activity.contains("applyLiveChannelActivityBatch(JSON.parse(event.data))"));
         assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
         assertTrue(tuner.contains("const tableSystemName = String(table?.system_name || '').trim()"));
@@ -2274,7 +2287,7 @@ class StatsWebInteractionUiContractTest
         String invoke = function(source,
             "function invokeLiveSubscriber(target, callback, ...parameters)");
         String listener = function(source, "function invokeLiveListener(callback, ...parameters)");
-        String channelActivity = function(source, "function synchronizeLiveChannelActivitySource()");
+        String channelActivity = function(source, "function applyLiveChannelActivityBatch(batch)");
         String multiplexer = source.substring(source.indexOf("class LiveMultiplexer"),
             source.indexOf("const liveMultiplexer = new LiveMultiplexer()"));
 
@@ -2294,7 +2307,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(multiplexer.contains("this.failedTopics.add(topic)"));
         assertTrue(multiplexer.contains("this.failedTopics.delete(topic)"));
         assertTrue(source.contains("invokeLiveListener(callback, { type: event"));
-        assertTrue(channelActivity.contains("invokeLiveSubscriber(target, 'activityTable', update)"));
+        assertTrue(channelActivity.contains("invokeLiveSubscriber(target, 'activityBatch', current)"));
         assertTrue(source.contains("invokeLiveSubscriber(target, 'snapshot', current)"));
         assertTrue(multiplexer.contains("error?.status === 401 || error?.status === 403"));
         assertTrue(multiplexer.contains("!this.authorizationRecoveryUsed"));

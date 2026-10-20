@@ -232,16 +232,16 @@ class StatsWebServerServiceLifecycleTest
                 String.class, JsonNode.class);
             validate.setAccessible(true);
             JsonNode first = OBJECT_MAPPER.readTree("""
-                {"delta":true,"markers":true,"subscription_id":"00000000-0000-0000-0000-000000000001"}
+                {"markers":true,"subscription_id":"00000000-0000-0000-0000-000000000001"}
                 """);
             JsonNode second = OBJECT_MAPPER.readTree("""
-                {"delta":true,"markers":true,"subscription_id":"00000000-0000-0000-0000-000000000002"}
+                {"markers":true,"subscription_id":"00000000-0000-0000-0000-000000000002"}
                 """);
-            validate.invoke(service, "channel_activity", OBJECT_MAPPER.readTree("{\"delta\":true}"));
+            validate.invoke(service, "channel_activity", OBJECT_MAPPER.readTree("{\"markers\":true}"));
             validate.invoke(service, "channel_activity", first);
             for(String invalid: List.of("{\"subscription_id\":\"not-a-uuid\"}",
                 "{\"subscription_id\":false}", "{\"subscription_id\":null}", "{\"subscription_id\":\"\"}",
-                "{\"delta\":\"true\"}", "{\"unknown\":true}"))
+                "{\"delta\":true}", "{\"markers\":\"true\"}", "{\"unknown\":true}"))
             {
                 InvocationTargetException failure = assertThrows(InvocationTargetException.class,
                     () -> validate.invoke(service, "channel_activity", OBJECT_MAPPER.readTree(invalid)));

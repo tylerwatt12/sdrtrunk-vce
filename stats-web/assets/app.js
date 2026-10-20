@@ -3262,16 +3262,19 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       replaceBody(orderedRows);
       return;
     }
+    const focused = body.contains(document.activeElement) ? document.activeElement : null;
+    const incoming = new Set(incomingKeys.map(String));
+    [...body.children].forEach((row) => {
+      if (!incoming.has(row.dataset.id)) row.remove();
+    });
     const existing = new Map([...body.children]
       .filter((row) => row.dataset.id !== undefined)
       .map((row) => [row.dataset.id, row]));
     let cursor = body.firstElementChild;
-    const retained = new Set();
     orderedRows.forEach((data, index) => {
       const key = String(incomingKeys[index]);
       let current = existing.get(key);
       if (current) {
-        retained.add(current);
         current.tableRowData = data;
         const classes = typeof options.rowClass === 'function' ? options.rowClass(data) : options.rowClass;
         if (current.className !== (classes || '')) current.className = classes || '';
@@ -3296,14 +3299,12 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         while (current.children.length > columns.length) current.lastElementChild.remove();
       } else {
         current = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
-        retained.add(current);
       }
       if (current !== cursor) body.insertBefore(current, cursor);
       cursor = current.nextElementSibling;
     });
-    [...body.children].forEach((row) => {
-      if (!retained.has(row)) row.remove();
-    });
+    if (focused instanceof HTMLElement && focused.isConnected && body.contains(focused) &&
+        document.activeElement !== focused) focused.focus({ preventScroll: true });
   };
 
   const renderBody = (reconcile = false) => {
@@ -10647,37 +10648,83 @@ function applyLiveChannelActivitySnapshot(snapshot) {
   liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'snapshot', current));
 }
 
-function mergeLiveChannelActivityDelta(update, currentTable) {
-  const id = String(update?.table_id || '');
-  if (!id) throw new Error('Missing activity table identity.');
-  if (update.operation === 'remove') return { ...update, table_id: id };
-  if (!currentTable && !update.table) throw new Error('Missing activity table baseline.');
+function mergeLiveChannelActivityChange(change, currentTable) {
+  const id = change?.table_id;
+  if (typeof id !== 'string' || !id || typeof change.replace !== 'boolean') {
+    throw new Error('Invalid activity table change.');
+  }
+  if (change.operation === 'remove') {
+    if (change.replace || change.table !== undefined || change.rows !== undefined ||
+        change.removed_row_keys !== undefined || change.row_order !== undefined) {
+      throw new Error('Invalid removed activity table.');
+    }
+    return { ...change, table_id: id };
+  }
+  if (change.operation !== 'upsert') throw new Error('Invalid activity operation.');
+  if (change.table !== undefined && (!change.table || typeof change.table !== 'object' ||
+      Array.isArray(change.table) || change.table.rows !== undefined ||
+      change.table.table_id !== undefined && change.table.table_id !== id)) {
+    throw new Error('Invalid activity table metadata.');
+  }
+  if (change.replace ? !change.table || !Array.isArray(change.rows) || !Array.isArray(change.row_order) : !currentTable) {
+    throw new Error('Missing activity table baseline.');
+  }
   const rows = new Map();
-  for (const row of currentTable?.rows || []) {
-    const key = String(row?.key ?? '');
-    if (!key || rows.has(key)) throw new Error('Invalid activity row baseline.');
+  for (const row of change.replace ? [] : currentTable.rows || []) {
+    const key = row?.key;
+    if (typeof key !== 'string' || !key || rows.has(key)) throw new Error('Invalid activity row baseline.');
     rows.set(key, row);
   }
-  for (const key of update.removed_row_keys || []) rows.delete(String(key));
-  for (const row of update.rows || []) {
-    const key = String(row?.key ?? '');
-    if (!key) throw new Error('Missing activity row identity.');
+  if (change.removed_row_keys !== undefined && !Array.isArray(change.removed_row_keys) ||
+      change.rows !== undefined && !Array.isArray(change.rows)) throw new Error('Invalid activity rows.');
+  for (const key of change.removed_row_keys || []) {
+    if (typeof key !== 'string' || !key) throw new Error('Invalid removed activity row.');
+    rows.delete(key);
+  }
+  const changedKeys = new Set();
+  for (const row of change.rows || []) {
+    const key = row?.key;
+    if (typeof key !== 'string' || !key || changedKeys.has(key)) throw new Error('Invalid changed activity row.');
+    changedKeys.add(key);
     rows.set(key, row);
   }
   let orderedRows = [...rows.values()];
-  if (update.row_order !== undefined) {
-    if (!Array.isArray(update.row_order) || update.row_order.length !== rows.size ||
-        new Set(update.row_order.map(String)).size !== rows.size) {
-      throw new Error('Invalid activity row order.');
-    }
-    orderedRows = update.row_order.map((key) => {
-      const row = rows.get(String(key));
+  if (change.row_order !== undefined) {
+    if (!Array.isArray(change.row_order) || change.row_order.length !== rows.size ||
+        new Set(change.row_order).size !== rows.size) throw new Error('Invalid activity row order.');
+    orderedRows = change.row_order.map((key) => {
+      const row = typeof key === 'string' ? rows.get(key) : null;
       if (!row) throw new Error('Missing activity row in order.');
       return row;
     });
   }
-  return { ...update, table_id: id,
-    table: { ...(update.table === undefined ? currentTable : update.table), table_id: id, rows: orderedRows } };
+  return { ...change, table_id: id,
+    table: { ...(change.table === undefined ? currentTable : change.table), table_id: id, rows: orderedRows } };
+}
+
+function applyLiveChannelActivityBatch(batch) {
+  if (liveChannelActivityNeedsResync) return;
+  if (!Number.isSafeInteger(batch?.revision) || batch.revision < 1 ||
+      !Number.isSafeInteger(batch.base_revision) || batch.base_revision < 0 || !Array.isArray(batch.changes)) {
+    throw new Error('Invalid activity batch.');
+  }
+  if (batch.revision <= liveChannelActivityRevision) return;
+  if (batch.base_revision !== liveChannelActivityRevision) throw new Error('Activity batch baseline does not match.');
+  const tables = new Map(liveChannelActivityTables);
+  const changedTables = new Set();
+  const changes = batch.changes.map((change) => {
+    const merged = mergeLiveChannelActivityChange(change, tables.get(change?.table_id));
+    if (changedTables.has(merged.table_id)) throw new Error('Repeated activity table change.');
+    changedTables.add(merged.table_id);
+    if (merged.operation === 'remove') tables.delete(merged.table_id);
+    else tables.set(merged.table_id, merged.table);
+    return merged;
+  });
+  liveChannelActivityTables.clear();
+  tables.forEach((table, id) => liveChannelActivityTables.set(id, table));
+  liveChannelActivityRevision = batch.revision;
+  const current = { ...batch, changes };
+  liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityBatch', current));
 }
 
 function reportLiveChannelActivityGap(detail, reconnect = false) {
@@ -10699,9 +10746,9 @@ function synchronizeLiveChannelActivitySource() {
     return;
   }
 
-  // A rebuilt view has no delta baseline, even when the server coalesces its close/open controls.
+  // A rebuilt view needs a batch baseline, even when the server coalesces its close/open controls.
   if (!liveChannelActivitySource) liveChannelActivitySubscriptionId = randomLiveClientId();
-  const parameters = { delta: true, subscription_id: liveChannelActivitySubscriptionId };
+  const parameters = { subscription_id: liveChannelActivitySubscriptionId };
   if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true;
   if (liveChannelActivitySource?.update(parameters)) liveChannelActivityNeedsResync = true;
   if (!liveChannelActivitySource) {
@@ -10722,53 +10769,12 @@ function synchronizeLiveChannelActivitySource() {
         //Ignore a malformed optional live update and retain the last complete snapshot.
       }
     });
-    source.addEventListener('activity_table', (event) => {
+    source.addEventListener('activity_batch', (event) => {
       try {
-        const update = JSON.parse(event.data);
-        const id = String(update?.table_id || update?.table?.table_id || '');
-        if (!id) return;
-        const revision = Math.max(0, Number(update?.revision) || 0);
-        if (liveChannelActivityNeedsResync) return;
-        if (revision && revision <= liveChannelActivityRevision) return;
-        const baseRevision = update.base_revision === undefined ?
-          liveChannelActivityRevision : Number(update.base_revision);
-        if (revision && liveChannelActivityRevision && (baseRevision !== liveChannelActivityRevision ||
-            (update.base_revision === undefined && revision !== liveChannelActivityRevision + 1))) {
-          liveChannelActivityNeedsResync = true;
-          liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', {
-            reason: 'channel_activity_revision_gap', expected_revision: liveChannelActivityRevision + 1,
-            observed_revision: revision
-          }));
-          return;
-        }
-        if (update.operation === 'remove') liveChannelActivityTables.delete(id);
-        else if (update.table) liveChannelActivityTables.set(id, update.table);
-        if (revision) liveChannelActivityRevision = revision;
-        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', update));
-        reportHealthyDelivery();
-      } catch (error) {
-        //Ignore one malformed update; a later snapshot restores authoritative state.
-      }
-    });
-    source.addEventListener('activity_delta', (event) => {
-      try {
-        const update = JSON.parse(event.data);
-        const revision = Math.max(0, Number(update?.revision) || 0);
-        if (liveChannelActivityNeedsResync || !revision || revision <= liveChannelActivityRevision) return;
-        if (Number(update.base_revision) !== liveChannelActivityRevision) {
-          reportLiveChannelActivityGap({ reason: 'channel_activity_revision_gap',
-            expected_revision: liveChannelActivityRevision, observed_revision: update.base_revision }, true);
-          return;
-        }
-        const id = String(update?.table_id || '');
-        const merged = mergeLiveChannelActivityDelta(update, liveChannelActivityTables.get(id));
-        if (merged.operation === 'remove') liveChannelActivityTables.delete(id);
-        else liveChannelActivityTables.set(id, merged.table);
-        liveChannelActivityRevision = revision;
-        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', merged));
+        applyLiveChannelActivityBatch(JSON.parse(event.data));
         reportHealthyDelivery();
       } catch (_) {
-        reportLiveChannelActivityGap({ reason: 'channel_activity_invalid_delta' }, true);
+        reportLiveChannelActivityGap({ reason: 'channel_activity_invalid_batch' }, true);
       }
     });
     source.addEventListener('activity_resync', (event) => {
@@ -10817,7 +10823,7 @@ function subscribeLiveChannelActivity(callbacks = {}, options = {}) {
   const subscriber = {
     markers: options.markers === true,
     snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
-    activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
+    activityBatch: typeof callbacks.activityBatch === 'function' ? callbacks.activityBatch : null,
     gap: typeof callbacks.gap === 'function' ? callbacks.gap : null,
     open: typeof callbacks.open === 'function' ? callbacks.open : null,
     error: typeof callbacks.error === 'function' ? callbacks.error : null
@@ -10827,7 +10833,7 @@ function subscribeLiveChannelActivity(callbacks = {}, options = {}) {
 
   if (liveChannelActivitySource) {
     if (liveChannelActivityTables.size && !liveChannelActivityNeedsResync) {
-      invokeLiveSubscriber(subscriber, 'snapshot', { tables: [...liveChannelActivityTables.values()] });
+      invokeLiveSubscriber(subscriber, 'snapshot', { revision: liveChannelActivityRevision, tables: [...liveChannelActivityTables.values()] });
     }
     if (liveChannelActivityState === 'open') invokeLiveSubscriber(subscriber, 'open');
     else if (liveChannelActivityState === 'error') invokeLiveSubscriber(subscriber, 'error');
@@ -17691,11 +17697,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         });
         renderActiveChannels();
       },
-      activityTable: (update) => {
-        const id = String(update?.table_id || update?.table?.table_id || '');
-        if (!id) return;
-        if (update.operation === 'remove') activeChannelTables.delete(id);
-        else if (update.table) updateSpectrumActivityTable(update.table);
+      activityBatch: ({ changes }) => {
+        changes.forEach((change) => {
+          if (change.operation === 'remove') activeChannelTables.delete(change.table_id);
+          else updateSpectrumActivityTable(change.table);
+        });
         renderActiveChannels();
       }
     }, { markers: true });
@@ -19469,9 +19475,11 @@ function liveChannelsSection(onSelectionChange) {
       });
       values.forEach(receiveTable);
     },
-    activityTable: (update) => {
-      if (update.operation === 'remove') receiveRemoval(update.table_id);
-      else receiveTable(update.table);
+    activityBatch: ({ changes }) => {
+      changes.forEach((change) => {
+        if (change.operation === 'remove') receiveRemoval(change.table_id);
+        else receiveTable(change.table);
+      });
     },
     open: () => {
       connection.textContent = 'Live';

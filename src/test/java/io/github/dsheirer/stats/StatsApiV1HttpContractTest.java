@@ -801,6 +801,81 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void multiplexStreamsOneBatchRevisionForMultipleTablesAndKeepsHttpAvailable() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        Field liveField = StatsWebServerService.class.getDeclaredField("mLiveService");
+        liveField.setAccessible(true);
+        ((StatsLiveService)liveField.get(mService)).close();
+        StatsLiveService live = StatsLiveService.fromActivitySource(source, null);
+        live.start();
+        liveField.set(mService, live);
+        assertEquals(0, live.snapshotWire().revision());
+        String clientId = "00000000-0000-0000-0000-000000000125";
+        HttpRequest request = HttpRequest.newBuilder(mOrigin.resolve(
+            StatsApiV1.LIVE_MULTIPLEX + "?client_id=" + clientId)).timeout(Duration.ofSeconds(5)).GET().build();
+        HttpResponse<InputStream> stream = mClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        try(var reader = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(); InputStream input = stream.body())
+        {
+            assertEquals("ready", readMultiplexFrame(input).json().path("event").textValue());
+            String body = OBJECT_MAPPER.writeValueAsString(Map.of("client_id", clientId, "revision", 1,
+                "subscriptions", Map.of("channel_activity", Map.of("subscription_id", clientId))));
+            HttpResponse<String> control = send(HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.LIVE_MULTIPLEX_CONTROL))
+                .timeout(Duration.ofSeconds(5)).header("Origin", mOrigin.toString())
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build());
+            assertEquals(200, control.statusCode(), control.body());
+            JsonNode initial = reader.submit(() -> {
+                for(int count = 0; count < 10; count++)
+                {
+                    MultiplexFrame frame = readMultiplexFrame(input);
+                    if(frame.topic() == 1) return frame.json();
+                }
+                throw new AssertionError("Missing initial snapshot");
+            }).get(3, TimeUnit.SECONDS);
+            assertEquals("snapshot", initial.path("event").textValue());
+            assertEquals(0, initial.at("/data/revision").longValue());
+            for(int index = 0; index < 20; index++)
+            {
+                var snapshot = new io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot(
+                    index % 2 == 0 ? "a" : "b", "Update " + index, "System", "Site", "Control", null,
+                    true, true, List.of(), List.of());
+                source.publish(new io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent(
+                    io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent.Operation.UPSERT, snapshot));
+            }
+            int batches = reader.submit(() -> {
+                long revision = 0;
+                int count = 0;
+                java.util.Set<String> tables = new java.util.HashSet<>();
+                while(revision < 20)
+                {
+                    MultiplexFrame frame = readMultiplexFrame(input);
+                    if(frame.topic() != 1) continue;
+                    assertEquals("activity_batch", frame.json().path("event").textValue());
+                    JsonNode data = frame.json().path("data");
+                    assertEquals(revision, data.path("base_revision").longValue());
+                    assertTrue(data.path("revision").longValue() > revision);
+                    for(JsonNode change: data.path("changes"))
+                    {
+                        assertTrue(change.path("replace").isBoolean());
+                        if(change.path("replace").booleanValue())
+                        {
+                            assertTrue(change.path("row_order").isArray(), "Empty table replacements carry an empty order");
+                            assertEquals(0, change.path("row_order").size());
+                        }
+                        tables.add(change.path("table_id").textValue());
+                    }
+                    revision = data.path("revision").longValue();
+                    count++;
+                }
+                assertEquals(java.util.Set.of("a", "b"), tables);
+                return count;
+            }).get(3, TimeUnit.SECONDS);
+            assertTrue(batches < 20, "Real multiplex transport sends coalesced batches");
+            assertEquals(200, get(StatsApiV1.STATUS).statusCode());
+        }
+    }
+
+    @Test
     void browserCallsAreNotAMultiplexTopic() throws Exception
     {
         String clientId = "00000000-0000-0000-0000-000000000123";
