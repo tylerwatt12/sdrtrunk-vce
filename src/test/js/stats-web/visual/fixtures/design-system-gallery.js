@@ -900,240 +900,115 @@ initializeCompactRecords();
 async function initializeReceiverHealth() {
   const host = document.querySelector('[data-visual-receiver-health]');
   if (!host) return;
-  const node = (tag, className, text) => {
+  const node = (tag, className = '', text) => {
     const element = document.createElement(tag);
-    if (className) element.className = className;
-    if (text !== undefined) element.textContent = text;
+    element.className = className;
+    if (text !== undefined) element.textContent = String(text);
     return element;
   };
-  const status = (label, tone = 'neutral') => node('span', `ui-status ui-status-${tone}`, label);
-  const button = (label) => {
-    const control = node('button', 'ui-button ui-button-secondary', label);
-    control.type = 'button';
-    return control;
-  };
-  const metric = (label, value, options = {}) => {
-    const card = node('div', `metric ui-metric ui-metric-compact${options.tone ? ` ui-metric-${options.tone}` : ''}${
-      options.text ? ' ui-metric-text' : ''}`);
-    const copy = node('div', 'ui-metric-copy');
-    const heading = node('div', 'ui-metric-heading');
-    const caption = node('span', 'ui-metric-label');
-    const landmark = node('span', 'ui-metric-icon');
+  const iconGlyph = (id) => {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('aria-hidden', 'true');
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-    use.setAttribute('href', `#visual-icon-${options.icon || 'health'}`);
+    const name = ({ 'icon-dashboard': 'activity', 'icon-warning': 'alert',
+      'icon-refresh': 'replay' })[id] || id.replace(/^icon-/, '');
+    use.setAttribute('href', `#visual-icon-${name}`);
     svg.append(use);
-    landmark.append(svg);
-    caption.append(landmark, label);
-    heading.append(caption);
-    if (options.status) heading.append(status(options.status, options.tone));
-    const number = node('strong', '', value);
-    if (options.unit) number.append(node('small', 'ui-metric-unit', options.unit));
-    copy.append(heading, number);
-    if (options.progress !== undefined) {
-      card.classList.add('ui-metric-meter');
-      const progress = node('progress', 'ui-metric-progress', `${options.progress}%`);
-      progress.max = 100;
-      progress.value = options.progress;
-      progress.setAttribute('aria-label', label);
-      copy.append(progress);
+    return svg;
+  };
+  const source = await fetch('/assets/app.js').then(response => response.text());
+  const functionSource = (name) => {
+    const signature = source.match(new RegExp(`^function ${name}\\([^\\n]*\\) \\{`, 'm'))?.[0];
+    if (!signature) throw new Error(`Missing function ${name}`);
+    const start = source.indexOf(signature);
+    const openingBrace = start + signature.length - 1;
+    let depth = 0;
+    for (let index = openingBrace; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1;
+      else if (source[index] === '}' && --depth === 0) return source.slice(start, index + 1);
     }
-    if (options.detail) copy.append(node('small', 'ui-metric-detail', options.detail));
-    card.append(copy);
-    return card;
+    throw new Error(`Unterminated function ${name}`);
   };
-  const grid = (count, ...cards) => {
-    const element = node('div', `summary-band ui-metric-grid ui-metric-grid-embedded ui-metric-grid-${count}`);
-    element.append(...cards);
-    return element;
-  };
-  const section = (key, title, content, options = {}) => {
-    const element = node('section', `section ui-section ui-settings-panel ui-section-collapsible receiver-health-section${
-      options.closed ? ' collapsed' : ''}`);
-    element.dataset.receiverHealthSection = key;
-    const heading = node('header', 'section-title ui-section-title');
-    const toggle = node('button', 'ui-disclosure-toggle receiver-health-section-toggle');
-    toggle.type = 'button';
-    toggle.setAttribute('aria-expanded', String(!options.closed));
-    toggle.setAttribute('aria-controls', `visual-health-${key}`);
-    toggle.dataset.receiverHealthFocus = `section-${key}`;
-    const copy = node('span', 'ui-disclosure-copy');
-    copy.append(node('span', '', title));
-    if (options.summary) copy.append(node('small', '', options.summary));
-    toggle.append(copy);
-    if (options.status) toggle.append(status(options.status, options.tone));
-    heading.append(toggle);
-    if (options.action) heading.append(options.action);
-    const body = node('div', 'ui-settings-panel-body receiver-health-section-body');
-    body.id = `visual-health-${key}`;
-    body.hidden = options.closed === true;
-    body.append(content);
-    toggle.addEventListener('click', () => {
-      const expanded = toggle.getAttribute('aria-expanded') !== 'true';
-      toggle.setAttribute('aria-expanded', String(expanded));
-      element.classList.toggle('collapsed', !expanded);
-      body.hidden = !expanded;
-    });
-    element.append(heading, body);
-    return element;
-  };
-  const overview = node('div', 'receiver-health-overview');
-  const state = metric('Receiver status', 'Action needed', { tone: 'danger', text: true });
-  state.classList.add('receiver-health-overview-state', 'receiver-health-critical');
-  const overviewMetrics = grid(4, state, metric('Current issues', '2'),
-    metric('Need action', '1', { tone: 'danger', icon: 'alert' }),
-    metric('Check soon', '1', { tone: 'warning', icon: 'alert' }));
-  overviewMetrics.classList.add('ui-metric-grid-inline', 'receiver-health-overview-metrics');
-  const timing = node('dl', 'ui-fact-list receiver-health-timing');
-  timing.append(node('dt', '', 'Monitoring since'), node('dd', '', 'Today · 8:04 AM'),
-    node('dt', '', 'Last update'), node('dd', '', 'Just now'));
-  const footer = node('div', 'receiver-health-overview-footer');
-  const preferences = node('aside', 'receiver-health-account-setting');
-  preferences.append(button('Choose status icon issues'));
-  footer.append(timing, preferences);
-  overview.append(overviewMetrics, footer);
-  const resources = grid(4,
-    metric('VCE processor use', '10.3', { unit: '%', progress: 10.3, status: 'Normal', tone: 'success' }),
-    metric('VCE memory use', '42', { unit: '%', progress: 42, detail: 'Used 860 MB of 2.0 GB', status: 'Normal', tone: 'success' }),
-    metric('Time spent freeing memory', '78', { unit: 'ms in last sample', progress: 78,
-      detail: 'Total since startup 2,925 ms', status: 'Check soon', tone: 'warning' }),
-    metric('Free storage space', '6', { unit: '%', progress: 6, detail: 'Free 18 GB of 300 GB',
-      status: 'Action needed', tone: 'danger', icon: 'recording' }));
-  resources.classList.add('receiver-health-resource-bars');
-  const computerSample = {
+  // Use the production page and shared builders so this executable example stays aligned with real layouts and states.
+  const pageSource = source.slice(source.indexOf('function receiverHealthText('),
+    source.indexOf('async function renderAdminHealth('));
+  const healthFunctions = [...pageSource.matchAll(/^function (\w+)\(/gm)].map(match => match[1]);
+  const sharedFunctions = ['receiverHealthSeverity', 'receiverHealthCount', 'normalizeReceiverHealthSnapshot',
+    'receiverHealthAccountAlertSummary', 'keyValues', 'metricCard', 'metrics', 'uiActionButton',
+    'uiPill', 'uiStatus', 'valueNode', 'section', 'sectionActionHost', 'adminStatusBytes', 'adminDatabaseDisplay',
+    'receiverHealthSavedActivitySection', 'livePickerNavigationIndex', 'exactDateTime', 'dateTime', 'elapsedLabel'];
+  const now = Date.UTC(2026, 9, 20, 14, 26, 37);
+  const attention = new URLSearchParams(location.search).get('health') === 'attention';
+  const incident = { code: 'control-stopped', severity: 'critical', title: 'Control channel stopped decoding',
+    configuration_id: 'county-dispatch', scope: 'County Dispatch · Primary site',
+    opened_at_ms: now - 15 * 60_000, last_seen_ms: now - 14 * 60_000,
+    observed: 'The control channel stopped reporting decoded messages.',
+    likely_cause: 'The signal or tuner connection may have changed.',
+    impact: 'New calls may be missed.', check_next: 'Check the channel signal and tuner connection.' };
+  const computer = {
     application: 'VCE', version: '0.6.2-nightly', update_track: 'nightly', update_build: '123456',
     build_timestamp: '2026-10-09T12:00:00.000+0000', operating_system: 'Windows 11',
     operating_system_version: '10.0', architecture: 'amd64', cpu_model: 'Intel Core i7-12700',
     processors_available: 16, installed_memory_bytes: 34359738368, jvm_memory_limit_bytes: 2147483648,
     java_version: '25.0.1', java_vendor: 'Eclipse Adoptium', application_uptime_ms: 93780000
   };
-  // Mount the real computer renderer so the gallery also covers production Copy details and its failure feedback.
-  const source = await fetch('/assets/app.js').then(response => response.text());
-  const functionSource = (signature) => {
-    const start = source.indexOf(signature);
-    if (start < 0) throw new Error(`Missing ${signature}`);
-    const openingBrace = source.indexOf('{', start + signature.length);
-    let depth = 0;
-    for (let index = openingBrace; index < source.length; index += 1) {
-      if (source[index] === '{') depth += 1;
-      else if (source[index] === '}' && --depth === 0) return source.slice(start, index + 1);
-    }
-    throw new Error(`Unterminated ${signature}`);
+  const resources = [
+    { label: 'VCE processor use', value: 18.6, unit: '%' },
+    { label: 'VCE memory use', value: 29.9, unit: '%', detail: 'Used 612 MB of 2.0 GB' },
+    { label: 'Time spent freeing memory', value: 8, unit: 'ms in last sample',
+      detail: 'Total since startup 35495 ms' },
+    { label: 'Free storage space', value: 35.1, unit: '%', detail: 'Free 80 GB of 228 GB' }
+  ].map(row => ({ severity: 'healthy', scope: 'Computer', ...row }));
+  const measurements = [
+    ['tuners', 'Tuners'], ['usb', 'USB tuner connection'], ['receiver', 'Incoming radio data'],
+    ['channelization', 'Channel separation'], ['processing', 'Per-channel processing'],
+    ['control', 'Control channel'], ['host', 'Computer resources'],
+    ['audio', 'Recordings, streams, and browser audio']
+  ].map(([id, title]) => ({ id, title, rows: id === 'host' ? resources : [
+    ['Dropped buffers', '0'], ['Samples received', '12,408'], ['Invalid messages', '0'], ['Last sample', 'Just now']
+  ].map(([label, value]) => ({ severity: 'healthy', scope: 'County Dispatch · Primary site', label, value })) }));
+  const snapshot = { started_at_ms: now - 90 * 60_000, generated_at_ms: now, computer,
+    summary: { severity: attention ? 'critical' : 'healthy', active_count: attention ? 2 : 0,
+      critical_count: attention ? 1 : 0, warning_count: attention ? 1 : 0 },
+    active: attention ? [incident, { ...incident, code: 'memory-cleanup', severity: 'warning',
+      title: 'Memory cleanup is taking longer', configuration_id: '', scope: 'Computer resources' }] : [],
+    resolved: Array.from({ length: 12 }, (_, index) => ({ ...incident, occurrence_id: `resolved-${index}`,
+      configuration_id: index < 8 ? 'county-dispatch' : 'north-dispatch',
+      scope: index < 8 ? 'County Dispatch · Primary site' : 'North Dispatch · West site',
+      resolved_at_ms: now - (index + 1) * 60_000 })), measurements };
+  const receiverHealthController = { authorized: () => true, pageHost: host, healthView: 'overview',
+    openHealthSections: new Set(['current', 'active', 'host-overview', 'resolved', 'saved-activity']),
+    expandedResolvedIncidents: new Set(), resolvedSort: 'recent', resolvedPage: 0,
+    computerCopyState: '', computerCopyBusy: false, refresh: async () => receiverHealthController.updatePage() };
+  const environment = {
+    node, iconGlyph, host, receiverHealthController, number: value => new Intl.NumberFormat('en-US').format(value),
+    Date: class extends Date { static now() { return now; } },
+    radioSystemPrimaryName: row => row.system_name || '', viewAllowed: () => false,
+    anchor: (label, target, className) => Object.assign(node('a', className, label), { href: target }),
+    href: (view, values = {}) => `#${view}${new URLSearchParams(values).size ? `?${new URLSearchParams(values)}` : ''}`,
+    activeUserPreferences: () => ({}), isReceiverHealthAlertEnabled: () => true,
+    openStatusIconSettings: () => {}, loadStatus: async () => {},
+    browsingWorkflows: { createBrowsingPager, pageRangeText },
+    serviceStatus: { database: { database_exists: true, database_bytes: 9.6 * 1073741824 } },
+    statsLoggingState: () => ({ available: true, state: 'RUNNING', summaryActive: true, historyActive: true }),
+    semanticLabel: value => value.charAt(0) + value.slice(1).toLowerCase(),
+    capabilityAllowed: () => true, ACCESS_CAPABILITIES: { ADMIN_SETTINGS: 'admin-settings' },
+    route: new URLSearchParams('view=admin&tab=health'),
+    METRIC_ICONS: { Processor: 'icon-health', Memory: 'icon-dashboard', 'Free storage': 'icon-recording',
+      'VCE processor use': 'icon-health', 'VCE memory use': 'icon-dashboard',
+      'Free storage space': 'icon-recording', 'Activity summaries': 'icon-live',
+      'Individual events': 'icon-scan-lists', 'Activity storage': 'icon-dashboard' }
   };
-  const keyValues = (entries) => {
-    const facts = node('dl', 'key-values ui-facts');
-    entries.forEach(([label, value]) => {
-      const fact = node('div', 'key-value-item ui-fact');
-      fact.append(node('dt', '', label), node('dd', '', value));
-      facts.append(fact);
-    });
-    return facts;
-  };
-  const uiActionButton = (label, _icon, click, className) => {
-    const action = node('button', className, label);
-    action.type = 'button';
-    action.addEventListener('click', click);
-    return action;
-  };
-  let computerSection;
-  let computerOpen = false;
-  const computerController = { authorized: () => true, pageHost: host, computerCopyState: '', computerCopyBusy: false,
-    updatePage: () => {
-      computerOpen = computerSection.querySelector('.ui-disclosure-toggle').getAttribute('aria-expanded') === 'true';
-      const replacement = renderComputer({ computer: computerSample });
-      computerSection.replaceWith(replacement);
-      computerSection = replacement;
-      computerSection.querySelector('[data-receiver-health-focus="computer-copy"]').focus();
-    } };
-  const renderComputer = new Function('node', 'keyValues', 'uiActionButton', 'number', 'receiverHealthSection',
-    'receiverHealthController', `
-      ${functionSource("function receiverHealthText(value, fallback = '—')")}
-      ${functionSource('function receiverHealthComputerFacts(computer)')}
-      ${functionSource('function receiverHealthComputerOverview(snapshot)')}
-      return receiverHealthComputerOverview;
-    `)(node, keyValues, uiActionButton, value => String(value),
-      (key, title, body, action) => section(key, title, body, { action, closed: !computerOpen }), computerController);
-  computerSection = renderComputer({ computer: computerSample });
-  const activity = grid(3,
-    metric('Activity summaries', 'On', { text: true, icon: 'activity' }),
-    metric('Individual events', 'On', { text: true, icon: 'activity' }),
-    metric('Activity storage', '9.6', { unit: 'GB', icon: 'activity' }));
-  const incident = node('article', 'ui-record-card receiver-health-incident receiver-health-critical');
-  const incidentHeading = node('div', 'ui-record-card-header receiver-health-incident-heading');
-  const identity = node('div', 'ui-record-card-copy receiver-health-incident-identity');
-  identity.append(node('h3', 'ui-record-card-title', 'Recording disk is nearly full'),
-    node('p', 'muted receiver-health-incident-scope', 'Recording service'));
-  incidentHeading.append(identity, node('span', 'ui-pill ui-pill-danger', 'Action needed'));
-  const incidentFacts = node('dl', 'ui-fact-list receiver-health-incident-facts');
-  incidentFacts.append(node('dt', '', 'Started'), node('dd', '', 'Today · 10:31 AM'),
-    node('dt', '', 'Last detected'), node('dd', '', 'Just now'));
-  const guidance = node('dl', 'ui-facts ui-record-facts receiver-health-incident-guidance');
-  [
-    ['What happened', '94% used · 18 GB available'],
-    ['Possible cause', 'The recording location has less free space than the configured safety threshold.'],
-    ['What this may affect', 'New recordings may stop when the remaining space is exhausted.'],
-    ['What to do', 'Remove unneeded recordings or select a location with more space.']
-  ].forEach(([label, description]) => {
-    const item = node('div', 'ui-fact receiver-health-guidance-item');
-    item.append(node('dt', '', label), node('dd', '', description));
-    guidance.append(item);
-  });
-  const incidentBody = node('div', 'ui-record-card-body receiver-health-incident-body');
-  incidentBody.append(incidentFacts, guidance);
-  incident.append(incidentHeading, incidentBody);
-  const incidentList = node('div', 'receiver-health-incident-list');
-  const memoryIncident = node('article', 'ui-record-card receiver-health-incident receiver-health-warning');
-  const memoryHeading = node('div', 'ui-record-card-header receiver-health-incident-heading');
-  const memoryIdentity = node('div', 'ui-record-card-copy receiver-health-incident-identity');
-  memoryIdentity.append(node('h3', 'ui-record-card-title', 'Memory cleanup is taking longer'),
-    node('p', 'muted receiver-health-incident-scope', 'Computer resources'));
-  memoryHeading.append(memoryIdentity, node('span', 'ui-pill ui-pill-warning', 'Check soon'));
-  const memoryBody = node('div', 'ui-record-card-body muted receiver-health-incident-body',
-    '78 ms in the last sample. Check memory use and close other applications if reception slows.');
-  memoryIncident.append(memoryHeading, memoryBody);
-  incidentList.append(incident, memoryIncident);
-  const issues = node('div', 'ui-settings-page receiver-health-issues-grid receiver-health-issues-grid-active');
-  issues.append(section('active', 'Issues needing attention', incidentList, { summary: '2 current issues' }),
-    section('resolved', 'Recently cleared', node('div', 'ui-feedback receiver-health-empty',
-      'No issues have cleared recently.'), { summary: 'No recently cleared issues', closed: true }));
-  const diagnostics = node('section', 'receiver-health-diagnostics');
-  diagnostics.setAttribute('aria-label', 'Receiver diagnostics');
-  const diagnosticsHeading = node('div', 'ui-heading-group ui-heading-group-quiet receiver-health-diagnostics-heading');
-  diagnosticsHeading.append(node('h2', '', 'Receiver diagnostics'), node('p', '', '8 groups · 32 measurements'));
-  const groups = node('div', 'ui-settings-page receiver-health-diagnostics-grid');
-  ['Tuners', 'USB tuner connection', 'Incoming radio data', 'Channel separation', 'Per-channel processing',
-    'Control channel', 'Computer resources', 'Recordings, streams, and browser audio'].forEach((title, index) => {
-    const rows = node('div', 'ui-record-card receiver-health-measurement-list');
-    rows.setAttribute('role', 'list');
-    const measurement = node('div', 'ui-record-section receiver-health-measurement-row receiver-health-healthy');
-    measurement.setAttribute('role', 'listitem');
-    const measurementHeading = node('div', 'ui-record-card-header receiver-health-measurement-heading');
-    const measurementIdentity = node('div', 'ui-record-card-copy');
-    measurementIdentity.append(node('p', 'muted receiver-health-measurement-scope', 'Receiver'),
-      node('div', 'ui-record-title receiver-health-measurement-label', 'Dropped buffers'));
-    const reading = node('div', 'receiver-health-measurement-value');
-    reading.append(node('strong', '', '0'));
-    measurementHeading.append(measurementIdentity, reading, status('Normal', 'success'));
-    measurement.append(measurementHeading,
-      node('div', 'ui-record-card-body muted receiver-health-measurement-detail', 'No dropped native buffers were observed.'));
-    rows.append(measurement);
-    [['Samples received', '12,408'], ['Invalid messages', '0'], ['Last sample', 'Just now']]
-      .forEach(([label, value]) => {
-        const sample = measurement.cloneNode(true);
-        sample.querySelector('.receiver-health-measurement-label').textContent = label;
-        sample.querySelector('.receiver-health-measurement-value strong').textContent = value;
-        sample.querySelector('.receiver-health-measurement-detail').remove();
-        rows.append(sample);
-      });
-    groups.append(section(`measurement-${index}`, title, rows, { summary: '4 measurements',
-      status: index === 6 ? 'Check soon' : 'Normal', tone: index === 6 ? 'warning' : 'success', closed: true }));
-  });
-  diagnostics.append(diagnosticsHeading, groups);
-  host.append(section('current', 'Receiver overview', overview, { action: button('Check again') }),
-    section('resources', 'Computer resources', resources),
-    computerSection,
-    section('activity', 'Saved activity', activity, { action: button('Open Activity settings') }), issues, diagnostics);
+  const render = new Function('environment', `
+    const { ${Object.keys(environment).join(', ')} } = environment;
+    const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;
+    const RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS = 1000;
+    let receiverHealthSectionSequence = 0;
+    ${[...sharedFunctions, ...healthFunctions].map(functionSource).join('\n')}
+    return snapshot => renderReceiverHealthPage(host, normalizeReceiverHealthSnapshot(snapshot), false, '');
+  `)({ ...environment, host });
+  receiverHealthController.updatePage = () => render(snapshot);
+  receiverHealthController.updatePage();
 }
 void initializeReceiverHealth();
 {

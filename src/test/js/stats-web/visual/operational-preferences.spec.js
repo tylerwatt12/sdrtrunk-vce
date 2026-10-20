@@ -230,15 +230,17 @@ test('problem report questions require answers before preparing a report', async
   expect(await before.evaluate((input) => input.validity.valid)).toBe(true);
 });
 
-test('receiver status owns saved activity status and refreshes both status sources', async ({ page }) => {
+test('receiver diagnostics owns saved activity status and refreshes both status sources', async ({ page }) => {
   const requests = await openCurrentStatus(page, 'health');
   await expect(page).toHaveURL(/view=admin&tab=health/);
   await expect(page.getByRole('heading', { level: 1, name: 'Receiver status' })).toBeVisible();
+  await expect(page.locator('#receiver-health-saved-activity')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
   await expect(page.locator('#receiver-health-saved-activity')).toContainText('Saved activity');
   await expect(page.locator('#receiver-health-saved-activity')).toContainText('Activity summaries');
   const initialStatusRequests = requests.status;
   const initialHealthRequests = requests.health;
-  await page.getByRole('button', { name: 'Check again' }).click();
+  await page.getByRole('button', { name: 'Refresh' }).click();
   await expect.poll(() => requests.status).toBeGreaterThan(initialStatusRequests);
   await expect.poll(() => requests.health).toBeGreaterThan(initialHealthRequests);
 });

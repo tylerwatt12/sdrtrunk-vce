@@ -29,7 +29,8 @@
   min-width: 0;
 }
 
-.receiver-health-section-body[hidden] {
+.receiver-health-section-body[hidden],
+.receiver-health-view[hidden] {
   display: none;
 }
 
@@ -37,6 +38,36 @@
   min-width: 0;
   display: grid;
   gap: var(--space-4);
+}
+
+.receiver-health-navigation,
+.receiver-health-view-heading,
+.receiver-health-support-links {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.receiver-health-tabs {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.receiver-health-resources {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.receiver-health-support-links {
+  justify-content: flex-start;
+}
+
+.receiver-health-latest {
+  justify-items: start;
 }
 
 .receiver-health-overview-footer {
@@ -66,7 +97,6 @@
   min-width: 0;
 }
 
-.receiver-health-issues-grid,
 .receiver-health-diagnostics-grid {
   min-width: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -80,7 +110,6 @@
   gap: var(--space-3);
 }
 
-.receiver-health-issues-grid-active > .receiver-health-section:not(.collapsed),
 .receiver-health-diagnostics-grid > .receiver-health-section:not(.collapsed) {
   grid-column: 1 / -1;
 }
@@ -153,12 +182,6 @@
   align-content: start;
 }
 
-@media (max-width: 900px) {
-  .receiver-health-issues-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 @media (max-width: 720px) {
   .receiver-health-diagnostics-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -166,6 +189,20 @@
 }
 
 @media (max-width: 560px) {
+  .receiver-health-navigation {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .receiver-health-tabs {
+    flex: none;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .receiver-health-refresh {
+    align-self: flex-end;
+  }
+
   .receiver-health-overview,
   .receiver-health-incident-guidance {
     grid-template-columns: minmax(0, 1fr);

@@ -113,12 +113,14 @@ assert.doesNotMatch(openAlerts, /content\.append/,
   'Status icon issues must open in the shared modal instead of rendering as a page.');
 
 const renderHealth = functionSource('function renderReceiverHealthPage(host, snapshot, stale, lastError)');
-assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,
+assert.match(renderHealth, /receiverHealthOverview\(snapshot, stale, lastError\)/);
+const healthOverview = functionSource('function receiverHealthOverview(snapshot, stale, lastError)');
+assert.match(healthOverview, /receiverHealthIncidentList\(snapshot\.active\)/,
   'The Receiver status page must keep the canonical current issue list.');
-assert.match(renderHealth, /receiverHealthAccountSettingNotice\(snapshot\)/);
+assert.match(healthOverview, /receiverHealthAccountSettingNotice\(snapshot\)/);
 
 const healthAccountSettingNotice = functionSource('function receiverHealthAccountSettingNotice(snapshot)');
-assert.match(healthAccountSettingNotice, /node\('button', 'ui-button ui-button-secondary'/,
+assert.match(healthAccountSettingNotice, /node\('button', 'ui-button ui-button-link'/,
   'The Receiver status control must use the shared settings action treatment.');
 assert.match(healthAccountSettingNotice,
   /openStatusIconSettings\('#receiver-health-alert-settings'\)/,

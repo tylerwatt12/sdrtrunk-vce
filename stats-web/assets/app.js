@@ -3771,9 +3771,9 @@ const METRIC_ICONS = {
   Logout: 'icon-stop', Denial: 'icon-warning', Data: 'icon-dashboard',
   'Healthy channels': 'icon-health', 'Degraded channels': 'icon-warning',
   'Offline channels': 'icon-stop', 'Current issues': 'icon-health',
-  'Receiver status': 'icon-health', 'VCE processor use': 'icon-health',
-  'VCE memory use': 'icon-dashboard', 'Time spent freeing memory': 'icon-replay',
-  'Free storage space': 'icon-recording',
+  'Receiver status': 'icon-health', 'VCE processor use': 'icon-health', Processor: 'icon-health',
+  'VCE memory use': 'icon-dashboard', Memory: 'icon-dashboard', 'Time spent freeing memory': 'icon-replay',
+  'Free storage space': 'icon-recording', 'Free storage': 'icon-recording',
   'Need action': 'icon-warning', 'Check soon': 'icon-warning',
   'Summary logging': 'icon-live', 'Detailed history': 'icon-scan-lists',
   'Activity database': 'icon-dashboard', Added: 'icon-plus', Updated: 'icon-refresh',
@@ -9730,6 +9730,7 @@ class ReceiverHealthController {
     this.pageHost = null;
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
+    this.healthView = 'overview';
     this.computerCopyState = '';
     this.computerCopyBusy = false;
     this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
@@ -9757,6 +9758,7 @@ class ReceiverHealthController {
       this.stale = false;
       this.lastError = '';
       this.resolvedPage = 0;
+      this.healthView = 'overview';
       this.computerCopyState = '';
       this.computerCopyBusy = false;
       this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
@@ -9783,7 +9785,7 @@ class ReceiverHealthController {
     } catch (error) {
       if (controller.signal.aborted || this.requestController !== controller) return;
       this.stale = true;
-      this.lastError = 'Receiver status is unavailable right now. Select Check again to try again.';
+      this.lastError = 'Receiver status is unavailable right now. Select Refresh to try again.';
     } finally {
       if (this.requestController === controller) this.requestController = null;
       if (this.desktopEnabled()) {
@@ -9796,6 +9798,7 @@ class ReceiverHealthController {
   bindPage(host) {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
+      this.healthView = 'overview';
       this.computerCopyState = '';
       this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
     }
@@ -20861,7 +20864,7 @@ async function renderRadioSystemIssi(system, renderContext) {
   feedback.setAttribute('role', 'status');
   feedback.hidden = true;
   directory.element.append(feedback);
-  const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
+  const refresh = node('button', 'ui-button ui-button-secondary receiver-health-refresh', 'Refresh');
   refresh.type = 'button';
   directory.titleActions.prepend(refresh);
   content.append(issiFilterToolbar(channels.rows, live, active !== 'foreign-systems',
@@ -29112,10 +29115,12 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
     scope);
   if (resolved) {
     const resolvedSummary = node('p', 'muted receiver-health-incident-resolved-summary');
-    resolvedSummary.append('Cleared ', receiverHealthTime(incident.resolved_at_ms));
+    resolvedSummary.append('Resolved ', receiverHealthTime(incident.resolved_at_ms));
+    if (incident.occurrences) resolvedSummary.append(` · ${number(incident.occurrences.length)} ` +
+      `occurrence${incident.occurrences.length === 1 ? '' : 's'}`);
     identity.append(resolvedSummary);
   }
-  heading.append(identity, receiverHealthSeverityBadge(incident.severity));
+  heading.append(identity, resolved ? uiPill('Resolved') : receiverHealthSeverityBadge(incident.severity));
 
   const facts = node('dl', 'ui-fact-list receiver-health-incident-facts');
   const entries = [
@@ -29125,7 +29130,9 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
   if (receiverHealthScope(incident) !== receiverHealthText(incident.scope, 'Receiver')) {
     entries.push(['Radio identity', receiverHealthText(incident.scope)]);
   }
-  if (resolved) entries.push(['Cleared', receiverHealthTime(incident.resolved_at_ms)]);
+  if (resolved) entries.push(['Resolved', receiverHealthTime(incident.resolved_at_ms)],
+    ['Original severity', receiverHealthSeverity(incident.severity) === 'critical' ? 'Action needed' :
+      receiverHealthSeverity(incident.severity) === 'warning' ? 'Check soon' : 'Normal']);
   entries.forEach(([label, value]) => {
     facts.append(node('dt', '', label));
     const detail = node('dd');
@@ -29156,10 +29163,27 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
 }
 
 function receiverHealthResolvedIncidentKey(incident) {
+  if (incident?.group_key) return `group:${incident.group_key}`;
   const occurrence = String(incident?.occurrence_id ?? '').trim();
   if (occurrence) return `occurrence:${occurrence}`;
   return ['fallback', incident?.code, incident?.scope, incident?.opened_at_ms, incident?.resolved_at_ms]
     .map((value) => String(value ?? '')).join('\u0000');
+}
+
+function receiverHealthResolvedGroupKey(incident) {
+  const channel = String(incident?.configuration_id || '').trim();
+  return JSON.stringify([incident?.code || incident?.title || '', channel ? 'channel' : 'scope',
+    channel || incident?.scope || 'Receiver']);
+}
+
+function receiverHealthResolvedGroups(incidents) {
+  const groups = new Map();
+  receiverHealthSortedResolvedIncidents(incidents, 'recent').forEach((incident) => {
+    const key = receiverHealthResolvedGroupKey(incident);
+    if (!groups.has(key)) groups.set(key, { ...incident, group_key: key, occurrences: [] });
+    groups.get(key).occurrences.push(incident);
+  });
+  return [...groups.values()];
 }
 
 function receiverHealthSortedResolvedIncidents(incidents, sort) {
@@ -29202,7 +29226,8 @@ function receiverHealthResolvedPage(incidents, sort, requestedPage) {
 }
 
 function receiverHealthPruneExpandedResolvedIncidents(incidents) {
-  const current = new Set(incidents.map(receiverHealthResolvedIncidentKey));
+  const current = new Set(incidents.flatMap((incident) => [incident, ...(incident.occurrences || [])])
+    .map(receiverHealthResolvedIncidentKey));
   receiverHealthController.expandedResolvedIncidents.forEach((key) => {
     if (!current.has(key)) receiverHealthController.expandedResolvedIncidents.delete(key);
   });
@@ -29211,7 +29236,7 @@ function receiverHealthPruneExpandedResolvedIncidents(incidents) {
 function receiverHealthIncidentList(incidents, resolved = false) {
   if (!incidents.length) {
     const empty = node('div', 'ui-feedback receiver-health-empty');
-    empty.append(resolved ? 'No issues have cleared recently.' :
+    empty.append(resolved ? 'No resolved issues yet.' :
       uiStatus('No receiver issues need attention.', 'success'));
     return empty;
   }
@@ -29219,20 +29244,25 @@ function receiverHealthIncidentList(incidents, resolved = false) {
   list.append(...incidents.map((incident) => {
     if (!resolved) return receiverHealthIncident(incident);
     const key = receiverHealthResolvedIncidentKey(incident);
-    return receiverHealthIncident(incident, true,
+    const card = receiverHealthIncident(incident, true,
       receiverHealthController.expandedResolvedIncidents.has(key), (open) => {
         if (open) receiverHealthController.expandedResolvedIncidents.add(key);
         else receiverHealthController.expandedResolvedIncidents.delete(key);
       });
+    if (incident.occurrences?.length > 1) {
+      const occurrences = receiverHealthIncidentList(incident.occurrences, true);
+      card.querySelector('.receiver-health-incident-body').replaceChildren(occurrences);
+    }
+    return card;
   }));
   return list;
 }
 
 function receiverHealthResolvedPager(page, onPage) {
   const navigation = browsingWorkflows.createBrowsingPager({ node,
-    className: 'receiver-health-resolved-pager', ariaLabel: 'Recently cleared issues',
+    className: 'receiver-health-resolved-pager', ariaLabel: 'Issue history',
     countText: `${browsingWorkflows.pageRangeText({ offset: page.offset, visible: page.rows.length,
-      total: page.total_count, label: 'Cleared issues', format: number })} · ` +
+      total: page.total_count, label: 'Issue groups', format: number })} · ` +
       `Page ${number(page.page + 1)} of ${number(page.page_count)}`,
     previous: { enabled: page.page > 0, onClick: () => onPage(page.page - 1),
       focusKey: 'resolved-previous' },
@@ -29244,17 +29274,17 @@ function receiverHealthResolvedPager(page, onPage) {
 }
 
 function receiverHealthResolvedSection(incidents) {
-  receiverHealthPruneExpandedResolvedIncidents(incidents);
+  const groups = receiverHealthResolvedGroups(incidents);
+  receiverHealthPruneExpandedResolvedIncidents(groups);
   if (!incidents.length) {
     receiverHealthController.resolvedPage = 0;
-    return receiverHealthSection('resolved', 'Recently cleared', receiverHealthIncidentList(incidents, true),
-      null, 'No recently cleared issues');
+    return section('Issue history', receiverHealthIncidentList([], true));
   }
   const body = node('div');
   const sort = node('select', 'ui-select receiver-health-resolved-select');
-  sort.setAttribute('aria-label', 'Sort cleared issues');
+  sort.setAttribute('aria-label', 'Sort issue history');
   sort.dataset.receiverHealthFocus = 'resolved-sort';
-  [['recent', 'Most recently cleared'], ['type', 'Issue type (A–Z)']].forEach(([value, label]) => {
+  [['recent', 'Most recently resolved'], ['type', 'Issue type (A–Z)']].forEach(([value, label]) => {
     const option = node('option', '', label);
     option.value = value;
     option.selected = receiverHealthController.resolvedSort === value;
@@ -29263,7 +29293,7 @@ function receiverHealthResolvedSection(incidents) {
   const control = node('label', 'receiver-health-resolved-sort');
   control.append(node('span', '', 'Sort'), sort);
   const draw = (focusPager = false) => {
-    const page = receiverHealthResolvedPage(incidents, receiverHealthController.resolvedSort,
+    const page = receiverHealthResolvedPage(groups, receiverHealthController.resolvedSort,
       receiverHealthController.resolvedPage);
     receiverHealthController.resolvedPage = page.page;
     const paginator = receiverHealthResolvedPager(page, (nextPage) => {
@@ -29279,8 +29309,13 @@ function receiverHealthResolvedSection(incidents) {
     draw();
   });
   draw();
-  return receiverHealthSection('resolved', 'Recently cleared', body, control,
-    `${number(incidents.length)} cleared issue${incidents.length === 1 ? '' : 's'}`);
+  const summary = node('p', 'ui-section-note',
+    `${number(incidents.length)} resolved event${incidents.length === 1 ? '' : 's'} · ` +
+    'Repeated issues grouped by channel');
+  const result = section('Issue history', node('div', 'ui-section-body ui-settings-page'), control);
+  result.lastElementChild.append(summary, body);
+  result.dataset.receiverHealthSection = 'resolved';
+  return result;
 }
 
 let receiverHealthSectionSequence = 0;
@@ -29323,7 +29358,8 @@ function receiverHealthSection(key, title, child, action = null, summary = '', s
 
 function receiverHealthResourceScale(row) {
   const numeric = Number(row?.value);
-  const available = Number.isFinite(numeric) && numeric >= 0;
+  const available = row?.value !== null && row?.value !== undefined && row?.value !== '' &&
+    Number.isFinite(numeric) && numeric >= 0;
   const label = receiverHealthText(row?.label).toLowerCase();
   const unit = receiverHealthText(row?.unit, '').toLowerCase();
   const maximum = unit === '%' ? 100 :
@@ -29352,7 +29388,8 @@ function receiverHealthResourceBar(row) {
   const labelNode = copy.querySelector('.ui-metric-label');
   const heading = node('div', 'ui-metric-heading receiver-health-resource-heading');
   labelNode.replaceWith(heading);
-  heading.append(labelNode, receiverHealthStatus(row.severity));
+  heading.append(labelNode);
+  if (severity !== 'healthy') heading.append(receiverHealthStatus(row.severity));
   const reading = copy.querySelector('strong');
   reading.classList.add('receiver-health-resource-value');
   if (unit) reading.append(node('small', 'ui-metric-unit', unit));
@@ -29370,10 +29407,19 @@ function receiverHealthResourceBar(row) {
 function receiverHealthHostResourceOverview(snapshot) {
   const group = snapshot.measurements.find((measurement) =>
     receiverHealthText(measurement.id).toLowerCase() === 'host');
-  const body = node('div', 'ui-metric-grid ui-metric-grid-embedded ui-metric-grid-4 receiver-health-resource-bars');
-  if (group?.rows?.length) body.append(...group.rows.map(receiverHealthResourceBar));
+  const body = node('div', 'ui-metric-grid ui-metric-grid-embedded ui-metric-grid-3 receiver-health-resource-bars');
+  const labels = new Map([['VCE processor use', 'Processor'], ['VCE memory use', 'Memory'],
+    ['Free storage space', 'Free storage']]);
+  const rows = (group?.rows || []).filter((row) => labels.has(row.label));
+  if (rows.length) body.append(...rows.map((row) => receiverHealthResourceBar({ ...row, label: labels.get(row.label),
+    detail: row.detail || (row.label === 'VCE processor use' ? 'VCE processor use' : '') })));
   else body.append(node('div', 'ui-feedback receiver-health-empty', 'Computer resource data is unavailable.'));
-  return receiverHealthSection('host-overview', 'Computer resources', body);
+  const result = node('section', 'receiver-health-resources');
+  const heading = node('div', 'receiver-health-view-heading');
+  heading.append(node('h2', 'ui-record-title', 'Computer resources'),
+    receiverHealthViewButton('View details', 'diagnostics'));
+  result.append(heading, body);
+  return result;
 }
 
 function receiverHealthComputerFacts(computer) {
@@ -29493,7 +29539,7 @@ function receiverHealthMeasurementGroup(group, index) {
 }
 
 function receiverHealthRefreshButton() {
-  const refresh = node('button', 'ui-button ui-button-secondary', 'Check again');
+  const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
   refresh.type = 'button';
   refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
@@ -29512,7 +29558,7 @@ function receiverHealthAccountSettingNotice(snapshot) {
     message = `${number(settings.disabled_count)} current issue${settings.disabled_count === 1 ? '' : 's'} ` +
       `${settings.disabled_count === 1 ? 'is' : 'are'} hidden from your status icon.`;
   }
-  const settingsLink = node('button', 'ui-button ui-button-secondary', 'Choose status icon issues');
+  const settingsLink = node('button', 'ui-button ui-button-link', 'Status indicator settings');
   settingsLink.type = 'button';
   settingsLink.id = 'receiver-health-alert-settings';
   settingsLink.dataset.receiverHealthFocus = 'alert-settings';
@@ -29535,66 +29581,94 @@ function receiverHealthRestoreFocus(host, key) {
   target?.focus({ preventScroll: true });
 }
 
-function renderReceiverHealthPage(host, snapshot, stale, lastError) {
-  const focusedControl = receiverHealthFocusedControl(host);
-  host.replaceChildren();
-  if (!snapshot) {
-    const message = stale ? (lastError || 'Receiver status is unavailable right now. Select Check again to try again.') :
-      'Loading receiver status…';
-    const body = node('div');
-    body.append(node('div', stale ? 'ui-notice ui-notice-warning' :
-      'ui-feedback ui-feedback-loading receiver-health-loading-message', message));
-    host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()),
-      receiverHealthSavedActivitySection());
-    receiverHealthRestoreFocus(host, focusedControl);
-    return;
-  }
+function receiverHealthRelativeTime(value) {
+  const time = dateTime(value);
+  if (!time) return node('span', 'muted', 'Unavailable');
+  time.setAttribute('aria-label', `${elapsedLabel(value)} · ${exactDateTime(value)}`);
+  time.textContent = Date.now() - Number(value) < 5_000 ? 'just now' : elapsedLabel(value);
+  return time;
+}
 
+function receiverHealthViewButton(label, view, sectionKey = '') {
+  const button = node('button', 'ui-button ui-button-link', label);
+  button.type = 'button';
+  button.dataset.receiverHealthFocus = `view-link:${view}:${sectionKey || label}`;
+  button.addEventListener('click', () => {
+    receiverHealthController.healthView = view;
+    if (sectionKey) receiverHealthController.openHealthSections.add(sectionKey);
+    receiverHealthController.updatePage();
+    const host = receiverHealthController.pageHost;
+    const target = sectionKey ? [...host.querySelectorAll('[data-receiver-health-focus]')]
+      .find((element) => element.dataset.receiverHealthFocus === `section:${sectionKey}`) :
+      host.querySelector(`#receiver-health-tab-${view}`);
+    target?.focus();
+  });
+  return button;
+}
+
+function receiverHealthOverview(snapshot, stale, lastError) {
   const summary = snapshot.summary;
-  const stateLabel = stale ? 'Status out of date' : summary.severity === 'critical' ? 'Action needed' :
-    summary.severity === 'warning' ? 'Check soon' : 'Normal';
-  const overview = node('div', 'receiver-health-overview');
-  const status = metricCard('Receiver status', summary.active_count, stateLabel);
-  status.classList.remove('ui-metric-blue');
-  status.classList.add('receiver-health-overview-state',
-    `receiver-health-${stale ? 'stale' : summary.severity}`,
-    `ui-metric-${stale ? 'neutral' : summary.severity === 'critical' ? 'danger' :
-      summary.severity === 'warning' ? 'warning' : 'success'}`);
-  const overviewMetrics = metrics([
-    ['Current issues', summary.active_count],
-    ['Need action', summary.critical_count],
-    ['Check soon', summary.warning_count]
-  ], true);
-  overviewMetrics.classList.add('ui-metric-grid-4', 'ui-metric-grid-inline', 'receiver-health-overview-metrics');
-  overviewMetrics.prepend(status);
-  overview.append(overviewMetrics);
+  const count = summary.active_count;
+  const healthy = count === 0 && summary.severity === 'healthy';
+  const label = stale ? 'Receiver status out of date' : healthy ? 'Receiver operating normally' : count > 0 ?
+    `${number(count)} issue${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} attention` : 'Receiver needs attention';
+  const tone = stale ? 'neutral' : healthy ? 'success' : summary.severity === 'critical' ? 'danger' : 'warning';
+  const overview = node('div', 'ui-settings-page receiver-health-overview');
+  const status = node('section', 'ui-record-card receiver-health-summary');
+  const heading = node('div', 'ui-record-card-header');
+  const copy = node('div', 'ui-record-card-copy ui-heading-group');
+  const title = node('h2');
+  const marker = uiStatus('', tone);
+  marker.setAttribute('aria-hidden', 'true');
+  title.append(marker, ' ', label);
+  const message = stale ? (lastError || 'Live status is delayed. Showing the last update received.') : healthy ?
+    'No issues need attention.' : summary.critical_count > 0 ?
+      `${number(summary.critical_count)} issue${summary.critical_count === 1 ? ' needs' : 's need'} action` + (summary.warning_count > 0 ?
+        ` · ${number(summary.warning_count)} to check soon` : '') : 'Check the issues below and their suggested next steps.';
+  copy.append(title, node('p', '', message));
+  heading.append(copy);
+  status.append(heading);
   const timing = node('dl', 'ui-fact-list receiver-health-timing');
   [
-    ['Monitoring since', receiverHealthTime(snapshot.started_at_ms)],
-    ['Last update', receiverHealthTime(snapshot.generated_at_ms)]
+    ['Last update', receiverHealthRelativeTime(snapshot.generated_at_ms)],
+    ['Monitoring since', receiverHealthTime(snapshot.started_at_ms)]
   ].forEach(([label, value]) => {
     timing.append(node('dt', '', label));
     const detail = node('dd');
     detail.append(valueNode(value));
     timing.append(detail);
   });
-  const footer = node('div', 'receiver-health-overview-footer');
-  footer.append(timing, receiverHealthAccountSettingNotice(snapshot));
-  overview.append(footer);
-  if (stale) overview.append(node('div', 'ui-notice ui-notice-warning receiver-health-stale-notice',
-    'Live status is delayed. Showing the last update received.'));
+  const footer = node('div', 'ui-record-card-footer receiver-health-overview-footer');
+  footer.append(timing);
+  status.append(footer);
+  overview.append(status);
+  if (snapshot.active.length || count > 0) {
+    const issues = node('section', 'receiver-health-current-issues ui-settings-page');
+    issues.append(node('h2', 'ui-record-title', stale ? 'Last reported issues' : 'Issues needing attention'),
+      snapshot.active.length ? receiverHealthIncidentList(snapshot.active) :
+        node('p', 'ui-notice', 'Issue details are unavailable. Refresh to try again.'));
+    overview.append(issues);
+  }
+  overview.append(receiverHealthHostResourceOverview(snapshot));
+  const latest = receiverHealthSortedResolvedIncidents(snapshot.resolved, 'recent')[0];
+  if (latest) {
+    const recent = node('section', 'receiver-health-latest ui-heading-group ui-heading-group-quiet');
+    const detail = node('p');
+    detail.append(receiverHealthText(latest.title, 'Receiver issue'), ' · ', receiverHealthScopeLink(latest),
+      ' · ', receiverHealthRelativeTime(latest.resolved_at_ms));
+    recent.append(node('h2', '', 'Latest resolved issue'), detail,
+      receiverHealthViewButton('View issue history', 'history'));
+    overview.append(recent);
+  }
+  const links = node('div', 'receiver-health-support-links');
+  links.append(receiverHealthViewButton('Computer & version', 'diagnostics', 'computer'),
+    receiverHealthViewButton('Saved activity', 'diagnostics', 'saved-activity'),
+    receiverHealthAccountSettingNotice(snapshot));
+  overview.append(links);
+  return overview;
+}
 
-  const issues = node('div', 'ui-settings-page receiver-health-issues-grid');
-  issues.classList.toggle('receiver-health-issues-grid-active', snapshot.active.length > 0);
-  issues.append(receiverHealthSection('active', 'Issues needing attention',
-    receiverHealthIncidentList(snapshot.active), null,
-    `${number(summary.active_count)} current issue${summary.active_count === 1 ? '' : 's'}`),
-    receiverHealthResolvedSection(snapshot.resolved));
-  host.append(receiverHealthSection('current', 'Receiver overview', overview, receiverHealthRefreshButton()),
-    receiverHealthHostResourceOverview(snapshot),
-    receiverHealthComputerOverview(snapshot),
-    receiverHealthSavedActivitySection(),
-    issues);
+function receiverHealthDiagnostics(snapshot) {
   const diagnostics = node('section', 'receiver-health-diagnostics');
   diagnostics.setAttribute('aria-label', 'Receiver diagnostics');
   const heading = node('div', 'ui-heading-group ui-heading-group-quiet receiver-health-diagnostics-heading');
@@ -29608,8 +29682,67 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     groups.append(receiverHealthSection('measurements', 'Detailed measurements', node('div', 'ui-feedback receiver-health-empty',
       'No measurements available.')));
   }
-  diagnostics.append(heading, groups);
-  host.append(diagnostics);
+  diagnostics.append(heading, groups, receiverHealthComputerOverview(snapshot), receiverHealthSavedActivitySection());
+  return diagnostics;
+}
+
+function renderReceiverHealthPage(host, snapshot, stale, lastError) {
+  const focusedControl = receiverHealthFocusedControl(host);
+  host.replaceChildren();
+  const views = [['overview', 'Overview'], ['history', 'Issue history'], ['diagnostics', 'Diagnostics']];
+  if (!views.some(([key]) => key === receiverHealthController.healthView)) receiverHealthController.healthView = 'overview';
+  const navigation = node('div', 'receiver-health-navigation');
+  const tabs = node('div', 'ui-page-nav ui-segmented ui-page-nav-tabs receiver-health-tabs');
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Receiver status views');
+  navigation.append(tabs, receiverHealthRefreshButton());
+  host.append(navigation);
+  views.forEach(([key, label]) => {
+    const active = key === receiverHealthController.healthView;
+    const tab = node('button', `ui-segmented-option${active ? ' active' : ''}`, label);
+    tab.type = 'button';
+    tab.id = `receiver-health-tab-${key}`;
+    tab.dataset.receiverHealthFocus = `tab:${key}`;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-label', label);
+    tab.setAttribute('aria-selected', String(active));
+    tab.setAttribute('aria-controls', `receiver-health-panel-${key}`);
+    tab.tabIndex = active ? 0 : -1;
+    tab.addEventListener('click', () => {
+      receiverHealthController.healthView = key;
+      receiverHealthController.updatePage();
+    });
+    tab.addEventListener('keydown', (event) => {
+      const index = livePickerNavigationIndex(event.key, views.findIndex(([id]) => id === key), views.length);
+      if (index === null) return;
+      event.preventDefault();
+      receiverHealthController.healthView = views[index][0];
+      receiverHealthController.updatePage();
+      host.querySelector(`#receiver-health-tab-${views[index][0]}`)?.focus();
+    });
+    tabs.append(tab);
+    const panel = node('div', 'ui-settings-page receiver-health-view');
+    panel.id = `receiver-health-panel-${key}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', tab.id);
+    panel.hidden = !active;
+    if (active) {
+      if (!snapshot) {
+        const feedback = node('div', stale ? 'ui-notice ui-notice-warning' :
+          'ui-feedback ui-feedback-loading receiver-health-loading-message', stale ?
+            (lastError || 'Receiver status is unavailable right now. Select Refresh to try again.') :
+            'Loading receiver status…');
+        feedback.setAttribute('role', 'status');
+        panel.append(feedback);
+      } else {
+        if (key !== 'overview' && stale) panel.append(node('div', 'ui-notice ui-notice-warning',
+          'Live status is delayed. Showing the last update received.'));
+        panel.append(key === 'overview' ? receiverHealthOverview(snapshot, stale, lastError) :
+          key === 'history' ? receiverHealthResolvedSection(snapshot.resolved) : receiverHealthDiagnostics(snapshot));
+      }
+    }
+    host.append(panel);
+  });
   receiverHealthRestoreFocus(host, focusedControl);
 }
 
@@ -33932,7 +34065,7 @@ function adminSettingsGroups() {
   return [
     { label: 'Status & support', items: [
       { id: 'health', label: 'Receiver status', icon: 'health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH,
-        description: 'Check the receiver and issues that need attention.' },
+        description: 'Receiver health and issues that need attention.' },
       { id: 'application-log', label: 'Application log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'View recent receiver messages and errors.' },
       { id: 'web-diagnostic-log', label: 'Web server log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,

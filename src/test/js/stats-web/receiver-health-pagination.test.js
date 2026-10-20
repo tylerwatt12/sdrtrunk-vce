@@ -23,9 +23,14 @@ function functionSource(signature) {
 const context = { RECEIVER_HEALTH_RESOLVED_PAGE_SIZE: 5 };
 vm.createContext(context);
 vm.runInContext(`
+  ${functionSource('function receiverHealthResolvedGroupKey(incident)')}
+  ${functionSource('function receiverHealthResolvedGroups(incidents)')}
+  ${functionSource('function receiverHealthResolvedIncidentKey(incident)')}
   ${functionSource('function receiverHealthSortedResolvedIncidents(incidents, sort)')}
   ${functionSource('function receiverHealthResolvedPage(incidents, sort, requestedPage)')}
   globalThis.resolvedPage = receiverHealthResolvedPage;
+  globalThis.resolvedGroups = receiverHealthResolvedGroups;
+  globalThis.resolvedIncidentKey = receiverHealthResolvedIncidentKey;
 `, context);
 
 function plain(value) {
@@ -87,6 +92,44 @@ assert.deepEqual(plain(context.resolvedPage([], 'recent', 4)), {
   limit: 5,
   has_more: false
 });
+
+const repeated = [
+  { ...incident('older', 100), code: 'control-stopped', configuration_id: 'county', scope: 'Original name',
+    observed: 'Earlier evidence', severity: 'warning' },
+  { ...incident('newer', 300), code: 'control-stopped', configuration_id: 'county', scope: 'Renamed channel',
+    observed: 'Latest evidence', severity: 'critical' },
+  { ...incident('other-channel', 200), code: 'control-stopped', configuration_id: 'north',
+    scope: 'Renamed channel' },
+  { ...incident('other-code', 400), code: 'usb-disconnected', configuration_id: 'county', scope: 'Renamed channel' }
+];
+const originalOrder = repeated.map(row => row.occurrence_id);
+const groups = plain(context.resolvedGroups(repeated));
+assert.deepEqual(groups.map(row => row.occurrence_id), ['other-code', 'newer', 'other-channel'],
+  'History groups use the newest event and remain ordered by the most recent resolution.');
+assert.deepEqual(groups[1].occurrences.map(row => row.occurrence_id), ['newer', 'older']);
+assert.equal(groups[1].observed, 'Latest evidence');
+assert.equal(groups[1].occurrences[1].observed, 'Earlier evidence',
+  'Grouping must preserve the evidence and severity of every occurrence.');
+assert.equal(groups[1].occurrences[1].severity, 'warning');
+assert.deepEqual(repeated.map(row => row.occurrence_id), originalOrder, 'Grouping must not reorder source events.');
+const stableGroup = context.resolvedGroups(repeated.slice(0, 1))[0];
+assert.equal(context.resolvedIncidentKey(groups[1]), context.resolvedIncidentKey(stableGroup),
+  'A channel group keeps its expansion key when a newer event or renamed channel appears.');
+const scopeGroups = plain(context.resolvedGroups([
+  { ...incident('first', 1), code: 'host-memory', scope: 'Computer A' },
+  { ...incident('second', 2), code: 'host-memory', scope: 'Computer B' },
+  { ...incident('third', 3), code: 'host-memory', scope: 'Computer A' }
+]));
+assert.equal(scopeGroups.length, 2, 'Issues without a channel ID remain separated by their exact scope.');
+assert.deepEqual(scopeGroups[0].occurrences.map(row => row.occurrence_id), ['third', 'first']);
+assert.deepEqual(plain(context.resolvedGroups([])), []);
+const groupPage = plain(context.resolvedPage(context.resolvedGroups([
+  ...repeated,
+  ...Array.from({ length: 5 }, (_, index) => ({ ...incident(`distinct-${index}`, 500 + index),
+    code: `distinct-${index}`, scope: 'Receiver' }))
+]), 'recent', 1));
+assert.equal(groupPage.total_count, 8, 'History pagination counts groups rather than individual events.');
+assert.equal(groupPage.rows.length, 3);
 
 context.number = (value) => String(value);
 vm.runInContext(`

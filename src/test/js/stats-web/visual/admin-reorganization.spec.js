@@ -133,6 +133,10 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         detailed_history_active: true, state: 'RUNNING' },
       database: { database_exists: true, database_bytes: 1_048_576, detailed_history_available: true, logger: [] } });
     } else if (pathname === '/api/v1/receiver-health') {
+      if (options.healthError) {
+        await route.fulfill({ status: 503, json: { error: { message: 'Status temporarily unavailable.' } } });
+        return;
+      }
       await data({ started_at_ms: Date.now() - 60_000, generated_at_ms: Date.now(),
         summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
         active: [], resolved: [], measurements: [], ...options.healthDocument });
@@ -328,6 +332,61 @@ test('page access preserves all nineteen backend policies and every tier option'
   }
 });
 
+test('receiver status opens a focused healthy overview and supports keyboard tabs', async ({ page }) => {
+  await openAdmin(page, 'health', [], { healthDocument: {
+    resolved: [{ occurrence_id: 'past-critical', code: 'control-stopped', severity: 'critical',
+      title: 'Control channel stopped decoding', scope: 'County Dispatch',
+      resolved_at_ms: 1_780_000_002_000 }]
+  } });
+  const overview = page.getByRole('tab', { name: 'Overview', exact: true });
+  const history = page.getByRole('tab', { name: 'Issue history', exact: true });
+  const diagnostics = page.getByRole('tab', { name: 'Diagnostics', exact: true });
+  await expect(overview).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#receiver-health-panel-overview')).toBeVisible();
+  await expect(page.locator('.receiver-health-overview')).toContainText('Receiver operating normally');
+  await expect(page.locator('.receiver-health-incident')).toHaveCount(0);
+  await expect(page.locator('.receiver-health-diagnostics')).toHaveCount(0);
+  await expect(page.locator('#receiver-health-saved-activity')).toHaveCount(0);
+  await expect(page.locator('[data-receiver-health-section="computer"]')).toHaveCount(0);
+  await overview.focus();
+  await overview.press('ArrowRight');
+  await expect(history).toBeFocused();
+  await expect(history).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#receiver-health-panel-history')).toBeVisible();
+  await expect(page.locator('#receiver-health-panel-overview')).toBeHidden();
+  await expect(page.locator('summary .ui-pill')).toHaveText('Resolved');
+  await history.press('End');
+  await expect(diagnostics).toBeFocused();
+  await expect(diagnostics).toHaveAttribute('aria-selected', 'true');
+  await diagnostics.press('Home');
+  await expect(overview).toBeFocused();
+  await expect(overview).toHaveAttribute('aria-selected', 'true');
+});
+
+test('receiver status can retry a failed load and marks the retained snapshot as out of date', async ({ page }) => {
+  const options = { healthError: true };
+  await openAdmin(page, 'health', [], options);
+  await expect(page.locator('#receiver-health-panel-overview')).toContainText(
+    'Receiver status is unavailable right now. Select Refresh to try again.');
+  await expect(page.locator('.receiver-health-summary')).toHaveCount(0);
+  options.healthError = false;
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.locator('.receiver-health-summary')).toContainText('Receiver operating normally');
+  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
+  options.healthError = true;
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Diagnostics', exact: true }))
+    .toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#receiver-health-panel-diagnostics > .ui-notice')).toHaveText(
+    'Live status is delayed. Showing the last update received.');
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await expect(page.locator('.receiver-health-summary')).toContainText('Receiver status out of date');
+  await expect(page.locator('.receiver-health-summary')).not.toContainText('Receiver operating normally');
+  options.healthError = false;
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.locator('.receiver-health-summary')).toContainText('Receiver operating normally');
+});
+
 test('receiver status retains the complete personal status icon issue picker', async ({ page }) => {
   expect(healthAlertIds).toHaveLength(27);
   await openAdmin(page, 'health');
@@ -349,7 +408,7 @@ test('receiver status preserves issue evidence, cleared history paging, and deta
   await openAdmin(page, 'health', [], { healthDocument: {
     summary: { severity: 'warning', active_count: 1, warning_count: 1, critical_count: 0 },
     active: [incident], resolved: Array.from({ length: 7 }, (_, index) => ({ ...incident,
-      occurrence_id: `cleared-${index}`, title: `Cleared issue ${index}`,
+      occurrence_id: `cleared-${index}`, scope: `Tuner ${index}`, title: `Cleared issue ${index}`,
       resolved_at_ms: 1_780_000_002_000 + index })),
     measurements: [{ id: 'receiver', title: 'Radio data measurements', rows: [{
       severity: 'warning', scope: 'Primary tuner', label: 'Lost radio samples', value: 32,
@@ -361,17 +420,32 @@ test('receiver status preserves issue evidence, cleared history paging, and deta
   await expect(current).toContainText('Transfer delivery slowed down.');
   await expect(current).toContainText('Call audio may have gaps.');
   await expect(current).toContainText('Check the USB connection.');
-  const cleared = page.locator('[data-receiver-health-focus="section:resolved"]');
-  await expect(cleared).toHaveAttribute('aria-expanded', 'false');
-  await cleared.click();
-  const pager = page.getByRole('navigation', { name: 'Recently cleared issues' });
-  await expect(pager).toContainText('Cleared issues 1–5 of 7 · Page 1 of 2');
+  const [issuesBounds, resourcesBounds] = await Promise.all([
+    page.locator('.receiver-health-current-issues').boundingBox(),
+    page.locator('.receiver-health-resources').boundingBox()
+  ]);
+  expect(issuesBounds.y + issuesBounds.height).toBeLessThanOrEqual(resourcesBounds.y);
+  await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.receiver-health-diagnostics')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Issue history', exact: true }).click();
+  const pager = page.getByRole('navigation', { name: 'Issue history' });
+  await expect(pager).toContainText('Page 1 of 2');
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(pager).toContainText('Cleared issues 6–7 of 7 · Page 2 of 2');
+  await expect(pager).toContainText('Page 2 of 2');
   const resolved = page.locator('details.receiver-health-incident').first();
   await resolved.locator('summary').click();
   await expect(resolved).toContainText('What happened');
+  await expect(resolved).toContainText('Original severity');
+  await expect(resolved).toContainText('Check soon');
   await expect(resolved).toContainText('32 samples were dropped.');
+  await expect(resolved.locator('summary .ui-pill')).toHaveText('Resolved');
+  await expect(resolved.locator('summary .ui-pill')).not.toHaveClass(/ui-pill-(warning|danger)/);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Issue history', exact: true }))
+    .toHaveAttribute('aria-selected', 'true');
+  await expect(pager).toContainText('Page 2 of 2');
+  await expect(resolved).toHaveAttribute('open', '');
+  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
   const measurements = page.locator('[data-receiver-health-focus="section:measurement:receiver"]');
   await expect(measurements).toHaveAttribute('aria-expanded', 'false');
   await measurements.click();
@@ -379,10 +453,47 @@ test('receiver status preserves issue evidence, cleared history paging, and deta
   await expect(page.locator('.receiver-health-measurement-row')).toContainText('Lost radio samples');
   await expect(page.locator('.receiver-health-measurement-row')).toContainText('32');
   await expect(page.locator('.receiver-health-measurement-row')).toContainText('Observed during the last sample.');
-  await page.getByRole('button', { name: 'Check again', exact: true }).click();
-  await expect(cleared).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Diagnostics', exact: true }))
+    .toHaveAttribute('aria-selected', 'true');
   await expect(measurements).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('tab', { name: 'Issue history', exact: true }).click();
   await expect(pager).toContainText('Page 2 of 2');
+});
+
+test('receiver status groups repeated history while preserving each occurrence and severity', async ({ page }) => {
+  const base = { code: 'control-stopped', configuration_id: 'county', severity: 'critical',
+    title: 'Control channel stopped decoding', scope: 'County Dispatch',
+    opened_at_ms: 1_780_000_000_000, last_seen_ms: 1_780_000_001_000,
+    observed: 'Current occurrence evidence', likely_cause: 'Signal changed.',
+    impact: 'New calls may be missed.', check_next: 'Check channel signal.' };
+  await openAdmin(page, 'health', [], { healthDocument: { resolved: [
+    { ...base, occurrence_id: 'older', severity: 'warning', scope: 'Previous channel name',
+      observed: 'Earlier occurrence evidence', resolved_at_ms: 1_780_000_002_000 },
+    { ...base, occurrence_id: 'newer', resolved_at_ms: 1_780_000_003_000 },
+    { ...base, occurrence_id: 'other', configuration_id: 'north', scope: 'North Dispatch',
+      resolved_at_ms: 1_780_000_001_500 }
+  ] } });
+  await page.getByRole('tab', { name: 'Issue history', exact: true }).click();
+  const groups = page.locator('#receiver-health-panel-history .receiver-health-incident-list')
+    .first().locator(':scope > details');
+  await expect(groups).toHaveCount(2);
+  const group = groups.first();
+  await expect(group.locator(':scope > summary')).toContainText('2 occurrences');
+  await expect(group.locator(':scope > summary .ui-pill')).toHaveText('Resolved');
+  await group.locator(':scope > summary').click();
+  const occurrences = group.locator('.receiver-health-incident-body > .receiver-health-incident-list > details');
+  await expect(occurrences).toHaveCount(2);
+  await occurrences.first().locator(':scope > summary').click();
+  await expect(occurrences.first()).toContainText('Current occurrence evidence');
+  await expect(occurrences.first()).toContainText('Original severityAction needed');
+  await occurrences.last().locator(':scope > summary').click();
+  await expect(occurrences.last()).toContainText('Earlier occurrence evidence');
+  await expect(occurrences.last()).toContainText('Original severityCheck soon');
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(group).toHaveAttribute('open', '');
+  await expect(occurrences.first()).toHaveAttribute('open', '');
+  await expect(occurrences.last()).toHaveAttribute('open', '');
 });
 
 for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], ['dark', 320]]) {
@@ -408,7 +519,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
         ]
       } });
       const resources = page.locator('.receiver-health-resource-bars .ui-metric');
-      await expect(resources).toHaveCount(4);
+      await expect(resources).toHaveCount(3);
       for (const card of await resources.all()) {
         await expect.poll(() => card.evaluate((element) => {
           const content = element.querySelector('.ui-metric-copy');
@@ -416,10 +527,18 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
             parseFloat(getComputedStyle(element).paddingTop) - parseFloat(getComputedStyle(element).borderTopWidth);
         }).then(Math.abs)).toBeLessThan(1);
       }
-      await expect(resources.nth(2)).toContainText('13ms in last sample');
-      await expect(resources.nth(2)).toContainText('Total since startup 25925 ms');
+      await expect(resources.nth(2)).toContainText('Free storage');
       await expect(page.getByRole('progressbar', { name: 'Time spent freeing memory', exact: true }))
-        .toHaveAttribute('aria-valuetext', '13 ms in last sample');
+        .toHaveCount(0);
+      await expect(page.locator('#receiver-health-saved-activity')).toHaveCount(0);
+      if (width > 720) {
+        const cards = await resources.evaluateAll((items) => items.map((item) => {
+          const bounds = item.getBoundingClientRect();
+          return { left: bounds.left, right: bounds.right };
+        }));
+        expect(cards[1].left - cards[0].right).toBeGreaterThanOrEqual(6);
+      }
+      await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
       await expect(page.locator('#receiver-health-saved-activity .ui-metric strong'))
         .toHaveText(['On', 'On', '1.0 MB']);
       const diagnostics = page.locator('.receiver-health-diagnostics-grid');
@@ -434,11 +553,6 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
         const [left, right] = await Promise.all([tuner.boundingBox(), usb.boundingBox()]);
         expect(right.x).toBeGreaterThan(left.x + left.width);
         expect(Math.abs(right.y - left.y)).toBeLessThan(2);
-        const cards = await resources.evaluateAll((items) => items.map((item) => {
-          const bounds = item.getBoundingClientRect();
-          return { left: bounds.left, right: bounds.right };
-        }));
-        expect(cards[1].left - cards[0].right).toBeGreaterThanOrEqual(6);
       }
       const toggle = control.locator('.ui-disclosure-toggle');
       await toggle.focus();
@@ -466,7 +580,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
       await expect(measurement).toContainText(row.label);
       const [panel, grid] = await Promise.all([control.boundingBox(), diagnostics.boundingBox()]);
       expect(Math.abs(panel.width - grid.width)).toBeLessThan(2);
-      await page.getByRole('button', { name: 'Check again', exact: true }).click();
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click();
       await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
         .toBeLessThanOrEqual(1);

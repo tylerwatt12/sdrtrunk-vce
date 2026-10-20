@@ -1624,15 +1624,13 @@ test('settings-dark-mobile', async ({ page }) => {
 test('receiver-health-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=health');
-  await page.getByRole('button', { name: 'Computer & version', exact: true }).click();
-  await expect(page.locator('[data-receiver-health-section="computer"] .ui-fact')).toHaveCount(14);
+  await expect(page.locator('.receiver-health-overview')).toContainText('Receiver operating normally');
   await expect(page.locator('body')).toHaveScreenshot('receiver-health-light-desktop.png', { fullPage: true });
 });
 
 test('receiver-health-dark-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=health');
-  await page.getByRole('button', { name: 'Computer & version', exact: true }).click();
   await expect(page.locator('body')).toHaveScreenshot('receiver-health-dark-mobile.png', { fullPage: true });
 });
 
@@ -1643,7 +1641,6 @@ for (const [name, theme, viewport] of [
   test(name, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=health`);
-    await page.getByRole('button', { name: 'Computer & version', exact: true }).click();
     await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
   });
 }
@@ -1658,6 +1655,7 @@ test('receiver health computer details copy success and failure', async ({ page 
     } } });
   });
   await page.goto('/design-system.html?theme=light&view=health');
+  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
   const computer = page.locator('[data-receiver-health-section="computer"]');
   await computer.getByRole('button', { name: 'Computer & version', exact: true }).click();
   await computer.getByRole('button', { name: 'Copy details', exact: true }).click();
@@ -1734,10 +1732,14 @@ test('receiver health gallery shares metric and disclosure structure', async ({ 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=health');
   const example = page.locator('.visual-health-example');
-  await expect(example.locator('.receiver-health-overview-metrics .ui-metric')).toHaveCount(4);
-  await expect(example.locator('.receiver-health-resource-bars .ui-metric')).toHaveCount(4);
-  await expect(example.getByRole('progressbar', { name: 'Free storage space' })).toHaveAttribute('value', '6');
-  await expect(example.getByRole('button', { name: 'Choose status icon issues' })).toBeVisible();
+  await expect(example.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(example.locator('.receiver-health-overview-metrics .ui-metric')).toHaveCount(0);
+  await expect(example.locator('.receiver-health-incident')).toHaveCount(0);
+  await expect(example.locator('.receiver-health-resource-bars .ui-metric')).toHaveCount(3);
+  await expect(example.getByRole('progressbar', { name: 'Free storage' })).toHaveAttribute('value', '35.1');
+  await expect(example.getByRole('button', { name: 'Status indicator settings' })).toBeVisible();
+  await expect(example.locator('.receiver-health-diagnostics-grid')).toHaveCount(0);
+  await example.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
   await expect(example.locator('.receiver-health-diagnostics-grid .ui-disclosure-copy > small')).toHaveCount(8);
   const diagnostics = example.locator('.receiver-health-diagnostics-grid');
   const toggle = diagnostics.locator('.ui-disclosure-toggle').first();
