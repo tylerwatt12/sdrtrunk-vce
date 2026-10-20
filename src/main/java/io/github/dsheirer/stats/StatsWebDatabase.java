@@ -5306,18 +5306,38 @@ class StatsWebDatabase
     {
         try
         {
-            var attributes = Files.readAttributes(getDatabasePath(), java.nio.file.attribute.BasicFileAttributes.class,
+            Path path = getDatabasePath();
+            var attributes = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class,
                 java.nio.file.LinkOption.NOFOLLOW_LINKS);
-            if(!attributes.isRegularFile() || attributes.fileKey() == null)
-            {
-                throw new IOException("No stable database file identity");
-            }
-            return attributes.fileKey();
+            return p25SourceIdentity(path, attributes);
         }
         catch(IOException exception)
         {
-            throw new StatsApiException(503, "P25 source identity is unavailable");
+            StatsApiException failure = new StatsApiException(503, "P25 source identity is unavailable");
+            failure.initCause(exception);
+            throw failure;
         }
+    }
+
+    private record CreationStamp(Path path, java.nio.file.attribute.FileTime creationTime) {}
+
+    static Object p25SourceIdentity(Path path, java.nio.file.attribute.BasicFileAttributes attributes) throws IOException
+    {
+        if(!attributes.isRegularFile())
+        {
+            throw new IOException("P25 source is not a regular file");
+        }
+        if(attributes.fileKey() != null)
+        {
+            return attributes.fileKey();
+        }
+        // Windows exposes no fileKey. Creation time stays fixed across ordinary writes and WAL checkpoints.
+        var creationTime = attributes.creationTime();
+        if(creationTime.compareTo(java.nio.file.attribute.FileTime.fromMillis(0)) <= 0)
+        {
+            throw new IOException("P25 source creation time is unavailable");
+        }
+        return new CreationStamp(path.toAbsolutePath().normalize(), creationTime);
     }
 
     /** Both bounded raw datasets share one short WAL snapshot; no Alias/JSON work occurs in this transaction. */
