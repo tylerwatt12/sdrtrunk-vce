@@ -16,7 +16,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/components/controls.css?v=39") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=11") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=31") layer(compositions);',
-  '@import url("./styles/compositions/tables.css?v=16") layer(compositions);',
+  '@import url("./styles/compositions/tables.css?v=17") layer(compositions);',
   '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=20") layer(compositions);',
   '@import url("./styles/compositions/audio-dock.css?v=20") layer(compositions);',
@@ -52,6 +52,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/activity.css?v=6") layer(features);',
   '@import url("./styles/features/recordings.css?v=21") layer(features);',
   '@import url("./styles/features/call-relations.css?v=1") layer(features);',
+  '@import url("./styles/utilities/table-measurement.css?v=1") layer(utilities);',
   '@import url("./styles/utilities/reduced-motion.css?v=14") layer(utilities);',
 ];
 

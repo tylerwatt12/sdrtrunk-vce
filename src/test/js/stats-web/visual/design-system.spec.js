@@ -374,6 +374,65 @@ test('column auto-fit measures intrinsic table content off screen', async ({ pag
   });
 });
 
+for (const theme of ['light', 'dark']) {
+  test(`Live column auto-fit ignores table minimum width and remains stable in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+    const measurements = await page.evaluate(async () => {
+      const application = await fetch('/assets/app.js').then((response) => response.text());
+      const source = application.slice(application.indexOf('function measureTableColumnContentWidth('),
+        application.indexOf('function applyPreferredTableWidths('));
+      const limits = application.match(/^const TABLE_WIDTH_(?:MINIMUM|MAXIMUM) = \d+;/gm).join('\n');
+      const measure = new Function('node', `${limits}\n${source}\nreturn measureTableColumnContentWidth;`)(
+        (tag) => document.createElement(tag));
+      const table = document.createElement('table');
+      table.className = 'data-table resizable-table ui-data-table channels-live-table '
+        + 'ui-data-table-compact ui-mobile-cards';
+      table.dataset.mobileCards = 'true';
+      table.dataset.rowDensity = 'dense';
+      table.innerHTML = '<colgroup><col><col><col></colgroup><thead><tr>'
+        + '<th data-column="status"><button class="table-sort-control">Status</button></th>'
+        + '<th data-column="tags"><button class="table-sort-control">Tags</button>'
+        + '<span class="column-resizer"></span></th>'
+        + '<th data-column="channel"><button class="table-sort-control">Channel</button></th>'
+        + '</tr></thead><tbody>'
+        + '<tr><td>IDLE</td><td data-column="tags" title="Current control channel">CC</td>'
+        + '<td>Regional Emergency Services Dispatch Channel</td></tr>'
+        + '<tr><td>ACTIVE</td><td data-column="tags">V + D</td><td>Dispatch</td></tr>'
+        + '</tbody>';
+      document.body.append(table);
+      const sourceStyle = getComputedStyle(table);
+      const headers = [...table.tHead.rows[0].cells];
+      const columns = [...table.querySelectorAll('col')];
+      const fittedWidths = [];
+      for (const startingWidth of [72, 360, 1000]) {
+        columns[1].style.width = `${startingWidth}px`;
+        table.style.width = `${startingWidth + 600}px`;
+        const tags = measure(table, headers[1], 1);
+        columns[1].style.width = `${tags}px`;
+        fittedWidths.push(tags, measure(table, headers[1], 1));
+      }
+      const result = {
+        sourceMinimumWidth: sourceStyle.minWidth,
+        sourceLayout: sourceStyle.tableLayout,
+        fittedWidths,
+        longValueWidth: measure(table, headers[2], 2),
+        remainingClones: document.querySelectorAll('.table-column-autofit-measurement').length
+      };
+      table.remove();
+      return result;
+    });
+    expect(measurements.sourceMinimumWidth).toBe('720px');
+    expect(measurements.sourceLayout).toBe('fixed');
+    expect(measurements.fittedWidths[0]).toBeGreaterThanOrEqual(48);
+    expect(measurements.fittedWidths[0]).toBeLessThan(140);
+    expect(new Set(measurements.fittedWidths).size).toBe(1);
+    expect(measurements.longValueWidth).toBeGreaterThan(measurements.fittedWidths[0] * 2);
+    expect(measurements.longValueWidth).toBeLessThan(720);
+    expect(measurements.remainingClones).toBe(0);
+  });
+}
+
 test('icon actions show hints on hover and keyboard-visible focus only', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');

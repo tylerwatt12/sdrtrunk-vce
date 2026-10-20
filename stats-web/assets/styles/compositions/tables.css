@@ -464,33 +464,6 @@
   max-width: none;
 }
 
-/* Isolated intrinsic-size clone used by column auto-fit. */
-.ui-data-table.table-column-autofit-measurement {
-  position: fixed;
-  top: 0;
-  left: -10000px;
-  width: max-content;
-  min-width: 0;
-  max-width: 1200px;
-  table-layout: auto;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.ui-data-table.table-column-autofit-measurement :is(th, td) {
-  width: auto;
-  max-width: none;
-  overflow: visible;
-  white-space: nowrap;
-  overflow-wrap: normal;
-}
-
-.ui-data-table.table-column-autofit-measurement th :is(.table-sort-control, .table-column-label) {
-  width: auto;
-  overflow: visible;
-  text-overflow: clip;
-}
-
 /* Opt-in labeled cards preserve table content on narrow screens. */
 @media (max-width: 760px) {
   .ui-data-table.ui-mobile-cards {
