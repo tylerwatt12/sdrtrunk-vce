@@ -938,9 +938,7 @@ public class StatsWebServerService implements AutoCloseable
         status.put("stats_logging", statsLoggingStatusResponse());
         ReceiverActivityStatus logging = statsLoggingStatus();
         status.put("p25_visualizer_available", logging.summaryActive() && logging.detailedHistoryActive() &&
-            mWebChannelCatalog.get().stream().anyMatch(channel -> "TRUNKED".equals(channel.channelKind()) &&
-                channel.processingState() == ChannelAdministrationService.ProcessingState.RUNNING &&
-                Set.of("p25-phase1", "p25-phase2").contains(channel.protocolId())));
+            mChannelAdministrationService != null && mChannelAdministrationService.hasRunningP25TrunkedChannel());
         return status;
     }
 

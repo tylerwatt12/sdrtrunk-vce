@@ -29,6 +29,7 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.TrunkedDiscoveryEvidence;
@@ -124,6 +125,23 @@ public final class ChannelAdministrationService
             List<ChannelSummary> summaries = channels.stream().map(channel -> summary(channel,
                 order.get(channel.getConfigurationId()))).toList();
             return new Catalog(revision(), summaries);
+        });
+    }
+
+    /** Web navigation needs availability, without constructing the full channel directory. */
+    public boolean hasRunningP25TrunkedChannel()
+    {
+        return onConfigurationThread(() ->
+        {
+            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+            {
+                if(!ChannelConfigurationPolicy.isActive(channel)) continue;
+                DecoderType decoder = channel.getDecodeConfiguration().getDecoderType();
+                if((decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2) &&
+                    ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED &&
+                    isProcessing(channel.getConfigurationId())) return true;
+            }
+            return false;
         });
     }
 

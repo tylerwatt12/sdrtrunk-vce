@@ -33,6 +33,8 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.stats.activity.ReceiverActivityService;
+import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebCapability;
@@ -58,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -121,6 +124,60 @@ class StatsApiV1HttpContractTest
         else
         {
             System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, mPreviousAssetOverride);
+        }
+    }
+
+    @Test
+    void shellRequestsDoNotReadTheMainChannelCatalog() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("data");
+        ApplicationPreference disabledLogging = new ApplicationPreference(ignored -> {})
+        {
+            @Override public boolean isStatsLoggingEnabled() { return false; }
+        };
+        ReceiverActivityService logging = new ReceiverActivityService(new TestUserPreferences(disabledLogging,
+            new TestDirectoryPreference(dataRoot)))
+        {
+            @Override public ReceiverActivityStatus getStatus()
+            {
+                return new ReceiverActivityStatus(true, true, true, true, 30,
+                    ReceiverActivityStatus.State.RUNNING, "synthetic", 0, 0, 0, null);
+            }
+        };
+        mService.close();
+        mService = new StatsWebServerService(new TestUserPreferences(new TestApplicationPreference(),
+            new TestDirectoryPreference(dataRoot)), null, logging);
+        mOrigin = URI.create("http://127.0.0.1:" + mService.getRuntimeState().port());
+        Field catalogField = StatsWebServerService.class.getDeclaredField("mWebChannelCatalog");
+        catalogField.setAccessible(true);
+        Object catalog = catalogField.get(mService);
+        Field readField = StatsWebSnapshot.class.getDeclaredField("mRead");
+        readField.setAccessible(true);
+        AtomicInteger catalogReads = new AtomicInteger();
+        readField.set(catalog, (java.util.function.Supplier<List<?>>)() -> {
+            catalogReads.incrementAndGet();
+            return List.of();
+        });
+        try
+        {
+            assertEquals(200, get("/api/v1/auth/session").statusCode());
+            for(int visitor = 0; visitor < 3; visitor++)
+            {
+                HttpResponse<String> response = get(StatsApiV1.STATUS);
+                assertEquals(200, response.statusCode(), response.body());
+                JsonNode data = OBJECT_MAPPER.readTree(response.body()).path("data");
+                assertTrue(data.at("/stats_logging/summary_active").asBoolean());
+                assertTrue(data.at("/stats_logging/detailed_history_active").asBoolean());
+                assertFalse(data.path("p25_visualizer_available").asBoolean());
+            }
+            assertEquals(0, catalogReads.get(), "Shell status must not build Main's channel directory");
+            assertEquals(200, get(StatsApiV1.DASHBOARD + "/main").statusCode());
+            assertEquals(1, catalogReads.get(), "Main still reads the shared directory snapshot");
+        }
+        finally
+        {
+            mService.close();
+            logging.dispose();
         }
     }
 

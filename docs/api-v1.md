@@ -99,7 +99,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/aliases` | Paged Alias catalog and bounded activity metrics. |
 | `GET /api/v1/aliases/{id}` | One Alias and its bounded activity breakdown. |
 | `GET /api/v1/scan-lists` | Published Scan Lists available to the signed-in browser listener. |
-| `GET /api/v1/radio-systems` | Paged radio systems with an optional bounded channel preview. |
+| `GET /api/v1/radio-systems` | Paged radio systems. Use the system's channels resource for its saved channels. |
 | `GET /api/v1/radio-systems/{radio_system_key}` | One radio system and its summary. |
 | `GET /api/v1/radio-systems/{radio_system_key}/channels` | Paged saved channels assigned to the radio system. |
 | `GET /api/v1/radio-systems/{radio_system_key}/group-identities` | Paged talkgroups and patch groups. |
