@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.stats;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
@@ -169,12 +170,12 @@ public final class ReceiverWebServices implements AutoCloseable
                         return mDatabase.affiliationPresentationGeneration();
                     }
                     @Override
-                    public List<Map<String,Object>> presentRows(List<Map<String,Object>> rows)
+                    public List<ObjectNode> presentRows(List<Map<String,Object>> rows)
                     {
                         return mDatabase.presentP25ActivityRows(rows);
                     }
                     @Override
-                    public List<Map<String,Object>> presentAffiliations(List<Map<String,Object>> rows)
+                    public List<ObjectNode> presentAffiliations(List<Map<String,Object>> rows)
                     {
                         return mDatabase.presentP25Affiliations(rows);
                     }

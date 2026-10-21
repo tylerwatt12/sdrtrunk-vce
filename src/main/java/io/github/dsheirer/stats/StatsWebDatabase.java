@@ -13,6 +13,7 @@ package io.github.dsheirer.stats;
 
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.channel.ChannelAdministrationService;
@@ -1390,7 +1391,7 @@ class StatsWebDatabase
         return observedGroupIdentities(aliasListId, request, queryObserver, false);
     }
 
-    private Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request,
+    Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request,
         Consumer<ObservedGroupIdentityQuery> queryObserver, boolean onlyUnassigned)
     {
         if(aliasListId <= 0)
@@ -1632,26 +1633,22 @@ class StatsWebDatabase
                 aliasListId, aliasListName, family, family, aliasListId, aliasListId,
                 aliasListId, aliasListName, family, aliasListId, aliasListId));
 
-            if(!includeExact)
+            if(!includeExact || onlyUnassigned)
             {
                 sql.append(" AND has_exact_definition = 0");
             }
 
             if(onlyUnassigned)
             {
+                String protocols = "P25".equals(family) ? "('APCO25', 'APCO25_PHASE2')" : "('" + family + "')";
                 sql.append("""
                      AND NOT EXISTS (
                        SELECT 1 FROM alias definition
                        WHERE definition.alias_list_id = observed.alias_list_id
-                         AND ((definition.matcher_type = 'TALKGROUP'
-                               AND definition.value = observed.group_identity_id)
-                           OR (definition.matcher_type = 'TALKGROUP_RANGE'
-                               AND observed.group_identity_id BETWEEN definition.min_value AND definition.max_value))
-                         AND ((observed.protocol_code = 1
-                               AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
-                           OR (observed.protocol_code = 3 AND definition.protocol = 'DMR')
-                           OR (observed.protocol_code = 4 AND definition.protocol = 'NXDN')))
-                    """);
+                         AND definition.matcher_type = 'TALKGROUP_RANGE'
+                         AND observed.group_identity_id BETWEEN definition.min_value AND definition.max_value
+                         AND definition.protocol IN %s)
+                    """.formatted(protocols));
             }
 
             if(request.search() != null)
@@ -5404,7 +5401,7 @@ class StatsWebDatabase
         });
     }
 
-    List<Map<String,Object>> presentP25ActivityRows(List<Map<String,Object>> core)
+    List<ObjectNode> presentP25ActivityRows(List<Map<String,Object>> core)
     {
         if(core.isEmpty())
         {
@@ -5465,7 +5462,7 @@ class StatsWebDatabase
         """.formatted(IDENTITY_KEY_SQL.formatted("radio"),IDENTITY_KEY_SQL.formatted("talkgroup"));
 
     /** Enrich only changed current identities, using the same channel-owned Alias rules as Activity. */
-    List<Map<String,Object>> presentP25Affiliations(List<Map<String,Object>> core)
+    List<ObjectNode> presentP25Affiliations(List<Map<String,Object>> core)
     {
         if(core.isEmpty()) return List.of();
         return read(connection -> {
@@ -5482,14 +5479,14 @@ class StatsWebDatabase
                 List<Map<String,Object>> rows = core.stream().map(row -> (Map<String,Object>)new LinkedHashMap<>(row)).toList();
                 mAliasResolver.enrichActivity(connection,rows);
                 com.fasterxml.jackson.databind.JsonNode named = new StatsSystemNameResolver(connection).enrich(rows);
-                List<Map<String,Object>> result = new ArrayList<>();
+                List<ObjectNode> result = new ArrayList<>();
                 for(com.fasterxml.jackson.databind.JsonNode row: named)
                 {
-                    Map<String,Object> value = new LinkedHashMap<>();
+                    ObjectNode value = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
                     for(String field: List.of("radio_system_key","configuration_id","confirmed_at_ms","wacn","system_id",
                         "radio_home_wacn","radio_home_system_id","talkgroup_home_wacn","talkgroup_home_system_id",
                         "system_name","system_names"))
-                        if(row.has(field)) value.put(field,StatsApiV1Payload.mapperValue(row.get(field)));
+                        if(row.has(field)) value.set(field,row.get(field));
                     value.put("protocol","p25");
                     for(String[] field: new String[][]{{"radio_identity_key","source_identity_key"},
                         {"talkgroup_identity_key","target_identity_key"},{"radio_id","source_native_id"},
@@ -5498,13 +5495,13 @@ class StatsWebDatabase
                         {"radio_alias_name","source_alias_name"},{"radio_talker_alias","source_talker_alias"},
                         {"talkgroup_alias_name","target_alias_name"},{"radio_home_system_name","source_home_system_name"},
                         {"talkgroup_home_system_name","target_home_system_name"}})
-                        if(row.has(field[1])) value.put(field[0],StatsApiV1Payload.mapperValue(row.get(field[1])));
+                        if(row.has(field[1])) value.set(field[0],row.get(field[1]));
                     if(row.hasNonNull("source_canonical_wacn") && row.hasNonNull("source_canonical_system_id") &&
                         row.hasNonNull("source_canonical_subscriber_id"))
-                        value.put("radio_canonical_identity",Map.of("wacn",row.path("source_canonical_wacn").asInt(),
-                            "system_id",row.path("source_canonical_system_id").asInt(),
-                            "subscriber_id",row.path("source_canonical_subscriber_id").asInt()));
-                    result.add(java.util.Collections.unmodifiableMap(value));
+                        value.putObject("radio_canonical_identity").put("wacn",row.path("source_canonical_wacn").asInt())
+                            .put("system_id",row.path("source_canonical_system_id").asInt())
+                            .put("subscriber_id",row.path("source_canonical_subscriber_id").asInt());
+                    result.add(value);
                 }
                 return List.copyOf(result);
             }

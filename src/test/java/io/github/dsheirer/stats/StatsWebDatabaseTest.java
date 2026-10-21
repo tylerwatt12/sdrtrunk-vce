@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
@@ -2210,6 +2211,80 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void unassignedP25GroupsReuseExactCoverageAndSeekOnlyTheirProtocolRanges() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement();
+            PreparedStatement calls = connection.prepareStatement("""
+                INSERT INTO p25_site_call_identity_bucket (
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
+                    identity_kind_code, identity_summary_id, observed_local_id, last_observed_at_ms,
+                    observed_call_count, encrypted_observed_call_count, observed_working_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                """))
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET alias_list_id=71 WHERE sort_order=72");
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site (
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (710,71,1,1,1000,4000),(720,71,1,2,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,
+                    first_seen_ms,last_seen_ms)
+                VALUES (7112,71,1,0xBEE00,0x49F,102,1000,4000),
+                       (7113,71,1,0xBEE00,0x49F,103,1000,4000),
+                       (7114,71,3,0xBEE00,0x49F,103,1000,4000),
+                       (7115,71,1,0xBEE00,0x49F,104,1000,4000),
+                       (7116,71,1,0xBEE00,0x49F,105,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value,min_value,max_value)
+                VALUES (7112,71,'Phase 2 exact','TALKGROUP','APCO25_PHASE2',102,NULL,NULL),
+                       (7113,71,'Phase 2 range','TALKGROUP_RANGE','APCO25_PHASE2',NULL,104,105),
+                       (7114,72,'Other list','TALKGROUP_RANGE','APCO25',NULL,103,104),
+                       (7115,71,'Other protocol','TALKGROUP_RANGE','DMR',NULL,103,104)
+                """);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7101,101,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7112,102,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7113,103,null,1);
+            insertP25ChannelIdentity(calls,bucket,720,72,1,1,7113,103,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,3,7114,103,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7115,104,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7116,105,null,1);
+        }
+        StatsWebDatabase.ObservedGroupIdentityQuery[] query = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        var result = mDatabase.observedGroupIdentities(71,
+            request("/?include_exact=true&limit=100&sort=group_identity&direction=asc"), value -> query[0]=value, true);
+        assertEquals(3,number(result.get("total_count")));
+        assertEquals(List.of(103L,103L,103L),rows(result).stream()
+            .map(row -> number(row.get("group_identity_id"))).toList());
+        assertEquals(Set.of(P25_CHANNEL_A,P25_CHANNEL_B),rows(result).stream()
+            .map(row -> row.get("configuration_id")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(1,rows(result).stream().filter(row -> number(row.get("group_identity_kind_code"))==3).count());
+        var all = mDatabase.unassignedGroupIdentities(71,request("/?include_exact=true&limit=100&sort=group_identity&direction=asc"));
+        var second = mDatabase.unassignedGroupIdentities(71,request("/?include_exact=true&limit=1&offset=1&sort=group_identity&direction=asc"));
+        var expected = new LinkedHashMap<>(rows(all).get(1));
+        var actual = new LinkedHashMap<>(rows(second).getFirst());
+        expected.remove("counts_as_of_ms");
+        actual.remove("counts_as_of_ms");
+        assertEquals(expected,actual);
+        assertEquals(3,number(second.get("total_count")));
+        assertEquals(3,number(mDatabase.unassignedGroupIdentities(71,request("/?q=103")).get("total_count")));
+        assertEquals(0,number(mDatabase.unassignedGroupIdentities(71,request("/?q=missing")).get("total_count")));
+        assertTrue(rows(mDatabase.unassignedGroupIdentities(71,request("/?offset=20"))).isEmpty());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection,query[0].sql(),query[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains(
+                "idx_alias_activity_talkgroup_range (alias_list_id=? AND protocol=? AND min_value<?")),plan.toString());
+            assertFalse(plan.stream().anyMatch(detail -> detail.contains("MULTI-INDEX OR")),plan.toString());
+        }
+    }
+
+    @Test
     void conventionalDmrAliasDiscoveryKeepsCarrierTimeslotsSeparate() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -2246,6 +2321,29 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> searched = rows(mDatabase.observedGroupIdentities(74,
             request("/?include_exact=true&q=dispatch%20repeater")));
         assertEquals(2, searched.size(), "Search must use the same saved-channel label shown in the browser");
+        assertTrue(rows(mDatabase.unassignedGroupIdentities(74,request("/?include_exact=true"))).isEmpty(),
+            "Unassigned results must exclude exact definitions even when include_exact is requested");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_talkgroup_summary (
+                    channel_id,frequency_hz,timeslot,talkgroup_id,first_seen_ms,last_seen_ms,call_count,encrypted_count)
+                VALUES (74,460012500,1,8,2000,5000,1,0),(74,460012500,2,9,2000,5000,1,0),
+                       (74,460012500,1,10,2000,5000,1,0),(74,460012500,2,10,2000,5000,1,0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,min_value,max_value)
+                VALUES (7411,74,'DMR range','TALKGROUP_RANGE','DMR',8,9),
+                       (7412,74,'Wrong protocol','TALKGROUP_RANGE','NXDN',10,11),
+                       (7413,71,'Wrong list','TALKGROUP_RANGE','DMR',10,11)
+                """);
+        }
+        var unassigned = mDatabase.unassignedGroupIdentities(74,
+            request("/?include_exact=true&sort=slot&direction=asc"));
+        assertEquals(2,number(unassigned.get("total_count")));
+        assertEquals(List.of(1L,2L),rows(unassigned).stream().map(row -> number(row.get("timeslot"))).toList());
+        assertTrue(rows(unassigned).stream().allMatch(row -> number(row.get("group_identity_id"))==10));
     }
 
     @Test
@@ -3212,19 +3310,19 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("ANALYZE");
         }
-        List<Map<String,Object>> actual = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
+        List<ObjectNode> actual = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
         assertTrue(actual.size() < 500);
-        assertFalse(actual.stream().anyMatch(row -> number(row.get("id")) > 10000 && number(row.get("id")) < 12001));
-        assertFalse(actual.stream().anyMatch(row -> number(row.get("id")) == 12002));
-        Map<String,Object> north = actual.stream().filter(row -> number(row.get("observed_at_ms")) == 10000).findFirst().orElseThrow();
-        Map<String,Object> south = actual.stream().filter(row -> number(row.get("id")) == 12001).findFirst().orElseThrow();
-        assertEquals("North Unit", north.get("source_alias_name"));
-        assertEquals(RADIO_SYSTEM_KEY, north.get("radio_system_key"));
-        assertEquals("South Unit", south.get("source_alias_name"));
-        assertEquals("Fireground", south.get("target_alias_name"));
+        assertFalse(actual.stream().anyMatch(row -> row.path("id").asLong() > 10000 && row.path("id").asLong() < 12001));
+        assertFalse(actual.stream().anyMatch(row -> row.path("id").asLong() == 12002));
+        ObjectNode north = actual.stream().filter(row -> row.path("observed_at_ms").asLong() == 10000).findFirst().orElseThrow();
+        ObjectNode south = actual.stream().filter(row -> row.path("id").asLong() == 12001).findFirst().orElseThrow();
+        assertEquals("North Unit", north.path("source_alias_name").textValue());
+        assertEquals(RADIO_SYSTEM_KEY, north.path("radio_system_key").textValue());
+        assertEquals("South Unit", south.path("source_alias_name").textValue());
+        assertEquals("Fireground", south.path("target_alias_name").textValue());
         assertEquals(777, StatsApiV1Payload.present(north).at("/source_canonical_identity/subscriber_id").intValue());
-        assertFalse(north.containsKey("frequency_hz"));
-        assertFalse(north.containsKey("event_type"));
+        assertFalse(north.has("frequency_hz"));
+        assertFalse(north.has("event_type"));
         assertEquals(actual, mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows()),
             "Every shared seed and delta uses the same compact projection");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -3246,10 +3344,10 @@ class StatsWebDatabaseTest
                 SELECT 20000+n,71,71,20000+n,4 FROM rows
                 """);
         }
-        List<Map<String,Object>> bounded = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
+        List<ObjectNode> bounded = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
         assertEquals(500, bounded.size());
-        assertEquals(20501, number(bounded.getFirst().get("id")));
-        assertEquals(20002, number(bounded.getLast().get("id")));
+        assertEquals(20501, bounded.getFirst().path("id").asLong());
+        assertEquals(20002, bounded.getLast().path("id").asLong());
     }
 
     @Test
@@ -3273,17 +3371,17 @@ class StatsWebDatabaseTest
         }
         List<Map<String,Object>> core = mDatabase.p25RawSnapshot().affiliations();
         assertEquals(1,core.size());
-        Map<String,Object> row = mDatabase.presentP25Affiliations(core).getFirst();
-        assertEquals(RADIO_SYSTEM_KEY,row.get("radio_system_key"));
-        assertEquals("v1-r-bee00-49f-202",row.get("radio_identity_key"));
-        assertEquals("v1-g-bee00-49f-101",row.get("talkgroup_identity_key"));
-        assertEquals(P25_CHANNEL_A,row.get("configuration_id"));
-        assertEquals(10000,number(row.get("confirmed_at_ms")));
-        assertEquals("Current Unit",row.get("radio_alias_name"));
-        assertEquals("p25",row.get("protocol"));
-        assertFalse(row.containsKey("id"));
-        assertFalse(row.containsKey("alias_list_id"));
-        assertFalse(row.containsKey("action"),"current state must not impersonate an Activity event");
+        ObjectNode row = mDatabase.presentP25Affiliations(core).getFirst();
+        assertEquals(RADIO_SYSTEM_KEY,row.path("radio_system_key").textValue());
+        assertEquals("v1-r-bee00-49f-202",row.path("radio_identity_key").textValue());
+        assertEquals("v1-g-bee00-49f-101",row.path("talkgroup_identity_key").textValue());
+        assertEquals(P25_CHANNEL_A,row.path("configuration_id").textValue());
+        assertEquals(10000,row.path("confirmed_at_ms").asLong());
+        assertEquals("Current Unit",row.path("radio_alias_name").textValue());
+        assertEquals("p25",row.path("protocol").textValue());
+        assertFalse(row.has("id"));
+        assertFalse(row.has("alias_list_id"));
+        assertFalse(row.has("action"),"current state must not impersonate an Activity event");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
@@ -3293,7 +3391,7 @@ class StatsWebDatabaseTest
         }
         List<Map<String,Object>> corrected = mDatabase.p25RawSnapshot().affiliations();
         assertFalse(core.equals(corrected),"same current radio key must notice canonical corrections");
-        assertEquals(777,((Map<?,?>)mDatabase.presentP25Affiliations(corrected).getFirst().get("radio_canonical_identity")).get("subscriber_id"));
+        assertEquals(777,mDatabase.presentP25Affiliations(corrected).getFirst().at("/radio_canonical_identity/subscriber_id").asInt());
         // A first subscriber presents the entire current table, not a single 500-row Activity page.
         List<Map<String,Object>> bulk = new ArrayList<>();
         for(int index = 0; index < P25ActivityLiveService.MAXIMUM_AFFILIATIONS; index++)
@@ -3310,12 +3408,12 @@ class StatsWebDatabaseTest
             value.put("source_canonical_subscriber_id", radio);
             bulk.add(value);
         }
-        List<Map<String,Object>> presented = mDatabase.presentP25Affiliations(bulk);
+        List<ObjectNode> presented = mDatabase.presentP25Affiliations(bulk);
         assertEquals(10_000, presented.size());
-        assertEquals("v1-r-bee00-49f-100000", presented.getFirst().get("radio_identity_key"));
-        assertEquals("v1-r-bee00-49f-109999", presented.getLast().get("radio_identity_key"));
+        assertEquals("v1-r-bee00-49f-100000", presented.getFirst().path("radio_identity_key").textValue());
+        assertEquals("v1-r-bee00-49f-109999", presented.getLast().path("radio_identity_key").textValue());
         assertEquals(row.get("talkgroup_alias_name"), presented.getLast().get("talkgroup_alias_name"));
-        assertEquals(109_999, ((Map<?,?>)presented.getLast().get("radio_canonical_identity")).get("subscriber_id"));
+        assertEquals(109_999, presented.getLast().at("/radio_canonical_identity/subscriber_id").asInt());
         assertFalse(bulk.getFirst().containsKey("source_alias_name"), "presentation must not mutate native reader rows");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())

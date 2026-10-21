@@ -3,6 +3,7 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,8 +43,8 @@ class P25ActivityLiveServiceTest
             var event=viewers.getFirst().poll(2,TimeUnit.SECONDS);assertNotNull(event);
             assertEquals("p25_state_delta",event.name());
             for(int index=1;index<200;index++) assertSame(event,viewers.get(index).poll(1,TimeUnit.SECONDS));
-            assertEquals("enriched",list(event,"rows").getFirst().get("label"));
-            assertEquals(12,list(event,"affiliations").getFirst().get("talkgroup_id"));
+            assertEquals("enriched",list(event,"rows").getFirst().path("label").textValue());
+            assertEquals(12,list(event,"affiliations").getFirst().path("talkgroup_id").intValue());
             var latest=seed(service);assertEquals(data(event).get("sequence"),latest.path("sequence").asLong());
             assertSame(event.frame(7),event.frame(7));assertSame(event.frame(7).bytes(true),event.frame(7).bytes(true));
             Thread.sleep(1100);assertEquals(2,fixture.eventPresentations.get(),"quiet raw rows skip aliases/encoding");
@@ -63,7 +64,7 @@ class P25ActivityLiveServiceTest
             events=new ArrayList<>(events);events.removeLast();events.addFirst(row(501,"new"));
             fixture.set(events,List.of(affiliation(1,11)));
             var event=viewer.poll(2,TimeUnit.SECONDS);assertNotNull(event);
-            assertEquals(List.of(1L),data(event).get("removed_ids"));assertEquals(501L,list(event,"rows").getFirst().get("id"));
+            assertEquals(List.of(1L),data(event).get("removed_ids"));assertEquals(501L,list(event,"rows").getFirst().path("id").longValue());
             assertTrue(list(event,"affiliations").isEmpty());
             assertEquals(1,seed(service).path("affiliations").size(),"Activity eviction cannot remove current state");
             fixture.set(List.of(),List.of());
@@ -207,7 +208,7 @@ class P25ActivityLiveServiceTest
         try(P25ActivityLiveService service=fixture.service();var viewer=service.subscribe())
         {
             seed(service);fixture.alias.set("renamed");fixture.generation.incrementAndGet();
-            var update=viewer.poll(2,TimeUnit.SECONDS);assertEquals("renamed",list(update,"affiliations").getFirst().get("radio_alias_name"));
+            var update=viewer.poll(2,TimeUnit.SECONDS);assertEquals("renamed",list(update,"affiliations").getFirst().path("radio_alias_name").textValue());
             int projected=fixture.nativePresentations.get();service.seed(true);for(int index=0;index<20;index++) service.seed(true);
             assertEquals(projected+1,fixture.nativePresentations.get());
             var overflow=new ArrayList<Map<String,Object>>();for(int id=0;id<=10_000;id++) overflow.add(affiliation(id,id));
@@ -219,10 +220,43 @@ class P25ActivityLiveServiceTest
         }
     }
 
+    @Test void publicTreesPreserveSourceFactsAndIntegralWidthsDoNotPublishQuietChanges() throws Exception
+    {
+        Fixture fixture = new Fixture();
+        Map<String,Object> raw = new LinkedHashMap<>(row(1,"stable"));
+        raw.put("explicit_null",null);
+        raw.put("large_number",Long.MAX_VALUE);
+        fixture.set(List.of(raw),List.of(affiliation(1,11)));
+        try(P25ActivityLiveService service = fixture.service(); var viewer = service.subscribe())
+        {
+            var first = service.seed();
+            long sequence = service.state().sequence();
+            fixture.narrowNumbers.set(true);
+            fixture.generation.incrementAndGet();
+            await(() -> fixture.eventPresentations.get() >= 2);
+            assertNull(viewer.poll(300,TimeUnit.MILLISECONDS),"Integral node width alone cannot produce a delta");
+            assertEquals(sequence,service.state().sequence());
+            assertSame(first,service.seed(),"Quiet presentation changes reuse the exact prepared seed");
+            fixture.set(List.of(raw),List.of(affiliation(1,12)));
+            await(() -> service.state().sequence() > sequence);
+            JsonNode current = seed(service).at("/rows/0");
+            assertEquals("stable",current.path("label").textValue());
+            assertTrue(current.has("explicit_null"));
+            assertTrue(current.path("explicit_null").isNull());
+            assertFalse(current.has("absent_field"));
+            assertEquals(Long.MAX_VALUE,current.path("large_number").longValue());
+            assertEquals("stable",raw.get("label"),"Presentation cannot mutate native producer rows");
+        }
+    }
+
     @SuppressWarnings("unchecked") private static Map<String,Object> data(StatsLiveEventHub.LiveEvent event)
     { return (Map<String,Object>)event.data(); }
-    @SuppressWarnings("unchecked") private static List<Map<String,Object>> list(StatsLiveEventHub.LiveEvent event,String field)
-    { return (List<Map<String,Object>>)data(event).get(field); }
+    private static List<JsonNode> list(StatsLiveEventHub.LiveEvent event,String field)
+    {
+        List<JsonNode> rows = new ArrayList<>();
+        JSON.<JsonNode>valueToTree(data(event).get(field)).forEach(rows::add);
+        return rows;
+    }
     private static List<StatsLiveEventHub.LiveEvent> revision(StatsLiveEventHub.Subscription viewer) throws Exception
     {
         var first=viewer.poll(2,TimeUnit.SECONDS);assertNotNull(first);var parts=new ArrayList<StatsLiveEventHub.LiveEvent>();parts.add(first);
@@ -245,6 +279,7 @@ class P25ActivityLiveServiceTest
     }
     private static final class Fixture implements P25ActivityLiveService.Source
     {
+        final AtomicBoolean narrowNumbers = new AtomicBoolean();
         final AtomicReference<P25ActivityLiveService.RawSnapshot> raw=new AtomicReference<>(new P25ActivityLiveService.RawSnapshot("first",List.of(),List.of()));
         final AtomicReference<Object> identity=new AtomicReference<>("first");
         final AtomicInteger reads=new AtomicInteger(),eventPresentations=new AtomicInteger(),nativePresentations=new AtomicInteger();
@@ -263,14 +298,21 @@ class P25ActivityLiveServiceTest
         }
         @Override public Object identity() { return identity.get(); }
         @Override public long presentationGeneration() { return generation.get(); }
-        @Override public List<Map<String,Object>> presentRows(List<Map<String,Object>> rows)
-        { if(!rows.isEmpty()) eventPresentations.incrementAndGet();return rows; }
-        @Override public List<Map<String,Object>> presentAffiliations(List<Map<String,Object>> rows)
+        @Override public List<ObjectNode> presentRows(List<Map<String,Object>> rows)
+        {
+            if(!rows.isEmpty()) eventPresentations.incrementAndGet();
+            return rows.stream().map(row -> {
+                ObjectNode value = JSON.valueToTree(row);
+                if(narrowNumbers.get()) value.put("id",value.path("id").intValue());
+                return value;
+            }).toList();
+        }
+        @Override public List<ObjectNode> presentAffiliations(List<Map<String,Object>> rows)
         {
             if(rows.isEmpty()) return List.of();nativePresentations.incrementAndGet();
             if(badProjection.get()) throw new IllegalStateException("fixture presentation unavailable");
             if(swapDuringPresentation.getAndSet(false)) identity.set("replacement");
-            return rows.stream().map(row->{ var value=new LinkedHashMap<>(row);value.put("radio_identity_key",value.remove("source_identity_key"));value.put("radio_alias_name",alias.get());return (Map<String,Object>)Map.copyOf(value); }).toList();
+            return rows.stream().map(row->{ var value=new LinkedHashMap<>(row);value.put("radio_identity_key",value.remove("source_identity_key"));value.put("radio_alias_name",alias.get());return JSON.<ObjectNode>valueToTree(value); }).toList();
         }
     }
 }

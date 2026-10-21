@@ -17,7 +17,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -88,19 +90,16 @@ final class StatsApiV1Payload
 
     static JsonNode present(Object value)
     {
-        return transform(source(value), StatsApiProtocol.UNKNOWN);
+        return transform(value instanceof JsonNode tree ? tree : source(value), StatsApiProtocol.UNKNOWN);
     }
 
-    /** Identical compact public rows for the shared saved baseline and state deltas. */
-    static java.util.List<Map<String,Object>> p25VisualizerRows(Object value)
+    /** Identical compact public trees for the shared saved baseline and state deltas. */
+    static List<ObjectNode> p25VisualizerRows(JsonNode value)
     {
-        JsonNode rows = transform(value instanceof JsonNode tree ? tree : source(value), StatsApiProtocol.UNKNOWN);
-        for(JsonNode row: rows) if(row instanceof ObjectNode object) object.retain(P25_VISUALIZER_FIELDS);
-        return OBJECT_MAPPER.convertValue(rows,
-            new com.fasterxml.jackson.core.type.TypeReference<java.util.List<Map<String,Object>>>() { });
+        List<ObjectNode> rows = new ArrayList<>();
+        for(JsonNode row: present(value)) rows.add(((ObjectNode)row).retain(P25_VISUALIZER_FIELDS));
+        return List.copyOf(rows);
     }
-
-    static Object mapperValue(JsonNode value) { return OBJECT_MAPPER.convertValue(value,Object.class); }
 
     /** Preserves producer field casing before optional read-side enrichment. */
     static JsonNode source(Object value)

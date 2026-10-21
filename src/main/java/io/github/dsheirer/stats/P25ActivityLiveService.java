@@ -1,6 +1,8 @@
 /* Copyright (C) 2026 Dennis Sheirer. GNU General Public License, version 3 or later. */
 package io.github.dsheirer.stats;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.io.IOException;
@@ -39,8 +41,9 @@ final class P25ActivityLiveService implements AutoCloseable
         RawSnapshot snapshot();
         Object identity();
         long presentationGeneration();
-        List<Map<String,Object>> presentRows(List<Map<String,Object>> rows);
-        List<Map<String,Object>> presentAffiliations(List<Map<String,Object>> rows);
+        /** Transfers fresh public trees to this reader; presenters never mutate returned trees again. */
+        List<ObjectNode> presentRows(List<Map<String,Object>> rows);
+        List<ObjectNode> presentAffiliations(List<Map<String,Object>> rows);
     }
 
     record State(long revision, String epoch, long sequence, int timeout, boolean enabled,
@@ -62,9 +65,9 @@ final class P25ActivityLiveService implements AutoCloseable
         }
     }
 
-    private record Row(Map<String,Object> core, Map<String,Object> value, int bytes) {}
+    private record Row(Map<String,Object> core, ObjectNode value, int bytes) {}
 
-    private record Table<K>(Map<K,Row> entries, List<Map<String,Object>> values, long bytes)
+    private record Table<K>(Map<K,Row> entries, List<ObjectNode> values, long bytes)
     {
         static <K> Table<K> empty()
         {
@@ -279,7 +282,11 @@ final class P25ActivityLiveService implements AutoCloseable
         long generation = mSource.presentationGeneration();
         boolean names = refresh || replaced || generation != mPresentation;
         Table<Long> rows = table(raw.rows(), replaced ? Table.empty() : mRows, names, mSource::presentRows,
-            row -> ((Number)row.get("id")).longValue(), row -> ((Number)row.get("id")).longValue());
+            row -> ((Number)row.get("id")).longValue(), row -> {
+                JsonNode id = row.required("id");
+                if(!id.isNumber()) throw new IllegalStateException("Invalid public P25 activity key");
+                return id.longValue();
+            });
         Table<RadioKey> affiliations = table(nativeRows, replaced ? Table.empty() : mAffiliations, names,
             mSource::presentAffiliations, row -> key(row, "source_identity_key"), row -> key(row, "radio_identity_key"));
         if(rows.bytes() + affiliations.bytes() + rows.entries().size() + affiliations.entries().size() + 4096 > MAXIMUM_SEED_BYTES)
@@ -318,9 +325,18 @@ final class P25ActivityLiveService implements AutoCloseable
         return new RadioKey(system, radio);
     }
 
+    private static RadioKey key(ObjectNode row, String radioField)
+    {
+        JsonNode system = row.get("radio_system_key");
+        JsonNode radio = row.get(radioField);
+        if(system == null || !system.isTextual() || radio == null || !radio.isTextual())
+            throw new IllegalStateException("Invalid public P25 radio key");
+        return new RadioKey(system.textValue(), radio.textValue());
+    }
+
     private static <K> Table<K> table(List<Map<String,Object>> raw, Table<K> previous, boolean names,
-                                    Function<List<Map<String,Object>>,List<Map<String,Object>>> present,
-                                    Function<Map<String,Object>,K> coreKey, Function<Map<String,Object>,K> publicKey)
+                                    Function<List<Map<String,Object>>,List<ObjectNode>> present,
+                                    Function<Map<String,Object>,K> coreKey, Function<ObjectNode,K> publicKey)
         throws IOException
     {
         Map<K,Map<String,Object>> core = new LinkedHashMap<>();
@@ -338,7 +354,7 @@ final class P25ActivityLiveService implements AutoCloseable
                 changed.add(value);
             }
         }
-        Map<K,Map<String,Object>> projected = new LinkedHashMap<>();
+        Map<K,ObjectNode> projected = new LinkedHashMap<>();
         for(var value: present.apply(changed))
         {
             if(projected.put(publicKey.apply(value), value) != null)
@@ -351,7 +367,7 @@ final class P25ActivityLiveService implements AutoCloseable
             throw new IllegalStateException("Incomplete P25 projection");
         }
         Map<K,Row> next = new LinkedHashMap<>();
-        List<Map<String,Object>> values = new ArrayList<>();
+        List<ObjectNode> values = new ArrayList<>();
         long bytes = 0;
         for(var entry: core.entrySet())
         {
@@ -379,7 +395,7 @@ final class P25ActivityLiveService implements AutoCloseable
         {
             Row old = before.entries().get(entry.getKey());
             Row value = entry.getValue();
-            if(old == null || !old.value().equals(value.value()))
+            if(old == null || !old.value().equals(P25ActivityLiveService::compareValues, value.value()))
             {
                 changes.add(new Change(upsert, value.value(), value.bytes()));
             }
@@ -391,6 +407,13 @@ final class P25ActivityLiveService implements AutoCloseable
                 changes.add(new Change(removal, id instanceof RadioKey radio ? radio.payload() : id, 256));
             }
         }
+    }
+
+    /** Integral node widths do not change a public JSON number after the former Map conversion. */
+    private static int compareValues(JsonNode left, JsonNode right)
+    {
+        return left.isIntegralNumber() && right.isIntegralNumber() ?
+            left.bigIntegerValue().compareTo(right.bigIntegerValue()) : left.equals(right) ? 0 : 1;
     }
 
     private void install(Table<Long> rows, Table<RadioKey> affiliations, boolean available, long captured,
