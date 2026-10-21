@@ -3,8 +3,10 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +49,10 @@ class P25ActivityLiveServiceTest
             assertEquals(12,list(event,"affiliations").getFirst().path("talkgroup_id").intValue());
             var latest=seed(service);assertEquals(data(event).get("sequence"),latest.path("sequence").asLong());
             assertSame(event.frame(7),event.frame(7));assertSame(event.frame(7).bytes(true),event.frame(7).bytes(true));
+            var quietSeed=service.seed();int comparisons=fixture.treeComparisons.get(),quietReads=fixture.reads.get();
             Thread.sleep(1100);assertEquals(2,fixture.eventPresentations.get(),"quiet raw rows skip aliases/encoding");
+            assertSame(quietSeed,service.seed());assertTrue(fixture.reads.get()>quietReads,"a quiet poll must run");
+            assertEquals(comparisons,fixture.treeComparisons.get(),"quiet polls must not recursively compare retained public trees");
             viewers.forEach(StatsLiveEventHub.Subscription::close);Thread.sleep(300);int reads=fixture.reads.get();
             Thread.sleep(1100);assertEquals(reads,fixture.reads.get());
         }
@@ -231,12 +236,14 @@ class P25ActivityLiveServiceTest
         {
             var first = service.seed();
             long sequence = service.state().sequence();
+            int comparisons = fixture.treeComparisons.get();
             fixture.narrowNumbers.set(true);
             fixture.generation.incrementAndGet();
             await(() -> fixture.eventPresentations.get() >= 2);
             assertNull(viewer.poll(300,TimeUnit.MILLISECONDS),"Integral node width alone cannot produce a delta");
             assertEquals(sequence,service.state().sequence());
             assertSame(first,service.seed(),"Quiet presentation changes reuse the exact prepared seed");
+            assertTrue(fixture.treeComparisons.get()>comparisons,"Rebuilt public trees still require numeric comparison");
             fixture.set(List.of(raw),List.of(affiliation(1,12)));
             await(() -> service.state().sequence() > sequence);
             JsonNode current = seed(service).at("/rows/0");
@@ -283,6 +290,7 @@ class P25ActivityLiveServiceTest
         final AtomicReference<P25ActivityLiveService.RawSnapshot> raw=new AtomicReference<>(new P25ActivityLiveService.RawSnapshot("first",List.of(),List.of()));
         final AtomicReference<Object> identity=new AtomicReference<>("first");
         final AtomicInteger reads=new AtomicInteger(),eventPresentations=new AtomicInteger(),nativePresentations=new AtomicInteger();
+        final AtomicInteger treeComparisons=new AtomicInteger();
         final AtomicLong generation=new AtomicLong();final AtomicBoolean enabled=new AtomicBoolean(true),fail=new AtomicBoolean(),badProjection=new AtomicBoolean(),swapDuringPresentation=new AtomicBoolean();
         final AtomicReference<String> alias=new AtomicReference<>("unit");
         volatile CountDownLatch entered,release;
@@ -304,7 +312,7 @@ class P25ActivityLiveServiceTest
             return rows.stream().map(row -> {
                 ObjectNode value = JSON.valueToTree(row);
                 if(narrowNumbers.get()) value.put("id",value.path("id").intValue());
-                return value;
+                return (ObjectNode)new CountingObjectNode(value,treeComparisons);
             }).toList();
         }
         @Override public List<ObjectNode> presentAffiliations(List<Map<String,Object>> rows)
@@ -312,7 +320,23 @@ class P25ActivityLiveServiceTest
             if(rows.isEmpty()) return List.of();nativePresentations.incrementAndGet();
             if(badProjection.get()) throw new IllegalStateException("fixture presentation unavailable");
             if(swapDuringPresentation.getAndSet(false)) identity.set("replacement");
-            return rows.stream().map(row->{ var value=new LinkedHashMap<>(row);value.put("radio_identity_key",value.remove("source_identity_key"));value.put("radio_alias_name",alias.get());return JSON.<ObjectNode>valueToTree(value); }).toList();
+            return rows.stream().map(row->{ var value=new LinkedHashMap<>(row);value.put("radio_identity_key",value.remove("source_identity_key"));value.put("radio_alias_name",alias.get());return (ObjectNode)new CountingObjectNode(JSON.valueToTree(value),treeComparisons); }).toList();
+        }
+    }
+
+    private static final class CountingObjectNode extends ObjectNode
+    {
+        private final AtomicInteger mComparisons;
+
+        CountingObjectNode(ObjectNode value, AtomicInteger comparisons)
+        {
+            super(JsonNodeFactory.instance);setAll(value);mComparisons=comparisons;
+        }
+
+        @Override public boolean equals(Comparator<JsonNode> comparator,JsonNode other)
+        {
+            mComparisons.incrementAndGet();
+            return super.equals(comparator,other);
         }
     }
 }

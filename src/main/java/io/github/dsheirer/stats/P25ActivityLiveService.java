@@ -395,7 +395,7 @@ final class P25ActivityLiveService implements AutoCloseable
         {
             Row old = before.entries().get(entry.getKey());
             Row value = entry.getValue();
-            if(old == null || !old.value().equals(P25ActivityLiveService::compareValues, value.value()))
+            if(old != value && (old == null || !old.value().equals(P25ActivityLiveService::compareValues, value.value())))
             {
                 changes.add(new Change(upsert, value.value(), value.bytes()));
             }
