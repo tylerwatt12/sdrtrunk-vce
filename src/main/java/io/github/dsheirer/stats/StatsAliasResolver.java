@@ -30,7 +30,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * Central alias lookup for Stats Server read models. Each lookup loads only rules that can match the bounded
+ * Central alias lookup for Stats Server read models. Each lookup loads only the winning aliases for the
  * identities and alias lists present in the current response page; SQLite remains the source of truth.
  */
 class StatsAliasResolver
@@ -39,7 +39,6 @@ class StatsAliasResolver
     static final int MAX_ALIAS_LISTS = 256;
     static final int MAX_SYSTEM_KEYS = 256;
     static final int MAX_SYSTEM_ALIAS_LIST_PAIRS = 512;
-    static final int MAX_LOADED_RULES = 4_096;
     static final int MAX_RULE_LOOKUP_PAIRS = 20_000;
     private static final int QUERY_VALUE_CHUNK = 200;
     private static final int RULE_TARGET_CHUNK = 500;
@@ -143,7 +142,7 @@ class StatsAliasResolver
 
         requireBoundedRows(rows);
         Map<String,Set<Long>> aliasLists = loadAliasLists(connection, systemKeys(rows));
-        List<Rule> rules = loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
+        RuleIndex rules = loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source(identifierColumn, ignored -> true)));
         enrich(rows, rules, aliasLists, identifierColumn, prefix);
@@ -226,7 +225,7 @@ class StatsAliasResolver
         }
 
         P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection, canonicalTargets);
-        RuleIndex working = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, workingTargets));
+        RuleIndex working = loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, workingTargets);
 
         for(Map<String,Object> row: rows)
         {
@@ -389,12 +388,12 @@ class StatsAliasResolver
                                        Map<String,Set<Long>> aliasLists, String identifierColumn,
                                        String workingIdColumn, String prefix) throws SQLException
     {
-        RuleIndex local = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
+        RuleIndex local = loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
             ruleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 source(identifierColumn,
                     row -> localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")),
                 source(workingIdColumn,
-                    row -> positiveLong(row.get("p25_subscriber_identity_id")) != null))));
+                    row -> positiveLong(row.get("p25_subscriber_identity_id")) != null)));
         P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection,
             p25SubscriberRuleTargets(rows, row -> systemAliasLists(row, aliasLists),
                 p25SubscriberSource("p25_subscriber_identity_id", row -> protocolCode(row) == 1)));
@@ -535,10 +534,8 @@ class StatsAliasResolver
     }
 
     /**
-     * Migration-only form of {@link #resolveEvidenceAliases(Connection, List)}.  The interactive resolver loads all
-     * matching rules for one bounded response and therefore deliberately rejects pathological rule sets.  A database
-     * upgrade cannot reject otherwise-valid configuration merely because thousands of ranges overlap one retained
-     * identity, so this path asks SQLite for only the single winning exact/range rule for each bounded evidence row.
+     * Migration-only form of {@link #resolveEvidenceAliases(Connection, List)}. Reuses prepared winner lookups
+     * while walking a bounded migration evidence page, including formats that predate the current read-model indexes.
      */
     void resolveEvidenceAliasesForMigration(Connection connection, List<Map<String,Object>> rows)
         throws SQLException
@@ -679,12 +676,12 @@ class StatsAliasResolver
         RuleIndex p25 = snapshot.talkgroups();
         RuleIndex dmr = snapshot.dmrTalkgroups();
         RuleIndex nxdn = snapshot.nxdnTalkgroups();
-        RuleIndex nbfm = index(loadRules(connection, RuleType.TALKGROUP, List.of("NBFM"),
+        RuleIndex nbfm = loadRules(connection, RuleType.TALKGROUP, List.of("NBFM"),
             ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                source("group_identity_id", row -> protocolCode(row) == 10))));
-        RuleIndex am = index(loadRules(connection, RuleType.TALKGROUP, List.of("AM"),
+                source("group_identity_id", row -> protocolCode(row) == 10)));
+        RuleIndex am = loadRules(connection, RuleType.TALKGROUP, List.of("AM"),
             ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                source("group_identity_id", row -> protocolCode(row) == 11))));
+                source("group_identity_id", row -> protocolCode(row) == 11)));
 
         for(Map<String,Object> row: rows)
         {
@@ -849,12 +846,12 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        RuleIndex local = index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
+        RuleIndex local = loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
             ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                 source(identifierColumn,
                     row -> localRadioFallback(row, "p25_subscriber_identity_id", identifierColumn, "")),
                 source("observed_working_id",
-                    row -> positiveLong(row.get("p25_subscriber_identity_id")) != null))));
+                    row -> positiveLong(row.get("p25_subscriber_identity_id")) != null)));
         P25SubscriberRuleIndex canonical = loadP25SubscriberRules(connection,
             p25SubscriberRuleTargets(rows, StatsAliasResolver::assignedAliasList,
                 p25SubscriberSource("p25_subscriber_identity_id", ignored -> true)));
@@ -887,17 +884,15 @@ class StatsAliasResolver
         }
 
         requireBoundedRows(rows);
-        List<Rule> rules = loadRules(connection, type, protocols,
+        RuleIndex rules = loadRules(connection, type, protocols,
             ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                 source(identifierColumn, ignored -> true)));
         enrichByAssignedAliasList(rows, rules, identifierColumn, prefix);
     }
 
-    private void enrich(List<Map<String,Object>> rows, List<Rule> rules, Map<String,Set<Long>> aliasLists,
+    private void enrich(List<Map<String,Object>> rows, RuleIndex index, Map<String,Set<Long>> aliasLists,
                         String identifierColumn, String prefix)
     {
-        RuleIndex index = index(rules);
-
         for(Map<String,Object> row: rows)
         {
             enrich(row, index, aliasLists, identifierColumn, prefix);
@@ -975,10 +970,10 @@ class StatsAliasResolver
             }
         }
 
-        RuleIndex p25 = index(loadRules(connection, type, P25_PROTOCOLS, p25Targets));
+        RuleIndex p25 = loadRules(connection, type, P25_PROTOCOLS, p25Targets);
         P25SubscriberRuleIndex p25Subscribers = loadP25SubscriberRules(connection, p25SubscriberTargets);
-        RuleIndex dmr = index(loadRules(connection, type, DMR_PROTOCOLS, dmrTargets));
-        RuleIndex nxdn = index(loadRules(connection, type, NXDN_PROTOCOLS, nxdnTargets));
+        RuleIndex dmr = loadRules(connection, type, DMR_PROTOCOLS, dmrTargets);
+        RuleIndex nxdn = loadRules(connection, type, NXDN_PROTOCOLS, nxdnTargets);
 
         for(Map<String,Object> row: rows)
         {
@@ -1025,10 +1020,7 @@ class StatsAliasResolver
         }
     }
 
-    /**
-     * Bulk table exports can contain tens of thousands of identities.  Index exact rules once so each row only
-     * evaluates rules for its identifier plus the comparatively small set of ranged rules.
-     */
+    /** Applies the already-selected winners without repeating matching work for each response row. */
     private void enrich(Map<String,Object> row, RuleIndex index, Map<String,Set<Long>> aliasListsBySystem,
                         String identifierColumn, String prefix)
     {
@@ -1045,11 +1037,9 @@ class StatsAliasResolver
         applyPresentation(row, best, prefix);
     }
 
-    private void enrichByAssignedAliasList(List<Map<String,Object>> rows, List<Rule> rules, String identifierColumn,
+    private void enrichByAssignedAliasList(List<Map<String,Object>> rows, RuleIndex index, String identifierColumn,
                                            String prefix)
     {
-        RuleIndex index = index(rules);
-
         for(Map<String,Object> row: rows)
         {
             enrichByAssignedAliasList(row, index, identifierColumn, prefix);
@@ -1110,18 +1100,6 @@ class StatsAliasResolver
         }
     }
 
-    private static RuleIndex index(List<Rule> rules)
-    {
-        Map<Long,AliasListRules> rulesByAliasList = new HashMap<>();
-
-        for(Rule rule: rules)
-        {
-            rulesByAliasList.computeIfAbsent(rule.aliasListId(), ignored -> new AliasListRules()).add(rule);
-        }
-
-        return new RuleIndex(Map.copyOf(rulesByAliasList));
-    }
-
     private Snapshot activitySnapshot(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         Predicate<Map<String,Object>> talkgroupTarget = row -> {
@@ -1132,10 +1110,10 @@ class StatsAliasResolver
             .equals(integer(row.get("target_kind_code")));
 
         return new Snapshot(
-            index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
+            loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("target_id", row -> protocolCode(row) == 1 && talkgroupTarget.test(row))))),
-            index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
+                    source("target_id", row -> protocolCode(row) == 1 && talkgroupTarget.test(row)))),
+            loadRules(connection, RuleType.RADIO, P25_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("source_radio_id", row -> protocolCode(row) == 1 &&
                         localRadioFallback(row, "source_p25_subscriber_identity_id", "source_radio_id", "source_")),
@@ -1145,26 +1123,26 @@ class StatsAliasResolver
                         localRadioFallback(row, "target_p25_subscriber_identity_id", "target_id", "target_")),
                     source("target_observed_working_id", row -> protocolCode(row) == 1 &&
                         radioTarget.test(row) &&
-                        positiveLong(row.get("target_p25_subscriber_identity_id")) != null)))),
+                        positiveLong(row.get("target_p25_subscriber_identity_id")) != null))),
             loadP25SubscriberRules(connection,
                 p25SubscriberRuleTargets(rows, StatsAliasResolver::assignedAliasList,
                     p25SubscriberSource("source_p25_subscriber_identity_id", row -> protocolCode(row) == 1),
                     p25SubscriberSource("target_p25_subscriber_identity_id",
                         row -> protocolCode(row) == 1 && radioTarget.test(row)))),
-            index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
+            loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("target_id", row -> protocolCode(row) == 3 && talkgroupTarget.test(row))))),
-            index(loadRules(connection, RuleType.RADIO, DMR_PROTOCOLS,
+                    source("target_id", row -> protocolCode(row) == 3 && talkgroupTarget.test(row)))),
+            loadRules(connection, RuleType.RADIO, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("source_radio_id", row -> protocolCode(row) == 3),
-                    source("target_id", row -> protocolCode(row) == 3 && radioTarget.test(row))))),
-            index(loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
+                    source("target_id", row -> protocolCode(row) == 3 && radioTarget.test(row)))),
+            loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("target_id", row -> protocolCode(row) == 4 && talkgroupTarget.test(row))))),
-            index(loadRules(connection, RuleType.RADIO, NXDN_PROTOCOLS,
+                    source("target_id", row -> protocolCode(row) == 4 && talkgroupTarget.test(row)))),
+            loadRules(connection, RuleType.RADIO, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
                     source("source_radio_id", row -> protocolCode(row) == 4),
-                    source("target_id", row -> protocolCode(row) == 4 && radioTarget.test(row))))));
+                    source("target_id", row -> protocolCode(row) == 4 && radioTarget.test(row)))));
     }
 
     private Snapshot evidenceSnapshot(Connection connection, List<Map<String,Object>> rows,
@@ -1182,21 +1160,21 @@ class StatsAliasResolver
             p25Evidence, systemAliasLists, radio);
 
         return new Snapshot(
-            index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS, p25TalkgroupTargets)),
-            index(loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, p25RadioTargets)),
+            loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS, p25TalkgroupTargets),
+            loadRules(connection, RuleType.RADIO, P25_PROTOCOLS, p25RadioTargets),
             loadP25SubscriberRules(connection, p25SubscriberTargets),
-            index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
+            loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("identity_id", row -> protocolCode(row) == 3 && talkgroup.test(row))))),
-            index(loadRules(connection, RuleType.RADIO, DMR_PROTOCOLS,
+                    source("identity_id", row -> protocolCode(row) == 3 && talkgroup.test(row)))),
+            loadRules(connection, RuleType.RADIO, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("identity_id", row -> protocolCode(row) == 3 && radio.test(row))))),
-            index(loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
+                    source("identity_id", row -> protocolCode(row) == 3 && radio.test(row)))),
+            loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("identity_id", row -> protocolCode(row) == 4 && talkgroup.test(row))))),
-            index(loadRules(connection, RuleType.RADIO, NXDN_PROTOCOLS,
+                    source("identity_id", row -> protocolCode(row) == 4 && talkgroup.test(row)))),
+            loadRules(connection, RuleType.RADIO, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("identity_id", row -> protocolCode(row) == 4 && radio.test(row))))));
+                    source("identity_id", row -> protocolCode(row) == 4 && radio.test(row)))));
     }
 
     private static RuleTargets canonicalEvidenceTargets(List<Map<String,Object>> rows,
@@ -1290,18 +1268,18 @@ class StatsAliasResolver
     private Snapshot observedSnapshot(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         return new Snapshot(
-            index(loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
+            loadRules(connection, RuleType.TALKGROUP, P25_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("group_identity_id", row -> protocolCode(row) == 1)))),
+                    source("group_identity_id", row -> protocolCode(row) == 1))),
             RuleIndex.empty(),
             P25SubscriberRuleIndex.empty(),
-            index(loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
+            loadRules(connection, RuleType.TALKGROUP, DMR_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("group_identity_id", row -> protocolCode(row) == 3)))),
+                    source("group_identity_id", row -> protocolCode(row) == 3))),
             RuleIndex.empty(),
-            index(loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
+            loadRules(connection, RuleType.TALKGROUP, NXDN_PROTOCOLS,
                 ruleTargets(rows, StatsAliasResolver::assignedAliasList,
-                    source("group_identity_id", row -> protocolCode(row) == 4)))),
+                    source("group_identity_id", row -> protocolCode(row) == 4))),
             RuleIndex.empty());
     }
 
@@ -1669,61 +1647,88 @@ class StatsAliasResolver
         return Map.copyOf(immutable);
     }
 
-    private List<Rule> loadRules(Connection connection, RuleType type, List<String> protocols,
-                                 RuleTargets targets) throws SQLException
+    /** Resolves each requested pair in SQLite so losing configured rules never enter the read model. */
+    private RuleIndex loadRules(Connection connection, RuleType type, List<String> protocols,
+                                RuleTargets targets) throws SQLException
     {
-        if(targets.isEmpty())
-        {
-            return List.of();
-        }
-
-        Map<Long,Rule> rules = new LinkedHashMap<>();
+        Map<RuleTarget,Rule> rules = new HashMap<>();
         List<RuleTarget> pairs = targets.pairs();
-
         for(int offset = 0; offset < pairs.size(); offset += RULE_TARGET_CHUNK)
         {
             List<RuleTarget> chunk = pairs.subList(offset, Math.min(pairs.size(), offset + RULE_TARGET_CHUNK));
-            loadRules(connection, type, protocols, chunk, false, rules);
-            loadRules(connection, type, protocols, chunk, true, rules);
+            //Seek one candidate per protocol before combining P25 variants; the indexes start with protocol.
+            String sql = """
+                WITH requested(alias_list_id, identifier) AS (VALUES %s), protocols(protocol) AS (VALUES %s)
+                SELECT requested.alias_list_id, requested.identifier, definition.id AS alias_id,
+                    definition.matcher_type = '%s' AS ranged, definition.name, definition.description,
+                    definition.group_name, definition.color, list.name AS alias_list_name
+                FROM requested
+                JOIN alias definition ON definition.id = COALESCE(
+                    (SELECT MAX((SELECT id FROM alias INDEXED BY %s
+                        WHERE matcher_type = '%s' AND protocol = protocols.protocol
+                          AND alias_list_id = requested.alias_list_id AND value = requested.identifier
+                        ORDER BY id DESC LIMIT 1)) FROM protocols),
+                    (SELECT candidate.id FROM protocols JOIN alias candidate ON candidate.id = (
+                        SELECT id FROM alias INDEXED BY %s
+                        WHERE matcher_type = '%s' AND protocol = protocols.protocol
+                          AND alias_list_id = requested.alias_list_id
+                          AND min_value <= requested.identifier AND max_value >= requested.identifier
+                        ORDER BY min_value DESC, max_value DESC, id DESC LIMIT 1)
+                     ORDER BY candidate.min_value DESC, candidate.max_value DESC, candidate.id DESC LIMIT 1))
+                JOIN alias_list list ON list.id = definition.alias_list_id
+                """.formatted(pairPlaceholders(chunk.size()), valuesPlaceholders(protocols.size()),
+                    type.rangeMatcher(), type.valueIndex(), type.valueMatcher(), type.rangeIndex(),
+                    type.rangeMatcher());
+            try(PreparedStatement statement = connection.prepareStatement(sql))
+            {
+                int parameter = 1;
+                for(RuleTarget target: chunk)
+                {
+                    statement.setLong(parameter++, target.aliasListId());
+                    statement.setInt(parameter++, target.identifier());
+                }
+                bind(statement, parameter, protocols);
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        RuleTarget target = new RuleTarget(resultSet.getLong("alias_list_id"),
+                            resultSet.getInt("identifier"));
+                        rules.put(target, rule(resultSet, target.aliasListId(), resultSet.getBoolean("ranged")));
+                    }
+                }
+            }
         }
-
-        return List.copyOf(rules.values());
+        return new RuleIndex(Map.copyOf(rules));
     }
 
-    /** Loads only exact canonical subscriber aliases requested by this bounded page. */
+    /** Loads only the winning canonical subscriber alias for each requested list and subscriber. */
     private P25SubscriberRuleIndex loadP25SubscriberRules(Connection connection,
-                                                           P25SubscriberRuleTargets targets) throws SQLException
+                                                          P25SubscriberRuleTargets targets) throws SQLException
     {
-        if(targets.isEmpty())
-        {
-            return P25SubscriberRuleIndex.empty();
-        }
-
-        Map<P25SubscriberRuleTarget,Rule> rules = new LinkedHashMap<>();
+        Map<P25SubscriberRuleTarget,Rule> rules = new HashMap<>();
         List<P25SubscriberRuleTarget> pairs = targets.pairs();
         for(int offset = 0; offset < pairs.size(); offset += RULE_TARGET_CHUNK)
         {
             List<P25SubscriberRuleTarget> chunk = pairs.subList(offset,
                 Math.min(pairs.size(), offset + RULE_TARGET_CHUNK));
-            //Keep requested identities first even when imported Alias counts have outgrown SQLite's statistics.
             String sql = """
                 WITH requested(alias_list_id, p25_subscriber_identity_id) AS (VALUES %s)
                 SELECT requested.alias_list_id, requested.p25_subscriber_identity_id,
                     definition.id AS alias_id, definition.name, definition.description,
                     definition.group_name, definition.color, list.name AS alias_list_name
                 FROM requested
-                CROSS JOIN alias_p25_subscriber_identity subscriber_alias
-                    INDEXED BY idx_alias_p25_subscriber_identity
-                  ON subscriber_alias.p25_subscriber_identity_id = requested.p25_subscriber_identity_id
-                JOIN alias definition
-                  ON definition.id = subscriber_alias.alias_id
-                 AND definition.alias_list_id = requested.alias_list_id
+                JOIN alias definition ON definition.id = (
+                    SELECT candidate.id
+                    FROM alias_p25_subscriber_identity subscriber_alias
+                        INDEXED BY idx_alias_p25_subscriber_identity
+                    CROSS JOIN alias candidate ON candidate.id = subscriber_alias.alias_id
+                    WHERE subscriber_alias.p25_subscriber_identity_id = requested.p25_subscriber_identity_id
+                      AND candidate.alias_list_id = requested.alias_list_id
+                      AND candidate.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
+                    ORDER BY subscriber_alias.alias_id DESC LIMIT 1)
                 JOIN alias_list list ON list.id = definition.alias_list_id
-                WHERE definition.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
-                ORDER BY definition.id
-                LIMIT ?
                 """.formatted(pairPlaceholders(chunk.size()));
-
             try(PreparedStatement statement = connection.prepareStatement(sql))
             {
                 int parameter = 1;
@@ -1732,32 +1737,13 @@ class StatsAliasResolver
                     statement.setLong(parameter++, target.aliasListId());
                     statement.setLong(parameter++, target.p25SubscriberIdentityId());
                 }
-                statement.setInt(parameter, MAX_LOADED_RULES + 1);
                 try(ResultSet resultSet = statement.executeQuery())
                 {
-                    int loaded = 0;
                     while(resultSet.next())
                     {
-                        if(++loaded > MAX_LOADED_RULES)
-                        {
-                            throw tooLarge("Alias lookup matched too many canonical subscriber rules");
-                        }
                         P25SubscriberRuleTarget target = new P25SubscriberRuleTarget(
-                            resultSet.getLong("alias_list_id"),
-                            resultSet.getLong("p25_subscriber_identity_id"));
-                        if(!rules.containsKey(target) && rules.size() >= MAX_LOADED_RULES)
-                        {
-                            throw tooLarge("Alias lookup matched too many canonical subscriber rules");
-                        }
-                        Rule rule = new Rule(null, null, null, false, resultSet.getString("name"),
-                            resultSet.getString("description"), resultSet.getString("group_name"),
-                            resultSet.getInt("color"), target.aliasListId(),
-                            resultSet.getString("alias_list_name"), resultSet.getLong("alias_id"));
-                        Rule current = rules.get(target);
-                        if(current == null || rule.aliasId() > current.aliasId())
-                        {
-                            rules.put(target, rule);
-                        }
+                            resultSet.getLong("alias_list_id"), resultSet.getLong("p25_subscriber_identity_id"));
+                        rules.put(target, rule(resultSet, target.aliasListId(), false));
                     }
                 }
             }
@@ -1765,76 +1751,11 @@ class StatsAliasResolver
         return new P25SubscriberRuleIndex(Map.copyOf(rules));
     }
 
-    private void loadRules(Connection connection, RuleType type, List<String> protocols,
-                           List<RuleTarget> targets, boolean ranged,
-                           Map<Long,Rule> rules) throws SQLException
+    private static Rule rule(ResultSet resultSet, long aliasListId, boolean ranged) throws SQLException
     {
-        String index = ranged ? type.rangeIndex() : type.valueIndex();
-        String matcher = ranged ? type.rangeMatcher() : type.valueMatcher();
-        String match = ranged ? "requested.identifier BETWEEN definition.min_value AND definition.max_value" :
-            "requested.identifier = definition.value";
-        //Start with the bounded page, not every configured Alias of this protocol. The exact index can seek
-        //all three equality keys; the range index limits each search to its owning list and protocol first.
-        //Several requested identities can match one range, so deduplicate IDs before applying the rule budget.
-        String sql = """
-            WITH requested(alias_list_id, identifier) AS (VALUES %s),
-            matched(alias_id) AS (
-                SELECT DISTINCT definition.id
-                FROM requested
-                CROSS JOIN alias definition INDEXED BY %s
-                WHERE definition.matcher_type = '%s'
-                  AND definition.protocol IN (%s)
-                  AND definition.alias_list_id = requested.alias_list_id AND %s
-                ORDER BY definition.id
-                LIMIT ?
-            )
-            SELECT definition.id AS alias_id, definition.value, definition.min_value,
-                definition.max_value, definition.name, definition.description, definition.group_name,
-                definition.color, definition.alias_list_id, list.name AS alias_list_name
-            FROM matched
-            JOIN alias definition ON definition.id = matched.alias_id
-            JOIN alias_list list ON list.id = definition.alias_list_id
-            ORDER BY definition.id
-            """.formatted(pairPlaceholders(targets.size()), index, matcher,
-            placeholders(protocols.size()), match);
-
-        try(PreparedStatement statement = connection.prepareStatement(sql))
-        {
-            int parameter = 1;
-
-            for(RuleTarget target: targets)
-            {
-                statement.setLong(parameter++, target.aliasListId());
-                statement.setInt(parameter++, target.identifier());
-            }
-
-            parameter = bind(statement, parameter, protocols);
-            statement.setInt(parameter, MAX_LOADED_RULES + 1);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                while(resultSet.next())
-                {
-                    long aliasId = resultSet.getLong("alias_id");
-
-                    if(rules.containsKey(aliasId))
-                    {
-                        continue;
-                    }
-
-                    if(rules.size() >= MAX_LOADED_RULES)
-                    {
-                        throw tooLarge("Alias lookup matched too many configured rules");
-                    }
-
-                    rules.put(aliasId, new Rule(integer(resultSet.getObject("value")),
-                        integer(resultSet.getObject("min_value")), integer(resultSet.getObject("max_value")),
-                        ranged, resultSet.getString("name"), resultSet.getString("description"),
-                        resultSet.getString("group_name"), resultSet.getInt("color"),
-                        resultSet.getLong("alias_list_id"), resultSet.getString("alias_list_name"), aliasId));
-                }
-            }
-        }
+        return new Rule(ranged, resultSet.getString("name"), resultSet.getString("description"),
+            resultSet.getString("group_name"), resultSet.getInt("color"), aliasListId,
+            resultSet.getString("alias_list_name"), resultSet.getLong("alias_id"));
     }
 
     private static Set<String> systemKeys(List<Map<String,Object>> rows)
@@ -2285,11 +2206,6 @@ class StatsAliasResolver
             }
         }
 
-        private boolean isEmpty()
-        {
-            return mPairs.isEmpty();
-        }
-
         private List<RuleTarget> pairs()
         {
             return List.copyOf(mPairs);
@@ -2321,11 +2237,6 @@ class StatsAliasResolver
                 requireMaximum(mPairs.size(), MAX_RULE_LOOKUP_PAIRS,
                     "Alias lookup references too many list and canonical subscriber pairs");
             }
-        }
-
-        private boolean isEmpty()
-        {
-            return mPairs.isEmpty();
         }
 
         private List<P25SubscriberRuleTarget> pairs()
@@ -2410,7 +2321,7 @@ class StatsAliasResolver
         }
     }
 
-    private record RuleIndex(Map<Long,AliasListRules> rulesByAliasList)
+    private record RuleIndex(Map<RuleTarget,Rule> rules)
     {
         private static RuleIndex empty()
         {
@@ -2419,8 +2330,7 @@ class StatsAliasResolver
 
         private Rule best(int identifier, long aliasListId)
         {
-            AliasListRules rules = rulesByAliasList.get(aliasListId);
-            return rules != null ? rules.best(identifier) : null;
+            return rules.get(new RuleTarget(aliasListId, identifier));
         }
 
         private Rule best(int identifier, Set<Long> aliasLists)
@@ -2585,56 +2495,8 @@ class StatsAliasResolver
         }
     }
 
-    private static final class AliasListRules
-    {
-        private final Map<Integer,List<Rule>> mExact = new HashMap<>();
-        private final List<Rule> mRanged = new ArrayList<>();
-
-        private void add(Rule rule)
-        {
-            if(rule.ranged())
-            {
-                mRanged.add(rule);
-            }
-            else if(rule.value() != null)
-            {
-                mExact.computeIfAbsent(rule.value(), ignored -> new ArrayList<>()).add(rule);
-            }
-        }
-
-        private Rule best(int identifier)
-        {
-            Rule best = null;
-
-            for(Rule rule: mExact.getOrDefault(identifier, List.of()))
-            {
-                if(best == null || rule.isPreferredAssignedListTo(best))
-                {
-                    best = rule;
-                }
-            }
-
-            if(best != null)
-            {
-                return best;
-            }
-
-            for(Rule rule: mRanged)
-            {
-                if(rule.matchesIdentifier(identifier) &&
-                    (best == null || rule.isPreferredAssignedListTo(best)))
-                {
-                    best = rule;
-                }
-            }
-
-            return best;
-        }
-    }
-
-    private record Rule(Integer value, Integer minimum, Integer maximum, boolean ranged, String name,
-                        String description, String group, int color, long aliasListId, String aliasListName,
-                        long aliasId)
+    private record Rule(boolean ranged, String name, String description, String group, int color,
+                        long aliasListId, String aliasListName, long aliasId)
     {
         private boolean hasSamePresentationAs(Rule other)
         {
@@ -2642,37 +2504,5 @@ class StatsAliasResolver
                 Objects.equals(description, other.description) && Objects.equals(group, other.group) &&
                 color == other.color;
         }
-
-        boolean isPreferredAssignedListTo(Rule other)
-        {
-            int specificity = ranged ? 0 : 1;
-            int otherSpecificity = other.ranged ? 0 : 1;
-            if(specificity != otherSpecificity)
-            {
-                return specificity > otherSpecificity;
-            }
-            return ranged ? isPreferredRangeTo(other) : aliasId > other.aliasId;
-        }
-
-        private boolean isPreferredRangeTo(Rule other)
-        {
-            int minimumComparison = Integer.compare(minimum != null ? minimum : Integer.MIN_VALUE,
-                other.minimum != null ? other.minimum : Integer.MIN_VALUE);
-            if(minimumComparison != 0)
-            {
-                return minimumComparison > 0;
-            }
-
-            int maximumComparison = Integer.compare(maximum != null ? maximum : Integer.MIN_VALUE,
-                other.maximum != null ? other.maximum : Integer.MIN_VALUE);
-            return maximumComparison != 0 ? maximumComparison > 0 : aliasId > other.aliasId;
-        }
-
-        boolean matchesIdentifier(int identifier)
-        {
-            return ranged ? minimum != null && maximum != null && identifier >= minimum && identifier <= maximum :
-                value != null && identifier == value;
-        }
-
     }
 }
