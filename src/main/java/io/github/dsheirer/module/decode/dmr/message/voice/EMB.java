@@ -22,15 +22,12 @@ package io.github.dsheirer.module.decode.dmr.message.voice;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.dmr.message.type.LCSS;
 import java.util.HashSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DMR Voice Frame B-F Embedded Signalling Chunk
  */
 public class EMB
 {
-    private static final Logger mLog = LoggerFactory.getLogger(EMB.class);
     private static final int[] VALID_WORDS = new int[]{
         0x0000, 0x0273, 0x04E5, 0x0696, 0x09C9, 0x0BBA, 0x0D2C, 0x0F5F, 0x11E2, 0x1391, 0x1507, 0x1774, 0x182B, 0x1A58,
         0x1CCE, 0x1EBD, 0x21B7, 0x23C4, 0x2552, 0x2721, 0x287E, 0x2A0D, 0x2C9B, 0x2EE8, 0x3055, 0x3226, 0x34B0, 0x36C3,
@@ -160,22 +157,4 @@ public class EMB
         return sb.toString();
     }
 
-    public static void main(String[] args)
-    {
-        CorrectedBinaryMessage m = new CorrectedBinaryMessage(16);
-
-        for(int x = 0; x < Math.pow(2, 16); x++)
-        {
-            m.setInt(x, WORD);
-
-            EMB emb = new EMB(m);
-
-            if(!emb.isValid())
-            {
-                mLog.debug("Invalid: " + x);
-            }
-        }
-
-
-    }
 }

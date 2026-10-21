@@ -18,8 +18,6 @@
 package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.BinaryMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.BitSet;
 
@@ -44,8 +42,6 @@ import java.util.BitSet;
  */
 public class CRCLJ
 {
-	private static final Logger mLog = LoggerFactory.getLogger( CRCLJ.class );
-	
 	private static final int MESSAGE_START = 32;
 	private static final int CRC_START = 64;
 
@@ -180,14 +176,5 @@ public class CRCLJ
 		}
 
 		return null;
-    }
-    
-    public static void main( String[] args )
-    {
-    	BinaryMessage msg = BinaryMessage.load( "01010101101010101010000100011000000000100001000110000000001000010001100000000010" );
-    	
-    	CRC crc = checkAndCorrect( msg );
-    	
-    	mLog.debug( "CRC:" + crc.getDisplayText() );
     }
 }

@@ -608,37 +608,4 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
         }
     }
 
-    public static void main(String[] args)
-    {
-        mLog.debug("Starting ...");
-
-        RdioScannerConfiguration config = new RdioScannerConfiguration();
-        config.setHost("https://api.RdioScanner.com/call-upload-dev");
-        config.setApiKey("c33aae37-8572-11ea-bd8b-0ecc8ab9ccec");
-        config.setSystemID(11);
-
-        String response = testConnection(config);
-
-        if(response == null)
-        {
-            mLog.debug("Test Successful!");
-        }
-        else
-        {
-            if(response.contains("1 Invalid-API-Key"))
-            {
-                mLog.error("Invalid API Key");
-            }
-            else if(response.contains("1 API-Key-Access-Denied"))
-            {
-                mLog.error("System ID not valid for API Key");
-            }
-            else
-            {
-                mLog.debug("Response: " + response);
-            }
-        }
-
-        mLog.debug("Finished!");
-    }
 }

@@ -565,38 +565,4 @@ import org.slf4j.LoggerFactory;
          }
      }
 
-     public static void main(String[] args)
-     {
-         mLog.debug("Starting ...");
-
-         OpenMHzConfiguration config = new OpenMHzConfiguration();
-         config.setHost("https://api.OpenMHz.com/call-upload-dev");
-         config.setApiKey("c33aae37-8572-11ea-bd8b-0ecc8ab9ccec");
-         config.setSystemName("systemx");
-
-         String response = testConnection(config);
-         mLog.error("Response: " + response);
-
-         if(OK_RESPONSE.equals(response))
-         {
-             mLog.debug("Test Successful!");
-         }
-         else
-         {
-             if(response.contains(INVALID_API_KEY_RESPONSE))
-             {
-                 mLog.error(INVALID_API_KEY_RESPONSE);
-             }
-             else if(response.contains(INVALID_SYSTEM_NAME_RESPONSE))
-             {
-                 mLog.error(INVALID_SYSTEM_NAME_RESPONSE);
-             }
-             else
-             {
-                 mLog.debug("Response: " + response);
-             }
-         }
-
-         mLog.debug("Finished!");
-     }
  }

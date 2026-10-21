@@ -200,17 +200,4 @@ public class DibitDelayBuffer
         mLog.debug("BUFFER: " + sb + " Length:" + mBuffer.length);
     }
 
-    public static void main(String[] args)
-    {
-        Dibit[] test = {
-            Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D11_MINUS_3,
-            Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D11_MINUS_3,Dibit.D01_PLUS_3,
-            Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D01_PLUS_3,Dibit.D11_MINUS_3,
-            Dibit.D11_MINUS_3,Dibit.D11_MINUS_3,Dibit.D01_PLUS_3,Dibit.D11_MINUS_3,
-            Dibit.D11_MINUS_3,Dibit.D11_MINUS_3,Dibit.D11_MINUS_3,Dibit.D01_PLUS_3};
-
-        int bitErrors = P25P2SyncPattern.getBitErrorCount(test);
-
-        mLog.debug("Bit Errors:" + bitErrors);
-    }
 }

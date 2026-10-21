@@ -55,14 +55,6 @@ public class Release
     }
 
     /**
-     * JsonObject for the release
-     */
-    public JsonObject getJsonObject()
-    {
-        return mJsonObject;
-    }
-
-    /**
      * Name of the release
      */
     public String getName()
@@ -76,14 +68,6 @@ public class Release
     public String getTagName()
     {
         return getTag("tag_name");
-    }
-
-    /**
-     * Assets URL
-     */
-    public String getAssetsUrl()
-    {
-        return getTag("assets_url");
     }
 
     public List<Asset> getAssets()
@@ -136,15 +120,6 @@ public class Release
         }
 
         return null;
-    }
-
-
-    /**
-     * Indicates if the release has a download URL
-     */
-    public boolean hasDownloadUrl()
-    {
-        return getDownloadUrl() != null;
     }
 
     public String toString()

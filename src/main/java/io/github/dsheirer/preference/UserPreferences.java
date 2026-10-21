@@ -167,7 +167,7 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
-     * Browser Live activity and optional Java desktop view preferences
+     * Browser Live activity preferences
      */
     public NowPlayingPreference getNowPlayingPreference()
     {

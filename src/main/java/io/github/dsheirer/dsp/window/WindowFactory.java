@@ -24,16 +24,12 @@ import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
 import java.util.Arrays;
 import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Window factory and corresponding utility methods.
  */
 public class WindowFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(WindowFactory.class);
-
     private static final float PI = (float)FastMath.PI;
     private static final float TWO_PI = (float)FastMath.PI * 2.0f;
     private static final float FOUR_PI = (float)FastMath.PI * 4.0f;
@@ -479,10 +475,4 @@ public class WindowFactory
         return apply(coefficients, samples);
     }
 
-    public static void main(String[] args)
-    {
-        float[] kaiser = getKaiser(16, 80.0f);
-
-        mLog.debug("Window:" + Arrays.toString(kaiser));
-    }
 }

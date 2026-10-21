@@ -329,36 +329,4 @@ public class CalibrationManager
         return uncalibrated;
     }
 
-    public static void main(String[] args)
-    {
-        CalibrationManager manager = getInstance();
-
-        manager.reset(CalibrationType.DIFFERENTIAL_DEMODULATOR);
-
-        if(!manager.isCalibrated())
-        {
-            try
-            {
-                manager.calibrate();
-            }
-            catch(Exception e)
-            {
-                e.printStackTrace();
-            }
-        }
-
-
-        StringBuilder sb1 = new StringBuilder();
-        sb1.append("Updated Calibration Settings:\n");
-        for(CalibrationType type: CalibrationType.values())
-        {
-            Calibration calibration = manager.getCalibration(type);
-            if(calibration != null)
-            {
-                sb1.append("\t").append(type.name()).append("\t").append(manager.getCalibration(type).getImplementation()).append("\n");
-            }
-        }
-        mLog.info(sb1.toString());
-        mLog.info("Complete");
-    }
 }

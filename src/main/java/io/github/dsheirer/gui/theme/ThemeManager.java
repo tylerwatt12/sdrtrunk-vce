@@ -122,7 +122,7 @@ public class ThemeManager
     /**
      * Install a listener on {@link javafx.stage.Window#getWindows()} so that every JavaFX window
      * created in the application (including ad-hoc {@code Alert}, {@code TextInputDialog} and
-     * other transient dialogs spawned by the playlist editor and similar) automatically picks up
+     * other transient dialogs) automatically picks up
      * the current theme without each call site needing to remember to register its Scene.  Idle
      * cost is one listener invocation per window opened; the listener short-circuits when the FX
      * toolkit is not yet started.

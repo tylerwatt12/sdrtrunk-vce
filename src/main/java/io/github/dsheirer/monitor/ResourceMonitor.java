@@ -334,30 +334,6 @@ public class ResourceMonitor
     }
 
     /**
-     * Property for total system memory
-     */
-    public LongProperty memoryTotalProperty()
-    {
-        return mMemoryTotal;
-    }
-
-    /**
-     * Property for memory currently allocated to the JVM
-     */
-    public LongProperty memoryAllocatedProperty()
-    {
-        return mMemoryAllocated;
-    }
-
-    /**
-     * Property for memory used by the JVM (out of what has been allocated)
-     */
-    public LongProperty memoryUsedProperty()
-    {
-        return mMemoryUsed;
-    }
-
-    /**
      * Property for memory used vs memory allocated to the JVM.
      */
     public DoubleProperty javaMemoryUsedPercentageProperty()

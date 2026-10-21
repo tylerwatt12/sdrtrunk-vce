@@ -615,33 +615,4 @@ public class SDRplay
         }
     }
 
-    public static void main(String[] args)
-    {
-        /**
-         * Note: on windows, add the following environment variable to the IntelliJ launcher:
-         * -Djava.library.path="C:\Program Files\SDRplay\API\x64"
-         *
-         * Alternately, we can add this location to the Windows PATH environment variable and
-         * Java will look there for the library, without having to specify it as a launcher
-         * option.  This would allow for users that have installed the API to an alternate location.
-         */
-
-        try
-        {
-            SDRplay sdrplay = new SDRplay();
-            Status status = sdrplay.open();
-            mLog.info("Open Status: " + status);
-
-            for(DeviceInfo deviceInfo: sdrplay.getDeviceInfos())
-            {
-                mLog.info("Found: " + deviceInfo);
-            }
-            Status closeStatus = sdrplay.close();
-            mLog.info("Close Status: " + closeStatus);
-        }
-        catch(SDRPlayException se)
-        {
-            mLog.info("Error", se);
-        }
-    }
 }

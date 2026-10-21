@@ -19,7 +19,6 @@
 package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -212,48 +211,4 @@ public class CRCUtil
         return sb.toString();
     }
 
-    public static void main(String[] args)
-    {
-        mLog.debug("Starting");
-
-        int messageSize = 164;
-        int crcSize = 16;
-        long poly = 0x11021l;
-        long initialFill = 0x0l;
-        long[] checksums = CRCUtil.generate(messageSize, crcSize, poly, initialFill, true);
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("private static int[] CHECKSUMS = new int[]{");
-        for(long checksum: checksums)
-        {
-            sb.append("0x").append(Long.toHexString(checksum).toUpperCase());
-            sb.append(",");
-        }
-
-        sb.append("};");
-        mLog.debug("Checksums:\n{}", sb);
-
-        String hex = "7CFC0039420170452A4F9970000000000000000000D05";
-        CorrectedBinaryMessage message = new CorrectedBinaryMessage(BinaryMessage.loadHex(hex));
-
-
-        int calculated = 0xFFF; //Initial fill of all ones
-
-        int messageStart = 0;
-        /* Iterate the set bits and XOR running checksum with lookup value */
-        for(int i = message.nextSetBit(messageStart);
-            i >= messageStart && i < messageSize;
-            i = message.nextSetBit(i + 1))
-        {
-            mLog.debug("Bit [{}] is set", i);
-            calculated ^= checksums[i];
-        }
-
-        int checksum = message.getInt(messageSize, messageSize + crcSize - 1);
-        int residual = calculated ^ checksum;
-
-        mLog.debug("CALC:" + Integer.toHexString(calculated).toUpperCase() +
-                " CHECK:" + Integer.toHexString(checksum).toUpperCase() +
-                " RESIDUAL:" + Integer.toHexString(residual).toUpperCase());
-    }
 }

@@ -57,7 +57,6 @@ import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.vector.calibrate.CalibrationType;
 import io.github.dsheirer.vector.calibrate.Implementation;
-import java.text.DecimalFormat;
 import java.util.Set;
 import java.util.TreeSet;
 import org.apache.commons.math3.util.FastMath;
@@ -1231,26 +1230,4 @@ public class FilterFactory
         return FastMath.abs(a - objective) <= marginOfError;
     }
 
-    public static void main(String[] args)
-    {
-        DecimalFormat df = new DecimalFormat("0.000000");
-
-        int length = 49;
-
-        try
-        {
-            float [] taps = FilterFactory.getSinc(0.5, length, WindowType.NONE);
-
-            for(int x = 0; x < length; x++)
-            {
-                mLog.debug("Tap: " + x + " Value: " + df.format(taps[x]));
-            }
-        }
-        catch(Exception e)
-        {
-            e.printStackTrace();
-        }
-
-        mLog.debug("Done!");
-    }
 }

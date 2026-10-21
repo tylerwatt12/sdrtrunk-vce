@@ -20,17 +20,10 @@
 package io.github.dsheirer.dsp.filter.interpolator;
 
 import io.github.dsheirer.sample.complex.Complex;
-import java.text.DecimalFormat;
-import java.util.Arrays;
 import org.apache.commons.lang3.Validate;
-import org.apache.commons.math3.util.FastMath;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class InterpolatorScalar extends Interpolator
 {
-    private static final Logger mLog = LoggerFactory.getLogger(InterpolatorScalar.class);
-
     private float mGain;
 
     /**
@@ -89,26 +82,4 @@ public class InterpolatorScalar extends Interpolator
         return new Complex(i, q);
     }
 
-    public static void main(String[] args)
-    {
-        InterpolatorScalar interpolator = new InterpolatorScalar(1.0f);
-        DecimalFormat decimalFormat = new DecimalFormat("0.0000");
-
-        double TWO_PI = FastMath.PI * 2.0;
-
-		float[] samples = new float[16];
-
-		for(int x = 0; x < 16; x++)
-        {
-            samples[x] = (float) FastMath.sin(TWO_PI * x / 8.0);
-        }
-
-        mLog.debug("Samples: " + Arrays.toString(samples));
-
-        for(float x = 0.0f; x <= 1.01f; x += 0.1f)
-        {
-            mLog.debug(decimalFormat.format(x) + ": " + decimalFormat.format(interpolator.filter(samples, 1, x)));
-        }
-
-    }
 }

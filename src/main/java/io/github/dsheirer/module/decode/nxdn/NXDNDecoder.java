@@ -30,10 +30,8 @@ import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
 import io.github.dsheirer.dsp.squelch.PowerMonitor;
-import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
-import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.buffer.IByteBufferProvider;
 import io.github.dsheirer.sample.complex.ComplexSamples;
@@ -41,15 +39,9 @@ import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ISourceEventListener;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
-import io.github.dsheirer.source.wave.ComplexWaveSource;
-import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * NXDN Decoder for 4800, 9600 and Type-C/D systems.
@@ -57,7 +49,6 @@ import org.slf4j.LoggerFactory;
 public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener,
         ISourceEventListener, Listener<ComplexSamples>
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(NXDNDecoder.class);
     private static final Map<String,float[]> BASEBAND_FILTERS = new HashMap<>();
     private final DecodeConfigNXDN mConfig;
     private final NXDNSymbolProcessor mSymbolProcessor;
@@ -333,121 +324,4 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
         return this;
     }
 
-    /**
-     * Listener implementation used in the main method for offline demodulating an I/Q file..
-     */
-    public static class DebugListener implements Listener<IMessage>
-    {
-        private int mInvalidMessages;
-        private int mValidMessages;
-        private int mValidMessageBitErrors;
-
-        public void log()
-        {
-            System.out.println("Invalid: " + mInvalidMessages + " Valid: " + mValidMessages + " Valid-Bit Errors: " + mValidMessageBitErrors);
-        }
-
-        @Override
-        public void receive(IMessage message)
-        {
-            if(message instanceof NXDNMessage nxdn)
-            {
-                if(nxdn.isValid())
-                {
-                    System.out.println("BE:" + nxdn.getMessage().getCorrectedBitCount() + " " + nxdn);
-                    mValidMessages++;
-                    mValidMessageBitErrors += nxdn.getMessage().getCorrectedBitCount();
-                }
-                else
-                {
-                    System.out.println("\t\tBE:" + nxdn.getMessage().getCorrectedBitCount() + " " + nxdn);
-                    mInvalidMessages++;
-                }
-            }
-            else
-            {
-                System.out.println(message.toString());
-            }
-        }
-    }
-
-    public static void main(String[] args)
-    {
-        LOGGER.info("Starting ...");
-
-        DecodeConfigNXDN config = null;
-//        String directory = "D:\\Recordings\\NXDN\\"; //Windows
-        String directory = "/run/media/denny/T9/Recordings/NXDN/"; //Linux
-
-        //NXDN 9600 Channels
-//        config = new DecodeConfigNXDN(TransmissionMode.M9600);
-//        config.add(new ChannelFrequency(105, 451887500, 0));
-//        String file = directory + "20251127_063701_451887500_Bush-NXDN-96_Sentinel-Heights_Control_45_baseband.wav";
-
-        //Weird 938 MHz site in Springfield, VA that is all CRC errors.
-//        String file = directory + "20260324_033833_938736125_SYSTEM_SITE_null_47_baseband.wav";
-
-        //NXDN 4800 Channels
-        config = new DecodeConfigNXDN(TransmissionMode.M4800);
-//        String file = directory + "20251128_052514_150845000_MobileTech-NXDN-48_Fulton_Control_47_baseband.wav";
-        //Lower SNR recordings
-        String file = directory + "20260430_023716_150867500_Mobiletech-Communications-(NXDN)_Pulaski_Pulaski_11_baseband.wav";
-//        String file = directory + "20260430_023556_152982500_Mobiletech-Communications-(NXDN)_Manlius_Manlius_15_baseband.wav";
-
-        //This traffic channel sample Has Sync Detects between 1,096,430 - 1,111,430 samples (decimated sample rate: 12,500 Hz)
-//        String file = directory + "20260104_065056_153582500_Mobiletech-Communications-(NXDN)_Fulton_LCN-3_50_baseband.wav";
-//        String file = directory + "20260104_065240_153582500_Mobiletech-Communications-(NXDN)_Fulton_LCN-3_50_baseband.wav";
-//        String file = directory + "AceVentura Sample 1/20260122_071724_154987500_SCFR_SITE_null_1_baseband.wav";
-//        String file = directory + "AceVentura Sample 2/20260122_073239_154987500_SCFR_SITE_null_1_baseband.wav";
-//        String file = directory + "20260322_063443_150845000_Mobiletech-Communications-(NXDN)_Fulton_Fulton_2_baseband.wav";
-
-
-        //Type-D Channels
-//        config = new DecodeConfigNXDN(TransmissionMode.TYPE_D);
-//        String file = directory + "Type C and D/Action Radio Hennepin tadscottsmith/20260402_152326_464125000_Action-Radio---Hennepin_LCN-1_103_baseband.wav";
-//        String file = directory + "Type C and D/Action Radio Hennepin 2 tadscottsmith/recordings/20260330_221120_464650000_Action-Radio_Hennepin_LCN-4_92_baseband.wav";
-//        String file = directory + "Type C and D/20260314_091952_451775000_Heimes_Omaha_TYPE_D_114_baseband.wav";
-//        String file = directory + "Type C and D/20260318_034719_452675000_Heimes_Omaha_TYPE_D_0_baseband.wav";
-//        String file = directory + "Type C and D/20260320_065339_451450000_Heimes_Omaha_TYPE_D_0_baseband.wav";
-
-        //This file has PPM mis-adjusted by 8.0 to test for equalizer balance
-//        String file = directory + "20260119_044740_150845000_Mobiletech-Communications-(NXDN)_Oswego_Control_2_baseband.wav";
-
-        System.out.println("Processing File: " + file);
-        boolean autoReplay = false;
-
-        NXDNDecoder decoder = new NXDNDecoder(config);
-        decoder.start();
-
-        DebugListener listener = new DebugListener();
-        decoder.setMessageListener(listener);
-
-        try(ComplexWaveSource source = new ComplexWaveSource(new File(file), autoReplay))
-        {
-            source.setListener(iNativeBuffer -> {
-                Iterator<ComplexSamples> it = iNativeBuffer.iterator();
-
-                while(it.hasNext())
-                {
-                    decoder.receive(it.next());
-                }
-            });
-            source.start();
-            decoder.setSampleRate(source.getSampleRate());
-            System.out.println("Recording File Sample Rate: " + source.getSampleRate());
-
-            while(true)
-            {
-                source.next(2048, true);
-            }
-        }
-        catch(IOException ioe)
-        {
-            LOGGER.error("Error", ioe);
-        }
-
-        listener.log();
-
-        LOGGER.info("Finished");
-    }
 }

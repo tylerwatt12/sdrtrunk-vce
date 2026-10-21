@@ -559,23 +559,4 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
         }
     }
 
-    public static void main(String[] args)
-    {
-        String text = "HTTP/1.0 403 Forbidden";
-
-        Pattern pattern = Pattern.compile("HTTP/1.0 (\\d{3})");
-
-        Matcher m = pattern.matcher(text);
-
-        if(m.find())
-        {
-            mLog.info("Matching Group Count: " + m.groupCount());
-            mLog.info("Match 0: " + m.group(0));
-            mLog.info("Match 1: " + m.group(1));
-        }
-        else
-        {
-            mLog.info("No Match");
-        }
-    }
 }

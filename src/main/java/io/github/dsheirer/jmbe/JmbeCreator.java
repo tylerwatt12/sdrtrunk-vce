@@ -77,14 +77,6 @@ public class JmbeCreator
         mLibraryPath = library;
     }
 
-    /**
-     * Path to where the library should be created
-     */
-    public Path getLibraryPath()
-    {
-        return mLibraryPath;
-    }
-
     /** UI-independent single-use blocking job. Call on a worker, never the UI thread. */
     public Path run(Consumer<String> progress) throws IOException, InterruptedException
     {
