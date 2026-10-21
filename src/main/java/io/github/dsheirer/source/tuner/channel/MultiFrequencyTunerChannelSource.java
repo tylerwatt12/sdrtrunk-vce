@@ -29,6 +29,7 @@ import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
+import io.github.dsheirer.source.tuner.frequency.ChannelFrequencyErrorManager.CorrectionSnapshot;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.List;
@@ -510,6 +511,13 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         {
             mTunerChannelSource.setFrequencyCorrection(correction);
         }
+    }
+
+    @Override
+    public CorrectionSnapshot getFrequencyCorrectionSnapshot()
+    {
+        TunerChannelSource source = mTunerChannelSource;
+        return !mChangingChannels.get() && source != null ? source.getFrequencyCorrectionSnapshot() : null;
     }
 
     @Override

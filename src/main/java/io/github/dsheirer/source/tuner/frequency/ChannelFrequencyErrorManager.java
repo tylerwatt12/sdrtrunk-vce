@@ -20,7 +20,6 @@ package io.github.dsheirer.source.tuner.frequency;
 
 import io.github.dsheirer.buffer.FloatAveragingBuffer;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.source.ChannelFrequencyCorrectionStatusNotification;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 
@@ -39,6 +38,28 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
     private long mAverageRequestedCorrection;
     private boolean mCurrentForTunerProcessing;
     private boolean mCurrentForChannelProcessing;
+    private long mRequestTunerGeneration;
+    private long mLatestRequestTimestamp;
+    private volatile long mGeneration;
+    private long mLastRequestedCorrection;
+    private long mLastMeasurementTimestamp;
+    private boolean mHasMeasurement;
+    private volatile CorrectionSnapshot mCorrectionSnapshot;
+
+    /** One worker-produced latest value; no observer callback or per-client work occurs on decoder threads. */
+    public record CorrectionSnapshot(long timestamp, Long measurementTimestamp, Long requestedAdjustmentHz,
+                                     long channelCorrectionHz, long tunerCenterFrequencyHz, double tunerCorrectionPPM,
+                                     long tunerCorrectionHz, boolean autoPPM, long tunerGeneration, long generation)
+    {
+    }
+
+    public CorrectionSnapshot getCorrectionSnapshot()
+    {
+        CorrectionSnapshot snapshot = mCorrectionSnapshot;
+        return mRunning && snapshot != null && snapshot.generation() == mGeneration &&
+            snapshot.tunerGeneration() == mParent.getTunerGeneration() ?
+            snapshot : null;
+    }
 
     public ChannelFrequencyErrorManager(TunerChannelSource tunerChannelSource, TunerFrequencyErrorManager parent)
     {
@@ -59,6 +80,8 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
             long requestedCorrection = sourceEvent.getValue().longValue();
             mAverageRequestedCorrection = (long)mRequestedCorrectionAveragingBuffer.get(requestedCorrection);
             mCurrentForChannelProcessing = true;
+            mRequestTunerGeneration = mParent.getTunerGeneration();
+            mLatestRequestTimestamp = System.currentTimeMillis();
         }
     }
 
@@ -74,10 +97,14 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
 
     void processChannel()
     {
-        long decoderCorrection = 0;
-        long channelCorrection = 0;
         long appliedFrequencyCorrection = 0;
         boolean applyFrequencyCorrection = false;
+        long generation;
+        long tunerGeneration;
+        long requestedCorrection;
+        long measurementTimestamp;
+        long channelCorrection;
+        boolean hasMeasurement;
 
         synchronized(this)
         {
@@ -85,6 +112,8 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
             {
                 return;
             }
+
+            generation = mGeneration;
 
             if(mCurrentForChannelProcessing)
             {
@@ -99,12 +128,25 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
                     applyFrequencyCorrection = true;
                 }
 
-                decoderCorrection = mAverageRequestedCorrection;
+                if(mRequestTunerGeneration == mParent.getTunerGeneration())
+                {
+                    mLastRequestedCorrection = mAverageRequestedCorrection;
+                    mLastMeasurementTimestamp = mLatestRequestTimestamp;
+                    mHasMeasurement = true;
+                }
                 mAverageRequestedCorrection = 0;
                 mCurrentForTunerProcessing = true;
                 mCurrentForChannelProcessing = false;
             }
 
+            tunerGeneration = mParent.getTunerGeneration();
+            if(mRequestTunerGeneration != tunerGeneration)
+            {
+                mHasMeasurement = false;
+            }
+            requestedCorrection = mLastRequestedCorrection;
+            measurementTimestamp = mLastMeasurementTimestamp;
+            hasMeasurement = mHasMeasurement;
             channelCorrection = mAppliedFrequencyCorrection;
         }
 
@@ -113,16 +155,30 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
             mTunerChannelSource.setFrequencyCorrection(appliedFrequencyCorrection);
         }
 
-        broadcastStatus(decoderCorrection, channelCorrection);
+        updateSnapshot(generation, tunerGeneration, requestedCorrection, measurementTimestamp, hasMeasurement,
+            channelCorrection);
     }
 
-    private void broadcastStatus(long decoderCorrection, long channelCorrection)
+    private void updateSnapshot(long expectedGeneration, long tunerGeneration, long requestedCorrection,
+                                long measurementTimestamp, boolean hasMeasurement, long channelCorrection)
     {
-        ChannelFrequencyCorrectionStatusNotification notification =
-            ChannelFrequencyCorrectionStatusNotification.create(mTunerChannelSource, decoderCorrection,
-                channelCorrection, mParent.getTunerPPM(), mParent.getTunerFrequencyCorrection(),
-                mParent.isEnabled());
-        mTunerChannelSource.broadcastConsumerSourceEvent(notification);
+        if(!mRunning || expectedGeneration != mGeneration)
+        {
+            return;
+        }
+
+        //Primitive capture above shares only the existing correction lock. Allocation and all observation metadata
+        //work stay outside that lock, so a decoder request cannot wait for diagnostic projection or tuner settings.
+        long center = mParent.getTunerCenterFrequency();
+        double ppm = mParent.getTunerPPM();
+        CorrectionSnapshot snapshot = new CorrectionSnapshot(System.currentTimeMillis(),
+            hasMeasurement ? measurementTimestamp : null, hasMeasurement ? requestedCorrection : null,
+            channelCorrection, center, ppm, Math.round(center * ppm / 1_000_000.0), mParent.isEnabled(),
+            tunerGeneration, expectedGeneration);
+        if(mRunning && mGeneration == expectedGeneration && mParent.getTunerGeneration() == tunerGeneration)
+        {
+            mCorrectionSnapshot = snapshot;
+        }
     }
 
     public void start()
@@ -135,6 +191,11 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
                 mCurrentForTunerProcessing = false;
                 mCurrentForChannelProcessing = false;
                 mRequestedCorrectionAveragingBuffer.reset();
+                mLastRequestedCorrection = 0;
+                mLastMeasurementTimestamp = 0;
+                mHasMeasurement = false;
+                mCorrectionSnapshot = null;
+                mGeneration++;
                 mRunning = true;
             }
 
@@ -155,6 +216,11 @@ public class ChannelFrequencyErrorManager implements Listener<SourceEvent>
             mCurrentForTunerProcessing = false;
             mCurrentForChannelProcessing = false;
             mRequestedCorrectionAveragingBuffer.reset();
+            mLastRequestedCorrection = 0;
+            mLastMeasurementTimestamp = 0;
+            mHasMeasurement = false;
+            mCorrectionSnapshot = null;
+            mGeneration++;
         }
 
         if(clearFrequencyCorrection)

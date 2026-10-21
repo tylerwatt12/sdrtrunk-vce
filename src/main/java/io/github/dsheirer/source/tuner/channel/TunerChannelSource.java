@@ -33,7 +33,6 @@ import org.slf4j.LoggerFactory;
 public abstract class TunerChannelSource extends ComplexSource implements ISourceEventProcessor
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerChannelSource.class);
-    protected static final long HEARTBEAT_INTERVAL_MS = 100;
     private SourceEventListenerToProcessorAdapter mConsumerSourceEventListenerAdapter;
     protected TunerChannel mTunerChannel;
     private Listener<SourceEvent> mProducerSourceEventListener;
@@ -109,6 +108,12 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
     public TunerChannel getTunerChannel()
     {
         return mTunerChannel;
+    }
+
+    /** Latest worker-produced frequency correction, or null while stopped or after a tuner retune. */
+    public ChannelFrequencyErrorManager.CorrectionSnapshot getFrequencyCorrectionSnapshot()
+    {
+        return mChannelFrequencyErrorManager != null ? mChannelFrequencyErrorManager.getCorrectionSnapshot() : null;
     }
 
     /** Native discovered-tuner identity for lifecycle ownership; never exposed directly to the browser. */
@@ -199,7 +204,6 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
                     mChannelFrequencyErrorManager.receive(sourceEvent);
                 }
                 break;
-            case NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_STATUS:
             case NOTIFICATION_FREQUENCY_ROTATION_FAILURE:
             case NOTIFICATION_FREQUENCY_ROTATION_SUCCESS:
             case NOTIFICATION_CHANNEL_POWER:

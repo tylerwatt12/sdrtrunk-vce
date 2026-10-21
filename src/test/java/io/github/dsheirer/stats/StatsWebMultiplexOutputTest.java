@@ -10,6 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.web.auth.WebCapability;
+import io.github.dsheirer.source.tuner.frequency.ChannelFrequencyErrorManager.CorrectionSnapshot;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -57,6 +60,43 @@ class StatsWebMultiplexOutputTest
         assertEquals(DiagnosticStreamFrame.TYPE_STATE, frame.type());
         assertTrue(json.contains("\"subscription_id\":\"" + subscriptionId + "\""));
         assertTrue(json.contains("\"frequency_hz\":851012500"));
+    }
+
+    @Test
+    void carriesLatestChannelCorrectionsInTheExistingSubscribedStateWithoutExposingInternalGenerations()
+        throws Exception
+    {
+        var correction = ChannelDiagnosticService.FrequencyCorrection.from(new CorrectionSnapshot(9_500, 9_000L,
+            -6L, 120, 852_000_000, -0.25, -213, true, 17, 23), 10_000);
+        var state = new ChannelDiagnosticService.State(11, 7, "live", "", "live", "", "live", "",
+            "unsupported", "", "unsupported", "", "00000000-0000-0000-0000-000000000001", 851_012_500,
+            25_000, null, "DMR", "DMR", 512, 10, 240, 4_800, 8_000, correction);
+        DiagnosticStreamFrame frame = StatsWebServerService.diagnosticState(7, 11, state, "test-subscription");
+        JsonNode json = new ObjectMapper().readTree(new String(frame.encoded(), DiagnosticStreamFrame.HEADER_BYTES,
+            frame.encoded().length - DiagnosticStreamFrame.HEADER_BYTES, StandardCharsets.UTF_8));
+        JsonNode values = json.path("frequency_correction");
+        assertEquals("test-subscription", json.path("subscription_id").textValue());
+        assertEquals(7, frame.generation());
+        assertTrue(values.path("available").booleanValue());
+        assertTrue(values.path("fresh").booleanValue());
+        assertTrue(values.path("request_available").booleanValue());
+        assertTrue(values.path("request_fresh").booleanValue());
+        assertEquals(-6, values.path("requested_adjustment_hz").longValue());
+        assertEquals(120, values.path("channel_correction_hz").longValue());
+        assertEquals(852_000_000, values.path("tuner_center_frequency_hz").longValue());
+        assertEquals(-0.25, values.path("tuner_correction_ppm").doubleValue());
+        assertEquals(-213, values.path("tuner_correction_hz").longValue());
+        assertTrue(values.path("auto_ppm").booleanValue());
+        assertEquals(9_500, values.path("updated_at_ms").longValue());
+        assertEquals(9_000, values.path("measurement_at_ms").longValue());
+        assertFalse(values.has("tuner_generation"));
+        assertFalse(values.has("generation"));
+
+        var absent = ChannelDiagnosticService.FrequencyCorrection.from(null, 10_000);
+        JsonNode unavailable = new ObjectMapper().readTree(
+            io.github.dsheirer.web.http.ApiHttpResponse.encodePayload(absent));
+        assertFalse(unavailable.path("available").booleanValue());
+        assertTrue(unavailable.path("requested_adjustment_hz").isNull());
     }
 
     @Test

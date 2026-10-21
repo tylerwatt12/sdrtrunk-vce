@@ -32,7 +32,6 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
 {
     private static final double TWO_PI = 2 * Math.PI;
     private Listener<SourceEvent> mSourceEventListener;
-    private Listener<Float> mSymbolListener;
     private volatile SymbolObserver[] mSymbolObservers = new SymbolObserver[0];
     private double mSampleRate;
 
@@ -91,24 +90,7 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     }
 
     /**
-     * Registers the listener to receive demodulated symbols.
-     * @param listener to receive symbols.
-     */
-    public void setSymbolListener(Listener<Float> listener)
-    {
-        mSymbolListener = listener;
-    }
-
-    /**
-     * Removes any registered symbol listener
-     */
-    public void removeSymbolListener()
-    {
-        mSymbolListener = null;
-    }
-
-    /**
-     * Adds an independent symbol observer without replacing the legacy UI listener. Observers run on the decoder
+     * Adds an independent symbol observer. Observers run on the decoder
      * thread and must only perform bounded, non-blocking work.
      */
     public synchronized void addSymbolObserver(SymbolObserver observer)
@@ -154,16 +136,11 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     }
 
     /**
-     * Broadcasts the demodulated symbol to a symbol listener.
+     * Broadcasts the demodulated symbol to registered observers.
      * @param symbol in range 0 to +/- PI radians
      */
     public void broadcast(float symbol)
     {
-        if(mSymbolListener != null)
-        {
-            mSymbolListener.receive(symbol);
-        }
-
         for(SymbolObserver observer: mSymbolObservers)
         {
             observer.receive(symbol);

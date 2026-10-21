@@ -24,6 +24,8 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.sample.real.IRealBufferListener;
 import io.github.dsheirer.source.Source;
+import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.frequency.ChannelFrequencyErrorManager.CorrectionSnapshot;
 import io.github.dsheirer.spectrum.DFTSize;
 import io.github.dsheirer.util.concurrent.BoundedSpscFloatBatchQueue;
 import java.time.Duration;
@@ -60,6 +62,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
     public static final int ANALOG_AUDIO_SAMPLE_RATE = 8_000;
     private static final long BINDING_REFRESH_NANOS = TimeUnit.MILLISECONDS.toNanos(250);
     private static final float MAXIMUM_SYMBOL_PHASE = (float)Math.PI;
+    private static final long CORRECTION_FRESH_MILLISECONDS = 2_000;
 
     private final ChannelProcessingManager mChannelProcessingManager;
     private final DiagnosticFftScheduler mFftScheduler;
@@ -333,8 +336,45 @@ public final class ChannelDiagnosticService implements AutoCloseable
                         String configurationId, long frequencyHz, long sampleRateHz, Integer timeslot, String protocol,
                         String decoderProfile,
                         int fftSize, int signalFramesPerSecond, int symbolBatchSize, int maximumVisibleSymbols,
-                        int audioSampleRateHz)
+                        int audioSampleRateHz, FrequencyCorrection frequencyCorrection)
     {
+        private State withFrequencyCorrection(long revision, FrequencyCorrection correction)
+        {
+            return new State(revision, generation, state, reason, signalState, signalReason, symbolsState,
+                symbolsReason, squelchState, squelchReason, audioState, audioReason, configurationId, frequencyHz,
+                sampleRateHz, timeslot, protocol, decoderProfile, fftSize, signalFramesPerSecond, symbolBatchSize,
+                maximumVisibleSymbols, audioSampleRateHz, correction);
+        }
+    }
+
+    /** Current values only. An absent measurement is distinct from a measured zero. */
+    public record FrequencyCorrection(boolean available, boolean fresh, boolean requestAvailable, boolean requestFresh,
+                                      Long updatedAtMs, Long measurementAtMs, Long requestedAdjustmentHz,
+                                      Long channelCorrectionHz, Long tunerCenterFrequencyHz, Double tunerCorrectionPpm,
+                                      Long tunerCorrectionHz, Boolean autoPpm)
+    {
+        private static final FrequencyCorrection UNAVAILABLE = new FrequencyCorrection(false, false, false, false,
+            null, null, null, null, null, null, null, null);
+
+        static FrequencyCorrection from(CorrectionSnapshot snapshot, long now)
+        {
+            if(snapshot == null)
+            {
+                return UNAVAILABLE;
+            }
+
+            boolean requestAvailable = snapshot.requestedAdjustmentHz() != null;
+            return new FrequencyCorrection(true, recent(snapshot.timestamp(), now), requestAvailable,
+                requestAvailable && snapshot.measurementTimestamp() != null &&
+                    recent(snapshot.measurementTimestamp(), now), snapshot.timestamp(), snapshot.measurementTimestamp(),
+                snapshot.requestedAdjustmentHz(), snapshot.channelCorrectionHz(), snapshot.tunerCenterFrequencyHz(),
+                snapshot.tunerCorrectionPPM(), snapshot.tunerCorrectionHz(), snapshot.autoPPM());
+        }
+
+        private static boolean recent(long timestamp, long now)
+        {
+            return timestamp <= now && now - timestamp <= CORRECTION_FRESH_MILLISECONDS;
+        }
     }
 
     public final class Session implements AutoCloseable
@@ -484,6 +524,12 @@ public final class ChannelDiagnosticService implements AutoCloseable
             {
                 if(Objects.equals(mBindingInfo, info) && (mProducer == null || !mProducer.isClosed()))
                 {
+                    FrequencyCorrection correction = frequencyCorrection();
+                    if(!correction.equals(mState.frequencyCorrection()))
+                    {
+                        //Only metadata changes: do not rebind the source or recreate the FFT/symbol probes.
+                        mState = mState.withFrequencyCorrection(++mStateRevision, correction);
+                    }
                     return;
                 }
 
@@ -592,7 +638,16 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 symbolsReason, squelchState, squelchReason, audioState, audioReason,
                 mScope.configurationId(), frequency, sampleRate, mScope.timeslot(), protocol,
                 decoderProfile, fftSize,
-                SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS, ANALOG_AUDIO_SAMPLE_RATE);
+                SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS, ANALOG_AUDIO_SAMPLE_RATE,
+                frequencyCorrection());
+        }
+
+        private FrequencyCorrection frequencyCorrection()
+        {
+            CorrectionSnapshot snapshot = mProcessingChain != null && mBindingInfo != null &&
+                mBindingInfo.source() instanceof TunerChannelSource tunerSource ?
+                    tunerSource.getFrequencyCorrectionSnapshot() : null;
+            return FrequencyCorrection.from(snapshot, System.currentTimeMillis());
         }
 
         private void detach()

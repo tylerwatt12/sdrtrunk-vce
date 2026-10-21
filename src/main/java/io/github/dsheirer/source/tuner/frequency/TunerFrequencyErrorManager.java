@@ -48,8 +48,9 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
     private ScheduledFuture<?> mScheduledFuture;
     private volatile boolean mEnabled = true;
     private boolean mShutdown;
-    private double mTunerPPM;
-    private long mTunerCorrection;
+    private volatile long mTunerFrequency;
+    private volatile long mTunerGeneration;
+    private volatile double mTunerPPM;
     private double mAutoCorrectionBaselinePPM;
     private boolean mApplyingAutomaticCorrection;
     private int mTunerProcessingTickCounter;
@@ -58,8 +59,8 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
     {
         mTunerController = tunerController;
         mTunerController.addListener(this);
+        mTunerFrequency = mTunerController.getFrequency();
         mTunerPPM = mTunerController.getFrequencyCorrection();
-        mTunerCorrection = toHertz(mTunerPPM);
         mAutoCorrectionBaselinePPM = mTunerPPM;
     }
 
@@ -76,11 +77,14 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
             event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CORRECTION_CHANGE)
         {
             double ppm = mTunerController.getFrequencyCorrection();
+            mTunerPPM = ppm;
 
-            if(ppm != mTunerPPM)
+            long frequency = mTunerController.getFrequency();
+
+            if(frequency != mTunerFrequency)
             {
-                mTunerPPM = ppm;
-                mTunerCorrection = toHertz(mTunerPPM);
+                mTunerFrequency = frequency;
+                mTunerGeneration++;
             }
 
             if(event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CORRECTION_CHANGE &&
@@ -246,12 +250,18 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
 
     public double getTunerPPM()
     {
-        return mTunerController.getFrequencyCorrection();
+        //Reporting must never make a decoder wait for a UI/hardware settings lock.
+        return mTunerPPM;
     }
 
-    public long getTunerFrequencyCorrection()
+    long getTunerCenterFrequency()
     {
-        return mTunerCorrection;
+        return mTunerFrequency;
+    }
+
+    long getTunerGeneration()
+    {
+        return mTunerGeneration;
     }
 
     public void add(ChannelFrequencyErrorManager channelFrequencyErrorManager)
@@ -319,11 +329,6 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
 
         mScheduledFuture = null;
         mTunerProcessingTickCounter = 0;
-    }
-
-    private long toHertz(double ppm)
-    {
-        return (long)(mTunerController.getFrequency() * ppm * PPM_DIVISOR);
     }
 
     private long clamp(long value, long minimum, long maximum)

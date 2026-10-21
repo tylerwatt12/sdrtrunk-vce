@@ -24,6 +24,9 @@ import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ComplexSource;
 import io.github.dsheirer.source.SourceEvent;
+import io.github.dsheirer.source.tuner.channel.TunerChannel;
+import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.frequency.ChannelFrequencyErrorManager.CorrectionSnapshot;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -39,6 +42,185 @@ import org.junit.jupiter.api.Test;
 class ChannelDiagnosticServiceTest
 {
     private static final String CONFIGURATION_ID = "00000000-0000-0000-0000-000000000001";
+
+    @Test
+    void correctionMetadataUpdatesWithoutRebindingAndClearsWhenTheChannelStops()
+    {
+        TestProcessingChain chain = new TestProcessingChain();
+        TestCorrectionSource source = new TestCorrectionSource();
+        TestFeedbackDecoder decoder = new TestFeedbackDecoder();
+        source.snapshot = correctionSnapshot(0L);
+        chain.setSource(source);
+        chain.addModule(decoder);
+        chain.setProcessing(true);
+        ChannelProcessingManager manager = manager(chain);
+        DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
+        ChannelDiagnosticService service = new ChannelDiagnosticService(manager, scheduler);
+        ChannelDiagnosticService.Scope scope = new ChannelDiagnosticService.Scope(CONFIGURATION_ID, 851_012_500L,
+            null);
+        ChannelDiagnosticService.Session first = service.tryOpen(scope).session();
+        ChannelDiagnosticService.Session second = service.tryOpen(scope).session();
+        try
+        {
+            await(() -> first.state().frequencyCorrection().available());
+            long generation = first.state().generation();
+            long revision = first.state().revision();
+            int tasks = scheduler.activeTaskCount();
+            assertEquals(0L, first.state().frequencyCorrection().requestedAdjustmentHz());
+            assertEquals(first.state(), second.state());
+            assertEquals(1, chain.signalTapCount());
+            assertEquals(1, decoder.attachmentAttempts());
+
+            source.snapshot = correctionSnapshot(-6L);
+            await(() -> Long.valueOf(-6L).equals(first.state().frequencyCorrection().requestedAdjustmentHz()));
+            assertTrue(first.state().revision() > revision);
+            assertEquals(generation, first.state().generation());
+            assertEquals(tasks, scheduler.activeTaskCount());
+            assertEquals(1, decoder.attachmentAttempts());
+            assertEquals(1, chain.signalTapCount());
+
+            source.snapshot = null;
+            await(() -> !first.state().frequencyCorrection().available());
+            assertEquals(generation, first.state().generation());
+            source.snapshot = correctionSnapshot(3L);
+            await(() -> first.state().frequencyCorrection().available());
+            chain.setProcessing(false);
+            await(() -> "waiting".equals(first.state().state()));
+            assertFalse(first.state().frequencyCorrection().available());
+            assertEquals(0, decoder.activeObservers());
+            assertEquals(0, chain.signalTapCount());
+
+            chain.setProcessing(true);
+            await(() -> "live".equals(first.state().state()));
+            assertTrue(first.state().generation() > generation);
+            assertEquals(1, decoder.activeObservers());
+            assertEquals(1, chain.signalTapCount());
+        }
+        finally
+        {
+            first.close();
+            second.close();
+            service.close();
+            scheduler.close();
+            chain.dispose();
+            manager.shutdown();
+        }
+        assertEquals(0, decoder.activeObservers());
+    }
+
+    @Test
+    void correctionAvailabilityAndFreshnessAreIndependentFromMeasuredZero()
+    {
+        var absent = ChannelDiagnosticService.FrequencyCorrection.from(null, 10_000);
+        assertFalse(absent.available());
+        assertFalse(absent.requestAvailable());
+        assertNull(absent.requestedAdjustmentHz());
+        var snapshot = new CorrectionSnapshot(9_500, 8_500L, 0L, -120, 852_000_000,
+            -0.25, -213, true, 2, 1);
+        var current = ChannelDiagnosticService.FrequencyCorrection.from(snapshot, 10_000);
+        assertTrue(current.available());
+        assertTrue(current.fresh());
+        assertTrue(current.requestAvailable());
+        assertTrue(current.requestFresh());
+        assertEquals(0L, current.requestedAdjustmentHz());
+        assertEquals(-120L, current.channelCorrectionHz());
+        var olderRequest = ChannelDiagnosticService.FrequencyCorrection.from(snapshot, 10_750);
+        assertTrue(olderRequest.fresh());
+        assertFalse(olderRequest.requestFresh());
+        var stale = ChannelDiagnosticService.FrequencyCorrection.from(snapshot, 12_000);
+        assertTrue(stale.available());
+        assertFalse(stale.fresh());
+        assertFalse(stale.requestFresh());
+        assertEquals(0L, stale.requestedAdjustmentHz());
+        var noRequest = ChannelDiagnosticService.FrequencyCorrection.from(new CorrectionSnapshot(9_500, null, null,
+            0, 852_000_000, -0.25, -213, false, 2, 1), 10_000);
+        assertTrue(noRequest.available());
+        assertTrue(noRequest.fresh());
+        assertFalse(noRequest.requestAvailable());
+        assertFalse(noRequest.requestFresh());
+    }
+
+    @Test
+    void sharedSymbolObserversDropOverflowWithoutWaitingForDiagnosticLocksOrSlowViewers() throws Exception
+    {
+        TestProcessingChain chain = new TestProcessingChain();
+        TestFeedbackDecoder decoder = new TestFeedbackDecoder();
+        chain.addModule(decoder);
+        chain.setProcessing(true);
+        ChannelProcessingManager manager = manager(chain);
+        DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
+        CountDownLatch blocked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        DiagnosticFftScheduler.Task blocker = scheduler.scheduleWithFixedDelay(() ->
+        {
+            blocked.countDown();
+            try
+            {
+                release.await();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }, 1);
+        assertTrue(blocked.await(1, TimeUnit.SECONDS));
+        ChannelDiagnosticService service = new ChannelDiagnosticService(manager, scheduler);
+        ChannelDiagnosticService.Scope scope = new ChannelDiagnosticService.Scope(CONFIGURATION_ID, 851_012_500L,
+            null);
+        ChannelDiagnosticService.Session slow = service.tryOpen(scope).session();
+        ChannelDiagnosticService.Session active = service.tryOpen(scope).session();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try
+        {
+            await(() -> "live".equals(active.state().symbolsState()));
+            assertEquals(1, decoder.activeObservers());
+            synchronized(service)
+            {
+                Future<?> producer = executor.submit(() ->
+                {
+                    for(int i = 0; i < ChannelDiagnosticService.SYMBOL_BATCH_SIZE * 100; i++)
+                    {
+                        decoder.broadcast(0.75f);
+                    }
+                });
+                producer.get(1, TimeUnit.SECONDS);
+            }
+            assertNull(slow.poll(Duration.ZERO));
+            assertNull(active.poll(Duration.ZERO), "a full queue must not run its drain on the decoder thread");
+            release.countDown();
+            blocker.close();
+            DiagnosticStreamFrame received = active.poll(Duration.ofSeconds(2));
+            assertTrue(received != null);
+            assertEquals(DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, received.type());
+            assertEquals(ChannelDiagnosticService.SYMBOL_BATCH_SIZE, received.valueCount());
+            await(() -> scheduler.activeTaskCount() == 1);
+            slow.close();
+            assertEquals(1, decoder.activeObservers(), "the remaining viewer owns the shared observer");
+            active.close();
+            assertEquals(0, decoder.activeObservers());
+            decoder.broadcast(1.0f);
+            assertNull(active.poll(Duration.ZERO));
+        }
+        finally
+        {
+            release.countDown();
+            blocker.close();
+            executor.shutdownNow();
+            slow.close();
+            active.close();
+            service.close();
+            scheduler.close();
+            chain.dispose();
+            manager.shutdown();
+        }
+    }
+
+    private static CorrectionSnapshot correctionSnapshot(Long request)
+    {
+        long now = System.currentTimeMillis();
+        return new CorrectionSnapshot(now, request != null ? now : null, request, 120,
+            852_000_000, -0.25, -213, true, 1, 1);
+    }
 
     @Test
     void supportsBoundedDemandSessionsAndReleasesThemOnClose()
@@ -422,6 +604,23 @@ class ChannelDiagnosticServiceTest
             return getModules().stream().filter(module ->
                 "SignalTap".equals(module.getClass().getSimpleName())).count();
         }
+    }
+
+    private static final class TestCorrectionSource extends TunerChannelSource
+    {
+        private volatile CorrectionSnapshot snapshot;
+
+        private TestCorrectionSource()
+        {
+            super(null, new TunerChannel(851_012_500L, 12_500), "diagnostic test", null);
+        }
+
+        @Override public CorrectionSnapshot getFrequencyCorrectionSnapshot() { return snapshot; }
+        @Override public void setFrequency(long frequency) { }
+        @Override public void setFrequencyCorrection(long correction) { }
+        @Override protected void setSampleRate(double sampleRate) { }
+        @Override public double getSampleRate() { return 25_000; }
+        @Override public void setListener(Listener<ComplexSamples> listener) { }
     }
 
     private static final class TestComplexSource extends ComplexSource

@@ -18,16 +18,12 @@
  */
 package io.github.dsheirer.source;
 
-import java.util.EnumSet;
-import java.util.Set;
-
 public class SourceEvent
 {
 
     public enum Event
     {
         NOTIFICATION_CHANNEL_COUNT_CHANGE,
-        NOTIFICATION_CHANNEL_FREQUENCY_CORRECTION_STATUS,
         NOTIFICATION_CHANNEL_POWER,
         NOTIFICATION_CHANNEL_SAMPLE_RATE_CHANGE,
         NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED,
@@ -48,18 +44,12 @@ public class SourceEvent
         REQUEST_FREQUENCY_CHANGE,
         REQUEST_FREQUENCY_CORRECTION,
         REQUEST_FREQUENCY_ROTATION,
-        REQUEST_FREQUENCY_SELECTION,
         REQUEST_CHANGE_SQUELCH_THRESHOLD,
         REQUEST_CURRENT_SQUELCH_THRESHOLD,
         REQUEST_CHANGE_SQUELCH_AUTO_TRACK,
         REQUEST_CURRENT_SQUELCH_AUTO_TRACK,
         REQUEST_START_SAMPLE_STREAM,
-        REQUEST_STOP_SAMPLE_STREAM;
-
-        public static final Set<Event> NOTIFICATION_EVENTS =
-            Set.copyOf(EnumSet.range(NOTIFICATION_CHANNEL_COUNT_CHANGE, NOTIFICATION_ERROR_STATE));
-        public static final Set<Event> REQUEST_EVENTS =
-            Set.copyOf(EnumSet.range(REQUEST_FREQUENCY_CHANGE, REQUEST_STOP_SAMPLE_STREAM));
+        REQUEST_STOP_SAMPLE_STREAM
     }
 
     private final Event mEvent;
@@ -129,22 +119,6 @@ public class SourceEvent
     public Event getEvent()
     {
         return mEvent;
-    }
-
-    /**
-     * Indicates if this is a notification event
-     */
-    public boolean isNotificationEvent()
-    {
-        return Event.NOTIFICATION_EVENTS.contains(mEvent);
-    }
-
-    /**
-     * Indicates if this is a request event
-     */
-    public boolean isRequestEvent()
-    {
-        return Event.REQUEST_EVENTS.contains(mEvent);
     }
 
     /**
@@ -284,16 +258,6 @@ public class SourceEvent
     }
 
     /**
-     * Creates a new channel sample rate change event
-     *
-     * @param sampleRate in hertz
-     */
-    public static SourceEvent channelSampleRateChange(double sampleRate)
-    {
-        return new SourceEvent(Event.NOTIFICATION_CHANNEL_SAMPLE_RATE_CHANGE, sampleRate);
-    }
-
-    /**
      * Notification that a baseband recording file has been loaded
      */
     public static SourceEvent recordingFileLoaded()
@@ -309,16 +273,6 @@ public class SourceEvent
     public static SourceEvent channelCountChange(int channelCount)
     {
         return new SourceEvent(Event.NOTIFICATION_CHANNEL_COUNT_CHANGE, channelCount);
-    }
-
-    /**
-     * Creates a new frequency change request event
-     *
-     * @param frequency requested
-     */
-    public static SourceEvent frequencyRequest(long frequency)
-    {
-        return new SourceEvent(Event.REQUEST_FREQUENCY_CHANGE, frequency);
     }
 
     /**
@@ -363,15 +317,6 @@ public class SourceEvent
     public static SourceEvent frequencyRotationRequest()
     {
         return new SourceEvent(Event.REQUEST_FREQUENCY_ROTATION);
-    }
-
-    /**
-     * Creates a request to cycle to a specific frequency.  This is normally used for decoders to request the
-     * next frequency in a list when a multiple-frequency source configuration is defined.
-     */
-    public static SourceEvent frequencySelectionRequest()
-    {
-        return new SourceEvent(Event.REQUEST_FREQUENCY_SELECTION);
     }
 
     /**
