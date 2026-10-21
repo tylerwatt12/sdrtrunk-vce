@@ -383,19 +383,20 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
   assert.equal(staleHost.children[0].textContent, 'Loading radios…');
 }
 
-async function checkAliasCoverageIndependentCount() {
+async function checkAliasCoverageIndependentCount(aliasFamily) {
   function node(tag, className = '', text = '') {
     const classes = new Set(className.split(/\s+/).filter(Boolean));
     const element = {
-      tagName: tag.toUpperCase(), children: [], dataset: {}, attributes: {}, isConnected: true, textContent: text,
+      nodeType: 1, tagName: tag.toUpperCase(), children: [], dataset: {}, attributes: {}, isConnected: true, textContent: text,
       classList: { add: (...values) => values.forEach((value) => classes.add(value)),
         contains: (value) => classes.has(value),
         toggle: (value, enabled) => enabled ? classes.add(value) : classes.delete(value) },
       setAttribute(name, value) { this.attributes[name] = value; },
       removeAttribute(name) { delete this.attributes[name]; },
       append(...values) { values.forEach((value) => {
-        if (value && typeof value === 'object') value.parentNode = this;
-        this.children.push(value);
+        const child = value && typeof value === 'object' ? value : { nodeType: 3, textContent: String(value) };
+        child.parentNode = this;
+        this.children.push(child);
       }); },
       prepend(...values) { this.children.unshift(...values); },
       replaceChildren(...values) { this.children = []; this.append(...values); },
@@ -433,7 +434,7 @@ async function checkAliasCoverageIndependentCount() {
     createAsyncSection: () => directory, renderIsCurrent: () => current,
     beginPage: (_renderContext, ...children) => { content.replaceChildren(...children); return true; },
     pageHeader: () => node('header'), radioDirectoryPerspectiveControl: () => node('div'),
-    aliasListFamily: (row) => row.family, aliasListFamilyLabel: () => 'P25', number: String,
+    aliasListFamily: (row) => row.family, aliasListFamilyLabel: () => aliasFamily, number: String,
     analogAliasList: (row) => ['NBFM', 'AM'].includes(row?.family),
     uiSelect: () => node('select'), uiSelectFrame: (select) => select,
     uiSegmentedControl: (choices, selected, onChange) => {
@@ -457,7 +458,7 @@ async function checkAliasCoverageIndependentCount() {
     api: async () => ({ totals: { configured_alias_count: 2 }, channels: [] }),
     apiPage: (path, parameters, options) => {
       if (path === '/api/v1/identities/lists') return Promise.resolve({ rows: [
-        { alias_list_id: 2, family: 'P25', name: 'County', alias_count: 2 }
+        { alias_list_id: 2, family: aliasFamily, name: 'County', alias_count: 2 }
       ] });
       if (path.endsWith('/aliases')) return Promise.resolve({ rows: [{ name: 'Dispatch' }], total_count: 2 });
       requests.push({ parameters, signal: options.signal, tablesPresented: tables.length });
@@ -481,6 +482,14 @@ async function checkAliasCoverageIndependentCount() {
   const slowCount = deferred();
   pendingCounts.push(slowCount);
   await context.renderAliasCoverageDirectory({ signal: pageController.signal });
+  const layout = host.children[0];
+  assert.deepEqual(layout.children.filter((child) => child.nodeType === 3).map((child) => child.textContent), [],
+    'Optional Alias Inventory content must not create standalone null or undefined text');
+  const notes = layout.children.filter((child) => child.classList?.contains('ui-section-note'));
+  assert.equal(notes.length, aliasFamily === 'P25' ? 0 : 1,
+    'Only analog Alias Lists show the saved-history note');
+  if (notes.length) assert.equal(notes[0].textContent,
+    'Calls include saved history since alias tracking began. Heard within filters when each assignment was last heard.');
   assert.equal(tables.length, 1, 'Configured aliases appear while their Unassigned count remains pending');
   assert.equal(requests[0].tablesPresented, 1, 'The independent count starts after Configured presentation');
   assert.equal(summary()[2], 'Loading…', 'A pending count must not look like zero');
@@ -1970,7 +1979,8 @@ async function main() {
   ], talkerSystem), 'radios.talker-alias-affiliation-channel');
   assert.match(appSource, /radioTableType\('group-identity-radios', columns, groupIdentity\)/);
   await checkGroupIdentityRadiosLoading(browsing, tableLayouts);
-  await checkAliasCoverageIndependentCount();
+  await checkAliasCoverageIndependentCount('P25');
+  await checkAliasCoverageIndependentCount('NBFM');
   assert.match(appSource, /signalingMetrics\(signalingActionRows\(response\.action_counts\)/);
   assert.match(functionBinding(appSource, 'signalingMetrics'), /values\.filter\(\(\[, count\]\) => Number\(count\) > 0\)/);
   assert.equal(tableDefaults.width('channel-frequencies-p25', { id: 'tags' }), 130);
