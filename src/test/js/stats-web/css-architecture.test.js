@@ -11,9 +11,9 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=43") layer(tokens);',
+  '@import url("./styles/tokens.css?v=44") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=6") layer(components);',
-  '@import url("./styles/components/controls.css?v=43") layer(components);',
+  '@import url("./styles/components/controls.css?v=44") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=11") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=34") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=18") layer(compositions);',
@@ -53,7 +53,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/recordings.css?v=21") layer(features);',
   '@import url("./styles/features/call-relations.css?v=1") layer(features);',
   '@import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);',
-  '@import url("./styles/utilities/reduced-motion.css?v=15") layer(utilities);',
+  '@import url("./styles/utilities/reduced-motion.css?v=16") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.

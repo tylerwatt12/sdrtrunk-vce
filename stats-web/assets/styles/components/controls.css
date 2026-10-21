@@ -112,19 +112,34 @@
   position: relative;
 }
 
+.ui-button-awaiting-apply::before,
 .ui-button-awaiting-apply::after {
   content: "";
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  inset: calc(-1 * var(--apply-attention-ring-offset));
+  border-radius: calc(var(--ui-control-radius, var(--radius-control)) + var(--apply-attention-ring-offset));
   pointer-events: none;
-  box-shadow: var(--shadow-apply-attention-ring);
+}
+
+.ui-button-awaiting-apply::before {
+  border: var(--apply-attention-ring-width) solid var(--apply-attention-ring-color);
+}
+
+.ui-button-awaiting-apply::after {
+  border: var(--apply-attention-wave-width) solid var(--apply-attention-wave-color);
+  box-shadow: var(--shadow-apply-attention-wave);
+  opacity: 0;
   animation: ui-button-awaiting-apply-halo var(--apply-attention-duration) ease-out infinite;
 }
 
 @keyframes ui-button-awaiting-apply-halo {
-  from { box-shadow: var(--shadow-apply-attention-pulse-start); }
-  to { box-shadow: var(--shadow-apply-attention-pulse-end); }
+  0% { opacity: 0; }
+  14% { opacity: .8; }
+  85%, 100% {
+    opacity: 0;
+    inset: calc(-1 * (var(--apply-attention-ring-offset) + var(--apply-attention-wave-spread)));
+    border-radius: calc(var(--ui-control-radius, var(--radius-control)) + var(--apply-attention-ring-offset) + var(--apply-attention-wave-spread));
+  }
 }
 
 .ui-button svg,

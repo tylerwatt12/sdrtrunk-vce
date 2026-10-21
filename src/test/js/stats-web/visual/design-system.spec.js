@@ -32,12 +32,40 @@ for (const [, theme, viewport] of galleryCases) {
         repeats: style.animationIterationCount, pointerEvents: style.pointerEvents };
     })).toEqual({ name: 'ui-button-awaiting-apply-halo', duration: '1.4s',
       repeats: 'infinite', pointerEvents: 'none' });
-    await search.evaluate((button) => {
-      for (const animation of button.getAnimations({ subtree: true })) {
-        if (animation.animationName === 'ui-button-awaiting-apply-halo') {
-          animation.pause(); animation.currentTime = 350;
-        }
-      }
+    const phases = await search.evaluate((button) => {
+      const animation = button.getAnimations({ subtree: true })
+        .find(item => item.animationName === 'ui-button-awaiting-apply-halo');
+      animation.pause();
+      return [0, 350, 1000].map(time => {
+        animation.currentTime = time;
+        const ring = getComputedStyle(button, '::before');
+        const wave = getComputedStyle(button, '::after');
+        return {
+          ring: { border: ring.border, inset: ring.inset, opacity: ring.opacity,
+            animation: ring.animationName, radius: ring.borderRadius },
+          wave: { borderWidth: wave.borderTopWidth, borderStyle: wave.borderTopStyle,
+            inset: Number.parseFloat(wave.top), opacity: Number(wave.opacity) },
+          fill: getComputedStyle(button).backgroundColor
+        };
+      });
+    });
+    expect(phases[0].ring.border).toContain('2px solid');
+    expect(phases[0].ring.border).not.toContain('rgba(0, 0, 0, 0)');
+    expect(Number.parseFloat(phases[0].ring.inset)).toBeLessThan(-2);
+    expect(phases[0].ring.opacity).toBe('1');
+    expect(phases[0].ring.animation).toBe('none');
+    for (const phase of phases) {
+      expect(phase.ring).toEqual(phases[0].ring);
+      expect(phase.fill).toBe(phases[0].fill);
+      expect(phase.wave.borderWidth).toBe('1px');
+      expect(phase.wave.borderStyle).toBe('solid');
+    }
+    expect(phases[1].wave.inset).toBeLessThan(phases[0].wave.inset);
+    expect(phases[2].wave.inset).toBeLessThan(phases[1].wave.inset);
+    expect(phases[1].wave.opacity).toBeGreaterThan(phases[0].wave.opacity);
+    expect(phases[2].wave.opacity).toBeLessThan(phases[1].wave.opacity);
+    await search.evaluate(button => {
+      button.getAnimations({ subtree: true }).find(item => item.animationName === 'ui-button-awaiting-apply-halo').currentTime = 350;
     });
     await expectNoHorizontalOverflow(page);
     await expect(example).toHaveScreenshot(`awaiting-apply-${theme}-${viewport.width}.png`, { animations: 'allow' });
@@ -66,8 +94,12 @@ for (const theme of ['light', 'dark']) {
     const search = example.getByRole('button', { name: 'Search recordings', exact: true });
     await expect.poll(() => search.evaluate((button) => ({
       animation: getComputedStyle(button, '::after').animationName,
-      shadow: getComputedStyle(button, '::after').boxShadow !== 'none'
-    }))).toEqual({ animation: 'none', shadow: true });
+      waveOpacity: getComputedStyle(button, '::after').opacity,
+      ringWidth: getComputedStyle(button, '::before').borderTopWidth,
+      ringStyle: getComputedStyle(button, '::before').borderTopStyle,
+      ringOpacity: getComputedStyle(button, '::before').opacity
+    }))).toEqual({ animation: 'none', waveOpacity: '0', ringWidth: '2px',
+      ringStyle: 'solid', ringOpacity: '1' });
     await expect(example).toHaveScreenshot(`awaiting-apply-${theme}-reduced-motion.png`);
     await search.click();
     await expect(search).not.toHaveClass(/ui-button-awaiting-apply/);

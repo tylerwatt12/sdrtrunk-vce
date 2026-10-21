@@ -2,7 +2,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ui-button-awaiting-apply::after {
     animation: none;
-    box-shadow: var(--shadow-apply-attention-ring);
+    opacity: 0;
   }
 
   .audio-dock-motion { display: none; }

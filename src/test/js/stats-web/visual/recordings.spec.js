@@ -2296,11 +2296,19 @@ test('search halo repeats continuously for unapplied filters and clears on rever
   expect(repeated.playState).toBe('running');
   expect(repeated.iteration).toBeGreaterThanOrEqual(3);
   await expectSearchHalo(submit, true);
-  await submit.evaluate(element => {
-    const animation = element.getAnimations({ subtree: true }).find(item => item.effect?.getTiming().iterations === Infinity);
-    animation.pause(); animation.currentTime = 400;
-  });
-  await page.locator('.recordings-search-panel').screenshot({ path: testInfo.outputPath('search-halo-desktop-midpulse.png'), animations: 'allow' });
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => {
+      if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
+      else delete document.documentElement.dataset.theme;
+    }, theme);
+    for (const [phase, time] of [['midpulse', 350], ['quiet', 1250]]) {
+      await submit.evaluate((element, time) => {
+        const animation = element.getAnimations({ subtree: true }).find(item => item.effect?.getTiming().iterations === Infinity);
+        animation.pause(); animation.currentTime = time;
+      }, time);
+      await page.locator('.recordings-search-panel').screenshot({ path: testInfo.outputPath(`search-halo-${theme}-desktop-${phase}.png`), animations: 'allow' });
+    }
+  }
   await submit.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => animation.play()));
   expect(state.requestedFilters).toHaveLength(1);
 
@@ -2397,25 +2405,33 @@ for (const theme of ['light', 'dark']) {
     await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
     const submit = searchButton(page);
-    const before = await submit.evaluate(element => getComputedStyle(element, '::after').boxShadow);
+    const before = await submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth);
     await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('dispatch');
     await submit.scrollIntoViewIfNeeded();
     await expectSearchHalo(submit, false);
-    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::after').boxShadow)).not.toBe(before);
+    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth)).not.toBe(before);
+    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth)).toBe('2px');
+    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0');
     const palettes = await submit.evaluate(async element => {
       const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
       const root = document.documentElement;
       return APPEARANCE_SCHEMES.map(scheme => {
         applyThemeHue(scheme.hue, root);
-        const style = getComputedStyle(element, '::after');
-        return { name: scheme.name, shadow: style.boxShadow, animation: style.animationName };
+        const ring = getComputedStyle(element, '::before');
+        const wave = getComputedStyle(element, '::after');
+        return { name: scheme.name, color: ring.borderTopColor, width: ring.borderTopWidth,
+          style: ring.borderTopStyle, ringOpacity: ring.opacity, animation: wave.animationName, waveOpacity: wave.opacity };
       });
     });
     expect(palettes).toHaveLength(8);
-    expect(new Set(palettes.map(palette => palette.shadow)).size).toBe(8);
+    expect(new Set(palettes.map(palette => palette.color)).size).toBe(8);
     for (const palette of palettes) {
-      expect(palette.shadow, palette.name).not.toBe('none');
+      expect(palette.color, palette.name).not.toBe('rgba(0, 0, 0, 0)');
+      expect(palette.width, palette.name).toBe('2px');
+      expect(palette.style, palette.name).toBe('solid');
+      expect(palette.ringOpacity, palette.name).toBe('1');
       expect(palette.animation, palette.name).toBe('none');
+      expect(palette.waveOpacity, palette.name).toBe('0');
     }
     await submit.focus();
     await page.keyboard.press('Shift+Tab');
@@ -2429,6 +2445,15 @@ for (const theme of ['light', 'dark']) {
     await page.locator('.recordings-search-panel').screenshot({ path: testInfo.outputPath(`search-halo-${theme}-320.png`) });
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await expectSearchHalo(submit, true);
+    await submit.evaluate(element => element.blur());
+    for (const [phase, time] of [['midpulse', 350], ['quiet', 1250]]) {
+      await submit.evaluate((element, time) => {
+        const animation = element.getAnimations({ subtree: true }).find(item => item.effect?.getTiming().iterations === Infinity);
+        animation.pause(); animation.currentTime = time;
+      }, time);
+      await page.locator('.recordings-search-panel').screenshot({ path: testInfo.outputPath(`search-halo-${theme}-320-${phase}.png`), animations: 'allow' });
+    }
+    await submit.focus();
     await submit.press('Enter');
     await expectSearchHalo(submit, false);
   });
