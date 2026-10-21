@@ -2572,7 +2572,7 @@ class StatsWebDatabase
             WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "TALKGROUP", false);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -2619,7 +2619,7 @@ class StatsWebDatabase
                 IDENTITY_KEY_SQL.formatted("summary"),
                 GROUP_IDENTITY_SIGNALING_COUNT_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "TALKGROUP", false);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
         sql.append(" ORDER BY ").append(order(request, GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
@@ -3309,7 +3309,7 @@ class StatsWebDatabase
             WHERE system.system_key = ? AND summary.identity_kind_code = 2
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
         addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
@@ -3356,7 +3356,7 @@ class StatsWebDatabase
             IDENTITY_KEY_SQL.formatted("affiliated_group"), radioPresenceSelect(),
             radioPresenceJoins("summary.id")));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
         addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
@@ -3565,7 +3565,7 @@ class StatsWebDatabase
             TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
 
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
 
         sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
@@ -3594,7 +3594,7 @@ class StatsWebDatabase
               AND trim(summary.last_talker_alias) <> ''
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -6848,17 +6848,6 @@ class StatsWebDatabase
         }
     }
 
-    private static String selectedRadioSystemsCte(int systemCount)
-    {
-        if(systemCount < 1 || systemCount > StatsRequest.MAX_LIMIT)
-        {
-            throw new IllegalArgumentException("Radio-system count is invalid");
-        }
-
-        String requestedSystems = String.join(", ", java.util.Collections.nCopies(systemCount, "(?)"));
-        return "WITH requested_radio_systems(radio_system_id) AS (VALUES " + requestedSystems + ")";
-    }
-
     private static List<Map<String,Object>> queryRadioSystemChannels(Connection connection, long radioSystemId, StatsRequest request)
         throws SQLException
     {
@@ -8195,12 +8184,6 @@ class StatsWebDatabase
     {
         parameters.add(limit);
         parameters.add(offset);
-    }
-
-    private static void addRadioSystemIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
-                                                     String aliasMatcher, boolean includeTalkerAlias)
-    {
-        StatsIdentitySearch.append(sql, parameters, search, aliasMatcher, includeTalkerAlias);
     }
 
     private static void addIssiSubscriberSearch(StringBuilder sql, List<Object> parameters, String search)

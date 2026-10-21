@@ -15,14 +15,15 @@ import java.util.List;
 import java.util.Locale;
 
 /** Shared, scoped search for dashboard and retained-statistics identity directories.
- * Callers must name the identity and radio-system table aliases {@code summary} and {@code system}.
+ * Callers supply a plain SELECT with identity and radio-system aliases {@code summary} and {@code system};
+ * search prepends its statement-local home-name relation and appends the shared predicate.
  */
 final class StatsIdentitySearch
 {
     private StatsIdentitySearch() {}
 
-    static void append(StringBuilder sql, List<Object> parameters, String search, String aliasMatcher,
-                       boolean includeTalkerAlias)
+    static void append(StringBuilder sql, List<Object> parameters, String radioSystemKey, String search,
+                       String aliasMatcher, boolean includeTalkerAlias)
     {
         if(search == null)
         {
@@ -33,6 +34,15 @@ final class StatsIdentitySearch
             throw new IllegalArgumentException("Unsupported radio-system Alias matcher");
         }
         String pattern = like(search);
+        // Resolve each distinct home once for this statement, rather than once for every identity.
+        // IS preserves the original empty-name behavior for unknown home components as well.
+        sql.insert(0, "WITH identity_search_homes AS MATERIALIZED (" +
+            "SELECT keys.home_wacn,keys.home_system_id FROM (" +
+            "SELECT DISTINCT home_wacn,home_system_id FROM radio_system_identity_summary " +
+            "WHERE radio_system_id=(SELECT id FROM radio_system WHERE system_key=?)) keys " +
+            "WHERE lower(coalesce(" + StatsSystemNameResolver.p25NameSql("keys.home_wacn", "keys.home_system_id") +
+            ",'')) LIKE ? ESCAPE '\\') ");
+        parameters.addAll(0, List.of(radioSystemKey, pattern));
         sql.append(" AND (CAST(summary.identity_id AS TEXT) LIKE ? ESCAPE '\\' ")
             .append("OR (system.protocol_code=4 AND system.address_domain_code=2 AND ")
             .append("printf('%02d-%04d', ((summary.identity_id >> 11) & 31), ")
@@ -41,10 +51,8 @@ final class StatsIdentitySearch
         parameters.add(pattern);
         sql.append(" OR system.id IN (SELECT named_system.id FROM radio_system named_system WHERE ")
             .append("lower(coalesce(").append(StatsSystemNameResolver.displayNameSql("named_system"))
-            .append(",'')) LIKE ? ESCAPE '\\') OR lower(coalesce(")
-            .append(StatsSystemNameResolver.p25NameSql("summary.home_wacn", "summary.home_system_id"))
-            .append(",'')) LIKE ? ESCAPE '\\'");
-        parameters.add(pattern);
+            .append(",'')) LIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 FROM identity_search_homes home ")
+            .append("WHERE home.home_wacn IS summary.home_wacn AND home.home_system_id IS summary.home_system_id)");
         parameters.add(pattern);
         if(includeTalkerAlias)
         {

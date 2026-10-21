@@ -936,7 +936,7 @@ final class RetainedStatisticsCatalog
             "ON system.id=summary.radio_system_id WHERE system.system_key=? " +
             "AND summary.identity_kind_code=?");
         List<Object> parameters = new ArrayList<>(List.of(systemKey, kind));
-        StatsIdentitySearch.append(sql, parameters, search, kind == 2 ? "RADIO_ID" : "TALKGROUP",
+        StatsIdentitySearch.append(sql, parameters, systemKey, search, kind == 2 ? "RADIO_ID" : "TALKGROUP",
             kind == 2);
         long total = count(connection, "SELECT COUNT(*) FROM (" + sql + ")", parameters);
         sql.append(" ORDER BY summary.identity_id, summary.home_wacn, summary.home_system_id, " +

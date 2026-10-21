@@ -2767,6 +2767,50 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void homeNameSearchKeepsFiltersCountsAndNonDefaultPageOrder() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,
+                    first_seen_ms,last_seen_ms,logical_call_count)
+                VALUES (7103,71,2,0xBEE00,0x49F,203,1000,3000,1),
+                    (7104,71,2,0xBEE00,0x49F,204,1000,6000,2),
+                    (7105,71,1,0xBEE00,0x49F,102,1000,6000,1),
+                    (7106,71,3,0xBEE00,0x49F,900,1000,3000,1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation (
+                    radio_system_id,radio_identity_id,talkgroup_identity_id,channel_id,
+                    radio_observed_local_id,talkgroup_observed_local_id,confirmed_at_ms)
+                VALUES (71,7102,7101,71,202,101,4000),
+                    (71,7103,7101,71,203,101,4000),(71,7104,7101,71,204,101,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_channel_presence (
+                    radio_system_id,radio_identity_id,channel_id,observed_local_id,evidence_code,confirmed_at_ms)
+                VALUES (71,7102,71,202,2,4000),(71,7103,71,203,2,4000),(71,7104,71,204,2,4000)
+                """);
+        }
+        String filter = "/?q=shared%20p25&sort=last_seen&direction=desc&limit=1&offset=1";
+        Map<String,Object> radios = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request(filter + "&affiliated=true&configuration_id=" + P25_CHANNEL_A));
+        assertEquals(3,number(radios.get("total_count")));
+        assertEquals(202,number(rows(radios).getFirst().get("native_id")));
+        assertEquals(true,radios.get("has_more"));
+        assertEquals(0,number(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request(filter + "&affiliated=false")).get("total_count")));
+        assertEquals(0,number(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request(filter + "&configuration_id=" + P25_CHANNEL_B)).get("total_count")));
+        Map<String,Object> groups = mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,request(filter));
+        assertEquals(3,number(groups.get("total_count")));
+        assertEquals(101,number(rows(groups).getFirst().get("native_id")));
+        assertEquals(true,groups.get("has_more"));
+    }
+
+    @Test
     void talkerAliasSearchFindsConfiguredNamesBeforePaging() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
