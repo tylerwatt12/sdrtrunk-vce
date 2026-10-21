@@ -36,7 +36,7 @@ class SpectrumDiscoveryPublicationTest
             { @Override public Path getDirectoryApplicationRoot() { return root; } };
             @Override public DirectoryPreference getDirectoryPreference() { return directory; }
         };
-        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null)
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null)
         {
             @Override protected void publishCommittedAliasConfiguration(AliasConfigurationSnapshot committed,
                 AliasConfigurationPublication publication)
@@ -81,7 +81,7 @@ class SpectrumDiscoveryPublicationTest
             { @Override public Path getDirectoryApplicationRoot() { return root; } };
             @Override public DirectoryPreference getDirectoryPreference() { return directory; }
         };
-        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null)
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null)
         {
             @Override protected void publishCommittedAliasConfiguration(AliasConfigurationSnapshot committed,
                 AliasConfigurationPublication publication)

@@ -31,8 +31,6 @@ public class P25P2SyncDetector implements Listener<Dibit>
     /* Determines the threshold for sync pattern soft matching */
     private static final int SYNC_MATCH_THRESHOLD = 4;
 
-    public static final double DEFAULT_SYMBOL_RATE = 6000;
-
     private MultiSyncPatternMatcher mMatcher;
     private SoftSyncDetector mPrimarySyncDetector;
     public P25P2SyncDetector(ISyncDetectListener syncDetectListener)

@@ -22,6 +22,7 @@ package io.github.dsheirer.icon;
 import java.util.ArrayList;
 import java.util.List;
 
+/** Legacy icon-set document retained for bounded database import and repair. */
 public class IconSet
 {
     private String mDefaultIcon;
@@ -30,16 +31,6 @@ public class IconSet
     public IconSet()
     {
         //No-arg deserialization constructor
-    }
-
-    public void add(Icon icon)
-    {
-        mIcons.add(icon);
-    }
-
-    public void remove(Icon icon)
-    {
-        mIcons.remove(icon);
     }
 
     public List<Icon> getIcons()

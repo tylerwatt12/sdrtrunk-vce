@@ -82,12 +82,6 @@ public record WebPasswordVerifier(int version, String username, String algorithm
         return normalized;
     }
 
-    public WebPasswordVerifier withAuthRevision(long replacementRevision)
-    {
-        return new WebPasswordVerifier(version, username, algorithm, iterations, derivedKeyBits, saltBase64,
-            passwordHashBase64, passwordChangedAtEpochMillis, replacementRevision);
-    }
-
     byte[] decodeSalt()
     {
         return Base64.getDecoder().decode(saltBase64);

@@ -19,7 +19,6 @@
 package io.github.dsheirer.audio.convert;
 
 import java.util.List;
-import org.apache.commons.math3.util.FastMath;
 
 public abstract class AudioFrames
 {
@@ -72,16 +71,6 @@ public abstract class AudioFrames
     public abstract int getCurrentFrameDuration();
 
     /**
-     * Indicates if there is a frame before the current one
-     * @return true if the frame exists, otherwise false
-     */
-    public boolean hasPrevFrame()
-    {
-        int prevFrame = mCurrentFrame - 1;
-        return prevFrame >= 0 && prevFrame < mAudioFrames.size();
-    }
-
-    /**
      * Indicates if there is a frame after the current one
      * @return true if the frame exists, otherwise false
      */
@@ -89,14 +78,6 @@ public abstract class AudioFrames
     {
         int nextFrame = mCurrentFrame + 1;
         return nextFrame >= 0 && nextFrame < mAudioFrames.size();
-    }
-
-    /**
-     * Seek to the previous frame
-     */
-    public void prevFrame()
-    {
-        mCurrentFrame -= 1;
     }
 
     /**
@@ -116,18 +97,4 @@ public abstract class AudioFrames
         mCurrentFrame = -1;
     }
 
-    /**
-     * Seek by the specified time
-     * @param duration_ms time in milliseconds, positive or negative
-     */
-    public void seek(int duration_ms)
-    {
-        int step = duration_ms < 0 ? -1 : 1;
-        int actual_ms = 0;
-        while(FastMath.abs(actual_ms) < FastMath.abs(duration_ms))
-        {
-            mCurrentFrame += step;
-            actual_ms += getCurrentFrameDuration();
-        }
-    }
 }

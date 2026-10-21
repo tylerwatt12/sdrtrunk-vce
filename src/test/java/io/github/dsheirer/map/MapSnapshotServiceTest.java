@@ -11,6 +11,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
@@ -20,6 +25,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.protocol.Protocol;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +40,43 @@ import org.junit.jupiter.api.Test;
 
 class MapSnapshotServiceTest
 {
+    @Test
+    void aliasesUseBundledIconsAndLegacyOrUnsetNamesFallBackWithoutLosingLabels() throws Exception
+    {
+        AliasListDefinition definition = new AliasListDefinition("test", AliasListFamily.P25);
+        definition.setId(1);
+        List<Alias> aliases = new ArrayList<>();
+        String[] icons = {"Police", "Old custom icon", null};
+        for(int index = 0; index < icons.length; index++)
+        {
+            Alias alias = new Alias("Unit " + (index + 1));
+            alias.setId(index + 1);
+            alias.setAliasListDefinition(definition);
+            alias.setMatchIdentifier(new Radio(Protocol.APCO25, index + 1));
+            alias.setIconName(icons[index]);
+            alias.setColor(0x123456);
+            aliases.add(alias);
+        }
+        AliasModel model = new AliasModel();
+        model.replaceCommittedConfiguration(List.of(definition), aliases);
+        try(MapSnapshotService service = new MapSnapshotService(model))
+        {
+            for(int radio = 1; radio <= icons.length; radio++)
+            {
+                service.receive(event(radio, 40, -83, radio * 1_000L));
+            }
+            await(() -> service.snapshot().entities().size() == 3);
+            for(var entity: service.snapshot().entities())
+            {
+                assertEquals("Unit " + entity.identifier(), entity.label());
+                assertEquals("#123456", entity.color());
+                assertEquals("1".equals(entity.identifier()) ? "police" : "no-icon", entity.icon());
+            }
+            assertEquals("Old custom icon", aliases.get(1).getIconName());
+            assertEquals(0, service.projectionFailures());
+        }
+    }
+
     @Test
     void capturesReceivingSystemAndWorkingFactsBeforeObserverProjection() throws Exception
     {

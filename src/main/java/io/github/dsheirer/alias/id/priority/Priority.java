@@ -28,7 +28,6 @@ import io.github.dsheirer.alias.id.AliasIDType;
 public class Priority extends AliasID
 {
     public static final int DO_NOT_MONITOR = -1;
-    public static final int SELECTED_PRIORITY = 0;
     public static final int MIN_PRIORITY = 1;
     public static final int MAX_PRIORITY = 100;
     public static final int DEFAULT_PRIORITY = 100;

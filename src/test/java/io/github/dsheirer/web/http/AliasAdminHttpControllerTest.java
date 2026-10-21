@@ -70,7 +70,7 @@ class AliasAdminHttpControllerTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
         long listId = service.createAliasList("Transfer", AliasListFamily.P25).aliasListId();
@@ -119,7 +119,7 @@ class AliasAdminHttpControllerTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
         long listId = service.createAliasList("Transfer", AliasListFamily.P25).aliasListId();
@@ -171,7 +171,7 @@ class AliasAdminHttpControllerTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
         long listId = service.createAliasList("Transfer", AliasListFamily.P25).aliasListId();
@@ -253,7 +253,7 @@ class AliasAdminHttpControllerTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
         primary.setName("Primary");
@@ -840,7 +840,7 @@ class AliasAdminHttpControllerTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
         AliasAdminHttpController controller = new AliasAdminHttpController(service);
@@ -901,7 +901,7 @@ class AliasAdminHttpControllerTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         List<AliasListDefinition> legacyDefinitions = new ArrayList<>();
         for(int index = 1; index <= 501; index++)

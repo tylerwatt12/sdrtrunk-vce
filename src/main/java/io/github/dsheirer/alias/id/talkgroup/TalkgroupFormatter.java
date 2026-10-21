@@ -19,40 +19,19 @@
 
 package io.github.dsheirer.alias.id.talkgroup;
 
-import io.github.dsheirer.preference.identifier.IntegerFormat;
-import io.github.dsheirer.preference.identifier.talkgroup.APCO25TalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.AbstractIntegerFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.AnalogTalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.FleetsyncTalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.MDC1200TalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.NXDNTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import java.text.ParseException;
-import java.util.EnumMap;
-import org.jspecify.annotations.NonNull;
 
 /**
  * Protocol-specific formatting of talkgroup values and parsing of formatted talkgroup values.
  */
 public class TalkgroupFormatter
 {
-    private static final EnumMap<@NonNull Protocol,AbstractIntegerFormatter> mFormatterMap = new EnumMap<>(Protocol.class);
-
-    static
-    {
-        AnalogTalkgroupFormatter analogTalkgroupFormatter = new AnalogTalkgroupFormatter();
-        mFormatterMap.put(Protocol.AM, analogTalkgroupFormatter);
-        mFormatterMap.put(Protocol.NBFM, analogTalkgroupFormatter);
-
-        mFormatterMap.put(Protocol.APCO25, new APCO25TalkgroupFormatter());
-        mFormatterMap.put(Protocol.DMR, new DMRTalkgroupFormatter());
-        mFormatterMap.put(Protocol.FLEETSYNC, new FleetsyncTalkgroupFormatter());
-        mFormatterMap.put(Protocol.MDC1200, new MDC1200TalkgroupFormatter());
-        mFormatterMap.put(Protocol.NXDN, new NXDNTalkgroupFormatter());
-        mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
-    }
+    private static final AbstractIntegerFormatter DECIMAL_FORMATTER = new UnknownTalkgroupFormatter();
+    private static final AbstractIntegerFormatter FLEETSYNC_FORMATTER = new FleetsyncTalkgroupFormatter();
 
     private TalkgroupFormatter()
     {
@@ -63,13 +42,7 @@ public class TalkgroupFormatter
      */
     public static int parse(Protocol protocol, String value) throws ParseException
     {
-        AbstractIntegerFormatter formatter = mFormatterMap.get(protocol);
-
-        if(formatter == null)
-        {
-            formatter = mFormatterMap.get(Protocol.UNKNOWN);
-        }
-
+        AbstractIntegerFormatter formatter = protocol == Protocol.FLEETSYNC ? FLEETSYNC_FORMATTER : DECIMAL_FORMATTER;
         return formatter.parse(value);
     }
 
@@ -78,28 +51,7 @@ public class TalkgroupFormatter
      */
     public static String format(Protocol protocol, int value)
     {
-        AbstractIntegerFormatter formatter = mFormatterMap.get(protocol);
-
-        if(formatter == null)
-        {
-            formatter = mFormatterMap.get(Protocol.UNKNOWN);
-        }
-
+        AbstractIntegerFormatter formatter = protocol == Protocol.FLEETSYNC ? FLEETSYNC_FORMATTER : DECIMAL_FORMATTER;
         return formatter.format(value);
-    }
-
-    /**
-     * Formats the integer value to the specified integer format using the protocol specific formatter
-     */
-    public static String format(Protocol protocol, int value, IntegerFormat format)
-    {
-        AbstractIntegerFormatter formatter = mFormatterMap.get(protocol);
-
-        if(formatter == null)
-        {
-            formatter = mFormatterMap.get(Protocol.UNKNOWN);
-        }
-
-        return formatter.format(value, format);
     }
 }

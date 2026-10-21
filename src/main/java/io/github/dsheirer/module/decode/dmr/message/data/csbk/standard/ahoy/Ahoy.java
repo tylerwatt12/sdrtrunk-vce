@@ -37,7 +37,6 @@ public abstract class Ahoy extends CSBKMessage
     protected static final int SERVICE_KIND_FLAG = 23;
     private static final int AMBIENT_LISTENING_SERVICE_FLAG = 24;
     private static final int TALKGROUP_FLAG = 25;
-    protected static final int[] APPENDED_BLOCKS_OR_STATUS = new int[]{26, 27};
     private static final int[] SERVICE_KIND = new int[]{28, 29, 30, 31};
     protected static final int[] TARGET_ADDRESS = new int[]{32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
         47, 48, 49, 50, 51, 52, 53, 54, 55};

@@ -42,11 +42,6 @@ public class UpdateCheckService
         mCurrentBuild = currentBuild;
     }
 
-    public String getTrack()
-    {
-        return mTrack;
-    }
-
     public UpdateCheckResult check()
     {
         if(mTrack == null || !MANIFEST_URIS.containsKey(mTrack) || mCurrentBuild < 0)

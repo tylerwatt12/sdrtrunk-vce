@@ -31,6 +31,7 @@ import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfigura
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
@@ -40,6 +41,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
+import io.github.dsheirer.map.StandardMapIconCatalog;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -49,6 +51,7 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Path;
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -68,12 +71,86 @@ class AliasAdministrationServiceTest
     Path mTemporaryFolder;
 
     @Test
+    void bundledIconsAreTheOnlyChoicesAndUnchangedLegacyNamesRemainEditable() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("bundled-icons");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        String legacyIcons = "{\"defaultIcon\":\"Custom\",\"icons\":[{\"name\":\"Custom\",\"path\":\"/old/custom.png\"}]}";
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            var statement = connection.prepareStatement("""
+                INSERT INTO application_icons(key, icons_json, updated_at_ms) VALUES ('default', ?, 1234)
+                """))
+        {
+            statement.setString(1, legacyIcons);
+            statement.executeUpdate();
+        }
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long listId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            assertEquals(java.util.Arrays.stream(StandardMapIconCatalog.values())
+                .map(StandardMapIconCatalog::aliasName).sorted().toList(), service.options(listId).iconNames());
+
+            Alias created = alias("Dispatch", listId, 101);
+            created.setIconName("Police");
+            long aliasId = service.createAlias(created).aliasIds().getFirst();
+            assertEquals("Police", service.getAlias(aliasId).alias().getIconName());
+
+            //An older imported alias may reference a custom name even though the runtime does not offer it.
+            try(Connection connection = SdrTrunkDatabase.open(database);
+                var statement = connection.prepareStatement("UPDATE alias SET icon_name='Custom' WHERE id=?"))
+            {
+                statement.setLong(1, aliasId);
+                statement.executeUpdate();
+            }
+            manager.getAliasModel().getAlias(aliasId).setIconName("Custom");
+            var opened = service.getAlias(aliasId);
+            opened.alias().setDescription("Updated description");
+            service.replaceAlias(aliasId, opened.alias(), opened.editRevision());
+            assertEquals("Custom", service.getAlias(aliasId).alias().getIconName());
+            assertEquals("Custom", new AliasDatabaseStore(database).loadAliases(
+                new AliasDatabaseStore(database).loadAliasListDefinitions()).stream()
+                .filter(value -> value.getId() == aliasId).findFirst().orElseThrow().getIconName());
+
+            var invalid = service.getAlias(aliasId);
+            invalid.alias().setIconName("Another custom icon");
+            assertThrows(IllegalArgumentException.class,
+                () -> service.replaceAlias(aliasId, invalid.alias(), invalid.editRevision()));
+            Alias invalidCreate = alias("New custom", listId, 102);
+            invalidCreate.setIconName("Custom");
+            assertThrows(IllegalArgumentException.class, () -> service.createAlias(invalidCreate));
+
+            var replacement = service.getAlias(aliasId);
+            replacement.alias().setIconName("Ambulance");
+            service.replaceAlias(aliasId, replacement.alias(), replacement.editRevision());
+            assertEquals("Ambulance", service.getAlias(aliasId).alias().getIconName());
+            try(Connection connection = SdrTrunkDatabase.open(database);
+                var statement = connection.prepareStatement(
+                    "SELECT icons_json, updated_at_ms FROM application_icons WHERE key='default'");
+                var rows = statement.executeQuery())
+            {
+                assertTrue(rows.next());
+                assertEquals(legacyIcons, rows.getString(1));
+                assertEquals(1234, rows.getLong(2));
+            }
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
+
+    @Test
     void concurrentAliasListCreatesRecheckTheCapacityInsideTheSerializedMutation() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("alias-list-capacity-race");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try
         {
@@ -124,7 +201,7 @@ class AliasAdministrationServiceTest
         Path dataRoot = mTemporaryFolder.resolve("scoped-alias-data");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         try
         {
             manager.init();
@@ -183,7 +260,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         try
         {
             manager.init();
@@ -245,7 +322,7 @@ class AliasAdministrationServiceTest
         Path dataRoot = mTemporaryFolder.resolve("scoped-alias-race");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try
         {
@@ -300,7 +377,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         try
         {
             manager.init();
@@ -408,7 +485,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -476,7 +553,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -693,7 +770,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -882,7 +959,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -948,7 +1025,7 @@ class AliasAdministrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -982,7 +1059,7 @@ class AliasAdministrationServiceTest
         SdrTrunkTestDatabase.create(database);
 
         UserPreferences preferences = new TestUserPreferences(dataRoot);
-        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null);
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null);
 
         try
         {
@@ -1241,7 +1318,7 @@ class AliasAdministrationServiceTest
 
         private CountingConfigurationManager(UserPreferences preferences)
         {
-            super(preferences, null, new AliasModel(), null, null);
+            super(preferences, null, new AliasModel(), null);
         }
 
         @Override

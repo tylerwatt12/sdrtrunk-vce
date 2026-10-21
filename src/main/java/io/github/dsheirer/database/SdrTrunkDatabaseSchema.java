@@ -1207,15 +1207,6 @@ public final class SdrTrunkDatabaseSchema
         }
     }
 
-    /** Creates the authoritative saved-channel table. Used by fresh databases and the adjacent staged migrator. */
-    public static void createConfigurationChannelTable(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate(CURRENT_CONFIGURATION_CHANNEL_TABLE_SQL);
-        }
-    }
-
     /** Creates the bounded receiver-health history for fresh databases and the adjacent staged migrator only. */
     public static void createReceiverHealthIncidentTable(Connection connection) throws SQLException
     {

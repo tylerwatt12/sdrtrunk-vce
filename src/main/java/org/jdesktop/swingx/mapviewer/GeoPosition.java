@@ -107,36 +107,6 @@ public class GeoPosition
         return longitude;
     }
 
-    /**
-     * Formats the position as Degrees Minutes Seconds (DMS)
-     */
-    public String toDMS()
-    {
-        int latDegrees = (int)Math.floor(Math.abs(latitude));
-        double latMinutes = (Math.abs(latitude) - latDegrees) * 60.0;
-        int latMinutesInt = (int)Math.floor(latMinutes);
-        double latSeconds = (latMinutes - latMinutesInt) * 60.0;
-        int latSecondsInt = (int)latSeconds;
-
-        int lonDegrees = (int)Math.floor(Math.abs(longitude));
-        double lonMinutes = (Math.abs(longitude) - lonDegrees) * 60.0;
-        int lonMinutesInt = (int)Math.floor(lonMinutes);
-        double lonSeconds = (lonMinutes - lonMinutesInt) * 60.0;
-        int lonSecondsInt = (int)lonSeconds;
-
-        StringBuilder sb = new StringBuilder();
-        sb.append(latDegrees).append("°");
-        sb.append(latMinutesInt).append("'");
-        sb.append(latSecondsInt).append("");
-        sb.append(latitude >= 0 ? "N" : "S");
-        sb.append(", ");
-        sb.append(lonDegrees).append("°");
-        sb.append(lonMinutesInt).append("'");
-        sb.append(lonSecondsInt).append("");
-        sb.append(longitude >= 0 ? "E" : "W");
-        return sb.toString();
-    }
-
     @Override
     public int hashCode()
     {

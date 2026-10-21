@@ -388,7 +388,7 @@ class SpectrumChannelCreationTest
             { @Override public Path getDirectoryApplicationRoot() { return root; } };
             @Override public DirectoryPreference getDirectoryPreference() { return directory; }
         };
-        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null);
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null);
         manager.init();
         return new Fixture(manager, ChannelAdministrationServiceTestSupport.create(manager, systemNames), database);
     }

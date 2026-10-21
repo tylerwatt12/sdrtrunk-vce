@@ -22,79 +22,36 @@
 
 package io.github.dsheirer.alias.id.radio;
 
-import io.github.dsheirer.preference.identifier.IntegerFormat;
-import io.github.dsheirer.preference.identifier.talkgroup.APCO25TalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.AbstractIntegerFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.NXDNTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
-import org.jspecify.annotations.NonNull;
 
 import java.text.ParseException;
-import java.util.EnumMap;
 
 /**
  * Protocol-specific formatting of radio id values and parsing of formatted radio id values.
  */
 public class RadioFormatter
 {
-    private static final EnumMap<@NonNull Protocol,AbstractIntegerFormatter> mFormatterMap = new EnumMap<>(Protocol.class);
-
-    static
-    {
-        mFormatterMap.put(Protocol.APCO25, new APCO25TalkgroupFormatter());
-        mFormatterMap.put(Protocol.DMR, new DMRTalkgroupFormatter());
-        mFormatterMap.put(Protocol.NXDN, new NXDNTalkgroupFormatter());
-        mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
-    }
+    private static final AbstractIntegerFormatter DECIMAL_FORMATTER = new UnknownTalkgroupFormatter();
 
     private RadioFormatter()
     {
     }
 
     /**
-     * Parses the formatted value into an integer using a protocol specific formatter
+     * Parses a decimal radio value. The protocol remains part of the shared alias formatter API.
      */
     public static int parse(Protocol protocol, String value) throws ParseException
     {
-        AbstractIntegerFormatter formatter = mFormatterMap.get(protocol);
-
-        if(formatter == null)
-        {
-            formatter = mFormatterMap.get(Protocol.UNKNOWN);
-        }
-
-        return formatter.parse(value);
+        return DECIMAL_FORMATTER.parse(value);
     }
 
     /**
-     * Formats the integer value using a protocol-specific formatter
+     * Formats a radio value as decimal.
      */
     public static String format(Protocol protocol, int value)
     {
-        AbstractIntegerFormatter formatter = mFormatterMap.get(protocol);
-
-        if(formatter == null)
-        {
-            formatter = mFormatterMap.get(Protocol.UNKNOWN);
-        }
-
-        return formatter.format(value);
-    }
-
-    /**
-     * Formats the integer value to the specified integer format using the protocol specific formatter
-     */
-    public static String format(Protocol protocol, int value, IntegerFormat format)
-    {
-        AbstractIntegerFormatter formatter = mFormatterMap.get(protocol);
-
-        if(formatter == null)
-        {
-            formatter = mFormatterMap.get(Protocol.UNKNOWN);
-        }
-
-        return formatter.format(value, format);
+        return DECIMAL_FORMATTER.format(value);
     }
 }

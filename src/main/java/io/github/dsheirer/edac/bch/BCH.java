@@ -36,17 +36,10 @@ import org.apache.commons.lang3.ArrayUtils;
 public abstract class BCH
 {
     public static final int MESSAGE_NOT_CORRECTED = -1;
-    public static final int PRIMITIVE_POLYNOMIAL_GF_3 = 0x7;
-    public static final int PRIMITIVE_POLYNOMIAL_GF_7 = 0xB;
-    public static final int PRIMITIVE_POLYNOMIAL_GF_15 = 0x13;
-    public static final int PRIMITIVE_POLYNOMIAL_GF_31 = 0x25;
     public static final int PRIMITIVE_POLYNOMIAL_GF_63 = 0x43;
-    public static final int PRIMITIVE_POLYNOMIAL_GF_127 = 0x83;
-    public static final int PRIMITIVE_POLYNOMIAL_GF_255 = 0x11D;
 
     /**
-     * Primitive polynomials for GF(2) to GF(8) are defined in this class via the PRIMITIVE_POLYNOMIAL_GF_xx constants.
-     * This is different from the generator polynomial that is used to create message codewords for the BCH code, where
+     * The primitive polynomial is different from the generator polynomial used to create message codewords, where
      * the generator polynomial dictates the error correcting capacity value T for the BCH finite set.  The base
      * primitive polynomial is used to calculate the syndromes for the BCH code regardless of the generator polynomial
      * that is used to generate the codewords and the specified value of T dictates how many syndromes are calculated
@@ -84,8 +77,7 @@ public abstract class BCH
      * @param k message data bits
      * @param t maximum correctable errors.  This is a design parameter of the generator polynomial used to form the
      * codewords
-     * @param primitivePolynomial for the GF(2).  Note: use one of the PRIMITIVE_POLYNOMIAL_GF_xxx constants defined in
-     * this class which cover use cases for M: 2-8.
+     * @param primitivePolynomial for the Galois Field
      */
     protected BCH(int m, int k, int t, int primitivePolynomial)
     {

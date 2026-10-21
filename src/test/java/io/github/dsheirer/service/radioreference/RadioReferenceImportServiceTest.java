@@ -1123,7 +1123,7 @@ class RadioReferenceImportServiceTest
         {
             Path dataRoot = root.resolve("rr-import-" + UUIDHolder.next());
             SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
-            manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null, new AliasModel(), null, null);
+            manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null, new AliasModel(), null);
             manager.init();
             aliases = AliasAdministrationServiceTestSupport.create(manager);
             channels = ChannelAdministrationServiceTestSupport.create(manager);

@@ -47,30 +47,6 @@ public class PatchGroupManager
     private Map<Integer,PatchGroupTracker> mPatchGroupTrackerMap = new HashMap<>();
 
     /**
-     * Summary listing of active patch groups
-     */
-    public String getPatchGroupSummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Active Patch Groups\n");
-        List<PatchGroupTracker> trackers = new ArrayList<>(mPatchGroupTrackerMap.values());
-
-        if(trackers.isEmpty())
-        {
-            sb.append("  None\n");
-        }
-        else
-        {
-            for(PatchGroupTracker tracker : trackers)
-            {
-                sb.append("  ").append(tracker.mPatchGroupIdentifier).append("\n");
-            }
-        }
-
-        return sb.toString();
-    }
-
-    /**
      * Clears any existing patch groups
      */
     public void clear()

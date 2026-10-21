@@ -47,7 +47,6 @@ import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceE
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
-import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
@@ -155,7 +154,6 @@ public class SDRTrunk
     private ScheduledExecutorService mManagedRecordingMaintenance;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
-    private IconModel mIconModel;
     private ConfigurationManager mConfigurationManager;
     private JFrame mMainGui;
     private BasebandRecordingDialog mBasebandRecordingDialog;
@@ -198,7 +196,6 @@ public class SDRTrunk
         mGuiAvailable = !GraphicsEnvironment.isHeadless();
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
         mUpdateCheckService = new UpdateCheckService();
-        mIconModel = new IconModel();
 
         if(mGuiAvailable)
         {
@@ -236,7 +233,7 @@ public class SDRTrunk
 
         AliasModel aliasModel = new AliasModel();
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
-        mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
+        mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager);
         try
         {
             mRemoteConnectivityService = new RemoteConnectivityService(mConfigurationManager);
@@ -607,17 +604,16 @@ public class SDRTrunk
                 openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryEventLog().toFile()));
         viewMenu.add(viewEventLogsMenu);
 
-        JMenuItem recordingViewerMenu = new JMenuItem("Message Recording Viewer (.bits)");
-        recordingViewerMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.BRAILLE, 12));
-        recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
-        viewMenu.add(recordingViewerMenu);
-
         viewMenu.add(new JSeparator());
         viewMenu.add(new ResourceStatusVisibleMenuItem());
 
         menuBar.add(viewMenu);
 
         JMenu diagnosticsMenu = new JMenu("Diagnostics");
+        JMenuItem recordingViewerMenu = new JMenuItem("Message Recording Viewer (.bits)");
+        recordingViewerMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.BRAILLE, 12));
+        recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
+        diagnosticsMenu.add(recordingViewerMenu);
         JMenuItem basebandRecordingItem = new JMenuItem("Baseband Recording (Debug)…");
         basebandRecordingItem.addActionListener(event -> {
             if(mBasebandRecordingDialog == null || !mBasebandRecordingDialog.isDisplayable())

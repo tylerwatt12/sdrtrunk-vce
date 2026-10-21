@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Converts PCM audio packets to Mono, MP3 encoded audio
  */
-public class MP3AudioConverter implements IAudioConverter
+public class MP3AudioConverter
 {
     private static final Logger mLog = LoggerFactory.getLogger( MP3AudioConverter.class );
     public static final int AUDIO_QUALITY = Lame.QUALITY_LOW;
@@ -149,7 +149,7 @@ public class MP3AudioConverter implements IAudioConverter
         return converted;
     }
 
-    @Override
+    /** Finalizes the MP3 stream and returns any buffered frame bytes. */
     public List<byte[]> flush()
     {
         byte[] lastPartialFrame = new byte[mEncoder.getMP3BufferSize()];

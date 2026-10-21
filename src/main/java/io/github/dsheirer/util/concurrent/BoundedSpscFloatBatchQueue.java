@@ -101,9 +101,4 @@ public final class BoundedSpscFloatBatchQueue
         mReadSequence.setRelease(mReadSequence.getPlain() + 1);
     }
 
-    public int completeBatchCount()
-    {
-        long size = mWriteSequence.getAcquire() - mReadSequence.getAcquire();
-        return (int)Math.max(0, Math.min(mBatches.length, size));
-    }
 }

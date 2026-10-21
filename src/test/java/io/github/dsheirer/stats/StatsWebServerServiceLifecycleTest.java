@@ -583,7 +583,7 @@ class StatsWebServerServiceLifecycleTest
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
         ConfigurationManager configurationManager = new ConfigurationManager(preferences, null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         configurationManager.init();
         AliasAdministrationService aliasAdministrationService =
             AliasAdministrationServiceTestSupport.create(configurationManager);
@@ -731,7 +731,7 @@ class StatsWebServerServiceLifecycleTest
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
         ConfigurationManager configurationManager = new ConfigurationManager(preferences, null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         configurationManager.init();
         AliasAdministrationService aliasAdministrationService =
             AliasAdministrationServiceTestSupport.create(configurationManager);

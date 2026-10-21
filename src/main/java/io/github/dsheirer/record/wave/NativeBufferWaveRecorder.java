@@ -323,11 +323,6 @@ public class NativeBufferWaveRecorder extends Module implements Listener<INative
         }
     }
 
-    public Listener<INativeBuffer> getReusableComplexBufferListener()
-    {
-        return this;
-    }
-
     @Override
     public void reset() { /* no action required */ }
 

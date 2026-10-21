@@ -20,38 +20,14 @@ package io.github.dsheirer.source;
 
 public class InvalidFrequencyException extends SourceException
 {
-    private long mInvalidFrequency;
-    private long mValidFrequency;
-
     /**
      * Thrown when the user or the application requests to tune to an invalid frequency.  Invalid means that the
-     * frequency is outside of the tunable range of the current tuner device.  This class provides both the requested
-     * invalid frequency and the suggested valid frequency to use in lieu of the requested invalid frequency.
+     * frequency is outside of the tunable range of the current tuner device.
      * @param message optional text
-     * @param invalidFrequency that was requested
-     * @param validFrequency that should be used instead
      */
-    public InvalidFrequencyException( String message, long invalidFrequency, long validFrequency )
+    public InvalidFrequencyException(String message)
     {
-        super( message );
-
-        mInvalidFrequency = invalidFrequency;
-        mValidFrequency = validFrequency;
+        super(message);
     }
 
-    /**
-     * The invalid requested frequency
-     */
-    public long getInvalidFrequency()
-    {
-        return mInvalidFrequency;
-    }
-
-    /**
-     * The valid frequency that should be used
-     */
-    public long getValidFrequency()
-    {
-        return mValidFrequency;
-    }
 }

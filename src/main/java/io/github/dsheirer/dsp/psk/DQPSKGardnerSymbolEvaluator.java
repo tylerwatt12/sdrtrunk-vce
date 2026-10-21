@@ -19,7 +19,7 @@ import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.sample.complex.Complex;
 import org.apache.commons.math3.util.FastMath;
 
-public class DQPSKGardnerSymbolEvaluator implements IPSKSymbolEvaluator<Dibit>
+public class DQPSKGardnerSymbolEvaluator
 {
     private static final Complex ROTATE_FROM_PLUS_135 = Complex.fromAngle(-3.0 * FastMath.PI / 4.0);
     private static final Complex ROTATE_FROM_PLUS_45 = Complex.fromAngle(-1.0 * FastMath.PI / 4.0);
@@ -139,7 +139,6 @@ public class DQPSKGardnerSymbolEvaluator implements IPSKSymbolEvaluator<Dibit>
      *
      * @return phase error in radians of distance from the reference symbol.
      */
-    @Override
     public float getPhaseError()
     {
         return mPhaseError;
@@ -152,7 +151,6 @@ public class DQPSKGardnerSymbolEvaluator implements IPSKSymbolEvaluator<Dibit>
      * originates at zero radians and rotates toward the intended reference symbol, therefore the error value indicates
      * if the symbol was sampled early (-) or late (+) relative to the reference symbol.
      */
-    @Override
     public float getTimingError()
     {
         return mTimingError;
@@ -161,7 +159,6 @@ public class DQPSKGardnerSymbolEvaluator implements IPSKSymbolEvaluator<Dibit>
     /**
      * Reference symbol that is closest to the transmitted/sampled symbol.
      */
-    @Override
     public Dibit getSymbolDecision()
     {
         return mSymbolDecision;

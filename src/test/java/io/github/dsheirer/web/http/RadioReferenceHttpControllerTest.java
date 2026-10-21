@@ -77,7 +77,7 @@ class RadioReferenceHttpControllerTest
         Path dataRoot = mTemporaryDirectory.resolve("enrichment-http-data");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         var channels = ChannelAdministrationServiceTestSupport.create(manager);
         long aliasListId = manager.getAliasModel().aliasListDefinitions().stream()
@@ -146,7 +146,7 @@ class RadioReferenceHttpControllerTest
         Path dataRoot = mTemporaryDirectory.resolve("catalog-http-data");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         FakeGateway gateway = new FakeGateway();
 

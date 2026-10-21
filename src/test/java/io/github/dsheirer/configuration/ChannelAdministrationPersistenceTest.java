@@ -47,7 +47,7 @@ class ChannelAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -190,7 +190,7 @@ class ChannelAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(root);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(root), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         ChannelAdministrationService channels = ChannelAdministrationServiceTestSupport.create(manager);
         long aliasListId = manager.getAliasModel().aliasListDefinitions().stream()

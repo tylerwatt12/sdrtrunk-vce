@@ -19,199 +19,37 @@
 
 package io.github.dsheirer.icon;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import javafx.beans.Observable;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.util.Callback;
-import java.util.Objects;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
-public class Icon implements Comparable<Icon>
+/** Legacy icon metadata retained for database import and repair. Runtime choices use the bundled catalog. */
+@JsonIgnoreProperties({"defaultIcon", "standardIcon"})
+public class Icon
 {
-    private StringProperty mName = new SimpleStringProperty();
-    private StringProperty mPath = new SimpleStringProperty();
-    private BooleanProperty mDefaultIcon = new SimpleBooleanProperty();
-    private BooleanProperty mStandardIcon = new SimpleBooleanProperty();
+    private String mName;
+    private String mPath;
 
-    /**
-     * Deserialization constructor - do not use
-     */
     public Icon()
     {
         //No-arg deserialization constructor
     }
 
-    /**
-     * Constructs an instance
-     * @param name for the icon
-     * @param path to the icon
-     */
-    public Icon(String name, String path)
-    {
-        setName(name);
-        setPath(path);
-    }
-
-    @JsonIgnore
-    public StringProperty nameProperty()
+    public String getName()
     {
         return mName;
     }
 
-    @JsonIgnore
-    public StringProperty pathProperty()
+    public void setName(String name)
+    {
+        mName = name;
+    }
+
+    public String getPath()
     {
         return mPath;
     }
 
-    @JsonIgnore
-    public BooleanProperty defaultIconProperty()
-    {
-        return mDefaultIcon;
-    }
-
-    @JsonIgnore
-    public BooleanProperty standardIconProperty()
-    {
-        return mStandardIcon;
-    }
-
-    /**
-     * Name of the icon
-     */
-    public String getName()
-    {
-        return mName.get();
-    }
-
-    /**
-     * Sets the name of the icon
-     */
-    public void setName(String name)
-    {
-        mName.set(name);
-    }
-
-    /**
-     * Indicates if this is a standard icon
-     */
-    @JsonIgnore
-    public boolean getStandardIcon()
-    {
-        return mStandardIcon.get();
-    }
-
-    /**
-     * Sets or flags this icon as a standard icon indicating that it should not be deleted
-     */
-    void setStandardIcon(boolean standardIcon)
-    {
-        mStandardIcon.set(standardIcon);
-    }
-
-    /**
-     * Indicates if this icon is the default icon
-     */
-    @JsonIgnore
-    public boolean getDefaultIcon()
-    {
-        return mDefaultIcon.get();
-    }
-
-    /**
-     * Sets the default icon state.
-     *
-     * Note: uniqueness of default flag is only enforced through the icon model and package private access
-     */
-    void setDefaultIcon(boolean defaultIcon)
-    {
-        mDefaultIcon.set(defaultIcon);
-    }
-
-    public String toString()
-    {
-        return getName();
-    }
-
-    /**
-     * Path to the icon
-     */
-    public String getPath()
-    {
-        return mPath.get();
-    }
-
-    /**
-     * Sets the path to the icon
-     */
     public void setPath(String path)
     {
-        mPath.set(path);
-    }
-
-    @Override
-    public int compareTo(Icon other)
-    {
-        if(other == null)
-        {
-            return -1;
-        }
-        else if(hashCode() == other.hashCode())
-        {
-            return 0;
-        }
-        else if(getName() != null && other.getName() != null)
-        {
-            if(getName().contentEquals(other.getName()))
-            {
-                if(getPath() != null && other.getPath() != null)
-                {
-                    return getPath().compareTo(other.getPath());
-                }
-                else if(getPath() != null)
-                {
-                    return -1;
-                }
-                else
-                {
-                    return 1;
-                }
-            }
-            else
-            {
-                return getName().compareTo(other.getName());
-            }
-        }
-        else if(getName() != null)
-        {
-            return -1;
-        }
-        else
-        {
-            return 1;
-        }
-   }
-
-    @Override
-    public int hashCode()
-    {
-        return Objects.hash(getName(), getPath());
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (!(o instanceof Icon)) return false;
-        return compareTo((Icon) o) == 0;
-    }
-
-    /**
-     * Creates an observable property extractor for use with observable lists to detect changes internal to this object.
-     */
-    @JsonIgnore
-    public static Callback<Icon,Observable[]> extractor()
-    {
-        return (Icon i) -> new Observable[] {i.nameProperty(), i.pathProperty(), i.standardIconProperty(), i.defaultIconProperty()};
+        mPath = path;
     }
 }

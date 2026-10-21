@@ -20,7 +20,6 @@
 
 package io.github.dsheirer.preference.identifier.talkgroup;
 
-import io.github.dsheirer.preference.identifier.IntegerFormat;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,16 +32,6 @@ import java.text.ParseException;
 public abstract class AbstractIntegerFormatter
 {
     private static final Logger mLog = LoggerFactory.getLogger(AbstractIntegerFormatter.class);
-
-    public static String toHex(int value)
-    {
-        return Integer.toHexString(value).toUpperCase();
-    }
-
-    public static String toHex(int value, int width)
-    {
-        return StringUtils.leftPad(Integer.toHexString(value).toUpperCase(), width, '0');
-    }
 
     public static String toDecimal(int value, int width)
     {
@@ -58,8 +47,6 @@ public abstract class AbstractIntegerFormatter
     {
         return String.valueOf(value);
     }
-
-    public abstract String format(int value, IntegerFormat integerFormat);
 
     /**
      * Parses an integer value from the formatted string value

@@ -30,7 +30,7 @@ class StreamingAdminHttpTest
     {
         Path database=SdrTrunkDatabasePath.getDatabasePath(temporary);
         SdrTrunkTestDatabase.create(database);
-        ConfigurationManager manager=new ConfigurationManager(new StreamingAdministrationServiceTest.TestPreferences(temporary),null,new AliasModel(),null,null);
+        ConfigurationManager manager=new ConfigurationManager(new StreamingAdministrationServiceTest.TestPreferences(temporary),null,new AliasModel(),null);
         WebAccessService access=new WebAccessService(database);
         access.provisionOrResetPrimaryAdmin("fixture-password".toCharArray());
         access.createUser("listener", "fixture-password".toCharArray());

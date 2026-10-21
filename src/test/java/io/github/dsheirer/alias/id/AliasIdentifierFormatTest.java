@@ -22,6 +22,7 @@ package io.github.dsheirer.alias.id;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.id.radio.Radio;
@@ -32,8 +33,8 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormat;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormatter;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
-import io.github.dsheirer.preference.identifier.IntegerFormat;
 import io.github.dsheirer.protocol.Protocol;
+import java.text.ParseException;
 import org.junit.jupiter.api.Test;
 
 class AliasIdentifierFormatTest
@@ -81,10 +82,49 @@ class AliasIdentifierFormatTest
     @Test
     void mapsNxdnFormatters()
     {
-        assertEquals("65535", TalkgroupFormatter.format(Protocol.NXDN, 65_535, IntegerFormat.DECIMAL));
-        assertEquals("FFFF", TalkgroupFormatter.format(Protocol.NXDN, 65_535, IntegerFormat.HEXADECIMAL));
-        assertEquals("65535", RadioFormatter.format(Protocol.NXDN, 65_535, IntegerFormat.DECIMAL));
-        assertEquals("FFFF", RadioFormatter.format(Protocol.NXDN, 65_535, IntegerFormat.HEXADECIMAL));
+        assertEquals("65535", TalkgroupFormatter.format(Protocol.NXDN, 65_535));
+        assertEquals("65535", RadioFormatter.format(Protocol.NXDN, 65_535));
+    }
+
+    @Test
+    void preservesDecimalDefaultsAndParsingForEveryProtocol() throws ParseException
+    {
+        for(Protocol protocol: Protocol.values())
+        {
+            assertEquals("12345", RadioFormatter.format(protocol, 12_345), protocol.name());
+            assertEquals(12_345, RadioFormatter.parse(protocol, " 12345 "), protocol.name());
+            assertEquals(Integer.MAX_VALUE, RadioFormatter.parse(protocol, "2147483647"), protocol.name());
+            assertEquals(Integer.MIN_VALUE, RadioFormatter.parse(protocol, "-2147483648"), protocol.name());
+            assertThrows(ParseException.class, () -> RadioFormatter.parse(protocol, "0x3039"), protocol.name());
+            assertThrows(ParseException.class, () -> RadioFormatter.parse(protocol, "2147483648"), protocol.name());
+
+            if(protocol != Protocol.FLEETSYNC)
+            {
+                assertEquals("12345", TalkgroupFormatter.format(protocol, 12_345), protocol.name());
+                assertEquals(12_345, TalkgroupFormatter.parse(protocol, " 12345 "), protocol.name());
+                assertEquals(Integer.MAX_VALUE, TalkgroupFormatter.parse(protocol, "2147483647"), protocol.name());
+                assertEquals(Integer.MIN_VALUE, TalkgroupFormatter.parse(protocol, "-2147483648"), protocol.name());
+                assertThrows(ParseException.class, () -> TalkgroupFormatter.parse(protocol, "0x3039"), protocol.name());
+                assertThrows(ParseException.class, () -> TalkgroupFormatter.parse(protocol, "2147483648"), protocol.name());
+            }
+        }
+    }
+
+    @Test
+    void preservesFleetsyncStructuredDefaultsAndBoundaries() throws ParseException
+    {
+        int minimum = (1 << 13) + 1;
+        int maximum = (127 << 13) + 8191;
+        assertEquals("001-0001", TalkgroupFormatter.format(Protocol.FLEETSYNC, minimum));
+        assertEquals("127-8191", TalkgroupFormatter.format(Protocol.FLEETSYNC, maximum));
+        assertEquals(minimum, TalkgroupFormatter.parse(Protocol.FLEETSYNC, "1-1"));
+        assertEquals(minimum, TalkgroupFormatter.parse(Protocol.FLEETSYNC, "001-0001"));
+        assertEquals(maximum, TalkgroupFormatter.parse(Protocol.FLEETSYNC, "127-8191"));
+
+        for(String invalid: new String[]{"0-1", "128-1", "1-0", "1-8192", "8193", " 1-1 ", null})
+        {
+            assertThrows(ParseException.class, () -> TalkgroupFormatter.parse(Protocol.FLEETSYNC, invalid));
+        }
     }
 
     @Test

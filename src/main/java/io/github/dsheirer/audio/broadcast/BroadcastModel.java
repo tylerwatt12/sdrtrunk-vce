@@ -125,21 +125,6 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     }
 
     /**
-     * List of broadcastAudio configuration names
-     */
-    public List<String> getBroadcastConfigurationNames()
-    {
-        List<String> names = new ArrayList<>();
-
-        for(ConfiguredBroadcast configuredBroadcast: mConfiguredBroadcasts)
-        {
-            names.add(configuredBroadcast.getBroadcastConfiguration().getName());
-        }
-
-        return names;
-    }
-
-    /**
      * Current list of broadcastAudio configurations
      */
     public List<BroadcastConfiguration> getBroadcastConfigurations()
@@ -638,22 +623,6 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     }
 
     /**
-     * Finds a configuration by its editable display name for presentation-only duplicate checks.
-     */
-    public BroadcastConfiguration getBroadcastConfigurationByName(String name)
-    {
-        for(ConfiguredBroadcast configuredBroadcast: mConfiguredBroadcasts)
-        {
-            BroadcastConfiguration configuration = configuredBroadcast.getBroadcastConfiguration();
-            if(configuration.getName() != null && configuration.getName().equals(name))
-            {
-                return configuration;
-            }
-        }
-        return null;
-    }
-
-    /**
      * Registers the listener to receive broadcastAudio configuration events
      */
     public void addListener(Listener<BroadcastEvent> listener)
@@ -797,7 +766,6 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
             mBroadcastConfiguration = configuration;
             mGeneration = generation;
         }
-
 
         @Override
         public void run()

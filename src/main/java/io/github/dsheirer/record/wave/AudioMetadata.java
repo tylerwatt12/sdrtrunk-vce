@@ -20,49 +20,37 @@
 package io.github.dsheirer.record.wave;
 
 /**
- * WAVE and ID3 audio metadata tags.
+ * WAVE INFO/LIST audio metadata tags.
  *
  * Metadata tag details:
  * LIST: https://sno.phy.queensu.ca/~phil/exiftool/TagNames/RIFF.html#Info
- * ID3: http://id3.org/id3v2.3.0
  *
  */
 public enum AudioMetadata
 {
     //Primary tags
-    ARTIST_NAME("TPE1", "IART", true),
-    ALBUM_TITLE("TALB", "IPRD", true),
-    GROUPING("TIT1", "ISBJ", true),
-    TRACK_TITLE("TIT2", "INAM", true),
-    COMMENTS("COMM", "ICMT", true),
-    DATE_CREATED("TDRC", "ICRD", true),
-    GENRE("TCON", "IGNR", true),
-    YEAR("TYER", "ICOP", true),
-    COMPOSER("TCOM", "ISFT", true);
+    ARTIST_NAME("IART", true),
+    ALBUM_TITLE("IPRD", true),
+    GROUPING("ISBJ", true),
+    TRACK_TITLE("INAM", true),
+    COMMENTS("ICMT", true),
+    DATE_CREATED("ICRD", true),
+    GENRE("IGNR", true),
+    YEAR("ICOP", true),
+    COMPOSER("ISFT", true);
 
-    private String mID3Tag;
     private String mLISTTag;
     private boolean mPrimaryTag;
 
     /**
-     * Wave file LIST and ID3 chunk metadata tag types
-     * @param id3Tag used in the ID3 chunk
+     * Wave file LIST chunk metadata tag types
      * @param listTag used in the LIST chunk
      * @param PrimaryTag indicates if this is a custom LIST tag (true) or standard LIST tag (false)
      */
-    AudioMetadata(String id3Tag, String listTag, boolean PrimaryTag)
+    AudioMetadata(String listTag, boolean PrimaryTag)
     {
-        mID3Tag = id3Tag;
         mLISTTag = listTag;
         mPrimaryTag = PrimaryTag;
-    }
-
-    /**
-     * Tag to use when this metadata type is included in a WAV ID3 chunk
-     */
-    public String getID3Tag()
-    {
-        return mID3Tag;
     }
 
     /**

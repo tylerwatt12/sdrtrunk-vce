@@ -6,7 +6,6 @@
 package io.github.dsheirer.map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -31,6 +30,7 @@ class StandardMapIconCatalogTest
             }
         }
         assertSame(StandardMapIconCatalog.NO_ICON, StandardMapIconCatalog.forAliasName("custom/user/path.png"));
+        assertSame(StandardMapIconCatalog.NO_ICON, StandardMapIconCatalog.forAliasName(null));
         assertNull(StandardMapIconCatalog.forSlug("../../etc/passwd"));
     }
 }

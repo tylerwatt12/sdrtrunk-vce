@@ -50,11 +50,6 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
     public static final byte MASTER1_NORM_STBY = (byte) 0x02;
     public static final byte MASTER1_POR_DET = (byte) 0x04;
 
-    public static final byte SYNTH1_PLL_LOCK = (byte) 0x01;
-    public static final byte SYNTH1_BAND_SHIF = (byte) 0x01;
-    public static final byte SYNTH7_3PHASE_EN = (byte) 0x08;
-    public static final byte SYNTH8_VCOCAL_UPD = (byte) 0x04;
-
     public static final byte FILT3_MASK = (byte) 0x20;
     public static final byte FILT3_ENABLE = (byte) 0x00;
     public static final byte FILT3_DISABLE = (byte) 0x20;
@@ -63,17 +58,9 @@ public class E4KEmbeddedTuner extends EmbeddedTuner
     public static final byte IF_CHANNEL_FILTER_MASK = (byte) 0x1F;
     public static final byte IF_RC_FILTER_MASK = (byte) 0x0F;
 
-    public static final byte AGC1_LIN_MODE = (byte) 0x10;
-    public static final byte AGC1_LNA_UPDATE = (byte) 0x20;
-    public static final byte AGC1_LNA_G_LOW = (byte) 0x40;
-    public static final byte AGC1_LNA_G_HIGH = (byte) 0x80;
     public static final byte AGC1_MOD_MASK = (byte) 0xF;
 
     public static final byte GAIN1_MOD_MASK = (byte) 0xF;
-    public static final byte IF_GAIN_MODE_SWITCHING_MASK = (byte) 0x1;
-
-    public static final byte AGC6_LNA_CAL_REQ = (byte) 0x10;
-
     public static final byte AGC7_MIXER_GAIN_MASK = (byte) 0x01;
     public static final byte AGC7_MIX_GAIN_MANUAL = (byte) 0x00;
     public static final byte AGC7_MIX_GAIN_AUTO = (byte) 0x01;

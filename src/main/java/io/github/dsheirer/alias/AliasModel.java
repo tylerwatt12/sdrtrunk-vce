@@ -416,25 +416,6 @@ public class AliasModel
     }
 
     /**
-     * Assigns the compatible visible factory Alias List to a newly constructed channel when one is available.
-     * Existing channel assignments are not changed by this helper.
-     */
-    public boolean assignDefaultAliasList(Channel channel)
-    {
-        DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
-            channel.getDecodeConfiguration().getDecoderType() : null;
-        AliasListDefinition definition = getDefaultAliasListDefinition(decoderType);
-
-        if(definition != null)
-        {
-            channel.setAliasListDefinition(definition);
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
      * Ensures a newly added saved channel has one compatible Alias List. The canonical factory list is preferred;
      * if it was removed, the oldest compatible administrator-owned list is used instead.
      */

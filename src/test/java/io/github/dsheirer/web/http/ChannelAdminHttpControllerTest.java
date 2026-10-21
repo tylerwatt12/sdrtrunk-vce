@@ -71,7 +71,7 @@ class ChannelAdminHttpControllerTest
         Path dataRoot = mTemporaryFolder.resolve("channel-http-data");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         HttpServer server = null;
         ExecutorService executor = Executors.newCachedThreadPool();
         try
@@ -296,7 +296,7 @@ class ChannelAdminHttpControllerTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         HttpServer server = null;
         ExecutorService executor = Executors.newCachedThreadPool();
         try
@@ -361,7 +361,7 @@ class ChannelAdminHttpControllerTest
         TestUserPreferences preferences = new TestUserPreferences(dataRoot);
         AliasModel aliasModel = new AliasModel();
         ConfigurationManager manager = new ConfigurationManager(preferences, null, aliasModel,
-            new EventLogManager(aliasModel, preferences), null);
+            new EventLogManager(aliasModel, preferences));
         ChannelProcessingManager processing = manager.getChannelProcessingManager();
         AtomicInteger stopNotifications = new AtomicInteger();
         HttpServer server = null;

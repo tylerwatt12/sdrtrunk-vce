@@ -104,7 +104,7 @@ class ConfigurationBackgroundSaveTest
         BroadcastifyCallConfiguration secondStream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
         secondStream.setName("Second stream");
         repository.synchronizeChannelAndBroadcastConfiguration(List.of(first, second), List.of(firstStream, secondStream));
-        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(root), null, new AliasModel(), null, null);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(root), null, new AliasModel(), null);
         manager.init();
         return new Fixture(database, repository, manager);
     }

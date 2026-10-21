@@ -39,7 +39,6 @@ public class TestTunerController extends TunerController
     public static final double USABLE_BANDWIDTH_PERCENTAGE = 1.00;
 
     public static final int SPECTRAL_FRAME_RATE = 20;
-    public static final long SAMPLE_GENERATION_INTERVAL = 1000 / SPECTRAL_FRAME_RATE;
 
     private SampleGenerator mSampleGenerator;
     private long mFrequency = 460662500l;

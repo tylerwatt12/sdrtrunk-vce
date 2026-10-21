@@ -38,10 +38,8 @@ import java.util.HexFormat;
  *
  * <p>The source XML is read-only. Existing configuration is retained, imported name conflicts are renamed, a
  * validated SQLite backup is created first, and aliases, list definitions, channels, and streams are committed in one
- * transaction. Callers with live configuration services execute the prepared import through
- * {@link io.github.dsheirer.configuration.ConfigurationManager#applyExternalConfigurationSnapshot} so ordinary
- * configuration saves cannot interleave between the preview check and commit. The setup wizard executes before
- * those services exist, while holding the portable-data lock.</p>
+ * transaction. The setup wizard executes the prepared import before runtime configuration services exist, while
+ * holding the portable-data lock.</p>
  */
 public class LegacyPlaylistImportService
 {

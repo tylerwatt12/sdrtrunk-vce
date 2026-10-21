@@ -65,7 +65,7 @@ class AliasActivityBrowserDependencyTest
             AliasActivityRepresentativeTestDatabase.createExact(databasePath);
         insertAliasListsBeforeRepresentative(databasePath, 125);
         UserPreferences preferences = new TestUserPreferences(dataRoot);
-        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null);
+        ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null);
         manager.init();
         assertEquals(fixture.aliasCount(), manager.getAliasModel().getAliases().stream()
             .filter(alias -> alias.getAliasListId() == fixture.aliasListId()).count());

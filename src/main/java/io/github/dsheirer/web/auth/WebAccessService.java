@@ -345,11 +345,6 @@ public final class WebAccessService
         }
     }
 
-    public CapabilityPolicy resetCapabilityTier(WebCapability capability) throws IOException, SQLException
-    {
-        return setCapabilityTier(capability, capability.defaultTier());
-    }
-
     private SecuritySnapshot loadSnapshot() throws IOException, SQLException
     {
         List<WebUserRepository.StoredAccount> stored = mUsers.loadSecurityAccounts();

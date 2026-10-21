@@ -48,7 +48,7 @@ class LegacyPlaylistImportUiContractTest
     }
 
     @Test
-    void previewDoesNotConstructRuntimeServicesAndExistingRuntimeImportIsolationIsRetained() throws Exception
+    void previewDoesNotConstructRuntimeServicesAndTheRetiredRuntimeImportBridgeIsAbsent() throws Exception
     {
         String dialog = Files.readString(DIALOG);
         String manager = Files.readString(CONFIGURATION_MANAGER);
@@ -57,8 +57,9 @@ class LegacyPlaylistImportUiContractTest
         assertFalse(dialog.contains(".execute("));
         assertTrue(manager.contains("mExternalConfigurationOperation = true;"));
         assertTrue(manager.contains("if(mExternalConfigurationOperation)"));
-        assertTrue(manager.contains("saveNow(true);"));
+        assertFalse(manager.contains("applyExternalConfigurationSnapshot"));
+        assertFalse(manager.contains("ExternalConfigurationReloadException"));
         assertTrue(manager.contains("if(hasDirtyConfiguration())"));
-        assertTrue(manager.contains("save(allowDuringExternalOperation);"));
+        assertFalse(manager.contains("allowDuringExternalOperation"));
     }
 }

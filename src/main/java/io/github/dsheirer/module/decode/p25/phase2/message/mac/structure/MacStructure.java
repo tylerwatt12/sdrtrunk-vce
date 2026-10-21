@@ -49,7 +49,6 @@ public abstract class MacStructure extends AbstractMessage
     protected static final int OCTET_16_BIT_120 = 120;
     protected static final int OCTET_17_BIT_128 = 128;
     protected static final int OCTET_18_BIT_136 = 136;
-    protected static final int OCTET_19_BIT_144 = 144;
     protected static final int OCTET_20_BIT_152 = 152;
     private static IntField OPCODE = IntField.length8(OCTET_1_BIT_0);
     private static IntField LCCH_NAC = IntField.length12(OCTET_20_BIT_152);

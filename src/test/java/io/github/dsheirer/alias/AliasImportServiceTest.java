@@ -641,7 +641,7 @@ class AliasImportServiceTest
     private static class Manager extends ConfigurationManager
     {
         int commits; boolean fail;
-        Manager(UserPreferences preferences) { super(preferences, null, new AliasModel(), null, null); }
+        Manager(UserPreferences preferences) { super(preferences, null, new AliasModel(), null); }
         @Override protected AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot snapshot,
             AliasConfigurationPublication publication)
         {

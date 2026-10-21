@@ -156,11 +156,10 @@ class JavaDesktopSystemsRemovalUiContractTest
         }
 
         String icon = Files.readString(Path.of("src/main/java/io/github/dsheirer/icon/Icon.java"));
-        String iconModel = Files.readString(Path.of("src/main/java/io/github/dsheirer/icon/IconModel.java"));
         assertFalse(icon.contains("ImageIcon"));
         assertFalse(icon.contains("getFxImage"));
-        assertFalse(iconModel.contains("getScaledIcon"));
-        assertFalse(iconModel.contains("mResizedIcons"));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/icon/IconModel.java")));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/database/icon/IconDatabaseStore.java")));
     }
 
     @Test

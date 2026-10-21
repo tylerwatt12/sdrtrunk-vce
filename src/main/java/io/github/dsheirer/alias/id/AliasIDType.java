@@ -18,10 +18,6 @@
  */
 package io.github.dsheirer.alias.id;
 
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.Set;
-
 public enum AliasIDType
 {
     BROADCAST_CHANNEL("Audio Broadcast Channel"),
@@ -55,10 +51,6 @@ public enum AliasIDType
     {
         mLabel = label;
     }
-
-    //Values used by the View-By alias editor
-    public static final Set<AliasIDType> VIEW_BY_VALUES = Collections.unmodifiableSet(EnumSet.of(TALKGROUP,
-        TALKGROUP_RANGE, P25_SUBSCRIBER_IDENTITY, RADIO_ID, RADIO_ID_RANGE, UNIT_STATUS, STATUS, TONES));
 
     @Override
     public String toString()

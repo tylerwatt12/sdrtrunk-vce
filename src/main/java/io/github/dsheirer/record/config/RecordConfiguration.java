@@ -67,14 +67,6 @@ public class RecordConfiguration extends Configuration
     }
 
     /**
-     * Clears all recorder types from this configuration
-     */
-    public void clearRecorders()
-    {
-        mRecorders.clear();
-    }
-
-    /**
      * Indicates if this configuration has the specified recorder type
      * @param recorderType to check
      * @return true if this configuration contains the specified recorder type

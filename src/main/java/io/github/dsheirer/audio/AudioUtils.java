@@ -39,30 +39,6 @@ public class AudioUtils
     /**
      * Converts the audio packets into a byte array of 16-bit, little-endian audio samples
      */
-    public static byte[] convertTo16BitSamples(List<float[]> buffers)
-    {
-        ByteArrayOutputStream stream = new ByteArrayOutputStream();
-
-        try
-        {
-            for(float[] audioBuffer: buffers)
-            {
-                //Converting from 32-bit floats to signed 16-bit samples
-                ByteBuffer buffer = ConversionUtils.convertToSigned16BitSamples(audioBuffer);
-                stream.write(buffer.array());
-            }
-        }
-        catch(IOException _)
-        {
-            mLog.error("Error writing converted PCM bytes to output stream");
-        }
-
-        return stream.toByteArray();
-    }
-
-    /**
-     * Converts the audio packets into a byte array of 16-bit, little-endian audio samples
-     */
     public static byte[] convert(List<float[]> audioBuffers)
     {
         ByteArrayOutputStream stream = new ByteArrayOutputStream();

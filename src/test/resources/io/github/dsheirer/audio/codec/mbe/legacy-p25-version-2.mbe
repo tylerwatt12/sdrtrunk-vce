@@ -1,0 +1,21 @@
+{
+  "protocol": "APCO25-PHASE1",
+  "version": 2,
+  "call_type": "GROUP",
+  "from": "1001",
+  "to": "2001",
+  "encrypted": true,
+  "frames": [
+    {
+      "encryption_algorithm": 132,
+      "encryption_key_id": 1,
+      "encryption_mi": "000000000000000000",
+      "time": 1000,
+      "hex": "00112233445566778899AABBCCDDEEFF0011"
+    },
+    {"time": 1020, "hex": "112233445566778899AABBCCDDEEFF001122"},
+    {"time": 1040, "hex": "2233445566778899AABBCCDDEEFF00112233"},
+    {"time": 1060, "hex": "33445566778899AABBCCDDEEFF0011223344"},
+    {"time": 1080, "hex": "445566778899AABBCCDDEEFF001122334455"}
+  ]
+}

@@ -33,8 +33,6 @@ public class TimeStamp
         DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss").withZone(SYSTEM_ZONE);
     public static final DateTimeFormatter DATE_TIME_FORMAT_FILE =
         DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(SYSTEM_ZONE);
-    public static final DateTimeFormatter DATE_TIME_MILLIS_FORMAT =
-        DateTimeFormatter.ofPattern("yyyyMMdd HHmmss.SSS").withZone(SYSTEM_ZONE);
 
     private TimeStamp()
     {

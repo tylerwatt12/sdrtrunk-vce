@@ -51,8 +51,6 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 public abstract class DecodeConfiguration extends Configuration
 {
     public static final int DEFAULT_CALL_TIMEOUT_DELAY_SECONDS = 45;
-    public static final int CALL_TIMEOUT_MINIMUM = 1;
-    public static final int CALL_TIMEOUT_MAXIMUM = 180;
     public static final int TRAFFIC_CHANNEL_LIMIT_DEFAULT = 20;
 
     protected DecodeConfiguration()

@@ -27,7 +27,6 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
  */
 public abstract class DMRBurst extends DMRMessage
 {
-    public static final int PAYLOAD_1_START = 24;
     public static final int SYNC_START = 132;
     public static final int PAYLOAD_2_START = 180;
 

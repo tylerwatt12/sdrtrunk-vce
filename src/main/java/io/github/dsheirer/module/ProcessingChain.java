@@ -128,7 +128,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private ReentrantLock mModuleLock = new ReentrantLock();
     private List<Module> mModules = new ArrayList<>();
 
-
     /**
      * Creates a processing chain for managing a set of modules
      *
@@ -187,23 +186,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     {
         Source source = mSource;
         mDecodeEventSource = source != null ? new DecodeEventSource(getCurrentChannel(), this, source) : null;
-    }
-
-    /**
-     * Retrieves the primary decoder module
-     * @return primary decoder or null.
-     */
-    public PrimaryDecoder getPrimaryDecoder()
-    {
-        for(Module module : mModules)
-        {
-            if(module instanceof PrimaryDecoder decoder)
-            {
-                return decoder;
-            }
-        }
-
-        return null;
     }
 
     /**
@@ -471,33 +453,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         {
             mModuleLock.unlock();
         }
-    }
-
-    /**
-     * List of decoder states for this processing chain
-     */
-    public List<DecoderState> getDecoderStates()
-    {
-        List<DecoderState> decoderStates = new ArrayList<>();
-
-        mModuleLock.lock();
-
-        try
-        {
-            for(Module module : mModules)
-            {
-                if(module instanceof DecoderState)
-                {
-                    decoderStates.add((DecoderState)module);
-                }
-            }
-        }
-        finally
-        {
-            mModuleLock.unlock();
-        }
-
-        return decoderStates;
     }
 
     /**
@@ -1195,24 +1150,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     }
 
     /**
-     * Adds the listener to receive decoder state events from decoder modules
-     */
-    public void addDecoderStateEventListener(Listener<DecoderStateEvent> listener)
-    {
-        mDecoderStateEventBroadcaster.addListener(listener);
-    }
-
-    public void removeDecoderStateEventListener(Listener<DecoderStateEvent> listener)
-    {
-        mDecoderStateEventBroadcaster.removeListener(listener);
-    }
-
-    public Listener<DecoderStateEvent> getDecoderStateEventListener()
-    {
-        return mDecoderStateEventBroadcaster;
-    }
-
-    /**
      * Adds a listener to receive source events from this processing chain
      */
     public void addSourceEventListener(Listener<SourceEvent> listener)
@@ -1226,35 +1163,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public void removeSourceEventListener(Listener<SourceEvent> listener)
     {
         mSourceEventBroadcaster.removeListener(listener);
-    }
-
-    /**
-     * Adds the listener to receive call events from all modules.
-     */
-    public void addSquelchStateListener(Listener<SquelchStateEvent> listener)
-    {
-        mSquelchStateEventBroadcaster.addListener(listener);
-    }
-
-    public void removeSquelchStateListener(Listener<SquelchStateEvent> listener)
-    {
-        mSquelchStateEventBroadcaster.removeListener(listener);
-    }
-
-    /**
-     * Adds listener to receive demodulated audio buffers from an modules that produce demodulated audio.
-     */
-    public void addDemodulatedAudioListener(Listener<float[]> listener)
-    {
-        mDemodulatedAudioBufferBroadcaster.addListener(listener);
-    }
-
-    /**
-     * Removes the listener from receiving demodulated audio buffers.
-     */
-    public void removeDemodulatedAudioListener(Listener<float[]> listener)
-    {
-        mDemodulatedAudioBufferBroadcaster.removeListener(listener);
     }
 
     /**

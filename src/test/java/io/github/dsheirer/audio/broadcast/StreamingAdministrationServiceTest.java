@@ -59,7 +59,7 @@ class StreamingAdministrationServiceTest
         Path root=temporary.resolve("receiver");
         Path database=SdrTrunkDatabasePath.getDatabasePath(root);
         SdrTrunkTestDatabase.create(database);
-        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null,null);
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
         try
         {
             manager.init();
@@ -116,7 +116,7 @@ class StreamingAdministrationServiceTest
         Path root=temporary.resolve("scoped-edits");
         Path database=SdrTrunkDatabasePath.getDatabasePath(root);
         SdrTrunkTestDatabase.create(database);
-        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null,null);
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
         try
         {
             manager.init();
@@ -165,7 +165,7 @@ class StreamingAdministrationServiceTest
     {
         Path root=temporary.resolve("fresh-site-selection");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(root));
-        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null,null);
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
         try
         {
             manager.init();
@@ -199,7 +199,7 @@ class StreamingAdministrationServiceTest
     {
         Path root=temporary.resolve("scoped-routing");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(root));
-        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null,null);
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
         try
         {
             manager.init();
@@ -236,7 +236,7 @@ class StreamingAdministrationServiceTest
         Path root=temporary.resolve("all-providers");
         Path database=SdrTrunkDatabasePath.getDatabasePath(root);
         SdrTrunkTestDatabase.create(database);
-        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null,null);
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
         try
         {
             manager.init();

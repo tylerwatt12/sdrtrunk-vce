@@ -75,7 +75,7 @@ class ScanListAdminDeliveryWorkflowTest
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
         manager.init();
         AliasAdministrationService administration = AliasAdministrationServiceTestSupport.create(manager);
         AliasAdminHttpController controller = new AliasAdminHttpController(administration);

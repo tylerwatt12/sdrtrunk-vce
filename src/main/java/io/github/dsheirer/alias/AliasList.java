@@ -449,21 +449,6 @@ public class AliasList
     }
 
     /**
-     * Lookup alias by ESN
-     */
-    public Alias getESNAlias(String esn)
-    {
-        Alias alias = null;
-
-        if(esn != null)
-        {
-            alias = mLookupIndex.mESNMap.get(esn.toLowerCase());
-        }
-
-        return alias;
-    }
-
-    /**
      * Alias list name
      */
     public String toString()

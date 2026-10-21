@@ -38,7 +38,6 @@ import javafx.beans.property.StringProperty;
  */
 public class BroadcastifyCallConfiguration extends BroadcastConfiguration
 {
-    public static final String DEVELOPMENT_ENDPOINT = "https://api.broadcastify.com/call-upload-dev";
     public static final String PRODUCTION_ENDPOINT = "https://api.broadcastify.com/call-upload";
 
     private IntegerProperty mSystemID = new SimpleIntegerProperty();

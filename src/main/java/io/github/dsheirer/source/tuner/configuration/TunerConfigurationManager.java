@@ -453,26 +453,6 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     }
 
     /**
-     * Removes the tuner configuration from this manager.
-     * @param tunerConfiguration to remove
-     */
-    public void removeTunerConfiguration(TunerConfiguration tunerConfiguration)
-    {
-        mLock.lock();
-
-        try
-        {
-            mTunerConfigurations.remove(tunerConfiguration);
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        saveConfigurations();
-    }
-
-    /**
      * Removes a managed recording tuner's saved configuration and any disabled marker together. The recording file
      * itself is deliberately outside this manager's ownership and is never removed here.
      */

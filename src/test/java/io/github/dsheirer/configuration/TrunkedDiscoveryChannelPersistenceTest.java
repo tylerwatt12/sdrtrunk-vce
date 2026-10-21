@@ -512,7 +512,7 @@ class TrunkedDiscoveryChannelPersistenceTest
                 { @Override public Path getDirectoryApplicationRoot() { return root; } };
                 @Override public DirectoryPreference getDirectoryPreference() { return directory; }
             };
-            manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null)
+            manager = new ConfigurationManager(preferences, null, new AliasModel(), null)
             {
                 @Override public synchronized void commitAndPublishDiscoveredChannels(AliasConfigurationSnapshot aliases,
                     ChannelConfigurationSnapshot channels, Set<String> ids)

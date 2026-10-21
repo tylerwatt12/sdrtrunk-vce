@@ -8,18 +8,16 @@
  * (at your option) any later version.
  * ****************************************************************************
  */
-package io.github.dsheirer.preference.identifier.talkgroup;
+package io.github.dsheirer.module.decode.p25.identifier.radio;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.preference.identifier.IntegerFormat;
 import org.junit.jupiter.api.Test;
 
-class APCO25TalkgroupFormatterTest
+class APCO25FullyQualifiedRadioIdentifierTest
 {
     @Test
     void canonicalSubscriberIsPrimaryAndWorkingIdIsSeparate()
@@ -29,9 +27,7 @@ class APCO25TalkgroupFormatterTest
                 501, 0xBEE00, 0x348, 2_115_288);
 
         assertEquals("BEE00.348.2115288 (Working ID 501)",
-            APCO25TalkgroupFormatter.format(roamed, IntegerFormat.FORMATTED, true));
-        assertEquals("BEE00.348.2115288 (Working ID 501)",
-            APCO25TalkgroupFormatter.format(roamed, IntegerFormat.DECIMAL, false));
+            roamed.toString());
     }
 
     @Test
@@ -40,8 +36,6 @@ class APCO25TalkgroupFormatterTest
         APCO25FullyQualifiedRadioIdentifier nativeSubscriber =
             APCO25FullyQualifiedRadioIdentifier.createFrom(2_115_288, 0xBEE00, 0x348, 2_115_288);
 
-        assertEquals("BEE00.348.2115288",
-            APCO25TalkgroupFormatter.format(nativeSubscriber, IntegerFormat.FORMATTED, false));
         assertFalse(nativeSubscriber.hasExplicitWorkingAddress());
         assertNull(nativeSubscriber.getWorkingAddress());
         assertEquals("BEE00.348.2115288", nativeSubscriber.toString());
@@ -54,22 +48,9 @@ class APCO25TalkgroupFormatterTest
             APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
                 2_115_288, 0xBEE00, 0x348, 2_115_288);
 
-        assertEquals("BEE00.348.2115288 (Working ID 2115288)",
-            APCO25TalkgroupFormatter.format(nativeSubscriber, IntegerFormat.FORMATTED, false));
         assertTrue(nativeSubscriber.hasExplicitWorkingAddress());
         assertEquals(2_115_288, nativeSubscriber.getWorkingAddress());
         assertEquals("BEE00.348.2115288 (Working ID 2115288)", nativeSubscriber.toString());
-    }
-
-    @Test
-    void numericPreferenceNeverChangesCanonicalSubscriberPresentation()
-    {
-        APCO25FullyQualifiedRadioIdentifier roamed =
-            APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(
-                501, 0xBEE00, 0x348, 2_115_288);
-
-        assertEquals("BEE00.348.2115288 (Working ID 501)",
-            APCO25TalkgroupFormatter.format(roamed, IntegerFormat.HEXADECIMAL, true));
     }
 
     @Test
@@ -81,7 +62,6 @@ class APCO25TalkgroupFormatterTest
 
         assertTrue(reserved.hasExplicitWorkingAddress());
         assertNull(reserved.getWorkingAddress());
-        assertEquals("BEE00.348.2115288",
-            APCO25TalkgroupFormatter.format(reserved, IntegerFormat.FORMATTED, false));
+        assertEquals("BEE00.348.2115288", reserved.toString());
     }
 }

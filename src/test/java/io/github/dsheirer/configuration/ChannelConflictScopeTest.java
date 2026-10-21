@@ -7,7 +7,6 @@ package io.github.dsheirer.configuration;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
@@ -127,7 +126,7 @@ class ChannelConflictScopeTest
     {
         Path root = temporary.resolve(name);
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(root));
-        var manager = new ConfigurationManager(new Preferences(root), null, new AliasModel(), null, null);
+        var manager = new ConfigurationManager(new Preferences(root), null, new AliasModel(), null);
         manager.init();
         return new Fixture(manager, ChannelAdministrationServiceTestSupport.create(manager));
     }

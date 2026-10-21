@@ -171,13 +171,13 @@ public class FrequencyController
         if(frequency < mMinimumFrequency)
         {
             throw new InvalidFrequencyException("Frequency [" + frequency + "] is below the minimum [" +
-                    mMinimumFrequency + "]", frequency, mMinimumFrequency);
+                    mMinimumFrequency + "]");
         }
 
         if(frequency > mMaximumFrequency)
         {
             throw new InvalidFrequencyException("Frequency [" + frequency + "] is above the maximum [" +
-                    mMaximumFrequency + "]", frequency, mMaximumFrequency);
+                    mMaximumFrequency + "]");
         }
 
         long tunedFrequency = getTunedFrequency(frequency);

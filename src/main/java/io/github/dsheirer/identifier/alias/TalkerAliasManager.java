@@ -31,9 +31,6 @@ import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -169,36 +166,6 @@ public class TalkerAliasManager
                     alias.bindTo(rid, servingWacn, servingSystem) : alias.bindTo(rid, nativeSystemKey));
             }
         }
-    }
-
-    /**
-     * Creates a summary listing of talker aliases
-     * @return summary.
-     */
-    public String getAliasSummary()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Active System Radio Aliases\n");
-        sb.append("  Radio\tTalker Alias (TA-)\n");
-        List<AliasKey> radios = new ArrayList<>(mAliasMap.keySet());
-
-        if(!radios.isEmpty())
-        {
-            radios.sort(Comparator.comparing(AliasKey::protocol).thenComparingInt(AliasKey::homeWacn)
-                .thenComparingInt(AliasKey::homeSystem).thenComparingInt(AliasKey::radio));
-            for(AliasKey radio : radios)
-            {
-                sb.append("  ").append(radio);
-                sb.append("\t").append(mAliasMap.get(radio));
-                sb.append("\n");
-            }
-        }
-        else
-        {
-            sb.append("  None\n");
-        }
-
-        return sb.toString();
     }
 
     private TalkerAliasIdentifier lookup(RadioIdentifier radio, String servingSystemKey)

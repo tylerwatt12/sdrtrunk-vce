@@ -42,6 +42,7 @@ class JavaShellCleanupUiContractTest
         assertFalse(Files.exists(ROOT.resolve("CreditsDialog.java")));
         assertFalse(preferences.contains("Streaming (Web)"));
         assertFalse(webSettings.contains("getOpenButton()"));
+        assertFalse(webSettings.contains("Editable assets folder"));
     }
 
     @Test
@@ -124,6 +125,8 @@ class JavaShellCleanupUiContractTest
         String p25p2Viewer = Files.readString(ROOT.resolve("viewer/P25P2Viewer.java"));
 
         assertTrue(application.contains("Message Recording Viewer (.bits)"));
+        assertTrue(application.contains("diagnosticsMenu.add(recordingViewerMenu)"));
+        assertFalse(application.contains("viewMenu.add(recordingViewerMenu)"));
         assertTrue(manager.contains("new MessageRecordingViewer()"));
         assertFalse(recordingViewer.contains("public static void main(String[] args)"));
         assertFalse(nxdnViewer.contains("static void main()"));

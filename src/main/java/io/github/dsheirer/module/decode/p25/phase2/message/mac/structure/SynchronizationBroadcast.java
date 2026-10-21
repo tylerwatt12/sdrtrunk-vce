@@ -39,7 +39,6 @@ import java.util.TimeZone;
  */
 public class SynchronizationBroadcast extends MacStructure
 {
-    public static final int US_TDMA_UNSYNCHRONIZED_TO_FDMA_FLAG = 20;
     public static final int IST_INVALID_SYSTEM_TIME_NOT_LOCKED_TO_EXTERNAL_REFERENCE_FLAG = 21;
     public static final int MM_MICRO_SLOTS_TO_MINUTE_ROLLOVER_UNLOCKED_FLAG = 22;
     private static final IntField MC_LEAP_SECOND_CORRECTION = IntField.range(23, 24);

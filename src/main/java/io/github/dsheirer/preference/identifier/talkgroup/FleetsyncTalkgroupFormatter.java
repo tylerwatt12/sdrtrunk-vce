@@ -20,68 +20,19 @@
 
 package io.github.dsheirer.preference.identifier.talkgroup;
 
-import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
-import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncIdentifier;
-import io.github.dsheirer.preference.identifier.IntegerFormat;
-
 import java.text.ParseException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Formats Fleetsync 20-bit identifiers into either an integer value or an 8-bit fleet and 12-bit ident
+ * Formats and parses Fleetsync fleet-ident values.
  */
 public class FleetsyncTalkgroupFormatter extends AbstractIntegerFormatter
 {
-    private static final int IDENTIFIER_DECIMAL_WIDTH = 7;
-    private static final int IDENTIFIER_HEXADECIMAL_WIDTH = 5;
     private static final int FLEET_DECIMAL_WIDTH = 3;
     private static final int IDENT_DECIMAL_WIDTH = 4;
     private static final String SEPARATOR = "-";
     private static final Pattern FLEETSYNC_PATTERN = Pattern.compile("(\\d{1,3})-(\\d{1,4})");
-
-    /**
-     * Formats the individual or group identifier to the specified format and width.
-     */
-    public static String format(TalkgroupIdentifier identifier, IntegerFormat format, boolean fixedWidth)
-    {
-        if(identifier instanceof FleetsyncIdentifier)
-        {
-            FleetsyncIdentifier fleetsync = (FleetsyncIdentifier)identifier;
-
-            if(fixedWidth)
-            {
-                switch(format)
-                {
-                    case DECIMAL:
-                        return toDecimal(fleetsync.getValue(), IDENTIFIER_DECIMAL_WIDTH);
-                    case FORMATTED:
-                        return toDecimal(fleetsync.getFleet(), FLEET_DECIMAL_WIDTH) + SEPARATOR +
-                            toDecimal(fleetsync.getIdent(), IDENT_DECIMAL_WIDTH);
-                    case HEXADECIMAL:
-                        return toHex(fleetsync.getValue(), IDENTIFIER_HEXADECIMAL_WIDTH);
-                    default:
-                        throw new IllegalArgumentException("Unrecognized integer format: " + format);
-                }
-            }
-            else
-            {
-                switch(format)
-                {
-                    case DECIMAL:
-                        return fleetsync.toString();
-                    case FORMATTED:
-                        return fleetsync.getFleet() + SEPARATOR + fleetsync.getIdent();
-                    case HEXADECIMAL:
-                        return toHex(identifier.getValue());
-                    default:
-                        throw new IllegalArgumentException("Unrecognized integer format: " + format);
-                }
-            }
-        }
-
-        return identifier.toString();
-    }
 
     @Override
     public String format(int talkgroup)
@@ -130,12 +81,6 @@ public class FleetsyncTalkgroupFormatter extends AbstractIntegerFormatter
         throw new ParseException("Error parsing value from fleetsync talkgroup [" + formattedTalkgroup + "]", 0);
     }
 
-
-    @Override
-    public String format(int value, IntegerFormat format)
-    {
-        return format(value);
-    }
 
     /**
      * Prefix for the specified talkgroup value

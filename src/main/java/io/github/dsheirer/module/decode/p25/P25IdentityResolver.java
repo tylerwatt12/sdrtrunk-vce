@@ -62,7 +62,6 @@ public final class P25IdentityResolver
     static final long DEFAULT_LEASE_MILLISECONDS = DEFAULT_LEASE_MINUTES * 60_000L;
     /** Longest standards-valid temporary-WUID lease. */
     public static final int MAX_LEASE_MINUTES = 7_890;
-    public static final long MAX_LEASE_MILLISECONDS = MAX_LEASE_MINUTES * 60_000L;
     private static final int DEFAULT_SLOT_COUNT = 1 << 18;
     private static final int DEFAULT_PROBE_COUNT = 8;
     private static final int EVIDENCE_AFFILIATION = 1;

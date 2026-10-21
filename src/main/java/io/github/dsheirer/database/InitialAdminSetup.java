@@ -55,46 +55,6 @@ public final class InitialAdminSetup
     }
 
     /**
-     * Keeps the grandfathered marker absence of an existing installation during an in-place staged migration.
-     * Imports deliberately do not call this method because they create a new destination profile.
-     */
-    public static void preserveGrandfatheredAbsence(Path existingDatabase, Path stagedDatabase)
-        throws IOException, SQLException
-    {
-        if(readState(existingDatabase) == null && !hasStoredWebAccounts(existingDatabase))
-        {
-            try(Connection connection = SdrTrunkDatabase.open(stagedDatabase);
-                PreparedStatement statement = connection.prepareStatement(
-                    "DELETE FROM database_metadata WHERE key = ?"))
-            {
-                statement.setString(1, METADATA_KEY);
-                statement.executeUpdate();
-            }
-        }
-    }
-
-    private static boolean hasStoredWebAccounts(Path databasePath) throws IOException, SQLException
-    {
-        try(Connection connection = SdrTrunkDatabase.open(databasePath);
-            PreparedStatement table = connection.prepareStatement(
-                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='web_user'"))
-        {
-            try(ResultSet rows = table.executeQuery())
-            {
-                if(!rows.next() || rows.getLong(1) == 0)
-                {
-                    return false;
-                }
-            }
-            try(PreparedStatement users = connection.prepareStatement("SELECT COUNT(*) FROM web_user");
-                ResultSet rows = users.executeQuery())
-            {
-                return rows.next() && rows.getLong(1) > 0;
-            }
-        }
-    }
-
-    /**
      * Indicates whether startup must collect an administrator password.  If a prior attempt persisted the credential
      * but was interrupted before updating the marker, the credential is authoritative and setup is completed here.
      */

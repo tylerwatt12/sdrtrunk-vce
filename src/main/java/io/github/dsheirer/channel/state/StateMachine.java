@@ -184,22 +184,6 @@ public class StateMachine
     }
 
     /**
-     * Manually sets the fade timeout
-     */
-    public void setFadeTimeout(long timeout)
-    {
-        mFadeTimeout = timeout;
-    }
-
-    /**
-     * Fade timeout value
-     */
-    public long getFadeTimeout()
-    {
-        return mFadeTimeout;
-    }
-
-    /**
      * Sets the fade timeout buffer value.  This value determines the maximum length of time the state machine
      * can stay in any state (without an update) before automatically transitioning to FADE state.
      * @param buffer in milliseconds
@@ -228,19 +212,4 @@ public class StateMachine
         updateEndTimeout();
     }
 
-    /**
-     * Sets the end timeout value
-     */
-    public void setEndTimeout(long endTimeout)
-    {
-        mEndTimeout = endTimeout;
-    }
-
-    /**
-     * Current end timeout value
-     */
-    public long getEndTimeout()
-    {
-        return mEndTimeout;
-    }
 }

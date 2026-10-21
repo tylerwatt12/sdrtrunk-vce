@@ -27,6 +27,7 @@ import io.github.dsheirer.configuration.ConfigurationEditVersion;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.configuration.ConfigurationIdentityAllocator;
 import io.github.dsheirer.identifier.tone.Tone;
+import io.github.dsheirer.map.StandardMapIconCatalog;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
@@ -232,9 +233,8 @@ public final class AliasAdministrationService
         {
             AliasListDefinition definition = requireAliasList(aliasListId);
             ScanListConfiguration scanListConfiguration = scanListModel().configuration();
-            List<String> icons = mConfigurationManager.getIconModel() != null ?
-                mConfigurationManager.getIconModel().iconsProperty().stream()
-                    .map(icon -> icon.getName()).filter(Objects::nonNull).sorted().toList() : List.of();
+            List<String> icons = java.util.Arrays.stream(StandardMapIconCatalog.values())
+                .map(StandardMapIconCatalog::aliasName).sorted().toList();
             List<BroadcastDestination> streams = mConfigurationManager.getBroadcastModel()
                 .getBroadcastConfigurations().stream()
                 .map(configuration -> new BroadcastDestination(configuration.getConfigurationId(),
@@ -1271,15 +1271,13 @@ public final class AliasAdministrationService
             .map(destination -> requireBroadcastDestination(destination.getConfigurationId())).toList());
     }
 
-    private void validateIconName(String iconName)
+    private static void validateIconName(String iconName)
     {
         if(iconName == null)
         {
             return;
         }
-        if(iconName.isBlank() || mConfigurationManager.getIconModel() == null ||
-            mConfigurationManager.getIconModel().iconsProperty().stream()
-            .noneMatch(icon -> iconName.equals(icon.getName())))
+        if(!StandardMapIconCatalog.forAliasName(iconName).aliasName().equals(iconName))
         {
             throw new IllegalArgumentException("Icon [" + iconName + "] does not exist");
         }

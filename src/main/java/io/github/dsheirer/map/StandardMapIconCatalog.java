@@ -11,7 +11,7 @@ import java.util.stream.Stream;
 
 /**
  * The bundled map icons that may be sent to a browser.  This deliberately does not read paths from persisted icon
- * records or accept user-supplied paths.  Custom icon delivery is a separate product decision.
+ * records or accept user-supplied paths. This is also the Alias editor's complete icon catalog.
  */
 public enum StandardMapIconCatalog
 {
@@ -66,7 +66,7 @@ public enum StandardMapIconCatalog
 
     public static StandardMapIconCatalog forAliasName(String aliasName)
     {
-        return BY_NAME.getOrDefault(aliasName, NO_ICON);
+        return aliasName != null ? BY_NAME.getOrDefault(aliasName, NO_ICON) : NO_ICON;
     }
 
     public static StandardMapIconCatalog forSlug(String slug)

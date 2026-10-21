@@ -63,7 +63,6 @@ public final class TunerDiagnosticService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerDiagnosticService.class);
     public static final int FFT_SIZE = 8_192;
-    public static final int MAXIMUM_TRANSMITTED_BINS = FFT_SIZE;
     public static final int FRAMES_PER_SECOND = 10;
     private static final int MAXIMUM_DECIMATION = 32;
     private static final int QUANTIZATION_BITS = 8;

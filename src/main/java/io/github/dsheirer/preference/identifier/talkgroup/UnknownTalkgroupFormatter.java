@@ -19,13 +19,6 @@
 
 package io.github.dsheirer.preference.identifier.talkgroup;
 
-import io.github.dsheirer.preference.identifier.IntegerFormat;
-
 public class UnknownTalkgroupFormatter extends AbstractIntegerFormatter
 {
-    @Override
-    public String format(int value, IntegerFormat integerFormat)
-    {
-        return format(value);
-    }
 }

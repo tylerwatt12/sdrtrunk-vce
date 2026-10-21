@@ -924,7 +924,7 @@ class RemoteConnectivityServiceTest
             AliasModel aliases = new AliasModel();
             skipConfigurationFlush = failRemovalPublication;
             configuration = new ConfigurationManager(preferences, null, aliases,
-                new EventLogManager(aliases, preferences), null)
+                new EventLogManager(aliases, preferences))
             {
                 @Override
                 public synchronized ChannelConfigurationSnapshot commitAndPublishRemoteSenderRemoval(

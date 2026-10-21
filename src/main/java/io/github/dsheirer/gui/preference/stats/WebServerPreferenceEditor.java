@@ -15,7 +15,6 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
-import io.github.dsheirer.stats.StatsWebPath;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.stats.WebServerRuntimeState;
 import io.github.dsheirer.web.auth.Pbkdf2PasswordHasher;
@@ -388,10 +387,6 @@ public class WebServerPreferenceEditor extends HBox
         advanced.setPadding(new Insets(8));
         advanced.add(new Label("Port"), 0, 0);
         advanced.add(getPortField(), 1, 0);
-        advanced.add(new Label("Editable assets folder"), 0, 1);
-        Label assets = wrappingLabel();
-        assets.setText(StatsWebPath.getAssetsPath().toString());
-        advanced.add(assets, 1, 1);
         ColumnConstraints labels = new ColumnConstraints();
         labels.setPercentWidth(27);
         ColumnConstraints values = new ColumnConstraints();

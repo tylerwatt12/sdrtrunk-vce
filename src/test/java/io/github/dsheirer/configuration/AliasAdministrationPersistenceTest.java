@@ -109,7 +109,7 @@ class AliasAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -134,7 +134,7 @@ class AliasAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -197,7 +197,7 @@ class AliasAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -277,7 +277,7 @@ class AliasAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -488,7 +488,7 @@ class AliasAdministrationPersistenceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
-            new AliasModel(), null, null);
+            new AliasModel(), null);
 
         try
         {
@@ -640,7 +640,7 @@ class AliasAdministrationPersistenceTest
 
         private FailingConfigurationManager(UserPreferences preferences)
         {
-            super(preferences, null, new AliasModel(), null, null);
+            super(preferences, null, new AliasModel(), null);
         }
 
         private void failNextSave()
@@ -667,7 +667,7 @@ class AliasAdministrationPersistenceTest
 
         private LateChannelConfigurationManager(UserPreferences preferences)
         {
-            super(preferences, null, new AliasModel(), null, null);
+            super(preferences, null, new AliasModel(), null);
         }
 
         private void addChannelDuringNextCommit()
@@ -695,7 +695,7 @@ class AliasAdministrationPersistenceTest
 
         private RecoveringPublicationManager(UserPreferences preferences)
         {
-            super(preferences, null, new AliasModel(), null, null);
+            super(preferences, null, new AliasModel(), null);
         }
 
         private void failNextPublication()
@@ -719,7 +719,7 @@ class AliasAdministrationPersistenceTest
     {
         private UnrecoverablePublicationManager(UserPreferences preferences)
         {
-            super(preferences, null, new AliasModel(), null, null);
+            super(preferences, null, new AliasModel(), null);
         }
 
         @Override
