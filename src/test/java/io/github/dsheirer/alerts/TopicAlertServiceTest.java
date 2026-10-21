@@ -367,7 +367,7 @@ class TopicAlertServiceTest
     {
         service.updateConfiguration(new TopicAlertConfiguration(1, new TopicAlertConfiguration.PushSettings(true, "proxy", "", "VCE test"),
             List.of(AlertTopic.administratorAlerts(), new AlertTopic("fire", "Fire", "", true, true, false)), List.of(rule)), 1);
-        service.saveDevice(new AlertDevice("phone", "Phone", "proxy", "remote-phone", "", "", "", "a".repeat(64), List.of("fire"), false, "", "", "UTC"));
+        service.saveDevice(new AlertDevice("phone", "Phone", "proxy", "remote-phone", "", "", "", "a".repeat(64), List.of("fire"), false));
     }
     private static AlertRule rule(String mode, int minutes, int count, int window)
     {

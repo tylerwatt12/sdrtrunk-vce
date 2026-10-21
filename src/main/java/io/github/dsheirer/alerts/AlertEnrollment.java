@@ -27,19 +27,4 @@ public record AlertEnrollment(String id, @JsonProperty("remote_enrollment_id") S
         enrollmentUrl = AlertRule.text(enrollmentUrl, "Enrollment URL", 2048, true);
         code = AlertRule.text(code, "Enrollment code", 240, true);
     }
-
-    /** Source compatibility only: retired personal delivery preferences are discarded. */
-    public AlertEnrollment(String id, String remoteEnrollmentId, String manageTokenHash, List<String> topicIds,
-                           boolean ignoredPaused, String ignoredQuietStart, String ignoredQuietEnd, String ignoredTimeZone,
-                           long createdAtMs, long expiresAtMs, String status, String deviceId, String enrollmentUrl, String code)
-    {
-        this(id, remoteEnrollmentId, manageTokenHash, topicIds, createdAtMs, expiresAtMs, status, deviceId, enrollmentUrl, code);
-    }
-
-    public AlertEnrollment(String id, String remoteEnrollmentId, String manageTokenHash, List<String> topicIds,
-                           boolean ignoredPaused, String ignoredQuietStart, String ignoredQuietEnd, String ignoredTimeZone,
-                           long createdAtMs, long expiresAtMs, String status, String deviceId)
-    {
-        this(id, remoteEnrollmentId, manageTokenHash, topicIds, createdAtMs, expiresAtMs, status, deviceId, "", "");
-    }
 }

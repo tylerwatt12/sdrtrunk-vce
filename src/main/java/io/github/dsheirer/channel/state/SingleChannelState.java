@@ -50,8 +50,6 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.Collections;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Channel state tracks the overall state of all processing modules and decoders configured for the channel and
@@ -83,7 +81,6 @@ import org.slf4j.LoggerFactory;
 public class SingleChannelState extends AbstractChannelState implements IDecoderStateEventListener, ISourceEventListener,
     IdentifierUpdateListener, IStateMachineListener
 {
-    private static final Logger mLog = LoggerFactory.getLogger(SingleChannelState.class);
     public static final long FADE_TIMEOUT_DELAY = 1200;
     public static final long RESET_TIMEOUT_DELAY = 2000;
 

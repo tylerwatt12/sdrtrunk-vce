@@ -229,7 +229,9 @@ class TopicAlertsHttpControllerTest
             f.service.updateConfiguration(new TopicAlertConfiguration(current.revision(),
                 new TopicAlertConfiguration.PushSettings(true, "direct", "https://vce.example", "VCE"), current.topics(), current.rules()), current.revision());
             String publicKey = WebPushCodec.generateKeys().publicKey();
-            Map<String,Object> request = Map.of("topic_ids", java.util.List.of("fire"), "prefs", Map.of("paused", true, "quiet_enabled", true, "time_zone", "retired-invalid-zone"),
+            Map<String,Object> retiredPreferences = Map.of("paused", true, "quiet_enabled", true,
+                "quiet_start", "00:00", "quiet_end", "00:00", "time_zone", "retired-invalid-zone");
+            Map<String,Object> request = Map.of("topic_ids", java.util.List.of("fire"), "prefs", retiredPreferences,
                 "subscription", Map.of("endpoint", "https://fcm.googleapis.com/send/public-test-fixture",
                     "keys", Map.of("p256dh", publicKey, "auth", Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]))));
             assertEquals(403, f.send("POST", "/api/v1/alerts/enrollments", request, null, false).statusCode());
@@ -240,6 +242,14 @@ class TopicAlertsHttpControllerTest
             assertEquals(200, device.statusCode());
             for(String secret: java.util.List.of("prefs", "paused", "quiet_start", "quiet_end", "time_zone", "endpoint", "p256dh", "auth", "manage_token_hash", "remote_device_id"))
                 assertFalse(f.body(device).has(secret), secret);
+            var updated = f.send("PUT", "/api/v1/alerts/subscriptions/me", Map.of("topic_ids", List.of("fire"),
+                "prefs", retiredPreferences), token, true);
+            assertEquals(200, updated.statusCode(), updated.body());
+            f.service.saveRule(new AlertRule("dispatch", "Dispatch activity", "fire", true, "call", "", "", "", "", null, null, null,
+                0, "rule", false, "Dispatch", "Activity", "details"), f.service.configuration().revision());
+            f.service.testRule("dispatch", f.service.configuration().revision());
+            assertEquals(1, f.service.pendingDeliveries(10).size(), "Retired personal preferences cannot suppress delivery");
+            assertEquals(f.body(enrolled).path("device_id").asText(), f.service.pendingDeliveries(10).getFirst().deviceId());
             assertEquals(403, f.send("GET", "/api/v1/alerts/subscriptions/me", null, PublicAccessVerifier.token(), false).statusCode());
             assertEquals(422, f.send("PUT", "/api/v1/alerts/subscriptions/me", Map.of("topic_ids", java.util.List.of("administrator-alerts"), "prefs", Map.of()), token, true).statusCode());
             assertEquals(200, f.send("DELETE", "/api/v1/alerts/subscriptions/me", null, token, true).statusCode());

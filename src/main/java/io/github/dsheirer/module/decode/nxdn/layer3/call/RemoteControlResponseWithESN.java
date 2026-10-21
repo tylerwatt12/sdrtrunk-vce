@@ -33,7 +33,6 @@ import java.util.List;
 public class RemoteControlResponseWithESN extends RemoteControl
 {
     private static final IntField CAUSE = IntField.length8(OCTET_6);
-    private static final int LOCATION_ID_OFFSET = OCTET_7;
 
     /**
      * Constructs an instance

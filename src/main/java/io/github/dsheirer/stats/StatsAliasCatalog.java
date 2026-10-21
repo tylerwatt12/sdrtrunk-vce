@@ -1433,7 +1433,7 @@ final class StatsAliasCatalog
     }
 
     /**
-     * Adds the same identifier-overlap warning shown by the desktop editor to only the bounded rows being returned.
+     * Adds identifier-overlap warnings to only the bounded rows being returned.
      * The correlated comparison still checks every sibling in the owning alias list, so paging and filters cannot
      * hide a collision.
      */

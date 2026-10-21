@@ -101,19 +101,17 @@ class PushDeliveryServiceTest
         }
     }
 
-    @Test void relayExpiryAndRenewalKeepGuestTopicsWhileRetiredPreferencesAreIgnored() throws Exception
+    @Test void relayExpiryAndRenewalKeepGuestTopics() throws Exception
     {
         try(Fixture f = new Fixture(directory.resolve("renew-relay.sqlite")))
         {
-            f.push.updateDevice(f.tokenA, List.of("fire"), JSON.valueToTree(Map.of("paused", true,
-                "quiet_enabled", true, "quiet_start", "22:00", "quiet_end", "07:00", "time_zone", "UTC")));
+            f.push.updateDevice(f.tokenA, List.of("fire"));
             f.updates = JSON.valueToTree(Map.of("cursor", "1", "updates", List.of(
                 Map.of("type", "device_expired", "device_id", REMOTE_A))));
             f.push.relayTick();
             assertTrue(f.push.managedDevice(f.tokenA).subscriptionExpired());
-            f.push.updateDevice(f.tokenA, List.of("fire"), JSON.valueToTree(Map.of("paused", false,
-                "quiet_enabled", true, "quiet_start", "21:00", "quiet_end", "06:00", "time_zone", "UTC")));
-            assertTrue(f.push.managedDevice(f.tokenA).subscriptionExpired(), "Editing preferences must not reactivate an expired endpoint");
+            f.push.updateDevice(f.tokenA, List.of("fire"));
+            assertTrue(f.push.managedDevice(f.tokenA).subscriptionExpired(), "Editing topics must not reactivate an expired endpoint");
             f.updates = JSON.valueToTree(Map.of("cursor", "2", "updates", List.of(
                 Map.of("type", "device_refreshed", "device_id", REMOTE_A))));
             f.push.relayTick();
@@ -132,7 +130,7 @@ class PushDeliveryServiceTest
         {
             String newToken = PublicAccessVerifier.token(); long now = System.currentTimeMillis();
             f.service.saveEnrollment(new AlertEnrollment("second-pairing", "c".repeat(32), PushDeliveryService.hashToken(newToken),
-                List.of("fire"), true, "22:00", "07:00", "UTC", now, now + 900_000, "pending", ""));
+                List.of("fire"), now, now + 900_000, "pending", "", "", ""));
             f.updates = JSON.valueToTree(Map.of("status", "completed", "device_id", REMOTE_A));
             f.push.enrollment("second-pairing", newToken);
             assertEquals(2, f.service.devices().size());
@@ -151,7 +149,7 @@ class PushDeliveryServiceTest
             String endpoint = "https://fcm.googleapis.com/send/expired";
             f.service.unsubscribe("phone-a");
             f.service.saveDevice(new AlertDevice("direct-phone", "Phone", "direct", "", endpoint, keys.publicKey(), auth,
-                PushDeliveryService.hashToken(f.tokenA), List.of("fire"), true, "22:00", "07:00", "UTC", true));
+                PushDeliveryService.hashToken(f.tokenA), List.of("fire"), true));
             f.push.refreshSubscription(f.tokenA, JSON.valueToTree(Map.of("endpoint", endpoint,
                 "keys", Map.of("p256dh", keys.publicKey(), "auth", auth))));
             assertTrue(f.push.managedDevice(f.tokenA).subscriptionExpired());
@@ -198,9 +196,9 @@ class PushDeliveryServiceTest
             String auth = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[16]);
             JsonNode subscription = JSON.valueToTree(Map.of("endpoint", "https://fcm.googleapis.com/send/this-browser",
                 "keys", Map.of("p256dh", keys.publicKey(), "auth", auth)));
-            var first = f.push.enroll(List.of("fire"), JSON.createObjectNode(), subscription);
+            var first = f.push.enroll(List.of("fire"), subscription);
             f.service.markDeviceExpired((String)first.get("device_id"), true);
-            var second = f.push.enroll(List.of("fire"), JSON.createObjectNode(), subscription);
+            var second = f.push.enroll(List.of("fire"), subscription);
             assertEquals(first.get("device_id"), second.get("device_id"));
             assertEquals(3, f.service.devices().size());
             assertEquals("reconnect_required", second.get("status"));
@@ -208,7 +206,7 @@ class PushDeliveryServiceTest
             assertThrows(SecurityException.class, () -> f.push.managedDevice((String)first.get("manage_token")));
             JsonNode collision = JSON.valueToTree(Map.of("endpoint", subscription.path("endpoint").asText(),
                 "keys", Map.of("p256dh", WebPushCodec.generateKeys().publicKey(), "auth", auth)));
-            assertThrows(IllegalArgumentException.class, () -> f.push.enroll(List.of("fire"), JSON.createObjectNode(), collision));
+            assertThrows(IllegalArgumentException.class, () -> f.push.enroll(List.of("fire"), collision));
         }
     }
 
@@ -218,7 +216,7 @@ class PushDeliveryServiceTest
         {
             String token = PublicAccessVerifier.token(); long now = System.currentTimeMillis();
             f.service.saveEnrollment(new AlertEnrollment("pending-phone", "d".repeat(32), PushDeliveryService.hashToken(token),
-                List.of("fire"), false, "", "", "UTC", now, now + 900_000, "pending", ""));
+                List.of("fire"), now, now + 900_000, "pending", "", "", ""));
             f.push.deregister();
             assertEquals("cancelled", f.push.enrollment("pending-phone", token).get("status"));
             assertTrue(f.service.devices().isEmpty());
@@ -242,18 +240,6 @@ class PushDeliveryServiceTest
         }
     }
 
-    @Test void legacyPersonalPreferencesCannotSuppressAnExistingSubscription() throws Exception
-    {
-        try(Fixture f = new Fixture(directory.resolve("retired-prefs.sqlite")))
-        {
-            f.push.updateDevice(f.tokenA, List.of("fire"), JSON.valueToTree(Map.of("paused", true,
-                "quiet_enabled", true, "quiet_start", "00:00", "quiet_end", "00:00", "time_zone", "invalid-retired-zone")));
-            var delivery = f.publish(); f.push.deliverRelayBatch(delivery);
-            assertTrue(f.requests.getFirst().path("suppressed_device_ids").isEmpty());
-            assertFalse(JSON.valueToTree(f.push.managedDevice(f.tokenA)).has("time_zone"));
-        }
-    }
-
     private static final class Fixture implements AutoCloseable
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
@@ -270,8 +256,8 @@ class PushDeliveryServiceTest
             service.saveRule(rule, service.configuration().revision());
             var current = service.configuration(); service.updateConfiguration(new TopicAlertConfiguration(current.revision(),
                 new TopicAlertConfiguration.PushSettings(true, "proxy", "", "VCE"), current.topics(), current.rules()), current.revision());
-            service.saveDevice(new AlertDevice("phone-a", "Phone A", "proxy", REMOTE_A, "", "", "", PushDeliveryService.hashToken(tokenA), List.of("fire"), false, "", "", "UTC"));
-            service.saveDevice(new AlertDevice("phone-b", "Phone B", "proxy", REMOTE_B, "", "", "", PushDeliveryService.hashToken(tokenB), List.of("fire"), false, "", "", "UTC"));
+            service.saveDevice(new AlertDevice("phone-a", "Phone A", "proxy", REMOTE_A, "", "", "", PushDeliveryService.hashToken(tokenA), List.of("fire"), false));
+            service.saveDevice(new AlertDevice("phone-b", "Phone B", "proxy", REMOTE_B, "", "", "", PushDeliveryService.hashToken(tokenB), List.of("fire"), false));
             var credentials = new PushCredentialStore(database); credentials.prepareRegistration(); credentials.registration("sender-fixture", "approved");
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/", exchange -> {

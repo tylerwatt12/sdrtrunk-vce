@@ -185,7 +185,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private static final String STATUS_UPDATE_LABEL = "STATUS UPDATE - ";
     private static final String STEALTH_LABEL = " (STEALTH)";
     private static final String TIME_LABEL = " TIME:";
-    private static final String UNIT_REGISTRATION_LABEL = "UNIT REGISTRATION";
     private static final String UNIT_LABEL = "UNIT:";
     private static final String USER_PAGE_RETURN_LABEL = "USER PAGE-RETURN TO CONTROL CHANNEL";
     private static final String USER_LABEL = " USER:";

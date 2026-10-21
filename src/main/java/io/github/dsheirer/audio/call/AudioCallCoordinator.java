@@ -2590,11 +2590,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return discardedSamples;
         }
 
-        private CompletedReceiverLeg preview()
-        {
-            return latestSnapshot != null ? build(false) : null;
-        }
-
         private CompletedReceiverLeg complete()
         {
             return build(true);

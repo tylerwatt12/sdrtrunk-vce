@@ -59,7 +59,6 @@ public class P25P1DemodulatorC4FM
     private static final int BUFFER_WORKSPACE_LENGTH = 1024;
     private static final int DIBIT_LENGTH_NID = 33; //32 dibits (64 bits) +1 status
     private static final int DIBIT_LENGTH_SYNC = 24;
-    private static final int SYMBOL_RATE = 4800;
     private static final Correction INVALID_SYNC_DETECTION = new Correction(0d, Double.MAX_VALUE, 0f, 0f, 0f, 0f, 0);
     private static final Dibit[] SYNC_PATTERN_DIBITS = P25P1SyncDetector.syncPatternToDibits();
     private static final IntField NAC_FIELD = IntField.length12(0);

@@ -64,7 +64,6 @@ public class DMRSoftSymbolProcessor
     private static final int BUFFER_PROTECTED_REGION_DIBITS = 92;
     private static final int BUFFER_WORKSPACE_LENGTH_DIBITS = 25; //This can be adjusted for efficiency
     private static final int BUFFER_LENGTH_DIBITS = BUFFER_PROTECTED_REGION_DIBITS + BUFFER_WORKSPACE_LENGTH_DIBITS;
-    private static final int SYMBOL_RATE = 4800;
     private static final float EQUALIZER_LOOP_GAIN = 0.15f;
     private static final float MAXIMUM_EQUALIZER_BALANCE = (float)(Math.PI / 3.0);
     private static final float MAXIMUM_EQUALIZER_GAIN = 1.25f;

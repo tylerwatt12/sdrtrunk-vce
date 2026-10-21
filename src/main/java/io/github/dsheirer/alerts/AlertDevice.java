@@ -26,19 +26,4 @@ public record AlertDevice(String id, String name, String method,
         topicIds = topicIds != null ? List.copyOf(topicIds.stream().distinct().toList()) : List.of();
         if(topicIds.size() > 256) throw new IllegalArgumentException("Too many topic subscriptions");
     }
-
-    /** Source compatibility only: retired personal delivery preferences are discarded. */
-    public AlertDevice(String id, String name, String method, String remoteDeviceId, String endpoint, String p256dh,
-                       String auth, String manageTokenHash, List<String> topicIds, boolean ignoredPaused,
-                       String ignoredQuietStart, String ignoredQuietEnd, String ignoredTimeZone, boolean subscriptionExpired)
-    {
-        this(id, name, method, remoteDeviceId, endpoint, p256dh, auth, manageTokenHash, topicIds, subscriptionExpired);
-    }
-
-    public AlertDevice(String id, String name, String method, String remoteDeviceId, String endpoint, String p256dh,
-                       String auth, String manageTokenHash, List<String> topicIds, boolean ignoredPaused,
-                       String ignoredQuietStart, String ignoredQuietEnd, String ignoredTimeZone)
-    {
-        this(id, name, method, remoteDeviceId, endpoint, p256dh, auth, manageTokenHash, topicIds, false);
-    }
 }

@@ -209,11 +209,6 @@ public final class SdrTrunkDatabaseBootstrap
 
     public record BootstrapResult(boolean startApplication, boolean initializeNewPreferences)
     {
-        private static BootstrapResult cancelled()
-        {
-            return new BootstrapResult(false, false);
-        }
-
     }
 
     public record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent,

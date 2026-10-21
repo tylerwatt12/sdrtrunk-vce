@@ -40,7 +40,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -54,7 +53,7 @@ import java.util.function.Supplier;
 import javafx.application.Platform;
 
 /**
- * Command boundary shared by desktop and web Alias administration. Each command mutates a detached candidate,
+ * Command boundary for Alias administration. Each command mutates a detached candidate,
  * commits one complete SQLite transaction, and then publishes only the committed rows to the runtime models.
  */
 public final class AliasAdministrationService
@@ -84,7 +83,7 @@ public final class AliasAdministrationService
     }
 
     /**
-     * Returns the current Alias configuration revision on the configuration-model thread. Desktop editors can retain
+     * Returns the current Alias configuration revision on the configuration-model thread. Clients can retain
      * this value while staging a detached form and use a revision-aware mutation when overwriting stale data matters.
      */
     public long currentRevision()
@@ -493,7 +492,7 @@ public final class AliasAdministrationService
     }
 
     /**
-     * Creates an Alias list from a trusted desktop workflow using the current serialized model state.
+     * Creates an Alias list using the current serialized model state.
      */
     public MutationResult createAliasList(String name, AliasListFamily family)
     {
@@ -661,7 +660,7 @@ public final class AliasAdministrationService
     }
 
     /**
-     * Creates an Alias from a trusted desktop workflow using the current serialized model state.
+     * Creates an Alias using the current serialized model state.
      */
     public MutationResult createAlias(Alias alias)
     {
@@ -697,7 +696,7 @@ public final class AliasAdministrationService
     }
 
     /**
-     * Applies the fields supported by the desktop multiple-alias editor, plus compatible move and delete operations.
+     * Applies shared Alias fields, moves, or deletions to the selected Aliases.
      */
     public MutationResult bulkEdit(BulkEdit edit, long expectedRevision)
     {

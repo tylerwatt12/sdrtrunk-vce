@@ -1902,23 +1902,6 @@ final class CurrentDatabaseBestEffortRepair
         return !row.wasNull() && bytes <= maximumBytes;
     }
 
-    private static boolean addressDomain(Object value)
-    {
-        return integer(value) && ((Number)value).longValue() >= 0 && ((Number)value).longValue() <= 2;
-    }
-
-    private static long scalar(Connection connection, String sql) throws SQLException
-    {
-        try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery(sql))
-        {
-            if(!resultSet.next())
-            {
-                throw new SQLException("Current-format relationship repair count returned no result");
-            }
-            return resultSet.getLong(1);
-        }
-    }
-
     record Inspection(long droppedRelationships, long repairedBroadcastRoutes, long clearedChannelAliasLists,
                       long droppedChannels, long repairedChannels, long droppedBroadcastProviders,
                       long repairedBroadcastProviders,

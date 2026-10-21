@@ -186,10 +186,6 @@ public class ReceiverActivitySchema
         .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
             ") = 'integer' AND " + column + " >= 0)")
         .collect(Collectors.joining(",\n                    "));
-    private static final String ACTION_INSERT_COLUMNS = String.join(", ", ACTION_COUNT_COLUMNS);
-    private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
-        .map(column -> "?")
-        .collect(Collectors.joining(", "));
     private static final List<String> TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS = TRUNKED_SIGNALING_ACTIONS.stream()
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count")
         .toList();
@@ -5603,20 +5599,10 @@ public class ReceiverActivitySchema
             receiverKind == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG;
     }
 
-    private static boolean isTalkgroup(String targetKind)
-    {
-        return "TALKGROUP".equals(targetKind) || "PATCH_GROUP".equals(targetKind);
-    }
-
     /** Zero and the P25 all-call value remain visible in detail but are not projected into the talkgroup directory. */
     private static boolean isDirectoryTalkgroup(Integer talkgroup)
     {
         return talkgroup != null && talkgroup > 0 && talkgroup < P25_EVERYONE_TALKGROUP;
-    }
-
-    private static List<Integer> patchMemberTalkgroups(ReceiverActivityRecords.ActivityEvent activity)
-    {
-        return "PATCH_GROUP".equals(activity.targetKind()) ? activity.patchMemberTalkgroupIds() : List.of();
     }
 
     private static int summaryTimeslot(Integer timeslot)

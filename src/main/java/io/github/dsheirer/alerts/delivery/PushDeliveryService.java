@@ -131,12 +131,7 @@ public final class PushDeliveryService implements AutoCloseable
             "approved".equals(mCredentials.get().registrationStatus()));
     }
 
-    public Map<String,Object> enroll(List<String> topics, JsonNode subscription) throws Exception
-    {
-        return enroll(topics, JSON.createObjectNode(), subscription);
-    }
-
-    public synchronized Map<String,Object> enroll(List<String> topics, JsonNode ignoredLegacyPreferences, JsonNode subscription) throws Exception
+    public synchronized Map<String,Object> enroll(List<String> topics, JsonNode subscription) throws Exception
     {
         if(!ready()) throw new IllegalStateException("Notifications are not ready. Ask the administrator to finish push setup.");
         requireTopics(topics, List.of());
@@ -200,12 +195,7 @@ public final class PushDeliveryService implements AutoCloseable
         return device;
     }
 
-    public void updateDevice(String token, List<String> topics) throws Exception
-    {
-        updateDevice(token, topics, JSON.createObjectNode());
-    }
-
-    public synchronized void updateDevice(String token, List<String> topics, JsonNode ignoredLegacyPreferences) throws Exception
+    public synchronized void updateDevice(String token, List<String> topics) throws Exception
     {
         AlertDevice old = managedDevice(token);
         requireTopics(topics, old.topicIds());

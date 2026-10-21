@@ -3549,10 +3549,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 
     private record GeneratedDefaultMembershipRecovery(Set<Long> aliasIds, Set<Long> aliasListIds, long sourceRows)
     {
-        private static GeneratedDefaultMembershipRecovery none()
-        {
-            return new GeneratedDefaultMembershipRecovery(Set.of(), Set.of(), 0);
-        }
     }
 
     private record WebUserRow(long id, String username, String tier, boolean primary, int credentialVersion,

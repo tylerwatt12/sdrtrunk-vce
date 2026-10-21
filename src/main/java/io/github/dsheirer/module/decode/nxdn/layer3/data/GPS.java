@@ -39,11 +39,8 @@ public class GPS extends NXDNPacketMessage
 {
     private static final IntField MESSAGE_TYPE = IntField.length16(0); //Constant: 0xFFFC
     private static final IntField SATELLITES_IN_VIEW = IntField.length8(16);
-    private static final IntField UNKNOWN_1 = IntField.length16(24);
-    private static final IntField UNKNOWN_2 = IntField.length32(40); //0x37FF3422 or 0x3400342F ??
     private static final IntField ELEVATION_METERS = IntField.length16(72);
     private static final IntField SPEED_KPH_TENTHS = IntField.length14(90);
-    private static final IntField UNKNOWN_3 = IntField.length4(104);
     private static final IntField HEADING_TENTHS = IntField.length12(108);
     private static final IntField DATE_UTC_YEAR = IntField.length7(152); //Year: 2000 - 2127
     private static final IntField DATE_UTC_MONTH = IntField.length4(159); //Month: 1-12
@@ -57,8 +54,6 @@ public class GPS extends NXDNPacketMessage
     private static final IntField TIME_UTC_HOURS = IntField.length5(263);
     private static final IntField TIME_UTC_MINUTES = IntField.length6(268);
     private static final IntField TIME_UTC_SECONDS = IntField.length6(274);
-    private static final IntField EMPTY = IntField.length24(280); //Always 0x000000
-    private static final IntField CRC_32 = IntField.length32(304);
     private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss z");
     private static final DecimalFormat DEGREES_FORMAT = new DecimalFormat("0.000000");
     private Long mTimestamp;

@@ -70,11 +70,11 @@ class TopicAlertStoreTest
     @Test void pairingSessionAndOwnershipCompleteAtomicallyAndRetainUnavailableExistingChoices() throws Exception
     {
         Path path = mDirectory.resolve("pairing.sqlite"); TopicAlertStore store = store(path);
-        var session = new AlertEnrollment("session", "remote-session", "c".repeat(64), List.of("fire"), false, "", "", "UTC", NOW, NOW + 100_000, "pending", "", "https://example.test/pair", "code");
+        var session = new AlertEnrollment("session", "remote-session", "c".repeat(64), List.of("fire"), NOW, NOW + 100_000, "pending", "", "https://example.test/pair", "code");
         store.saveEnrollment(session);
         var hidden = new AlertTopic("fire", "Fire", "", false, false, false); var config = store.configuration();
         store.updateConfiguration(new TopicAlertConfiguration(config.revision(), config.push(), List.of(AlertTopic.administratorAlerts(), hidden), List.of()), config.revision());
-        var completed = new AlertEnrollment("session", "remote-session", "c".repeat(64), List.of("fire"), false, "", "", "UTC", NOW, NOW + 100_000, "completed", "phone", session.enrollmentUrl(), session.code());
+        var completed = new AlertEnrollment("session", "remote-session", "c".repeat(64), List.of("fire"), NOW, NOW + 100_000, "completed", "phone", session.enrollmentUrl(), session.code());
         var phone = device("phone", "remote-phone", "c"); store.completeEnrollment(completed, phone);
         TopicAlertStore restored = new TopicAlertStore(path);
         assertEquals("phone", restored.findEnrollmentByTokenHash("c".repeat(64)).orElseThrow().deviceId());
@@ -127,7 +127,7 @@ class TopicAlertStoreTest
             Path path = mDirectory.resolve("renew-" + method + ".sqlite"); TopicAlertStore store = store(path);
             var phone = new AlertDevice("phone", "Saved phone", method, "proxy".equals(method) ? "remote-phone" : "",
                 "direct".equals(method) ? "https://example.test/push/old" : "", "direct".equals(method) ? "public-key" : "",
-                "direct".equals(method) ? "auth" : "", "a".repeat(64), List.of("fire"), false, "22:00", "07:00", "America/New_York");
+                "direct".equals(method) ? "auth" : "", "a".repeat(64), List.of("fire"), false);
             store.saveDevice(phone);
             store.publish(topic(), "rule", "Rule", new AlertEvent("before", NOW, "call", Map.of()), "Title", "Body", "details", List.of(phone), NOW);
             long oldDelivery = store.pendingDeliveries(1, NOW).getFirst().id(); store.markDeviceExpired(phone.id(), true);
@@ -198,7 +198,7 @@ class TopicAlertStoreTest
         store.updateConfiguration(new TopicAlertConfiguration(config.revision(), config.push(), List.of(AlertTopic.administratorAlerts(), topic()), List.of()), config.revision()); return store;
     }
     private static AlertTopic topic() { return new AlertTopic("fire", "Fire", "", true, true, false); }
-    private static AlertDevice device(String id, String remote, String token) { return new AlertDevice(id, "Phone", "proxy", remote, "", "", "", token.repeat(64), List.of("fire"), false, "", "", "UTC"); }
+    private static AlertDevice device(String id, String remote, String token) { return new AlertDevice(id, "Phone", "proxy", remote, "", "", "", token.repeat(64), List.of("fire"), false); }
     private static String plan(Connection connection, String query) throws Exception
     {
         StringBuilder result = new StringBuilder(); try(Statement sql = connection.createStatement(); var rows = sql.executeQuery("EXPLAIN QUERY PLAN " + query)) { while(rows.next()) result.append(rows.getString(4)).append('\n'); } return result.toString();

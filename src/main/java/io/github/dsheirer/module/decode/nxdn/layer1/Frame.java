@@ -65,7 +65,6 @@ public class Frame
     private static final PunctureProvider PUNCTURE_PROVIDER_LONG_CAC = new PunctureProviderLongCAC();
     private static final PunctureProvider PUNCTURE_PROVIDER_NONE = new PunctureProviderNone();
     private static final PunctureProvider PUNCTURE_PROVIDER_SACCH_SCCH = new PunctureProviderSACCHAndSCCH();
-    private static final IntField STRUCTURE = IntField.length2(0);
     private static final IntField RADIO_ACCESS_NUMBER = IntField.length6(2);
     private static final FragmentedIntField LICH_FIELD = FragmentedIntField.of(0, 2, 4, 6, 8, 10, 12);
     private static final FragmentedIntField LICH_PARITY_FIELD = FragmentedIntField.of(0, 2, 4, 6);

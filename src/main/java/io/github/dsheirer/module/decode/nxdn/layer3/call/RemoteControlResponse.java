@@ -32,7 +32,6 @@ import java.util.List;
  */
 public class RemoteControlResponse extends RemoteControl
 {
-    private static final IntField CONTROL_COMMAND = IntField.length5(OCTET_2 + 3);
     private static final IntField CAUSE = IntField.length8(OCTET_8);
     private static final int LOCATION_ID_OFFSET = OCTET_9;
 

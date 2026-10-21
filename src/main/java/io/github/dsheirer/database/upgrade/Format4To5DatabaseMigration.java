@@ -1175,35 +1175,6 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                 eventLog != null && eventLog.getLoggers() != null && !eventLog.getLoggers().isEmpty());
         }
 
-        private static boolean readBooleanFlag(ResultSet resultSet, String column) throws SQLException, IOException
-        {
-            long value = requiredInteger(resultSet, column);
-            if(value == 0)
-            {
-                return false;
-            }
-            if(value == 1)
-            {
-                return true;
-            }
-            throw new IOException("configuration_channel " + column + " must be 0 or 1");
-        }
-
-        private static Integer readNullableInt(ResultSet resultSet, String column) throws SQLException, IOException
-        {
-            Long value = nullableInteger(resultSet, column);
-            if(value == null)
-            {
-                return null;
-            }
-            if(value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
-            {
-                throw new IOException("configuration_channel " + column +
-                    " is outside the supported integer range");
-            }
-            return value.intValue();
-        }
-
         private void bind(PreparedStatement statement, int firstParameter) throws SQLException
         {
             statement.setString(firstParameter, decoderType);
@@ -1239,29 +1210,6 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
             return null;
         }
 
-        private static long requiredInteger(ResultSet resultSet, String column) throws SQLException, IOException
-        {
-            Long value = nullableInteger(resultSet, column);
-            if(value == null)
-            {
-                throw new IOException("configuration_channel " + column + " cannot be null");
-            }
-            return value;
-        }
-
-        private static Long nullableInteger(ResultSet resultSet, String column) throws SQLException, IOException
-        {
-            Object value = resultSet.getObject(column);
-            if(value == null)
-            {
-                return null;
-            }
-            if(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)
-            {
-                return ((Number)value).longValue();
-            }
-            throw new IOException("configuration_channel " + column + " is not stored as an integer");
-        }
     }
 
     private record ChannelInspection(List<ActiveChannelRow> activeChannels, Set<Long> retiredChannelIds,

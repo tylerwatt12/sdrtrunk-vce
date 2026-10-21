@@ -40,8 +40,6 @@ import io.github.dsheirer.module.decode.nxdn.layer3.scch.InitializationVectorPar
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.List;
 import java.util.Objects;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * NXDN AMBE+ Frame recorder generates call sequence recordings containing JSON representations of audio
@@ -49,7 +47,6 @@ import org.slf4j.LoggerFactory;
  */
 public class NXDNCallSequenceRecorder extends MBECallSequenceRecorder
 {
-    private final static Logger mLog = LoggerFactory.getLogger(NXDNCallSequenceRecorder.class);
     public static final String PROTOCOL = "NXDN";
     private final EncryptionContextTracker mEncryptionContextTracker = new EncryptionContextTracker();
     private MBECallSequence mCallSequence;

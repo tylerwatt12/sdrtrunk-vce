@@ -44,8 +44,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * NXDN Message Processor.
@@ -54,7 +52,6 @@ import org.slf4j.LoggerFactory;
  */
 public class NXDNMessageProcessor implements Listener<IMessage>
 {
-    private final static Logger LOGGER = LoggerFactory.getLogger(NXDNMessageProcessor.class);
     private ChannelAccessInformation mChannelAccessInformation;
     private final Map<Integer, ChannelFrequency> mChannelFrequencyMap = new HashMap<>();
     private final PacketSequenceAssembler mPacketSequenceAssembler = new PacketSequenceAssembler();
