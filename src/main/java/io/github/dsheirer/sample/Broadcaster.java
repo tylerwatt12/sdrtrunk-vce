@@ -19,7 +19,6 @@
 package io.github.dsheirer.sample;
 
 import io.github.dsheirer.log.LoggingSuppressor;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -69,14 +68,6 @@ public class Broadcaster<T> implements Listener<T>
     public int getListenerCount()
     {
         return mListeners.size();
-    }
-
-    /**
-     * The list of listeners currently registered with this broadcaster
-     */
-    public List<Listener<T>> getListeners()
-    {
-        return Collections.unmodifiableList(mListeners);
     }
 
     /**

@@ -3297,16 +3297,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         return value;
     }
 
-    private static int integer(ResultSet rows, String column, String label) throws SQLException, IOException
-    {
-        long value = longInteger(rows, column, label);
-        if(value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
-        {
-            throw new IOException(label + " " + column + " is outside the integer range");
-        }
-        return (int)value;
-    }
-
     private static Integer nullableInteger(ResultSet rows, String column, String label)
         throws SQLException, IOException
     {

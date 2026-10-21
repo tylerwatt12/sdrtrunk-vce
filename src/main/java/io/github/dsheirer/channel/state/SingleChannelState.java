@@ -40,7 +40,6 @@ import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
-import io.github.dsheirer.module.decode.config.WithCallTimeout;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventListener;
@@ -124,12 +123,8 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         }
         else
         {
-            final DecodeConfiguration decodeConfig = channel.getDecodeConfiguration();
-            final int fadeTimeoutSeconds = decodeConfig instanceof WithCallTimeout withcalltimeout
-                ? withcalltimeout.getCallTimeoutSeconds()
-                : DecodeConfiguration.DEFAULT_CALL_TIMEOUT_DELAY_SECONDS;
-
-            mStateMachine.setFadeTimeoutBufferMilliseconds((long)fadeTimeoutSeconds * 1000);
+            mStateMachine.setFadeTimeoutBufferMilliseconds(
+                DecodeConfiguration.DEFAULT_CALL_TIMEOUT_DELAY_SECONDS * 1000L);
         }
     }
 

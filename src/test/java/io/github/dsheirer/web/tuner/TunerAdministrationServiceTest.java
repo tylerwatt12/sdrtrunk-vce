@@ -96,13 +96,23 @@ class TunerAdministrationServiceTest
     {
         FakeDiscoveredTuner tuner = new FakeDiscoveredTuner("measured-error");
         TestTuner live = new TestTuner(tuner);
-        live.getTunerController().setMeasuredFrequencyError(100);
         tuner.install(live);
         TunerAdministrationService service = new TunerAdministrationService(() -> List.of(tuner), target -> null);
 
-        TunerAdministrationService.MeasuredError error = service.snapshot().tuners().getFirst().measuredError();
-        assertEquals(100, error.hertz());
-        assertEquals(100 / (live.getTunerController().getFrequency() / 1_000_000.0), error.ppm());
+        for(int hertz : new int[]{100, 0, -125})
+        {
+            live.getTunerController().setMeasuredFrequencyError(hertz);
+            TunerAdministrationService.MeasuredError error = service.snapshot().tuners().getFirst().measuredError();
+            if(hertz == 0)
+            {
+                assertNull(error);
+            }
+            else
+            {
+                assertEquals(hertz, error.hertz());
+                assertEquals(hertz / (live.getTunerController().getFrequency() / 1_000_000.0), error.ppm());
+            }
+        }
     }
 
     @Test

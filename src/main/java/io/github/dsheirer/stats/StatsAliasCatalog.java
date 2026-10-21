@@ -2858,11 +2858,6 @@ final class StatsAliasCatalog
         return value instanceof String string && !string.isBlank() ? string : null;
     }
 
-    private static String lower(String value)
-    {
-        return value != null ? value.toLowerCase(Locale.ROOT) : null;
-    }
-
     private static long number(Object value)
     {
         return value instanceof Number number ? number.longValue() : 0;

@@ -54,14 +54,6 @@ public class RealResampler
     }
 
     /**
-     * Resample factor (output rate / input rate)
-     */
-    public double getResampleFactor()
-    {
-        return mResampleFactor;
-    }
-
-    /**
      * Resamples all of the audio packets
      * @param audioPackets to resample
      * @return resampled audio packets

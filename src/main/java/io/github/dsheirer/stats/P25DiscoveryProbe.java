@@ -359,11 +359,11 @@ public final class P25DiscoveryProbe implements AutoCloseable
             }
             String failure = switch(event.getEvent())
             {
-                case NOTIFICATION_ERROR_STATE, NOTIFICATION_TUNER_SHUTDOWN, NOTIFICATION_STOP_SAMPLE_STREAM ->
+                case NOTIFICATION_ERROR_STATE, NOTIFICATION_STOP_SAMPLE_STREAM ->
                     "The tuner stopped supplying samples. Retry when it is available.";
                 case NOTIFICATION_FREQUENCY_CHANGE -> event.hasValue() &&
                     event.getValue().longValue() != mFrequencyHz ? "The probe frequency changed. Retry discovery." : null;
-                case NOTIFICATION_SAMPLE_RATE_CHANGE, NOTIFICATION_CHANNEL_SAMPLE_RATE_CHANGE -> event.hasValue() &&
+                case NOTIFICATION_SAMPLE_RATE_CHANGE -> event.hasValue() &&
                     Double.compare(event.getValue().doubleValue(), mSampleRate) != 0 ?
                     "The tuner sample rate changed. Retry discovery." : null;
                 default -> null;

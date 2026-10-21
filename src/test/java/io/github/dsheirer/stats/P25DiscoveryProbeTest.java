@@ -796,6 +796,25 @@ class P25DiscoveryProbeTest
         }
     }
 
+    @Test
+    void ordinaryStopAndErrorNotificationsStillFailTheProbeAndReleaseItsSource() throws Exception
+    {
+        for(SourceEvent event : List.of(SourceEvent.stopSampleStreamNotification(null),
+            SourceEvent.errorState(null, "private hardware detail")))
+        {
+            FakeSource source = new FakeSource();
+            try(P25DiscoveryProbe probe = new P25DiscoveryProbe((target, frequency) -> source,
+                (modulation, rate, messages) -> decoder(samples -> { }), System::currentTimeMillis))
+            {
+                P25DiscoveryProbe.Session session = probe.open("target", FREQUENCY);
+                source.events.receive(event);
+                await(() -> session.status().state().equals("failed"));
+                assertFalse(session.status().reason().contains("private hardware detail"));
+                await(() -> source.closed.get() == 1);
+            }
+        }
+    }
+
     private static void confirm(P25DiscoveryProbe.ModeEvidence evidence, long base)
     {
         for(int x = 0; x < 3; x++)

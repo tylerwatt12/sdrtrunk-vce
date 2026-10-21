@@ -130,6 +130,23 @@ class ChannelControlFrequencyHistoryTest
             quality(new Channel("Other", Channel.ChannelType.STANDARD), FIRST, 20_000, 19_999), 20_001));
     }
 
+    @Test
+    void liveControlProofKeepsTheInclusiveFiveSecondFreshnessBoundary()
+    {
+        Channel channel = new Channel("Control", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId("123e4567-e89b-12d3-a456-426614174000");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        ControlChannelQualitySnapshot lastProof = quality(channel, FIRST, 25_000, 25_000);
+        assertTrue(ChannelAdministrationService.isConfirmedActiveControl(channel, FIRST, lastProof, 30_000));
+        assertFalse(ChannelAdministrationService.isConfirmedActiveControl(channel, FIRST, lastProof, 30_001));
+        assertTrue(ChannelAdministrationService.isConfirmedActiveControl(channel, FIRST,
+            quality(channel, FIRST, 30_000, 25_000), 30_000));
+        assertFalse(ChannelAdministrationService.isConfirmedActiveControl(channel, FIRST,
+            quality(channel, FIRST, 30_000, 24_999), 30_000));
+        assertFalse(ChannelAdministrationService.isConfirmedActiveControl(channel, FIRST,
+            quality(channel, FIRST, 30_001, 30_000), 30_000));
+    }
+
     private static ControlChannelQualitySnapshot quality(Channel channel, long frequency, long observed, long decoded)
     {
         return new ControlChannelQualitySnapshot(channel, channel.getConfigurationId(), frequency, observed, true,

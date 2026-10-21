@@ -23,7 +23,6 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.sample.ConversionUtils;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.SampleType;
-import io.github.dsheirer.source.IControllableFileSource;
 import io.github.dsheirer.source.IFrameLocationListener;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
@@ -44,7 +43,7 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.UnsupportedAudioFileException;
 
-public class ComplexWaveSource extends Source implements IControllableFileSource, AutoCloseable
+public class ComplexWaveSource extends Source implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexWaveSource.class);
 
@@ -210,12 +209,6 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     }
 
     @Override
-    public long getFrameCount() throws IOException
-    {
-        return 0;
-    }
-
-    @Override
     public double getSampleRate()
     {
         AudioInputStream stream = mInputStream;
@@ -306,7 +299,6 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     /**
      * Reads the number of frames and sends a buffer to the listener
      */
-    @Override
     public void next(int frames) throws IOException
     {
         next(frames, true);
@@ -374,7 +366,6 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
         mListener = null;
     }
 
-    @Override
     public File getFile()
     {
         return mFile;
@@ -390,13 +381,11 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
         }
     }
 
-    @Override
     public void setListener(IFrameLocationListener listener)
     {
         mFrameLocationListener = listener;
     }
 
-    @Override
     public void removeListener(IFrameLocationListener listener)
     {
         mFrameLocationListener = null;

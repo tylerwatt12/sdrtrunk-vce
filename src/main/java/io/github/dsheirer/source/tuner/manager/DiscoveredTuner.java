@@ -78,14 +78,6 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     }
 
     /**
-     * Logs current state of the tuner
-     */
-    public void logState()
-    {
-        mLog.info(getDiagnosticReport());
-    }
-
-    /**
      * Generates a state report for this tuner.
      * @return
      */

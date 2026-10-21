@@ -27,7 +27,6 @@ import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
-import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -153,7 +152,6 @@ public class SDRTrunk
     private ScheduledFuture<?> mManagedRecordingRetention;
     private ScheduledExecutorService mManagedRecordingMaintenance;
     private AudioStreamingManager mAudioStreamingManager;
-    private ControlChannelQualityRegistry mControlChannelQualityRegistry;
     private ConfigurationManager mConfigurationManager;
     private JFrame mMainGui;
     private BasebandRecordingDialog mBasebandRecordingDialog;
@@ -346,7 +344,6 @@ public class SDRTrunk
         {
             mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
         }
-        mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
             mStatsWebServerService::receive, call -> {
                 try { mStatsWebServerService.receiveCompletedCallForAlerts(call); }
@@ -363,8 +360,6 @@ public class SDRTrunk
             mReceiverActivityService.getDecodeEventListener());
         mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
             mReceiverActivityService.getControlChannelQualityListener());
-        mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
-            mControlChannelQualityRegistry);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mReceiverActivityService);
         mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mReceiverActivityService);
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
@@ -982,11 +977,6 @@ public class SDRTrunk
             mJavaFxWindowManager.shutdown();
         }
         mLog.info("Stopping channels ...");
-        if(mControlChannelQualityRegistry != null)
-        {
-            mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
-                mControlChannelQualityRegistry);
-        }
         ChannelProcessingManager channelProcessingManager =
             mConfigurationManager.getChannelProcessingManager();
         channelProcessingManager.close();
@@ -1126,10 +1116,6 @@ public class SDRTrunk
             mLogicalCallDiagnosticService.close();
         }
 
-        if(mControlChannelQualityRegistry != null)
-        {
-            mControlChannelQualityRegistry.clear();
-        }
         if(mResourceMonitor != null)
         {
             mResourceMonitor.stop();

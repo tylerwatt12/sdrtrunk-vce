@@ -28,7 +28,6 @@ public class InterpolatingSampleBuffer
 {
     private static final float MAXIMUM_DEVIATION_SAMPLES_PER_SYMBOL = 0.02f; // +/- 2% deviation
 
-    private Complex mPrecedingSample = new Complex(0,0);
     private Complex mCurrentSample = new Complex(0,0);
     private Complex mMiddleSample = new Complex(0,0);
 
@@ -127,31 +126,11 @@ public class InterpolatingSampleBuffer
     }
 
     /**
-     * Current value of the detected samples per symbol
-     */
-    public float getSamplingPoint()
-    {
-        return mSamplingPoint;
-    }
-
-    /**
      * Indicates if this buffer has accumulated a enough samples to represent a full symbol
      */
     public boolean hasSymbol()
     {
         return mSamplingPoint < 1.0f;
-    }
-
-    /**
-     * Un-interpolated sample that precedes the current interpolated sampling point.  The current interpolated sampling
-     * point falls somewhere between sample index 3 and index 4 and the sample is interpolated from sample
-     * indexes 0 - 7, therefore the uninterpolated sample that immediately precedes the current sample is
-     * located at index 3.
-     */
-    public Complex getPrecedingSample()
-    {
-        mPrecedingSample.setValues(mDelayLineInphase[mDelayLinePointer + 3], mDelayLineQuadrature[mDelayLinePointer + 3]);
-        return mPrecedingSample;
     }
 
     /**

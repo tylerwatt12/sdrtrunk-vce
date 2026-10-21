@@ -20,7 +20,6 @@
 package io.github.dsheirer.bits;
 
 import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
-import io.github.dsheirer.dsp.symbol.SyncDetectProvider;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 
@@ -36,7 +35,7 @@ import java.util.List;
  * Will extract multiple messages simultaneously, for each sync pattern that is
  * encountered within the bitset bit stream.
  */
-public class MessageFramer implements IBinarySymbolProcessor, Listener<Boolean>, SyncDetectProvider
+public class MessageFramer implements IBinarySymbolProcessor, Listener<Boolean>
 {
     private boolean[] mSyncPattern;
     private int mMessageLength;
@@ -113,7 +112,6 @@ public class MessageFramer implements IBinarySymbolProcessor, Listener<Boolean>,
         process(bit);
     }
 
-    @Override
     public void setSyncDetectListener(ISyncDetectListener listener)
     {
         mSyncDetectListener = listener;

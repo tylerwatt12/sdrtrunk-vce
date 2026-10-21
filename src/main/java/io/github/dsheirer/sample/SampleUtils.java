@@ -19,16 +19,10 @@
 
 package io.github.dsheirer.sample;
 
-import io.github.dsheirer.sample.complex.Complex;
 import io.github.dsheirer.sample.complex.ComplexSamples;
-import java.util.Random;
-import org.apache.commons.math3.util.FastMath;
 
 public class SampleUtils
 {
-	private static final double TWO_PI = Math.PI * 2.0;
-	private static final Random RANDOM = new Random();
-
 	private SampleUtils()
 	{
 	}
@@ -78,47 +72,4 @@ public class SampleUtils
 		return complex;
 	}
 
-	/**
-	 * Generates a buffer of complex samples where each sample's vector length is unity (1.0)
-	 * @param count of buffer samples
-	 * @return complex buffer
-	 */
-	public static ComplexSamples generateComplex(int count)
-	{
-
-		float[] i = new float[count];
-		float[] q = new float[count];
-
-		for(int x = 0; x < i.length; x++)
-		{
-			//Random angle in radians in range of -PI to + PI
-			double angle = RANDOM.nextDouble() * TWO_PI - Math.PI;
-
-			i[x] = (float)Math.cos(angle);
-			q[x] = (float)Math.sin(angle);
-		}
-
-		return new ComplexSamples(i, q, System.currentTimeMillis());
-	}
-
-    public static Complex multiply(Complex a, Complex b)
-    {
-        return new Complex((a.inphase() * b.inphase()) - (a.quadrature() * b.quadrature()),
-                ((a.quadrature() * b.inphase()) + (a.inphase() * b.quadrature())));
-    }
-
-    public static Complex minus(Complex a, Complex b)
-    {
-        return new Complex(a.inphase() - b.inphase(), a.quadrature() - b.quadrature());
-    }
-
-    public static double magnitude(Complex sample)
-    {
-        return FastMath.sqrt(magnitudeSquared(sample));
-    }
-
-    public static int magnitudeSquared(Complex sample)
-    {
-        return (int)((sample.inphase() * sample.inphase()) + (sample.quadrature() * sample.quadrature()));
-    }
 }

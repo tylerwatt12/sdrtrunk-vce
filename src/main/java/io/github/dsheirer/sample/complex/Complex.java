@@ -249,38 +249,6 @@ public class Complex implements Serializable
         }
     }
 
-    /**
-     * Maintains the vector magnitude close to 1.0 (unit circle) when the magnitude is already
-     * close to 1.0, avoiding square root multiplication.  If you need a faster way to set the
-     * magnitude to close to 1.0 without the square root of normalize(), use fastNormalize2().
-     */
-    public void fastNormalize()
-    {
-        multiply((1.9999f - magnitudeSquared()));
-    }
-
-    /**
-     * Sets vector magnitude to close to 1.0f without the magnitude square root operation
-     */
-    public void normalizeFast()
-    {
-        float inphaseAbsolute = FastMath.abs(inphase());
-        float quadratureAbsolute = FastMath.abs(quadrature());
-
-        float gain;
-
-        if(inphaseAbsolute > quadratureAbsolute)
-        {
-            gain = 1.0f / (inphaseAbsolute + (0.4f * quadratureAbsolute));
-        }
-        else
-        {
-            gain = 1.0f / (quadratureAbsolute + (0.4f * inphaseAbsolute));
-        }
-
-        multiply(gain);
-    }
-
     public float left()
     {
         return mLeft;
@@ -296,25 +264,9 @@ public class Complex implements Serializable
         return mLeft;
     }
 
-    /**
-     * Absolute value of in-phase component
-     */
-    public float inPhaseAbsolute()
-    {
-        return FastMath.abs(mLeft);
-    }
-
     public float quadrature()
     {
         return mRight;
-    }
-
-    /**
-     * Absolute value of quadrature component
-     */
-    public float quadratureAbsolute()
-    {
-        return FastMath.abs(mRight);
     }
 
     public float x()
@@ -325,40 +277,6 @@ public class Complex implements Serializable
     public float y()
     {
         return mRight;
-    }
-
-    public float real()
-    {
-        return mLeft;
-    }
-
-    /**
-     * Absolute value of real component
-     */
-    public float realAbsolute()
-    {
-        return FastMath.abs(mLeft);
-    }
-
-    public float imaginary()
-    {
-        return mRight;
-    }
-
-    /**
-     * Absolute value of imaginary component
-     */
-    public float imaginaryAbsolute()
-    {
-        return FastMath.abs(mRight);
-    }
-
-    /**
-     * Returns the greater absolute value between left and right values
-     */
-    public float maximumAbsolute()
-    {
-        return FastMath.max(FastMath.abs(mLeft), FastMath.abs(mRight));
     }
 
     /**
@@ -392,24 +310,6 @@ public class Complex implements Serializable
     }
 
     /**
-     * Angle in degrees
-     * @return angle value (-180.0 to 180.0) relative to engineering 0 degrees (ie due East)
-     */
-    public double angleDegrees()
-    {
-        return FastMath.toDegrees(FastMath.atan2(y(), x()));
-    }
-
-    /**
-     * Angle in polar degrees relative to true North
-     */
-    public double polarAngleDegrees()
-    {
-        double angle = FastMath.toDegrees(FastMath.atan2(y(), x()));
-        return (450.0 - angle) % 360.0;
-    }
-
-    /**
      * Constrains the i and q quantities to +/- value.
      *
      * @param value - maximum absolute value
@@ -433,14 +333,6 @@ public class Complex implements Serializable
         {
             mRight = -value;
         }
-    }
-
-    /**
-     * Angle of this sample in degrees
-     */
-    public float polarAngle()
-    {
-        return (float)FastMath.toDegrees(angle());
     }
 
     /**

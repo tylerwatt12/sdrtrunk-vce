@@ -377,6 +377,26 @@ class DigitalTrunkedDiscoveryProbeTest
         finally { release.countDown(); }
     }
 
+    @Test void ordinarySourceChangesStillFailDiscoveryAndReleaseItsReservation() throws Exception
+    {
+        for(SourceEvent event : List.of(SourceEvent.stopSampleStreamNotification(null),
+            SourceEvent.errorState(null, "private hardware detail"), SourceEvent.sampleRateChange(25_000),
+            SourceEvent.frequencyChange(null, FREQUENCY + 1_000)))
+        {
+            var source = new FakeSource();
+            try(var probe = new DigitalTrunkedDiscoveryProbe((target, frequency) -> source,
+                (mode, rate, messages) -> decoder(samples -> { }), System::currentTimeMillis))
+            {
+                var session = probe.open("recording", FREQUENCY, "dmr");
+                source.events.receive(event);
+                await(() -> "failed".equals(session.status().state()));
+                assertFalse(session.status().reason().contains("private hardware detail"));
+                assertNull(session.status().evidence());
+                await(() -> source.closed.get() == 1);
+            }
+        }
+    }
+
     @Test void upstreamDropDuringDecodeRejectsOtherwiseConfirmedProof() throws Exception
     {
         var source = new FakeSource();
@@ -810,10 +830,12 @@ class DigitalTrunkedDiscoveryProbeTest
         final AtomicLong upstreamDrops = new AtomicLong();
         volatile boolean reservationValid = true;
         private volatile Listener<ComplexSamples> samples;
+        private volatile Listener<SourceEvent> events;
         public double sampleRate() { return 50_000; }
         public boolean valid() { return reservationValid && closed.get() == 0; }
         public long droppedSampleBatches() { return upstreamDrops.get(); }
-        public void start(Listener<ComplexSamples> samples, Listener<SourceEvent> events) { this.samples = samples; }
+        public void start(Listener<ComplexSamples> samples, Listener<SourceEvent> events)
+        { this.samples = samples; this.events = events; }
         public void stopSamples() { samples = null; }
         public void close() { stopSamples(); closed.compareAndSet(0, 1); }
         void emit(ComplexSamples sample) { var listener = samples; if(listener != null) listener.receive(sample); }

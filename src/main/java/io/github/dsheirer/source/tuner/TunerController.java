@@ -38,7 +38,6 @@ import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.frequency.FrequencyController;
 import io.github.dsheirer.source.tuner.frequency.FrequencyController.Tunable;
 import io.github.dsheirer.source.tuner.frequency.TunerFrequencyErrorManager;
-import java.text.DecimalFormat;
 import java.util.SortedSet;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -58,14 +57,13 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     protected Broadcaster<INativeBuffer> mNativeBufferBroadcaster = new Broadcaster<>();
     protected FrequencyController mFrequencyController;
     private volatile int mMiddleUnusableHalfBandwidth;
-    private int mMeasuredFrequencyError;
+    private volatile int mMeasuredFrequencyError;
     private volatile double mUsableBandwidthPercentage;
     private SourceEventListenerToProcessorAdapter mSourceEventListener;
     private volatile NativeBufferWaveRecorder mRecorder;
     private final RecordingStatusBroadcaster mRecordingStatusBroadcaster = new RecordingStatusBroadcaster();
     private ITunerErrorListener mTunerErrorListener;
     private volatile boolean mCenterFrequencyLocked;
-    private static final DecimalFormat FREQUENCY_ERROR_PPM_FORMAT = new DecimalFormat("0.000");
     private TunerFrequencyErrorManager mTunerFrequencyErrorManager;
 
     /**
@@ -263,16 +261,13 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     }
 
     /**
-     * Responds to requests to set the frequency
+     * Responds to sample stream requests.
      */
     @Override
     public void process(SourceEvent sourceEvent ) throws SourceException
     {
         switch(sourceEvent.getEvent())
         {
-            case REQUEST_FREQUENCY_CHANGE:
-                setFrequency( sourceEvent.getValue().longValue() );
-                break;
             case REQUEST_START_SAMPLE_STREAM:
                 if(sourceEvent.getSource() instanceof INativeBufferListener listener)
                 {
@@ -598,62 +593,12 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     }
 
     /**
-     * Status of measured frequency and PPM error
-     */
-    public String getMeasuredErrorStatus()
-    {
-        if(hasMeasuredFrequencyError())
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Average Channel Error: ");
-            sb.append(getMeasuredFrequencyError());
-            sb.append(" Hz (");
-            sb.append(FREQUENCY_ERROR_PPM_FORMAT.format(getPPMFrequencyError()));
-            sb.append("ppm)");
-            return sb.toString();
-        }
-
-        return "";
-    }
-
-    /**
-     * Indicates if this tuner controller has a non-zero measured frequency error value.
-     */
-    public boolean hasMeasuredFrequencyError()
-    {
-        return mMeasuredFrequencyError != 0;
-    }
-
-    /**
-     * Calculates the current PPM error value as measured by certain downstream decoders.
-     * @return
-     */
-    public double getPPMFrequencyError()
-    {
-        if(hasMeasuredFrequencyError())
-        {
-            return mMeasuredFrequencyError / (getFrequency() / 1E6d);
-        }
-
-        return 0.0d;
-    }
-
-    /**
      * Sets the measured frequency error average.
      * @param measuredFrequencyError in hertz.
      */
     public void setMeasuredFrequencyError(int measuredFrequencyError)
     {
         mMeasuredFrequencyError = measuredFrequencyError;
-
-        try
-        {
-            mFrequencyController.broadcast(SourceEvent.frequencyErrorMeasurement(measuredFrequencyError));
-        }
-        catch(SourceException e)
-        {
-            //Ignore display-only update failures.
-        }
     }
 
     /**

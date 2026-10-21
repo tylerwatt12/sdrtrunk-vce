@@ -24,7 +24,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
 {
     private final CopyOnWriteArrayList<DiscoveredTuner> mTuners = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<ChangeListener> mChangeListeners = new CopyOnWriteArrayList<>();
-    private final CopyOnWriteArrayList<Listener<TunerEvent>> mTunerEventListeners = new CopyOnWriteArrayList<>();
     private final TunerConfigurationManager mConfigurations;
 
     public DiscoveredTunerRegistry(TunerConfigurationManager configurations)
@@ -125,16 +124,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
         mChangeListeners.remove(listener);
     }
 
-    public void addTunerEventListener(Listener<TunerEvent> listener)
-    {
-        mTunerEventListeners.addIfAbsent(listener);
-    }
-
-    public void removeTunerEventListener(Listener<TunerEvent> listener)
-    {
-        mTunerEventListeners.remove(listener);
-    }
-
     private void changed(Change change, DiscoveredTuner tuner, int index)
     {
         for(ChangeListener listener: mChangeListeners)
@@ -202,10 +191,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
                     changed(Change.UPDATED, matching, mTuners.indexOf(matching));
                 default -> { }
             }
-        }
-        for(Listener<TunerEvent> listener: mTunerEventListeners)
-        {
-            listener.receive(event);
         }
     }
 

@@ -161,11 +161,6 @@ public class CostasLoop implements IPhaseLockedLoop
         return getCurrentVector();
     }
 
-    public double getLoopFrequency()
-    {
-        return mLoopFrequency;
-    }
-
     /**
      * Updates the costas loop frequency and phase to adjust for the phase error value
      *

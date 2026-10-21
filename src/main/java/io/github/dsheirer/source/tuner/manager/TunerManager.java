@@ -727,29 +727,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     }
 
     /**
-     * Find a tuner that matches the name argument
-     *
-     * @param preferredTunerName of the tuner
-     * @return named tuner or null
-     */
-    public DiscoveredTuner getDiscoveredTuner(String preferredTunerName)
-    {
-        if(preferredTunerName != null)
-        {
-            for(DiscoveredTuner discoveredTuner : mDiscoveredTunerRegistry.availableTuners())
-            {
-                if(discoveredTuner.isAvailable() &&
-                   discoveredTuner.getTuner().getPreferredName().equalsIgnoreCase(preferredTunerName))
-                {
-                    return discoveredTuner;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
      * Sorted list of preferred tuner names
      */
     public List<String> getPreferredTunerNames()

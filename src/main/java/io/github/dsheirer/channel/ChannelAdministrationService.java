@@ -15,7 +15,6 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
-import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
@@ -76,6 +75,7 @@ public final class ChannelAdministrationService
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
     private static final long SQUELCH_PREVIEW_LEASE_SECONDS = 10L;
+    private static final long CONTROL_QUALITY_FRESHNESS_MILLISECONDS = 5_000L;
     private static final Map<String,Boolean> REMOTE_ORIGIN = Map.of("remote", true);
     private final ConfigurationManager mConfigurationManager;
     private final ChannelProtocolRegistry mProtocolRegistry;
@@ -1251,8 +1251,8 @@ public final class ChannelAdministrationService
         return quality != null && quality.active() && quality.channel() == channel && quality.frequencyHz() == frequency &&
             quality.lastValidDecodeMs() > 0 && quality.lastValidDecodeMs() <= now && quality.matchesCurrentChannel() &&
             quality.observedAtMs() <= now &&
-            now - quality.observedAtMs() <= ControlChannelQualityRegistry.DEFAULT_FRESHNESS_MILLISECONDS &&
-            now - quality.lastValidDecodeMs() <= ControlChannelQualityRegistry.DEFAULT_FRESHNESS_MILLISECONDS;
+            now - quality.observedAtMs() <= CONTROL_QUALITY_FRESHNESS_MILLISECONDS &&
+            now - quality.lastValidDecodeMs() <= CONTROL_QUALITY_FRESHNESS_MILLISECONDS;
     }
 
     private ProcessingState processingState(Channel channel)

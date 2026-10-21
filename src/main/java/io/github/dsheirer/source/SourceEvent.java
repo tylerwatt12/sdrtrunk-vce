@@ -25,42 +25,32 @@ public class SourceEvent
     {
         NOTIFICATION_CHANNEL_COUNT_CHANGE,
         NOTIFICATION_CHANNEL_POWER,
-        NOTIFICATION_CHANNEL_SAMPLE_RATE_CHANGE,
         NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_LOCKED,
         NOTIFICATION_FREQUENCY_AND_SAMPLE_RATE_UNLOCKED,
         NOTIFICATION_FREQUENCY_CHANGE,
         NOTIFICATION_FREQUENCY_CORRECTION_CHANGE,
         NOTIFICATION_FREQUENCY_ROTATION_SUCCESS,
         NOTIFICATION_FREQUENCY_ROTATION_FAILURE,
-        NOTIFICATION_MEASURED_FREQUENCY_ERROR,
         NOTIFICATION_RECORDING_FILE_LOADED,
         NOTIFICATION_SAMPLE_RATE_CHANGE,
-        NOTIFICATION_SQUELCH_THRESHOLD,
-        NOTIFICATION_SQUELCH_AUTO_TRACK,
         NOTIFICATION_STOP_SAMPLE_STREAM,
-        NOTIFICATION_TUNER_SHUTDOWN,
         NOTIFICATION_ERROR_STATE,
 
-        REQUEST_FREQUENCY_CHANGE,
         REQUEST_FREQUENCY_CORRECTION,
         REQUEST_FREQUENCY_ROTATION,
-        REQUEST_CHANGE_SQUELCH_THRESHOLD,
-        REQUEST_CURRENT_SQUELCH_THRESHOLD,
-        REQUEST_CHANGE_SQUELCH_AUTO_TRACK,
-        REQUEST_CURRENT_SQUELCH_AUTO_TRACK,
         REQUEST_START_SAMPLE_STREAM,
         REQUEST_STOP_SAMPLE_STREAM
     }
 
     private final Event mEvent;
     private final Number mValue;
-    private Source mSource;
+    private final Source mSource;
     private final String mEventDescription;
 
     /**
-     * Protected constructor for SourceEvent subclasses.  Use the static constructor methods to create standard events.
+     * Use the static constructor methods to create source events.
      */
-    protected SourceEvent(Event event, Source source, Number value, String eventDescription)
+    private SourceEvent(Event event, Source source, Number value, String eventDescription)
     {
         mEvent = event;
         mSource = source;
@@ -143,14 +133,6 @@ public class SourceEvent
     }
 
     /**
-     * Sets the source associated with this event
-     */
-    public void setSource(Source source)
-    {
-        mSource = source;
-    }
-
-    /**
      * Indicates if this event contains an optional source
      */
     public boolean hasSource()
@@ -224,16 +206,6 @@ public class SourceEvent
     public static SourceEvent frequencyCorrectionRequest(long correction)
     {
         return new SourceEvent(Event.REQUEST_FREQUENCY_CORRECTION, correction);
-    }
-
-    /**
-     * Creates a new frequency error measurement notification event.
-     *
-     * @param frequencyError in hertz
-     */
-    public static SourceEvent frequencyErrorMeasurement(long frequencyError)
-    {
-        return new SourceEvent(Event.NOTIFICATION_MEASURED_FREQUENCY_ERROR, frequencyError);
     }
 
     /**
@@ -347,66 +319,6 @@ public class SourceEvent
     public static SourceEvent channelPowerLevel(Source source, double powerDb)
     {
         return new SourceEvent(Event.NOTIFICATION_CHANNEL_POWER, source, powerDb);
-    }
-
-    /**
-     * Creates a squelch threshold change notification
-     * @param source for the event
-     * @param thresholdDb setting for the power squelch
-     * @return new source event
-     */
-    public static SourceEvent squelchThreshold(Source source, double thresholdDb)
-    {
-        return new SourceEvent(Event.NOTIFICATION_SQUELCH_THRESHOLD, source, thresholdDb);
-    }
-
-    /**
-     * Requests the current squelch threshold value
-     * @return source event
-     */
-    public static SourceEvent requestCurrentSquelchThreshold()
-    {
-        return new SourceEvent(Event.REQUEST_CURRENT_SQUELCH_THRESHOLD, null, 0);
-    }
-
-    /**
-     * Creates a new squelch threshold level be applied to the channel's power squelch control
-     * @param source of the request
-     * @param thresholdDb setting to apply
-     * @return new source event
-     */
-    public static SourceEvent requestSquelchThreshold(Source source, double thresholdDb)
-    {
-        return new SourceEvent(Event.REQUEST_CHANGE_SQUELCH_THRESHOLD, source, thresholdDb);
-    }
-
-    /**
-     * Creates a new request squelch auto track status source event.
-     * @return new source event
-     */
-    public static SourceEvent requestCurrentSquelchAutoTrack()
-    {
-        return new SourceEvent(Event.REQUEST_CURRENT_SQUELCH_AUTO_TRACK, null, 0);
-    }
-
-    /**
-     * Creates a new squelch auto-track notification
-     * @param autoTrack true or false.
-     * @return source event
-     */
-    public static SourceEvent squelchAutoTrack(boolean autoTrack)
-    {
-        return new SourceEvent(Event.NOTIFICATION_SQUELCH_AUTO_TRACK, null, autoTrack ? 1 : 0);
-    }
-
-    /**
-     * Creates a new squelch auto-track request
-     * @param autoTrack to enable (true) or disable auto-track.
-     * @return source event
-     */
-    public static SourceEvent requestSquelchAutoTrack(boolean autoTrack)
-    {
-        return new SourceEvent(Event.REQUEST_CHANGE_SQUELCH_AUTO_TRACK, null, autoTrack ? 1 : 0);
     }
 
     @Override

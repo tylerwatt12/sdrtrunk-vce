@@ -161,9 +161,9 @@ public final class DigitalTrunkedDiscoveryProbe implements AutoCloseable
             if(event == null) return;
             switch(event.getEvent())
             {
-                case NOTIFICATION_ERROR_STATE, NOTIFICATION_TUNER_SHUTDOWN, NOTIFICATION_STOP_SAMPLE_STREAM -> failure.compareAndSet(null, "The receiver stopped supplying samples. Retry discovery.");
+                case NOTIFICATION_ERROR_STATE, NOTIFICATION_STOP_SAMPLE_STREAM -> failure.compareAndSet(null, "The receiver stopped supplying samples. Retry discovery.");
                 case NOTIFICATION_FREQUENCY_CHANGE -> { if(event.hasValue() && event.getValue().longValue() != frequency) failure.compareAndSet(null, "The checked frequency changed. Retry discovery."); }
-                case NOTIFICATION_SAMPLE_RATE_CHANGE, NOTIFICATION_CHANNEL_SAMPLE_RATE_CHANGE -> { if(event.hasValue() && Double.compare(event.getValue().doubleValue(), sampleRate) != 0) failure.compareAndSet(null, "The sample rate changed. Retry discovery."); }
+                case NOTIFICATION_SAMPLE_RATE_CHANGE -> { if(event.hasValue() && Double.compare(event.getValue().doubleValue(), sampleRate) != 0) failure.compareAndSet(null, "The sample rate changed. Retry discovery."); }
                 default -> { }
             }
         }

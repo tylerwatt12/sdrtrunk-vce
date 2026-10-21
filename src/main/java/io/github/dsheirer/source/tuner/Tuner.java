@@ -99,8 +99,6 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
     {
         if(mRunning.compareAndSet(true, false))
         {
-            broadcast(new TunerEvent(this, Event.NOTIFICATION_SHUTTING_DOWN));
-
             if(getChannelSourceManager() != null)
             {
                 getChannelSourceManager().stopAllChannels();
@@ -176,9 +174,6 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
                 break;
             case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 broadcast(new TunerEvent(Tuner.this, Event.UPDATE_FREQUENCY_ERROR));
-                break;
-            case NOTIFICATION_MEASURED_FREQUENCY_ERROR:
-                broadcast(new TunerEvent(Tuner.this, Event.UPDATE_MEASURED_FREQUENCY_ERROR));
                 break;
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
                 broadcast(new TunerEvent(Tuner.this, Event.UPDATE_SAMPLE_RATE));

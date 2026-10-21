@@ -19,14 +19,13 @@
 
 package io.github.dsheirer.sample.complex;
 
-import io.github.dsheirer.sample.buffer.ITimestamped;
 import java.util.Arrays;
 import java.util.Objects;
 
 /**
  * Complex samples array that incorporates a timestamp for the first complex sample.
  */
-public record InterleavedComplexSamples(float[] samples, long timestamp) implements ITimestamped
+public record InterleavedComplexSamples(float[] samples, long timestamp)
 {
     /**
      * Converts this interleaved complex samples to de-interleaved.

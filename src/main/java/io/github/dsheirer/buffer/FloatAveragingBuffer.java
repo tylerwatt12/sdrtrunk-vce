@@ -74,15 +74,6 @@ public class FloatAveragingBuffer
     }
 
     /**
-     * Current average value.
-     * @return average
-     */
-    public float getAverage()
-    {
-        return mAverage;
-    }
-
-    /**
      * Adds the value to the buffer and updates the average.
      * @param value to add
      */

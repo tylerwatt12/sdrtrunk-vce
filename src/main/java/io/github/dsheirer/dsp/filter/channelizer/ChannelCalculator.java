@@ -103,15 +103,6 @@ public class ChannelCalculator
     }
 
     /**
-     * Updates the number of channels being channelized by the polyphase channelizer
-     */
-    public void setChannelCount(int channelCount)
-    {
-        mChannelCount = channelCount;
-        updateChannelBandwidth();
-    }
-
-    /**
      * Identifies the index of the wrap-around channel meaning that the lower half of the channel exists at the upper
      * end of the spectrum and the upper half of the channel exists at the lower end of the spectrum
      *
@@ -169,16 +160,6 @@ public class ChannelCalculator
     public double getOversampling()
     {
         return mOversampling;
-    }
-
-    /**
-     * Sets the oversampling rate being applied by the polyphase channelizer
-     * @param oversampling rate where 1.0 indicates no oversampling, and a value greater than 1.0 indicates
-     * that the polyphase channelizer is oversampling each channel.
-     */
-    public void setOversampling(double oversampling)
-    {
-        mOversampling = oversampling;
     }
 
     /**

@@ -42,15 +42,6 @@ public class MessagePackage
     private int mElapsed;
 
     /**
-     * Constructs an instance
-     * @param message for this instance
-     */
-    public MessagePackage(IMessage message)
-    {
-        this(message, 0, 0);
-    }
-
-    /**
      * Constructs an instance.
      * @param message for this instance
      * @param bitCounter at the time this instance was created

@@ -107,11 +107,6 @@ public class FrequencyCorrectionSyncMonitor implements ISyncDetectListener, IFre
         mCostasLoop.setPLLBandwidth(PLLBandwidth.BW_300);
     }
 
-    public PLLBandwidth getCurrentBandwidth()
-    {
-        return mCurrentBandwidth;
-    }
-
     @Override
     public void processFrequencyError(long frequencyError)
     {

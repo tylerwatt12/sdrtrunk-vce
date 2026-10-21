@@ -25,7 +25,6 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
-import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNDecoderState;
 import io.github.dsheirer.module.decode.nxdn.NXDNMessageFramer;
@@ -164,9 +163,6 @@ public class NxdnViewer extends VBox
                 DecodeConfigNXDN config = new DecodeConfigNXDN();
                 List<MessagePackage> messagePackages = new ArrayList<>();
                 NXDNMessageProcessor messageProcessor = new NXDNMessageProcessor(config);
-
-                Broadcaster<IMessage> messageBroadcaster = new Broadcaster<>();
-                messageProcessor.setMessageListener(messageBroadcaster);
 
                 Channel empty = new Channel("Empty");
                 TransmissionMode transmissionMode = mLoadedFile.get().contains("4800") ? TransmissionMode.M4800 : TransmissionMode.M9600;
@@ -481,14 +477,9 @@ public class NxdnViewer extends VBox
             channelStartCountColumn.setText("Starts");
             channelStartCountColumn.setCellValueFactory(new PropertyValueFactory<>("channelStartProcessingRequestCount"));
 
-            TableColumn audioSegmentCountColumn = new TableColumn();
-            audioSegmentCountColumn.setPrefWidth(50);
-            audioSegmentCountColumn.setText("Audio");
-            audioSegmentCountColumn.setCellValueFactory(new PropertyValueFactory<>("audioSegmentCount"));
-
             mMessagePackageTableView.getColumns().addAll(timestampColumn, bitCountColumn, elapsedColumn, validColumn,
                     timeslotColumn, messageColumn, decodeEventCountColumn, decoderStateEventCountColumn,
-                    channelStartCountColumn, audioSegmentCountColumn);
+                    channelStartCountColumn);
         }
 
         return mMessagePackageTableView;

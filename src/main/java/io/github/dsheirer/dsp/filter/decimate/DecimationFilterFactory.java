@@ -69,26 +69,4 @@ public class DecimationFilterFactory
         }
     }
 
-    /**
-     * Finds the greatest factor of 2 decimation rate that is less than the requested rate.
-     * @param requestedRate for decimation
-     * @return factor of 2 decimation rate that is closest to the requested rate
-     */
-    public static int getDecimationRate(int requestedRate)
-    {
-        if(requestedRate < 0)
-        {
-            throw new IllegalArgumentException("Requested decimation rate must be greater than 2");
-        }
-
-        for(int x = SUPPORTED_RATES.length - 1; x >= 0; x--)
-        {
-            if(SUPPORTED_RATES[x] < requestedRate)
-            {
-                return SUPPORTED_RATES[x];
-            }
-        }
-
-        return 2;
-    }
 }
