@@ -111,10 +111,6 @@ body[data-view="dashboard"] .content {
   align-content: start;
   gap: var(--space-1);
   padding: var(--space-2);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .dashboard-coverage-entry {
@@ -132,10 +128,6 @@ body[data-view="dashboard"] .content {
   gap: var(--space-2);
   margin-bottom: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .dashboard-activity-layout {

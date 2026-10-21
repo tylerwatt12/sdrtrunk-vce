@@ -583,7 +583,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const changed = previewRows.length === 1 && importStatus(previewRows[0]).label === 'Different' ?
         talkgroupChanges(previewRows[0]) : [];
       if (changed.length) {
-        const detail = node('div', 'radioreference-talkgroup-changes');
+        const detail = node('div', 'radioreference-talkgroup-changes ui-surface-inset');
         detail.append(node('strong', '', 'RadioReference fields changing'));
         const list = node('dl');
         changed.forEach((change) => {
@@ -607,7 +607,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         firstValue(channel, ['frequencies_hz', 'frequency_hz'],
           firstValue(preview, ['frequencies_hz', 'frequency_hz'], [])));
       const values = Array.isArray(frequencies) ? frequencies : [frequencies];
-      const facts = node('dl', 'radioreference-preview-facts');
+      const facts = node('dl', 'radioreference-preview-facts ui-surface ui-surface-soft');
       const factsValues = [['Action', operation ? operation.toLowerCase().replace(/_/g, ' ') : 'Create or refresh'],
         ['Channel', name], ['Protocol', protocol || 'Detected by RadioReference'],
         ['Frequencies', values.filter(Number).map((value) => `${formatFrequency(value)} MHz`).join(', ') ||
@@ -1443,7 +1443,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       `${formatFrequency(frequencyHz(frequency))} MHz`);
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
     const aliases = aliasSelect(family);
-    const facts = node('dl', 'radioreference-preview-facts');
+    const facts = node('dl', 'radioreference-preview-facts ui-surface ui-surface-soft');
     [['Frequency', `${formatFrequency(frequencyHz(frequency))} MHz`],
       ['Mode', textValue(frequency, ['mode_name', 'mode', 'protocol'], 'Detected by RadioReference')],
       ['Description', textValue(frequency, ['description'], '—')]].forEach(([label, value]) => {

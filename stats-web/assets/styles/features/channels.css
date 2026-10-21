@@ -416,9 +416,6 @@
   flex-wrap: wrap;
   gap: 7px;
   padding: 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
   overflow: auto;
   color: var(--muted);
   white-space: pre-wrap;
@@ -429,9 +426,6 @@
   display: grid;
   gap: 3px;
   padding: 7px 9px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .channel-observed-item span {
@@ -519,9 +513,6 @@
 
   .channel-map-row {
     padding: 9px;
-    background: var(--surface-2);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-control);
   }
 
   .channel-map-row .channel-map-field {
@@ -548,9 +539,6 @@
   grid-column: 1 / -1;
   margin-top: var(--space-4);
   padding: var(--space-4);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
 }
 
 .channel-squelch-heading,

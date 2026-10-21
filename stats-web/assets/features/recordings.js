@@ -1496,7 +1496,7 @@ export function createRecordingsFeature(deps) {
   }
 
   function callCard(row) {
-    const card = node('article', 'recordings-call'); card.dataset.recordingId = String(row.id);
+    const card = node('article', 'recordings-call ui-surface ui-surface-soft'); card.dataset.recordingId = String(row.id);
     const action = (icon, glyph, labelText, hint, perform, className) => {
       const control = iconButton ? iconButton(icon, labelText, className) : button(node, glyph, null, className);
       control.setAttribute('aria-label', labelText); control.title = hint; control.addEventListener('click', perform); return control;
@@ -1511,7 +1511,7 @@ export function createRecordingsFeature(deps) {
     const groupId = value(row, 'talkgroup_id', 'group_id');
     const hasGroup = recordingHasTalkgroup(row);
     const conventional = !hasGroup && value(row, 'destination_radio_id') === null;
-    head.append(time, node('span', 'recordings-call-duration', duration(row)),
+    head.append(time, node('span', 'recordings-call-duration ui-pill ui-pill-compact', duration(row)),
       node('span', 'recordings-call-protocol', `${protocolLabel(row.protocol)}${conventional ? ' · Conventional' : ''}`));
     const actions = node('div', 'recordings-call-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${description}`); actions.append(play, detail, info);
     const main = node('div', 'recordings-call-main');
@@ -2302,7 +2302,7 @@ export function createRecordingsFeature(deps) {
 
   function makeSearchForm() {
     const form = node('form', 'recordings-search');
-    const sidebar = node('aside', 'recordings-search-panel'); sidebar.setAttribute('aria-label', 'Recording search');
+    const sidebar = node('aside', 'recordings-search-panel ui-surface ui-surface-soft'); sidebar.setAttribute('aria-label', 'Recording search');
     const fullText = textInput('Words or "exact phrase"'); fullText.id = 'recordings-input-transcript'; fullText.value = search.transcript; fullText.maxLength = 240;
     const textRange = select(node, [['recent', 'Past 24 hours'], ['time', 'Use Time filter']], 'Full text range'); textRange.value = search.text_range || 'recent';
     const textRangeField = field('Full text range', textRange); textRangeField.hidden = !search.transcript;
@@ -2359,7 +2359,7 @@ export function createRecordingsFeature(deps) {
     const discard = button(node, 'Discard changes', () => { if (appliedSearch) Object.assign(search, appliedSearch); selectedSuggestions.clear(); appliedSuggestions.forEach((value, key) => selectedSuggestions.set(key, value)); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action'); discard.id = 'recordings-discard'; discard.hidden = true;
     actions.append(draftFeedback, searchError, submit, clear, discard);
     sidebar.append(field('Full text', fullText), syntax, textRangeField, field('Time range', range), override, custom, high, system, targets, paths, radios, tones, more, actions);
-    const browser = node('div', 'recordings-browser'); browser.append(sidebar); form.append(browser);
+    const browser = node('div', 'recordings-browser ui-surface'); browser.append(sidebar); form.append(browser);
     form.addEventListener('submit', event => { event.preventDefault(); submitSearch(); });
     updateDraftFeedback(); return form;
   }

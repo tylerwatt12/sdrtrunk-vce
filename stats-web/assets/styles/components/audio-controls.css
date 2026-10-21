@@ -34,7 +34,7 @@
 .ui-audio-surface {
   color: var(--audio-ink);
   background: var(--audio-surface);
-  border: 1px solid var(--audio-line);
+  border: 0;
   border-radius: var(--audio-radius);
   box-shadow: var(--audio-shadow);
 }

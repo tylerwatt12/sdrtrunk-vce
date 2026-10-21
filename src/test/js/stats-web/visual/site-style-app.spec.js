@@ -13,7 +13,7 @@ const scope = `radio_system_key=${encodeURIComponent(systemKey)}`;
 const routes = [
   ['dashboard', 'view=dashboard', '.signal-current-tile', channelName],
   ['live', `view=live&channel=${channelId}`, '.channels-live-table', channelName],
-  ['topics', 'view=topics', '.alerts-topic-grid', 'Fire activity'],
+  ['topics', 'view=topics', '.alerts-public-topics', 'Fire activity'],
   ['recordings', 'view=recordings', '.recordings-library', 'Fire Dispatch'],
   ['map', 'view=map', '.listen-map-details', 'Engine 4'],
   ['network-visualizer', 'view=network-visualizer', '.network-visualizer-label', systemName],
@@ -120,7 +120,7 @@ test('actual route style matrix includes every production route and administrati
     .toEqual(availableLeaves.sort());
 });
 
-test('Spectrum frequency lookup opens the RadioReference account page from its settings link', async ({ page }) => {
+test('Spectrum frequency lookup opens shared account connection and keeps its selection on cancel', async ({ page }) => {
   const fixture = await installSiteStyleApplication(page);
   const application = readFileSync(path.resolve(__dirname, '../../../../../stats-web/assets/app.js'), 'utf8');
   await page.route('**/assets/app.js*', route => route.fulfill({ contentType: 'text/javascript',
@@ -128,6 +128,7 @@ test('Spectrum frequency lookup opens the RadioReference account page from its s
   await page.goto('/app.html?view=tuner-spectrum');
   await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   await expect(page.locator('.spectrum-browse-control-rail')).toBeVisible();
+  const originalUrl = page.url();
   await page.evaluate(async () => {
     const application = await import(document.querySelector('script[type="module"][src*="/assets/app.js"]').src);
     application.openTunerFrequencyActions({ frequencyHz: 851012500, targetId: 'target-a',
@@ -136,14 +137,16 @@ test('Spectrum frequency lookup opens the RadioReference account page from its s
   await page.locator('.spectrum-browse-control-rail')
     .getByRole('button', { name: 'Look up on RadioReference', exact: true }).click();
   const lookup = page.getByRole('dialog', { name: 'RadioReference lookup', exact: true });
-  await expect(lookup).toContainText('Connect a current RadioReference Premium account');
-  const settings = lookup.getByRole('link', { name: 'Open RadioReference settings', exact: true });
-  await expect(settings).toHaveAttribute('href', '/?view=radioreference');
-  await settings.click();
-  await expect(page).toHaveURL(/\?view=radioreference$/);
-  await expect(lookup).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Connect your account', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Connect RadioReference', exact: true })).toBeVisible();
+  const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
+  await expect(connection).toBeVisible();
+  await expect(connection).toContainText('Connect your account to look up the selected frequency.');
+  await expect(connection.getByRole('textbox', { name: 'Username', exact: true })).toBeVisible();
+  await connection.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(connection).toHaveCount(0);
+  await expect(lookup).toContainText('851.012500 MHz');
+  await expect(lookup).toContainText('Connect an account to look up this frequency.');
+  await expect(lookup.getByRole('button', { name: 'Connect account', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(originalUrl);
   expect(fixture.unexpected).toEqual([]);
   expect(fixture.pageErrors).toEqual([]);
 });

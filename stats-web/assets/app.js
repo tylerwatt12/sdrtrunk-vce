@@ -24,14 +24,14 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=11';
+import { createListenMap } from './features/listen-map.js?v=12';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=8';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=30';
+import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=31';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=13';
@@ -40,7 +40,7 @@ import { createRemoteLinksWorkspace } from './features/remote-links.js?v=19';
 import { createAlertsWorkspace } from './features/alerts.js?v=18';
 import { createCallRelations } from './features/call-relations.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=54';
+import { createRecordingsFeature } from './features/recordings.js?v=55';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
 import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
@@ -5079,7 +5079,7 @@ function aliasListPopupTrigger(options) {
 }
 
 function aliasConflictSummary(row) {
-  const wrapper = node('li', 'alias-conflict-item');
+  const wrapper = node('li', 'alias-conflict-item ui-surface ui-surface-soft');
   const id = Number(row?.alias_id);
   const name = String(row?.name || '').trim() || `Alias ${identifierNumber(id)}`;
   const link = anchor(name, href('aliases', {
@@ -6533,7 +6533,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const options = aliasEditorContext?.options || {};
   const body = node('div', 'alias-editor-form alias-transfer editor-workspace');
   if (!importing) {
-    const destinationSummary = node('div', 'alias-transfer-destination');
+    const destinationSummary = node('div', 'alias-transfer-destination ui-surface-inset');
     destinationSummary.append(
       node('strong', '', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)} Alias List`),
       node('span', 'muted', `${number(selectedList.alias_count || 0)} aliases`));
@@ -7061,7 +7061,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
         rowsHost.replaceChildren();
         const visibleRows = response.rows.filter((row) => previewFilter === 'all' || row.result === previewFilter);
         visibleRows.forEach((row) => {
-          const detail = node('details', `alias-transfer-row alias-transfer-row-${row.result}`);
+          const detail = node('details', `alias-transfer-row alias-transfer-row-${row.result} ui-surface ui-surface-soft`);
           detail.append(node('summary', '', `${countLabels[row.result] || row.result} · ${row.name || '(unnamed)'}${row.row ? ` · row ${row.row}` : ''}`));
           if (row.error) detail.append(node('p', 'ui-feedback ui-feedback-error', row.error));
           if (row.changes.length) {
@@ -8586,7 +8586,7 @@ function dashboardCoverage(activity) {
   dashboardProtocolConfigurations(activity).forEach((configuration) => {
     const reported = coverage.filter((row) => dashboardProtocolKey(row) === configuration.key);
     if (!reported.length) return;
-    const item = node('div', 'dashboard-coverage-protocol');
+    const item = node('div', 'ui-surface ui-surface-soft dashboard-coverage-protocol');
     item.append(node('strong', '', configuration.label));
     ['TRUNKED', 'CONVENTIONAL'].forEach((channelKind) => {
       const row = reported.find((candidate) => dashboardChannelKind(candidate) === channelKind);
@@ -12624,7 +12624,7 @@ async function renderDashboardActivity(renderContext) {
   let radioTitle = null;
   let radioTitleActions = null;
   const radioTableController = {};
-  const toolbar = node('div', 'dashboard-activity-page-controls');
+  const toolbar = node('div', 'ui-surface dashboard-activity-page-controls');
   toolbar.setAttribute('aria-label', 'Radio activity controls');
   toolbar.append(node('span', 'dashboard-control-label', 'Time range'));
   const host = node('div', 'dashboard-activity-view');
@@ -13479,7 +13479,7 @@ function liveDetailFilterController(options) {
     hideAll.type = 'button';
     typeActions.append(showAll, hideAll);
     typeSection.append(typeActions);
-    const tree = node('ul', 'live-filter-tree');
+    const tree = node('ul', 'live-filter-tree ui-surface-inset');
     tree.setAttribute('aria-label', options.typeHeading || `${options.noun} types`);
     typeSection.append(tree);
     modalBody.append(typeSection);
@@ -13560,7 +13560,7 @@ function liveDetailFilterController(options) {
 
     const settings = node('div', 'live-filter-settings');
     if (options.timeslots && catalog.timeslots.length) {
-      const timeslots = node('fieldset', 'live-filter-choice-group');
+      const timeslots = node('fieldset', 'live-filter-choice-group ui-surface-inset');
       timeslots.append(node('legend', '', 'Timeslots'));
       catalog.timeslots.forEach((value) => {
         const label = node('label');
@@ -13578,7 +13578,7 @@ function liveDetailFilterController(options) {
       settings.append(timeslots);
     }
     if (options.validity) {
-      const validity = node('fieldset', 'live-filter-choice-group');
+      const validity = node('fieldset', 'live-filter-choice-group ui-surface-inset');
       validity.append(node('legend', '', 'Validity'));
       [['valid', 'Valid messages'], ['invalid', 'Invalid messages']].forEach(([value, textValue]) => {
         const label = node('label');
@@ -13595,7 +13595,7 @@ function liveDetailFilterController(options) {
       });
       settings.append(validity);
     }
-    const searchField = node('label', 'live-filter-search');
+    const searchField = node('label', 'live-filter-search ui-surface-inset');
     searchField.append(node('span', '', 'Search'));
     const search = node('input');
     search.type = 'search';
@@ -16251,7 +16251,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   optionsSummary.setAttribute('aria-label', 'Display options');
   optionsSummary.title = 'Display options';
   optionsSummary.setAttribute('aria-expanded', 'false');
-  const optionsPanel = node('div', 'tuner-spectrum-options-panel');
+  const optionsPanel = node('div', 'tuner-spectrum-options-panel ui-surface');
   optionsPanel.setAttribute('role', 'group');
   optionsPanel.setAttribute('aria-label', 'Tuner spectrum options');
   let initialFloor = tunerStoredNumber(TUNER_SPECTRUM_FLOOR_PREFERENCE,
@@ -16292,7 +16292,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const rangeHelp = node('span', 'tuner-spectrum-control-help',
     'Turn off auto range to adjust the display range.');
   const speedControl = node('label', 'settings-field-control tuner-spectrum-display-control tuner-spectrum-speed-control ui-field');
-  const speedInput = node('input');
+  const speedInput = node('input', 'ui-range');
   speedInput.type = 'range';
   speedInput.min = '0.25';
   speedInput.max = '4';
@@ -16474,7 +16474,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const readouts = node('div', 'tuner-spectrum-readouts channel-diagnostic-readouts');
   readouts.setAttribute('aria-label', 'Spectrum measurements');
   const moreMeasurements = node('details', 'tuner-spectrum-more-measurements');
-  const moreReadouts = node('div', 'tuner-spectrum-more-readouts channel-diagnostic-readouts');
+  const moreReadouts = node('div', 'tuner-spectrum-more-readouts channel-diagnostic-readouts ui-surface');
   const moreSummary = node('summary', 'ui-button ui-button-secondary ui-icon-button');
   moreSummary.append(iconGlyph('icon-about'));
   moreSummary.setAttribute('aria-label', 'More measurements');
@@ -19472,7 +19472,7 @@ function liveChannelsSection(onSelectionChange) {
     tables.set(value.table_id, value);
     let tab = tabNodes.get(value.table_id);
     if (!tab) {
-      tab = node('div', 'channels-live-tab');
+      tab = node('div', 'channels-live-tab ui-surface ui-surface-soft');
       tab.setAttribute('role', 'none');
       const select = node('button', 'channels-tab-select');
       select.type = 'button';
@@ -25097,7 +25097,7 @@ function channelMapEditor(field, values) {
   },
     'ui-button ui-button-secondary');
   const append = (value = {}) => {
-    const row = node('div', 'ui-repeater-row channel-map-row');
+    const row = node('div', 'ui-repeater-row channel-map-row ui-surface ui-surface-soft');
     const channel = node('input', 'ui-input');
     channel.type = 'number';
     channel.step = '1';
@@ -25182,12 +25182,12 @@ function channelEditorControl(field, profile, options, channel, protocolCatalog)
   } else if (field.type === 'read_only') {
     const empty = value == null || Array.isArray(value) && !value.length ||
       typeof value === 'object' && !Array.isArray(value) && !Object.keys(value).length;
-    control = node('div', 'channel-read-only');
+    control = node('div', 'channel-read-only ui-surface-inset');
     if (empty) control.append(uiPill('Not observed', 'neutral'));
     else if (Array.isArray(value)) value.forEach((entry) =>
       control.append(uiPill(field.path.includes('frequencies') ? `${channelMHz(entry)} MHz` : String(entry), 'blue')));
     else if (typeof value === 'object') Object.entries(value).forEach(([key, entry]) => {
-      const item = node('div', 'channel-observed-item');
+      const item = node('div', 'channel-observed-item ui-surface ui-surface-soft');
       item.append(node('span', '', semanticLabel(key)), node('strong', '', String(entry)));
       control.append(item);
     });
@@ -25448,7 +25448,7 @@ function channelSquelchNoise(quality) {
 }
 
 function channelSquelchTuner(profile, channel, entry, advancedFields) {
-  const panel = node('section', 'channel-squelch-tuner');
+  const panel = node('section', 'channel-squelch-tuner ui-surface ui-surface-soft');
   const heading = node('div', 'channel-squelch-heading');
   const headingCopy = node('div');
   headingCopy.append(node('h4', '', 'Squelch tuning'), node('p', 'muted',

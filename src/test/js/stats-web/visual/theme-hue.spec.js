@@ -448,7 +448,7 @@ for (const theme of ['light', 'dark']) {
       expect(minimum, `${theme} ${name} must stay readable at every hue`).toBeGreaterThanOrEqual(4.5);
     }
     await page.goto(`/design-system.html?theme=${theme}&view=radio-directory&hue=335`);
-    await expect(page.locator('.radio-directory-conventional-card .ui-icon-tile-secondary').first()).toBeVisible();
+    await expect(page.locator('.radio-directory-conventional-card').first()).toBeVisible();
     await expect(page.locator('body')).toHaveScreenshot(`coordinated-directory-${theme}.png`, { fullPage: true });
   });
 }

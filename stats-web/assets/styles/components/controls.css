@@ -629,8 +629,8 @@
   gap: 5px;
   padding: 4px 8px;
   color: var(--muted);
-  background: var(--surface-2);
-  border: 1px solid var(--line-dark);
+  background: var(--ui-tile-fill);
+  border: 1px solid transparent;
   border-radius: 999px;
   font-size: var(--font-size-meta);
   font-weight: var(--font-weight-control);
@@ -766,8 +766,8 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-control);
 }
 
@@ -1122,7 +1122,7 @@
   gap: var(--space-2);
   padding: var(--space-3);
   color: var(--ink);
-  background: var(--surface-2);
+  background: var(--ui-tile-fill);
   border-radius: var(--radius-control);
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -1177,8 +1177,8 @@ a.ui-link-tile:focus-visible {
   justify-content: space-between;
   gap: var(--space-3);
   padding: 10px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-control);
 }
 
@@ -1210,6 +1210,8 @@ a.ui-link-tile:focus-visible {
 }
 
 .ui-range {
+  min-width: 0;
+  margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
 }
@@ -1440,8 +1442,8 @@ a.ui-link-tile:focus-visible {
 .ui-notice {
   padding: 11px 13px;
   color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 1px solid transparent;
   border-radius: var(--ui-control-radius, var(--radius-control));
   line-height: 1.45;
 }
@@ -1483,8 +1485,8 @@ a.ui-link-tile:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-control);
 }
 
@@ -1527,8 +1529,8 @@ a.ui-link-tile:focus-visible {
   padding: var(--space-5);
   color: var(--muted);
   text-align: center;
-  background: var(--surface);
-  border: 1px dashed var(--line-dark);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
 }
 

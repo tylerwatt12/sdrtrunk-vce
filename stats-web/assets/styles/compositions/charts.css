@@ -129,8 +129,8 @@
   max-width: min(240px, calc(100% - 8px));
   padding: 7px 9px;
   color: var(--ink);
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--line-dark) 28%, transparent);
+  background: var(--ui-panel-fill);
+  border: 0;
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-surface);
   font-size: var(--font-size-label);

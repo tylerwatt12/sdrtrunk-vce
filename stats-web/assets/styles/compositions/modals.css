@@ -10,8 +10,8 @@ body.modal-open {
   padding: var(--ui-popover-padding, var(--space-3));
   overflow: auto;
   color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
+  background: var(--ui-panel-fill);
+  border: 0;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-modal);
 }
@@ -50,8 +50,8 @@ body.modal-open {
   flex-direction: column;
   overflow: hidden;
   color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-panel-fill);
+  border: 0;
   border-radius: var(--radius-modal);
   box-shadow: var(--shadow-modal);
 }

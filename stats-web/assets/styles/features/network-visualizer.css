@@ -214,7 +214,7 @@ body[data-view="network-visualizer"] .content {
   width: min(470px, calc(100% - 48px));
   padding: var(--space-4);
   text-align: center;
-  border: 1px solid var(--network-panel-line);
+  border: 1px solid transparent;
   border-radius: var(--radius-card);
   background: var(--network-panel);
   box-shadow: var(--network-shadow);
@@ -252,7 +252,7 @@ body[data-view="network-visualizer"] .content {
   position: absolute;
   z-index: 5;
   background: var(--network-overlay);
-  border: 1px solid var(--network-panel-line);
+  border: 0;
   box-shadow: var(--network-label-shadow);
   backdrop-filter: blur(var(--network-overlay-blur));
 }
@@ -398,7 +398,7 @@ body[data-view="network-visualizer"] .content {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--network-panel-line);
+  border: 0;
   border-radius: var(--radius-card);
   background: var(--network-panel);
   box-shadow: var(--network-shadow);

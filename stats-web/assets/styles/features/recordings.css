@@ -6,9 +6,6 @@
   grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
   align-items: stretch;
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  background: var(--surface-2);
   overflow: clip;
 }
 .recordings-search-panel {
@@ -18,8 +15,6 @@
   align-content: start;
   position: relative;
   padding: var(--space-5) var(--space-4);
-  border-right: 1px solid var(--line);
-  background: color-mix(in srgb, var(--accent) 4%, var(--surface-2));
 }
 .recordings-results-panel { min-width: 0; padding: var(--space-4); }
 .recordings-results-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
@@ -113,13 +108,12 @@
 .recordings-call-gap { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; }
 .recordings-call-gap::before, .recordings-call-gap::after { content: ''; height: 1px; background: var(--line); }
 .recordings-call-gap-label { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
-.recordings-call { position: relative; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-control); padding: var(--space-3); background: var(--surface); }
+.recordings-call { position: relative; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-3); border: 1px solid transparent; padding: var(--space-3); }
 .recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr) auto; }
 .recordings-call-select { margin: var(--space-1) 0 0; }
 .recordings-call-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.recordings-call-time, .recordings-call-duration, .recordings-call-protocol, .recordings-call-identity { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
+.recordings-call-time, .recordings-call-protocol, .recordings-call-identity { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
 .recordings-call-time strong { font-weight: var(--font-weight-normal); }
-.recordings-call-duration { color: var(--ink); font-weight: var(--font-weight-heading); border: 1px solid var(--line); border-radius: var(--radius-selection); padding: 2px var(--space-1); background: var(--surface-2); }
 .recordings-call-actions { display: flex; align-items: center; gap: var(--space-1); }
 .recordings-card-action { display: inline-flex; align-items: center; justify-content: center; width: var(--control-height-compact); height: var(--control-height-compact); padding: var(--space-2); }
 .recordings-card-action svg { width: 16px; height: 16px; flex: none; }
@@ -394,7 +388,6 @@
 
 @media (max-width: 900px) {
   .recordings-browser { grid-template-columns: minmax(0, 1fr); }
-  .recordings-search-panel { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 @media (max-width: 700px) {
   .read-only-modal.recordings-filters-modal { width: 100vw; }

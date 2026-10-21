@@ -230,7 +230,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1024, height: 550
       await openLive(page);
       await expect(page.locator('.live-details')).toBeVisible();
       const dock = page.locator('#audio-dock');
-      const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+      const handle = dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
       const geometry = () => page.evaluate(() => Object.fromEntries(
         ['.content', '.live-split', '.live-right-workspace', '.live-channels-section', '.live-details'].map((selector) => {
           const element = document.querySelector(selector);

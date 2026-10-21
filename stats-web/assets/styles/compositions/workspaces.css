@@ -144,10 +144,10 @@
   min-width: 0;
   overflow: hidden;
   margin-bottom: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-panel-fill);
+  border: 0;
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
+  box-shadow: none;
 }
 
 .ui-section > .ui-notice,
@@ -189,8 +189,8 @@
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  background: transparent;
+  border-bottom: 0;
   font-size: var(--font-size-section-title);
   font-weight: var(--font-weight-heading);
 }
@@ -317,8 +317,8 @@
   align-content: start;
   gap: var(--space-1);
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-control);
 }
 
@@ -428,8 +428,8 @@
 .ui-metric {
   min-width: 0;
   padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-control);
 }
 
@@ -772,21 +772,21 @@
 .ui-surface {
   min-width: 0;
   color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-panel-fill);
+  border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
+  box-shadow: none;
 }
 
 .ui-surface-soft {
-  background: var(--surface-2);
-  border-color: transparent;
+  background: var(--ui-tile-fill);
+  border: 0;
   box-shadow: none;
 }
 
 .ui-surface-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  background: transparent;
+  border-bottom: 0;
 }
 
 /* Edge headers follow the surface without clipping menus or focus outside it. */
@@ -882,8 +882,8 @@
   gap: var(--space-1) var(--space-3);
   padding: var(--ui-surface-padding, 14px);
   color: var(--link);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
 }
 
@@ -927,10 +927,10 @@
   flex-wrap: wrap;
   gap: var(--ui-layout-gap, 9px);
   padding: var(--ui-surface-padding, 12px);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
+  box-shadow: none;
 }
 
 /* Browse controls sit directly on the page beside a calm catalog. */
@@ -1084,8 +1084,8 @@
   display: grid;
   gap: var(--space-1);
   padding: 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
 }
 
@@ -1143,10 +1143,10 @@
 .ui-section-disclosure {
   min-width: 0;
   margin: 0;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-inset-fill);
+  border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
+  box-shadow: none;
 }
 
 .ui-form-section {
@@ -1176,6 +1176,7 @@
 }
 
 .ui-section-disclosure > .ui-form-section {
+  background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -1209,7 +1210,7 @@
 }
 
 .ui-section-disclosure[open] > .ui-section-summary {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
 }
 
 .ui-section-disclosure[open] > .ui-section-summary::after {
@@ -1267,8 +1268,8 @@
 .ui-record-grid { display: grid; gap: var(--space-3); }
 .ui-record-card {
   min-width: 0;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-control);
   overflow: hidden;
 }
@@ -1351,8 +1352,8 @@
 }
 .ui-surface-inset {
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-inset-fill);
+  border: 0;
   border-radius: var(--radius-control);
 }
 .ui-permission-list { display: grid; }

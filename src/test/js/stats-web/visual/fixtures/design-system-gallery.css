@@ -74,10 +74,6 @@ body[data-gallery-view="activity-filters"] {
   align-content: start;
   gap: var(--space-3);
   padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .visual-section-wide {
@@ -360,12 +356,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   text-transform: uppercase;
 }
 
-.visual-settings-form {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface);
-}
-
 .visual-settings-form .settings-card-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -422,8 +412,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
 .visual-feature-example > .section {
   margin: 0;
   overflow: clip;
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .visual-health-example .summary-band > div {

@@ -65,9 +65,8 @@
 }
 
 .support-report-output {
-  border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  background: var(--surface-2);
+  background: var(--ui-inset-fill);
 }
 
 .support-report-options {
@@ -78,10 +77,6 @@
   padding-bottom: var(--space-3);
   cursor: pointer;
   font-weight: var(--font-weight-heading);
-}
-
-.support-report-options[open] > summary {
-  border-bottom: 1px solid var(--line);
 }
 
 .support-report-output > summary {
@@ -176,7 +171,6 @@
 
 .operational-preference-lane-heading {
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--line-dark);
 }
 
 .operational-preference-lane-heading strong {

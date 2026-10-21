@@ -231,7 +231,7 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=entity-details');
   const tile = page.locator('.visual-entity-details-example .ui-metric').first();
-  await expect(tile).toHaveCSS('border-left-width', '1px');
+  await expect(tile).toHaveCSS('border-left-width', '0px');
   const tileRadius = await tile.evaluate((element) => getComputedStyle(element).borderRadius);
   const controlRadius = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--radius-control').trim());
@@ -297,12 +297,12 @@ for (const [, theme, viewport] of galleryCases) {
 
   test(`embedded stat groups use the existing body inset in ${theme} at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    await page.goto(`/design-system.html?theme=${theme}&view=health`);
-    const resources = page.locator('.receiver-health-resource-bars');
+    await page.goto(`/design-system.html?theme=${theme}&view=admin-navigation`);
+    const resources = page.locator('.recordings-transcription-counts');
     await expect(resources).toBeVisible();
     await expectMetricGridSpacing(resources, { inset: 0, sectionInset: false });
     const spacing = await resources.evaluate((grid) => {
-      const body = grid.closest('.ui-settings-panel-body');
+      const body = grid.closest('.recordings-admin-body');
       const bodyBounds = body.getBoundingClientRect();
       const cardBounds = grid.firstElementChild.getBoundingClientRect();
       const styles = getComputedStyle(body);
@@ -376,8 +376,8 @@ test('workspace density changes spacing without changing visual identity', async
   expect(styles.compact.buttonFontWeight).toBe(styles.comfortable.buttonFontWeight);
   expect(styles.compact.buttonShadow).toBe(styles.comfortable.buttonShadow);
   expect(styles.compact.surfaceRadius).toBe(styles.comfortable.surfaceRadius);
-  expect(styles.compact.surfaceShadow).not.toBe('none');
-  expect(styles.comfortable.surfaceShadow).not.toBe('none');
+  expect(styles.compact.surfaceShadow).toBe('none');
+  expect(styles.comfortable.surfaceShadow).toBe('none');
 });
 
 test('channel frequencies and band plans share a flush responsive layout', async ({ page }) => {
@@ -1617,22 +1617,27 @@ test('radio-directory-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-dark-mobile.png', { fullPage: true });
 });
 
-test('radio directory exposes Live only for running channels', async ({ page }) => {
+test('radio directory keeps Live actions in system headers and shows channel state', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=radio-directory');
-  const running = page.getByRole('link', { name: 'Open Parma in Live; channel is running', exact: true });
+  const running = page.getByRole('link', { name: 'Open Parma in Live', exact: true });
   const stoppedRow = page.locator('.radio-directory-site-row').filter({
     has: page.getByRole('link', { name: 'Ottawa County', exact: true })
   });
   await expect(page.locator('.radio-directory-item-status')).toHaveCount(0);
-  await expect(running).toHaveAttribute('title', 'Open Parma in Live · Running');
-  await expect(running.locator('svg')).toHaveCSS('fill', /rgb\(/);
+  await expect(running).toHaveAttribute('title', 'Open Parma in Live');
+  await expect(running.locator('xpath=parent::*')).toHaveClass(/radio-directory-system-header/);
+  const runningRow = page.locator('.radio-directory-site-row').filter({
+    has: page.getByRole('link', { name: 'Parma', exact: true })
+  });
+  await expect(runningRow.locator('.radio-directory-live-state')).toHaveText('Running');
+  await expect(runningRow.locator('.radio-directory-live-state')).toHaveClass(/ui-status-success/);
   await expect(stoppedRow.getByRole('link', { name: /Live/ })).toHaveCount(0);
   await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveText('Stopped');
-  await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveClass(/muted/);
+  await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveClass(/ui-status-neutral/);
   await running.focus();
   await expect(running).toBeFocused();
-  await expect(running).toHaveAccessibleName('Open Parma in Live; channel is running');
+  await expect(running).toHaveAccessibleName('Open Parma in Live');
 });
 
 test('matching-status-light-desktop', async ({ page }) => {

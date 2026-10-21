@@ -505,8 +505,8 @@
     display: grid;
     min-width: 0;
     overflow: hidden;
-    background: var(--surface);
-    border: 1px solid var(--line);
+    background: var(--ui-tile-fill);
+    border: 0;
     border-radius: var(--radius-control);
   }
   .ui-mobile-cards tbody > tr.ui-table-row-group {
@@ -519,7 +519,7 @@
   .ui-data-table.ui-mobile-cards .ui-table-row-group > th {
     display: block;
     padding: 0;
-    border: 1px solid var(--line);
+    border: 0;
     border-radius: var(--radius-control);
   }
   .ui-mobile-cards .table-row-group-count { float: none; }
@@ -637,8 +637,8 @@
 
 /* A spacious catalog keeps identity and site context together without a grid. */
 .ui-catalog-table-wrap {
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-panel-fill);
+  border: 0;
   border-radius: var(--catalog-panel-radius);
 }
 

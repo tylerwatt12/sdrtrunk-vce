@@ -52,8 +52,8 @@
   top: calc(var(--app-header-offset, 0px) + var(--space-3));
   min-width: 0;
   padding: var(--space-2);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: transparent;
+  border: 0;
   border-radius: var(--radius-control);
 }
 
@@ -195,6 +195,7 @@
 .ui-settings-panel,
 .settings-card.ui-settings-panel {
   min-width: 0;
+  background: var(--ui-panel-fill);
   border-radius: var(--radius-control);
   box-shadow: none;
 }
@@ -202,8 +203,9 @@
 .ui-settings-panel > .ui-section-title,
 .ui-settings-panel > .settings-card-header,
 .ui-settings-panel-header {
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-2);
+  padding: var(--space-4) var(--space-4) 0;
+  background: transparent;
+  border-bottom: 0;
   font-size: var(--settings-panel-title-size);
   font-weight: var(--settings-heading-weight);
 }
@@ -228,7 +230,7 @@
   min-width: 0;
   gap: var(--space-4);
   padding: var(--space-4);
-  background: var(--surface);
+  background: transparent;
 }
 
 .ui-settings-form.ui-settings-form-plain,
@@ -430,7 +432,7 @@
 .settings-page-form {
   gap: var(--space-4);
   padding: var(--space-4);
-  background: var(--surface-2);
+  background: transparent;
 }
 
 .user-settings-summary {
@@ -472,10 +474,9 @@
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ui-tile-fill);
+  border: 0;
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .settings-card:not(.settings-card-form) {
@@ -484,9 +485,7 @@
 }
 
 .settings-card-header {
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  padding: var(--space-4) var(--space-4) 0;
 }
 
 .settings-card-title,
@@ -498,7 +497,7 @@
 }
 
 .settings-card-description {
-  margin: 6px 0 0;
+  margin: var(--space-1) 0 0;
   color: var(--muted);
   font-size: var(--font-size-body);
   font-weight: var(--font-weight-normal);
@@ -508,23 +507,16 @@
 .settings-card-body {
   flex: 1 1 auto;
   display: grid;
+  align-content: start;
   gap: var(--space-3);
   padding: var(--space-4);
-}
-
-.settings-card-body .admin-toggle-control,
-.settings-card-body .settings-field-control,
-.live-presentation-form .admin-toggle-control {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .settings-field-control {
   min-width: 0;
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-3);
+  padding: 0;
 }
 
 .settings-field-grid {
@@ -582,20 +574,18 @@
 }
 
 .settings-table-layout {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-inset-fill);
   border-radius: var(--radius-control);
 }
 
 .settings-table-layout > summary {
-  padding: 10px 12px;
+  padding: var(--space-3);
   cursor: pointer;
   font-weight: var(--font-weight-medium);
 }
 
 .settings-table-layout > .settings-summary {
-  padding: 0 12px 6px;
-  border-top: 1px solid var(--line);
+  padding: 0 var(--space-3) var(--space-2);
 }
 
 .settings-summary-footer {
@@ -654,9 +644,8 @@
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   gap: var(--space-3);
-  padding: 14px 12px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  padding: var(--space-3) 0;
+  background: transparent;
   cursor: pointer;
 }
 
@@ -730,8 +719,8 @@
 
   .settings-card-header,
   .settings-card-body {
-    padding-right: 14px;
-    padding-left: 14px;
+    padding-right: var(--space-3);
+    padding-left: var(--space-3);
   }
 
   .settings-field-grid,

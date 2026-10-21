@@ -436,7 +436,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   }
 
   function historyTable(entity, actionsHost) {
-    const wrapper = node('div', 'ui-table-wrap listen-map-history-wrap');
+    const wrapper = node('div', 'ui-table-wrap ui-surface ui-surface-soft listen-map-history-wrap');
     wrapper.dataset.entityId = entity.id;
     const table = node('table', 'ui-data-table ui-data-table-quiet listen-map-history');
     const head = node('thead');

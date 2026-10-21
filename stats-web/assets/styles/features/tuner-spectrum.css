@@ -270,9 +270,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: 0;
   padding: 0;
   overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--interactive-border);
-  border-radius: var(--radius-card);
   box-shadow: var(--shadow-raised);
 }
 
@@ -804,9 +801,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: 0;
   padding: 0;
   overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
   box-shadow: var(--shadow-raised);
 }
 

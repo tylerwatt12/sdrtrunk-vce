@@ -1,5 +1,8 @@
 /* Original blue-gray palette by default; custom hue affects only theme colors, never status colors. */
 :root {
+  --ui-panel-fill: var(--surface);
+  --ui-tile-fill: var(--surface-2);
+  --ui-inset-fill: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
   --main-page-width: 1120px;
   --page-nav-tab-rule: 3px;
   --quality-meter-height: 4px;

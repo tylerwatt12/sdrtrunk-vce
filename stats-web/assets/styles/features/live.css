@@ -227,10 +227,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  border: 1px solid transparent;
 }
 
 .channels-live-tab.active {
@@ -735,9 +732,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   max-height: min(430px, 48vh);
   overflow: auto;
   padding: var(--space-1) 0;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .live-filter-tree,
@@ -805,9 +799,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   gap: var(--space-2) var(--space-4);
   margin: 0;
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .live-filter-choice-group legend,

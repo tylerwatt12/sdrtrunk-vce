@@ -394,7 +394,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       alias_lists: [list], export_channel_options: [channel] });
     if (p === '/api/v1/admin/alerts/topics' || p === '/api/v1/admin/alerts/rules') return respond({ revision: 1,
       topics: alertTopics, rules: alertRules, options: {} });
-    if (p === '/api/v1/admin/alerts/config') return respond({ revision: 1, enabled: false, mode: 'proxy', site_url: '',
+    if (p === '/api/v1/admin/alerts/config') return respond({ revision: 1, enabled: true, mode: 'proxy', site_url: '',
       sender_label: 'VCE installation', registration: { status: 'pending', sender_id: 'fixture-sender' } });
     if (p === '/api/v1/alerts/topics') return respond({ topics: alertTopics.filter(topic => topic.visible), mode: 'proxy', push_enabled: false });
     if (p === '/api/v1/alerts/history') return respond({ items: [{ id: 'fire-alert', topic_id: 'fire', title: 'Fire Tactical is active',

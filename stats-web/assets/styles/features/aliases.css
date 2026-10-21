@@ -369,8 +369,6 @@
   display: grid;
   gap: 3px;
   padding: 10px 12px;
-  border-left: 4px solid var(--accent);
-  background: var(--surface-2);
 }
 
 .alias-transfer-progress {
@@ -560,9 +558,6 @@
 .alias-transfer-row {
   margin-top: 6px;
   padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--surface);
   overflow-wrap: anywhere;
 }
 
@@ -821,9 +816,6 @@
   display: grid;
   gap: 2px;
   padding: 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .alias-conflict-item small {

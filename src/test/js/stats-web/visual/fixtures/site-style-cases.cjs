@@ -10,7 +10,8 @@ const galleryViews = [
   'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alerts',
   'alias-modal', 'alias-export', 'scan-list-members', 'channels', 'radio-directory', 'entity-details',
   'live-notice', 'live-filter', 'tuner-frequency-popover', 'spectrum-discovery', 'spectrum-search',
-  'control-states', 'table-overflow', 'setup-guide', 'call-matching', 'receiving-windows', 'section-body'
+  'control-states', 'table-overflow', 'setup-guide', 'call-matching', 'receiving-windows', 'section-body',
+  'awaiting-apply', 'comparison-table'
 ];
 const gallerySelector = (view) => ({
   gallery: '.design-system-gallery', 'modal-long': '.visual-modal-example',
@@ -20,6 +21,7 @@ const gallerySelector = (view) => ({
   'spectrum-discovery': '.visual-spectrum-discovery-example .spectrum-discovery-modal',
   'spectrum-search': '.visual-spectrum-search-example .spectrum-search-modal',
   'radioreference-connect': '[role="dialog"][aria-labelledby^="read-only-modal-title-radioreference-connect-"]',
+  'comparison-table': '[role="dialog"][aria-labelledby^="read-only-modal-title-gallery-comparison-table-"]',
   'setup-guide': 'body'
 }[view] || `.visual-${view}-example`);
 const presentations = [

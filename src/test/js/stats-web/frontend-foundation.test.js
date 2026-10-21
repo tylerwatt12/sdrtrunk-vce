@@ -1397,7 +1397,9 @@ async function main() {
   assert.doesNotMatch(appSource, /function radioDirectoryStatus\(/);
   assert.match(appCssSource,
     /\.ui-button-state-success > svg \{[^}]*color: var\(--success\);[^}]*fill: currentColor/s);
-  assert.match(appCssSource, /\.ui-surface \{[^}]*background: var\(--surface\)/s);
+  assert.match(appCssSource,
+    /\.ui-surface \{[^}]*background: var\(--ui-panel-fill\);[^}]*border: 0;[^}]*box-shadow: none/s,
+    'Shared panels must use the semantic filled surface without a decorative outline or shadow');
   assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);
   assert.match(appCssSource, /\.ui-icon-tile \{[^}]*background: var\(--accent-soft\)/s);
   assert.match(appCssSource,

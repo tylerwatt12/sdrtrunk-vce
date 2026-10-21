@@ -1108,7 +1108,7 @@ for (const width of [1280, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await install(page, { liveSpectrum: true, listening: true });
       const dock = page.locator('#audio-dock');
-      const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+      const handle = dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
       await expect(dock).toBeVisible();
       await expect(page.locator('.spectrum-browse-panel .channel-diagnostic-overlay').first()).toBeHidden();
       const geometry = () => page.evaluate(() => {
@@ -1351,7 +1351,7 @@ test('Spectrum display options remain reachable from desktop and mobile controls
 });
 
 for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
-  test(`boxed Spectrum display options share one retune setting in ${theme} at ${width}px`, async ({ page }) => {
+  test(`filled Spectrum display options share one retune setting in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = { theme, listening: true, liveSpectrum: true };
     await install(page, state);
@@ -1375,7 +1375,8 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
         return { border: style.borderTopWidth, background: style.backgroundColor };
       }));
     expect(styles).toHaveLength(7);
-    expect(styles.every((style) => style.border === '1px' && !['transparent', 'rgba(0, 0, 0, 0)'].includes(style.background))).toBe(true);
+    expect(styles.every((style) => style.border === '0px' && ['transparent', 'rgba(0, 0, 0, 0)'].includes(style.background))).toBe(true);
+    await expect(panel.locator('select').first()).toHaveCSS('border-top-width', '1px');
     const overflow = await panel.evaluate((element) => [element, ...element.querySelectorAll('*')]
       .filter((control) => control.clientWidth > 0 && control.scrollWidth > control.clientWidth + 1)
       .map((control) => ({ className: control.className, tag: control.tagName,

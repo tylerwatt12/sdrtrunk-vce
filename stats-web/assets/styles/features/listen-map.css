@@ -272,8 +272,6 @@
 
 .listen-map-history-wrap {
   max-height: 280px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
   overflow: auto;
 }
 
