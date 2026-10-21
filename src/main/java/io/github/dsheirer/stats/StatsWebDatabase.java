@@ -2103,6 +2103,8 @@ class StatsWebDatabase
                 row.put("protocol_label", channel.protocolLabel());
                 row.put("channel_kind", channel.channelKind());
                 row.put("frequencies_hz", channel.frequenciesHz());
+                row.put("display_frequency_hz", channel.displayFrequencyHz());
+                row.put("display_frequency_source", channel.displayFrequencySource());
                 row.put("processing_state", channel.processingState().name());
                 row.put("alias_list_id", channel.aliasListId());
                 row.put("alias_list_name", channel.aliasListName());

@@ -31,8 +31,6 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.web.http.StreamingAdminHttpController;
 import io.github.dsheirer.web.http.TopicAlertsHttpController;
 import io.github.dsheirer.web.http.PagingToneHttpController;
-import io.github.dsheirer.channel.ChannelAdministrationService;
-import io.github.dsheirer.web.http.WebRequestExecutor;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterCatalog;
@@ -66,6 +64,7 @@ import io.github.dsheirer.web.http.OperationalPreferencesHttpController;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
+import io.github.dsheirer.web.http.WebRequestExecutor;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
 import io.github.dsheirer.web.http.RemoteLinksHttpController;
 import io.github.dsheirer.web.http.RecordingTunerHttpController;
@@ -110,7 +109,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -175,7 +173,6 @@ public class StatsWebServerService implements AutoCloseable
     private boolean mClosed;
 
     private final ReceiverWebServices mServices;
-    private final StatsWebSnapshot<List<ChannelAdministrationService.ChannelSummary>> mWebChannelCatalog;
     private boolean mStarted;
 
     public StatsWebServerService(UserPreferences preferences, ReceiverWebServices services)
@@ -183,8 +180,6 @@ public class StatsWebServerService implements AutoCloseable
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = Objects.requireNonNull(preferences);
         mServices = Objects.requireNonNull(services);
-        mWebChannelCatalog = new StatsWebSnapshot<>(Duration.ofSeconds(2), () ->
-            mServices.mChannelAdministrationService.currentCatalog().channels());
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(preferences);
         mTlsMaterialService = new WebTlsMaterialService(
             preferences.getDirectoryPreference().getDirectoryApplicationRoot());
@@ -685,8 +680,9 @@ public class StatsWebServerService implements AutoCloseable
             mServices.mReceiverHealthService::snapshot, mServices.mP25AssignmentService,
             mUserPreferences.getNowPlayingPreference()::getTrafficGrantAgeOutMilliseconds,
             mServices.mRemoteLinkAdministrationService,
-            new ActivityRecordingAvailability(mServices.mDatabase, () -> mServices.mManagedRecordingCatalog), mWebChannelCatalog)
-            .register(server);
+            new ActivityRecordingAvailability(mServices.mDatabase, () -> mServices.mManagedRecordingCatalog),
+            mServices.mWebChannelCatalog)
+            .withP25ActivityLiveService(mServices.mP25ActivityLiveService).register(server);
         RetainedStatisticsAdminHttpController retainedStatistics = new RetainedStatisticsAdminHttpController(
             mServices.mRetainedStatisticsCatalog, mServices.mRetainedStatisticsJobs);
         server.createContext(RetainedStatisticsAdminHttpController.PATH,
@@ -937,7 +933,8 @@ public class StatsWebServerService implements AutoCloseable
         status.put("stats_logging", statsLoggingStatusResponse());
         ReceiverActivityStatus logging = statsLoggingStatus();
         status.put("p25_visualizer_available", logging.summaryActive() && logging.detailedHistoryActive() &&
-            mChannelAdministrationService != null && mChannelAdministrationService.hasRunningP25TrunkedChannel());
+            mServices.mChannelAdministrationService != null &&
+            mServices.mChannelAdministrationService.hasRunningP25TrunkedChannel());
         return status;
     }
 
@@ -1350,12 +1347,12 @@ public class StatsWebServerService implements AutoCloseable
             case "channel_diagnostics" -> channelDiagnosticRequest(request);
             case "tuner_diagnostics" -> tunerDiagnosticRequest(request);
             case "frequency_audio" -> frequencyListenRequest(request);
-            case "saved_activity" -> {
+            case "p25_activity" -> {
                 if(parameters.size() != 1 || !parameters.has("subscription_id"))
-                    throw new StatsApiException(400, "Saved activity options are invalid");
+                    throw new StatsApiException(400, "P25 Activity options are invalid");
                 String id = requiredMultiplexText(parameters, "subscription_id");
                 UUID.fromString(id);
-                yield new SavedActivitySubscription(id);
+                yield new P25ActivitySubscription(id);
             }
             default -> throw new StatsApiException(400, "Unknown live subscription");
         };
@@ -1397,12 +1394,12 @@ public class StatsWebServerService implements AutoCloseable
         return new StatsRequest(values);
     }
 
-    sealed interface LiveSubscription permits ActivitySubscription, SavedActivitySubscription,
+    sealed interface LiveSubscription permits ActivitySubscription, P25ActivitySubscription,
         DecodeEventRequest, DecodeMessageRequest, ChannelDiagnosticRequest, TunerDiagnosticRequest,
         FrequencyListenRequest { }
     private record ActivitySubscription(boolean markers, String subscriptionId)
         implements LiveSubscription { }
-    private record SavedActivitySubscription(String subscriptionId) implements LiveSubscription { }
+    private record P25ActivitySubscription(String subscriptionId) implements LiveSubscription { }
 
     private static TunerDiagnosticRequest tunerDiagnosticRequest(StatsRequest request)
     {
@@ -2281,11 +2278,11 @@ public class StatsWebServerService implements AutoCloseable
         private final long[] mObservedOutputDrops = new long[TOPIC_MAXIMUM + 1];
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
+        private StatsLiveEventHub.Subscription mDecodeEvents;
         private StatsLiveEventHub.Subscription mP25Activity;
         private String mP25SubscriptionId;
         private long mP25StateRevision = -1;
         private long mP25Drops;
-        private StatsLiveEventHub.Subscription mDecodeEvents;
         private DecodeEventViewService.Scope mDecodeEventScope;
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
@@ -2455,7 +2452,7 @@ public class StatsWebServerService implements AutoCloseable
                 {
                     mP25Drops = queueDrops;
                     observeOutputDrops(output, TOPIC_P25_ACTIVITY);
-                    P25ActivityLiveService.State state = mP25ActivityLiveService.state();
+                    P25ActivityLiveService.State state = mServices.mP25ActivityLiveService.state();
                     writeMultiplexRecoveryJson(output, TOPIC_P25_ACTIVITY, "resync_required",
                         Map.of("reason", "transport_gap", "source_epoch", state.epoch(), "sequence", state.sequence()));
                     wrote = true;
@@ -2493,23 +2490,6 @@ public class StatsWebServerService implements AutoCloseable
         private boolean reportStatelessGaps(LiveMultiplexOutput output) throws IOException
         {
             boolean wrote = false;
-
-            if(mSavedActivity != null)
-            {
-                long queueDrops = mSavedActivity.droppedCount();
-                long outputDrops = output.eventDrops(TOPIC_SAVED_ACTIVITY);
-                long dropped = positiveDelta(queueDrops, mSavedActivityDrops) +
-                    positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_SAVED_ACTIVITY]);
-                mSavedActivityDrops = queueDrops;
-                mObservedOutputDrops[TOPIC_SAVED_ACTIVITY] = outputDrops;
-                if(dropped > 0)
-                {
-                    SavedActivityLiveService.State state = mServices.mSavedActivityLiveService.state();
-                    recoverSavedActivityGap(output, state, mSavedActivitySubscriptionId, dropped);
-                    if(state.initialized()) mSavedActivityStateRevision = state.revision();
-                    wrote = true;
-                }
-            }
 
             if(mDecodeEvents != null)
             {
@@ -2670,8 +2650,8 @@ public class StatsWebServerService implements AutoCloseable
                     long ingressDropBaseline = mServices.mLiveService.droppedActivityIngressEvents();
                     ActivitySubscription activity = (ActivitySubscription)parameters;
                     mChannelActivityMarkers = activity.markers();
-                    mChannelActivity = requiredSubscription(mServices.mLiveService.subscribeChannelActivity(
-                        mChannelActivityMarkers), topic);
+                    mChannelActivity = requiredSubscription(
+                        mServices.mLiveService.subscribeChannelActivity(mChannelActivityMarkers), topic);
                     long dropBaseline = mChannelActivity.droppedCount();
                     StatsLiveService.SnapshotWire snapshot = mServices.mLiveService.snapshotWire(mChannelActivityMarkers);
                     var recovery = new RecoveryCapture<>(dropBaseline, snapshot);
@@ -2681,14 +2661,6 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivityBaselineRevision = snapshot.revision();
                     mChannelActivityTableBaselines.clear();
                     observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
-                }
-                case "p25_activity" -> {
-                    mP25SubscriptionId = requiredMultiplexText(parameters, "subscription_id");
-                    mP25Activity = requiredSubscription(mP25ActivityLiveService.subscribe(), topic);
-                    mP25StateRevision = -1;
-                    mP25Drops = mP25Activity.droppedCount();
-                    observeOutputDrops(output, TOPIC_P25_ACTIVITY);
-                    pumpP25ActivityState(output);
                 }
                 case "decode_events" -> {
                     DecodeEventRequest request = (DecodeEventRequest)parameters;
@@ -2739,25 +2711,26 @@ public class StatsWebServerService implements AutoCloseable
                 case "channel_diagnostics" -> openChannelDiagnostics((ChannelDiagnosticRequest)parameters, output);
                 case "tuner_diagnostics" -> openTunerDiagnostics((TunerDiagnosticRequest)parameters, output);
                 case "frequency_audio" -> openFrequencyAudio((FrequencyListenRequest)parameters);
-                case "saved_activity" -> {
-                    mSavedActivitySubscriptionId = ((SavedActivitySubscription)parameters).subscriptionId();
-                    mSavedActivity = requiredSubscription(mServices.mSavedActivityLiveService.subscribe(), topic);
-                    mSavedActivityDrops = mSavedActivity.droppedCount();
-                    observeOutputDrops(output, TOPIC_SAVED_ACTIVITY);
-                    pumpSavedActivityState(output);
+                case "p25_activity" -> {
+                    mP25SubscriptionId = ((P25ActivitySubscription)parameters).subscriptionId();
+                    mP25Activity = requiredSubscription(mServices.mP25ActivityLiveService.subscribe(), topic);
+                    mP25StateRevision = -1;
+                    mP25Drops = mP25Activity.droppedCount();
+                    observeOutputDrops(output, TOPIC_P25_ACTIVITY);
+                    pumpP25ActivityState(output);
                 }
                 default -> throw new IllegalArgumentException("Unknown multiplex topic");
             }
         }
 
-        private boolean pumpSavedActivityState(LiveMultiplexOutput output) throws IOException
+        private boolean pumpP25ActivityState(LiveMultiplexOutput output) throws IOException
         {
-            if(mSavedActivity == null) return false;
-            SavedActivityLiveService.State state = mServices.mSavedActivityLiveService.state();
-            if(!state.initialized() || state.revision() == mSavedActivityStateRevision) return false;
-            writeMultiplexRecoveryJson(output, TOPIC_SAVED_ACTIVITY, "source_change",
-                state.payload(mSavedActivitySubscriptionId));
-            mSavedActivityStateRevision = state.revision();
+            if(mP25Activity == null) return false;
+            P25ActivityLiveService.State state = mServices.mP25ActivityLiveService.state();
+            if(state.revision() == mP25StateRevision) return false;
+            writeMultiplexRecoveryJson(output, TOPIC_P25_ACTIVITY, "source_change",
+                state.payload(mP25SubscriptionId));
+            mP25StateRevision = state.revision();
             return true;
         }
 
@@ -2926,17 +2899,17 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivityMarkers = false;
                     mChannelActivityTableBaselines.clear();
                 }
+                case "decode_events" -> closeDecodeEvents();
+                case "decode_messages" -> closeDecodeMessages();
+                case "channel_diagnostics" -> closeChannelDiagnostics();
+                case "tuner_diagnostics" -> closeTunerDiagnostics();
+                case "frequency_audio" -> closeFrequencyAudio();
                 case "p25_activity" -> {
                     mP25Activity = closeSubscription(mP25Activity);
                     mP25SubscriptionId = null;
                     mP25StateRevision = -1;
                     mP25Drops = 0;
                 }
-                case "decode_events" -> closeDecodeEvents();
-                case "decode_messages" -> closeDecodeMessages();
-                case "channel_diagnostics" -> closeChannelDiagnostics();
-                case "tuner_diagnostics" -> closeTunerDiagnostics();
-                case "frequency_audio" -> closeFrequencyAudio();
                 default -> { }
             }
         }
@@ -3153,28 +3126,6 @@ public class StatsWebServerService implements AutoCloseable
             case "p25_activity" -> WebCapability.RADIO_VIEW;
             default -> WebCapability.LIVE_VIEW;
         };
-    }
-
-    static Set<WebCapability> capabilitiesForTopic(String topic)
-    {
-        return "saved_activity".equals(topic) ? Set.of(WebCapability.RADIO_VIEW, WebCapability.DASHBOARD_VIEW) :
-            Set.of(capabilityForTopic(topic));
-    }
-
-    static void recoverSavedActivityGap(LiveMultiplexOutput output, SavedActivityLiveService.State state,
-                                       String subscriptionId, long dropped) throws IOException
-    {
-        byte[] gap = LiveMultiplexFrame.json(TOPIC_SAVED_ACTIVITY, "live_gap", Map.of("dropped", dropped))
-            .bytes(output.gzipEnabled());
-        if(state.initialized())
-        {
-            // A gap can replace an unwritten initial/settings state. Preserve its authoritative timing and
-            // subscription boundary after the gap, before any later append, so the browser can finish recovery.
-            output.offerRecoverySequence(TOPIC_SAVED_ACTIVITY, gap,
-                LiveMultiplexFrame.json(TOPIC_SAVED_ACTIVITY, "source_change", state.payload(subscriptionId))
-                    .bytes(output.gzipEnabled()));
-        }
-        else output.offerRecovery(TOPIC_SAVED_ACTIVITY, gap);
     }
 
     private static int topicId(String topic)

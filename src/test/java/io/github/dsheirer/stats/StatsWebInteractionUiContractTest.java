@@ -380,7 +380,7 @@ class StatsWebInteractionUiContractTest
         String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory)");
         assertFalse(source.contains("function renderRadioSystems()"));
         assertFalse(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
-        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', body)"));
+        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', wrapper)"));
         assertTrue(directory.contains("directory.systems.forEach((parent)"));
         assertTrue(directory.contains("parent.children.filter((row)"));
         assertTrue(directory.contains("update(updated) { directory = updated; draw(); }"));
@@ -1261,7 +1261,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(filters.contains("className: 'live-filter-modal'"));
         assertTrue(filters.contains("returnFocusSelector:"));
         assertTrue(filters.contains("trigger.setAttribute('aria-haspopup', 'dialog')"));
-        assertTrue(filters.contains("node('ul', 'live-filter-tree')"));
+        assertTrue(filters.contains("node('ul', 'live-filter-tree ui-surface-inset')"));
         assertTrue(filters.contains("node('li', `live-filter-tree-item"));
         assertFalse(filters.contains("tree.setAttribute('role', 'tree')"));
         assertTrue(filters.contains("iconButton('icon-chevron-down'"));
@@ -2115,7 +2115,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-options[open] .tuner-spectrum-options-panel"));
         assertTrue(tuner.contains("preferenceCheckbox('', label, checked, detail)"));
         assertTrue(tuner.contains("autoRangeInput.name = 'auto_range_on_retune'"));
-        assertTrue(css.contains(".settings-card-body .settings-field-control"));
+        assertTrue(css.contains(".settings-card-body {\n  flex: 1 1 auto;\n  display: grid;"));
         assertTrue(css.contains(".settings-field-control {"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-encrypted"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-call"));

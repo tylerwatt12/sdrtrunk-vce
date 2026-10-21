@@ -168,7 +168,7 @@ class StatsLiveBatchTest
                 long next = ((Number)batch.get("revision")).longValue();
                 assertTrue(next > revision);
                 assertTrue(event.frame(1).bytes(false).length <=
-                    StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC);
+                    LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC);
                 for(int index = 1; index < subscriptions.size(); index++)
                 {
                     var shared = subscriptions.get(index).poll(1, TimeUnit.SECONDS);

@@ -24052,20 +24052,6 @@ function channelCatalogAfterAutoStartMove(catalog, configurationId, direction) {
   };
 }
 
-function radioDirectoryAliasLists(row) {
-  const entries = Array.isArray(row.alias_lists) ? row.alias_lists : [];
-  if (!entries.length && row.alias_list_name) {
-    return aliasListLink(row.alias_list_name, row.alias_list_id) || node('span', 'muted', '—');
-  }
-  if (!entries.length) return node('span', 'muted', '—');
-  const values = node('span', 'radio-directory-alias-lists');
-  entries.forEach((entry, index) => {
-    if (index) values.append(node('span', 'muted', ' · '));
-    values.append(aliasListLink(entry.name, entry.id));
-  });
-  return values;
-}
-
 function radioDirectoryConventionalGroups(rows) {
   const groups = new Map();
   (rows || []).forEach((row) => {
@@ -24257,7 +24243,6 @@ function renderNestedRadioDirectory(renderContext, directory) {
   if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
   const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
   wrapper.dataset.uiDensity = 'compact';
-  const summaryHost = node('div');
   const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
   const searchWrap = node('label', 'ui-search');
   searchWrap.append(iconGlyph('icon-search'));
@@ -24302,19 +24287,15 @@ function renderNestedRadioDirectory(renderContext, directory) {
     });
     const conventionalRows = directory.channels.filter((row) => matchesState(row) && matches(row, term));
     const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
-    summaryHost.replaceChildren(channelSummaryCards({ channels: [...directory.channels,
-      ...directory.systems.flatMap((system) => system.children)] }, false));
     radioDirectoryReconcile(directoryHost,
       radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
         'No trunked systems or sites match this search'),
       radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
-        'No conventional channels match this search',
-        `${number(conventionalSystems.length)} ${conventionalSystems.length === 1 ? 'system' : 'systems'} · ` +
-        `${number(conventionalRows.length)} ${conventionalRows.length === 1 ? 'channel' : 'channels'} shown`)
+        'No conventional channels match this search')
     );
   };
   search.addEventListener('input', draw);
-  wrapper.append(summaryHost, toolbar, directoryHost);
+  wrapper.append(toolbar, directoryHost);
   draw();
 
   content.append(radioDirectoryEmbeddedPanel('systems', wrapper));

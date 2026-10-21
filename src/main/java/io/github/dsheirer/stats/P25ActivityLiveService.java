@@ -436,12 +436,12 @@ final class P25ActivityLiveService implements AutoCloseable
         int bytes = 1024;
         for(Change change: changes)
         {
-            if(change.bytes() + 1024 > StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC)
+            if(change.bytes() + 1024 > LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC)
             {
                 return resync(state);
             }
             if(current.size() == 100 ||
-                bytes + change.bytes() > StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC - 1024)
+                bytes + change.bytes() > LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC - 1024)
             {
                 parts.add(current);
                 current = new ArrayList<>();
@@ -483,7 +483,7 @@ final class P25ActivityLiveService implements AutoCloseable
             data.put("collection_enabled", state.enabled);
             data.put("traffic_grant_age_out_milliseconds", state.timeout);
             var frame = StatsLiveEventHub.LiveEvent.prepared("p25_state_delta", Map.copyOf(data), TOPIC);
-            if(frame.frame(TOPIC).bytes(false).length > StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC)
+            if(frame.frame(TOPIC).bytes(false).length > LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC)
             {
                 return resync(state);
             }

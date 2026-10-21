@@ -37,7 +37,8 @@ async function checkDashboardData(appSource, functionBinding) {
   const page = vm.createContext({
     route: new URLSearchParams(), ACCESS_CAPABILITIES: { RADIO: 'radio' },
     captureRenderContext: () => ({}), renderIsCurrent: () => current,
-    beginPage: () => true, pageHeader: () => ({}), tabs: () => ({}), href: () => '',
+    beginPage: () => true, pageHeader: () => ({}),
+    tabs: () => ({ classList: { add() {} }, setAttribute() {} }), href: () => '',
     node: () => ({ replaceWith() {} }), content: { append() {} }, capabilityAllowed: () => true,
     api: async (path) => { dataRequests.push(path); return {}; },
     loadMainDashboard: async () => {
@@ -81,7 +82,7 @@ async function checkDashboardData(appSource, functionBinding) {
 
   current = true;
   page.beginPage = () => false;
-  for (const tab of ['health', 'activity', 'calls']) {
+  for (const tab of ['health', 'activity', 'calls', 'inventory']) {
     page.route = new URLSearchParams(`tab=${tab}`);
     dataRequests.length = 0;
     await page.renderDashboard();

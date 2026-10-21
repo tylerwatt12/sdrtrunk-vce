@@ -418,7 +418,7 @@ final class StatsLiveService implements AutoCloseable
 
     private static boolean batchFits(StatsLiveEventHub.LiveEvent event) throws IOException
     {
-        return event.frame(1).bytes(false).length <= StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC;
+        return event.frame(1).bytes(false).length <= LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC;
     }
 
     private void publishBoundary(ProjectionRun run, ChannelActivityModel.SnapshotSet source)

@@ -40,6 +40,7 @@ import io.github.dsheirer.web.settings.SpectrumSnapSettingsService;
 import io.github.dsheirer.web.settings.WebReceiverSettingsService;
 import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 import java.util.List;
 import java.util.Objects;
@@ -67,7 +68,7 @@ public final class ReceiverWebServices implements AutoCloseable
     final StatsWebDatabase mDatabase;
     final WebEntityNavigationCatalog mEntityCatalog;
     final StatsLiveService mLiveService;
-    final SavedActivityLiveService mSavedActivityLiveService;
+    final P25ActivityLiveService mP25ActivityLiveService;
     final StatsP25AssignmentService mP25AssignmentService;
     final DecodeEventViewService mDecodeEventViewService;
     final DecodeMessageViewService mDecodeMessageViewService;
@@ -97,6 +98,7 @@ public final class ReceiverWebServices implements AutoCloseable
     final ReceiverActivityService mActivityLogService;
     final AliasAdministrationService mAliasAdministrationService;
     final ChannelAdministrationService mChannelAdministrationService;
+    final StatsWebSnapshot<List<ChannelAdministrationService.ChannelSummary>> mWebChannelCatalog;
     final StreamingAdministrationService mStreamingAdministrationService;
     final RemoteLinkAdministrationService mRemoteLinkAdministrationService;
     volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
@@ -148,18 +150,39 @@ public final class ReceiverWebServices implements AutoCloseable
             mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog,
                 () -> mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary());
             constructed.add(mWebCallService);
-            mSavedActivityLiveService = new SavedActivityLiveService(new SavedActivityLiveService.Source()
-            {
-                @Override public long watermark() { return mDatabase.savedActivityWatermark(); }
-                @Override public Map<String,Object> after(long afterId, Long watermarkId)
-                { return mDatabase.savedActivityAfter(afterId, watermarkId); }
-            }, active -> {
-                mActivityLogService.setLiveActivityDemand(active);
-            }, mUserPreferences.getNowPlayingPreference()::getTrafficGrantAgeOutMilliseconds,
+            mP25ActivityLiveService = new P25ActivityLiveService(
+                new P25ActivityLiveService.Source()
+                {
+                    @Override
+                    public P25ActivityLiveService.RawSnapshot snapshot()
+                    {
+                        return mDatabase.p25RawSnapshot();
+                    }
+                    @Override
+                    public Object identity()
+                    {
+                        return mDatabase.p25SourceIdentity();
+                    }
+                    @Override
+                    public long presentationGeneration()
+                    {
+                        return mDatabase.affiliationPresentationGeneration();
+                    }
+                    @Override
+                    public List<Map<String,Object>> presentRows(List<Map<String,Object>> rows)
+                    {
+                        return mDatabase.presentP25ActivityRows(rows);
+                    }
+                    @Override
+                    public List<Map<String,Object>> presentAffiliations(List<Map<String,Object>> rows)
+                    {
+                        return mDatabase.presentP25Affiliations(rows);
+                    }
+                }, mUserPreferences.getNowPlayingPreference()::getTrafficGrantAgeOutMilliseconds,
                 () -> mActivityLogService.getStatus().detailedHistoryActive());
-            constructed.add(mSavedActivityLiveService);
-            constructed.add(() -> mActivityLogService.setSavedActivityCommitSignal(null));
-            mActivityLogService.setSavedActivityCommitSignal(mSavedActivityLiveService::signalCommit);
+            constructed.add(mP25ActivityLiveService);
+            mWebChannelCatalog = new StatsWebSnapshot<>(Duration.ofSeconds(2), () ->
+                mChannelAdministrationService != null ? mChannelAdministrationService.currentCatalog().channels() : List.of());
             mTunerManager = tunerManager;
             mConventionalLiveSources = new ConventionalLiveSources(channelProcessingManager.getChannelActivityModel());
             mDecodeMessageViewService = new DecodeMessageViewService(channelProcessingManager, mConventionalLiveSources);
@@ -412,7 +435,7 @@ public final class ReceiverWebServices implements AutoCloseable
         mAudioCallCoordinator = null;
         mLogicalCallDiagnosticService = null;
         owned.addAll(List.of(mReceiverHealthService, () -> mFeatureMaintenance.shutdownNow(), mLiveService,
-            mSavedActivityLiveService, () -> mActivityLogService.setSavedActivityCommitSignal(null),
+            mP25ActivityLiveService,
             mP25AssignmentService, mDecodeMessageViewService, mChannelDiagnosticService, mFrequencyListenService,
             mTunerDiagnosticService, mDiagnosticFftScheduler, mWebCallService));
         closeOwned(owned);

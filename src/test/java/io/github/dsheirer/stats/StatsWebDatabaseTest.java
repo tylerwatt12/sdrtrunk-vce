@@ -2581,6 +2581,13 @@ class StatsWebDatabaseTest
         assertEquals(List.of("County A", "County B"), rowsFrom(system, "alias_lists").stream()
             .map(row -> row.get("name")).toList());
         assertEquals(2, rowsFrom(system, "children").size());
+        Map<String,Object> activeControl = rowWith(rowsFrom(system, "children"), "configuration_id", P25_CHANNEL_A);
+        assertEquals(853012500L, number(activeControl.get("display_frequency_hz")),
+            "The Main card must use the live control frequency rather than configured or retained quality data");
+        assertEquals("active-control", activeControl.get("display_frequency_source"));
+        Map<String,Object> stoppedControl = rowWith(rowsFrom(system, "children"), "configuration_id", P25_CHANNEL_B);
+        assertEquals(852012500L, number(stoppedControl.get("display_frequency_hz")));
+        assertEquals("configured", stoppedControl.get("display_frequency_source"));
         assertEquals(ANALOG_CHANNEL, rowsFrom(directory, "channels").getFirst().get("configuration_id"));
         assertEquals(154310000L, number(((List<?>)rowsFrom(directory, "channels").getFirst()
             .get("frequencies_hz")).getFirst()));

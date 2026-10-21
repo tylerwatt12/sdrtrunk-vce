@@ -145,12 +145,10 @@ class StatsApiV1HttpContractTest
             }
         };
         mService.close();
-        mService = new StatsWebServerService(new TestUserPreferences(new TestApplicationPreference(),
-            new TestDirectoryPreference(dataRoot)), null, logging);
+        mService = StatsWebTestRuntime.start(new TestUserPreferences(new TestApplicationPreference(),
+            new TestDirectoryPreference(dataRoot)), logging);
         mOrigin = URI.create("http://127.0.0.1:" + mService.getRuntimeState().port());
-        Field catalogField = StatsWebServerService.class.getDeclaredField("mWebChannelCatalog");
-        catalogField.setAccessible(true);
-        Object catalog = catalogField.get(mService);
+        Object catalog = StatsWebTestRuntime.services(mService).mWebChannelCatalog;
         Field readField = StatsWebSnapshot.class.getDeclaredField("mRead");
         readField.setAccessible(true);
         AtomicInteger catalogReads = new AtomicInteger();
@@ -177,7 +175,6 @@ class StatsApiV1HttpContractTest
         finally
         {
             mService.close();
-            logging.dispose();
         }
     }
 
@@ -923,12 +920,13 @@ class StatsApiV1HttpContractTest
     void multiplexStreamsOneBatchRevisionForMultipleTablesAndKeepsHttpAvailable() throws Exception
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
-        Field liveField = StatsWebServerService.class.getDeclaredField("mLiveService");
+        ReceiverWebServices features = StatsWebTestRuntime.services(mService);
+        Field liveField = ReceiverWebServices.class.getDeclaredField("mLiveService");
         liveField.setAccessible(true);
-        ((StatsLiveService)liveField.get(mService)).close();
+        ((StatsLiveService)liveField.get(features)).close();
         StatsLiveService live = StatsLiveService.fromActivitySource(source, null);
         live.start();
-        liveField.set(mService, live);
+        liveField.set(features, live);
         assertEquals(0, live.snapshotWire().revision());
         String clientId = "00000000-0000-0000-0000-000000000125";
         HttpRequest request = HttpRequest.newBuilder(mOrigin.resolve(
@@ -1110,9 +1108,7 @@ class StatsApiV1HttpContractTest
     {
         assertEquals(404, get(StatsApiV1.ACTIVITY + "/live").statusCode());
         assertEquals(404, get(StatsApiV1.ACTIVITY + "/live?source_epoch=unknown&after_sequence=0").statusCode());
-        Field field = StatsWebServerService.class.getDeclaredField("mP25ActivityLiveService");
-        field.setAccessible(true);
-        P25ActivityLiveService live = (P25ActivityLiveService)field.get(mService);
+        P25ActivityLiveService live = StatsWebTestRuntime.services(mService).mP25ActivityLiveService;
         try(var subscriber = live.subscribe())
         {
             HttpResponse<String> response = get(StatsApiV1.ACTIVITY + "/live/seed");
@@ -1132,9 +1128,7 @@ class StatsApiV1HttpContractTest
     @Test
     void p25RecentSeedIsCompactSharedGzipAndMatchesLiveRows() throws Exception
     {
-        Field liveField = StatsWebServerService.class.getDeclaredField("mP25ActivityLiveService");
-        liveField.setAccessible(true);
-        P25ActivityLiveService live = (P25ActivityLiveService)liveField.get(mService);
+        P25ActivityLiveService live = StatsWebTestRuntime.services(mService).mP25ActivityLiveService;
         try(var subscriber = live.subscribe())
         {
             HttpResponse<String> response = get(StatsApiV1.ACTIVITY + "/live/seed");
@@ -1157,9 +1151,7 @@ class StatsApiV1HttpContractTest
             assertFalse(row.has("source_entity_ref"));
             assertFalse(row.has("target_alias_description"));
             assertFalse(row.has("frequency_hz"));
-            Field databaseField = StatsWebServerService.class.getDeclaredField("mDatabase");
-            databaseField.setAccessible(true);
-            StatsWebDatabase database = (StatsWebDatabase)databaseField.get(mService);
+            StatsWebDatabase database = StatsWebTestRuntime.services(mService).mDatabase;
             var liveRows = database.presentP25ActivityRows(database.p25RawSnapshot().rows());
             assertEquals(seed.path("rows"), OBJECT_MAPPER.readTree(OBJECT_MAPPER.writeValueAsBytes(liveRows)));
             byte[] frame = StatsLiveEventHub.LiveEvent.prepared("p25_state_delta", Map.of("rows", liveRows), 7).frame(7).bytes(false);

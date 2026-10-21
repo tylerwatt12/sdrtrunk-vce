@@ -32,7 +32,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
-import io.github.dsheirer.stats.health.ReceiverHealthService;
 import io.github.dsheirer.support.WebDiagnosticLogService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.http.WebSessionHttpController;
@@ -80,7 +79,7 @@ class StatsWebServerServiceLifecycleTest
     Path mTemporaryDirectory;
 
     @Test
-    void failedFeatureConstructionDetachesCallbacksAndStopsItsAlreadyCreatedObserver() throws Exception
+    void failedFeatureConstructionStopsItsAlreadyCreatedObserver() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("failed-feature-construction");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -97,15 +96,7 @@ class StatsWebServerServiceLifecycleTest
         var tuners = new io.github.dsheirer.source.tuner.manager.TunerManager(preferences);
         var configuration = new ConfigurationManager(preferences, tuners, new AliasModel(), null);
         configuration.init();
-        java.util.concurrent.atomic.AtomicBoolean attached = new java.util.concurrent.atomic.AtomicBoolean();
-        var activity = new io.github.dsheirer.stats.activity.ReceiverActivityService(preferences)
-        {
-            @Override public void setSavedActivityCommitSignal(java.util.function.Consumer<Boolean> signal)
-            {
-                attached.set(signal != null);
-                super.setSavedActivityCommitSignal(signal);
-            }
-        };
+        var activity = new io.github.dsheirer.stats.activity.ReceiverActivityService(preferences);
         var events = new io.github.dsheirer.module.decode.event.DecodeEventViewService(
             configuration.getChannelProcessingManager(), configuration.getAliasModel());
         var before = Thread.getAllStackTraces().keySet();
@@ -114,7 +105,6 @@ class StatsWebServerServiceLifecycleTest
             IllegalStateException failure = assertThrows(IllegalStateException.class,
                 () -> new ReceiverWebServices(preferences, configuration, activity, events, null));
             assertTrue(failure.getMessage().contains("Injected late feature construction failure"));
-            assertFalse(attached.get(), "Failed construction must detach the saved-activity callback");
             assertTrue(Thread.getAllStackTraces().keySet().stream().noneMatch(thread ->
                 !before.contains(thread) && thread.isAlive() &&
                     thread.getName().startsWith("sdrtrunk decode message views")),
@@ -241,17 +231,15 @@ class StatsWebServerServiceLifecycleTest
         AtomicBoolean pauseWriter = new AtomicBoolean();
         List<CompletableFuture<HttpResponse<InputStream>>> streams = new ArrayList<>();
 
-        try(StatsWebServerService service = new StatsWebServerService(preferences);
+        try(StatsWebServerService service = StatsWebTestRuntime.start(preferences);
             HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(5)).build();
             var readers = Executors.newVirtualThreadPerTaskExecutor())
         {
             try
             {
-                var healthField = StatsWebServerService.class.getDeclaredField("mReceiverHealthService");
-                healthField.setAccessible(true);
                 // This fixture stalls only HTTP diagnostics. Latest-health coalescing has separate saturation coverage.
-                ((ReceiverHealthService)healthField.get(service)).setWebDiagnosticLogService(null);
+                StatsWebTestRuntime.services(service).mReceiverHealthService.setWebDiagnosticLogService(null);
                 var logField = StatsWebServerService.class.getDeclaredField("mWebDiagnosticLogService");
                 logField.setAccessible(true);
                 WebDiagnosticLogService diagnostics = (WebDiagnosticLogService)logField.get(service);
@@ -411,7 +399,7 @@ class StatsWebServerServiceLifecycleTest
     }
 
     @Test
-    void rejectsSavedHistorySubscriptionsWhileKeepingLiveControlsAvailable() throws Exception
+    void supportsP25LiveSubscriptionsAndRejectsRetiredSavedHistory() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("history-snapshot-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -423,7 +411,7 @@ class StatsWebServerServiceLifecycleTest
         System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
         TestUserPreferences preferences = new TestUserPreferences(
             new TestApplicationPreference(0, false, false, true), new TestDirectoryPreference(dataRoot));
-        try(StatsWebServerService service = new StatsWebServerService(preferences);
+        try(StatsWebServerService service = StatsWebTestRuntime.start(preferences);
             HttpClient client = HttpClient.newHttpClient())
         {
             URI origin = origin(service.getRuntimeState().port());
@@ -442,7 +430,14 @@ class StatsWebServerServiceLifecycleTest
                 HttpResponse.BodyHandlers.ofString());
             assertEquals(400, retired.statusCode(), retired.body());
 
-            HttpResponse<String> supported = client.send(multiplexControl(origin, cookie, csrf, clientId, 2,
+            HttpResponse<String> p25 = client.send(multiplexControl(origin, cookie, csrf, clientId, 2,
+                "{\"p25_activity\":{\"subscription_id\":\"" + UUID.randomUUID() + "\"}}"),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(404, p25.statusCode(), p25.body());
+            assertEquals("client_not_found", OBJECT_MAPPER.readTree(p25.body()).at("/error/code").textValue(),
+                "The P25 live topic passes typed validation and requires an actual live connection");
+
+            HttpResponse<String> supported = client.send(multiplexControl(origin, cookie, csrf, clientId, 3,
                 "{\"channel_activity\":{}}"), HttpResponse.BodyHandlers.ofString());
             assertEquals(404, supported.statusCode(), supported.body());
             assertEquals("client_not_found", OBJECT_MAPPER.readTree(supported.body()).at("/error/code").textValue(),

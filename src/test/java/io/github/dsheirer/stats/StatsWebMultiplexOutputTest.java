@@ -7,6 +7,8 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.web.auth.WebCapability;
@@ -33,6 +35,28 @@ import org.junit.jupiter.api.Test;
 
 class StatsWebMultiplexOutputTest
 {
+    @Test
+    void p25SubscriptionIncarnationsHaveValueEqualityAndRequireRadioAccess() throws Exception
+    {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode parameters = mapper.readTree(
+            "{\"subscription_id\":\"00000000-0000-0000-0000-000000000001\"}");
+        StatsWebServerService.LiveSubscription first =
+            StatsWebServerService.parseMultiplexSubscription("p25_activity", parameters);
+        assertEquals(first, StatsWebServerService.parseMultiplexSubscription("p25_activity", parameters.deepCopy()));
+        assertNotEquals(first, StatsWebServerService.parseMultiplexSubscription("p25_activity", mapper.readTree(
+            "{\"subscription_id\":\"00000000-0000-0000-0000-000000000002\"}")));
+        assertEquals(WebCapability.RADIO_VIEW, StatsWebServerService.capabilityForTopic("p25_activity"));
+
+        for(String invalid: List.of("{}", "{\"subscription_id\":null}",
+            "{\"subscription_id\":\"invalid\"}",
+            "{\"subscription_id\":\"00000000-0000-0000-0000-000000000001\",\"channel_id\":\"other\"}"))
+        {
+            assertThrows(RuntimeException.class, () ->
+                StatsWebServerService.parseMultiplexSubscription("p25_activity", mapper.readTree(invalid)));
+        }
+    }
+
     @Test
     void liveAnalogAudioRequiresTheExistingAudioListeningCapability() throws Exception
     {
@@ -572,8 +596,8 @@ class StatsWebMultiplexOutputTest
         assertFalse(source.contains("output.eventDrops() !="));
         assertFalse(source.contains("mLastChannelActivitySnapshot"));
         assertEquals(6, LiveMultiplexFrame.TOPIC_FREQUENCY_AUDIO);
-        assertEquals(7, LiveMultiplexFrame.TOPIC_SAVED_ACTIVITY);
-        assertEquals(LiveMultiplexFrame.TOPIC_SAVED_ACTIVITY, LiveMultiplexFrame.TOPIC_MAXIMUM);
+        assertEquals(7, LiveMultiplexFrame.TOPIC_P25_ACTIVITY);
+        assertEquals(LiveMultiplexFrame.TOPIC_P25_ACTIVITY, LiveMultiplexFrame.TOPIC_MAXIMUM);
         assertFalse(source.contains("network_activity"));
     }
 
