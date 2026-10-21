@@ -1192,7 +1192,8 @@ final class ReceiverActivityScopedDeletion
             // Member rows have no timestamp; bind their ownership to the same fixed event cutoff.
             if(table.name.equals("activity_event_identity_member") || table.name.startsWith("receiver_activity_tone"))
             {
-                predicate += " AND event_id IN (SELECT id FROM receiver_activity_event WHERE observed_at_ms<=? AND id<=?)";
+                predicate += " AND EXISTS (SELECT 1 FROM receiver_activity_event cutoff_event WHERE cutoff_event.id=" +
+                    table.name + ".event_id AND cutoff_event.observed_at_ms<=? AND cutoff_event.id<=?)";
                 arguments.add(cutoffMs);
                 arguments.add(scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of()));
             }
