@@ -895,16 +895,6 @@ final class ManagedRecordingsHttpController
         }
     }
 
-    private static Map<String,Object> numericSuggestion(String kind, Integer identity, String systemKey)
-    {
-        Map<String,Object> row = new LinkedHashMap<>();
-        row.put("kind", kind);
-        row.put("id", identity.toString());
-        row.put("label", ("talkgroup".equals(kind) ? "Talkgroup " : "Radio ") + identity);
-        if(systemKey != null) row.put("system_key", systemKey);
-        return row;
-    }
-
     private void audio(HttpExchange exchange, ManagedRecordingCatalog catalog, long id)
         throws IOException, SQLException
     {

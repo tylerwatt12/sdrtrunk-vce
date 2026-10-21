@@ -15,7 +15,6 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedChannelDescriptorSnapshot;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
-import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 

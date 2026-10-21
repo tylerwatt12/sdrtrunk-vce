@@ -149,7 +149,7 @@ public class NxdnViewer extends VBox
      * Note: invoke this method off of the UI thread in a thread pool executor and the results will be loaded into the
      * message table back on the JavaFX UI thread.
      *
-     * @param file containing a .bits recording of decoded DMR data.
+     * @param file containing a .bits recording of decoded NXDN data.
      */
     private void load(File file)
     {
@@ -193,7 +193,7 @@ public class NxdnViewer extends VBox
                 decoderStateEventBroadcaster.addListener(messagePackager::add);
                 decoderState.addDecodeEventListener(messagePackager::add);
                 decoderState.start();
-//
+
                 long frequency = getFrequencyFromFile(mLoadedFile.get());
 
                 if(frequency > 0)
@@ -206,10 +206,6 @@ public class NxdnViewer extends VBox
 
                 messageProcessor.setMessageListener(message -> {
                     //Add the initial message to the packager so that it can be combined with any decoder state events.
-                    if(message.toString().contains("FROM:166"))
-                    {
-                        int a = 0;
-                    }
                     messagePackager.add(message);
                     decoderState.receive(message);
 
@@ -239,10 +235,6 @@ public class NxdnViewer extends VBox
                 {
                     ioe.printStackTrace();
                 }
-
-//                audioModule.stop();
-//                decoderState.stop();
-//                singleChannelState.stop();
 
                 Platform.runLater(() -> {
                     getLoadingIndicator().setVisible(false);

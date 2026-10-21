@@ -815,21 +815,6 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
-    private static int snapshotFrequencyCount(Connection connection, Scope scope, long frequencyHz)
-        throws SQLException
-    {
-        int count = 0;
-        for(String table: List.of("p25_site_snapshot", "trunked_site_snapshot"))
-        {
-            List<Object> arguments = new ArrayList<>(scope.channelArguments());
-            arguments.add(frequencyHz);
-            arguments.add(frequencyHz);
-            count = Math.addExact(count, count(connection, table, scope.channelPredicate() +
-                " AND (primary_frequency_hz=? OR current_control_hz=?)", arguments));
-        }
-        return count;
-    }
-
     private static int clearSnapshotFrequency(Connection connection, Scope scope, long frequencyHz)
         throws SQLException
     {

@@ -252,19 +252,6 @@ public class FrequencyController
         return (long)(correctedFrequency / (1.0 + (mFrequencyCorrection / 1000000.0)));
     }
 
-    /**
-     * Calculate the corrected frequency by subtracting frequency correction
-     * from the tuned frequency.
-     *
-     * @param tunedFrequency
-     */
-    @SuppressWarnings("unused")
-    private long getCorrectedFrequency(long tunedFrequency)
-    {
-        return (long)(tunedFrequency /
-            (1.0 - (mFrequencyCorrection / 1000000.0)));
-    }
-
     public double getFrequencyCorrection()
     {
         return mFrequencyCorrection;

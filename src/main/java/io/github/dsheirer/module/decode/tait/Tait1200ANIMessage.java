@@ -21,13 +21,11 @@ package io.github.dsheirer.module.decode.tait;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
-import io.github.dsheirer.edac.CRC;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.message.Message;
 import io.github.dsheirer.module.decode.tait.identifier.TaitIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
 

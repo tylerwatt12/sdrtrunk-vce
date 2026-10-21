@@ -33,7 +33,7 @@ import javafx.scene.layout.HBox;
 
 
 /**
- * Preference settings for channel event view
+ * RSPduo startup preference.
  */
 public class TunerPreferenceEditor extends HBox
 {
@@ -95,7 +95,7 @@ public class TunerPreferenceEditor extends HBox
     {
         if(mRspDuoModeLabel == null)
         {
-            mRspDuoModeLabel = new Label("SDRPlay RSPduo Selection Mode");
+            mRspDuoModeLabel = new Label("RSPduo startup mode");
         }
 
         return mRspDuoModeLabel;

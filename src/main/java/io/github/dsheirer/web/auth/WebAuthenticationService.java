@@ -128,12 +128,6 @@ public final class WebAuthenticationService implements AutoCloseable
         return mSessionManager.resolve(sessionId, mAccessService);
     }
 
-    /** Arms one short-lived administrator sign-in for the local desktop Web button. */
-    public synchronized boolean armDesktopAdministratorHandoff()
-    {
-        return armDesktopAdministratorHandoff(DesktopHandoffDestination.DASHBOARD);
-    }
-
     /** The desktop chooses from fixed destinations; the browser cannot supply a redirect location. */
     public synchronized boolean armDesktopAdministratorHandoff(DesktopHandoffDestination destination)
     {

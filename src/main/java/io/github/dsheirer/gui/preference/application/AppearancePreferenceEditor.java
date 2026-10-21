@@ -79,7 +79,7 @@ public class AppearancePreferenceEditor extends HBox
             GridPane.setHgrow(separator, Priority.ALWAYS);
             mEditorPane.add(separator, 0, ++row, 3, 1);
 
-            mEditorPane.add(new Label("GUI Scale"), 0, ++row, 3, 1);
+            mEditorPane.add(new Label("Local UI scale"), 0, ++row, 3, 1);
 
             HBox sliderRow = new HBox(8);
             sliderRow.setPadding(new Insets(2, 0, 2, 4));
@@ -91,7 +91,7 @@ public class AppearancePreferenceEditor extends HBox
             sliderRow.getChildren().addAll(getGuiScaleSlider(), getGuiScaleValueLabel(), resetButton);
             mEditorPane.add(sliderRow, 0, ++row, 3, 1);
 
-            Label hint = new Label("Adjusts the size of all UI components. Takes effect immediately.");
+            Label hint = new Label("Adjusts local windows.");
             hint.setWrapText(true);
             mEditorPane.add(hint, 0, ++row, 3, 1);
 

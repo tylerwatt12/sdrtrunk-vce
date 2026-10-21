@@ -443,12 +443,6 @@ class StatsWebDatabase
     private static final String GROUP_IDENTITY_SIGNALING_COUNT_SQL = IDENTITY_EVIDENCE_FIELDS.stream()
         .map(field -> "summary." + field)
         .collect(java.util.stream.Collectors.joining(" + "));
-    private static final String OTHER_GROUP_IDENTITY_SIGNALING_COUNT_SQL =
-        "summary.acknowledge_count + summary.active_count + summary.busy_count + " +
-            "summary.check_count + summary.check_ack_count + summary.continue_count + " +
-            "summary.gps_count + summary.page_count + summary.patch_count + " +
-            "summary.patch_cancel_count + summary.patch_create_count + summary.queued_count + " +
-            "summary.request_count + summary.status_count + summary.unknown_count";
     private static final String TRUNKED_IDENTITY_OBSERVATION_PROJECTION_SQL =
         GROUP_IDENTITY_SIGNALING_FIELDS.stream()
             .map(field -> "summary." + field + " AS " + observationCountField(field))

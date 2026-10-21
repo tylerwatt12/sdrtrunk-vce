@@ -25,11 +25,8 @@ package io.github.dsheirer.module.decode.nxdn.layer3.type;
 public class SubscriberType
 {
     private static final int MASK_CLASSIFICATION = 0xC000;
-    private static final int MASK_TX_POWER = 0x3800;
     private static final int MASK_ACCESS = 0x0700;
     private static final int MASK_BIT_RATE = 0x00E0;
-    private static final int MASK_CODEC = 0x0018;
-    private static final int MASK_SPARE = 0x0007;
 
     private int mValue;
 

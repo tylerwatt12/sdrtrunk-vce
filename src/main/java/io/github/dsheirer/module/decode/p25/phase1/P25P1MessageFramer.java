@@ -28,7 +28,6 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25MessageFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
-import io.github.dsheirer.module.decode.p25.phase1.message.SymbolMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUHeader;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUMessageFactory;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.PDUSequence;

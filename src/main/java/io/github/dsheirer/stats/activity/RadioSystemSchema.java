@@ -13,7 +13,6 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;

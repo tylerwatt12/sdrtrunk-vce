@@ -25,8 +25,6 @@ package io.github.dsheirer.module.decode.nxdn.layer3.type;
 public class StatusCallOption extends CallOption
 {
     private static final int MASK_DELIVERY = 0x08;
-    private static final int MASK_FORMAT = 0x03;
-
     /**
      * Constructs an instance
      *

@@ -18,12 +18,9 @@
  ******************************************************************************/
 package io.github.dsheirer.edac.trellis;
 
-import com.google.common.base.Joiner;
 import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**

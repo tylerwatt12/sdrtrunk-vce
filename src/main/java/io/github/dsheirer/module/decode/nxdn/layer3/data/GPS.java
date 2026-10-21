@@ -45,7 +45,6 @@ public class GPS extends NXDNPacketMessage
     private static final IntField SPEED_KPH_TENTHS = IntField.length14(90);
     private static final IntField UNKNOWN_3 = IntField.length4(104);
     private static final IntField HEADING_TENTHS = IntField.length12(108);
-    private static final IntField UNKNOWN_4 = IntField.length32(120);
     private static final IntField DATE_UTC_YEAR = IntField.length7(152); //Year: 2000 - 2127
     private static final IntField DATE_UTC_MONTH = IntField.length4(159); //Month: 1-12
     private static final IntField DATE_UTC_DAY = IntField.length5(163); //Day: 0-30 (add 1 to value to get 1-31)
@@ -55,8 +54,6 @@ public class GPS extends NXDNPacketMessage
     private static final IntField LATITUDE_DEGREES_MINUTES = IntField.length16(200);
     private static final IntField LATITUDE_MINUTES_FRACTIONAL = IntField.length15(216);
     private static final int LATITUDE_HEMISPHERE_FLAG = 231;
-    private static final IntField UNKNOWN_5 = IntField.length16(232); //Always 0x0000 ?
-    private static final IntField UNKNOWN_6 = IntField.length15(248);
     private static final IntField TIME_UTC_HOURS = IntField.length5(263);
     private static final IntField TIME_UTC_MINUTES = IntField.length6(268);
     private static final IntField TIME_UTC_SECONDS = IntField.length6(274);

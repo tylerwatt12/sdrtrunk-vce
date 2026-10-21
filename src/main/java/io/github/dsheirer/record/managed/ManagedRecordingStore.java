@@ -403,22 +403,6 @@ final class ManagedRecordingStore implements AutoCloseable
         throw new SQLException("Unable to locate recording site");
     }
 
-    private static Long findSiteId(Connection connection, Site site) throws SQLException
-    {
-        try(PreparedStatement select = connection.prepareStatement(
-            "SELECT id FROM recording_site WHERE wacn=? AND system_id=? AND rfss=? AND site_id=?"))
-        {
-            select.setInt(1, site.wacn());
-            select.setInt(2, site.systemId());
-            select.setInt(3, site.rfss());
-            select.setInt(4, site.siteId());
-            try(ResultSet rows = select.executeQuery())
-            {
-                return rows.next() ? rows.getLong(1) : null;
-            }
-        }
-    }
-
     private static final String SELECT_CALL = "SELECT c.id,c.start_ms,c.end_ms,c.duration_ms,c.relative_path," +
         "c.size_bytes,c.alias_list_id,c.protocol,c.call_type,c.voice_type,c.source_id," +
         "c.source_home_wacn,c.source_home_system,c.source_home_id,c.target_id,c.target_home_wacn," +

@@ -49,18 +49,18 @@
     -fx-fill: #ececec;
 }
 
-.button, .toggle-button, .menu-button, .split-menu-button, .choice-box, .combo-box-base
+.button, .menu-button, .choice-box, .combo-box-base
 {
     -fx-background-color: #3c3f41, #4a4d4f, #3c3f41, #3c3f41;
     -fx-text-fill: #ececec;
 }
 
-.button:hover, .toggle-button:hover, .menu-button:hover
+.button:hover, .menu-button:hover
 {
     -fx-background-color: #4a90d9, #5aa0e9, #4a90d9, #3c3f41;
 }
 
-.button:armed, .toggle-button:selected
+.button:armed
 {
     -fx-background-color: #214283, #3672c4, #214283, #214283;
     -fx-text-fill: #ffffff;
@@ -174,7 +174,7 @@
     -fx-background-color: #2b2b2b;
 }
 
-.table-view, .tree-view, .list-view, .tree-table-view
+.table-view, .tree-view, .list-view
 {
     -fx-background-color: #2b2b2b;
     -fx-control-inner-background: #313335;
@@ -184,35 +184,34 @@
     -fx-border-width: 1;
 }
 
-.table-view .column-header, .table-view .filler, .table-view .column-header-background,
-.tree-table-view .column-header, .tree-table-view .filler, .tree-table-view .column-header-background
+.table-view .column-header, .table-view .filler, .table-view .column-header-background
 {
     -fx-background-color: #3c3f41;
 }
 
-.table-view .column-header .label, .tree-table-view .column-header .label
+.table-view .column-header .label
 {
     -fx-text-fill: #ececec;
 }
 
-.table-row-cell, .tree-table-row-cell, .list-cell, .tree-cell
+.table-row-cell, .list-cell, .tree-cell
 {
     -fx-text-fill: #ececec;
     -fx-background-color: -fx-control-inner-background;
 }
 
-.table-row-cell:odd, .tree-table-row-cell:odd, .list-cell:odd, .tree-cell:odd
+.table-row-cell:odd, .list-cell:odd, .tree-cell:odd
 {
     -fx-background-color: -fx-control-inner-background-alt;
 }
 
-.table-row-cell:selected, .tree-table-row-cell:selected, .list-cell:selected, .tree-cell:selected
+.table-row-cell:selected, .list-cell:selected, .tree-cell:selected
 {
     -fx-background-color: #214283;
     -fx-text-fill: #ffffff;
 }
 
-.table-row-cell:filled:hover, .tree-table-row-cell:filled:hover, .list-cell:filled:hover, .tree-cell:filled:hover
+.table-row-cell:filled:hover, .list-cell:filled:hover, .tree-cell:filled:hover
 {
     -fx-background-color: #3a3d3f;
 }
@@ -238,17 +237,6 @@
 {
     -fx-border-color: #4f5356;
     -fx-border-width: 1 0 0 0;
-}
-
-.split-pane
-{
-    -fx-background-color: #2b2b2b;
-}
-
-.split-pane > .split-pane-divider
-{
-    -fx-background-color: #4f5356;
-    -fx-padding: 0 1 0 1;
 }
 
 .tooltip
@@ -311,16 +299,6 @@
     -fx-border-color: #555a5e;
 }
 
-.hyperlink
-{
-    -fx-text-fill: #6ab0ff;
-}
-
-.hyperlink:visited
-{
-    -fx-text-fill: #9683c2;
-}
-
 .dialog-pane
 {
     -fx-background-color: #2b2b2b;
@@ -339,98 +317,4 @@
 .dialog-pane .header-panel .label
 {
     -fx-text-fill: #ffffff;
-}
-
-.chart
-{
-    -fx-background-color: #2b2b2b;
-    -fx-padding: 5px;
-}
-
-.chart-content
-{
-    -fx-background-color: #2b2b2b;
-}
-
-.chart-plot-background
-{
-    -fx-background-color: #1c1c1c;
-}
-
-.axis
-{
-    -fx-tick-label-fill: #ececec;
-    AXIS_COLOR: #4f5356;
-}
-
-.axis .axis-tick-mark, .axis .axis-minor-tick-mark
-{
-    -fx-stroke: #6a6f73;
-}
-
-.axis-label
-{
-    -fx-text-fill: #ececec;
-}
-
-.chart-vertical-grid-lines, .chart-horizontal-grid-lines
-{
-    -fx-stroke: #3c3f41;
-}
-
-.chart-alternative-row-fill
-{
-    -fx-fill: transparent;
-    -fx-stroke: transparent;
-}
-
-.chart-alternative-column-fill
-{
-    -fx-fill: transparent;
-    -fx-stroke: transparent;
-}
-
-.chart-legend
-{
-    -fx-background-color: #313335;
-    -fx-text-fill: #ececec;
-    -fx-border-color: #4f5356;
-    -fx-border-width: 1;
-}
-
-.chart-legend-item
-{
-    -fx-text-fill: #ececec;
-}
-
-.chart-title
-{
-    -fx-text-fill: #ececec;
-}
-
-/* Bright high-contrast palette for chart series lines on a dark plot background. */
-.default-color0.chart-series-line { -fx-stroke: #ff5555; }
-.default-color1.chart-series-line { -fx-stroke: #55aaff; }
-.default-color2.chart-series-line { -fx-stroke: #55ff7f; }
-.default-color3.chart-series-line { -fx-stroke: #ffd34f; }
-.default-color4.chart-series-line { -fx-stroke: #cf9bff; }
-.default-color5.chart-series-line { -fx-stroke: #4fe6ff; }
-.default-color6.chart-series-line { -fx-stroke: #ff7fbf; }
-.default-color7.chart-series-line { -fx-stroke: #ffffff; }
-
-/* All chart data points render as bright white dots regardless of series.  Lines still carry
-   the per-series colour so they remain distinguishable.  Only -fx-background-color is set so
-   the symbol size and shape continue to match Modena's defaults. */
-.chart-symbol,
-.chart-line-symbol,
-.default-color0.chart-symbol, .default-color0.chart-line-symbol,
-.default-color1.chart-symbol, .default-color1.chart-line-symbol,
-.default-color2.chart-symbol, .default-color2.chart-line-symbol,
-.default-color3.chart-symbol, .default-color3.chart-line-symbol,
-.default-color4.chart-symbol, .default-color4.chart-line-symbol,
-.default-color5.chart-symbol, .default-color5.chart-line-symbol,
-.default-color6.chart-symbol, .default-color6.chart-line-symbol,
-.default-color7.chart-symbol, .default-color7.chart-line-symbol
-{
-    -fx-background-color: #ffffff;
 }

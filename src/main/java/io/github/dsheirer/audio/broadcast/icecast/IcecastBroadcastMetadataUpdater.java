@@ -18,19 +18,12 @@
  */
 package io.github.dsheirer.audio.broadcast.icecast;
 
-import com.google.common.base.Joiner;
-import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastIdentifierFormatter;
 import io.github.dsheirer.audio.broadcast.IBroadcastMetadataUpdater;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastMetadata;
-import io.github.dsheirer.identifier.Form;
-import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.util.ThreadPool;
 import org.slf4j.Logger;
@@ -43,7 +36,6 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.List;
 
 public class IcecastBroadcastMetadataUpdater implements IBroadcastMetadataUpdater
 {

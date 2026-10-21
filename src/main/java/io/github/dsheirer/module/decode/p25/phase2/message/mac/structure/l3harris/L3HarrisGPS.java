@@ -21,7 +21,6 @@ package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.l3harr
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
-import java.text.DecimalFormat;
 
 /**
  * Utility class to parse L3Harris GPS data from P25 Phase 1 and Phase 2 messages.

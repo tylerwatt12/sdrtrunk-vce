@@ -40,24 +40,6 @@ public abstract class PunctureProvider
         mPunctureBitCount = punctureBitCount;
     }
 
-    public String visualize(CorrectedBinaryMessage cbm)
-    {
-        StringBuilder sb = new StringBuilder();
-        for(int x = 0; x < cbm.size(); x++)
-        {
-            if(isPunctured(x))
-            {
-                sb.append(".");
-            }
-            else
-            {
-                sb.append(cbm.get(x) ? "1" : "0");
-            }
-        }
-
-        return sb.toString();
-    }
-
     /**
      * Indicates if the original message index is preserved (ie not punctured).
      * @param index to test

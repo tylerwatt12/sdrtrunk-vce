@@ -152,7 +152,7 @@ public class P25P1Viewer extends VBox
      * Note: invoke this method off of the UI thread in a thread pool executor and the results will be loaded into the
      * message table back on the JavaFX UI thread.
      *
-     * @param file containing a .bits recording of decoded DMR data.
+     * @param file containing a .bits recording of decoded P25 Phase 1 data.
      */
     private void load(File file)
     {

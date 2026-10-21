@@ -225,7 +225,7 @@ public class JavaFxWindowManager
     }
 
     /**
-     * Processes a JMBE s editor request
+     * Processes a JMBE editor request.
      */
     @Subscribe
     public void process(final JmbeEditorRequest request)

@@ -214,15 +214,6 @@ public final class SdrTrunkDatabaseBootstrap
             return new BootstrapResult(false, false);
         }
 
-        private static BootstrapResult existingProfile()
-        {
-            return new BootstrapResult(true, false);
-        }
-
-        private static BootstrapResult newPreferences()
-        {
-            return new BootstrapResult(true, true);
-        }
     }
 
     public record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent,

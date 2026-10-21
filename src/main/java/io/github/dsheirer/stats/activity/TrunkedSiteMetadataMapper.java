@@ -17,7 +17,6 @@ import io.github.dsheirer.metadata.site.TrunkedSiteMetadataClassifier;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
-import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

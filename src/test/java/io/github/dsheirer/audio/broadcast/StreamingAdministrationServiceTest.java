@@ -214,7 +214,9 @@ class StreamingAdministrationServiceTest
             long aliasId=aliases.createAlias(first).aliasIds().getFirst();
             String assignmentBaseline=streams.aliases(id,"",false,0,50).revision();
             streams.assign(other,List.of(aliasId),List.of(),streams.aliases(other,"",false,0,50).revision());
-            Alias renamed=aliases.getAlias(aliasId).alias(); renamed.setName("Renamed dispatch"); aliases.saveAliases(List.of(renamed));
+            AliasAdministrationService.AliasEntry opened=aliases.getAlias(aliasId);
+            Alias renamed=opened.alias(); renamed.setName("Renamed dispatch");
+            aliases.replaceAlias(aliasId,renamed,opened.editRevision());
             streams.save(id,"BROADCASTIFY_CALL",Map.of("name","County calls"),streams.get(id).editRevision());
             assertEquals(assignmentBaseline,streams.aliases(id,"",false,0,50).revision());
             streams.assign(id,List.of(aliasId),List.of(),assignmentBaseline);

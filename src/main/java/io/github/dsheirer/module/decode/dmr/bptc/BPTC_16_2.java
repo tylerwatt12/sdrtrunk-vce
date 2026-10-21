@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.dmr.bptc;
 
-import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.Hamming16;
 import org.slf4j.Logger;

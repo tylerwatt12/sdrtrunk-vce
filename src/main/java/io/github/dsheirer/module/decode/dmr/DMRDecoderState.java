@@ -42,7 +42,6 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.EmptyTimeslotPlaceholderMessage;
 import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;

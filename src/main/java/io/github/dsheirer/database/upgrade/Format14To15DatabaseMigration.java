@@ -3076,18 +3076,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static Channel decodeChannel(ObjectNode payload, String label) throws IOException
-    {
-        try
-        {
-            return MAPPER.treeToValue(payload, Channel.class);
-        }
-        catch(IOException | RuntimeException exception)
-        {
-            throw new IOException(label + " is not a supported saved channel document");
-        }
-    }
-
     private static void requireTypedChannelComponent(ObjectNode payload, String property, String label)
         throws IOException
     {
@@ -3422,17 +3410,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             throw new IOException(label + " exceeds its supported text storage bound");
         }
         return text;
-    }
-
-    private static long requirePositiveInteger(ResultSet rows, String column, String label)
-        throws SQLException, IOException
-    {
-        long value = longInteger(rows, column, label);
-        if(value <= 0)
-        {
-            throw new IOException(label + " must be a positive integer");
-        }
-        return value;
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException

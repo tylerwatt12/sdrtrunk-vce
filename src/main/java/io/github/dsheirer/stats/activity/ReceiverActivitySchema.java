@@ -198,11 +198,6 @@ public class ReceiverActivitySchema
             .map(column -> column + " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column +
                 ") = 'integer' AND " + column + " >= 0)")
             .collect(Collectors.joining(",\n                    "));
-    private static final String TRUNKED_SIGNALING_ACTION_INSERT_COLUMNS =
-        String.join(", ", TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS);
-    private static final String TRUNKED_SIGNALING_ACTION_INSERT_PLACEHOLDERS =
-        TRUNKED_SIGNALING_ACTION_COUNT_COLUMNS.stream().map(column -> "?").collect(Collectors.joining(", "));
-
     private static final List<ReceiverActivityRecords.Action> CURRENT_ACTIONS = ReceiverActivityCodes.actionCodes().stream()
         .filter(action -> action != ReceiverActivityRecords.Action.TONE).toList();
     private static final List<ReceiverActivityRecords.Action> NEW_ACTIONS = CURRENT_ACTIONS.stream()

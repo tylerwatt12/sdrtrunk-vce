@@ -58,6 +58,7 @@ class LocalPreferenceSurfaceContractTest
             assertTrue(types.contains(type));
             assertTrue(tree.contains("PreferenceEditorType." + type));
         }
+        assertTrue(types.contains("SOURCE_TUNERS(\"RSPduo startup mode\")"));
         assertTrue(Files.exists(PREFERENCES.resolve("stats/WebServerPreferenceEditor.java")));
         assertFalse(factory.contains("UserPreferences userPreferences)"));
         assertFalse(tree.contains("UserPreferencesEditor(UserPreferences userPreferences)"));

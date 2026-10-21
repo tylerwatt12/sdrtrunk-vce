@@ -24,7 +24,6 @@ import io.github.dsheirer.identifier.IdentityResolutionEvidence;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.protocol.Protocol;
 
 /**

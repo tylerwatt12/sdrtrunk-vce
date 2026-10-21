@@ -31,7 +31,6 @@ import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorRe
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
-import java.util.ArrayList;
 import java.util.List;
 import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
 import java.util.Set;

@@ -23,7 +23,6 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
-import java.util.List;
 
 /**
  * Radio unit monitor command base implementation

@@ -126,7 +126,7 @@ public class JavaFxPreferences
             double y = mPreferences.getDouble(PREFERENCE_STAGE_Y_PREFIX + mKey, stage.getY());
             double height = mPreferences.getDouble(PREFERENCE_STAGE_HEIGHT_PREFIX + mKey, stage.getHeight());
             double width = mPreferences.getDouble(PREFERENCE_STAGE_WIDTH_PREFIX + mKey, stage.getWidth());
-            boolean maximized = mPreferences.getBoolean(PREFERENCE_STAGE_MAXIMIZED, stage.isMaximized());
+            boolean maximized = mPreferences.getBoolean(PREFERENCE_STAGE_MAXIMIZED + mKey, stage.isMaximized());
 
             ObservableList<Screen> screens = Screen.getScreensForRectangle(x, y, width, height);
 

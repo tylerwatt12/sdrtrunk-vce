@@ -133,27 +133,6 @@ public class DibitDelayBuffer
         return message;
     }
 
-    public int[] getBufferAsArray()
-    {
-        Dibit[] dibits = getBuffer();
-
-        int[] bits = new int[dibits.length * 2];
-
-        for(int x = 0; x < dibits.length; x++)
-        {
-            if(dibits[x].getBit1())
-            {
-                bits[x * 2] = 1;
-            }
-            if(dibits[x].getBit2())
-            {
-                bits[x * 2 + 1] = 1;
-            }
-        }
-
-        return bits;
-    }
-
     /**
      * Places the dibit into the internal circular buffer, overwriting the oldest dibit.
      */
@@ -176,28 +155,6 @@ public class DibitDelayBuffer
         Dibit toReturn = mBuffer[mPointer];
         put(dibit);
         return toReturn;
-    }
-
-    public void log()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        int counter = 0;
-        int pointer = mPointer;
-
-        while(counter < mBuffer.length)
-        {
-            sb.append(mBuffer[pointer].getBit1() ? "1" : "0");
-            sb.append(mBuffer[pointer++].getBit2() ? "1" : "0");
-
-            if(pointer >= mBuffer.length)
-            {
-                pointer = 0;
-            }
-
-            counter++;
-        }
-        mLog.debug("BUFFER: " + sb + " Length:" + mBuffer.length);
     }
 
 }

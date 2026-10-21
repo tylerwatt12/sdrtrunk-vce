@@ -35,7 +35,6 @@ import io.github.dsheirer.module.log.EventLogType;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.record.config.RecordConfiguration;
-import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigFactory;
 import io.github.dsheirer.source.config.SourceConfigRecording;
 import io.github.dsheirer.source.config.SourceConfigRemote;

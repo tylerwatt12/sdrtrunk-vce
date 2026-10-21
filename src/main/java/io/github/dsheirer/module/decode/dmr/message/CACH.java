@@ -23,8 +23,6 @@ import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.type.LCSS;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Common Announcement Channel is a 24-bit sequence that precedes an outbound DMR frame transmitted by a repeater.

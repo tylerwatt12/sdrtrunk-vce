@@ -624,14 +624,6 @@ public final class AliasAdministrationService
         return deleteAliasList(aliasListId, Long.valueOf(expectedRevision), confirmed);
     }
 
-    /**
-     * Deletes an Alias list from a trusted desktop workflow using the current serialized model state.
-     */
-    public MutationResult deleteAliasList(long aliasListId, boolean confirmed)
-    {
-        return deleteAliasList(aliasListId, null, confirmed);
-    }
-
     private MutationResult deleteAliasList(long aliasListId, Long expectedRevision, boolean confirmed)
     {
         return mutate(expectedRevision, () ->
@@ -647,7 +639,7 @@ public final class AliasAdministrationService
 
             if(!confirmed)
             {
-                throw new ConfirmationRequiredException(impact);
+                throw new ConfirmationRequiredException();
             }
 
             List<Alias> deletedAliases = aliasesForList(definition);
@@ -698,66 +690,10 @@ public final class AliasAdministrationService
         });
     }
 
-    /**
-     * Replaces an Alias from a trusted desktop workflow using the current serialized model state.
-     */
-    public MutationResult replaceAlias(long aliasId, Alias replacement)
-    {
-        Alias prepared = prepareReplacement(aliasId, replacement);
-        return mutate(null, () -> saveAliasesTarget(List.of(prepared)));
-    }
-
     public MutationResult deleteAlias(long aliasId, String expectedEditRevision)
     {
         return mutateValidated(() -> requireEditRevision(expectedEditRevision, aliasEditRevision(aliasId)),
             () -> deleteAliasesTarget(List.of(aliasId), List.of(requireAlias(aliasId))));
-    }
-
-    /**
-     * Deletes Aliases by durable identity from a trusted desktop workflow.
-     */
-    public MutationResult deleteAliases(List<Long> aliasIds)
-    {
-        return deleteAliases(aliasIds, null);
-    }
-
-    /**
-     * Revision-aware batch deletion for a staged selection or confirmation dialog.
-     */
-    public MutationResult deleteAliases(List<Long> aliasIds, long expectedRevision)
-    {
-        return deleteAliases(aliasIds, Long.valueOf(expectedRevision));
-    }
-
-    /**
-     * Atomically creates and replaces a mixed set of Aliases from a trusted desktop or import workflow. An ID of zero
-     * creates a new row; a positive ID replaces the current row with that durable identity.
-     */
-    public MutationResult saveAliases(List<Alias> aliases)
-    {
-        return saveAliasRequests(inheritedRequests(aliases), null);
-    }
-
-    /**
-     * Revision-aware form of {@link #saveAliases(List)}.
-     */
-    public MutationResult saveAliases(List<Alias> aliases, long expectedRevision)
-    {
-        return saveAliasRequests(inheritedRequests(aliases), Long.valueOf(expectedRevision));
-    }
-
-    /**
-     * Saves a mixed create/update batch. New rows explicitly choose inherited or submitted routing; existing rows
-     * always preserve their current scan-list memberships unless a separate replacement command is used.
-     */
-    public MutationResult saveAliasRequests(List<AliasSaveRequest> requests, long expectedRevision)
-    {
-        return saveAliasRequests(requests, Long.valueOf(expectedRevision));
-    }
-
-    public MutationResult saveAliasRequests(List<AliasSaveRequest> requests)
-    {
-        return saveAliasRequests(requests, null);
     }
 
     /**
@@ -766,14 +702,6 @@ public final class AliasAdministrationService
     public MutationResult bulkEdit(BulkEdit edit, long expectedRevision)
     {
         return bulkEdit(edit, Long.valueOf(expectedRevision));
-    }
-
-    /**
-     * Applies a bulk edit from a trusted desktop workflow without imposing the HTTP request-size limit.
-     */
-    public MutationResult bulkEdit(BulkEdit edit)
-    {
-        return bulkEdit(edit, null);
     }
 
     private MutationResult bulkEdit(BulkEdit edit, Long expectedRevision)
@@ -1004,16 +932,6 @@ public final class AliasAdministrationService
         return alias != null;
     }
 
-    private static List<AliasSaveRequest> inheritedRequests(List<Alias> aliases)
-    {
-        if(aliases == null)
-        {
-            return null;
-        }
-        return aliases.stream().map(alias -> alias != null && alias.getId() == Alias.UNASSIGNED_ID ?
-            AliasSaveRequest.inherit(alias) : AliasSaveRequest.preserve(alias)).toList();
-    }
-
     private long nextAliasListId()
     {
         return mConfigurationManager.nextAliasListIds(aliasModel().aliasListDefinitions().stream()
@@ -1078,14 +996,6 @@ public final class AliasAdministrationService
             prepared.forEach(alias -> mMutationWorkspace.aliasesById().put(alias.getId(), alias));
         }
         return new MutationTarget(null, List.of(), prepared.size(), prepared, PublicationMode.ALIASES);
-    }
-
-    private MutationResult deleteAliases(List<Long> aliasIds, Long expectedRevision)
-    {
-        List<Long> validatedIds = validatedAliasIds(aliasIds);
-
-        return mutate(expectedRevision, () -> deleteAliasesTarget(validatedIds,
-            validatedIds.stream().map(this::requireAlias).toList()));
     }
 
     private MutationTarget deleteAliasesTarget(List<Long> aliasIds, List<Alias> aliases)
@@ -2329,40 +2239,17 @@ public final class AliasAdministrationService
 
     public static class StaleRevisionException extends IllegalStateException
     {
-        private final long mExpected;
-        private final long mCurrent;
-
         public StaleRevisionException(long expected, long current)
         {
             super("Alias catalog changed after it was loaded");
-            mExpected = expected;
-            mCurrent = current;
-        }
-
-        public long getExpected()
-        {
-            return mExpected;
-        }
-
-        public long getCurrent()
-        {
-            return mCurrent;
         }
     }
 
     public static class ConfirmationRequiredException extends IllegalStateException
     {
-        private final DeleteImpact mImpact;
-
-        public ConfirmationRequiredException(DeleteImpact impact)
+        public ConfirmationRequiredException()
         {
             super("Alias-list deletion requires confirmation");
-            mImpact = impact;
-        }
-
-        public DeleteImpact getImpact()
-        {
-            return mImpact;
         }
     }
 

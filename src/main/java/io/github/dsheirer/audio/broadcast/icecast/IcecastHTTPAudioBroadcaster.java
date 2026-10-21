@@ -26,7 +26,6 @@ import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.util.ThreadPool;
-import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.HashMap;

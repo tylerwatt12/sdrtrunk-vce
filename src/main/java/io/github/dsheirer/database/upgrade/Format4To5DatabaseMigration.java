@@ -1049,16 +1049,6 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
         return node;
     }
 
-    private static JsonNode requireArray(JsonNode object, String field, String label) throws IOException
-    {
-        JsonNode node = object.get(field);
-        if(node == null || !node.isArray())
-        {
-            throw new IOException(label + "." + field + " must be a JSON array");
-        }
-        return node;
-    }
-
     private static void requireExactFields(JsonNode object, Set<String> expected, String label) throws IOException
     {
         Set<String> actual = new HashSet<>();

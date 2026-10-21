@@ -18,12 +18,8 @@
  */
 package io.github.dsheirer.dsp.filter.fir.real;
 
-import io.github.dsheirer.dsp.filter.FilterFactory;
-import io.github.dsheirer.dsp.window.WindowType;
 import org.apache.commons.lang3.ArrayUtils;
 
-import java.text.DecimalFormat;
-import java.util.Random;
 
 /**
  * Finite Impulse Response (FIR) filter for filtering individual float samples or float sample arrays.

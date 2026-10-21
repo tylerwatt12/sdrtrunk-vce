@@ -8,7 +8,6 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService.EventView;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService.PartyIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
-import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.protocol.Protocol;

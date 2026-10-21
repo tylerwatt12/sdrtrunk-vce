@@ -20,7 +20,6 @@
 package io.github.dsheirer.module.decode.nxdn.layer1;
 
 import io.github.dsheirer.dsp.symbol.Dibit;
-import java.text.DecimalFormat;
 import java.util.Arrays;
 import org.apache.commons.math3.stat.descriptive.moment.Variance;
 
@@ -31,7 +30,6 @@ import org.apache.commons.math3.stat.descriptive.moment.Variance;
  */
 public class C4FMEqualizer
 {
-    private static final DecimalFormat DF = new DecimalFormat("0.0000");
     //Maximum possible error is PI/4 = 0.78, but we clip it to less than half as the allowable error for tap updates
     private static final float MAX_SYMBOL_ERROR = 0.3f;
     private static final double TRAINING_IMPROVEMENT_GOAL_PER_ITERATION = 0.001f;
@@ -79,21 +77,6 @@ public class C4FMEqualizer
         mBuffer = new float[bufferLength];
         mTapUpdateSymbolCount = tapUpdateSymbolCount;
         mTrainingSkipCountThreshold = maxSkipTrainingCount;
-    }
-
-    /**
-     * Description of the current tap values
-     */
-    public String getTapsDescription()
-    {
-        StringBuilder sb = new StringBuilder();
-        sb.append("<html>EQ Taps<br>");
-        for(int i = 0; i < mTaps.length; i++)
-        {
-            sb.append(i).append(": ").append(DF.format(mTaps[i])).append("<br>");
-        }
-
-        return sb.toString();
     }
 
     /**

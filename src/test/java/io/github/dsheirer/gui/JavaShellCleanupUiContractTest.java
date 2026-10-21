@@ -76,6 +76,13 @@ class JavaShellCleanupUiContractTest
         assertFalse(directoryPreference.contains("resetDirectoryScreenCapture"));
         assertFalse(directoryPreference.contains("getDefaultScreenCaptureDirectory"));
         assertTrue(migrator.contains("\"directory.screen.capture\""));
+        assertFalse(directoryEditor.contains("JMBE Libraries"));
+        assertFalse(directoryEditor.contains("getDirectoryJmbe"));
+        assertFalse(directoryPreference.contains("getDirectoryJmbe"));
+        assertFalse(directoryPreference.contains("setDirectoryJmbe"));
+        assertFalse(directoryPreference.contains("resetDirectoryJmbe"));
+        assertTrue(directoryPreference.contains("getDefaultJmbeDirectory"));
+        assertTrue(migrator.contains("\"directory.jmbe\""));
         assertFalse(wizard.contains("Screenshots:"));
         assertTrue(directoryEditor.contains("setFitToWidth(true)"));
         assertTrue(wizard.contains("openWebAfterSetup"));
@@ -97,7 +104,8 @@ class JavaShellCleanupUiContractTest
         assertFalse(manager.contains("process(ViewWebP25BandplanOverrideRequest"));
         assertFalse(Files.exists(ROOT.resolve("ViewWebAliasRequest.java")));
         assertFalse(Files.exists(ROOT.resolve("ViewWebP25BandplanOverrideRequest.java")));
-        assertTrue(service.contains("createDesktopAdministratorHandoffUri()"));
+        assertFalse(service.contains("createDesktopAdministratorHandoffUri()"));
+        assertTrue(service.contains("createDesktopAdministratorHandoffUri(\n"));
         assertFalse(service.contains("createDesktopAdministratorAliasHandoffUri"));
         assertFalse(service.contains("createDesktopAdministratorStreamingHandoffUri"));
         assertFalse(service.contains("createDesktopAdministratorP25BandplanOverrideHandoffUri"));
@@ -113,12 +121,15 @@ class JavaShellCleanupUiContractTest
         String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
         String recordingViewer = Files.readString(ROOT.resolve("viewer/MessageRecordingViewer.java"));
         String nxdnViewer = Files.readString(ROOT.resolve("viewer/NxdnViewer.java"));
+        String p25p2Viewer = Files.readString(ROOT.resolve("viewer/P25P2Viewer.java"));
 
         assertTrue(application.contains("Message Recording Viewer (.bits)"));
         assertTrue(manager.contains("new MessageRecordingViewer()"));
         assertFalse(recordingViewer.contains("public static void main(String[] args)"));
         assertFalse(nxdnViewer.contains("static void main()"));
         assertFalse(nxdnViewer.contains("class A implements Listener<IMessage>"));
+        assertFalse(nxdnViewer.contains("FROM:166"));
+        assertFalse(p25p2Viewer.contains("PCWIN TDMA Frequency Band"));
     }
 
     @Test
@@ -130,6 +141,8 @@ class JavaShellCleanupUiContractTest
             Path.of("src/main/java/io/github/dsheirer/configuration/ConfigurationManager.java"));
         String aliasAdministration = Files.readString(
             Path.of("src/main/java/io/github/dsheirer/alias/AliasAdministrationService.java"));
+        String javaFxPreferences = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/preference/javafx/JavaFxPreferences.java"));
 
         assertFalse(application.contains("Reset Table Column Widths"));
         assertFalse(application.contains("JTableColumnWidthMonitor"));
@@ -143,6 +156,11 @@ class JavaShellCleanupUiContractTest
         assertFalse(configurationManager.contains("prepareForAliasListRefresh"));
         assertFalse(configurationManager.contains("beforePublication"));
         assertFalse(aliasAdministration.contains("prepareForAliasListRefresh"));
+        assertFalse(aliasAdministration.contains("public MutationResult saveAliases("));
+        assertFalse(aliasAdministration.contains("public MutationResult saveAliasRequests("));
+        assertFalse(aliasAdministration.contains("public MutationResult deleteAliases("));
+        assertTrue(javaFxPreferences.contains(
+            "getBoolean(PREFERENCE_STAGE_MAXIMIZED + mKey, stage.isMaximized())"));
 
         String[] removed = {
             "WebAdministratorNavigator.java",
@@ -185,6 +203,12 @@ class JavaShellCleanupUiContractTest
         assertFalse(build.contains("org.controlsfx:controlsfx"));
         assertFalse(build.contains("com.sun.javafx.event"));
         assertFalse(darkTheme.contains(".toggle-switch"));
+        assertFalse(darkTheme.contains(".toggle-button"));
+        assertFalse(darkTheme.contains(".split-menu-button"));
+        assertFalse(darkTheme.contains(".tree-table-view"));
+        assertFalse(darkTheme.contains(".split-pane"));
+        assertFalse(darkTheme.contains(".hyperlink"));
+        assertFalse(darkTheme.contains(".chart"));
     }
 
     @Test

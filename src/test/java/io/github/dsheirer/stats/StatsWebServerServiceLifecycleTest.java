@@ -616,7 +616,8 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(service.isPrimaryAdminConfigured());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             URI initialOrigin = origin(initial.port());
-            URI handoffUri = service.createDesktopAdministratorHandoffUri();
+            URI handoffUri = service.createDesktopAdministratorHandoffUri(
+                WebAuthenticationService.DesktopHandoffDestination.DASHBOARD);
             assertEquals(initialOrigin.resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH), handoffUri);
             assertNull(handoffUri.getQuery());
             assertNull(handoffUri.getFragment());

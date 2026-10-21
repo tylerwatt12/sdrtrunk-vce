@@ -1,7 +1,6 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.stats;
 
-import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import java.nio.file.Files;
 import java.nio.file.Path;

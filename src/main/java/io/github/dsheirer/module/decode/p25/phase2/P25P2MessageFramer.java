@@ -18,33 +18,13 @@
  */
 package io.github.dsheirer.module.decode.p25.phase2;
 
-import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.alias.AliasModel;
-import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.psk.pll.IPhaseLockedLoop;
 import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.dsp.symbol.ISyncDetectListener;
-import io.github.dsheirer.identifier.patch.PatchGroupManager;
-import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.message.MessageProviderModule;
-import io.github.dsheirer.module.ProcessingChain;
-import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.audio.P25P2AudioModule;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
-import io.github.dsheirer.module.decode.p25.phase2.message.P25P2Message;
-import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.record.AudioRecordingManager;
-import io.github.dsheirer.record.binary.BinaryReader;
 import io.github.dsheirer.sample.Listener;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.function.Consumer;
 
 /**
  * P25 Sync Detector and Message Framer.  Includes capability to detect PLL out-of-phase lock errors

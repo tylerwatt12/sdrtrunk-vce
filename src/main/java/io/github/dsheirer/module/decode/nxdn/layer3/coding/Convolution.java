@@ -21,10 +21,8 @@ package io.github.dsheirer.module.decode.nxdn.layer3.coding;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import org.apache.commons.lang3.StringUtils;
 
 /**
  * NXDN Convolutional encoder and Viterbi decoder for Rate 1/2, K=5
@@ -136,26 +134,4 @@ public class Convolution
         return encoded;
     }
 
-    /**
-     * Utility method to generate the G1 and G2 precomputed value arrays across all 32 states.
-     */
-    public static void generatePolynomialValues()
-    {
-        int g1Mask = 0x19;   //11001 G1(D) = D4 + D3 + 1
-        int g2Mask = 0x17;    //10111 = G2(D) = D4 + D2 + D1 + 1
-        boolean[] g1 = new boolean[32];
-        boolean[] g2 = new boolean[32];
-
-        System.out.println("STATE: 11..1"); //G1 taps
-        System.out.println("STATE: 43210");
-        for(int state = 0; state < 32; state++)
-        {
-            g1[state] = Integer.bitCount(state & g1Mask) % 2 == 1;
-            g2[state] = Integer.bitCount(state & g2Mask) % 2 == 1;
-            System.out.println("STATE: " + StringUtils.leftPad(Integer.toBinaryString(state), 5, "0") + " G1: " + (g1[state] ? "1" : "0"));
-        }
-
-        System.out.println("private static final boolean[] G1 = {" + Arrays.toString(g1) + "};");
-        System.out.println("private static final boolean[] G2 = {" + Arrays.toString(g2) + "};");
-    }
 }

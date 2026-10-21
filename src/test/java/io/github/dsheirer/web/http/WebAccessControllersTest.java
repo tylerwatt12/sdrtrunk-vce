@@ -377,9 +377,7 @@ class WebAccessControllersTest
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-            assertTrue(destination == WebAuthenticationService.DesktopHandoffDestination.DASHBOARD ?
-                authenticationService.armDesktopAdministratorHandoff() :
-                authenticationService.armDesktopAdministratorHandoff(destination));
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(destination));
             assertTrue(WebRequestSecurity.isLoopbackHost("127.0.0.1:" + server.getAddress().getPort(),
                 server.getAddress().getPort()));
             assertFalse(WebRequestSecurity.isLoopbackHost("attacker.example:" + server.getAddress().getPort(),

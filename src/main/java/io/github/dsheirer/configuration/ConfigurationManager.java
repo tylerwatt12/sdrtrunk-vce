@@ -22,7 +22,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasConfigurationEquality;
-import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;

@@ -101,30 +101,6 @@ public class SampleUtils
 		return new ComplexSamples(i, q, System.currentTimeMillis());
 	}
 
-	/**
-	 * Generates random complex samples with vector length in range 0.5 to 1.0 (unity).
-	 * @param count of samples
-	 * @return complex sample buffer
-	 */
-	public static ComplexSamples generateComplexRandomVectorLength(int count)
-	{
-		ComplexSamples unitySamples = generateComplex(count);
-		float[] i = unitySamples.i();
-		float[] q = unitySamples.q();
-
-		float gain;
-
-		//Apply random gain reduction to samples in range 0.5 to 1.0 gain
-		for(int x = 0; x < i.length; x++)
-		{
-			gain = 0.5f + RANDOM.nextFloat() / 2.0f;
-			i[x] *= gain;
-			q[x] *= gain;
-		}
-
-		return new ComplexSamples(i, q, System.currentTimeMillis());
-	}
-
     public static Complex multiply(Complex a, Complex b)
     {
         return new Complex((a.inphase() * b.inphase()) - (a.quadrature() * b.quadrature()),

@@ -30,10 +30,7 @@ import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncIdentifier;
 import io.github.dsheirer.module.decode.fleetsync2.message.Fleetsync2Message;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public class Fleetsync2DecoderState extends DecoderState

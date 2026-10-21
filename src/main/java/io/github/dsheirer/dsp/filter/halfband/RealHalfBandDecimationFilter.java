@@ -18,12 +18,8 @@
  */
 package io.github.dsheirer.dsp.filter.halfband;
 
-import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
-import io.github.dsheirer.dsp.window.WindowType;
 
-import java.text.DecimalFormat;
-import java.util.Random;
 
 /**
  * Implements a half-band filter that produces one filtered output for every two input samples.

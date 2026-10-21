@@ -3153,44 +3153,6 @@ final class StatsAliasCatalog
             return new IdentityTargets(aliasListIds);
         }
 
-        /**
-         * A catalog request for one Alias List normally spans many bounded metric batches.  When every supported
-         * identity has the same protocol and Alias List, its receiver coverage is identical for every batch and can
-         * be loaded once without changing the coverage row bound.  Mixed selections retain the existing per-batch
-         * behavior.
-         */
-        private static IdentityTargets singleCoverageTarget(List<Map<String,Object>> aliases)
-        {
-            Map<Integer,Set<Long>> aliasListIds = new LinkedHashMap<>();
-            int targetCount = 0;
-
-            for(Map<String,Object> alias: aliases)
-            {
-                if(!isSupportedIdentity(alias))
-                {
-                    continue;
-                }
-
-                long aliasListId = number(alias.get("alias_list_id"));
-
-                if(aliasListId <= 0)
-                {
-                    continue;
-                }
-
-                int protocol = aliasProtocolCode(alias);
-                Set<Long> protocolLists = aliasListIds.computeIfAbsent(protocol,
-                    ignored -> new LinkedHashSet<>());
-
-                if(protocolLists.add(aliasListId) && ++targetCount > 1)
-                {
-                    return null;
-                }
-            }
-
-            return new IdentityTargets(aliasListIds);
-        }
-
         private static IdentityTargets forAliasList(long aliasListId, Set<Integer> protocols)
         {
             Map<Integer,Set<Long>> aliasListIds = new LinkedHashMap<>();

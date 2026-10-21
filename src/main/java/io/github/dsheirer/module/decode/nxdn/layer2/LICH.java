@@ -19,10 +19,6 @@
 
 package io.github.dsheirer.module.decode.nxdn.layer2;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -352,14 +348,4 @@ public enum LICH
         return this.equals(LICH.RCCH_INBOUND_SINGLE_CAC_LONG);
     }
 
-    static void main()
-    {
-        List<LICH> liches = new ArrayList<>(Arrays.stream(LICH.values()).toList());
-        liches.sort(Comparator.comparingInt(LICH::getValue));
-
-        for(LICH setting : liches)
-        {
-            System.out.println(Integer.toHexString(setting.getValue()).toUpperCase() + ": " + setting);
-        }
-    }
 }

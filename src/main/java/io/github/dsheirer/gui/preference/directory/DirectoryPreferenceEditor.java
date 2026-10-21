@@ -46,7 +46,7 @@ import javafx.stage.Stage;
 
 
 /**
- * Preference settings for channel event view
+ * Local output-folder and storage-warning preferences.
  */
 public class DirectoryPreferenceEditor extends HBox
 {
@@ -63,11 +63,6 @@ public class DirectoryPreferenceEditor extends HBox
     private Button mChangeEventLogsButton;
     private Button mResetEventLogsButton;
     private Label mEventLogsPathLabel;
-
-    private Label mJmbeLabel;
-    private Button mChangeJmbeButton;
-    private Button mResetJmbeButton;
-    private Label mJmbePathLabel;
 
     private Label mRecordingLabel;
     private Button mChangeRecordingButton;
@@ -122,8 +117,6 @@ public class DirectoryPreferenceEditor extends HBox
                 getChangeApplicationLogsButton(), getResetApplicationLogsButton());
             row = addDirectoryRow(row, getEventLogsLabel(), getEventLogsPathLabel(),
                 getChangeEventLogsButton(), getResetEventLogsButton());
-            row = addDirectoryRow(row, getJmbeLabel(), getJmbePathLabel(),
-                getChangeJmbeButton(), getResetJmbeButton());
             row = addDirectoryRow(row, getRecordingLabel(), getRecordingPathLabel(),
                 getChangeRecordingButton(), getResetRecordingButton());
             row = addDirectoryRow(row, getStreamingLabel(), getStreamingPathLabel(),
@@ -270,47 +263,6 @@ public class DirectoryPreferenceEditor extends HBox
         return mEventLogsPathLabel;
     }
 
-    private Label getJmbeLabel()
-    {
-        if(mJmbeLabel == null)
-        {
-            mJmbeLabel = new Label("JMBE Libraries");
-        }
-
-        return mJmbeLabel;
-    }
-
-    private Button getChangeJmbeButton()
-    {
-        if(mChangeJmbeButton == null)
-        {
-            mChangeJmbeButton = createChangeButton("Select JMBE Folder",
-                mDirectoryPreference::getDirectoryJmbe, mDirectoryPreference::setDirectoryJmbe);
-        }
-
-        return mChangeJmbeButton;
-    }
-
-    private Button getResetJmbeButton()
-    {
-        if(mResetJmbeButton == null)
-        {
-            mResetJmbeButton = createResetButton(mDirectoryPreference::resetDirectoryJmbe);
-        }
-
-        return mResetJmbeButton;
-    }
-
-    private Label getJmbePathLabel()
-    {
-        if(mJmbePathLabel == null)
-        {
-            mJmbePathLabel = new Label(mDirectoryPreference.getDirectoryJmbe().toString());
-        }
-
-        return mJmbePathLabel;
-    }
-
     private Label getRecordingLabel()
     {
         if(mRecordingLabel == null)
@@ -425,10 +377,9 @@ public class DirectoryPreferenceEditor extends HBox
         {
             getApplicationLogsPathLabel().setText(mDirectoryPreference.getDirectoryApplicationLog().toString());
             getEventLogsPathLabel().setText(mDirectoryPreference.getDirectoryEventLog().toString());
-            getJmbePathLabel().setText(mDirectoryPreference.getDirectoryJmbe().toString());
             getRecordingPathLabel().setText(mDirectoryPreference.getDirectoryRecording().toString());
             getStreamingPathLabel().setText(mDirectoryPreference.getDirectoryStreaming().toString());
-            for(Label label: new Label[]{getApplicationLogsPathLabel(), getEventLogsPathLabel(), getJmbePathLabel(),
+            for(Label label: new Label[]{getApplicationLogsPathLabel(), getEventLogsPathLabel(),
                 getRecordingPathLabel(), getStreamingPathLabel()})
             {
                 label.getTooltip().setText(label.getText());

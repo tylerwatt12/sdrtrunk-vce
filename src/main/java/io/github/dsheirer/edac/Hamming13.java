@@ -20,7 +20,6 @@
 package io.github.dsheirer.edac;
 
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.bits.CorrectedBinaryMessage;
 
 /**
  * Implements Hamming(13,9,3) Error Detection algorithm

@@ -21,8 +21,6 @@
  */
 package io.github.dsheirer.record;
 
-import java.util.EnumSet;
-import java.util.Set;
 
 /**
  * Supported recorder types.
@@ -66,11 +64,6 @@ public enum RecorderType
     TRAFFIC_MBE_CALL_SEQUENCE("Traffic Channel MBE Audio CODEC Frames (.mbe)");
 
     private String mDisplayString;
-
-    /**
-     * Recorders available to all decoders
-     */
-    private static final Set<RecorderType> DEFAULT_RECORDER_TYPES = EnumSet.of(BASEBAND, TRAFFIC_BASEBAND);
 
     RecorderType( String displayString )
     {

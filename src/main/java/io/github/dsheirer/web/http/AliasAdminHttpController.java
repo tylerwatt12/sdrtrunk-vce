@@ -1034,12 +1034,6 @@ public final class AliasAdminHttpController
         return response;
     }
 
-    private static Map<String,Object> unmatchedTalkgroupPolicyView(UnmatchedTalkgroupPolicy policy,
-                                                                    Set<Long> scanListIds)
-    {
-        return behaviorView(policy.isRecordEnabled(), policy.getStreamDestinations(), scanListIds);
-    }
-
     private static Map<String,Object> behaviorView(boolean recordable, List<BroadcastChannel> destinations,
                                                     Set<Long> scanListIds)
     {

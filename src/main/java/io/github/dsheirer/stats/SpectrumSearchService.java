@@ -16,7 +16,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -693,15 +692,6 @@ public final class SpectrumSearchService implements AutoCloseable
         return peaks.stream().filter(peak -> Math.abs(peak.frequencyHz() - frequency) <= 6250).findFirst().orElse(null);
     }
     private static String preferred(Job job) { return job.lease.tuner() != null ? job.lease.tuner().getPreferredName() : null; }
-    private static P25SiteIdentity verifiedIdentity(P25DiscoveryProbe.Status status)
-    {
-        if(status == null || !"ready".equals(status.state()) || status.identity() == null) return null;
-        var mode = "C4FM".equals(status.selectedModulation()) ? status.c4fm() :
-            "CQPSK".equals(status.selectedModulation()) ? status.cqpsk() : null;
-        if(mode == null || !mode.confirmed() || !Objects.equals(status.identity(), mode.identity())) return null;
-        var identity = status.identity();
-        return new P25SiteIdentity(identity.wacn(), identity.system(), identity.rfss(), identity.site());
-    }
     private static P25DiscoveryProbe.Status check(SpectrumSearchHardware.Lease lease, long frequency,
                                                  BooleanSupplier cancelled) throws InterruptedException
     {

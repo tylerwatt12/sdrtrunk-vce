@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.module.decode.dmr.message.data.lc.full;
 
-import io.github.dsheirer.bits.BinaryMessage;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;

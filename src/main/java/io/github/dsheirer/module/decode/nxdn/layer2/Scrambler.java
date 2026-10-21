@@ -20,9 +20,7 @@
 package io.github.dsheirer.module.decode.nxdn.layer2;
 
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.bits.CorrectedBinaryMessage;
 
-import java.util.Arrays;
 
 /**
  * NXDN Scrambler.

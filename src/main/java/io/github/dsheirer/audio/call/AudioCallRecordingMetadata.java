@@ -464,17 +464,6 @@ public record AudioCallRecordingMetadata(String systemName, String siteName,
             protocol(destination) + ":" + destination.getForm() + ':' + destination.getValue() : null;
     }
 
-    private static String receivedSourceIdentity(Identifier<?> source)
-    {
-        if(source instanceof FullyQualifiedRadioIdentifier fullyQualified)
-        {
-            return canonicalIdentityOrNull(RadioSystemIdentityKey.KIND_RADIO,
-                fullyQualified.getWacn(), fullyQualified.getSystem(), fullyQualified.getRadio());
-        }
-
-        return source != null && source.getValue() != null ? source.getValue().toString() : null;
-    }
-
     private static Integer p25ObservedWorkingId(ResolvedRadioIdentity identity)
     {
         return identity != null && (identity.subscriber() != null ||

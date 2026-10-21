@@ -448,8 +448,13 @@ class AliasAdministrationPersistenceTest
             Alias replacement = service.getAlias(aliasId).alias();
             replacement.setName("Changed");
             manager.failNextSave();
+            long mixedRevision = service.currentRevision();
             assertThrows(AliasAdministrationService.PersistenceException.class,
-                () -> service.saveAliases(List.of(replacement, alias("New Alias", aliasListId, 102))));
+                () -> service.applyTransfer(aliasListId, List.of(
+                    new AliasAdministrationService.AliasEntry(mixedRevision, replacement,
+                        service.getAlias(aliasId).scanListIds()),
+                    new AliasAdministrationService.AliasEntry(mixedRevision,
+                        alias("New Alias", aliasListId, 102), Set.of())), List.of(), mixedRevision));
 
             assertEquals(List.of(aliasId, secondAliasId), manager.getAliasModel().getAliases().stream()
                 .map(Alias::getId).toList());
@@ -459,7 +464,7 @@ class AliasAdministrationPersistenceTest
 
             manager.failNextSave();
             assertThrows(AliasAdministrationService.PersistenceException.class,
-                () -> service.deleteAliases(List.of(aliasId)));
+                () -> service.applyTransfer(aliasListId, List.of(), List.of(aliasId), service.currentRevision()));
             assertEquals(List.of(aliasId, secondAliasId), manager.getAliasModel().getAliases().stream()
                 .map(Alias::getId).toList());
             assertEquals(secondAliasId,

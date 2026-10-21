@@ -27,9 +27,7 @@ import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentif
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.message.StuffBitsMessage;
 import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
-import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2DecoderState;
@@ -43,7 +41,6 @@ import io.github.dsheirer.util.ThreadPool;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -273,12 +270,6 @@ public class P25P2Viewer extends VBox
                     decoderState2.getConfigurationIdentifierListener().receive(new IdentifierUpdateNotification(id,
                             IdentifierUpdateNotification.Operation.ADD, 2));
                 }
-
-                //TODO: testing use - PCWIN TDMA Frequency Band as preload data
-                //ID:2 OFFSET:-45000000 SPACING:12500 BASE:851012500 TDMA BW:12500 TIMESLOTS:2 VOCODER:HALF_RATE
-                P25FrequencyBand band = new P25FrequencyBand(2, 851012500l, -45000000l, 12500, 12500, 2);
-                P25FrequencyBandPreloadDataContent content = new P25FrequencyBandPreloadDataContent(Collections.singleton(band));
-                messageProcessor.preload(content);
 
                 messageProcessor.setMessageListener(message -> {
                     if(!(message instanceof StuffBitsMessage))

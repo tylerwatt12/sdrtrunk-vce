@@ -24,7 +24,6 @@ import io.github.dsheirer.bits.BitSetFullException;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.edac.Hamming13;
 import io.github.dsheirer.edac.Hamming15;
-import io.github.dsheirer.edac.IHamming;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

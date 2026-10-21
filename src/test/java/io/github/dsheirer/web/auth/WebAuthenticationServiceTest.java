@@ -113,7 +113,8 @@ class WebAuthenticationServiceTest
 
         try
         {
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.DASHBOARD));
             Optional<WebAuthenticationService.DesktopHandoffResult> first =
                 authenticationService.redeemDesktopAdministratorHandoff(null);
             assertTrue(first.isPresent());
@@ -160,7 +161,8 @@ class WebAuthenticationServiceTest
                 WebAuthenticationService.DesktopHandoffDestination.CHANNEL_SETUP));
             authenticationService.cancelDesktopAdministratorHandoff();
             assertTrue(authenticationService.redeemDesktopAdministratorHandoff(null).isEmpty());
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            assertTrue(authenticationService.armDesktopAdministratorHandoff(
+                WebAuthenticationService.DesktopHandoffDestination.DASHBOARD));
             assertEquals(WebAuthenticationService.DesktopHandoffDestination.DASHBOARD,
                 authenticationService.redeemDesktopAdministratorHandoff(null).orElseThrow().destination(),
                 "a canceled setup handoff must not change a later ordinary Web-button destination");

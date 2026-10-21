@@ -326,7 +326,7 @@ class AliasAdministrationServiceTest
     }
 
     @Test
-    void sharedServiceAtomicallySavesMixedCreatesAndReplacements() throws Exception
+    void sharedServiceAtomicallyAppliesMixedTransferCreatesAndReplacements() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("mixed-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -340,8 +340,12 @@ class AliasAdministrationServiceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             assertEquals(service.catalog().revision(), service.currentRevision());
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
-            AliasAdministrationService.MutationResult initial = service.saveAliases(List.of(
-                alias("Dispatch", aliasListId, 101), alias("Operations", aliasListId, 102)));
+            long initialRevision = service.currentRevision();
+            AliasAdministrationService.MutationResult initial = service.applyTransfer(aliasListId, List.of(
+                new AliasAdministrationService.AliasEntry(initialRevision,
+                    alias("Dispatch", aliasListId, 101), Set.of()),
+                new AliasAdministrationService.AliasEntry(initialRevision,
+                    alias("Operations", aliasListId, 102), Set.of())), List.of(), initialRevision);
             long dispatchId = initial.aliasIds().getFirst();
             Alias replacement = service.getAlias(dispatchId).alias();
             replacement.setName("Dispatch Updated");
@@ -349,18 +353,30 @@ class AliasAdministrationServiceTest
             int commitsBeforeMixedSave = manager.commitCount();
 
             Alias duplicateReplacement = service.getAlias(dispatchId).alias();
+            long duplicateRevision = service.currentRevision();
             assertThrows(IllegalArgumentException.class,
-                () -> service.saveAliases(List.of(replacement, duplicateReplacement)));
+                () -> service.applyTransfer(aliasListId, List.of(
+                    new AliasAdministrationService.AliasEntry(duplicateRevision, replacement, Set.of()),
+                    new AliasAdministrationService.AliasEntry(duplicateRevision, duplicateReplacement, Set.of())),
+                    List.of(), duplicateRevision));
             assertEquals(commitsBeforeMixedSave, manager.commitCount());
             assertEquals("Dispatch", service.getAlias(dispatchId).alias().getName());
 
             Alias invalidCreate = alias("Invalid", aliasListId + 1000, 104);
-            assertThrows(AliasAdministrationService.NotFoundException.class,
-                () -> service.saveAliases(List.of(replacement, invalidCreate)));
+            long invalidRevision = service.currentRevision();
+            assertThrows(IllegalArgumentException.class,
+                () -> service.applyTransfer(aliasListId, List.of(
+                    new AliasAdministrationService.AliasEntry(invalidRevision, replacement, Set.of()),
+                    new AliasAdministrationService.AliasEntry(invalidRevision, invalidCreate, Set.of())),
+                    List.of(), invalidRevision));
             assertEquals(commitsBeforeMixedSave, manager.commitCount());
             assertEquals("Dispatch", service.getAlias(dispatchId).alias().getName());
 
-            AliasAdministrationService.MutationResult mixed = service.saveAliases(List.of(replacement, created));
+            long mixedRevision = service.currentRevision();
+            AliasAdministrationService.MutationResult mixed = service.applyTransfer(aliasListId, List.of(
+                new AliasAdministrationService.AliasEntry(mixedRevision, replacement, Set.of()),
+                new AliasAdministrationService.AliasEntry(mixedRevision, created, Set.of())), List.of(),
+                mixedRevision);
 
             assertEquals(commitsBeforeMixedSave + 1, manager.commitCount());
             assertEquals(2, mixed.affected());
@@ -372,7 +388,7 @@ class AliasAdministrationServiceTest
             assertEquals(3, new HashSet<>(manager.getAliasModel().getAliases().stream()
                 .map(Alias::getId).toList()).size());
 
-            service.deleteAliases(mixed.aliasIds());
+            service.applyTransfer(aliasListId, List.of(), mixed.aliasIds(), mixed.revision());
             assertEquals(1, manager.getAliasModel().getAliases().size());
 
             AliasDatabaseStore store = new AliasDatabaseStore(database);
@@ -431,7 +447,10 @@ class AliasAdministrationServiceTest
             {
                 aliases.add(alias("Alias " + index, aliasListId, index));
             }
-            AliasAdministrationService.MutationResult created = service.saveAliases(aliases);
+            long createRevision = service.currentRevision();
+            AliasAdministrationService.MutationResult created = service.applyTransfer(aliasListId,
+                aliases.stream().map(alias -> new AliasAdministrationService.AliasEntry(createRevision, alias,
+                    Set.of())).toList(), List.of(), createRevision);
             int commitsBeforeBulk = manager.commitCount();
 
             AliasAdministrationService.MutationResult changed = service.bulkEdit(
@@ -646,7 +665,8 @@ class AliasAdministrationServiceTest
                 .limit(AliasAdministrationService.MAX_BROADCAST_CHANNELS)
                 .map(configuration -> new BroadcastChannel(configuration.getConfigurationId(),
                     configuration.getName())).toList());
-            AliasAdministrationService.MutationResult configured = service.replaceAlias(aliasId, bounded);
+            AliasAdministrationService.MutationResult configured = service.replaceAlias(aliasId, bounded,
+                service.getAlias(aliasId).editRevision());
             int commitsBeforeOverflow = manager.commitCount();
 
             IllegalArgumentException overflow = assertThrows(IllegalArgumentException.class,
@@ -980,7 +1000,8 @@ class AliasAdministrationServiceTest
             service.createAliasList("Current State", AliasListFamily.DMR);
             assertTrue(manager.getAliasModel().getAliasListDefinition("Current State") != null,
                 "Creating a list validates current state without rejecting an unrelated change");
-            service.deleteAliasList(manager.getAliasModel().getAliasListDefinition("Current State").getId(), true);
+            service.deleteAliasList(manager.getAliasModel().getAliasListDefinition("Current State").getId(),
+                service.currentRevision(), true);
 
             AliasAdministrationService.MutationResult first = service.createAlias(
                 alias("Dispatch", aliasListId, 101));

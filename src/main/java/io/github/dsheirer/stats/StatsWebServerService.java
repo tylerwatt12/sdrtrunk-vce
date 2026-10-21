@@ -121,8 +121,6 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -175,11 +173,6 @@ public class StatsWebServerService implements AutoCloseable
     private static final int MAXIMUM_MULTIPLEX_CLIENTS = 32;
     private static final int MAXIMUM_MULTIPLEX_CONTROL_BYTES = 32 * 1024;
     private static final int MAXIMUM_MULTIPLEX_PARAMETER_VALUES = 64;
-    private static final int MULTIPLEX_MAGIC = 0x534C4D58;
-    private static final int MULTIPLEX_VERSION = 2;
-    private static final int MULTIPLEX_HEADER_BYTES = 16;
-    private static final int MULTIPLEX_JSON = 1;
-    private static final int MULTIPLEX_DIAGNOSTIC = 2;
     private static final int TOPIC_CONTROL = 0;
     private static final int TOPIC_CHANNEL_ACTIVITY = 1;
     private static final int TOPIC_DECODE_EVENTS = 2;
@@ -1515,12 +1508,6 @@ public class StatsWebServerService implements AutoCloseable
             loggingStatus.summaryActive());
     }
 
-    /** Arms the one-use local administrator sign-in opened by the desktop Web button. */
-    public synchronized URI createDesktopAdministratorHandoffUri()
-    {
-        return createDesktopAdministratorHandoffUri(WebAuthenticationService.DesktopHandoffDestination.DASHBOARD);
-    }
-
     /** Arms the same local sign-in with a fixed destination selected by the application. */
     public synchronized URI createDesktopAdministratorHandoffUri(
         WebAuthenticationService.DesktopHandoffDestination destination)
@@ -2067,15 +2054,6 @@ public class StatsWebServerService implements AutoCloseable
     {
     }
 
-    private static void writeMultiplexRecoverySequenceJson(MultiplexOutput output, int topic,
-                                                            String firstEvent, Object firstData,
-                                                            String secondEvent, Object secondData) throws IOException
-    {
-        output.offerRecoverySequence(topic,
-            LiveMultiplexFrame.json(topic, firstEvent, firstData).bytes(output.mGzipEnabled),
-            LiveMultiplexFrame.json(topic, secondEvent, secondData).bytes(output.mGzipEnabled));
-    }
-
     private static void writeMultiplexDiagnostic(MultiplexOutput output, int topic, DiagnosticStreamFrame frame)
         throws IOException
     {
@@ -2089,20 +2067,6 @@ public class StatsWebServerService implements AutoCloseable
         {
             output.offerLatest(topic, frame.type(), encoded);
         }
-    }
-
-    private static byte[] encodeMultiplexEnvelope(int kind, int topic, byte[] payload)
-    {
-        ByteBuffer envelope = ByteBuffer.allocate(Math.addExact(MULTIPLEX_HEADER_BYTES, payload.length))
-            .order(ByteOrder.BIG_ENDIAN);
-        envelope.putInt(MULTIPLEX_MAGIC);
-        envelope.put((byte)MULTIPLEX_VERSION);
-        envelope.put((byte)kind);
-        envelope.putShort((short)topic);
-        envelope.putInt(payload.length);
-        envelope.putInt(0);
-        envelope.put(payload);
-        return envelope.array();
     }
 
     static DecodeEventViewService.Scope decodeEventScope(URI uri)

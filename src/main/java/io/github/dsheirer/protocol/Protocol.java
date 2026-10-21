@@ -67,8 +67,6 @@ public enum Protocol
     public static final Set<Protocol> TALKGROUP_PROTOCOLS =
         activeOnly(EnumSet.of(AM, APCO25, DMR, FLEETSYNC, MDC1200, MPT1327, NBFM, NXDN));
 
-    private static final Set<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, NXDN);
-
     private static Set<Protocol> activeOnly(EnumSet<Protocol> candidates)
     {
         candidates.removeIf(protocol -> !protocol.isActive());

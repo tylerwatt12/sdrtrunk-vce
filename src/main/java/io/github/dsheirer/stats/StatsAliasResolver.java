@@ -1921,13 +1921,6 @@ class StatsAliasResolver
         return systemKey != null ? aliasListsBySystem.getOrDefault(systemKey, Set.of()) : Set.of();
     }
 
-    private static Set<Long> p25AliasLists(Map<String,Object> row,
-                                           Map<String,Set<Long>> aliasListsBySystem)
-    {
-        Set<Long> system = systemAliasLists(row, aliasListsBySystem);
-        return !system.isEmpty() ? system : assignedAliasList(row);
-    }
-
     private static Set<Long> assignedAliasList(Map<String,Object> row)
     {
         Long aliasListId = positiveLong(row.get("alias_list_id"));

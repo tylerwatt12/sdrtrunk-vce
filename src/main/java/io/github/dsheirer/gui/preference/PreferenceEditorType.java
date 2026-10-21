@@ -28,7 +28,7 @@ public enum PreferenceEditorType
     DIRECTORY("Directories"),
     JMBE_LIBRARY("JMBE Audio Library"),
     VOICE_DECRYPTION_MODULE("Optional Voice Module"),
-    SOURCE_TUNERS("Tuners"),
+    SOURCE_TUNERS("RSPduo startup mode"),
     STATS_SERVER("Stats Database Maintenance"),
     VECTOR_CALIBRATION("Vector Calibration"),
     WEB_SERVER("Web Server"),

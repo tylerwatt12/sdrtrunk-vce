@@ -18,7 +18,6 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
-import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.util.ArrayList;

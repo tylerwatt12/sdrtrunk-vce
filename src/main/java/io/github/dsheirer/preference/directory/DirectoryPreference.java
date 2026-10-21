@@ -49,7 +49,6 @@ public class DirectoryPreference extends Preference
 
     private static final String PREFERENCE_KEY_DIRECTORY_APPLICATION_LOGS = "directory.application.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_EVENT_LOGS = "directory.event.logs";
-    private static final String PREFERENCE_KEY_DIRECTORY_JMBE = "directory.jmbe";
     private static final String PREFERENCE_KEY_DIRECTORY_RECORDING = "directory.recording";
     private static final String PREFERENCE_KEY_DIRECTORY_MANAGED_RECORDING = "directory.recording.managed";
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
@@ -58,7 +57,6 @@ public class DirectoryPreference extends Preference
 
     private Path mDirectoryApplicationLogs;
     private Path mDirectoryEventLogs;
-    private Path mDirectoryJmbe;
     private Path mDirectoryRecording;
     private volatile Path mDirectoryManagedRecording;
     private Path mDirectoryStreaming;
@@ -207,40 +205,6 @@ public class DirectoryPreference extends Preference
     {
         mPreferences.remove(PREFERENCE_KEY_DIRECTORY_EVENT_LOGS);
         mDirectoryEventLogs = null;
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Path to the folder for storing the JMBE audio library
-     */
-    public Path getDirectoryJmbe()
-    {
-        if(mDirectoryJmbe == null)
-        {
-            mDirectoryJmbe = getPath(PREFERENCE_KEY_DIRECTORY_JMBE, getDefaultJmbeDirectory());
-            createDirectory(mDirectoryJmbe);
-        }
-
-        return mDirectoryJmbe;
-    }
-
-    /**
-     * Sets the path to the JMBE folder
-     */
-    public void setDirectoryJmbe(Path path)
-    {
-        mDirectoryJmbe = path;
-        mPreferences.put(PREFERENCE_KEY_DIRECTORY_JMBE, path.toString());
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Removes a stored JMBE directory preference so that the default path can be used again
-     */
-    public void resetDirectoryJmbe()
-    {
-        mPreferences.remove(PREFERENCE_KEY_DIRECTORY_JMBE);
-        mDirectoryJmbe = null;
         notifyPreferenceUpdated();
     }
 
