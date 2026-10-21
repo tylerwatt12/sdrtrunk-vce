@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,22 +38,37 @@ public class SiteControlChannelLearner implements SiteMetadataListener
     private static final String ROLE_SECONDARY_CONTROL = "secondary_control";
     static final long ABSENT_FREQUENCY_RECONCILIATION_DELAY_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
 
-    private final Runnable mConfigurationSaveScheduler;
+    private final BiConsumer<SiteMetadataEvent,Function<Channel,Boolean>> mConfigurationCommand;
+    private boolean mChanged;
     private final Map<String,Long> mMatchingIdentityObservedSince = new HashMap<>();
     private final Map<String,Long> mLastObservedSourceFrequency = new HashMap<>();
 
     public SiteControlChannelLearner(ConfigurationManager configurationManager)
     {
-        this(configurationManager != null ? configurationManager::scheduleConfigurationSave : () -> {});
+        mConfigurationCommand = configurationManager::submitLearnedChannelUpdate;
     }
 
     SiteControlChannelLearner(Runnable configurationSaveScheduler)
     {
-        mConfigurationSaveScheduler = configurationSaveScheduler != null ? configurationSaveScheduler : () -> {};
+        mConfigurationCommand = (event, update) ->
+        {
+            if(update.apply(event != null ? event.channel() : null)) configurationSaveScheduler.run();
+        };
     }
 
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
+    {
+        //Metadata is already an observer path, but it must not wait for a configuration/database command.
+        mConfigurationCommand.accept(event, candidate ->
+        {
+            mChanged = false;
+            learn(event, candidate);
+            return mChanged;
+        });
+    }
+
+    private void learn(SiteMetadataEvent event, Channel channel)
     {
         if(event == null || !event.isUseful() || !event.matchesCurrentChannel())
         {
@@ -64,8 +81,6 @@ public class SiteControlChannelLearner implements SiteMetadataListener
 
             return;
         }
-
-        Channel channel = event.channel();
 
         if(channel == null || !channel.isStandardChannel() ||
             !(channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig))
@@ -281,10 +296,10 @@ public class SiteControlChannelLearner implements SiteMetadataListener
     {
         if(frequenciesChanged)
         {
-            //Refresh observable frequencies and cached tuner-channel projections after mutating the rotation list.
+            //Refresh cached tuner-channel projections after changing the rotation list.
             channel.setSourceConfiguration(sourceConfig);
         }
 
-        mConfigurationSaveScheduler.run();
+        mChanged = true;
     }
 }

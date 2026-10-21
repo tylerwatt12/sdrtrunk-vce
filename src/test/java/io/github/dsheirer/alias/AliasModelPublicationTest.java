@@ -18,7 +18,6 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import java.util.Set;
-import javafx.collections.ListChangeListener;
 import org.junit.jupiter.api.Test;
 
 class AliasModelPublicationTest
@@ -34,13 +33,12 @@ class AliasModelPublicationTest
         AliasModel model = model(List.of(firstDefinition, secondDefinition), List.of(changed, sameList, unrelated));
         AliasList first = model.getAliasList(firstDefinition);
         AliasList second = model.getAliasList(secondDefinition);
-        int[] firstChanges = changes(first);
-        int[] secondChanges = changes(second);
+        int[] firstChanges = changes(model, first);
+        int[] secondChanges = changes(model, second);
         int[] definitionChanges = {0};
         int[] nameChanges = {0};
-        model.aliasListDefinitions().addListener((ListChangeListener<AliasListDefinition>)change ->
-            definitionChanges[0]++);
-        model.aliasListNames().addListener((ListChangeListener<String>)change -> nameChanges[0]++);
+        model.addChangeListener(change -> { if(change.definitionsChanged()) definitionChanges[0]++; });
+        model.addChangeListener(change -> { if(change.namesChanged()) nameChanges[0]++; });
 
         AliasListDefinition firstCopy = copy(firstDefinition);
         AliasListDefinition secondCopy = copy(secondDefinition);
@@ -77,12 +75,11 @@ class AliasModelPublicationTest
         Alias original = alias(10, definition, "Original", 100);
         AliasModel model = model(List.of(definition), List.of(original));
         AliasList cached = model.getAliasList(definition);
-        int[] runtimeChanges = changes(cached);
+        int[] runtimeChanges = changes(model, cached);
         int[] aliasChanges = {0};
         int[] definitionChanges = {0};
-        model.aliasList().addListener((ListChangeListener<Alias>)change -> aliasChanges[0]++);
-        model.aliasListDefinitions().addListener((ListChangeListener<AliasListDefinition>)change ->
-            definitionChanges[0]++);
+        model.addChangeListener(change -> { if(change.aliasesChanged()) aliasChanges[0]++; });
+        model.addChangeListener(change -> { if(change.definitionsChanged()) definitionChanges[0]++; });
 
         AliasListDefinition detachedDefinition = copy(definition);
         model.publishCommittedConfiguration(List.of(detachedDefinition),
@@ -110,9 +107,9 @@ class AliasModelPublicationTest
         AliasList first = model.getAliasList(firstDefinition);
         AliasList second = model.getAliasList(secondDefinition);
         AliasList third = model.getAliasList(thirdDefinition);
-        int[] firstChanges = changes(first);
-        int[] secondChanges = changes(second);
-        int[] thirdChanges = changes(third);
+        int[] firstChanges = changes(model, first);
+        int[] secondChanges = changes(model, second);
+        int[] thirdChanges = changes(model, third);
         Alias replacement = copy(moving, secondDefinition);
 
         model.publishCommittedConfiguration(definitions, List.of(replacement, secondAlias, unrelated),
@@ -142,10 +139,10 @@ class AliasModelPublicationTest
             List.of(firstAlias, firstSibling, firstOther, secondAlias));
         AliasList first = model.getAliasList(firstDefinition);
         AliasList second = model.getAliasList(secondDefinition);
-        int[] firstChanges = changes(first);
-        int[] secondChanges = changes(second);
+        int[] firstChanges = changes(model, first);
+        int[] secondChanges = changes(model, second);
         int[] overlapChanges = {0};
-        firstAlias.getMatchIdentifier().overlapProperty().addListener((_, _, _) -> overlapChanges[0]++);
+        firstAlias.getMatchIdentifier().addChangeListener(() -> overlapChanges[0]++);
         AliasListDefinition changedDefinition = new AliasListDefinition("Renamed", AliasListFamily.P25,
             new UnmatchedTalkgroupPolicy(true, List.of()), NewAliasBehavior.DEFAULT);
         changedDefinition.setId(firstDefinition.getId());
@@ -184,10 +181,10 @@ class AliasModelPublicationTest
         AliasModel model = model(definitions, List.of(firstAlias, secondAlias, unrelated));
         AliasList first = model.getAliasList(firstDefinition);
         AliasList second = model.getAliasList(secondDefinition);
-        int[] firstChanges = changes(first);
-        int[] secondChanges = changes(second);
+        int[] firstChanges = changes(model, first);
+        int[] secondChanges = changes(model, second);
         int[] overlapChanges = {0};
-        firstAlias.getMatchIdentifier().overlapProperty().addListener((_, _, _) -> overlapChanges[0]++);
+        firstAlias.getMatchIdentifier().addChangeListener(() -> overlapChanges[0]++);
         assertSame(secondAlias, first.getAliases(APCO25Talkgroup.create(100)).getFirst());
 
         model.publishCommittedConfiguration(definitions, List.of(secondAlias, unrelated, firstAlias), Set.of(),
@@ -224,16 +221,16 @@ class AliasModelPublicationTest
 
         assertSame(numericLast, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
         assertSame(subscriberReplacement, cached.getAliases(subscriber).getFirst());
-        assertTrue(numericReplacement.getMatchIdentifier().overlapProperty().get());
-        assertTrue(subscriberReplacement.getMatchIdentifier().overlapProperty().get());
+        assertTrue(numericReplacement.getMatchIdentifier().isOverlap());
+        assertTrue(subscriberReplacement.getMatchIdentifier().isOverlap());
 
         model.publishCommittedConfiguration(List.of(definition), List.of(numericReplacement, subscriberLast),
             Set.of(numericLast.getId(), subscriberReplacement.getId()), false);
 
         assertSame(numericReplacement, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
         assertSame(subscriberLast, cached.getAliases(subscriber).getFirst());
-        assertFalse(numericReplacement.getMatchIdentifier().overlapProperty().get());
-        assertFalse(subscriberLast.getMatchIdentifier().overlapProperty().get());
+        assertFalse(numericReplacement.getMatchIdentifier().isOverlap());
+        assertFalse(subscriberLast.getMatchIdentifier().isOverlap());
     }
 
     @Test
@@ -249,7 +246,7 @@ class AliasModelPublicationTest
         model.publishCommittedConfiguration(List.of(definition), List.of(survivingFirst, survivingLast),
             Set.of(deleted.getId()), false);
         int[] overlapChanges = {0};
-        survivingFirst.getMatchIdentifier().overlapProperty().addListener((_, _, _) -> overlapChanges[0]++);
+        survivingFirst.getMatchIdentifier().addChangeListener(() -> overlapChanges[0]++);
         ((Talkgroup)deleted.getMatchIdentifier()).setValue(101);
         deleted.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 102));
         ((Talkgroup)deleted.getMatchIdentifier()).setValue(103);
@@ -274,7 +271,7 @@ class AliasModelPublicationTest
         model.publishCommittedConfiguration(List.of(definition), List.of(replacement, last),
             Set.of(previous.getId()), false);
         int[] overlapChanges = {0};
-        replacement.getMatchIdentifier().overlapProperty().addListener((_, _, _) -> overlapChanges[0]++);
+        replacement.getMatchIdentifier().addChangeListener(() -> overlapChanges[0]++);
 
         ((Talkgroup)previous.getMatchIdentifier()).setValue(101);
         previous.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 102));
@@ -285,7 +282,7 @@ class AliasModelPublicationTest
         assertSame(replacement, cached.getAliases(APCO25Talkgroup.create(104)).getFirst());
         assertSame(last, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
         assertTrue(cached.getAliases(APCO25Talkgroup.create(103)).isEmpty());
-        assertFalse(last.getMatchIdentifier().overlapProperty().get());
+        assertFalse(last.getMatchIdentifier().isOverlap());
     }
 
     @Test
@@ -298,7 +295,7 @@ class AliasModelPublicationTest
         AliasModel model = model(List.of(removedDefinition, retainedDefinition), List.of(removed, retained));
         AliasList removedList = model.getAliasList(removedDefinition);
         AliasList retainedList = model.getAliasList(retainedDefinition);
-        int[] retainedChanges = changes(retainedList);
+        int[] retainedChanges = changes(model, retainedList);
 
         model.publishCommittedConfiguration(List.of(copy(retainedDefinition)), List.of(copy(retained, retainedDefinition)),
             Set.of(removed.getId()), true);
@@ -315,30 +312,33 @@ class AliasModelPublicationTest
     void publicationRecoveryRefreshesAnIndexWhoseFormerOwnerWasAlreadyRemoved()
     {
         AliasListDefinition definition = definition(1, "First");
+        Alias survivor = alias(11, definition, "Survivor", 100);
         Alias removed = alias(10, definition, "Removed", 100);
-        AliasModel model = model(List.of(definition), List.of(removed));
+        AliasModel model = model(List.of(definition), List.of(survivor, removed));
         AliasList cached = model.getAliasList(definition);
+        assertSame(removed, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
         boolean[] failNext = {true};
-        cached.aliases().addListener((ListChangeListener<Alias>)change ->
-        {
-            if(failNext[0])
+        survivor.getMatchIdentifier().addChangeListener(() -> {
+            if(failNext[0] && !survivor.getMatchIdentifier().isOverlap())
             {
                 failNext[0] = false;
-                throw new AssertionError("Injected observer failure before index publication");
+                throw new AssertionError("Injected overlap observer failure before index publication");
             }
         });
 
-        assertThrows(AssertionError.class, () -> model.publishCommittedConfiguration(List.of(definition), List.of(),
-            Set.of(removed.getId()), false));
-        assertTrue(model.getAliases().isEmpty());
-        assertTrue(cached.aliases().isEmpty());
+        assertThrows(AssertionError.class, () -> model.publishCommittedConfiguration(List.of(definition),
+            List.of(survivor), Set.of(removed.getId()), false));
+        assertEquals(List.of(survivor), model.getAliases());
+        assertEquals(List.of(survivor), cached.aliases());
         assertSame(removed, cached.getAliases(APCO25Talkgroup.create(100)).getFirst(),
-            "The injected observer failed before the old prepared lookup could be replaced");
+            "The observer failed before the complete prepared lookup could replace its old snapshot");
 
-        model.publishCommittedConfiguration(List.of(copy(definition)), List.of(), Set.of(removed.getId()), true);
+        model.publishCommittedConfiguration(List.of(copy(definition)), List.of(copy(survivor, definition)),
+            Set.of(removed.getId()), true);
 
         assertSame(cached, model.getAliasList(definition));
-        assertTrue(cached.getAliases(APCO25Talkgroup.create(100)).isEmpty());
+        assertSame(survivor, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
+        assertFalse(survivor.getMatchIdentifier().isOverlap());
     }
 
     private static AliasModel model(List<AliasListDefinition> definitions, List<Alias> aliases)
@@ -385,19 +385,16 @@ class AliasModelPublicationTest
         return copy;
     }
 
-    private static int[] changes(AliasList list)
+    private static int[] changes(AliasModel model, AliasList list)
     {
         int[] changes = {0};
-        list.aliases().addListener((ListChangeListener<Alias>)change ->
-        {
-            while(change.next())
+        Object[] previous = {AliasModelTestAccess.lookupIndex(list)};
+        model.addChangeListener(change -> {
+            Object current = AliasModelTestAccess.lookupIndex(list);
+            if(current != previous[0])
             {
-                //The list's Alias extractor also reports names and overlap flags as nonstructural updates.
-                if(change.wasAdded() || change.wasRemoved() || change.wasPermutated())
-                {
-                    changes[0]++;
-                    break;
-                }
+                changes[0]++;
+                previous[0] = current;
             }
         });
         return changes;

@@ -64,7 +64,7 @@ public class Dcs extends AliasID implements Comparable<Dcs>
     public void setDCSCode(DCSCode dcsCode)
     {
         mDCSCode = dcsCode;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

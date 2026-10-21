@@ -19,12 +19,10 @@
 
  package io.github.dsheirer.audio.broadcast.openmhz;
 
+ import java.util.Objects;
  import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
  import io.github.dsheirer.audio.broadcast.BroadcastFormat;
  import io.github.dsheirer.audio.broadcast.BroadcastServerType;
- import javafx.beans.binding.Bindings;
- import javafx.beans.property.SimpleStringProperty;
- import javafx.beans.property.StringProperty;
 
  /**
   * Streaming configuration for Rdio Scanner API.
@@ -36,8 +34,8 @@
  {
     public static final String PRODUCTION_ENDPOINT = "https://api.openmhz.com";
 
-     private StringProperty mSystemName = new SimpleStringProperty();
-     private StringProperty mApiKey = new SimpleStringProperty();
+     private String mSystemName = null;
+     private String mApiKey = null;
 
      /**
       * Constructor for faster jackson
@@ -59,27 +57,6 @@
          {
              setHost(PRODUCTION_ENDPOINT);
          }
-
-         //The parent class binds this property, so we unbind it and rebind it here
-         mValid.unbind();
-         mValid.bind(Bindings.and(Bindings.and(Bindings.isNotNull(mSystemName), Bindings.isNotNull(mApiKey)),
-             Bindings.isNotNull(mHost)));
-     }
-
-     /**
-      * System ID as a property
-      */
-     public StringProperty systemIDProperty()
-     {
-         return mSystemName;
-     }
-
-     /**
-      * API key as a property
-      */
-     public StringProperty apiKeyProperty()
-     {
-         return mApiKey;
      }
 
      /**
@@ -87,7 +64,7 @@
       */
      public String getApiKey()
      {
-         return mApiKey.get();
+         return mApiKey;
      }
 
      /**
@@ -96,7 +73,11 @@
       */
      public void setApiKey(String apiKey)
      {
-         mApiKey.setValue(apiKey);
+         if(!Objects.equals(mApiKey, apiKey))
+         {
+             mApiKey = apiKey;
+             notifyChanged();
+         }
      }
 
      /**
@@ -104,7 +85,7 @@
       */
      public String getSystemName()
      {
-         return mSystemName.get();
+         return mSystemName;
      }
 
      /**
@@ -112,7 +93,11 @@
       */
      public void setSystemName(String systemName)
      {
-         mSystemName.set(systemName);
+         if(!Objects.equals(mSystemName, systemName))
+         {
+             mSystemName = systemName;
+             notifyChanged();
+         }
      }
 
      @Override
@@ -128,4 +113,10 @@
          copy.setSystemName(getSystemName());
          return copy;
      }
- }
+     @Override
+    public boolean isValid()
+    {
+        return getSystemName() != null && getApiKey() != null && getHost() != null;
+    }
+
+}

@@ -11,17 +11,11 @@
 
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
+import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import javafx.beans.binding.Bindings;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 
 /**
  * Streaming-tab configuration for RadioResolve call uploads and site metadata.
@@ -29,9 +23,9 @@ import javafx.beans.property.StringProperty;
 public class RadioResolveConfiguration extends BroadcastConfiguration
 {
     public static final String PRODUCTION_ENDPOINT = "https://calls.radioresolve.com";
-    private StringProperty mApiKey = new SimpleStringProperty();
-    private BooleanProperty mIgnoreCertificateErrors = new SimpleBooleanProperty(false);
-    private ObjectProperty<Mode> mMode = new SimpleObjectProperty<>(Mode.CALLS_AND_METADATA);
+    private String mApiKey = null;
+    private boolean mIgnoreCertificateErrors = false;
+    private Mode mMode = Mode.CALLS_AND_METADATA;
 
     /**
      * RadioResolve call and site-metadata publishing mode.
@@ -75,24 +69,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         {
             setHost(PRODUCTION_ENDPOINT);
         }
-
-        mValid.unbind();
-        mValid.bind(Bindings.and(Bindings.isNotEmpty(mHost), Bindings.isNotEmpty(mApiKey)));
-    }
-
-    public StringProperty apiKeyProperty()
-    {
-        return mApiKey;
-    }
-
-    public BooleanProperty ignoreCertificateErrorsProperty()
-    {
-        return mIgnoreCertificateErrors;
-    }
-
-    public ObjectProperty<Mode> modeProperty()
-    {
-        return mMode;
     }
 
     @Override
@@ -103,17 +79,21 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
 
     public String getApiKey()
     {
-        return mApiKey.get();
+        return mApiKey;
     }
 
     public void setApiKey(String apiKey)
     {
-        mApiKey.set(apiKey);
+        if(!Objects.equals(mApiKey, apiKey))
+        {
+            mApiKey = apiKey;
+            notifyChanged();
+        }
     }
 
     public boolean getIgnoreCertificateErrors()
     {
-        return mIgnoreCertificateErrors.get();
+        return mIgnoreCertificateErrors;
     }
 
     public boolean isIgnoreCertificateErrors()
@@ -123,17 +103,25 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
 
     public void setIgnoreCertificateErrors(boolean ignore)
     {
-        mIgnoreCertificateErrors.set(ignore);
+        if(!Objects.equals(mIgnoreCertificateErrors, ignore))
+        {
+            mIgnoreCertificateErrors = ignore;
+            notifyChanged();
+        }
     }
 
     public Mode getMode()
     {
-        return mMode.get();
+        return mMode;
     }
 
     public void setMode(Mode mode)
     {
-        mMode.set(mode != null ? mode : Mode.CALLS_AND_METADATA);
+        if(!Objects.equals(mMode, mode != null ? mode : Mode.CALLS_AND_METADATA))
+        {
+            mMode = mode != null ? mode : Mode.CALLS_AND_METADATA;
+            notifyChanged();
+        }
     }
 
     @JsonIgnore
@@ -192,4 +180,9 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return trimmed;
     }
 
+    @Override
+    public boolean isValid()
+    {
+        return getHost() != null && !getHost().isEmpty() && getApiKey() != null && !getApiKey().isEmpty();
+    }
 }

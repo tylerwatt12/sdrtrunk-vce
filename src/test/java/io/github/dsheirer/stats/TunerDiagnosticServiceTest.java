@@ -44,6 +44,33 @@ import org.junit.jupiter.api.Test;
 class TunerDiagnosticServiceTest
 {
     @Test
+    void inventoryTargetProjectionEnumeratesOnceAndNeverKeepsARemovedRuntimeIdentity()
+    {
+        var first = new io.github.dsheirer.source.tuner.test.TestTuner(null);
+        var idle = new io.github.dsheirer.source.tuner.test.TestTuner(null);
+        FakeController controller = new FakeController(851_000_000L, 10_000_000.0);
+        AtomicReference<List<TunerDiagnosticService.AvailableTarget>> available = new AtomicReference<>(List.of(
+            target(first, TunerClass.TEST_TUNER, controller, 1), target(idle, TunerClass.TEST_TUNER, controller, 0)));
+        AtomicInteger enumerations = new AtomicInteger();
+        try(TunerDiagnosticService service = new TunerDiagnosticService(() -> {
+            enumerations.incrementAndGet();
+            return available.get();
+        }, new FakeProcessorFactory()))
+        {
+            var ids = service.targetIds();
+            assertEquals(1, enumerations.get());
+            assertNotNull(ids.get(first));
+            assertNull(ids.get(idle));
+            assertEquals(0, controller.addCount.get(), "inventory projection does not attach a sample observer");
+            String firstId = ids.get(first);
+            available.set(List.of());
+            assertTrue(service.targetIds().isEmpty());
+            available.set(List.of(target(first, TunerClass.TEST_TUNER, controller, 1)));
+            assertNotEquals(firstId, service.targetIds().get(first), "a retired runtime cannot reuse its target ID");
+        }
+    }
+
+    @Test
     void remainsInertUntilAViewerOpensAndShowsTunerNameAndSerial()
     {
         FakeController controller = new FakeController(851_000_000L, 10_000_000.0);

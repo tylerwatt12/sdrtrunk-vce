@@ -28,7 +28,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastModel;
 import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -37,14 +36,13 @@ import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryException;
 import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -52,18 +50,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Manages channel, stream, alias, and supporting configuration state.
  */
-public class ConfigurationManager implements Listener<ChannelEvent>
+public class ConfigurationManager implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(ConfigurationManager.class);
     private AliasModel mAliasModel;
@@ -79,23 +81,21 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private final AliasAdministrationService mAliasAdministrationService;
     private final ChannelAdministrationService mChannelAdministrationService;
     private final ScanListModel mScanListModel;
-    private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
-    private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
     private final AtomicLong mChannelConfigurationRevision = new AtomicLong();
     private final AtomicLong mStreamingConfigurationRevision = new AtomicLong();
     private StreamingAdministrationService mStreamingAdministrationService;
-    private final Object mHeadlessWebConfigurationLock = new Object();
+    private final ConfigurationExecutor mConfigurationExecutor = new ConfigurationExecutor();
+    private final AtomicBoolean mClosed = new AtomicBoolean();
+    private final Consumer<StatsDatabaseMaintenanceRequest> mMaintenanceDispatcher;
     private final Object mRadioReferenceLoginLock = new Object();
-    private ScheduledFuture<?> mConfigurationSaveFuture;
-    private boolean mConfigurationLoading = false;
     private volatile boolean mInitialized = false;
     private volatile boolean mExternalConfigurationOperation = false;
 
     /**
      * Manages channel configurations, streams, and alias lists backed by the global SQLite database.
      *
-     * Monitors configuration changes to automatically save them after they occur.
+     * Commands commit detached configuration before publishing it to receiver models.
      *
      * @param userPreferences for user settings
      * @param tunerManager for access to tuner model
@@ -105,6 +105,15 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public ConfigurationManager(UserPreferences userPreferences, TunerManager tunerManager, AliasModel aliasModel,
                            EventLogManager eventLogManager)
     {
+        this(userPreferences, tunerManager, aliasModel, eventLogManager, request ->
+            request.result().completeExceptionally(new IllegalStateException("Statistics maintenance is unavailable")));
+    }
+
+    public ConfigurationManager(UserPreferences userPreferences, TunerManager tunerManager, AliasModel aliasModel,
+                                EventLogManager eventLogManager,
+                                Consumer<StatsDatabaseMaintenanceRequest> maintenanceDispatcher)
+    {
+        mMaintenanceDispatcher = Objects.requireNonNull(maintenanceDispatcher);
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
         mAliasModel = aliasModel;
@@ -129,39 +138,84 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         mChannelModel.addListener(mChannelProcessingManager);
         mChannelProcessingManager.addChannelEventListener(mChannelModel);
+    }
 
-        //Channel and broadcast editors retain their delayed saver. Alias administration commits detached candidates
-        //through its own transaction boundary before publishing them.
-        mChannelModel.addListener(this);
+    /** All configuration clients share this owner; windows never supply its execution thread. */
+    public <T> T executeConfigurationTask(Supplier<T> operation)
+    {
+        return mConfigurationExecutor.call(operation);
+    }
 
-        mBroadcastModel.addListener(broadcastEvent -> {
-            switch(broadcastEvent.getEvent())
+    public CompletableFuture<Void> submitConfigurationTask(Runnable operation)
+    {
+        return mConfigurationExecutor.submit(operation);
+    }
+
+    /** Learners submit detached commands without putting database work on metadata or decoder callbacks. */
+    public void submitLearnedChannelUpdate(SiteMetadataEvent event, Function<Channel,Boolean> update)
+    {
+        submitConfigurationTask(() ->
+        {
+            if(event == null || !event.isUseful() || !event.matchesCurrentChannel())
             {
-                case CONFIGURATION_ADD:
-                case CONFIGURATION_CHANGE:
-                case CONFIGURATION_DELETE:
-                    scheduleConfigurationSave();
-                    break;
-                default:
-                    //Do nothing
-                    break;
+                update.apply(null);
+                return;
             }
+            Channel live = event.channel();
+            if(mExternalConfigurationOperation || !mChannelModel.getChannels().contains(live)) return;
+            Channel candidate = live.copyOfPreservingIdentity();
+            if(!update.apply(candidate)) return;
+
+            List<Channel> channels = mChannelModel.getChannels().stream()
+                .map(channel -> channel == live ? candidate : channel).toList();
+            ChannelConfigurationSnapshot committed;
+            try
+            {
+                committed = mConfigurationRepository.commitChannelConfiguration(new ChannelConfigurationSnapshot(channels));
+            }
+            catch(Exception failure)
+            {
+                throw new ConfigurationCommitException("Unable to save learned channel settings", failure);
+            }
+            Channel saved = committed.channels().stream()
+                .filter(channel -> channel.getConfigurationId().equals(live.getConfigurationId())).findFirst().orElseThrow();
+            //Keep the active chain's Channel and configuration objects; only learning-owned fields change.
+            live.setP25SiteIdentity(saved.getP25SiteIdentity());
+            if(live.getDecodeConfiguration() instanceof DecodeConfigP25 decoder &&
+                saved.getDecodeConfiguration() instanceof DecodeConfigP25 learned)
+                decoder.setLearnedControlFrequencies(learned.getLearnedControlFrequencies());
+            if(live.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency source &&
+                saved.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency learned)
+            {
+                boolean frequenciesChanged = !source.getFrequencies().equals(learned.getFrequencies());
+                if(frequenciesChanged) source.setFrequencies(learned.getFrequencies());
+                source.setPreferredFrequency(learned.getPreferredFrequency());
+                if(frequenciesChanged) live.setSourceConfiguration(source);
+            }
+            mChannelConfigurationRevision.incrementAndGet();
+        }).exceptionally(failure ->
+        {
+            mLog.error("Unable to apply learned channel configuration", failure);
+            return null;
         });
     }
 
-    /**
-     * Serializes headless web configuration-model access shared by the channel and scan-list administrator
-     * services.  Desktop builds instead use the JavaFX application thread.  This lock is never acquired by tuner,
-     * sample, decoder, recorder, broadcaster, or browser-audio delivery paths.
-     */
-    public void runHeadlessWebConfigurationTask(Runnable task)
+    public void dispatchMaintenance(StatsDatabaseMaintenanceRequest request)
     {
-        Objects.requireNonNull(task, "Configuration task cannot be null");
+        mMaintenanceDispatcher.accept(request);
+    }
 
-        synchronized(mHeadlessWebConfigurationLock)
-        {
-            task.run();
-        }
+    public void quiesceAdministration()
+    {
+        mConfigurationExecutor.quiesceCalls();
+    }
+
+    @Override
+    public void close()
+    {
+        if(mClosed.get()) return;
+        mConfigurationExecutor.close();
+        if(mClosed.compareAndSet(false, true)) MyEventBus.getGlobalEventBus().unregister(mChannelProcessingManager);
     }
 
     /**
@@ -175,8 +229,15 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     /** Adds a saved channel after assigning or validating its required compatible Alias List. */
     public void addChannel(Channel channel)
     {
-        mAliasModel.requireAliasListAssignment(channel);
-        mChannelModel.addChannel(channel);
+        executeConfigurationTask(() ->
+        {
+            mAliasModel.requireAliasListAssignment(channel);
+            List<Channel> channels = new ArrayList<>(mChannelModel.getChannels());
+            channels.add(channel);
+            commitAndPublishChannelConfigurationOnOwner(new ChannelConfigurationSnapshot(channels),
+                Set.of(channel.getConfigurationId()), false);
+            return null;
+        });
     }
 
     /**
@@ -285,8 +346,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public void init()
     {
-        transferStateToModels();
-        mInitialized = true;
+        executeConfigurationTask(() -> {
+            transferStateToModels();
+            mInitialized = true;
+            return null;
+        });
     }
 
     /**
@@ -311,30 +375,21 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return mChannelConfigurationRevision.get();
     }
 
-    /**
-     * Completes any pending save before an external configuration operation accesses the SQLite database.
-     * This method should be invoked on the JavaFX application thread.
-     */
+    /** Barrier for previously admitted configuration commands; every mutation is committed before publication. */
     public void flushConfiguration()
     {
-        if(mExternalConfigurationOperation)
+        executeConfigurationTask(() ->
         {
-            throw new ConfigurationPublicationException(
-                "Configuration saves are suspended until VCE restarts");
-        }
-
-        saveNow();
-
-        if(hasDirtyConfiguration())
-        {
-            throw new IllegalStateException("Unable to save the current configuration");
-        }
+            if(mExternalConfigurationOperation)
+                throw new ConfigurationPublicationException("Configuration is unavailable until VCE restarts");
+            return null;
+        });
     }
 
-    /** Serializes one detached Alias command against delayed channel and broadcast saves. */
-    public synchronized <T> T applyConfigurationMutation(Supplier<T> task)
+    /** Executes one detached configuration command on the receiver's configuration owner. */
+    public <T> T applyConfigurationMutation(Supplier<T> task)
     {
-        return Objects.requireNonNull(task, "Configuration mutation cannot be null").get();
+        return executeConfigurationTask(Objects.requireNonNull(task, "Configuration mutation cannot be null"));
     }
 
     /**
@@ -361,7 +416,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /** Commits one detached channel configuration and publishes only the explicitly changed channel identities. */
-    public synchronized ChannelConfigurationSnapshot commitAndPublishChannelConfiguration(
+    public ChannelConfigurationSnapshot commitAndPublishChannelConfiguration(ChannelConfigurationSnapshot proposed, Set<String> changedConfigurationIds, boolean autoStartOnly)
+    {
+        return executeConfigurationTask(() -> commitAndPublishChannelConfigurationOnOwner(proposed, changedConfigurationIds, autoStartOnly));
+    }
+
+    private ChannelConfigurationSnapshot commitAndPublishChannelConfigurationOnOwner(
         ChannelConfigurationSnapshot proposed, Set<String> changedConfigurationIds, boolean autoStartOnly)
     {
         if(mExternalConfigurationOperation)
@@ -381,12 +441,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         ChannelConfigurationSnapshot committed;
         try
         {
-            //Preserve any pending desktop broadcast edit before the channel-only transaction reads its references.
-            saveNow();
-            if(hasDirtyConfiguration())
-            {
-                throw new IllegalStateException("Unable to save pending channel and broadcast configuration");
-            }
             committed = mConfigurationRepository.commitChannelConfiguration(proposed);
         }
         catch(Exception exception)
@@ -398,7 +452,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /** Atomic sender/channel removal; the callback exposes the committed credential state before publication. */
-    public synchronized ChannelConfigurationSnapshot commitAndPublishRemoteSenderRemoval(
+    public ChannelConfigurationSnapshot commitAndPublishRemoteSenderRemoval(ChannelConfigurationSnapshot proposed, Set<String> changedConfigurationIds, String senderId, RemoteLinkSettingsStore.Settings nextSettings, Runnable afterCommit)
+    {
+        return executeConfigurationTask(() -> commitAndPublishRemoteSenderRemovalOnOwner(proposed, changedConfigurationIds, senderId, nextSettings, afterCommit));
+    }
+
+    private ChannelConfigurationSnapshot commitAndPublishRemoteSenderRemovalOnOwner(
         ChannelConfigurationSnapshot proposed, Set<String> changedConfigurationIds, String senderId,
         RemoteLinkSettingsStore.Settings nextSettings, Runnable afterCommit)
     {
@@ -411,8 +470,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         ChannelConfigurationSnapshot saved;
         try
         {
-            saveNow();
-            if(hasDirtyConfiguration()) throw new IllegalStateException("Unable to save pending channel and broadcast configuration");
             saved = mConfigurationRepository.commitRemoteSenderRemoval(proposed, senderId, nextSettings, () ->
             {
                 committed.set(true);
@@ -434,9 +491,16 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private ChannelConfigurationSnapshot publishChannelConfigurationAfterCommit(ChannelConfigurationSnapshot committed,
         Set<String> changed, boolean autoStartOnly)
     {
+        Map<String,Long> previousAssignments = mChannelModel.getChannels().stream().collect(
+            java.util.stream.Collectors.toMap(Channel::getConfigurationId, Channel::getAliasListId));
+        Map<String,Long> committedAssignments = committed.channels().stream().collect(
+            java.util.stream.Collectors.toMap(Channel::getConfigurationId, Channel::getAliasListId));
+        boolean assignmentsChanged = !autoStartOnly && changed.stream().anyMatch(id ->
+            !Objects.equals(previousAssignments.get(id), committedAssignments.get(id)));
         try
         {
             publishCommittedChannelConfiguration(committed, changed, autoStartOnly);
+            if(assignmentsChanged) mAliasConfigurationRevision.incrementAndGet();
             return committed;
         }
         catch(RuntimeException | Error publicationFailure)
@@ -445,6 +509,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             {
                 ChannelConfigurationSnapshot reloaded = mConfigurationRepository.loadChannelConfiguration();
                 publishCommittedChannelConfiguration(reloaded, changed, autoStartOnly);
+                if(assignmentsChanged) mAliasConfigurationRevision.incrementAndGet();
                 mLog.error("Channel configuration committed, but initial publication failed; reloaded committed state",
                     publicationFailure);
                 return reloaded;
@@ -461,7 +526,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /** One persist-before-publish boundary for spectrum channel creation, including listening defaults. */
-    public synchronized void commitAndPublishDiscoveredChannels(AliasConfigurationSnapshot aliases,
+    public void commitAndPublishDiscoveredChannels(AliasConfigurationSnapshot aliases, ChannelConfigurationSnapshot channels, Set<String> configurationIds)
+    {
+        executeConfigurationTask(() -> { commitAndPublishDiscoveredChannelsOnOwner(aliases, channels, configurationIds); return null; });
+    }
+
+    private void commitAndPublishDiscoveredChannelsOnOwner(AliasConfigurationSnapshot aliases,
         ChannelConfigurationSnapshot channels, Set<String> configurationIds)
     {
         if(mExternalConfigurationOperation)
@@ -469,8 +539,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         ConfigurationSnapshot committed;
         try
         {
-            saveNow();
-            if(hasDirtyConfiguration()) throw new IllegalStateException("Pending configuration could not be saved");
             committed = mConfigurationRepository.commitDiscoveredChannels(aliases, channels);
         }
         catch(Exception exception)
@@ -513,8 +581,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         Map<String,Channel> saved = new java.util.LinkedHashMap<>();
         committed.channels().forEach(channel -> saved.put(channel.getConfigurationId(), channel));
 
-        mConfigurationLoading = true;
-        try
         {
             for(String configurationId: changedConfigurationIds)
             {
@@ -540,6 +606,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                         //Reordering autostart never requires a receiver restart and must retain the map key.
                         live.setAutoStart(replacement.getAutoStart());
                         live.setAutoStartOrder(replacement.getAutoStartOrder());
+                        mChannelModel.receive(new ChannelEvent(live,
+                            ChannelEvent.Event.NOTIFICATION_CONFIGURATION_CHANGE));
                     }
                     else
                     {
@@ -547,10 +615,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                     }
                 }
             }
-        }
-        finally
-        {
-            mConfigurationLoading = false;
         }
         mChannelConfigurationRevision.incrementAndGet();
     }
@@ -566,14 +630,18 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /** Saves a detached stream candidate before replacing only the affected sender. */
-    public synchronized void commitAndPublishStreamingConfiguration(List<BroadcastConfiguration> proposed, String changedId)
+    public void commitAndPublishStreamingConfiguration(List<BroadcastConfiguration> proposed, String changedId)
+    {
+        executeConfigurationTask(() -> { commitAndPublishStreamingConfigurationOnOwner(proposed, changedId); return null; });
+    }
+
+    private void commitAndPublishStreamingConfigurationOnOwner(List<BroadcastConfiguration> proposed, String changedId)
     {
         if(mExternalConfigurationOperation)
             throw new ConfigurationPublicationException("Configuration saves are suspended until VCE restarts");
         List<BroadcastConfiguration> committed;
         try
         {
-            flushConfiguration();
             committed = mConfigurationRepository.commitStreamingConfiguration(proposed);
         }
         catch(Exception exception)
@@ -601,29 +669,29 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     private void publishStreamingConfiguration(List<BroadcastConfiguration> committed, String changedId)
     {
-        mConfigurationLoading = true;
-        try
-        {
-            BroadcastConfiguration previous = mBroadcastModel.getBroadcastConfiguration(changedId);
-            if(previous != null) mBroadcastModel.removeBroadcastConfiguration(previous);
-            committed.stream().filter(configuration -> changedId.equals(configuration.getConfigurationId()))
-                .findFirst().ifPresent(mBroadcastModel::addBroadcastConfiguration);
-        }
-        finally { mConfigurationLoading = false; }
+        BroadcastConfiguration previous = mBroadcastModel.getBroadcastConfiguration(changedId);
+        if(previous != null) mBroadcastModel.removeBroadcastConfiguration(previous);
+        committed.stream().filter(configuration -> changedId.equals(configuration.getConfigurationId()))
+            .findFirst().ifPresent(mBroadcastModel::addBroadcastConfiguration);
         mStreamingConfigurationRevision.incrementAndGet();
         // Alias dialogs include the destination catalog; invalidate stale pickers on rename/add/delete.
         mAliasConfigurationRevision.incrementAndGet();
     }
 
     /** Creates an isolated Alias-only candidate; channel and broadcast state is deliberately out of scope. */
-    public synchronized AliasConfigurationSnapshot createDetachedAliasConfigurationSnapshot()
+    public AliasConfigurationSnapshot createDetachedAliasConfigurationSnapshot()
+    {
+        return executeConfigurationTask(() -> createDetachedAliasConfigurationSnapshotOnOwner());
+    }
+
+    private AliasConfigurationSnapshot createDetachedAliasConfigurationSnapshotOnOwner()
     {
         return AliasConfigurationSnapshot.detachedCopyOf(mAliasModel.aliasListDefinitions(),
             mAliasModel.getAliases(), mScanListModel.configuration());
     }
 
     /** Database hook kept protected so failure-path tests can inject a failed commit. */
-    protected synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
+    protected AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
         AliasConfigurationPublication publication)
     {
         if(mExternalConfigurationOperation)
@@ -637,14 +705,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
-            //Alias routes have foreign keys to broadcast configurations. Persist any pending channel/stream edit
-            //before the Alias-only transaction so a newly configured destination is durable before it is referenced.
-            saveNow();
-            if(hasDirtyConfiguration())
-            {
-                throw new IllegalStateException(
-                    "Unable to save channel and broadcast configuration before committing Alias configuration");
-            }
             return mConfigurationRepository.commitAliasConfiguration(proposed);
         }
         catch(Exception exception)
@@ -657,7 +717,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      * Owns the complete persist-then-publish boundary. A failed database commit leaves active models untouched. If an
      * observer fails after commit, the committed Alias state is reloaded before this command returns.
      */
-    public synchronized AliasConfigurationSnapshot commitAndPublishAliasConfiguration(AliasConfigurationSnapshot proposed,
+    public AliasConfigurationSnapshot commitAndPublishAliasConfiguration(AliasConfigurationSnapshot proposed, AliasConfigurationPublication publication)
+    {
+        return executeConfigurationTask(() -> commitAndPublishAliasConfigurationOnOwner(proposed, publication));
+    }
+
+    private AliasConfigurationSnapshot commitAndPublishAliasConfigurationOnOwner(AliasConfigurationSnapshot proposed,
         AliasConfigurationPublication publication)
     {
         AliasConfigurationPublication requested = Objects.requireNonNull(publication,
@@ -788,47 +853,10 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     private void clearModels()
     {
-        mConfigurationLoading = true;
-        try
-        {
-            //Shutdown any running channels
-            mChannelProcessingManager.shutdown();
-            mChannelModel.clear();
-            mBroadcastModel.clear();
-            mAliasModel.clear();
-        }
-        finally
-        {
-            mConfigurationLoading = false;
-        }
-    }
-
-    private synchronized void saveNow()
-    {
-        //Complete any pending configuration save.
-        if(mConfigurationSaveFuture != null)
-        {
-            try
-            {
-                mConfigurationSaveFuture.cancel(true);
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error trying to cancel pending configuration save");
-            }
-
-            mConfigurationSaveFuture = null;
-        }
-
-        if(mConfigurationSavePending.getAndSet(false) || mConfigurationDirty.get())
-        {
-            save();
-        }
-
-        if(hasDirtyConfiguration())
-        {
-            scheduleSave();
-        }
+        mChannelProcessingManager.shutdown();
+        mChannelModel.clear();
+        mBroadcastModel.clear();
+        mAliasModel.clear();
     }
 
     /**
@@ -840,67 +868,10 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         clearModels();
 
-        mConfigurationLoading = true;
-
-        try
-        {
-            mScanListModel.replaceConfiguration(snapshot.scanListConfiguration());
-            mAliasModel.replaceCommittedConfiguration(snapshot.aliasListDefinitions(), snapshot.aliases());
-            mBroadcastModel.addBroadcastConfigurations(snapshot.broadcastConfigurations());
-
-            //Channel model has to be loaded last since it will auto-start channels that are enabled
-            mChannelModel.addChannels(snapshot.channels());
-        }
-        finally
-        {
-            mConfigurationLoading = false;
-        }
-    }
-
-    /**
-     * Channel event listener method. Monitors channel events for changes that should be persisted to the database.
-     */
-    @Override
-    public void receive(ChannelEvent event)
-    {
-        if(mConfigurationLoading)
-        {
-            return;
-        }
-
-        //Only save configuration changes for standard channels (not traffic channels).
-        if(event.getChannel().getChannelType() == ChannelType.STANDARD)
-        {
-            switch(event.getEvent())
-            {
-                case NOTIFICATION_ADD:
-                case NOTIFICATION_CONFIGURATION_CHANGE:
-                case NOTIFICATION_DELETE:
-                    mAliasConfigurationRevision.incrementAndGet();
-                    mChannelConfigurationRevision.incrementAndGet();
-                    scheduleConfigurationSave();
-                    break;
-            }
-        }
-    }
-
-    /** Saves delayed channel and broadcast edits without rewriting Alias-owned rows. */
-    private synchronized void save()
-    {
-        if(mExternalConfigurationOperation)
-        {
-            return;
-        }
-
-        if(!mConfigurationDirty.getAndSet(false))
-        {
-            return;
-        }
-
-        if(!saveChannelAndBroadcastConfigurationToDatabase())
-        {
-            mConfigurationDirty.set(true);
-        }
+        mScanListModel.replaceConfiguration(snapshot.scanListConfiguration());
+        mAliasModel.replaceCommittedConfiguration(snapshot.aliasListDefinitions(), snapshot.aliases());
+        mBroadcastModel.addBroadcastConfigurations(snapshot.broadcastConfigurations());
+        mChannelModel.addChannels(snapshot.channels());
     }
 
     private ConfigurationSnapshot loadConfigurationSnapshot()
@@ -923,23 +894,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    boolean saveChannelAndBroadcastConfigurationToDatabase()
-    {
-        try
-        {
-            mConfigurationRepository.synchronizeChannelAndBroadcastConfiguration(
-                new ArrayList<>(mChannelModel.getChannels()),
-                new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
-            return true;
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error saving channel and broadcast configuration to SQLite database [" +
-                mConfigurationRepository.getDatabasePath() + "]", e);
-            return false;
-        }
-    }
-
     private static final class ConfigurationLoadException extends RuntimeException
     {
         private ConfigurationLoadException(String message, Throwable cause)
@@ -948,61 +902,4 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    /**
-     * Schedules a configuration state save task. Subsequent calls to this method are batched until the save event occurs.
-     */
-    public void scheduleConfigurationSave()
-    {
-        scheduleSave();
-    }
-
-    private void scheduleSave()
-    {
-        if(mConfigurationLoading)
-        {
-            return;
-        }
-
-        mConfigurationDirty.set(true);
-
-        if(mExternalConfigurationOperation)
-        {
-            return;
-        }
-
-        if(mConfigurationSavePending.compareAndSet(false, true))
-        {
-            mConfigurationSaveFuture = ThreadPool.SCHEDULED.schedule(new ConfigurationSaveTask(), 2, TimeUnit.SECONDS);
-        }
-    }
-
-    private boolean hasDirtyConfiguration()
-    {
-        return mConfigurationDirty.get();
-    }
-
-    /**
-     * Resets the configuration save pending flag to false and saves the current configuration state.
-     */
-    public class ConfigurationSaveTask implements Runnable
-    {
-        @Override
-        public void run()
-        {
-            try
-            {
-                save();
-            }
-            finally
-            {
-                mConfigurationSaveFuture = null;
-                mConfigurationSavePending.set(false);
-
-                if(hasDirtyConfiguration())
-                {
-                    scheduleSave();
-                }
-            }
-        }
-    }
 }

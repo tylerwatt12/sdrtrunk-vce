@@ -187,7 +187,8 @@ omit that snapshot; this does not change the conversion or final checks.
 and administrator are prepared first. `--no-upgrade-backup` applies to these catalog updates too. A failed optional
 catalog update is reported and receiving can continue with Managed Recordings unavailable.
 
-Use `--setup-wizard` for a graphical setup review; it requires a desktop. Normal startup validates existing databases.
+Use `--server` to run without the local window, even when a desktop is available. Use `--setup-wizard` for a graphical
+setup review; it requires a desktop and cannot be combined with `--server`. Normal startup validates existing databases.
 Only the bundled Application Migrator changes their formats. The format catalog, adjacent conversion requirements,
 and historical data policies are retained in the [technical migration reference](database-migration.md#technical-migration-reference).
 

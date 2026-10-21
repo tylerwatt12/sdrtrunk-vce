@@ -137,21 +137,21 @@ class AliasListMutationTest
         Alias second = alias("second", secondTalkgroup);
         aliasList.addAliases(List.of(first, second));
 
-        assertTrue(firstTalkgroup.overlapProperty().get());
-        assertTrue(secondTalkgroup.overlapProperty().get());
+        assertTrue(firstTalkgroup.isOverlap());
+        assertTrue(secondTalkgroup.isOverlap());
         assertSame(second, only(aliasList.getAliases(APCO25Talkgroup.create(100))));
 
         secondTalkgroup.setValue(101);
-        assertFalse(firstTalkgroup.overlapProperty().get());
-        assertFalse(secondTalkgroup.overlapProperty().get());
+        assertFalse(firstTalkgroup.isOverlap());
+        assertFalse(secondTalkgroup.isOverlap());
         assertSame(first, only(aliasList.getAliases(APCO25Talkgroup.create(100))));
         assertSame(second, only(aliasList.getAliases(APCO25Talkgroup.create(101))));
 
         secondTalkgroup.setValue(100);
-        assertTrue(firstTalkgroup.overlapProperty().get());
-        assertTrue(secondTalkgroup.overlapProperty().get());
+        assertTrue(firstTalkgroup.isOverlap());
+        assertTrue(secondTalkgroup.isOverlap());
         aliasList.removeAlias(second);
-        assertFalse(firstTalkgroup.overlapProperty().get());
+        assertFalse(firstTalkgroup.isOverlap());
         assertSame(first, only(aliasList.getAliases(APCO25Talkgroup.create(100))));
     }
 
@@ -173,19 +173,19 @@ class AliasListMutationTest
         p25AliasList.addAliases(List.of(firstRangeAlias, secondRangeAlias));
         nbfmAliasList.addAliases(List.of(firstDcsAlias, secondDcsAlias));
 
-        assertTrue(firstRange.overlapProperty().get());
-        assertTrue(secondRange.overlapProperty().get());
-        assertTrue(firstDcs.overlapProperty().get());
-        assertTrue(secondDcs.overlapProperty().get());
+        assertTrue(firstRange.isOverlap());
+        assertTrue(secondRange.isOverlap());
+        assertTrue(firstDcs.isOverlap());
+        assertTrue(secondDcs.isOverlap());
         assertSame(secondDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
 
         secondRange.setMinTalkgroup(300);
         secondRange.setMaxTalkgroup(400);
         secondDcs.setDCSCode(DCSCode.N025);
-        assertFalse(firstRange.overlapProperty().get());
-        assertFalse(secondRange.overlapProperty().get());
-        assertFalse(firstDcs.overlapProperty().get());
-        assertFalse(secondDcs.overlapProperty().get());
+        assertFalse(firstRange.isOverlap());
+        assertFalse(secondRange.isOverlap());
+        assertFalse(firstDcs.isOverlap());
+        assertFalse(secondDcs.isOverlap());
         assertSame(firstDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
         assertSame(secondDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N025))));
     }
@@ -206,7 +206,7 @@ class AliasListMutationTest
 
         nbfmAliasList.removeAlias(secondDcsAlias);
         assertSame(firstDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
-        assertFalse(firstDcs.overlapProperty().get());
+        assertFalse(firstDcs.isOverlap());
     }
 
     @Test

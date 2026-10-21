@@ -20,7 +20,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Assumptions;
@@ -29,28 +31,59 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class VoiceDecryptionModuleManagerTest
 {
     @Test
-    void usesVolatileRuntimeStateAndMirrorsObservableProperty(@TempDir Path tempDirectory) throws Exception
+    void publishesPlainStatusAfterRuntimeStateAndProvidersWithoutJavaFx(@TempDir Path tempDirectory) throws Exception
     {
         assertTrue(Modifier.isVolatile(VoiceDecryptionModuleManager.class.getDeclaredField("mRuntimeLoaded")
             .getModifiers()));
 
         try(VoiceDecryptionModuleManager manager = new VoiceDecryptionModuleManager())
         {
+            List<Boolean> transitions = new ArrayList<>();
+            BiConsumer<VoiceDecryptionModuleManager.Status,VoiceDecryptionModuleManager.Status> listener = (previous, current) -> {
+                assertEquals(current, manager.statusSnapshot());
+                assertEquals(current.loaded(), manager.isLoaded());
+                if(current.loaded()) assertFalse(manager.getProviders().isEmpty());
+                if(previous.loaded() != current.loaded()) transitions.add(current.loaded());
+            };
+            manager.addStatusListener(listener);
             assertFalse(manager.isLoaded());
-            assertFalse(manager.loadedProperty().get());
+            assertFalse(manager.statusSnapshot().loaded());
             assertTrue(manager.load(createTestModuleJar(tempDirectory), "request", "accepted"),
                 manager.getStatus());
             assertTrue(manager.isLoaded());
-            assertTrue(manager.loadedProperty().get());
+            assertTrue(manager.statusSnapshot().loaded());
 
             manager.unload();
 
             assertFalse(manager.isLoaded());
-            assertFalse(manager.loadedProperty().get());
+            assertFalse(manager.statusSnapshot().loaded());
+            assertEquals(List.of(true, false), transitions);
+            manager.removeStatusListener(listener);
+            assertTrue(manager.load(createTestModuleJar(tempDirectory), "request", "accepted"));
+            manager.unload();
+            assertEquals(List.of(true, false), transitions, "removed local observers do not receive later state");
+        }
+    }
+
+    @Test
+    void aPresentationObserverCannotTurnASuccessfulModuleLoadIntoAFailure(@TempDir Path tempDirectory) throws Exception
+    {
+        try(VoiceDecryptionModuleManager manager = new VoiceDecryptionModuleManager())
+        {
+            manager.addStatusListener((previous, current) -> { throw new IllegalStateException("observer unavailable"); });
+            assertTrue(manager.load(createTestModuleJar(tempDirectory), "request", "accepted"));
+            assertTrue(manager.isLoaded());
+            assertFalse(manager.getProviders().isEmpty());
+            assertFalse(manager.load(createTestModuleJar(tempDirectory), "request", "rejected"));
+            assertTrue(manager.isLoaded(), "rejecting another module selection keeps the active module");
+            assertTrue(manager.statusSnapshot().loaded());
+            manager.unload();
+            assertFalse(manager.isLoaded());
         }
     }
 

@@ -35,6 +35,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class P25AliasTest
@@ -70,7 +71,8 @@ public class P25AliasTest
 
         alias.setMatchIdentifier(matcher);
 
-        assertEquals(matcher.toString(), matcher.valueProperty().get());
+        assertSame(matcher, alias.getMatchIdentifier());
+        assertEquals("Talkgroup:13501 Protocol:APCO-25", matcher.toString());
     }
 
     @Test

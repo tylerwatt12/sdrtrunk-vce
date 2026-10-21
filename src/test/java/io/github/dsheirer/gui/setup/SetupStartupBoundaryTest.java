@@ -11,9 +11,10 @@ class SetupStartupBoundaryTest
     @Test
     void unavailableOptionalCatalogDoesNotRewriteTheSavedRecordingMode() throws Exception
     {
-        String startup = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java"));
-        int catalog = startup.indexOf("mManagedRecordingCatalog = new ManagedRecordingCatalog");
-        int audio = startup.indexOf("mAudioRecordingManager =", catalog);
+        String startup = Files.readString(Path.of("src/main/java/io/github/dsheirer/receiver/ReceiverRuntime.java"));
+        int catalog = startup.indexOf("mRecordingCatalog = new ManagedRecordingCatalog");
+        int audio = startup.indexOf("mRecording =", catalog);
+        assertTrue(catalog >= 0 && audio > catalog);
         String fallback = startup.substring(catalog, audio);
         assertTrue(fallback.contains("catch(Exception exception)"));
         assertTrue(fallback.contains("saved recording mode is unchanged"));
@@ -23,10 +24,27 @@ class SetupStartupBoundaryTest
     @Test void graphicalSetupPrecedesReceiverConstructionAndActualWebBindPrecedesActivation() throws Exception
     {
         String startup=Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java"));
+        String runtime=Files.readString(Path.of("src/main/java/io/github/dsheirer/receiver/ReceiverRuntime.java"));
         String main=startup.substring(startup.indexOf("public static void main"));
         assertTrue(main.indexOf("SetupWizard.run(")<main.indexOf("new SDRTrunk("));
-        assertTrue(startup.indexOf("SetupWizard.ensureListener(")<startup.indexOf("mTunerManager.start()"));
-        assertTrue(startup.indexOf("SetupWizard.ensureListener(")<startup.indexOf("mAudioStreamingManager.start()"));
+        assertTrue(main.indexOf("SetupWizard.run(")<main.indexOf("new ReceiverRuntime("));
+        int listenerRecovery = startup.indexOf("SetupWizard.ensureListener(");
+        int activation = startup.indexOf("mRuntime.activate();");
+        assertTrue(listenerRecovery >= 0 && activation > listenerRecovery);
+        String composition = runtime.substring(runtime.indexOf("private void startServices()"),
+            runtime.indexOf("private void activateServices()"));
+        assertTrue(composition.contains("mWebServer.start();"));
+        assertFalse(composition.contains("mTuners.start();"));
+        assertFalse(composition.contains("mStreaming.start();"));
+        assertFalse(composition.contains("mRecording.start();"));
+        String activationBody = runtime.substring(runtime.indexOf("private void activateServices()"),
+            runtime.indexOf("private void startRecordingRetention()"));
+        assertTrue(activationBody.contains("mTuners.start();"));
+        assertTrue(activationBody.contains("mStreaming.start();"));
+        assertTrue(activationBody.contains("mRecording.start();"));
+        int serverActivation = main.indexOf("runtime.activate();");
+        int autostart = main.indexOf("if(startConfiguredChannels) runtime.startConfiguredChannels(true);");
+        assertTrue(serverActivation >= 0 && autostart > serverActivation);
         assertFalse(startup.contains("CoordinatedStartupDialog"));
         assertTrue(main.indexOf("if(setup.replacement() != null)") < main.indexOf("new SDRTrunk("));
         String replacement = startup.substring(startup.indexOf("private static int replaceSetupDatabase"),

@@ -126,6 +126,22 @@ public final class TunerDiagnosticService implements AutoCloseable
         }
     }
 
+    /** One target projection for an inventory request; runtime identity and availability are captured together. */
+    public Map<Tuner,String> targetIds()
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mClosed) return Map.of();
+            Map<Tuner,String> ids = new IdentityHashMap<>();
+            for(TargetSnapshot snapshot: snapshotsLocked())
+            {
+                if(snapshot.identity() instanceof Tuner tuner && snapshot.diagnosticAvailable().get())
+                    ids.put(tuner, snapshot.target().targetId());
+            }
+            return java.util.Collections.unmodifiableMap(ids);
+        }
+    }
+
     /** Resolves an opaque browser target to its currently available tuner without initializing hardware. */
     Tuner tunerForTarget(String targetId)
     {

@@ -147,14 +147,13 @@ class LegacyXmlConfigurationImporterTest
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof Talkgroup));
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof TalkgroupRange));
         assertTrue(aliases.stream().allMatch(alias -> hasRouteNamed(alias, "RadioResolve")));
-        assertTrue(aliases.stream().allMatch(alias -> alias.getMatchIdentifier().toString()
-            .equals(alias.getMatchIdentifier().valueProperty().get())));
+        assertTrue(aliases.stream().allMatch(alias -> alias.getMatchIdentifier().toString().contains("Protocol:")));
         assertTrue(aliases.stream().allMatch(alias -> alias.getBroadcastChannels().stream()
-            .allMatch(channel -> channel.toString().equals(channel.valueProperty().get()))));
+            .allMatch(channel -> "RadioResolve".equals(channel.toString()))));
         assertTrue(aliases.stream().allMatch(alias -> alias.getStreamTalkgroupAlias() != null &&
             alias.getStreamTalkgroupAlias().getValue() == 42 &&
-            alias.getStreamTalkgroupAlias().toString().equals(
-                alias.getStreamTalkgroupAlias().valueProperty().get())));
+            alias.getStreamTalkgroupAlias().getProtocol() == Protocol.UNKNOWN &&
+            "Talkgroup:42 Protocol:Unknown **NOT VALID**".equals(alias.getStreamTalkgroupAlias().toString())));
 
         var state = new ConfigurationDatabaseStore(database).load();
         assertEquals(2, state.channels().size());
@@ -636,7 +635,7 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(70000, radioRange.getMinRadio());
         assertEquals(71000, radioRange.getMaxRadio());
         assertTrue(hasRouteNamed(radioAlias, "Icecast"));
-        assertEquals("Icecast", radioAlias.getBroadcastChannels().iterator().next().valueProperty().get());
+        assertEquals("Icecast", radioAlias.getBroadcastChannels().iterator().next().toString());
 
         Dcs dcs = assertInstanceOf(Dcs.class, aliases.stream()
             .filter(alias -> "DCS".equals(alias.getName())).findFirst().orElseThrow().getMatchIdentifier());
@@ -649,12 +648,12 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(4, tones.getToneSequence().getTones().get(0).getDuration());
         assertEquals(AmbeTone.DTMF_2, tones.getToneSequence().getTones().get(1).getAmbeTone());
         assertEquals(6, tones.getToneSequence().getTones().get(1).getDuration());
-        assertTrue(tones.getToneSequence().getTones().stream()
-            .allMatch(tone -> tone.toString().equals(tone.valueProperty().get())));
+        java.util.concurrent.atomic.AtomicInteger toneChanges = new java.util.concurrent.atomic.AtomicInteger();
+        tones.addChangeListener(toneChanges::incrementAndGet);
         Tone firstTone = tones.getToneSequence().getTones().getFirst();
         firstTone.incrementDuration();
-        assertEquals(firstTone.toString(), firstTone.valueProperty().get());
-        assertEquals(tones.toString(), tones.valueProperty().get());
+        assertEquals(5, firstTone.getDuration());
+        assertEquals(1, toneChanges.get());
 
         var state = new ConfigurationDatabaseStore(database).load();
         Channel nbfmChannel = state.channels().stream().filter(channel -> "NBFM".equals(channel.getName()))

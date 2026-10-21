@@ -143,7 +143,7 @@ public class BroadcastChannel extends AliasID implements Comparable<BroadcastCha
     public void setChannelName(String channel)
     {
         mChannelName = channel;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

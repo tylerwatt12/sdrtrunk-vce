@@ -41,8 +41,8 @@ class ChannelConflictScopeTest
             var other = f.channels.get(second);
             f.channels.update(second, renamed(other.channel(), "Other edit"), other.editRevision(), other.channel(), false);
             long beforeRuntime = f.channels.currentRevision();
-            f.live(first).processingProperty().set(true);
-            f.live(first).processingProperty().set(false);
+            io.github.dsheirer.controller.channel.ChannelTestAccess.setProcessing(f.live(first), true);
+            io.github.dsheirer.controller.channel.ChannelTestAccess.setProcessing(f.live(first), false);
             assertEquals(beforeRuntime, f.channels.currentRevision(), "Processing alone must not dirty saved configuration");
             f.channels.setAutoStart(List.of(first), true, f.channels.currentRevision());
             f.create("Third", 853_012_500L);

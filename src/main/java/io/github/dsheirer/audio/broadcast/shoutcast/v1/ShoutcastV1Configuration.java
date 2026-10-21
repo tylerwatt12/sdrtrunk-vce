@@ -21,7 +21,6 @@ package io.github.dsheirer.audio.broadcast.shoutcast.v1;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import javafx.beans.binding.Bindings;
 
 public class ShoutcastV1Configuration extends BroadcastConfiguration
 {
@@ -40,7 +39,6 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     public ShoutcastV1Configuration(BroadcastFormat format)
     {
         super(format);
-        mValid.bind(Bindings.and(Bindings.isNotNull(mHost), Bindings.greaterThan(mPort, 0)));
     }
 
     @Override
@@ -157,5 +155,10 @@ public class ShoutcastV1Configuration extends BroadcastConfiguration
     public void setBitRate(int bitRate)
     {
         mBitRate = bitRate;
+    }
+    @Override
+    public boolean isValid()
+    {
+        return getHost() != null && getPort() > 0;
     }
 }

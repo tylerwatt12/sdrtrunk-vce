@@ -35,9 +35,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
-import javafx.collections.FXCollections;
-import javafx.collections.ListChangeListener;
-import javafx.collections.ObservableList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,48 +48,46 @@ import org.slf4j.LoggerFactory;
 public class AliasModel
 {
     private static final Logger mLog = LoggerFactory.getLogger(AliasModel.class);
-    private final ObservableList<Alias> mAliases = FXCollections.observableArrayList();
-    private final ObservableList<Alias> mReadOnlyAliases = FXCollections.unmodifiableObservableList(mAliases);
-    private final ObservableList<String> mAliasListNames = FXCollections.observableArrayList();
-    private final ObservableList<String> mReadOnlyAliasListNames =
-        FXCollections.unmodifiableObservableList(mAliasListNames);
-    private final ObservableList<AliasListDefinition> mAliasListDefinitions = FXCollections.observableArrayList();
-    private final ObservableList<AliasListDefinition> mReadOnlyAliasListDefinitions =
-        FXCollections.unmodifiableObservableList(mAliasListDefinitions);
-    private final Map<Long,AliasList> mAliasListMap = new HashMap<>();
-    private boolean mReconcilingAliasLists;
+    private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), List.of());
+    private final Map<Long,AliasList> mAliasListMap = new ConcurrentHashMap<>();
+    private final List<Consumer<Change>> mListeners = new CopyOnWriteArrayList<>();
     private boolean mAliasPublicationIncomplete;
 
-    public AliasModel()
+    private record Snapshot(List<Alias> aliases, List<AliasListDefinition> definitions, List<String> names) {}
+
+    /** One explicit notification after a committed configuration and its lookup indexes are published. */
+    public record Change(boolean aliasesChanged, boolean definitionsChanged, boolean namesChanged) {}
+
+    public void addChangeListener(Consumer<Change> listener)
     {
-        //Keep cached decoder lookup lists synchronized with explicit model publications.
-        mAliases.addListener(new AliasListChangeListener());
+        mListeners.add(Objects.requireNonNull(listener));
     }
 
-    public ObservableList<Alias> aliasList()
+    public void removeChangeListener(Consumer<Change> listener)
     {
-        return mReadOnlyAliases;
+        mListeners.remove(listener);
     }
 
-    public ObservableList<String> aliasListNames()
+    public List<Alias> aliasList()
     {
-        return mReadOnlyAliasListNames;
+        return mSnapshot.aliases();
     }
 
-    /**
-     * Persisted alias-list definitions. Names remain available separately for existing UI bindings.
-     */
-    public ObservableList<AliasListDefinition> aliasListDefinitions()
+    public List<String> aliasListNames()
     {
-        return mReadOnlyAliasListDefinitions;
+        return mSnapshot.names();
+    }
+
+    public List<AliasListDefinition> aliasListDefinitions()
+    {
+        return mSnapshot.definitions();
     }
 
     void setAliasListDefinitions(Collection<AliasListDefinition> definitions)
     {
         List<AliasListDefinition> prepared = definitions != null ? List.copyOf(definitions) : List.of();
         validateCommittedDefinitions(prepared);
-        mAliasListDefinitions.setAll(prepared);
-        refreshAliasListNames();
+        replaceSnapshot(mSnapshot.aliases(), prepared);
     }
 
     /**
@@ -104,13 +102,13 @@ public class AliasModel
         {
             aliases.stream().filter(Objects::nonNull).map(Alias::getId).forEach(allAliasIds::add);
         }
-        mAliases.stream().map(Alias::getId).forEach(allAliasIds::add);
+        mSnapshot.aliases().stream().map(Alias::getId).forEach(allAliasIds::add);
         publishCommittedConfiguration(definitions, aliases, allAliasIds, true, true);
     }
 
     /**
      * Publishes the changed portion of an already committed configuration while retaining unchanged live Alias
-     * instances and alias-list names. This keeps decoder lookups and JavaFX selection stable across unrelated edits.
+     * instances and alias-list names. This keeps decoder lookups stable across unrelated edits.
      */
     public void publishCommittedConfiguration(Collection<AliasListDefinition> definitions,
                                                Collection<Alias> aliases, Collection<Long> changedAliasIds,
@@ -119,7 +117,7 @@ public class AliasModel
         publishCommittedConfiguration(definitions, aliases, changedAliasIds, definitionsChanged, false);
     }
 
-    private void publishCommittedConfiguration(Collection<AliasListDefinition> definitions,
+    private synchronized void publishCommittedConfiguration(Collection<AliasListDefinition> definitions,
                                                 Collection<Alias> aliases, Collection<Long> changedAliasIds,
                                                 boolean definitionsChanged, boolean refreshAllCachedLists)
     {
@@ -127,10 +125,10 @@ public class AliasModel
             definitions != null ? List.copyOf(definitions) : List.of();
         List<Alias> committedAliases = aliases != null ? List.copyOf(aliases) : List.of();
         Map<Long,AliasListDefinition> committedDefinitionsById = validateCommittedDefinitions(committedDefinitions);
-        Map<Long,AliasListDefinition> liveDefinitionsById = validateCommittedDefinitions(mAliasListDefinitions);
+        Map<Long,AliasListDefinition> liveDefinitionsById = validateCommittedDefinitions(mSnapshot.definitions());
         Set<Long> changedIds = changedAliasIds != null ? Set.copyOf(changedAliasIds) : Set.of();
 
-        if(!definitionsChanged && !sameDefinitions(mAliasListDefinitions, committedDefinitions))
+        if(!definitionsChanged && !sameDefinitions(mSnapshot.definitions(), committedDefinitions))
         {
             throw new IllegalArgumentException("Committed Alias List changes must be declared before publication");
         }
@@ -166,7 +164,7 @@ public class AliasModel
         }
 
         Map<Long,Alias> liveAliasesById = new HashMap<>();
-        for(Alias alias: mAliases)
+        for(Alias alias: mSnapshot.aliases())
         {
             liveAliasesById.put(alias.getId(), alias);
         }
@@ -221,11 +219,6 @@ public class AliasModel
                 }
             }
         }
-        if(!mAliasListDefinitions.equals(publishedDefinitions))
-        {
-            mAliasListDefinitions.setAll(publishedDefinitions);
-            refreshAliasListNames();
-        }
         for(Alias published: publishedAliases)
         {
             AliasListDefinition definition = publishedDefinitionsById.get(published.getAliasListId());
@@ -235,67 +228,39 @@ public class AliasModel
             }
         }
 
-        //Preserve narrow UI list changes and prepare each affected decoder lookup index once.
-        mReconcilingAliasLists = true;
-        try
-        {
-            reconcilePublishedAliases(publishedAliases);
-        }
-        finally
-        {
-            reconcileCachedAliasLists(refreshAll ? Set.copyOf(mAliasListMap.keySet()) : affectedAliasListIds);
-        }
-
+        Snapshot previous = mSnapshot;
+        mSnapshot = snapshot(publishedAliases, publishedDefinitions);
+        reconcileCachedAliasLists(refreshAll ? Set.copyOf(mAliasListMap.keySet()) : affectedAliasListIds);
         mAliasListMap.keySet().removeIf(id -> getAliasListDefinition(id) == null);
+        notifyChanged(previous);
         mAliasPublicationIncomplete = false;
     }
 
-    private void reconcilePublishedAliases(List<Alias> desired)
+    private static Snapshot snapshot(Collection<Alias> aliases, Collection<AliasListDefinition> definitions)
     {
-        Set<Long> desiredIds = desired.stream().map(Alias::getId).collect(java.util.stream.Collectors.toSet());
-        mAliases.removeIf(alias -> !desiredIds.contains(alias.getId()));
-
-        for(int index = 0; index < desired.size(); index++)
-        {
-            Alias replacement = desired.get(index);
-            if(index >= mAliases.size())
-            {
-                mAliases.add(replacement);
-            }
-            else if(mAliases.get(index).getId() == replacement.getId())
-            {
-                if(mAliases.get(index) != replacement)
-                {
-                    mAliases.set(index, replacement);
-                }
-            }
-            else
-            {
-                int existingIndex = indexOfAliasId(mAliases, replacement.getId(), index + 1);
-                if(existingIndex >= 0)
-                {
-                    mAliases.remove(existingIndex);
-                }
-                mAliases.add(index, replacement);
-            }
-        }
-
-        while(mAliases.size() > desired.size())
-        {
-            mAliases.removeLast();
-        }
+        List<AliasListDefinition> lists = List.copyOf(definitions);
+        List<String> names = lists.stream().map(AliasListDefinition::getName)
+            .filter(name -> name != null && !name.isEmpty()).distinct().toList();
+        return new Snapshot(List.copyOf(aliases), lists, names);
     }
 
-    private static int indexOfAliasId(List<Alias> aliases, long aliasId, int start)
+    private synchronized void replaceSnapshot(Collection<Alias> aliases, Collection<AliasListDefinition> definitions)
     {
-        for(int index = start; index < aliases.size(); index++)
+        Snapshot previous = mSnapshot;
+        mSnapshot = snapshot(aliases, definitions);
+        reconcileCachedAliasLists();
+        notifyChanged(previous);
+    }
+
+    private void notifyChanged(Snapshot previous)
+    {
+        Change change = new Change(!previous.aliases().equals(mSnapshot.aliases()),
+            !sameDefinitions(previous.definitions(), mSnapshot.definitions()),
+            !previous.names().equals(mSnapshot.names()));
+        if(change.aliasesChanged() || change.definitionsChanged() || change.namesChanged())
         {
-            if(aliases.get(index).getId() == aliasId)
-            {
-                return index;
-            }
+            for(Consumer<Change> listener: mListeners) listener.accept(change);
         }
-        return -1;
     }
 
     private static boolean sameDefinitions(List<AliasListDefinition> current,
@@ -355,7 +320,9 @@ public class AliasModel
 
         if(existing == null && sameName == null)
         {
-            mAliasListDefinitions.add(definition);
+            List<AliasListDefinition> definitions = new ArrayList<>(mSnapshot.definitions());
+            definitions.add(definition);
+            replaceSnapshot(mSnapshot.aliases(), definitions);
         }
         else if(existing != definition || sameName != definition)
         {
@@ -371,9 +338,10 @@ public class AliasModel
      */
     void removeAliasListDefinition(AliasListDefinition definition)
     {
-        if(definition != null && mAliasListDefinitions.remove(definition))
+        List<AliasListDefinition> definitions = new ArrayList<>(mSnapshot.definitions());
+        if(definition != null && definitions.remove(definition))
         {
-            refreshAliasListNames();
+            replaceSnapshot(mSnapshot.aliases(), definitions);
         }
     }
 
@@ -384,7 +352,7 @@ public class AliasModel
             return null;
         }
 
-        return mAliasListDefinitions.stream().filter(definition -> definition.getId() == id).findFirst().orElse(null);
+        return mSnapshot.definitions().stream().filter(definition -> definition.getId() == id).findFirst().orElse(null);
     }
 
     public AliasListDefinition getAliasListDefinition(String name)
@@ -394,7 +362,7 @@ public class AliasModel
             return null;
         }
 
-        return mAliasListDefinitions.stream().filter(definition ->
+        return mSnapshot.definitions().stream().filter(definition ->
             name.equalsIgnoreCase(definition.getName())).findFirst().orElse(null);
     }
 
@@ -442,7 +410,7 @@ public class AliasModel
         AliasListDefinition definition = getDefaultAliasListDefinition(decoderType);
         if(definition == null && family != null)
         {
-            definition = mAliasListDefinitions.stream()
+            definition = mSnapshot.definitions().stream()
                 .filter(candidate -> candidate.getFamily() == family)
                 .findFirst().orElse(null);
         }
@@ -467,7 +435,7 @@ public class AliasModel
         }
 
         AliasListDefinition attached = alias.getAliasListDefinition();
-        return attached != null && mAliasListDefinitions.stream().anyMatch(definition -> definition == attached) ?
+        return attached != null && mSnapshot.definitions().stream().anyMatch(definition -> definition == attached) ?
             attached : null;
     }
 
@@ -476,20 +444,7 @@ public class AliasModel
      */
     public void refreshAliasListNames()
     {
-        List<String> names = new ArrayList<>();
-        for(AliasListDefinition definition: mAliasListDefinitions)
-        {
-            if(definition.getName() != null && !definition.getName().isEmpty() &&
-                !names.contains(definition.getName()))
-            {
-                names.add(definition.getName());
-            }
-        }
-
-        if(!mAliasListNames.equals(names))
-        {
-            mAliasListNames.setAll(names);
-        }
+        replaceSnapshot(mSnapshot.aliases(), mSnapshot.definitions());
     }
 
     /**
@@ -497,7 +452,7 @@ public class AliasModel
      */
     public List<Alias> getAliases()
     {
-        return Collections.unmodifiableList(mAliases);
+        return mSnapshot.aliases();
     }
 
     /**
@@ -510,7 +465,7 @@ public class AliasModel
             return null;
         }
 
-        return mAliases.stream().filter(alias -> alias.getId() == aliasId).findFirst().orElse(null);
+        return mSnapshot.aliases().stream().filter(alias -> alias.getId() == aliasId).findFirst().orElse(null);
     }
 
     /**
@@ -518,9 +473,7 @@ public class AliasModel
      */
     public void clear()
     {
-        mAliases.clear();
-        mAliasListNames.clear();
-        mAliasListDefinitions.clear();
+        replaceSnapshot(List.of(), List.of());
         mAliasListMap.clear();
     }
 
@@ -588,25 +541,20 @@ public class AliasModel
         }
 
         AliasList cached = mAliasListMap.get(current.getId());
-        if(cached != null)
-        {
-            return cached;
-        }
+        if(cached != null) return cached;
 
-        AliasList aliasList = new AliasList(current);
-        List<Alias> matchingAliases = new ArrayList<>();
-
-        for(Alias alias: mAliases)
+        //Only first construction takes the publication lock. Decoder lookups use the cached lock-free index.
+        synchronized(this)
         {
-            if(alias.belongsTo(current))
+            AliasListDefinition latest = getAliasListDefinition(definition.getId());
+            if(latest == null) return AliasList.empty(definition.getName());
+            return mAliasListMap.computeIfAbsent(latest.getId(), id ->
             {
-                matchingAliases.add(alias);
-            }
+                AliasList aliasList = new AliasList(latest);
+                aliasList.addAliases(mSnapshot.aliases().stream().filter(alias -> alias.belongsTo(latest)).toList());
+                return aliasList;
+            });
         }
-
-        aliasList.addAliases(matchingAliases);
-        mAliasListMap.put(current.getId(), aliasList);
-        return aliasList;
     }
 
     /**
@@ -660,7 +608,7 @@ public class AliasModel
     {
         Set<String> groupNames = new TreeSet<>();
 
-        for(Alias alias : mAliases)
+        for(Alias alias : mSnapshot.aliases())
         {
             if(alias.hasGroup())
             {
@@ -685,23 +633,7 @@ public class AliasModel
         aliases.forEach(alias -> validated.add(validateAndBind(alias)));
         validateDistinctAliases(validated);
 
-        if(validated.size() == 1 && countSameIdentities(validated.getFirst()) <= 1)
-        {
-            Alias alias = validated.getFirst();
-            int existingIndex = indexOfSameIdentity(mAliases, alias);
-            if(existingIndex >= 0)
-            {
-                mAliases.set(existingIndex, alias);
-            }
-            else
-            {
-                mAliases.add(alias);
-            }
-            return;
-        }
-
-        List<Alias> rebuilt = replacementSnapshot(validated);
-        mAliases.setAll(rebuilt);
+        replaceSnapshot(replacementSnapshot(validated), mSnapshot.definitions());
     }
 
     private List<Alias> replacementSnapshot(List<Alias> replacements)
@@ -709,9 +641,9 @@ public class AliasModel
         Map<Long,Alias> replacementsById = new HashMap<>();
         replacements.forEach(alias -> replacementsById.put(alias.getId(), alias));
         Set<Long> installedIds = new HashSet<>();
-        List<Alias> rebuilt = new ArrayList<>(mAliases.size() + replacements.size());
+        List<Alias> rebuilt = new ArrayList<>(mSnapshot.aliases().size() + replacements.size());
 
-        for(Alias existing: mAliases)
+        for(Alias existing: mSnapshot.aliases())
         {
             long id = existing.getId();
             Alias replacement = replacementsById.get(id);
@@ -756,7 +688,8 @@ public class AliasModel
     {
         if(alias != null)
         {
-            mAliases.removeIf(existing -> sameIdentity(existing, alias));
+            replaceSnapshot(mSnapshot.aliases().stream().filter(existing -> !sameIdentity(existing, alias)).toList(),
+                mSnapshot.definitions());
         }
     }
 
@@ -784,8 +717,9 @@ public class AliasModel
                 }
             }
 
-            mAliases.removeIf(existing -> instances.contains(existing) ||
-                existing.getId() > Alias.UNASSIGNED_ID && persistedIds.contains(existing.getId()));
+            replaceSnapshot(mSnapshot.aliases().stream().filter(existing -> !instances.contains(existing) &&
+                !(existing.getId() > Alias.UNASSIGNED_ID && persistedIds.contains(existing.getId()))).toList(),
+                mSnapshot.definitions());
         }
     }
 
@@ -794,32 +728,6 @@ public class AliasModel
     {
         return first != null && second != null && first.getId() > Alias.UNASSIGNED_ID &&
             first.getId() == second.getId();
-    }
-
-    private int countSameIdentities(Alias alias)
-    {
-        int count = 0;
-        for(Alias existing: mAliases)
-        {
-            if(sameIdentity(existing, alias))
-            {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static int indexOfSameIdentity(List<Alias> aliases, Alias alias)
-    {
-        for(int index = 0; index < aliases.size(); index++)
-        {
-            if(sameIdentity(aliases.get(index), alias))
-            {
-                return index;
-            }
-        }
-
-        return -1;
     }
 
     private static void validateDistinctAliases(List<Alias> aliases)
@@ -852,7 +760,7 @@ public class AliasModel
             return aliases;
         }
 
-        for(Alias alias: mAliases)
+        for(Alias alias: mSnapshot.aliases())
         {
             if(alias.belongsTo(definition))
             {
@@ -881,7 +789,7 @@ public class AliasModel
             return false;
         }
 
-        for(Alias alias: mAliases)
+        for(Alias alias: mSnapshot.aliases())
         {
             if(alias.hasBroadcastConfiguration(configurationId))
             {
@@ -889,7 +797,7 @@ public class AliasModel
             }
         }
 
-        for(AliasListDefinition definition: mAliasListDefinitions)
+        for(AliasListDefinition definition: mSnapshot.definitions())
         {
             if(definition.getUnmatchedTalkgroupPolicy().getStreamDestinations().stream()
                 .anyMatch(destination -> configurationId.equals(destination.getConfigurationId())) ||
@@ -943,32 +851,6 @@ public class AliasModel
         return alias;
     }
 
-    /**
-     * Monitors alias additions and removals and updates alias lists
-     */
-    public class AliasListChangeListener implements ListChangeListener<Alias>
-    {
-        @Override
-        public void onChanged(ListChangeListener.Change<? extends Alias> change)
-        {
-            if(mReconcilingAliasLists)
-            {
-                return;
-            }
-
-            boolean changed = false;
-            while(change.next())
-            {
-                changed |= change.wasAdded() || change.wasRemoved() || change.wasUpdated() || change.wasPermutated();
-            }
-
-            if(changed)
-            {
-                reconcileCachedAliasLists();
-            }
-        }
-    }
-
     private void reconcileCachedAliasLists()
     {
         reconcileCachedAliasLists(Set.copyOf(mAliasListMap.keySet()));
@@ -976,36 +858,28 @@ public class AliasModel
 
     private void reconcileCachedAliasLists(Set<Long> affectedAliasListIds)
     {
-        mReconcilingAliasLists = true;
-        try
+        List<AliasList> cachedLists = List.copyOf(mAliasListMap.values());
+        Map<Long,List<Alias>> orderedAliasesByList = new HashMap<>();
+        for(AliasList aliasList: cachedLists)
         {
-            List<AliasList> cachedLists = List.copyOf(mAliasListMap.values());
-            Map<Long,List<Alias>> orderedAliasesByList = new HashMap<>();
-            for(AliasList aliasList: cachedLists)
+            orderedAliasesByList.put(aliasList.getId(), new ArrayList<>());
+        }
+        for(Alias alias: mSnapshot.aliases())
+        {
+            List<Alias> ordered = orderedAliasesByList.get(alias.getAliasListId());
+            if(ordered != null)
             {
-                orderedAliasesByList.put(aliasList.getId(), new ArrayList<>());
-            }
-            for(Alias alias: mAliases)
-            {
-                List<Alias> ordered = orderedAliasesByList.get(alias.getAliasListId());
-                if(ordered != null)
-                {
-                    ordered.add(alias);
-                }
-            }
-            for(AliasList aliasList: cachedLists)
-            {
-                List<Alias> ordered = orderedAliasesByList.get(aliasList.getId());
-                //An order-only publication can change a duplicate matcher's winner without replacing any Alias.
-                if(affectedAliasListIds.contains(aliasList.getId()) || !aliasList.aliases().equals(ordered))
-                {
-                    aliasList.reconcileAliases(ordered);
-                }
+                ordered.add(alias);
             }
         }
-        finally
+        for(AliasList aliasList: cachedLists)
         {
-            mReconcilingAliasLists = false;
+            List<Alias> ordered = orderedAliasesByList.get(aliasList.getId());
+            //An order-only publication can change a duplicate matcher's winner without replacing any Alias.
+            if(affectedAliasListIds.contains(aliasList.getId()) || !aliasList.aliases().equals(ordered))
+            {
+                aliasList.reconcileAliases(ordered);
+            }
         }
     }
 }

@@ -62,7 +62,7 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
     public void setMinTalkgroup(int minTalkgroup)
     {
         mMinTalkgroup = minTalkgroup;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "max")
@@ -74,7 +74,7 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
     public void setMaxTalkgroup(int maxTalkgroup)
     {
         mMaxTalkgroup = maxTalkgroup;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "protocol")
@@ -86,7 +86,7 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
     public void setProtocol(Protocol protocol)
     {
         mProtocol = protocol;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

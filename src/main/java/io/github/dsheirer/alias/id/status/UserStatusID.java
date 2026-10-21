@@ -36,7 +36,7 @@ public class UserStatusID extends AliasID
     public void setStatus(int status)
     {
         mStatus = status;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

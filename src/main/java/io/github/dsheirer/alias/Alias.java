@@ -22,22 +22,14 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
-import java.awt.Color;
 import java.util.Collection;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.Set;
 import java.util.TreeSet;
-import javafx.beans.Observable;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.IntegerProperty;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleIntegerProperty;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
-import javafx.util.Callback;
 
 /**
  * User-facing metadata and behavior for exactly one alias match identifier.
@@ -53,30 +45,23 @@ public class Alias
     private volatile long mId = UNASSIGNED_ID;
     private volatile long mAliasListId = UNASSIGNED_ALIAS_LIST_ID;
     private transient volatile AliasListDefinition mAliasListDefinition;
-    private final BooleanProperty mRecordable = new SimpleBooleanProperty();
-    private final BooleanProperty mStreamable = new SimpleBooleanProperty();
-    private final BooleanProperty mOverlap = new SimpleBooleanProperty();
-    private final IntegerProperty mColor = new SimpleIntegerProperty();
-    private final StringProperty mAliasListName = new SimpleStringProperty();
-    private final StringProperty mDescription = new SimpleStringProperty();
-    private final StringProperty mGroup = new SimpleStringProperty();
-    private final StringProperty mIconName = new SimpleStringProperty();
-    private final StringProperty mName = new SimpleStringProperty();
-    private final ObjectProperty<AliasID> mMatchIdentifier = new SimpleObjectProperty<>();
-    private final ObservableList<BroadcastChannel> mBroadcastChannels =
-        FXCollections.observableArrayList(channel ->
-            new Observable[] {channel.valueProperty(), channel.overlapProperty()});
-    private final ObservableList<BroadcastChannel> mReadOnlyBroadcastChannels =
-        FXCollections.unmodifiableObservableList(mBroadcastChannels);
-    private final ObjectProperty<StreamAsTalkgroup> mStreamTalkgroupAlias = new SimpleObjectProperty<>();
+    private boolean mRecordable;
+    private int mColor;
+    private String mAliasListName;
+    private String mDescription;
+    private String mGroup;
+    private String mIconName;
+    private String mName;
+    private AliasID mMatchIdentifier;
+    private StreamAsTalkgroup mStreamTalkgroupAlias;
+    private final List<BroadcastChannel> mBroadcastChannels = new ArrayList<>();
+    enum LookupChange { IDENTIFIER, MEMBERSHIP }
+    private final List<Consumer<LookupChange>> mLookupListeners = new CopyOnWriteArrayList<>();
+    private final Runnable mIdentifierChanged = () -> notifyLookupChanged(LookupChange.IDENTIFIER);
 
     public Alias(String name)
     {
-        mName.set(name);
-        mMatchIdentifier.addListener((_, _, _) -> updateOverlapBinding());
-        mBroadcastChannels.addListener((javafx.collections.ListChangeListener<BroadcastChannel>)_ ->
-            mStreamable.set(!mBroadcastChannels.isEmpty()));
-        updateOverlapBinding();
+        mName = name;
     }
 
     public Alias()
@@ -108,7 +93,7 @@ public class Alias
     }
 
     /**
-     * Stable alias-list foreign key. The name is retained as a display snapshot for existing UI bindings.
+     * Stable alias-list foreign key. The name is retained as a display snapshot.
      */
     @JsonIgnore
     public long getAliasListId()
@@ -128,7 +113,11 @@ public class Alias
             mAliasListDefinition = null;
         }
 
-        mAliasListId = aliasListId;
+        if(mAliasListId != aliasListId)
+        {
+            mAliasListId = aliasListId;
+            notifyLookupChanged(LookupChange.MEMBERSHIP);
+        }
     }
 
     /**
@@ -143,6 +132,7 @@ public class Alias
 
     public void setAliasListDefinition(AliasListDefinition definition)
     {
+        AliasListDefinition previous = mAliasListDefinition;
         if(definition == null)
         {
             mAliasListDefinition = null;
@@ -155,94 +145,34 @@ public class Alias
             mAliasListDefinition = definition;
             setAliasListName(definition.getName());
         }
-    }
-
-    @JsonIgnore
-    public ObjectProperty<AliasID> matchIdentifierProperty()
-    {
-        return mMatchIdentifier;
+        if(previous != definition && mAliasListId == UNASSIGNED_ALIAS_LIST_ID)
+            notifyLookupChanged(LookupChange.MEMBERSHIP);
     }
 
     @JsonIgnore
     public AliasID getMatchIdentifier()
     {
-        return mMatchIdentifier.get();
+        return mMatchIdentifier;
+    }
+
+    @JsonIgnore
+    public boolean isOverlap()
+    {
+        return mMatchIdentifier != null && mMatchIdentifier.isOverlap();
     }
 
     public void setMatchIdentifier(AliasID identifier)
     {
-        if(identifier != null)
-        {
-            identifier.updateValueProperty();
-        }
-
-        mMatchIdentifier.set(identifier);
+        if(mMatchIdentifier != null) mMatchIdentifier.removeChangeListener(mIdentifierChanged);
+        mMatchIdentifier = identifier;
+        if(identifier != null) identifier.addChangeListener(mIdentifierChanged);
+        notifyLookupChanged(LookupChange.IDENTIFIER);
     }
 
     @JsonIgnore
-    public BooleanProperty overlapProperty()
+    public List<BroadcastChannel> broadcastChannels()
     {
-        return mOverlap;
-    }
-
-    @JsonIgnore
-    public BooleanProperty recordableProperty()
-    {
-        return mRecordable;
-    }
-
-    @JsonIgnore
-    public BooleanProperty streamableProperty()
-    {
-        return mStreamable;
-    }
-
-    @JsonIgnore
-    public StringProperty aliasListNameProperty()
-    {
-        return mAliasListName;
-    }
-
-    @JsonIgnore
-    public StringProperty descriptionProperty()
-    {
-        return mDescription;
-    }
-
-    @JsonIgnore
-    public StringProperty groupProperty()
-    {
-        return mGroup;
-    }
-
-    @JsonIgnore
-    public StringProperty nameProperty()
-    {
-        return mName;
-    }
-
-    @JsonIgnore
-    public IntegerProperty colorProperty()
-    {
-        return mColor;
-    }
-
-    @JsonIgnore
-    public ObjectProperty<StreamAsTalkgroup> streamTalkgroupAliasProperty()
-    {
-        return mStreamTalkgroupAlias;
-    }
-
-    @JsonIgnore
-    public StringProperty iconNameProperty()
-    {
-        return mIconName;
-    }
-
-    @JsonIgnore
-    public ObservableList<BroadcastChannel> broadcastChannels()
-    {
-        return mReadOnlyBroadcastChannels;
+        return List.copyOf(mBroadcastChannels);
     }
 
     @Override
@@ -253,42 +183,45 @@ public class Alias
 
     public String getName()
     {
-        return mName.get();
+        return mName;
     }
 
     public void setName(String name)
     {
-        mName.set(name);
+        mName = name;
     }
 
     public StreamAsTalkgroup getStreamTalkgroupAlias()
     {
-        return mStreamTalkgroupAlias.get();
+        return mStreamTalkgroupAlias;
     }
 
     public void setStreamTalkgroupAlias(StreamAsTalkgroup streamTalkgroupAlias)
     {
-        mStreamTalkgroupAlias.set(streamTalkgroupAlias);
+        mStreamTalkgroupAlias = streamTalkgroupAlias;
     }
 
     public String getAliasListName()
     {
-        return mAliasListName.get();
+        return mAliasListName;
     }
 
     public void setAliasListName(String aliasListName)
     {
-        mAliasListName.set(aliasListName);
+        if(!Objects.equals(mAliasListName, aliasListName))
+        {
+            mAliasListName = aliasListName;
+        }
     }
 
     public String getDescription()
     {
-        return mDescription.get();
+        return mDescription;
     }
 
     public void setDescription(String description)
     {
-        mDescription.set(description);
+        mDescription = description;
     }
 
     /** Tests membership by durable SQLite identity, or exact definition object for an unpersisted draft. */
@@ -312,60 +245,54 @@ public class Alias
 
     public String getGroup()
     {
-        return mGroup.get();
+        return mGroup;
     }
 
     public void setGroup(String group)
     {
-        mGroup.set(group);
+        mGroup = group;
     }
 
     public boolean hasGroup()
     {
-        return mGroup.get() != null;
+        return mGroup != null;
     }
 
     public int getColor()
     {
-        return mColor.get();
+        return mColor;
     }
 
     public void setColor(int color)
     {
-        mColor.set(color);
-    }
-
-    @JsonIgnore
-    public Color getDisplayColor()
-    {
-        return new Color(getColor());
+        mColor = color;
     }
 
     public String getIconName()
     {
-        return mIconName.get();
+        return mIconName;
     }
 
     public void setIconName(String iconName)
     {
-        mIconName.set(iconName);
+        mIconName = iconName;
     }
 
     @JsonIgnore
     public boolean isRecordable()
     {
-        return mRecordable.get();
+        return mRecordable;
     }
 
     public void setRecordable(boolean recordable)
     {
-        mRecordable.set(recordable);
+        mRecordable = recordable;
     }
 
     @JsonIgnore
     public boolean isStreamable()
     {
-        return mStreamable.get();
+        return !mBroadcastChannels.isEmpty();
     }
 
     @JsonIgnore
@@ -417,23 +344,8 @@ public class Alias
         }
     }
 
-    private void updateOverlapBinding()
-    {
-        mOverlap.unbind();
-        mOverlap.set(false);
-
-        if(getMatchIdentifier() != null)
-        {
-            mOverlap.bind(getMatchIdentifier().overlapProperty());
-        }
-    }
-
-    /** Observable properties used only by presentation and runtime lookup lists, never as a persistence trigger. */
-    public static Callback<Alias,Observable[]> extractor()
-    {
-        return alias -> new Observable[] {alias.recordableProperty(), alias.streamableProperty(),
-            alias.colorProperty(), alias.aliasListNameProperty(), alias.descriptionProperty(), alias.groupProperty(),
-            alias.iconNameProperty(), alias.nameProperty(), alias.overlapProperty(),
-            alias.streamTalkgroupAliasProperty(), alias.matchIdentifierProperty(), alias.broadcastChannels()};
-    }
+    /** Runtime indexes observe matcher/list changes directly, not UI properties. */
+    void addLookupChangeListener(Consumer<LookupChange> listener) { mLookupListeners.add(listener); }
+    void removeLookupChangeListener(Consumer<LookupChange> listener) { mLookupListeners.remove(listener); }
+    private void notifyLookupChanged(LookupChange change) { mLookupListeners.forEach(listener -> listener.accept(change)); }
 }

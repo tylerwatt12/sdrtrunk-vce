@@ -73,8 +73,9 @@ public class UserPreferences implements Listener<PreferenceType>
     private P25BandplanOverrideRegistry mP25BandplanOverrideRegistry;
     private P25IdentityResolver mP25IdentityResolver;
 
-    private SwingPreference mSwingPreference = new SwingPreference();
-    private JavaFxPreferences mJavaFxPreferences = new JavaFxPreferences();
+    //Optional local window placement. Server startup does not construct desktop preference owners.
+    private SwingPreference mSwingPreference;
+    private JavaFxPreferences mJavaFxPreferences;
 
     /**
      * Constructs a new user preferences instance
@@ -105,8 +106,9 @@ public class UserPreferences implements Listener<PreferenceType>
     /**
      * Java FX window management preferences
      */
-    public JavaFxPreferences getJavaFxPreferences()
+    public synchronized JavaFxPreferences getJavaFxPreferences()
     {
+        if(mJavaFxPreferences == null) mJavaFxPreferences = new JavaFxPreferences();
         return mJavaFxPreferences;
     }
 
@@ -185,8 +187,9 @@ public class UserPreferences implements Listener<PreferenceType>
     /**
      * Swing window location/size user preferences
      */
-    public SwingPreference getSwingPreference()
+    public synchronized SwingPreference getSwingPreference()
     {
+        if(mSwingPreference == null) mSwingPreference = new SwingPreference();
         return mSwingPreference;
     }
 

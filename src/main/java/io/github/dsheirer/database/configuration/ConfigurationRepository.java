@@ -45,7 +45,7 @@ import java.util.stream.Collectors;
  * Single persistence facade for Alias, scan-list, channel, and broadcast-stream playlist configuration.
  *
  * <p>Every multi-table write uses one SQLite transaction. Alias and complete-snapshot writes return canonical state
- * read back before that transaction commits; the existing delayed channel/stream saver remains a write-only path.</p>
+ * read back before that transaction commits. ConfigurationManager owns command ordering and publication.</p>
  */
 public final class ConfigurationRepository
 {

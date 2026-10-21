@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,6 +74,7 @@ class RetainedStatisticsAdminHttpControllerTest
     Path mDirectory;
 
     private Path mDatabase;
+    private RetainedStatisticsJobs mJobs;
     private RetainedStatisticsCatalog mCatalog;
     private HttpServer mServer;
     private ExecutorService mExecutor;
@@ -116,11 +118,11 @@ class RetainedStatisticsAdminHttpControllerTest
         new WebSessionHttpController(access, authentication, mSecurity).register(mServer);
         mDispatched = new AtomicReference<>();
         mDispatchCount = new AtomicInteger();
-        RetainedStatisticsAdminHttpController controller = new RetainedStatisticsAdminHttpController(mCatalog,
-            request -> {
+        mJobs = new RetainedStatisticsJobs(mCatalog, request -> {
                 mDispatchCount.incrementAndGet();
                 mDispatched.set(request);
             });
+        RetainedStatisticsAdminHttpController controller = new RetainedStatisticsAdminHttpController(mCatalog, mJobs);
         mServer.createContext(RetainedStatisticsAdminHttpController.PATH,
             mSecurity.protectApi(WebCapability.ADMIN_SETTINGS, controller::handle));
         mServer.start();
@@ -134,6 +136,42 @@ class RetainedStatisticsAdminHttpControllerTest
         if(mServer != null) mServer.stop(0);
         if(mSecurity != null) mSecurity.close();
         if(mExecutor != null) mExecutor.shutdownNow();
+        if(mJobs != null) mJobs.close();
+    }
+
+    @Test
+    void replacingHttpRoutesRetainsActiveJobsRetryKeysAndOneDeletionAdmission() throws Exception
+    {
+        Session admin = login();
+        String base = RetainedStatisticsAdminHttpController.PATH;
+        String id = UUID.randomUUID().toString();
+        String body = MAPPER.writeValueAsString(Map.of("request_id", id, "target", radioTarget()));
+        assertEquals(202, send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        StatsDatabaseMaintenanceRequest active = mDispatched.get();
+
+        mServer.removeContext(base);
+        RetainedStatisticsAdminHttpController replacement = new RetainedStatisticsAdminHttpController(mCatalog, mJobs);
+        mServer.createContext(base, mSecurity.protectApi(WebCapability.ADMIN_SETTINGS, replacement::handle));
+
+        HttpResponse<String> status = send(request(base + "/deletions/" + id)
+            .header("Cookie", admin.cookie()).GET());
+        assertEquals(200, status.statusCode(), status.body());
+        assertEquals("running", json(status).at("/data/state").textValue());
+        assertEquals(202, send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        assertEquals(1, mDispatchCount.get());
+        assertSame(active, mDispatched.get());
+        String next = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(),
+            "target", radioTarget()));
+        HttpResponse<String> busy = send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(next)));
+        assertEquals(429, busy.statusCode(), busy.body());
+        assertEquals("1", busy.headers().firstValue("Retry-After").orElseThrow());
+        active.result().completeExceptionally(new IllegalStateException("test completion"));
+        assertEquals(202, send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(next))).statusCode());
+        assertEquals(2, mDispatchCount.get());
     }
 
     @Test

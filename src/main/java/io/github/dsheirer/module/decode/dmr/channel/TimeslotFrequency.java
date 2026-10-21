@@ -21,28 +21,16 @@ package io.github.dsheirer.module.decode.dmr.channel;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
-import javafx.beans.Observable;
-import javafx.beans.property.DoubleProperty;
-import javafx.beans.property.IntegerProperty;
-import javafx.beans.property.LongProperty;
-import javafx.beans.property.SimpleDoubleProperty;
-import javafx.beans.property.SimpleIntegerProperty;
-import javafx.beans.property.SimpleLongProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.util.Callback;
 
 /**
  * Maps a logical channel number (LCN) to a pair of channel frequency values
  */
 public class TimeslotFrequency
 {
-    private IntegerProperty mNumberProperty = new SimpleIntegerProperty();
-    private LongProperty mDownlinkFrequencyProperty = new SimpleLongProperty();
-    private LongProperty mUplinkFrequencyProperty = new SimpleLongProperty();
-    private DoubleProperty mDownlinkMhzProperty = new SimpleDoubleProperty();
-    private DoubleProperty mUplinkMhzProperty = new SimpleDoubleProperty();
-    private StringProperty mDescriptionProperty = new SimpleStringProperty();
+    private int mNumber;
+    private long mDownlinkFrequency;
+    private long mUplinkFrequency;
+    private String mDescription;
 
     /**
      * Creates a deep copy of this instance
@@ -56,51 +44,6 @@ public class TimeslotFrequency
         return copy;
     }
 
-    @JsonIgnore
-    public StringProperty descriptionProperty()
-    {
-        return mDescriptionProperty;
-    }
-
-    /**
-     * Logical Slot Number property
-     */
-    @JsonIgnore
-    public IntegerProperty getNumberProperty()
-    {
-        return mNumberProperty;
-    }
-
-    /**
-     * Downlink Frequency property
-     */
-    @JsonIgnore
-    public LongProperty downlinkFrequencyProperty()
-    {
-        return mDownlinkFrequencyProperty;
-    }
-
-    /**
-     * Uplink Frequency property
-     */
-    @JsonIgnore
-    public LongProperty uplinkFrequencyProperty()
-    {
-        return mUplinkFrequencyProperty;
-    }
-
-    @JsonIgnore
-    public DoubleProperty getDownlinkMHz()
-    {
-        return mDownlinkMhzProperty;
-    }
-
-    @JsonIgnore
-    public DoubleProperty getUplinkMHz()
-    {
-        return mUplinkMhzProperty;
-    }
-
     /**
      * Logical channel number (LCN) as a 1-index based counter
      *
@@ -110,7 +53,7 @@ public class TimeslotFrequency
     @JacksonXmlProperty(isAttribute = true, localName = "lsn")
     public int getNumber()
     {
-        return mNumberProperty.get();
+        return mNumber;
     }
 
     /**
@@ -159,7 +102,7 @@ public class TimeslotFrequency
     @JsonIgnore
     public String getDescription()
     {
-        return mDescriptionProperty.get();
+        return mDescription;
     }
 
     /**
@@ -168,7 +111,7 @@ public class TimeslotFrequency
      */
     public void setDescription(String description)
     {
-        mDescriptionProperty.set(description);
+        mDescription = description;
     }
 
     /**
@@ -177,7 +120,7 @@ public class TimeslotFrequency
      */
     public void setNumber(int lcn)
     {
-        mNumberProperty.set(lcn);
+        mNumber = lcn;
         updateDescription();
     }
 
@@ -188,7 +131,7 @@ public class TimeslotFrequency
     @JacksonXmlProperty(isAttribute = true, localName = "downlink")
     public long getDownlinkFrequency()
     {
-        return mDownlinkFrequencyProperty.get();
+        return mDownlinkFrequency;
     }
 
     /**
@@ -197,8 +140,7 @@ public class TimeslotFrequency
      */
     public void setDownlinkFrequency(long downlinkFrequency)
     {
-        mDownlinkFrequencyProperty.set(downlinkFrequency);
-        getDownlinkMHz().set(downlinkFrequency / 1E6);
+        mDownlinkFrequency = downlinkFrequency;
     }
 
     /**
@@ -208,7 +150,7 @@ public class TimeslotFrequency
     @JacksonXmlProperty(isAttribute = true, localName = "uplink")
     public long getUplinkFrequency()
     {
-        return mUplinkFrequencyProperty.get();
+        return mUplinkFrequency;
     }
 
     /**
@@ -217,8 +159,7 @@ public class TimeslotFrequency
      */
     public void setUplinkFrequency(long uplinkFrequency)
     {
-        mUplinkFrequencyProperty.set(uplinkFrequency);
-        getUplinkMHz().set(uplinkFrequency / 1E6);
+        mUplinkFrequency = uplinkFrequency;
     }
 
     @Override
@@ -227,12 +168,4 @@ public class TimeslotFrequency
         return "LCN:" + getNumber() + " DOWNLINK:" + getDownlinkFrequency();
     }
 
-    /**
-     * Creates an observable property extractor for use with observable lists to detect changes internal to this object.
-     */
-    public static Callback<TimeslotFrequency,Observable[]> extractor()
-    {
-        return (TimeslotFrequency tf) -> new Observable[] {tf.getNumberProperty(), tf.downlinkFrequencyProperty(),
-            tf.uplinkFrequencyProperty(), tf.getDownlinkMHz(), tf.getUplinkMHz(), tf.descriptionProperty()};
-    }
 }

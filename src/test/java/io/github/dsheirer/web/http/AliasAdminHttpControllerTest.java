@@ -24,10 +24,12 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
+import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
@@ -44,6 +46,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -257,7 +260,7 @@ class AliasAdminHttpControllerTest
         manager.init();
         BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
         primary.setName("Primary");
-        manager.getBroadcastModel().addBroadcastConfiguration(primary);
+        manager.commitAndPublishStreamingConfiguration(List.of(primary), primary.getConfigurationId());
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
         AtomicInteger aliasChanges = new AtomicInteger();
         AliasAdminHttpController controller = new AliasAdminHttpController(service, aliasChanges::incrementAndGet);
@@ -769,15 +772,17 @@ class AliasAdminHttpControllerTest
                     "alias", invalidTone))))).statusCode());
 
             BroadcastifyCallConfiguration overflowStream = null;
+            var destinations = new ArrayList<>(manager.getBroadcastModel().getBroadcastConfigurations());
             for(int index = 0; index <= 500; index++)
             {
                 BroadcastifyCallConfiguration configuration =
                     new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
                 configuration.setName("Stream " + String.format("%03d", index));
-                manager.getBroadcastModel().addBroadcastConfiguration(configuration);
+                destinations.add(configuration);
                 if(index == 500) overflowStream = configuration;
             }
             assertNotNull(overflowStream);
+            seedDestinationOptions(manager, destinations);
             JsonNode overflowPolicy = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
@@ -973,23 +978,34 @@ class AliasAdminHttpControllerTest
 
     private static void closeConfigurationManager(ConfigurationManager manager)
     {
-        var channelProcessingManager = manager.getChannelProcessingManager();
+        manager.quiesceAdministration();
+        manager.getChannelProcessingManager().close();
+        manager.getBroadcastModel().close();
+        manager.close();
+        manager.getRadioReferenceDirectoryService().close();
+    }
 
-        try
-        {
-            manager.flushConfiguration();
-        }
-        finally
+    /** Prepare the large option-cap fixture in one transaction, before exposing its entries to request handlers. */
+    private static void seedDestinationOptions(ConfigurationManager manager, List<BroadcastConfiguration> destinations)
+    {
+        manager.executeConfigurationTask(() ->
         {
             try
             {
-                MyEventBus.getGlobalEventBus().unregister(channelProcessingManager);
+                var committed = new ConfigurationRepository(manager.getDatabasePath())
+                    .commitStreamingConfiguration(destinations);
+                for(var destination: committed)
+                {
+                    if(manager.getBroadcastModel().getBroadcastConfiguration(destination.getConfigurationId()) == null)
+                        manager.getBroadcastModel().addBroadcastConfiguration(destination);
+                }
+                return null;
             }
-            finally
+            catch(IOException | SQLException failure)
             {
-                channelProcessingManager.close();
+                throw new IllegalStateException("Unable to prepare stream-option fixture", failure);
             }
-        }
+        });
     }
 
     private static Map<String,Object> alias(long aliasListId, String name, boolean recordable)

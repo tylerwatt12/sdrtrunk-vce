@@ -77,7 +77,6 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
-import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -95,7 +94,6 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
-import javafx.application.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1783,21 +1781,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private static void setChannelProcessingFlag(Channel channel, boolean processing)
     {
-        if(GraphicsEnvironment.isHeadless())
-        {
-            channel.setProcessing(processing);
-            return;
-        }
-
-        try
-        {
-            Platform.runLater(() -> channel.setProcessing(processing));
-        }
-        catch(IllegalStateException exception)
-        {
-            //JavaFX has not been initialized (for example, a headless service or unit test).
-            channel.setProcessing(processing);
-        }
+        channel.setProcessing(processing);
     }
 
     /**
@@ -2025,35 +2009,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             try
             {
-                if(GraphicsEnvironment.isHeadless())
-                {
-                    channel.setProcessing(false);
-                }
-                else
-                {
-                    //When we're in non-headless mode we have to change the processing property on the JavaFX
-                    //event thread.  However, if it hasn't yet been initialized (ie an FX window opened), we'll
-                    //get an ISE.  In that case, just set the property to false because there won't be any
-                    //property listeners being triggered.
-                    try
-                    {
-                        Platform.runLater(() -> {
-                            try
-                            {
-                                channel.setProcessing(false);
-                            }
-                            catch(Exception e)
-                            {
-                                mLog.error("Error during channel stop while setting processing to false [{}] - continuing channel stop process",
-                                    channel, e);
-                            }
-                        });
-                    }
-                    catch(IllegalStateException _)
-                    {
-                        channel.setProcessing(false);
-                    }
-                }
+                channel.setProcessing(false);
             }
             catch(RuntimeException exception)
             {

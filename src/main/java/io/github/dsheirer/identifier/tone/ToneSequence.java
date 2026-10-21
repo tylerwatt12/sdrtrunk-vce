@@ -21,17 +21,23 @@ package io.github.dsheirer.identifier.tone;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.Joiner;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
-
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * A sequentially ordered list of tones
  */
 public class ToneSequence
 {
-    private ObservableList<Tone> mTones = FXCollections.observableArrayList(Tone.extractor());
+    private final List<Tone> mTones = new ArrayList<>();
+    private final List<Tone> mReadOnlyTones = Collections.unmodifiableList(mTones);
+    private final Map<Tone,Integer> mToneReferences = new IdentityHashMap<>();
+    private final List<Runnable> mChangeListeners = new CopyOnWriteArrayList<>();
+    private final Runnable mToneChanged = this::notifyChanged;
 
     /**
      * Constructs an instance
@@ -39,7 +45,7 @@ public class ToneSequence
      */
     public ToneSequence(List<Tone> tones)
     {
-        mTones.setAll(tones);
+        setTones(tones);
     }
 
     /**
@@ -62,17 +68,16 @@ public class ToneSequence
         return toneSequence;
     }
 
-    public ObservableList<Tone> tonesProperty()
-    {
-        return mTones;
-    }
+    public void addChangeListener(Runnable listener) { mChangeListeners.add(listener); }
+    public void removeChangeListener(Runnable listener) { mChangeListeners.remove(listener); }
+    private void notifyChanged() { mChangeListeners.forEach(Runnable::run); }
 
     /**
      * List of tones
      */
     public List<Tone> getTones()
     {
-        return mTones;
+        return mReadOnlyTones;
     }
 
     /**
@@ -80,9 +85,15 @@ public class ToneSequence
      */
     public void setTones(List<Tone> tones)
     {
-        if(tones != null)
+        if(tones != null && !mTones.equals(tones))
         {
-            mTones.setAll(tones);
+            List<Tone> replacement = new ArrayList<>(tones);
+            mToneReferences.keySet().forEach(tone -> tone.removeChangeListener(mToneChanged));
+            mToneReferences.clear();
+            mTones.clear();
+            mTones.addAll(replacement);
+            mTones.forEach(this::observe);
+            notifyChanged();
         }
     }
 
@@ -97,7 +108,13 @@ public class ToneSequence
      */
     public void clear()
     {
-        mTones.clear();
+        if(!mTones.isEmpty())
+        {
+            mToneReferences.keySet().forEach(tone -> tone.removeChangeListener(mToneChanged));
+            mToneReferences.clear();
+            mTones.clear();
+            notifyChanged();
+        }
     }
 
     /**
@@ -108,6 +125,8 @@ public class ToneSequence
         if(tone != null)
         {
             mTones.add(tone);
+            observe(tone);
+            notifyChanged();
         }
     }
 
@@ -116,10 +135,25 @@ public class ToneSequence
      */
     public void removeTone(Tone tone)
     {
-        if(tone != null)
+        if(tone != null && mTones.remove(tone))
         {
-            mTones.remove(tone);
+            int remaining = mToneReferences.get(tone) - 1;
+            if(remaining == 0)
+            {
+                mToneReferences.remove(tone);
+                tone.removeChangeListener(mToneChanged);
+            }
+            else mToneReferences.put(tone, remaining);
+            notifyChanged();
         }
+    }
+
+    private void observe(Tone tone)
+    {
+        if(tone == null) return;
+        int references = mToneReferences.getOrDefault(tone, 0);
+        if(references == 0) tone.addChangeListener(mToneChanged);
+        mToneReferences.put(tone, references + 1);
     }
 
     @Override

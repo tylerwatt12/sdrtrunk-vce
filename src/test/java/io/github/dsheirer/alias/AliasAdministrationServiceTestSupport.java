@@ -16,6 +16,6 @@ public final class AliasAdministrationServiceTestSupport
 
     public static AliasAdministrationService create(ConfigurationManager configurationManager)
     {
-        return new AliasAdministrationService(configurationManager, false);
+        return new AliasAdministrationService(configurationManager);
     }
 }

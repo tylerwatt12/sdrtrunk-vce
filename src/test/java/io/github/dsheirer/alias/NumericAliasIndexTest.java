@@ -61,11 +61,11 @@ class NumericAliasIndexTest
             list.addAliases(List.of(broad, first, second, narrow, exactFirst, exactSecond));
 
             assertSame(exactSecond, match(list, kind, 150), kind.toString());
-            assertTrue(exactFirst.getMatchIdentifier().overlapProperty().get());
-            assertTrue(exactSecond.getMatchIdentifier().overlapProperty().get());
+            assertTrue(exactFirst.getMatchIdentifier().isOverlap());
+            assertTrue(exactSecond.getMatchIdentifier().isOverlap());
             list.removeAlias(exactSecond);
             assertSame(exactFirst, match(list, kind, 150));
-            assertFalse(exactFirst.getMatchIdentifier().overlapProperty().get());
+            assertFalse(exactFirst.getMatchIdentifier().isOverlap());
             list.removeAlias(exactFirst);
             assertSame(second, match(list, kind, 150), "Equal bounds use the last configured alias");
             list.removeAlias(second);
@@ -106,7 +106,7 @@ class NumericAliasIndexTest
             {
                 boolean overlaps = ranges.stream().anyMatch(other -> range != other &&
                     range.minimum() <= other.maximum() && other.minimum() <= range.maximum());
-                assertEquals(overlaps, range.alias().getMatchIdentifier().overlapProperty().get(),
+                assertEquals(overlaps, range.alias().getMatchIdentifier().isOverlap(),
                     kind + " " + range);
             }
 
@@ -135,9 +135,9 @@ class NumericAliasIndexTest
             list.addAlias(original);
             CountDownLatch building = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
-            replacement.getMatchIdentifier().overlapProperty().addListener((_, _, overlaps) ->
+            replacement.getMatchIdentifier().addChangeListener(() ->
             {
-                if(overlaps)
+                if(replacement.getMatchIdentifier().isOverlap())
                 {
                     building.countDown();
                     try

@@ -26,41 +26,16 @@ import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import javafx.collections.FXCollections;
-import javafx.collections.ListChangeListener;
-import javafx.collections.ObservableList;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Channel Model
  */
 public class ChannelModel implements Listener<ChannelEvent>
 {
-    private ObservableList<Channel> mChannels = FXCollections.observableArrayList(Channel.extractor());
-    private ObservableList<Channel> mTrafficChannels = FXCollections.observableArrayList(Channel.extractor());
-    private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
-    public ChannelModel()
-    {
-        //Register a listener to detect channel changes and broadcast change events to cause configuration save requests
-        ChannelListChangeListener changeListener = new ChannelListChangeListener();
-        mChannels.addListener(changeListener);
-        mTrafficChannels.addListener(changeListener);
-    }
-
-    /**
-     * Observable list of channel configurations managed by this model
-     */
-    public ObservableList<Channel> channelList()
-    {
-        return mChannels;
-    }
-
-    /**
-     * Observable list of traffic channel configurations managed by this model
-     */
-    public ObservableList<Channel> trafficChannelList()
-    {
-        return mTrafficChannels;
-    }
+    private final List<Channel> mChannels = new CopyOnWriteArrayList<>();
+    private final List<Channel> mTrafficChannels = new CopyOnWriteArrayList<>();
+    private final Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
     /**
      * Removes all channels and traffic channels and fires remove event for each.
@@ -129,7 +104,7 @@ public class ChannelModel implements Listener<ChannelEvent>
         {
             switch(event.getEvent())
             {
-                case NOTIFICATION_CONFIGURATION_CHANGE, NOTIFICATION_SELECTION_CHANGE:
+                case NOTIFICATION_CONFIGURATION_CHANGE:
                     //rebroadcast this event to any listeners
                     mChannelEventBroadcaster.broadcast(event);
                     break;
@@ -173,6 +148,7 @@ public class ChannelModel implements Listener<ChannelEvent>
             default:
                 break;
         }
+        mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, Event.NOTIFICATION_ADD));
     }
 
     /**
@@ -182,17 +158,9 @@ public class ChannelModel implements Listener<ChannelEvent>
     {
         if(channel != null)
         {
-            switch(channel.getChannelType())
-            {
-                case STANDARD:
-                    mChannels.remove(channel);
-                    break;
-                case TRAFFIC:
-                    mTrafficChannels.remove(channel);
-                    break;
-                default:
-                    break;
-            }
+            boolean removed = channel.getChannelType() == ChannelType.STANDARD ?
+                mChannels.remove(channel) : mTrafficChannels.remove(channel);
+            if(removed) mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, Event.NOTIFICATION_DELETE));
         }
     }
 
@@ -312,39 +280,4 @@ public class ChannelModel implements Listener<ChannelEvent>
         return sites;
     }
 
-    /**
-     * Observable list change listener for both channels and traffic channels lists
-     */
-    public class ChannelListChangeListener implements ListChangeListener<Channel>
-    {
-        @Override
-        public void onChanged(Change<? extends Channel> change)
-        {
-            while(change.next())
-            {
-                if(change.wasAdded())
-                {
-                    for(Channel channel: change.getAddedSubList())
-                    {
-                        mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, Event.NOTIFICATION_ADD));
-                    }
-                }
-                else if(change.wasRemoved())
-                {
-                    for(Channel channel: change.getRemoved())
-                    {
-                        mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, Event.NOTIFICATION_DELETE));
-                    }
-                }
-                else if(change.wasUpdated())
-                {
-                    for(int x = change.getFrom(); x < change.getTo(); x++)
-                    {
-                        mChannelEventBroadcaster.broadcast(new ChannelEvent(change.getList().get(x),
-                            Event.NOTIFICATION_CONFIGURATION_CHANGE));
-                    }
-                }
-            }
-        }
-    }
 }

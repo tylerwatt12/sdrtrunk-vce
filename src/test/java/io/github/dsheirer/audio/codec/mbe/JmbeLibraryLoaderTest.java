@@ -30,7 +30,7 @@ class JmbeLibraryLoaderTest
         Path firstLibrary = createLibrary("1.0.14", 14.0f);
         Path secondLibrary = createLibrary("1.0.15", 15.0f);
 
-        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader()))
         {
             IAudioCodec first = loader.getAudioCodec(firstLibrary, "TEST");
             IAudioCodec second = loader.getAudioCodec(secondLibrary, "TEST");
@@ -48,7 +48,7 @@ class JmbeLibraryLoaderTest
     {
         Path oldLibrary = createLibrary("1.0.13", 13.0f);
 
-        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader()))
         {
             assertNull(loader.getAudioCodec(oldLibrary, "TEST"));
         }
@@ -76,7 +76,7 @@ class JmbeLibraryLoaderTest
     {
         Path incompleteLibrary = createLibrary("1.0.14", 14.0f, false);
 
-        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader()))
         {
             assertNull(loader.getAudioCodec(incompleteLibrary, "TEST"));
         }
@@ -87,7 +87,7 @@ class JmbeLibraryLoaderTest
     {
         Path library = createLibrary("1.0.14", 14.0f, true, false);
 
-        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader()))
         {
             assertNotNull(loader.getAudioCodec(library, "TEST", false));
         }
@@ -98,13 +98,30 @@ class JmbeLibraryLoaderTest
     {
         Path library = createLibrary("1.0.15", 15.0f, true, true);
 
-        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader()))
         {
             IAudioCodec enabled = loader.getAudioCodec(library, "TEST", true);
             IAudioCodec muted = loader.getAudioCodec(library, "TEST", false);
 
             assertEquals(15.0f, enabled.getAudio(new byte[0])[0]);
             assertEquals(-15.0f, muted.getAudio(new byte[0])[0]);
+        }
+    }
+
+    @Test
+    void explicitOwnerCloseReleasesTheLibraryAndNextUseLoadsItAgain() throws Exception
+    {
+        Path library = createLibrary("1.0.14", 14.0f);
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader()))
+        {
+            IAudioCodec first = loader.getAudioCodec(library, "TEST");
+            assertNotNull(first);
+            loader.close();
+            loader.close();
+            IAudioCodec replacement = loader.getAudioCodec(library, "TEST");
+            assertNotNull(replacement);
+            assertNotSame(first.getClass().getClassLoader(), replacement.getClass().getClassLoader());
+            assertEquals(14.0f, replacement.getAudio(new byte[0])[0]);
         }
     }
 

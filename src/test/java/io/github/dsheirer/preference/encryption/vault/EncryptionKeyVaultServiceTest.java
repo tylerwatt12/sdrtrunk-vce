@@ -18,17 +18,17 @@ import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionAlgorithm;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
-import java.awt.GraphicsEnvironment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
+import java.util.ArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.concurrent.TimeUnit;
-import javafx.application.Platform;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -125,27 +125,54 @@ class EncryptionKeyVaultServiceTest
     }
 
     @Test
-    void serviceStateIsSynchronousWhileJavaFxPublicationIsDeferred() throws Exception
+    void plainStatusIsPublishedOnTheControlWorkerWithoutInitializingAUiToolkit() throws Exception
     {
-        assumeFalse(GraphicsEnvironment.isHeadless());
-        CountDownLatch toolkitStarted = new CountDownLatch(1);
+        EncryptionKeyVaultService service = service("plain-status.sqlite");
+        AtomicReference<Thread> notificationThread = new AtomicReference<>();
+        List<EncryptionKeyVaultService.Status> observed = new ArrayList<>();
+        BiConsumer<EncryptionKeyVaultService.Status,EncryptionKeyVaultService.Status> listener = (previous,current) -> {
+            assertEquals(current, service.statusSnapshot());
+            assertEquals(current.state(), service.getState());
+            notificationThread.set(Thread.currentThread());
+            observed.add(current);
+        };
+        service.addStatusListener(listener);
+        try(var worker = Executors.newSingleThreadExecutor())
+        {
+            Thread commandThread = worker.submit(() -> {
+                service.createVault(password("secret"));
+                return Thread.currentThread();
+            }).get(10, TimeUnit.SECONDS);
+            assertEquals(commandThread, notificationThread.get());
+            assertEquals(EncryptionKeyVaultState.UNLOCKED, service.statusSnapshot().state());
+            assertEquals("Encryption vault created and unlocked", service.getStatus());
+            service.replaceKeys(List.of(key()));
+            assertEquals(1, service.getKeys().size());
 
+            service.removeStatusListener(listener);
+            int notifications = observed.size();
+            service.lock();
+            assertEquals(notifications, observed.size());
+            assertEquals(EncryptionKeyVaultState.LOCKED, service.statusSnapshot().state());
+        }
+    }
+
+    @Test
+    void localPromptPreferenceRetainsItsPersistedValueAndPresentationFailuresDoNotChangeVaultState() throws Exception
+    {
+        EncryptionKeyVaultService service = service("plain-preference.sqlite");
+        boolean original = service.isPromptOnLaunch();
+        service.addStatusListener((previous,current) -> { throw new IllegalStateException("observer unavailable"); });
         try
         {
-            Platform.startup(toolkitStarted::countDown);
+            service.setPromptOnLaunch(!original);
+            assertEquals(!original, service.statusSnapshot().promptOnLaunch());
+            assertEquals(!original, new EncryptionKeyVaultService(service.getVaultPath()).isPromptOnLaunch());
+            service.createVault(password("secret"));
+            assertTrue(service.isUnlocked());
+            assertEquals(EncryptionKeyVaultState.UNLOCKED, service.statusSnapshot().state());
         }
-        catch(IllegalStateException alreadyStarted)
-        {
-            toolkitStarted.countDown();
-        }
-
-        assertTrue(toolkitStarted.await(30, TimeUnit.SECONDS));
-        EncryptionKeyVaultService service = service("javafx.sqlite");
-        service.createVault(password("secret"));
-
-        assertEquals(EncryptionKeyVaultState.UNLOCKED, service.getState());
-        service.replaceKeys(List.of(key()));
-        assertEquals(1, service.getKeys().size());
+        finally { service.setPromptOnLaunch(original); }
     }
 
     private EncryptionKeyVaultService service(String filename) throws Exception

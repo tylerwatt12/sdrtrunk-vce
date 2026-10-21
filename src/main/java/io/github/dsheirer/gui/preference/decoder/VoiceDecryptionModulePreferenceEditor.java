@@ -21,6 +21,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
@@ -50,6 +51,7 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
     public VoiceDecryptionModulePreferenceEditor(UserPreferences userPreferences)
     {
         mPreference = userPreferences.getVoiceDecryptionModulePreference();
+        mPreference.getModuleManager().addStatusListener((previous, current) -> updateOnFx(this::refresh));
         MyEventBus.getGlobalEventBus().register(this);
         setPadding(new Insets(10));
         setSpacing(10);
@@ -176,12 +178,18 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
         mPathLabel.setText(mPreference.getPath() != null ? mPreference.getPath().toString() : "(not set)");
     }
 
+    private static void updateOnFx(Runnable update)
+    {
+        if(Platform.isFxApplicationThread()) update.run();
+        else Platform.runLater(update);
+    }
+
     @Subscribe
     public void preferenceUpdated(PreferenceType preferenceType)
     {
         if(preferenceType == PreferenceType.VOICE_DECRYPTION_MODULE)
         {
-            refresh();
+            updateOnFx(this::refresh);
         }
     }
 }

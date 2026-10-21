@@ -13,6 +13,8 @@ package io.github.dsheirer.source.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
@@ -22,6 +24,25 @@ class SourceConfigTunerMultipleFrequencyTest
 {
     private static final long PRIMARY = 851_012_500L;
     private static final long ALTERNATE = 852_012_500L;
+
+    @Test
+    void publishesImmutableSnapshotsWithoutChangingAnEarlierReaderSnapshot()
+    {
+        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
+        source.setFrequencies(List.of(PRIMARY));
+        List<Long> original = source.getFrequencies();
+        assertSame(original, source.getFrequencies(), "reads do not copy the frequency list");
+        assertThrows(UnsupportedOperationException.class, () -> original.add(ALTERNATE));
+        source.addFrequency(ALTERNATE);
+        assertEquals(List.of(PRIMARY), original);
+        assertEquals(List.of(PRIMARY, ALTERNATE), source.getFrequencies());
+        List<Long> two = source.getFrequencies();
+        source.addFrequency(ALTERNATE);
+        assertSame(two, source.getFrequencies(), "a duplicate observation does not allocate a new snapshot");
+        source.setFrequencies(List.of(ALTERNATE));
+        assertEquals(List.of(PRIMARY, ALTERNATE), two);
+        assertEquals(List.of(ALTERNATE), source.getFrequencies());
+    }
 
     @Test
     void fallsBackToFirstFrequencyWhenPreferredFrequencyIsRemoved()

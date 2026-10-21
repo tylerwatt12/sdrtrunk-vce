@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.manager;
 
-import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
@@ -27,6 +26,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import java.util.List;
+import java.util.function.Function;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -58,6 +58,38 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private final ReentrantLock mAllocationLifecycleLock = new ReentrantLock();
     protected Tuner mTuner;
     protected TunerConfiguration mTunerConfiguration;
+    private Function<Tuner,TunerConfiguration> mConfigurationOnStart;
+
+    /** Discovery installs saved-value ownership before issuing an explicit startup command. */
+    void configureOnStart(Function<Tuner,TunerConfiguration> configurationOnStart)
+    {
+        mConfigurationOnStart = configurationOnStart;
+    }
+
+    /** Initial discovery follows the same start/configure/publish sequence as an operator restart. */
+    boolean startConfigured()
+    {
+        mAllocationLifecycleLock.lock();
+        try
+        {
+            if(!mEnabled) return false;
+            mOperatorGeneration++;
+            setTunerStatus(TunerStatus.DISABLED, false);
+            if(startAndApplyConfiguration())
+            {
+                setTunerStatus(TunerStatus.ENABLED);
+                return true;
+            }
+            mEnabled = false;
+            mOperatorState = OperatorState.DISABLED;
+            stop();
+            return false;
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
 
     /**
      * Tuner Class
@@ -150,8 +182,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     void setDiscoveryHeld(boolean held) { mDiscoveryHeld = held; }
 
     /**
-     * Gates allocation before a related device starts.  RSPduo master mode can start tuner 2 from tuner 1's status
-     * listener, so both logical tuners must be placed in Setup before either status change is published.
+     * Gates allocation for every logical tuner before starting either half of a shared physical device.
      */
     void prepareForSetup()
     {
@@ -408,6 +439,11 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
                 return false;
             }
 
+            if(mConfigurationOnStart != null)
+            {
+                mTunerConfiguration = mConfigurationOnStart.apply(getTuner());
+            }
+
             if(hasTunerConfiguration() && mTunerConfiguration.getTunerType() != TunerType.RECORDING)
             {
                 getTuner().getTunerController().apply(mTunerConfiguration);
@@ -471,25 +507,10 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         return mTunerConfiguration;
     }
 
-    /**
-     * Sets the tuner configuration for this tuner.
-     */
+    /** Assigns saved values; hardware application belongs to explicit startup/settings commands. */
     public void setTunerConfiguration(TunerConfiguration tunerConfiguration)
     {
         mTunerConfiguration = tunerConfiguration;
-
-        if(hasTuner())
-        {
-            try
-            {
-                getTuner().getTunerController().apply(mTunerConfiguration);
-            }
-            catch(SourceException se)
-            {
-                mLog.error("Error applying tuner configuration [" + mTunerConfiguration.getClass() +
-                        "] to discovered tuner [" + getId() + "}", se);
-            }
-        }
     }
 
     /**

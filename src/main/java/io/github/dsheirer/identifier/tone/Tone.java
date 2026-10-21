@@ -20,10 +20,8 @@
 package io.github.dsheirer.identifier.tone;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import javafx.beans.Observable;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.util.Callback;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * An AMBE tone with a duration in 20 millisecond units.
@@ -32,7 +30,7 @@ public class Tone
 {
     private AmbeTone mAmbeTone;
     private int mDuration = 0;
-    private StringProperty mValueProperty = new SimpleStringProperty();
+    private final List<Runnable> mChangeListeners = new CopyOnWriteArrayList<>();
 
     /**
      * Constructs an instance for the specified tone and duration
@@ -41,7 +39,6 @@ public class Tone
     {
         mAmbeTone = tone;
         mDuration = duration;
-        updateValueProperty();
     }
 
     public Tone copyOf()
@@ -70,18 +67,9 @@ public class Tone
         mAmbeTone = AmbeTone.INVALID;
     }
 
-    public StringProperty valueProperty()
-    {
-        return mValueProperty;
-    }
-
-    private void updateValueProperty()
-    {
-        //The value property doesn't always fire, so this hack seems to get it to fire consistently
-        mValueProperty.get();
-        mValueProperty.set(toString());
-        mValueProperty.get();
-    }
+    public void addChangeListener(Runnable listener) { mChangeListeners.add(listener); }
+    public void removeChangeListener(Runnable listener) { mChangeListeners.remove(listener); }
+    private void notifyChanged() { mChangeListeners.forEach(Runnable::run); }
 
     /**
      * Ambe tone for this sequence
@@ -96,10 +84,10 @@ public class Tone
      */
     public void setAmbeTone(AmbeTone tone)
     {
-        if(tone != null)
+        if(tone != null && tone != mAmbeTone)
         {
             mAmbeTone = tone;
-            updateValueProperty();
+            notifyChanged();
         }
     }
 
@@ -116,8 +104,11 @@ public class Tone
      */
     public void setDuration(int duration)
     {
-        mDuration = duration;
-        updateValueProperty();
+        if(mDuration != duration)
+        {
+            mDuration = duration;
+            notifyChanged();
+        }
     }
 
     /**
@@ -126,7 +117,7 @@ public class Tone
     public void incrementDuration()
     {
         mDuration++;
-        updateValueProperty();
+        notifyChanged();
     }
 
     /**
@@ -148,14 +139,6 @@ public class Tone
         sb.append(mAmbeTone.toString());
         sb.append(" (").append(mDuration * 20).append("ms)");
         return sb.toString();
-    }
-
-    /**
-     * Creates an observable property extractor for use with observable lists to detect changes internal to this object.
-     */
-    public static Callback<Tone,Observable[]> extractor()
-    {
-        return (Tone tone) -> new Observable[] {tone.valueProperty()};
     }
 
 }

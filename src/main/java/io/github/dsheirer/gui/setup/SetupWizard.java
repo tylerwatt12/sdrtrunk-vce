@@ -1435,10 +1435,9 @@ public final class SetupWizard extends JDialog
                     var state=liveServer.reloadActiveListener();
                     if(!state.running()) throw new IllegalArgumentException(state.statusMessage());
                 }
-                else try(StatsWebServerService server = StatsWebServerService.forListenerValidation(preferences))
+                else
                 {
-                    var state=server.getRuntimeState();
-                    if(!state.running()) throw new IllegalArgumentException(state.statusMessage());
+                    io.github.dsheirer.stats.WebListener.validate(preferences);
                 }
                 return true;
             }, ignored -> {

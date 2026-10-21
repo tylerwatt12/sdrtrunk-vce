@@ -23,7 +23,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDiscoveredTunerStatusListener
 {
     private final CopyOnWriteArrayList<DiscoveredTuner> mTuners = new CopyOnWriteArrayList<>();
-    private final CopyOnWriteArrayList<ChangeListener> mChangeListeners = new CopyOnWriteArrayList<>();
     private final TunerConfigurationManager mConfigurations;
 
     public DiscoveredTunerRegistry(TunerConfigurationManager configurations)
@@ -79,7 +78,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
             {
                 tuner.getTuner().addTunerEventListener(this);
             }
-            changed(Change.ADDED, tuner, mTuners.indexOf(tuner));
         }
     }
 
@@ -93,7 +91,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
             {
                 tuner.getTuner().removeTunerEventListener(this);
             }
-            changed(Change.REMOVED, tuner, index);
             ThreadPool.CACHED.execute(tuner::stop);
         }
     }
@@ -102,7 +99,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
     {
         List<DiscoveredTuner> tuners = snapshot();
         mTuners.clear();
-        changed(Change.RESET, null, -1);
         for(DiscoveredTuner tuner: tuners)
         {
             tuner.removeTunerStatusListener(this);
@@ -111,24 +107,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
                 tuner.getTuner().removeTunerEventListener(this);
             }
             tuner.stop();
-        }
-    }
-
-    public void addChangeListener(ChangeListener listener)
-    {
-        mChangeListeners.addIfAbsent(listener);
-    }
-
-    public void removeChangeListener(ChangeListener listener)
-    {
-        mChangeListeners.remove(listener);
-    }
-
-    private void changed(Change change, DiscoveredTuner tuner, int index)
-    {
-        for(ChangeListener listener: mChangeListeners)
-        {
-            listener.changed(change, tuner, index);
         }
     }
 
@@ -164,11 +142,6 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
         {
             tuner.getTuner().addTunerEventListener(this);
         }
-        int index = mTuners.indexOf(tuner);
-        if(index >= 0)
-        {
-            changed(Change.UPDATED, tuner, index);
-        }
     }
 
     @Override
@@ -186,19 +159,9 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
             switch(event.getEvent())
             {
                 case UPDATE_FREQUENCY_ERROR -> mConfigurations.updateTunerPPM(matching);
-                case UPDATE_CHANNEL_COUNT, UPDATE_FREQUENCY, NOTIFICATION_ERROR_STATE,
-                     UPDATE_LOCK_STATE, UPDATE_SAMPLE_RATE ->
-                    changed(Change.UPDATED, matching, mTuners.indexOf(matching));
                 default -> { }
             }
         }
     }
 
-    public enum Change { ADDED, UPDATED, REMOVED, RESET }
-
-    @FunctionalInterface
-    public interface ChangeListener
-    {
-        void changed(Change change, DiscoveredTuner tuner, int index);
-    }
 }

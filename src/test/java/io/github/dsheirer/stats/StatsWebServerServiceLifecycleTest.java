@@ -70,6 +70,60 @@ class StatsWebServerServiceLifecycleTest
     Path mTemporaryDirectory;
 
     @Test
+    void failedFeatureConstructionDetachesCallbacksAndStopsItsAlreadyCreatedObserver() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("failed-feature-construction");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        DirectoryPreference directories = new DirectoryPreference(ignored -> {})
+        {
+            @Override public Path getDirectoryApplicationRoot() { return dataRoot; }
+            @Override public Path getDirectoryApplicationLog()
+            { throw new IllegalStateException("Injected late feature construction failure"); }
+        };
+        UserPreferences preferences = new TestUserPreferences(
+            new TestApplicationPreference(0, false, false, true), directories);
+        var tuners = new io.github.dsheirer.source.tuner.manager.TunerManager(preferences);
+        var configuration = new ConfigurationManager(preferences, tuners, new AliasModel(), null);
+        configuration.init();
+        java.util.concurrent.atomic.AtomicBoolean attached = new java.util.concurrent.atomic.AtomicBoolean();
+        var activity = new io.github.dsheirer.stats.activity.ReceiverActivityService(preferences)
+        {
+            @Override public void setSavedActivityCommitSignal(java.util.function.Consumer<Boolean> signal)
+            {
+                attached.set(signal != null);
+                super.setSavedActivityCommitSignal(signal);
+            }
+        };
+        var events = new io.github.dsheirer.module.decode.event.DecodeEventViewService(
+            configuration.getChannelProcessingManager(), configuration.getAliasModel());
+        var before = Thread.getAllStackTraces().keySet();
+        try
+        {
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> new ReceiverWebServices(preferences, configuration, activity, events, null));
+            assertTrue(failure.getMessage().contains("Injected late feature construction failure"));
+            assertFalse(attached.get(), "Failed construction must detach the saved-activity callback");
+            assertTrue(Thread.getAllStackTraces().keySet().stream().noneMatch(thread ->
+                !before.contains(thread) && thread.isAlive() &&
+                    thread.getName().startsWith("sdrtrunk decode message views")),
+                "Failed construction must close the already-started message observer");
+        }
+        finally
+        {
+            configuration.quiesceAdministration();
+            configuration.getChannelProcessingManager().close();
+            events.close();
+            activity.dispose();
+            configuration.getBroadcastModel().close();
+            configuration.close();
+            configuration.getRadioReferenceDirectoryService().close();
+            tuners.stop();
+        }
+    }
+
+    @Test
     void publishesActualListenerStateAfterAccessChangesFailuresAndShutdown() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("runtime-notification-data");
@@ -82,7 +136,7 @@ class StatsWebServerServiceLifecycleTest
         TestApplicationPreference application = new TestApplicationPreference(0, false, false, true);
         TestUserPreferences preferences = new TestUserPreferences(application, new TestDirectoryPreference(dataRoot));
 
-        try(StatsWebServerService service = StatsWebServerService.forListenerValidation(preferences))
+        try(StatsWebServerService service = StatsWebTestRuntime.start(preferences))
         {
             assertTrue(service.getRuntimeState().running(), service.getRuntimeState().statusMessage());
             RuntimeStateObserver observer = new RuntimeStateObserver(service);
@@ -171,10 +225,10 @@ class StatsWebServerServiceLifecycleTest
         System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
         TestUserPreferences preferences = new TestUserPreferences(
             new TestApplicationPreference(0, false, false, true), new TestDirectoryPreference(dataRoot));
-        try(StatsWebServerService service = new StatsWebServerService(preferences))
+        try(StatsWebServerService service = StatsWebTestRuntime.start(preferences))
         {
             assertTrue(service.getRuntimeState().running(), service.getRuntimeState().statusMessage());
-            var validate = StatsWebServerService.class.getDeclaredMethod("validateMultiplexSubscription",
+            var validate = StatsWebServerService.class.getDeclaredMethod("parseMultiplexSubscription",
                 String.class, JsonNode.class);
             validate.setAccessible(true);
             JsonNode first = OBJECT_MAPPER.readTree("""
@@ -204,21 +258,21 @@ class StatsWebServerServiceLifecycleTest
             configurationConstructor.setAccessible(true);
             var configure = clientType.getDeclaredMethod("configure", configurationType);
             configure.setAccessible(true);
-            var reconcile = clientType.getDeclaredMethod("reconcile", StatsWebServerService.MultiplexOutput.class);
+            var reconcile = clientType.getDeclaredMethod("reconcile", LiveMultiplexOutput.class);
             reconcile.setAccessible(true);
             var activity = clientType.getDeclaredField("mChannelActivity");
             activity.setAccessible(true);
-            var poll = StatsWebServerService.MultiplexOutput.class.getDeclaredMethod("pollPending");
+            var poll = LiveMultiplexOutput.class.getDeclaredMethod("pollPending");
             poll.setAccessible(true);
 
             // Drive the real reconcile path without a network writer. A fresh browser incarnation must replace
             // the logical activity subscription and queue an authoritative snapshot, regardless of option equality.
             try(AutoCloseable consumer = (AutoCloseable)clientConstructor.newInstance(service,
                     "00000000-0000-0000-0000-000000000003", null);
-                StatsWebServerService.MultiplexOutput output =
-                    new StatsWebServerService.MultiplexOutput(OutputStream.nullOutputStream()))
+                LiveMultiplexOutput output =
+                    new LiveMultiplexOutput(OutputStream.nullOutputStream()))
             {
-                configure.invoke(consumer, configurationConstructor.newInstance(1L, Map.of("channel_activity", first)));
+                configure.invoke(consumer, configurationConstructor.newInstance(1L, Map.of("channel_activity", StatsWebServerService.parseMultiplexSubscription("channel_activity", first))));
                 assertEquals(true, reconcile.invoke(consumer, output));
                 StatsLiveEventHub.Subscription original = (StatsLiveEventHub.Subscription)activity.get(consumer);
                 assertNotNull(original);
@@ -228,13 +282,13 @@ class StatsWebServerServiceLifecycleTest
                     LiveMultiplexFrame.HEADER_BYTES, initial.length)).path("event").textValue());
 
                 configure.invoke(consumer, configurationConstructor.newInstance(2L,
-                    Map.of("channel_activity", first.deepCopy())));
+                    Map.of("channel_activity", StatsWebServerService.parseMultiplexSubscription("channel_activity", first.deepCopy()))));
                 assertEquals(false, reconcile.invoke(consumer, output));
                 assertSame(original, activity.get(consumer));
                 assertFalse(original.isClosed());
                 assertNull(poll.invoke(output), "an unchanged incarnation must not add snapshot bandwidth");
 
-                configure.invoke(consumer, configurationConstructor.newInstance(3L, Map.of("channel_activity", second)));
+                configure.invoke(consumer, configurationConstructor.newInstance(3L, Map.of("channel_activity", StatsWebServerService.parseMultiplexSubscription("channel_activity", second))));
                 assertEquals(true, reconcile.invoke(consumer, output));
                 assertTrue(original.isClosed());
                 assertNotSame(original, activity.get(consumer));
@@ -292,13 +346,13 @@ class StatsWebServerServiceLifecycleTest
         {
             int port;
             URI serverOrigin;
-            try(StatsWebServerService validation = StatsWebServerService.forListenerValidation(preferences))
+            try(WebListener validation = WebListener.validation(preferences))
             {
-                assertTrue(validation.getRuntimeState().running(), validation.getRuntimeState().statusMessage());
-                assertEquals(httpsEnabled, validation.getRuntimeState().https());
-                port = validation.getRuntimeState().port();
+                assertTrue(validation.runtimeState("Web listener verified.").running(), validation.runtimeState("Web listener verified.").statusMessage());
+                assertEquals(httpsEnabled, validation.runtimeState("Web listener verified.").https());
+                port = validation.runtimeState("Web listener verified.").port();
                 serverOrigin = URI.create((httpsEnabled ? "https" : "http") + "://127.0.0.1:" + port + "/");
-                client = httpsEnabled ? httpsClient(validation.getTlsMaterialService().validateInstalledMaterial()) :
+                client = httpsEnabled ? httpsClient(new WebTlsMaterialService(dataRoot).validateInstalledMaterial()) :
                     HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
                 for(String path: List.of("/", "/api/v1/status", WebSessionHttpController.SESSION_PATH,
                     "/assets/app.js"))
@@ -330,7 +384,7 @@ class StatsWebServerServiceLifecycleTest
             }
 
             applicationPreference.setPort(port);
-            try(StatsWebServerService runtime = new StatsWebServerService(preferences))
+            try(StatsWebServerService runtime = StatsWebTestRuntime.start(preferences))
             {
                 assertTrue(runtime.getRuntimeState().running(), runtime.getRuntimeState().statusMessage());
                 assertEquals(port, runtime.getRuntimeState().port());
@@ -384,7 +438,7 @@ class StatsWebServerServiceLifecycleTest
         TestUserPreferences preferences = new TestUserPreferences(
             new TestApplicationPreference(0, false, false, true), directoryPreference);
 
-        try(StatsWebServerService service = new StatsWebServerService(preferences))
+        try(StatsWebServerService service = StatsWebTestRuntime.start(preferences))
         {
             URI origin = origin(service.getRuntimeState().port());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -479,7 +533,7 @@ class StatsWebServerServiceLifecycleTest
 
         try
         {
-            web = new StatsWebServerService(preferences);
+            web = StatsWebTestRuntime.start(preferences);
             assertTrue(web.getRuntimeState().running(), web.getRuntimeState().statusMessage());
             URI endpoint = origin(web.getRuntimeState().port()).resolve(CallMatchingHttpController.PATH);
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -524,23 +578,23 @@ class StatsWebServerServiceLifecycleTest
 
             diagnostic = new LogicalCallDiagnosticService();
             coordinator = new AudioCallCoordinator(null, null, null, null, diagnostic);
-            web.setLogicalCallDiagnostics(diagnostic, coordinator);
+            StatsWebTestRuntime.services(web).setLogicalCallDiagnostics(diagnostic, coordinator);
             HttpResponse<String> accepted = client.send(adminRequest, HttpResponse.BodyHandlers.ofString());
             assertEquals(200, accepted.statusCode(), accepted.body());
             JsonNode data = OBJECT_MAPPER.readTree(accepted.body()).path("data");
             assertTrue(data.path("available").booleanValue());
             assertTrue(data.path("duplicates").isArray());
 
-            web.setLogicalCallDiagnostics(null, null);
+            StatsWebTestRuntime.services(web).setLogicalCallDiagnostics(null, null);
             assertEquals(503, client.send(adminRequest, HttpResponse.BodyHandlers.ofString()).statusCode());
-            web.setLogicalCallDiagnostics(diagnostic, coordinator);
+            StatsWebTestRuntime.services(web).setLogicalCallDiagnostics(diagnostic, coordinator);
             web.close();
-            var serviceField = StatsWebServerService.class.getDeclaredField("mLogicalCallDiagnosticService");
-            var coordinatorField = StatsWebServerService.class.getDeclaredField("mAudioCallCoordinator");
+            var serviceField = ReceiverWebServices.class.getDeclaredField("mLogicalCallDiagnosticService");
+            var coordinatorField = ReceiverWebServices.class.getDeclaredField("mAudioCallCoordinator");
             serviceField.setAccessible(true);
             coordinatorField.setAccessible(true);
-            assertNull(serviceField.get(web));
-            assertNull(coordinatorField.get(web));
+            assertNull(serviceField.get(StatsWebTestRuntime.services(web)));
+            assertNull(coordinatorField.get(StatsWebTestRuntime.services(web)));
         }
         finally
         {
@@ -582,7 +636,7 @@ class StatsWebServerServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(0, false, false, true);
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
-        ConfigurationManager configurationManager = new ConfigurationManager(preferences, null,
+        ConfigurationManager configurationManager = new ConfigurationManager(preferences, new io.github.dsheirer.source.tuner.manager.TunerManager(preferences),
             new AliasModel(), null);
         configurationManager.init();
         AliasAdministrationService aliasAdministrationService =
@@ -594,7 +648,7 @@ class StatsWebServerServiceLifecycleTest
 
         try
         {
-            service = new StatsWebServerService(preferences, null, null, aliasAdministrationService);
+            service = StatsWebTestRuntime.start(preferences, configurationManager);
             WebServerRuntimeState initial = service.getRuntimeState();
             assertTrue(initial.running());
             assertTrue(initial.port() > 0);
@@ -730,7 +784,7 @@ class StatsWebServerServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(0, true, false, true);
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
-        ConfigurationManager configurationManager = new ConfigurationManager(preferences, null,
+        ConfigurationManager configurationManager = new ConfigurationManager(preferences, new io.github.dsheirer.source.tuner.manager.TunerManager(preferences),
             new AliasModel(), null);
         configurationManager.init();
         AliasAdministrationService aliasAdministrationService =
@@ -742,7 +796,7 @@ class StatsWebServerServiceLifecycleTest
 
         try
         {
-            service = new StatsWebServerService(preferences, null, null, aliasAdministrationService);
+            service = StatsWebTestRuntime.start(preferences, configurationManager);
             WebServerRuntimeState state = service.getRuntimeState();
             assertTrue(state.running(), state.statusMessage());
             assertTrue(state.anyIpEnabled());
@@ -754,9 +808,9 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(material.coversHost("localhost"));
             assertTrue(material.coversHost("127.0.0.1"));
             assertHttpsIndex(material, state.port());
-            assertFalse(StatsWebServerService.automaticCertificateRequiresRenewal(material,
+            assertFalse(WebListener.requiresRenewal(material,
                 material.notAfter().minus(Duration.ofDays(31))));
-            assertTrue(StatsWebServerService.automaticCertificateRequiresRenewal(material,
+            assertTrue(WebListener.requiresRenewal(material,
                 material.notAfter().minus(Duration.ofDays(30))));
 
             WebTlsMaterialService customSource = new WebTlsMaterialService(
@@ -829,7 +883,7 @@ class StatsWebServerServiceLifecycleTest
 
         try
         {
-            service = new StatsWebServerService(preferences);
+            service = StatsWebTestRuntime.start(preferences);
             WebServerRuntimeState state = service.getRuntimeState();
             assertTrue(state.running(), state.statusMessage());
             assertTrue(state.https());

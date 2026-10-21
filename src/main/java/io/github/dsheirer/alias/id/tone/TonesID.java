@@ -23,7 +23,6 @@ import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
-import javafx.collections.ListChangeListener;
 
 import java.util.List;
 
@@ -31,9 +30,10 @@ import java.util.List;
  * Tone sequence alias identifier.  This is used for matching tone sequences produced by the AMBE audio CODEC.  Some
  * examples include DTMF dialed numbers, KNOX tones, 2-Tone, Tone-outs, etc.
  */
-public class TonesID extends AliasID implements ListChangeListener<Tone>
+public class TonesID extends AliasID
 {
     private ToneSequence mToneSequence;
+    private final Runnable mSequenceChanged = this::notifyChanged;
 
     public TonesID()
     {
@@ -71,17 +71,17 @@ public class TonesID extends AliasID implements ListChangeListener<Tone>
     {
         if(mToneSequence != null)
         {
-            mToneSequence.tonesProperty().removeListener(this);
+            mToneSequence.removeChangeListener(mSequenceChanged);
         }
 
         mToneSequence = toneSequence;
 
         if(mToneSequence != null)
         {
-            mToneSequence.tonesProperty().addListener(this);
+            mToneSequence.addChangeListener(mSequenceChanged);
         }
 
-        updateValueProperty();
+        notifyChanged();
     }
 
     /**
@@ -140,9 +140,4 @@ public class TonesID extends AliasID implements ListChangeListener<Tone>
         return "Tones: (empty)";
     }
 
-    @Override
-    public void onChanged(Change<? extends Tone> c)
-    {
-        updateValueProperty();
-    }
 }

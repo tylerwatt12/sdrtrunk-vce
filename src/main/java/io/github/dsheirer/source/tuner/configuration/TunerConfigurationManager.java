@@ -139,11 +139,6 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     {
         if(current == TunerStatus.DISABLED)
         {
-            if(!discoveredTuner.hasTunerConfiguration())
-            {
-                findTunerConfiguration(discoveredTuner.getId()).ifPresent(discoveredTuner::setTunerConfiguration);
-            }
-
             addDisabledTuner(discoveredTuner);
         }
         else if(current == TunerStatus.ENABLED)
@@ -156,18 +151,17 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
 
                 if(tunerType != TunerType.RECORDING)
                 {
-                    TunerConfiguration tunerConfiguration = getTunerConfiguration(tunerType, discoveredTuner.getId());
-
-                    if(tunerConfiguration != null &&
-                            tunerConfiguration != discoveredTuner.getTunerConfiguration())
-                    {
-                        discoveredTuner.setTunerConfiguration(tunerConfiguration);
-                    }
-
                     saveConfigurations();
                 }
             }
         }
+    }
+
+    /** Loads saved values for a discovered, possibly disabled device without touching its hardware. */
+    public void prepareTunerConfiguration(DiscoveredTuner discoveredTuner)
+    {
+        if(!discoveredTuner.hasTunerConfiguration())
+            findTunerConfiguration(discoveredTuner.getId()).ifPresent(discoveredTuner::setTunerConfiguration);
     }
 
     /**

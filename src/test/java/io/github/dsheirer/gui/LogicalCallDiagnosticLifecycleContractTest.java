@@ -24,25 +24,25 @@ import org.junit.jupiter.api.Test;
  */
 class LogicalCallDiagnosticLifecycleContractTest
 {
-    private static final Path APPLICATION = Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java");
+    private static final Path RUNTIME = Path.of("src/main/java/io/github/dsheirer/receiver/ReceiverRuntime.java");
 
     @Test
     void duplicateHistoryClosesAfterCoordinatorDrainsWithoutFileOrOutputDebugWiring() throws Exception
     {
-        String application = Files.readString(APPLICATION);
+        String application = Files.readString(RUNTIME);
         int serviceCreation = application.indexOf("new LogicalCallDiagnosticService(");
         int coordinatorCreation = application.indexOf("new AudioCallCoordinator(");
-        int siteMetadataDrain = application.indexOf("channelProcessingManager.awaitSiteMetadataDrain(");
-        int coordinatorStop = application.indexOf("mAudioCallCoordinator.disposeAndAwait(");
-        int streamingStop = application.indexOf("mAudioStreamingManager.stop();");
-        int recordingStop = application.indexOf("mAudioRecordingManager.stop();");
-        int statisticsStop = application.indexOf("mReceiverActivityService.disposeAndAwait(");
-        int serviceClose = application.indexOf("mLogicalCallDiagnosticService.close();");
+        int siteMetadataDrain = application.indexOf("processing.awaitSiteMetadataDrain(");
+        int coordinatorStop = application.indexOf("mCalls.disposeAndAwait(");
+        int streamingStop = application.indexOf("mStreaming::stop");
+        int recordingStop = application.indexOf("mRecording::stop");
+        int statisticsStop = application.indexOf("mActivity.disposeAndAwait(");
+        int serviceClose = application.indexOf("mCallDiagnostics::close");
 
         assertTrue(serviceCreation >= 0 && serviceCreation < coordinatorCreation);
         assertTrue(application.contains("new LogicalCallDiagnosticService()"));
-        assertTrue(application.contains("mReceiverActivityService::receiveRecordedCall"));
-        assertTrue(application.contains("mReceiverActivityService::receiveStreamedCall"));
+        assertTrue(application.contains("mActivity::receiveRecordedCall"));
+        assertTrue(application.contains("mActivity::receiveStreamedCall"));
         assertFalse(application.contains("offerDiagnosticOutput"));
         assertTrue(siteMetadataDrain >= 0 && siteMetadataDrain < coordinatorStop);
         assertTrue(coordinatorStop >= 0 && coordinatorStop < streamingStop && coordinatorStop < recordingStop);

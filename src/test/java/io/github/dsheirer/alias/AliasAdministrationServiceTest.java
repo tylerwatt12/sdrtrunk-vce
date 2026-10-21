@@ -29,6 +29,7 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
@@ -221,11 +222,11 @@ class AliasAdministrationServiceTest
             unrelatedChannel.setAliasListDefinition(manager.getAliasModel().getAliasListDefinition(list));
             unrelatedChannel.setDecodeConfiguration(new DecodeConfigP25Phase1());
             manager.getChannelModel().addChannel(unrelatedChannel);
-            unrelatedChannel.processingProperty().set(true);
-            unrelatedChannel.processingProperty().set(false);
+            io.github.dsheirer.controller.channel.ChannelTestAccess.setProcessing(unrelatedChannel, true);
+            io.github.dsheirer.controller.channel.ChannelTestAccess.setProcessing(unrelatedChannel, false);
             BroadcastifyCallConfiguration destination = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             destination.setName("Other destination");
-            manager.getBroadcastModel().addBroadcastConfiguration(destination);
+            commitDestination(manager, destination);
 
             assertNotEquals(opened.revision(), service.currentRevision());
             assertEquals(opened.editRevision(), service.getAlias(first).editRevision(),
@@ -733,7 +734,7 @@ class AliasAdministrationServiceTest
                 String name = "Route " + index;
                 BroadcastifyCallConfiguration route = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
                 route.setName(name);
-                manager.getBroadcastModel().addBroadcastConfiguration(route);
+                commitDestination(manager, route);
                 routeIds.add(route.getConfigurationId());
             }
 
@@ -972,7 +973,7 @@ class AliasAdministrationServiceTest
 
             BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             primary.setName("Primary");
-            manager.getBroadcastModel().addBroadcastConfiguration(primary);
+            commitDestination(manager, primary);
             AliasAdministrationService.MutationResult configured = service.updateAliasListDefaults(
                 list.aliasListId(), new AliasListDefaults(
                     new UnmatchedTalkgroupPolicy(true, List.of(route(primary))), Set.of(defaultScanListId)), service.getAliasListDefaults(list.aliasListId()).editRevision());
@@ -1097,10 +1098,10 @@ class AliasAdministrationServiceTest
 
             BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             primary.setName("Primary");
-            manager.getBroadcastModel().addBroadcastConfiguration(primary);
+            commitDestination(manager, primary);
             BroadcastifyCallConfiguration archive = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             archive.setName("Archive");
-            manager.getBroadcastModel().addBroadcastConfiguration(archive);
+            commitDestination(manager, archive);
 
             AliasAdministrationService.MutationResult policyChanged = service.updateUnmatchedTalkgroupPolicy(
                 aliasListId, new UnmatchedTalkgroupPolicy(true, List.of(route(primary))), service.getAliasListDefaults(aliasListId).editRevision());
@@ -1230,14 +1231,18 @@ class AliasAdministrationServiceTest
 
             AliasListDefinition defaultP25 = manager.getAliasModel().getDefaultAliasListDefinition(
                 DecoderType.P25_PHASE1);
-            channel.setAliasListDefinition(defaultP25);
+            Channel reassigned = manager.getChannelModel().getChannels().getFirst().copyOfPreservingIdentity();
+            reassigned.setAliasListDefinition(defaultP25);
+            manager.commitAndPublishChannelConfiguration(new ChannelConfigurationSnapshot(List.of(reassigned)),
+                Set.of(reassigned.getConfigurationId()), false);
+            assertEquals(defaultP25.getId(), manager.getChannelModel().getChannels().getFirst().getAliasListId());
 
             AliasAdministrationService.MutationResult deleted = service.deleteAliasList(
                 aliasListId, service.currentRevision(), true);
             assertEquals(2, deleted.affected());
             assertTrue(manager.getAliasModel().getAliases().isEmpty());
             assertNull(manager.getAliasModel().getAliasListDefinition(aliasListId));
-            assertEquals("Default P25", channel.getAliasListName());
+            assertEquals("Default P25", manager.getChannelModel().getChannels().getFirst().getAliasListName());
             assertTrue(liveList.getAliases(APCO25Talkgroup.createAny(101)).isEmpty());
 
             List<AliasListDefinition> remainingDefinitions = aliasStore.loadAliasListDefinitions();
@@ -1256,6 +1261,14 @@ class AliasAdministrationServiceTest
         }
     }
 
+    private static void commitDestination(ConfigurationManager manager,
+                                          io.github.dsheirer.audio.broadcast.BroadcastConfiguration destination)
+    {
+        var proposed = new java.util.ArrayList<>(manager.getBroadcastModel().getBroadcastConfigurations());
+        proposed.add(destination);
+        manager.commitAndPublishStreamingConfiguration(proposed, destination.getConfigurationId());
+    }
+
     private static void flushAndUnregister(ConfigurationManager manager)
     {
         try
@@ -1264,7 +1277,11 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            manager.quiesceAdministration();
+            manager.getChannelProcessingManager().close();
+            manager.getBroadcastModel().close();
+            manager.close();
+            manager.getRadioReferenceDirectoryService().close();
         }
     }
 

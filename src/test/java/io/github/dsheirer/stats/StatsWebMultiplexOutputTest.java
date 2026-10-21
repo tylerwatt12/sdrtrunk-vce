@@ -102,8 +102,8 @@ class StatsWebMultiplexOutputTest
     @Test
     void boundsMetadataBacklogAndMarksPersistentOverflow()
     {
-        StatsWebServerService.MultiplexOutput output =
-            new StatsWebServerService.MultiplexOutput(OutputStream.nullOutputStream());
+        LiveMultiplexOutput output =
+            new LiveMultiplexOutput(OutputStream.nullOutputStream());
 
         try(output)
         {
@@ -123,8 +123,8 @@ class StatsWebMultiplexOutputTest
     void detectsAndClosesABlockedNetworkWriter() throws Exception
     {
         BlockingOutputStream blocked = new BlockingOutputStream();
-        StatsWebServerService.MultiplexOutput output =
-            new StatsWebServerService.MultiplexOutput(blocked, Duration.ofMillis(25));
+        LiveMultiplexOutput output =
+            new LiveMultiplexOutput(blocked, Duration.ofMillis(25));
         output.start();
         output.offerEvent(2, new byte[]{1, 2, 3});
         assertTrue(blocked.mWriteEntered.await(1, TimeUnit.SECONDS));
@@ -147,7 +147,7 @@ class StatsWebMultiplexOutputTest
         BlockingOutputStream blocked = new BlockingOutputStream();
         AtomicInteger terminationCallbacks = new AtomicInteger();
         CountDownLatch writerTerminated = new CountDownLatch(1);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(blocked,
+        LiveMultiplexOutput output = new LiveMultiplexOutput(blocked,
             Duration.ofMillis(25), false, () -> {}, () -> {
                 terminationCallbacks.incrementAndGet();
                 writerTerminated.countDown();
@@ -179,7 +179,7 @@ class StatsWebMultiplexOutputTest
     void viewportStateSurvivesMetadataOverflowAndPrecedesTheNextDenseFrame() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
 
         for(int index = 0; index < 320; index++)
         {
@@ -204,7 +204,7 @@ class StatsWebMultiplexOutputTest
     void keepsLatestChannelSignalAndSymbolsIndependently() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{2});
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{3});
@@ -223,7 +223,7 @@ class StatsWebMultiplexOutputTest
     void keepsSignalSymbolsSquelchAndAudioInIndependentLatestLanes() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(4);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{2});
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_SQUELCH, new byte[]{3});
@@ -240,7 +240,7 @@ class StatsWebMultiplexOutputTest
     void authoritativeStateClearsBothChannelDiagnosticLanes() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{2});
         output.offerState(4, new byte[]{3});
@@ -261,7 +261,7 @@ class StatsWebMultiplexOutputTest
     void emitsChannelLatestValuesAlongsidePriorityDiagnosticState() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerLatest(1, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.offerState(5, new byte[]{6});
         output.start();
@@ -276,7 +276,7 @@ class StatsWebMultiplexOutputTest
     void authoritativeSnapshotDoesNotEraseUnrelatedMetadata() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerEvent(3, new byte[]{9});
         output.offerLatest(1, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
         output.start();
@@ -291,7 +291,7 @@ class StatsWebMultiplexOutputTest
     void savedActivityGapPreservesUnwrittenSourceBoundaryBeforeLaterAppends() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         var state = new SavedActivityLiveService.State(1, true, 11, 1, 1500, true);
         try(output)
         {
@@ -322,7 +322,7 @@ class StatsWebMultiplexOutputTest
     void savedActivityRecoveryClearsItsOwnBoundedQueueAndLeavesOtherTopicsIntact() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         try(output)
         {
             for(int index = 0; index < 128; index++) output.offerEvent(7, new byte[]{7});
@@ -346,7 +346,7 @@ class StatsWebMultiplexOutputTest
     void mixedTopicOverflowCannotEvictAnotherTopicsMetadata() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(65);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
 
         for(int index = 0; index < 128; index++)
         {
@@ -367,14 +367,14 @@ class StatsWebMultiplexOutputTest
     @Test
     void byteBudgetEvictsOnlyTheAffectedTopicAndReturnsChargesWhenPolled() throws Exception
     {
-        int envelopeBytes = StatsWebServerService.MultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC / 2 + 1;
+        int envelopeBytes = LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC / 2 + 1;
         byte[] evicted = new byte[envelopeBytes];
         evicted[0] = 2;
         byte[] retained = new byte[envelopeBytes];
         retained[0] = 4;
         byte[] unrelated = new byte[]{3};
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
 
         output.offerEvent(2, evicted);
         output.offerEvent(3, unrelated);
@@ -399,7 +399,7 @@ class StatsWebMultiplexOutputTest
     void multiMegabyteMetadataIsDroppedAndTopicRecoveryStillRuns() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         byte[] previous = new byte[128];
         previous[0] = 2;
         byte[] oversized = new byte[4 * 1024 * 1024];
@@ -431,7 +431,7 @@ class StatsWebMultiplexOutputTest
     void recoveryClearsOnlyTheAffectedTopicAndPrecedesRemainingMetadata() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
 
         for(int index = 0; index < 128; index++)
         {
@@ -454,7 +454,7 @@ class StatsWebMultiplexOutputTest
     {
         int decodeMessageTopic = 4;
         RecordingOutputStream recording = new RecordingOutputStream(2);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
 
         for(int index = 0; index < 128; index++)
         {
@@ -480,7 +480,7 @@ class StatsWebMultiplexOutputTest
         CountDownLatch recoveryStarted = new CountDownLatch(1);
         AtomicBoolean interceptFirstSelection = new AtomicBoolean(true);
         RecordingOutputStream recording = new RecordingOutputStream(3);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording,
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording,
             Duration.ofSeconds(1), () -> {
                 if(interceptFirstSelection.compareAndSet(true, false))
                 {
@@ -567,7 +567,7 @@ class StatsWebMultiplexOutputTest
     {
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
-        int sameTarget = source.indexOf("\"tuner_diagnostics\".equals(topic) && wanted != null && active != null");
+        int sameTarget = source.indexOf("wanted instanceof TunerDiagnosticRequest request &&");
         int update = source.indexOf(
             "mTunerDiagnostics.updateConfiguration(request.viewport(), request.profile())", sameTarget);
         int close = source.indexOf("closeTopic(topic);", sameTarget);
@@ -602,9 +602,9 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("output.eventDrops(topic) != mObservedOutputDrops[topic]"));
         assertFalse(source.contains("output.eventDrops() !="));
         assertFalse(source.contains("mLastChannelActivitySnapshot"));
-        assertTrue(source.contains("private static final int TOPIC_FREQUENCY_AUDIO = 6"));
-        assertTrue(source.contains("private static final int TOPIC_SAVED_ACTIVITY = 7"));
-        assertTrue(source.contains("private static final int TOPIC_MAXIMUM = TOPIC_SAVED_ACTIVITY"));
+        assertEquals(6, LiveMultiplexFrame.TOPIC_FREQUENCY_AUDIO);
+        assertEquals(7, LiveMultiplexFrame.TOPIC_SAVED_ACTIVITY);
+        assertEquals(LiveMultiplexFrame.TOPIC_SAVED_ACTIVITY, LiveMultiplexFrame.TOPIC_MAXIMUM);
         assertFalse(source.contains("network_activity"));
     }
 
@@ -643,7 +643,7 @@ class StatsWebMultiplexOutputTest
     void channelActivityGapPrecedesProtectedSnapshotAndPostRecoveryDelta() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerEvent(1, new byte[]{1});
         output.offerRecoverySequence(1, new byte[]{3}, new byte[]{2});
         output.offerEvent(1, new byte[]{4});
@@ -661,7 +661,7 @@ class StatsWebMultiplexOutputTest
     void clearingALogicalTopicRemovesItsQueuedStateAndDenseFrame() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(1);
-        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         output.offerEvent(2, new byte[]{2});
         output.offerEvent(5, new byte[100]);
         output.offerState(5, new byte[]{6});

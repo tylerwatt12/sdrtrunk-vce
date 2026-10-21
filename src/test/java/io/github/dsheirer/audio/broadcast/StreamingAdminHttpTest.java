@@ -42,7 +42,7 @@ class StreamingAdminHttpTest
         try
         {
             manager.init();
-            var controller=new StreamingAdminHttpController(new StreamingAdministrationService(manager,false));
+            var controller=new StreamingAdminHttpController(new StreamingAdministrationService(manager));
             server.createContext(StreamingAdminHttpController.PATH,security.protectApi(WebCapability.ADMIN_STREAMING,controller::handle));
             new WebSessionHttpController(access,authentication,security).register(server);
             server.createContext("/provider", exchange -> {

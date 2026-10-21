@@ -85,6 +85,16 @@ class TunerSettingCatalogTest
             FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(type.name());
             tuner.setTunerConfiguration(TunerFactory.getTunerConfiguration(type, tuner.getId()));
             assertFalse(TunerSettingCatalog.describe(tuner).isEmpty(), type.name());
+            var definitions = TunerSettingCatalog.specs(tuner.getTunerConfiguration());
+            assertEquals(definitions.size(), definitions.stream().map(TunerSettingDefinition::id).distinct().count(),
+                "each family has exactly one binding per setting: " + type);
+            for(var definition: definitions)
+            {
+                Object saved = definition.read(tuner.getTunerConfiguration());
+                assertTrue(definition.valueType().isInstance(saved), type + ": " + definition.id());
+                definition.write(tuner.getTunerConfiguration(), saved);
+                assertEquals(saved, definition.read(tuner.getTunerConfiguration()), type + ": " + definition.id());
+            }
         }
     }
 

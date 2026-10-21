@@ -62,7 +62,7 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
     public void setMinRadio(int minRadio)
     {
         mMinRadio = minRadio;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public int getMaxRadio()
@@ -73,7 +73,7 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
     public void setMaxRadio(int maxRadio)
     {
         mMaxRadio = maxRadio;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public Protocol getProtocol()
@@ -84,7 +84,7 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
     public void setProtocol(Protocol protocol)
     {
         mProtocol = protocol;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

@@ -209,7 +209,7 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
      */
     public void setBroadcastState(BroadcastState state)
     {
-        if(mBroadcastState.get() != state)
+        if(getBroadcastState() != state)
         {
             if(state == BroadcastState.CONNECTED || state == BroadcastState.DISCONNECTED)
             {
@@ -218,16 +218,16 @@ public abstract class AudioStreamingBroadcaster<T extends BroadcastConfiguration
 
             super.setBroadcastState(state);
 
-            if(mBroadcastState.get() != null)
+            if(getBroadcastState() != null)
             {
-                if(mBroadcastState.get().isErrorState())
+                if(getBroadcastState().isErrorState())
                 {
-                    mLog.error("[" + getStreamName() + STATUS_LABEL + mBroadcastState.get().toString());
+                    mLog.error("[" + getStreamName() + STATUS_LABEL + getBroadcastState().toString());
                     stop();
                 }
-                else if(mBroadcastState.get().isWarningState())
+                else if(getBroadcastState().isWarningState())
                 {
-                    mLog.warn("[" + getStreamName() + STATUS_LABEL + mBroadcastState.get().toString());
+                    mLog.warn("[" + getStreamName() + STATUS_LABEL + getBroadcastState().toString());
                 }
             }
 

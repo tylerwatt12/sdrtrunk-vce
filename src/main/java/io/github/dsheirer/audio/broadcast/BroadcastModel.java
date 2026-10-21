@@ -42,12 +42,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataListener
+public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataListener, AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(BroadcastModel.class);
 
@@ -55,8 +53,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
 
     private static final String UNIQUE_NAME_REGEX = "(.*)\\((\\d*)\\)";
 
-    private ObservableList<ConfiguredBroadcast> mConfiguredBroadcasts =
-        FXCollections.<ConfiguredBroadcast>observableArrayList(ConfiguredBroadcast.extractor());
+    private final List<ConfiguredBroadcast> mConfiguredBroadcasts = new CopyOnWriteArrayList<>();
     private List<AudioRecording> mRecordingQueue = new CopyOnWriteArrayList<>();
     private Map<Integer,AbstractAudioBroadcaster<?>> mBroadcasterMap = new ConcurrentHashMap<>();
     private final Object mBroadcasterLifecycleLock = new Object();
@@ -68,6 +65,9 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     private Broadcaster<BroadcastEvent> mBroadcastEventBroadcaster = new Broadcaster<>();
     private transient BroadcastEventListener mBroadcastEventListener = new BroadcastEventListener();
     private UserPreferences mUserPreferences;
+    private volatile boolean mClosed;
+    private volatile boolean mCleanupFailed;
+    private java.util.concurrent.ScheduledFuture<?> mRecordingDeletionMonitor;
 
     /**
      * Model for managing Broadcast configurations and any associated broadcaster instances.
@@ -88,7 +88,8 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
         if(startRecordingMaintenance)
         {
             //Monitor to remove temporary recording files that have been streamed by all audio broadcasters
-            ThreadPool.SCHEDULED.scheduleAtFixedRate(new RecordingDeletionMonitor(), 15l, 15l, TimeUnit.SECONDS);
+            mRecordingDeletionMonitor = ThreadPool.SCHEDULED.scheduleAtFixedRate(new RecordingDeletionMonitor(),
+                15l, 15l, TimeUnit.SECONDS);
 
             removeOrphanedTemporaryRecordings();
         }
@@ -97,9 +98,9 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     /**
      * List of broadcast configurations with (optional) audio broadcasters created from each configuration
      */
-    public ObservableList<ConfiguredBroadcast> getConfiguredBroadcasts()
+    public List<ConfiguredBroadcast> getConfiguredBroadcasts()
     {
-        return mConfiguredBroadcasts;
+        return List.copyOf(mConfiguredBroadcasts);
     }
 
     /** Process-local count of RadioResolve calls acknowledged as accepted by the server. */
@@ -122,6 +123,35 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
         {
             removeBroadcastConfiguration(configuredBroadcast.getBroadcastConfiguration());
         }
+    }
+
+    /** Stops routing and queued restarts, then waits for any in-flight sender start to finish its cleanup. */
+    @Override
+    public void close()
+    {
+        synchronized(mBroadcasterLifecycleLock)
+        {
+            mClosed = true;
+            mBroadcasterGenerations.clear();
+        }
+        if(mRecordingDeletionMonitor != null) mRecordingDeletionMonitor.cancel(false);
+        clear();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+        synchronized(mBroadcasterLifecycleLock)
+        {
+            while(!mBroadcasterLifecycles.isEmpty())
+            {
+                long remaining = deadline - System.nanoTime();
+                if(remaining <= 0) throw new IllegalStateException("Stream destinations did not stop before shutdown");
+                try { TimeUnit.NANOSECONDS.timedWait(mBroadcasterLifecycleLock, remaining); }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Stream destination shutdown was interrupted", exception);
+                }
+            }
+        }
+        if(mCleanupFailed) throw new IllegalStateException("A stream destination did not stop cleanly");
     }
 
     /**
@@ -155,6 +185,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
      */
     public ConfiguredBroadcast addBroadcastConfiguration(BroadcastConfiguration configuration)
     {
+        if(mClosed) throw new IllegalStateException("Stream destinations are closed");
         if(configuration != null)
         {
             ensureUniqueName(configuration);
@@ -306,6 +337,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     @Override
     public void receive(AudioRecording audioRecording)
     {
+        if(mClosed) return;
         if(audioRecording != null && !audioRecording.getBroadcastChannels().isEmpty())
         {
             for(BroadcastChannel broadcastChannel : audioRecording.getBroadcastChannels())
@@ -331,7 +363,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful() || !event.matchesCurrentChannel())
+        if(mClosed || event == null || !event.isUseful() || !event.matchesCurrentChannel())
         {
             return;
         }
@@ -475,6 +507,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
                             lifecycle.mAudioBroadcaster)
                     {
                         mBroadcasterLifecycles.remove(lifecycle.mAudioBroadcaster);
+                        mBroadcasterLifecycleLock.notifyAll();
                     }
                 }
             }
@@ -521,10 +554,6 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
                     cleanup = true;
                 }
 
-                if(!lifecycle.mStartInProgress && lifecycle.mCleanupComplete)
-                {
-                    mBroadcasterLifecycles.remove(broadcaster);
-                }
             }
         }
 
@@ -536,6 +565,11 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
         if(cleanup)
         {
             stopAndDispose(broadcaster);
+            synchronized(mBroadcasterLifecycleLock)
+            {
+                mBroadcasterLifecycles.remove(broadcaster);
+                mBroadcasterLifecycleLock.notifyAll();
+            }
         }
         broadcast(new BroadcastEvent(broadcaster, BroadcastEvent.Event.BROADCASTER_DELETE));
     }
@@ -551,6 +585,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
         }
         catch(RuntimeException e)
         {
+            mCleanupFailed = true;
             mLog.error("Error stopping detached audio broadcaster", e);
         }
 
@@ -560,6 +595,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
         }
         catch(RuntimeException e)
         {
+            mCleanupFailed = true;
             mLog.error("Error disposing detached audio broadcaster", e);
         }
     }
@@ -592,7 +628,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
     private boolean isGenerationCurrent(BroadcastConfiguration broadcastConfiguration, long expectedGeneration)
     {
         Long currentGeneration = mBroadcasterGenerations.get(broadcastConfiguration);
-        return currentGeneration != null && currentGeneration == expectedGeneration;
+        return !mClosed && currentGeneration != null && currentGeneration == expectedGeneration;
     }
 
     private boolean isLifecycleCurrent(BroadcasterLifecycle lifecycle)
@@ -770,6 +806,7 @@ public class BroadcastModel implements Listener<AudioRecording>, SiteMetadataLis
         @Override
         public void run()
         {
+            if(mClosed) return;
             createBroadcaster(mBroadcastConfiguration, mGeneration);
         }
     }

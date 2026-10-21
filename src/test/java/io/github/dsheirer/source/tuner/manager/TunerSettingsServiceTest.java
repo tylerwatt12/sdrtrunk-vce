@@ -18,6 +18,7 @@ import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController.Gain;
@@ -26,15 +27,18 @@ import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.RspSampleRate;
+import io.github.dsheirer.source.tuner.sdrplay.RspTunerController;
 import io.github.dsheirer.source.tuner.sdrplay.api.DeviceSelectionMode;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceType;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
+import io.github.dsheirer.source.tuner.sdrplay.rspDuo.IControlRspDuo;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Configuration;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Configuration;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.time.Duration;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -49,12 +53,88 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.List;
 import java.util.function.IntConsumer;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingsServiceTest
 {
+    @Test
+    void passiveInventoryReadsDoNotRegisterOperatorSessions()
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);
+        tuner.setTunerConfiguration(new AirspyTunerConfiguration(tuner.getId()));
+        AtomicInteger trackedDeviceChecks = new AtomicInteger();
+        try(TunerSettingsService service = new TunerSettingsService(() -> {}, candidate -> {
+            trackedDeviceChecks.incrementAndGet();
+            return false;
+        }, ignored -> null))
+        {
+            assertNull(service.error(tuner));
+            assertNull(service.transition(tuner));
+            assertNull(service.restoreResult(tuner));
+            assertNull(service.operation(tuner));
+            assertTrue(service.stoppedChannels(tuner).isEmpty());
+            assertFalse(service.verifyBrowse(tuner, "expired-browser"));
+            assertFalse(service.describe(tuner).isEmpty());
+            service.expireBrowsing();
+            assertEquals(0, trackedDeviceChecks.get(), "passive reads cannot retain a discovered device");
+        }
+    }
+
+    @Test
+    void retiresAbsentCompletedSessionsButPreservesAnInFlightOperation() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);
+        tuner.setTunerConfiguration(new AirspyTunerConfiguration(tuner.getId()));
+        tuner.prepareRestart(new TrackingAirspyController(), new CountingChannelManager());
+        tuner.mBlockStart = true;
+        AtomicBoolean present = new AtomicBoolean(true);
+        try(TunerSettingsService service = new TunerSettingsService(() -> {},
+            candidate -> candidate == tuner && present.get(), ignored -> null))
+        {
+            service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP);
+            assertTrue(tuner.mStartEntered.await(2, TimeUnit.SECONDS));
+            present.set(false);
+            service.expireBrowsing();
+            assertEquals("running", service.operation(tuner).state());
+            tuner.mReleaseStart.countDown();
+            await(Duration.ofSeconds(2), () -> {
+                service.expireBrowsing();
+                return service.operation(tuner) == null;
+            });
+            assertNull(service.transition(tuner));
+        }
+        finally { tuner.mReleaseStart.countDown(); tuner.stop(); }
+    }
+
+    @Test
+    void absentTunerSessionRetainsItsStoppedChannelRecoveryUntilRestored() throws Exception
+    {
+        CountingChannelManager sources = new CountingChannelManager();
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), sources);
+        TestChannelProcessingManager channels = new TestChannelProcessingManager(tuner, sources);
+        Channel channel = channels.addStandard("Recovery control", 851_012_500L);
+        AtomicBoolean present = new AtomicBoolean(true);
+        try(TunerSettingsService service = new TunerSettingsService(() -> {},
+            candidate -> candidate == tuner && present.get(), ignored -> null, channels, () -> List.of(tuner)))
+        {
+            service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP);
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            present.set(false);
+            service.expireBrowsing();
+            assertEquals(List.of(channel.getConfigurationId()),
+                service.stoppedChannels(tuner).stream().map(TunerSettingsService.ChannelInfo::id).toList());
+            assertNotNull(service.operation(tuner));
+            present.set(true);
+            service.restoreStoppedChannels(tuner);
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            assertTrue(service.stoppedChannels(tuner).isEmpty());
+        }
+        finally { channels.close(); }
+    }
+
     @Test
     void spectrumObservesStoppedRecordingWithoutStartingItOrChangingItsMode() throws Exception
     {
@@ -1243,16 +1323,77 @@ class TunerSettingsServiceTest
         {
             service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP);
             assertTrue(tuner.mStartEntered.await(2, TimeUnit.SECONDS));
+            assertEquals("starting_setup", service.operation(tuner).kind());
+            assertEquals("running", service.operation(tuner).state());
+            assertEquals(null, service.operation(tuner).completedAtEpochMs());
             TunerSettingsService.SettingUnavailableException failure = assertThrows(
                 TunerSettingsService.SettingUnavailableException.class,
                 () -> service.set(tuner, "automatic_ppm", false));
             assertEquals("Tuner busy", failure.getMessage());
             tuner.mReleaseStart.countDown();
             await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            assertEquals("failed", service.operation(tuner).state());
+            assertEquals("Tuner unavailable", service.operation(tuner).error());
+            assertNotNull(service.operation(tuner).completedAtEpochMs());
         }
         finally
         {
             tuner.mReleaseStart.countDown();
+        }
+    }
+
+    @Test
+    void stateBrowseAndRestoreUseTheSameLatestFiniteCompletionWithoutQueuingSettings() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP);
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            var setup = service.operation(tuner);
+            assertEquals("completed", setup.state());
+            assertEquals("starting_setup", setup.kind());
+            assertTrue(setup.completedAtEpochMs() >= setup.acceptedAtEpochMs());
+
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            var browse = service.operation(tuner);
+            assertEquals("completed", browse.state());
+            assertEquals("starting_browse", browse.kind());
+            assertFalse(setup.id().equals(browse.id()));
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+            assertEquals("completed", service.operation(tuner).state());
+            assertEquals("ending_browse", service.operation(tuner).kind());
+
+            service.restoreStoppedChannels(tuner);
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            var restore = service.operation(tuner);
+            assertEquals("completed", restore.state());
+            assertEquals("restoring", restore.kind());
+            assertEquals("applied", service.set(tuner, "automatic_ppm", false).status());
+            assertEquals(restore, service.operation(tuner), "ordinary settings do not create queued work");
+        }
+    }
+
+    @Test
+    void nativeStartupLinkageFailureCompletesBrowseAndReleasesItsFiniteAdmission() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);
+        tuner.setTunerConfiguration(new AirspyTunerConfiguration(tuner.getId()));
+        tuner.mStartFailure = new UnsatisfiedLinkError("expected missing test native library");
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var browse = service.browse(tuner, null);
+            ExecutionException failure = assertThrows(ExecutionException.class, () -> browse.get(2, TimeUnit.SECONDS));
+            assertTrue(failure.getCause() instanceof UnsatisfiedLinkError);
+            assertNull(service.transition(tuner));
+            assertEquals("failed", service.operation(tuner).state());
+            assertEquals("Change failed", service.operation(tuner).error());
+            assertNotNull(service.operation(tuner).completedAtEpochMs());
+
+            tuner.mStartFailure = null;
+            service.requestState(tuner, DiscoveredTuner.OperatorState.DISABLED);
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            assertEquals("completed", service.operation(tuner).state());
         }
     }
 
@@ -1355,17 +1496,6 @@ class TunerSettingsServiceTest
         master.installRunning();
         slave.installRunning();
         AtomicBoolean slaveStartedInSetup = new AtomicBoolean();
-        master.addTunerStatusListener((ignored, previous, current) ->
-        {
-            if(previous == TunerStatus.ENABLED && current == TunerStatus.DISABLED)
-            {
-                slave.setEnabled(false);
-            }
-            else if(previous == TunerStatus.DISABLED && current == TunerStatus.ENABLED)
-            {
-                slave.setEnabled(true);
-            }
-        });
         slave.addTunerStatusListener((ignored, previous, current) ->
         {
             if(current == TunerStatus.ENABLED)
@@ -1395,7 +1525,7 @@ class TunerSettingsServiceTest
             await(Duration.ofSeconds(2), () -> service.transition(master) == null);
             assertEquals(DiscoveredTuner.OperatorState.SETUP, master.getOperatorState());
             assertEquals(DiscoveredTuner.OperatorState.SETUP, slave.getOperatorState());
-            assertTrue(slaveStartedInSetup.get(), "the manager cascade must not briefly expose tuner 2");
+            assertTrue(slaveStartedInSetup.get(), "explicit paired startup must not briefly expose tuner 2");
             assertFalse(master.isAvailableForAllocation());
             assertFalse(slave.isAvailableForAllocation());
 
@@ -1671,6 +1801,7 @@ class TunerSettingsServiceTest
         private final CountDownLatch mStartEntered = new CountDownLatch(1);
         private final CountDownLatch mReleaseStart = new CountDownLatch(1);
         private volatile boolean mBlockStart;
+        private volatile Error mStartFailure;
         private TrackingAirspyController mRestartController;
         private CountingChannelManager mRestartChannels;
         private volatile boolean mFailEnterLive;
@@ -1713,6 +1844,7 @@ class TunerSettingsServiceTest
         public void start()
         {
             mStartCalls.incrementAndGet();
+            if(mStartFailure != null) throw mStartFailure;
             mStartEntered.countDown();
             if(mBlockStart)
             {
@@ -1770,7 +1902,7 @@ class TunerSettingsServiceTest
 
     private static final class TestRspDuoMaster extends DiscoveredRspDuoTuner1
     {
-        private final TrackingAirspyController mController = new TrackingAirspyController();
+        private final TrackingRspController mController = new TrackingRspController();
         private final CountingChannelManager mChannels = new CountingChannelManager();
         private final CountDownLatch mStartEntered = new CountDownLatch(1);
         private final CountDownLatch mReleaseStart = new CountDownLatch(1);
@@ -1814,7 +1946,7 @@ class TunerSettingsServiceTest
 
     private static final class TestRspDuoSlave extends DiscoveredRspDuoTuner2
     {
-        private final TrackingAirspyController mController = new TrackingAirspyController();
+        private final TrackingRspController mController = new TrackingRspController();
         private final CountingChannelManager mChannels = new CountingChannelManager();
         private volatile boolean mAdvanceGenerationBeforeFail;
         private volatile boolean mFailEnterLive;
@@ -1853,6 +1985,25 @@ class TunerSettingsServiceTest
                 installRunning();
             }
         }
+    }
+
+    /** A real RSP controller boundary with an in-memory vendor control, not an unrelated Airspy controller. */
+    private static final class TrackingRspController extends RspTunerController<IControlRspDuo>
+    {
+        private TrackingRspController()
+        {
+            super((IControlRspDuo)Proxy.newProxyInstance(IControlRspDuo.class.getClassLoader(),
+                new Class<?>[]{IControlRspDuo.class}, (proxy, method, arguments) -> {
+                    if("getSupportedSampleRates".equals(method.getName())) return RspSampleRate.getDualTunerSampleRates();
+                    if("getCurrentSampleRate".equals(method.getName())) return 2_000_000.0;
+                    if(method.getReturnType() == int.class) return 0;
+                    if(method.getReturnType() == long.class) return 0L;
+                    if(method.getReturnType() == boolean.class) return false;
+                    return null;
+                }), null);
+        }
+        @Override public TunerType getTunerType() { return TunerType.RSP_DUO_1; }
+        @Override public void apply(TunerConfiguration configuration) {}
     }
 
     private static final class FakeTuner extends Tuner

@@ -28,8 +28,8 @@ import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Multiple frequency tuner source configuration is used for a system with a rolling/rotating control
@@ -38,9 +38,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @JsonSubTypes.Type(value = SourceConfigTunerMultipleFrequency.class, name = "sourceConfigTunerMultipleFrequency")
 public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
 {
-    private List<Long> mFrequencies = new CopyOnWriteArrayList<>();
+    private volatile List<Long> mFrequencies = List.of();
     private String mPreferredTuner;
-    private Long mPreferredFrequency;
+    private volatile Long mPreferredFrequency;
     private boolean mFrequenciesInitialized;
     private Long mMinimumFrequency;
     private Long mMaximumFrequency;
@@ -52,7 +52,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     }
 
     /**
-     * List of frequencies for this configuration
+     * Immutable current frequency snapshot. Configuration commands publish replacements without blocking rotation.
      */
     @JacksonXmlProperty(isAttribute = false, localName = "frequency")
     public List<Long> getFrequencies()
@@ -65,7 +65,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      */
     public void setFrequencies(List<Long> frequencies)
     {
-        mFrequencies = frequencies != null ? new CopyOnWriteArrayList<>(frequencies) : new CopyOnWriteArrayList<>();
+        mFrequencies = frequencies != null ? List.copyOf(frequencies) : List.of();
         mFrequenciesInitialized = true;
 
         if(mPreferredFrequency != null && !mFrequencies.contains(mPreferredFrequency))
@@ -89,13 +89,15 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     @JsonIgnore
     public long getPreferredFrequency()
     {
-        if(mPreferredFrequency != null && mFrequencies.contains(mPreferredFrequency))
+        List<Long> frequencies = mFrequencies;
+        Long preferred = mPreferredFrequency;
+        if(preferred != null && frequencies.contains(preferred))
         {
-            return mPreferredFrequency;
+            return preferred;
         }
-        else if(!mFrequencies.isEmpty())
+        else if(!frequencies.isEmpty())
         {
-            return mFrequencies.get(0);
+            return frequencies.get(0);
         }
 
         return 0l;
@@ -149,9 +151,12 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      */
     public void addFrequency(long frequency)
     {
-        if(!mFrequencies.contains(frequency))
+        List<Long> frequencies = mFrequencies;
+        if(!frequencies.contains(frequency))
         {
-            mFrequencies.add(frequency);
+            List<Long> replacement = new ArrayList<>(frequencies);
+            replacement.add(frequency);
+            mFrequencies = List.copyOf(replacement);
         }
     }
 

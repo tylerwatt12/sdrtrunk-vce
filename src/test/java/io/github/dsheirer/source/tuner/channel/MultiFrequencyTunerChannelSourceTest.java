@@ -26,6 +26,7 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -36,6 +37,7 @@ import java.util.SortedSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class MultiFrequencyTunerChannelSourceTest
@@ -47,6 +49,51 @@ class MultiFrequencyTunerChannelSourceTest
         List.of(FIRST_FREQUENCY, SECOND_FREQUENCY, THIRD_FREQUENCY);
     private static final ChannelSpecification CHANNEL_SPECIFICATION =
         new ChannelSpecification(50_000, 12_500, 6_250, 7_000);
+
+    @Test
+    void runningRotationSeesCommittedLearnedListReplacementsWithoutAChannelRestart() throws Exception
+    {
+        SourceConfigTunerMultipleFrequency configuration = new SourceConfigTunerMultipleFrequency();
+        configuration.setFrequencies(List.of(FIRST_FREQUENCY));
+        MultiFrequencyTunerChannelSource source = new MultiFrequencyTunerChannelSource(null,
+            new TestTunerChannelSource(FIRST_FREQUENCY), configuration::getFrequencies,
+            CHANNEL_SPECIFICATION, null, "live learned snapshot", null, null);
+        source.setSourceEventListener(event -> {});
+        try
+        {
+            source.start();
+            configuration.addFrequency(SECOND_FREQUENCY);
+            assertEquals(SECOND_FREQUENCY, getNextFrequency(source));
+            configuration.setFrequencies(List.of(FIRST_FREQUENCY, SECOND_FREQUENCY, THIRD_FREQUENCY));
+            assertEquals(THIRD_FREQUENCY, getNextFrequency(source));
+            configuration.setFrequencies(List.of(FIRST_FREQUENCY));
+            assertEquals(0, getNextFrequency(source));
+        }
+        finally { source.stop(); }
+    }
+
+    @Test
+    void eachRotationAndCoverageDecisionReadsOneImmutableFrequencySnapshot() throws Exception
+    {
+        AtomicInteger reads = new AtomicInteger();
+        AtomicReference<List<Long>> current = new AtomicReference<>(FREQUENCIES);
+        MultiFrequencyTunerChannelSource source = new MultiFrequencyTunerChannelSource(null,
+            new TestTunerChannelSource(FIRST_FREQUENCY), () -> {
+                reads.incrementAndGet();
+                return current.getAndSet(List.of());
+            }, CHANNEL_SPECIFICATION, null, "snapshot consistency", null, null);
+        assertEquals(1, reads.get());
+        current.set(FREQUENCIES);
+        assertEquals(SECOND_FREQUENCY, getNextFrequency(source));
+        assertEquals(2, reads.get(), "selection cannot mix sizes or indexes from different publications");
+        current.set(FREQUENCIES);
+        Method coverage = MultiFrequencyTunerChannelSource.class.getDeclaredMethod("getAllFrequencyChannels");
+        coverage.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        SortedSet<TunerChannel> channels = (SortedSet<TunerChannel>)coverage.invoke(source);
+        assertEquals(FREQUENCIES, channels.stream().map(TunerChannel::getFrequency).toList());
+        assertEquals(3, reads.get());
+    }
 
     @Test
     void restoredMiddleFrequencyRotatesToFollowingFrequency() throws Exception

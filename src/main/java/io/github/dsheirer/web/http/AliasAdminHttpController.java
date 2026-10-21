@@ -895,7 +895,7 @@ public final class AliasAdminHttpController
             alias.getGroup(), alias.getColor(), alias.getIconName(), alias.isRecordable(),
             alias.getBroadcastChannels().stream().map(BroadcastChannel::getConfigurationId).toList(),
             alias.getStreamTalkgroupAlias() != null ? alias.getStreamTalkgroupAlias().getValue() : null,
-            alias.overlapProperty().get(), matcherView(alias.getMatchIdentifier()), scanListIds);
+            alias.isOverlap(), matcherView(alias.getMatchIdentifier()), scanListIds);
     }
 
     private static Map<String,Object> matcherView(AliasID matcher)

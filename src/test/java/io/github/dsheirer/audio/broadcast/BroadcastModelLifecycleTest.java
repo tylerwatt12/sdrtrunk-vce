@@ -28,7 +28,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import javafx.collections.ListChangeListener;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,12 +35,47 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Verifies broadcaster start cancellation without connecting to a remote streaming provider.
  */
 public class BroadcastModelLifecycleTest
 {
+    @Test
+    void closeStopsActiveSendersAndRejectsLateConfiguration()
+    {
+        TestBroadcastModel model = new TestBroadcastModel();
+        TestBroadcastConfiguration configuration = createConfiguration("Shutdown");
+        model.addBroadcastConfiguration(configuration);
+        model.runAllStarts();
+        TestAudioBroadcaster sender = model.getCreatedBroadcasters().getFirst();
+        model.close();
+        model.close();
+        assertEquals(1, sender.getStopCount());
+        assertEquals(1, sender.getDisposeCount());
+        assertFalse(sender.isActive());
+        assertTrue(model.getConfiguredBroadcasts().isEmpty());
+        assertThrows(IllegalStateException.class, () -> model.addBroadcastConfiguration(configuration));
+    }
+
+    @Test
+    void closeInvalidatesQueuedStartsAndDelayedRestarts()
+    {
+        TestBroadcastModel model = new TestBroadcastModel();
+        TestBroadcastConfiguration configuration = createConfiguration("Queued shutdown");
+        model.addBroadcastConfiguration(configuration);
+        TestAudioBroadcaster sender = model.getCreatedBroadcasters().getFirst();
+        model.process(new BroadcastEvent(configuration, BroadcastEvent.Event.CONFIGURATION_CHANGE));
+        model.close();
+        model.runAllStarts();
+        model.runAllRestarts();
+        assertEquals(0, sender.getStartCount());
+        assertEquals(1, sender.getStopCount());
+        assertEquals(1, sender.getDisposeCount());
+        assertEquals(1, model.getCreatedBroadcasters().size());
+    }
+
     @Test
     public void legacyBroadcasterRetainsAcceptAllDeliveryAndReplayOwnership()
     {
@@ -185,8 +219,9 @@ public class BroadcastModelLifecycleTest
         CountDownLatch releaseFactory = new CountDownLatch(1);
         CountDownLatch configurationRemoved = new CountDownLatch(1);
         model.blockNextBroadcasterFactory(factoryEntered, releaseFactory);
-        model.getConfiguredBroadcasts().addListener(
-            (ListChangeListener<ConfiguredBroadcast>)change -> configurationRemoved.countDown());
+        model.addListener(event -> {
+            if(event.getEvent() == BroadcastEvent.Event.CONFIGURATION_DELETE) configurationRemoved.countDown();
+        });
 
         Thread restartThread = new Thread(model.removeNextRestart(), "broadcast-delayed-create-test");
         restartThread.start();

@@ -21,10 +21,34 @@ import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.source.tuner.test.TestTuner;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class TunerAdministrationServiceTest
 {
+    @Test
+    void inventoryCapturesOneDiagnosticTargetProjectionForAllTuners()
+    {
+        FakeDiscoveredTuner first = new FakeDiscoveredTuner("projection-first");
+        FakeDiscoveredTuner second = new FakeDiscoveredTuner("projection-second");
+        first.install(new TestTuner(first));
+        second.install(new TestTuner(second));
+        first.holdForSetup();
+        second.holdForSetup();
+        AtomicInteger projections = new AtomicInteger();
+        TunerAdministrationService service = new TunerAdministrationService(() -> List.of(first,second),
+            () -> {
+                int generation = projections.incrementAndGet();
+                return tuner -> "projection-" + generation;
+            }, null, tuner -> List.of());
+        var snapshot = service.snapshot();
+        assertEquals(1, projections.get());
+        assertEquals(List.of("projection-1", "projection-1"),
+            snapshot.tuners().stream().map(TunerAdministrationService.Item::spectrumTargetId).toList());
+        service.snapshot();
+        assertEquals(2, projections.get(), "a subsequent request captures fresh diagnostic availability");
+    }
+
     @Test
     void includesDisabledAndErrorTunersWithoutLeakingRecordingPaths()
     {

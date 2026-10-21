@@ -19,22 +19,11 @@
 package io.github.dsheirer.gui;
 
 import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
-import io.github.dsheirer.audio.call.AudioCallCoordinator;
-import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
-import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
-import io.github.dsheirer.audio.broadcast.BroadcastFormat;
-import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelException;
-import io.github.dsheirer.controller.channel.ChannelProcessingManager;
-import io.github.dsheirer.controller.channel.ChannelSelectionManager;
-import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
@@ -46,33 +35,20 @@ import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceE
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
-import io.github.dsheirer.log.ApplicationLog;
-import io.github.dsheirer.map.MapSnapshotService;
-import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
-import io.github.dsheirer.module.decode.event.DecodeEventViewService;
-import io.github.dsheirer.module.log.EventLogger;
-import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.receiver.ReceiverRuntime;
+import io.github.dsheirer.receiver.ReceiverLaunchMode;
 import io.github.dsheirer.preference.PreferenceType;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
-import io.github.dsheirer.stats.activity.ReceiverActivityService;
-import io.github.dsheirer.audio.tone.P25PagingToneService;
-import io.github.dsheirer.record.AudioRecordingManager;
-import io.github.dsheirer.remote.RemoteConnectivityService;
-import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
-import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.web.network.WebNetworkAddressDiscovery;
 import io.github.dsheirer.stats.WebServerRuntimeState;
-import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.web.auth.WebAuthenticationService.DesktopHandoffDestination;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import java.awt.Desktop;
@@ -90,16 +66,8 @@ import java.net.URI;
 import java.net.Inet4Address;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
-import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
@@ -133,33 +101,17 @@ public class SDRTrunk
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".thin.shell.frame";
     private static final String APPLICATION_MIGRATOR_TITLE = "VCE Application Migrator";
-    private static final long SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS = 8_000L;
-    private static final long CALL_COORDINATOR_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
-    private static final long STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS = 2_000L;
-    private static final long STATISTICS_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
 
     private boolean mResourceStatusVisible;
-    private AudioCallCoordinator mAudioCallCoordinator;
-    private LogicalCallDiagnosticService mLogicalCallDiagnosticService;
-    private ReceiverActivityService mReceiverActivityService;
-    private AutoCloseable mToneActivitySubscription;
-    private DecodeEventViewService mDecodeEventViewService;
+    private final ReceiverRuntime mRuntime;
+    private boolean mDesktopClosed;
     private StatsWebServerService mStatsWebServerService;
-    private RemoteConnectivityService mRemoteConnectivityService;
-    private AudioRecordingManager mAudioRecordingManager;
-    private ManagedRecordingCatalog mManagedRecordingCatalog;
-    private ManagedRecordingTranscriptionService mManagedRecordingTranscriptionService;
-    private ScheduledFuture<?> mManagedRecordingRetention;
-    private ScheduledExecutorService mManagedRecordingMaintenance;
-    private AudioStreamingManager mAudioStreamingManager;
     private ConfigurationManager mConfigurationManager;
     private JFrame mMainGui;
     private BasebandRecordingDialog mBasebandRecordingDialog;
-    private MapSnapshotService mMapSnapshotService;
     private JavaFxWindowManager mJavaFxWindowManager;
     private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
-    private ApplicationLog mApplicationLog;
     private ResourceMonitor mResourceMonitor;
     private JFXPanel mResourceStatusPanel;
     private UpdateCheckService mUpdateCheckService;
@@ -180,216 +132,39 @@ public class SDRTrunk
     private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
     private volatile boolean mDatabaseReplacementInProgress;
-    private PortableDataRootLock mDataRootLock;
     private final boolean mStartConfiguredChannels;
-    private final boolean mGuiAvailable;
 
-    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock,
+    /** Optional local setup/diagnostic shell over the same receiver used in server mode. */
+    private SDRTrunk(ReceiverRuntime runtime, UserPreferences userPreferences,
                      boolean startConfiguredChannels, boolean openWebAfterSetup)
     {
+        mRuntime = runtime;
         mUserPreferences = userPreferences;
-        mDataRootLock = dataRootLock;
+        mConfigurationManager = runtime.configuration();
+        mTunerManager = runtime.tuners();
+        mStatsWebServerService = runtime.webServer();
         mStartConfiguredChannels = startConfiguredChannels;
         mOpenWebAfterSetup = openWebAfterSetup;
-        mGuiAvailable = !GraphicsEnvironment.isHeadless();
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
         mUpdateCheckService = new UpdateCheckService();
-
-        if(mGuiAvailable)
+        try
         {
-            //Install the stored look-and-feel before realizing the first Swing component.
             ThemeManager.getInstance().initialize(mUserPreferences);
             mMainGui = new JFrame();
             MyEventBus.getGlobalEventBus().register(this);
-        }
-
-        mApplicationLog = new ApplicationLog(mUserPreferences);
-        mApplicationLog.start();
-        if(mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
-        {
-            mUserPreferences.getEncryptionKeyPreference().getVaultService().tryAutoUnlockSavedPassword();
-        }
-
-        //Note: invoke this early in the application lifecycle, before the TunerManager causes the sdrplay classes
-        //to be loaded since the jextract auto-generated code attempts to load the library by name and that can fail
-        //when the library was not installed into a normal/default location, particularly on windows OS systems.
-        if(SDRPlayLibraryHelper.LOADED)
-        {
-            mLog.info("SDRPlay API native library preemptively loaded");
-        }
-
-        ThreadPool.logSettings();
-
-        if(mGuiAvailable)
-        {
             mResourceMonitor = new ResourceMonitor(mUserPreferences);
-            // Register icon fonts only for local Swing windows.
             IconFontSwing.register(FontAwesome.getIconFont());
-        }
-
-        mTunerManager = new TunerManager(mUserPreferences);
-
-        AliasModel aliasModel = new AliasModel();
-        EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
-        mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager);
-        try
-        {
-            mRemoteConnectivityService = new RemoteConnectivityService(mConfigurationManager);
-            mConfigurationManager.getChannelProcessingManager().setP25RemoteBitstreamService(mRemoteConnectivityService);
-        }
-        catch(IOException exception)
-        {
-            mLog.error("Remote-link settings are unavailable; remote connectivity is disabled", exception);
-        }
-
-        if(mGuiAvailable)
-        {
             mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences);
-        }
-
-        CalibrationManager.getInstance(mUserPreferences);
-
-        new ChannelSelectionManager(mConfigurationManager.getChannelModel());
-
-        mReceiverActivityService = new ReceiverActivityService(mUserPreferences);
-        mToneActivitySubscription = P25PagingToneService.getInstance()
-            .addCompletedToneListener(mReceiverActivityService::receiveCompletedToneSequence);
-
-        mLogicalCallDiagnosticService = new LogicalCallDiagnosticService();
-
-        try
-        {
-            Path catalogPath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences)
-                .resolveSibling("managed-recordings.sqlite");
-            mManagedRecordingCatalog = new ManagedRecordingCatalog(catalogPath,
-                mUserPreferences.getDirectoryPreference().getDirectoryManagedRecording());
-        }
-        catch(Exception exception)
-        {
-            //A damaged or unavailable optional catalog must not prevent Classic recording or live reception.
-            mLog.error("Managed recordings catalog is unavailable", exception);
-            mLog.warn("Managed recordings are unavailable for this run; the saved recording mode is unchanged");
-        }
-
-        mAudioRecordingManager = mManagedRecordingCatalog != null ?
-            new AudioRecordingManager(mUserPreferences, mReceiverActivityService::receiveRecordedCall,
-                mManagedRecordingCatalog) :
-            new AudioRecordingManager(mUserPreferences, mReceiverActivityService::receiveRecordedCall);
-        if(mManagedRecordingCatalog != null)
-        {
-            mManagedRecordingTranscriptionService = new ManagedRecordingTranscriptionService(mManagedRecordingCatalog,
-                mUserPreferences.getRecordPreference(),
-                () -> mAudioRecordingManager.getQueueStatus().queuedSourceBytes() > 0);
-        }
-
-        mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
-            mUserPreferences, mReceiverActivityService::receiveStreamedCall);
-
-        mDecodeEventViewService = new DecodeEventViewService(
-            mConfigurationManager.getChannelProcessingManager(), mConfigurationManager.getAliasModel());
-        mConfigurationManager.getChannelProcessingManager().addBoundDecodeEventListener(
-            mDecodeEventViewService.getBoundDecodeEventListener());
-
-        mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager(), mReceiverActivityService,
-            mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
-            mConfigurationManager.getScanListModel(), mConfigurationManager.getChannelAdministrationService(),
-            mConfigurationManager.getRadioReferenceDirectoryService(),
-            mConfigurationManager.getRadioReferenceImportService(),
-            mConfigurationManager.getStreamingAdministrationService(), mRemoteConnectivityService);
-        mStatsWebServerService.setManagedRecordingCatalog(mManagedRecordingCatalog);
-        mStatsWebServerService.setManagedRecordingTranscriptionService(mManagedRecordingTranscriptionService);
-
-        if(mGuiAvailable && !mStatsWebServerService.getRuntimeState().running())
-        {
-            try
+            mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
+            if(!mStatsWebServerService.getRuntimeState().running())
             {
                 if(!io.github.dsheirer.gui.setup.SetupWizard.ensureListener(mUserPreferences, mStatsWebServerService))
                     throw new io.github.dsheirer.gui.setup.SetupWizard.Cancelled();
                 mOpenWebAfterSetup = true;
             }
-            catch(io.github.dsheirer.gui.setup.SetupWizard.Cancelled e) { throw e; }
-            catch(Exception e) { throw new IllegalStateException("Web listener setup could not complete", e); }
-        }
-        mTunerManager.start();
-        mAudioRecordingManager.start();
-        if(mManagedRecordingTranscriptionService != null)
-        {
-            mManagedRecordingTranscriptionService.start();
-        }
-        if(mManagedRecordingCatalog != null)
-        {
-            mManagedRecordingMaintenance = Executors.newSingleThreadScheduledExecutor(
-                new NamingThreadFactory("managed recording retention"));
-            mManagedRecordingRetention = mManagedRecordingMaintenance.scheduleWithFixedDelay(() ->
-            {
-                try
-                {
-                    Integer retentionDays = mUserPreferences.getRecordPreference().getManagedRetentionDays();
-                    if(retentionDays != null)
-                    {
-                        mManagedRecordingCatalog.pruneOlderThan(System.currentTimeMillis() -
-                            TimeUnit.DAYS.toMillis(retentionDays));
-                    }
-                }
-                catch(Exception exception)
-                {
-                    mLog.warn("Managed recording age retention failed", exception);
-                }
-            }, 1, 24, TimeUnit.HOURS);
-        }
-        mAudioStreamingManager.start();
-
-        if(mJavaFxWindowManager != null)
-        {
-            mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
-        }
-        mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
-            mStatsWebServerService::receive, call -> {
-                try { mStatsWebServerService.receiveCompletedCallForAlerts(call); }
-                finally { mReceiverActivityService.receiveResolvedCall(call); }
-            },
-            mLogicalCallDiagnosticService);
-        mStatsWebServerService.setLogicalCallDiagnostics(mLogicalCallDiagnosticService, mAudioCallCoordinator);
-
-        mStatsWebServerService.setReceiverHealthOutputSources(mAudioCallCoordinator, mAudioRecordingManager,
-            mAudioStreamingManager, mConfigurationManager.getBroadcastModel());
-
-        mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
-        mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
-            mReceiverActivityService.getDecodeEventListener());
-        mConfigurationManager.getChannelProcessingManager().addControlChannelQualityListener(
-            mReceiverActivityService.getControlChannelQualityListener());
-        mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mReceiverActivityService);
-        mConfigurationManager.getChannelProcessingManager().addProtocolSiteMetadataListener(mReceiverActivityService);
-        mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
-        mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(new SiteControlChannelLearner(mConfigurationManager));
-
-        mMapSnapshotService = new MapSnapshotService(aliasModel);
-        mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mMapSnapshotService);
-        mStatsWebServerService.setMapSnapshotService(mMapSnapshotService);
-
-        mConfigurationManager.init();
-        if(mRemoteConnectivityService != null)
-        {
-            mRemoteConnectivityService.start();
-        }
-
-        if(!mGuiAvailable)
-        {
-            mLog.info("starting main application headless");
-            SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);
-            startPostLaunchExperience();
-        }
-        else
-        {
-            mLog.info("starting main application gui");
-
-            //Initialize the GUI
+            mRuntime.activate();
             initGUI();
-            // SIGTERM follows the portable preferences shutdown hook, not the Swing window listener. Keep the
-            // same tuner-settings quiescence boundary for a deployed GUI receiver as for headless operation.
-            SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);
+            mRuntime.setBeforeShutdown(this::closeDesktop);
             EventQueue.invokeLater(() -> {
                 try
                 {
@@ -397,90 +172,24 @@ public class SDRTrunk
                     mMainGui.setVisible(true);
                     checkForUpdates(false);
                 }
-                catch(Exception e)
+                catch(Exception exception)
                 {
-                    mLog.error("Unable to finish initial GUI setup; continuing with post-launch startup", e);
+                    mLog.error("Unable to finish initial GUI setup", exception);
                 }
-
-                try
-                {
-                    startPostLaunchExperience();
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Post-launch startup failed; starting configured channels without the startup dialog", e);
-                    EncryptionKeyVaultService vaultService = getLockedLaunchVault();
-
-                    if(vaultService != null)
-                    {
-                        vaultService.disableForRun();
-                    }
-
-                    if(mStartConfiguredChannels)
-                    {
-                        startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
-                    }
-                }
-                if(mOpenWebAfterSetup)
-                {
-                    openWebInterface(false, DesktopHandoffDestination.CHANNEL_SETUP);
-                }
+                if(mStartConfiguredChannels) mRuntime.startConfiguredChannels(false);
+                if(mOpenWebAfterSetup) openWebInterface(false, DesktopHandoffDestination.CHANNEL_SETUP);
             });
         }
-    }
-
-    private void startPostLaunchExperience()
-    {
-        if(!mStartConfiguredChannels) return;
-        List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
-        EncryptionKeyVaultService vaultService = getLockedLaunchVault();
-
-        if(!mGuiAvailable)
+        catch(RuntimeException | Error failure)
         {
-            if(vaultService != null)
-            {
-                vaultService.disableForRun();
-            }
-
-            startChannelsWithoutDialog(channels);
-            return;
+            closeDesktop();
+            throw failure;
         }
-
-        //Graphical launch readiness, release information and calibration finish before receiver construction.
-        startChannelsWithoutDialog(channels);
-    }
-
-    private void startChannelsWithoutDialog(List<Channel> channels)
-    {
-        for(Channel channel: channels)
+        catch(Exception failure)
         {
-            try
-            {
-                mLog.info("Auto-starting channel " + channel.getName());
-                mConfigurationManager.getChannelProcessingManager().start(channel);
-            }
-            catch(ChannelException | RuntimeException e)
-            {
-                mLog.error("Channel: " + channel.getName() + " auto-start failed: " + e.getMessage(), e);
-            }
+            closeDesktop();
+            throw new IllegalStateException("Desktop setup could not complete", failure);
         }
-    }
-
-    private EncryptionKeyVaultService getLockedLaunchVault()
-    {
-        if(!mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded())
-        {
-            return null;
-        }
-
-        EncryptionKeyVaultService vaultService = mUserPreferences.getEncryptionKeyPreference().getVaultService();
-
-        if(!vaultService.hasVault() || vaultService.isUnlocked() || !vaultService.isPromptOnLaunch())
-        {
-            return null;
-        }
-
-        return vaultService;
     }
 
     /**
@@ -568,15 +277,18 @@ public class SDRTrunk
         mEncryptionKeysItem.setIcon(IconFontSwing.buildIcon(FontAwesome.KEY, 12));
         mEncryptionKeysItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewEncryptionKeyPreferenceEditorRequest()));
         mEncryptionKeysItem.setVisible(mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().isLoaded());
-        mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager().loadedProperty()
-            .addListener((observable, oldValue, loaded) -> EventQueue.invokeLater(() -> {
-                mEncryptionKeysItem.setVisible(loaded);
+        mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager()
+            .addStatusListener((previous, current) -> {
+                if(previous.loaded() == current.loaded()) return;
+                EventQueue.invokeLater(() -> {
+                    mEncryptionKeysItem.setVisible(current.loaded());
 
-                if(!loaded)
-                {
-                    mUserPreferences.getEncryptionKeyPreference().getVaultService().lock();
-                }
-            }));
+                    if(!current.loaded())
+                    {
+                        mUserPreferences.getEncryptionKeyPreference().getVaultService().lock();
+                    }
+                });
+            });
         viewMenu.add(mEncryptionKeysItem);
 
         viewMenu.add(new JSeparator());
@@ -814,40 +526,9 @@ public class SDRTrunk
         return 0;
     }
 
-    private void flushConfigurationForDatabaseReplacement() throws Exception
+    private void flushConfigurationForDatabaseReplacement()
     {
-        if(Platform.isFxApplicationThread())
-        {
-            mConfigurationManager.flushConfiguration();
-            return;
-        }
-
-        FutureTask<Void> task = new FutureTask<>(() -> {
-            mConfigurationManager.flushConfiguration();
-            return null;
-        });
-        Platform.runLater(task);
-
-        try
-        {
-            task.get();
-        }
-        catch(ExecutionException e)
-        {
-            Throwable cause = e.getCause();
-
-            if(cause instanceof Exception exception)
-            {
-                throw exception;
-            }
-
-            if(cause instanceof Error error)
-            {
-                throw error;
-            }
-
-            throw e;
-        }
+        mConfigurationManager.flushConfiguration();
     }
 
     /** Stops receiver/database owners before starting any setup-time migration or replacement UI. */
@@ -868,7 +549,7 @@ public class SDRTrunk
             mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
             flushConfigurationForDatabaseReplacement();
             processShutdown(false);
-            releaseDataRootLock();
+            mRuntime.releaseDataRootLock();
             ApplicationRelauncher.relaunch(arguments);
             System.exit(0);
         }
@@ -928,231 +609,45 @@ public class SDRTrunk
         processShutdown(true);
     }
 
-    private synchronized void processShutdown(boolean releaseDataRootLock)
+    private void processShutdown(boolean releaseDataRootLock)
     {
-        if(mShutdownProcessed)
+        synchronized(this)
         {
-            return;
+            if(mShutdownProcessed) return;
+            mShutdownProcessed = true;
         }
-
-        mShutdownProcessed = true;
-        boolean databaseBoundarySafe = true;
-        mLog.info("Application shutdown started ...");
         try
         {
-            if(mStatsWebServerService != null)
-            {
-                mStatsWebServerService.close();
-            }
-            // Tuner settings and recording-tuner catalog changes use a short delayed SQLite coalescer. Once the
-            // admin worker is quiescent, commit its last acknowledged mutation before any receiver teardown.
-            ApplicationSettingsStore.flushPendingWritesNow();
+            if(releaseDataRootLock) mRuntime.close();
+            else mRuntime.closeForDatabaseReplacement();
         }
-        catch(Exception unsafeShutdown)
+        catch(RuntimeException failure)
         {
-            // Only database replacement retries cleanup; normal exit must not repeat it in the JVM hook.
             if(!releaseDataRootLock)
             {
-                mShutdownProcessed = false;
+                synchronized(this) { mShutdownProcessed = false; }
             }
-            mLog.error("Receiver cleanup did not complete", unsafeShutdown);
-            throw new IllegalStateException("Receiver cleanup did not complete", unsafeShutdown);
+            throw failure;
         }
-        if(mGuiAvailable)
+    }
+
+    private synchronized void closeDesktop()
+    {
+        if(mDesktopClosed) return;
+        mDesktopClosed = true;
+        if(mNetworkAccessRefreshTimer != null) mNetworkAccessRefreshTimer.stop();
+        if(mMainGui != null)
         {
-            if(mNetworkAccessRefreshTimer != null)
-            {
-                mNetworkAccessRefreshTimer.stop();
-            }
             MyEventBus.getGlobalEventBus().unregister(this);
             mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
             mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
             mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
                 (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
             mUserPreferences.getSwingPreference().flush();
-            if(mBasebandRecordingDialog != null)
-            {
-                mBasebandRecordingDialog.dispose();
-            }
-            mJavaFxWindowManager.shutdown();
         }
-        mLog.info("Stopping channels ...");
-        ChannelProcessingManager channelProcessingManager =
-            mConfigurationManager.getChannelProcessingManager();
-        channelProcessingManager.close();
-        if(mRemoteConnectivityService != null)
-        {
-            mRemoteConnectivityService.close();
-        }
-        if(mMapSnapshotService != null)
-        {
-            mMapSnapshotService.close();
-        }
-        boolean siteMetadataDrained = channelProcessingManager.awaitSiteMetadataDrain(
-            SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
-        databaseBoundarySafe &= siteMetadataDrained;
-
-        if(!siteMetadataDrained)
-        {
-            mLog.warn("Site-metadata observers did not drain before shutdown");
-        }
-
-        if(mAudioCallCoordinator != null)
-        {
-            //Channel close emits terminal call events. Resolve and hand those calls to statistics/output consumers
-            //before disposing the activity writer or the downstream recording and streaming queues.
-            boolean callCoordinatorStopped = mAudioCallCoordinator.disposeAndAwait(
-                CALL_COORDINATOR_SHUTDOWN_STOP_MILLISECONDS, TimeUnit.MILLISECONDS);
-            databaseBoundarySafe &= callCoordinatorStopped;
-
-            if(!callCoordinatorStopped)
-            {
-                mLog.warn("Logical-call resolver did not fully stop before shutdown");
-            }
-        }
-        //Finished tone work must reach Activity before its writer's final drain.
-        boolean tonesDrained;
-        try
-        {
-            tonesDrained = P25PagingToneService.getInstance().awaitWorkerDrain(
-                STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-            tonesDrained = false;
-        }
-        databaseBoundarySafe &= tonesDrained;
-        if(!tonesDrained) mLog.warn("Tone observations did not finish before statistics shutdown");
-        if(mToneActivitySubscription != null)
-        {
-            try { mToneActivitySubscription.close(); }
-            catch(Exception exception) { mLog.warn("Unable to remove the completed-tone Activity observer", exception); }
-            mToneActivitySubscription = null;
-        }
-        if(mReceiverActivityService != null)
-        {
-            channelProcessingManager.removeChannelDecodeEventListener(
-                mReceiverActivityService.getDecodeEventListener());
-            channelProcessingManager.removeControlChannelQualityListener(
-                mReceiverActivityService.getControlChannelQualityListener());
-            channelProcessingManager.removeSiteMetadataListener(mReceiverActivityService);
-            channelProcessingManager.removeProtocolSiteMetadataListener(mReceiverActivityService);
-        }
-        if(mDecodeEventViewService != null)
-        {
-            channelProcessingManager.removeBoundDecodeEventListener(
-                mDecodeEventViewService.getBoundDecodeEventListener());
-            mDecodeEventViewService.close();
-        }
-        EventLogger.flushPendingWrites();
-        if(mAudioStreamingManager != null)
-        {
-            mAudioStreamingManager.stop();
-        }
-        if(mManagedRecordingRetention != null)
-        {
-            mManagedRecordingRetention.cancel(false);
-            mManagedRecordingRetention = null;
-        }
-        if(mManagedRecordingMaintenance != null)
-        {
-            mManagedRecordingMaintenance.shutdown();
-            try
-            {
-                if(!mManagedRecordingMaintenance.awaitTermination(30, TimeUnit.SECONDS))
-                {
-                    mLog.warn("Managed recording retention is still finishing during shutdown");
-                }
-            }
-            catch(InterruptedException exception)
-            {
-                Thread.currentThread().interrupt();
-            }
-        }
-        if(mManagedRecordingTranscriptionService != null)
-        {
-            mManagedRecordingTranscriptionService.close();
-        }
-        mAudioRecordingManager.stop();
-        if(mManagedRecordingCatalog != null)
-        {
-            try
-            {
-                mManagedRecordingCatalog.close();
-            }
-            catch(Exception exception)
-            {
-                mLog.warn("Managed recordings catalog did not close cleanly", exception);
-            }
-        }
-
-        if(mReceiverActivityService != null)
-        {
-            //Resolved calls can still be completing their recording and streaming work during the final drains.
-            //Keep the statistics writer alive until those local output confirmations have crossed the observer
-            //barrier. Disposing the service then drains the already-mapped database records.
-            boolean statisticsDrained = mReceiverActivityService.awaitObservationDrain(
-                STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
-            boolean statisticsStopped = mReceiverActivityService.disposeAndAwait(
-                STATISTICS_SHUTDOWN_STOP_MILLISECONDS, TimeUnit.MILLISECONDS);
-            databaseBoundarySafe &= statisticsDrained && statisticsStopped;
-
-            if(!statisticsDrained || !statisticsStopped)
-            {
-                mLog.warn("Statistics service did not fully drain and stop before shutdown [observations={}, " +
-                    "workers={}]", statisticsDrained, statisticsStopped);
-            }
-        }
-
-        if(!releaseDataRootLock && !databaseBoundarySafe)
-        {
-            throw new IllegalStateException(
-                "Database-owning observers did not fully stop before SQLite database replacement");
-        }
-
-        if(mLogicalCallDiagnosticService != null)
-        {
-            mLogicalCallDiagnosticService.close();
-        }
-
-        if(mResourceMonitor != null)
-        {
-            mResourceMonitor.stop();
-        }
-
-        mLog.info("Stopping tuners ...");
-        mTunerManager.stop();
-        mLog.info("Shutdown complete.");
-        mApplicationLog.stop();
-        SqlitePreferencesFactory.shutdown();
-
-        if(releaseDataRootLock && databaseBoundarySafe)
-        {
-            releaseDataRootLock();
-        }
-        else if(releaseDataRootLock)
-        {
-            mLog.warn("Retaining the portable-data lock until process termination because shutdown did not " +
-                "establish a safe database boundary");
-        }
-    }
-
-    private void releaseDataRootLock()
-    {
-        if(mDataRootLock != null)
-        {
-            try
-            {
-                mDataRootLock.close();
-            }
-            catch(IOException e)
-            {
-                mLog.error("Unable to release the portable data lock", e);
-            }
-
-            mDataRootLock = null;
-        }
+        if(mBasebandRecordingDialog != null) mBasebandRecordingDialog.dispose();
+        if(mJavaFxWindowManager != null) mJavaFxWindowManager.shutdown();
+        if(mResourceMonitor != null) mResourceMonitor.stop();
     }
 
     private void registerQuitHandler()
@@ -1514,9 +1009,12 @@ public class SDRTrunk
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         System.setProperty("apple.awt.application.name", "VCE");
         PortableDataRootLock dataRootLock = null;
+        ReceiverRuntime runtime = null;
+        boolean desktopMode = false;
 
         try
         {
+            desktopMode = ReceiverLaunchMode.select(args, !GraphicsEnvironment.isHeadless()) == ReceiverLaunchMode.DESKTOP;
             Path dataRoot = PortableApplicationPaths.getDataRoot();
             Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
 
@@ -1529,7 +1027,7 @@ public class SDRTrunk
             UserPreferences userPreferences;
             boolean startConfiguredChannels = true;
             boolean openWebAfterSetup = false;
-            if(!GraphicsEnvironment.isHeadless())
+            if(desktopMode)
             {
                 var setup = io.github.dsheirer.gui.setup.SetupWizard.run(args, dataRoot, dataRootLock);
                 if(setup == null)
@@ -1579,12 +1077,25 @@ public class SDRTrunk
                 }
             }
 
-            new SDRTrunk(userPreferences, dataRootLock, startConfiguredChannels, openWebAfterSetup);
+            runtime = new ReceiverRuntime(userPreferences, dataRootLock);
             dataRootLock = null;
+            runtime.start();
+            if(desktopMode)
+                new SDRTrunk(runtime, userPreferences, startConfiguredChannels, openWebAfterSetup);
+            else
+            {
+                runtime.activate();
+                if(startConfiguredChannels) runtime.startConfiguredChannels(true);
+            }
         }
         catch(Exception e)
         {
-            SqlitePreferencesFactory.shutdown();
+            if(runtime != null)
+            {
+                try { runtime.close(); }
+                catch(RuntimeException cleanupFailure) { e.addSuppressed(cleanupFailure); }
+            }
+            else SqlitePreferencesFactory.shutdown();
 
             if(dataRootLock != null)
             {
@@ -1607,7 +1118,7 @@ public class SDRTrunk
             System.err.println(message);
             e.printStackTrace(System.err);
 
-            if(!GraphicsEnvironment.isHeadless())
+            if(desktopMode)
             {
                 CopyableErrorDialog.show(null, "VCE Startup Error",
                     "VCE could not start. Receiver services were not started.", exceptionMessage(e));

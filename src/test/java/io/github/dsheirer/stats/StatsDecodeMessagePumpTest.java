@@ -34,7 +34,7 @@ class StatsDecodeMessagePumpTest
         AtomicInteger polls = new AtomicInteger();
         CapturingOutput stream = new CapturingOutput();
 
-        try(var output = new StatsWebServerService.MultiplexOutput(stream))
+        try(var output = new LiveMultiplexOutput(stream))
         {
             var result = StatsWebServerService.pumpDecodeMessages(output, state::get, () -> {
                 if(polls.getAndIncrement() == 0)
@@ -66,7 +66,7 @@ class StatsDecodeMessagePumpTest
         AtomicInteger polls = new AtomicInteger();
         CapturingOutput stream = new CapturingOutput();
 
-        try(var output = new StatsWebServerService.MultiplexOutput(stream))
+        try(var output = new LiveMultiplexOutput(stream))
         {
             StatsWebServerService.pumpDecodeMessages(output, state::get,
                 () -> polls.getAndIncrement() == 0 ? message("queued-old", 1) : null, message -> true, 16, 1,
@@ -92,7 +92,7 @@ class StatsDecodeMessagePumpTest
     {
         AtomicInteger polls = new AtomicInteger();
         CapturingOutput stream = new CapturingOutput();
-        try(var output = new StatsWebServerService.MultiplexOutput(stream))
+        try(var output = new LiveMultiplexOutput(stream))
         {
             var result = StatsWebServerService.pumpDecodeMessages(output, () -> state(3, true),
                 () -> message("message-" + polls.incrementAndGet(), 3), message -> true, 64, 3, SUBSCRIPTION);
@@ -114,7 +114,7 @@ class StatsDecodeMessagePumpTest
         AtomicInteger polls = new AtomicInteger();
         AtomicInteger admissions = new AtomicInteger();
         CapturingOutput stream = new CapturingOutput();
-        try(var output = new StatsWebServerService.MultiplexOutput(stream))
+        try(var output = new LiveMultiplexOutput(stream))
         {
             var result = StatsWebServerService.pumpDecodeMessages(output, () -> state(3, true),
                 () -> polls.getAndIncrement() == 0 ? message("removed-member", 3) : null,

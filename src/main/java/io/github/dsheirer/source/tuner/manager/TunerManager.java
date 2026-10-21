@@ -47,7 +47,6 @@ import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
-import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -552,6 +551,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private boolean startAndConfigureTuner(DiscoveredTuner discoveredTuner)
     {
+        mTunerConfigurationManager.prepareTunerConfiguration(discoveredTuner);
+        discoveredTuner.configureOnStart(tuner ->
+            mTunerConfigurationManager.getTunerConfiguration(tuner.getTunerType(), discoveredTuner.getId()));
         discoveredTuner.addTunerStatusListener(this);
 
         //Set the tuner to disabled if the user has previously blacklisted the tuner
@@ -563,8 +565,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         else
         {
             mLog.info("Tuner: " + discoveredTuner + " - Added / Starting ...");
-            //Attempt to start the discovered tuner and determine the tuner type
-            tunerStatusUpdated(discoveredTuner, TunerStatus.DISABLED, TunerStatus.ENABLED);
+            discoveredTuner.startConfigured();
         }
 
         if(discoveredTuner instanceof DiscoveredUSBTuner)
@@ -674,56 +675,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
     }
 
-    /**
-     * Handles tuner status change events.  Events are sent to the tuner configuration manager so that it can save
-     * configuration updates and events are also monitored to detect when a user changes the tuner state of a tuner
-     * so that we can auto-start the tuner and apply a tuner configuration.
-     *
-     * @param discoveredTuner that has a status change.
-     * @param previous tuner status
-     * @param current tuner status
-     */
+    /** Status observers persist completion; they never start, configure or cascade hardware commands. */
     @Override
     public void tunerStatusUpdated(DiscoveredTuner discoveredTuner, TunerStatus previous, TunerStatus current)
     {
-        if(current == TunerStatus.ENABLED)
-        {
-            discoveredTuner.start();
-        }
-
-        //Special handling for RSPduo to auto-update enabled state for slave device when configured for master/slave operation
-        if(discoveredTuner instanceof DiscoveredRspDuoTuner1 rspDuoTuner1 && rspDuoTuner1.getDeviceInfo().getDeviceSelectionMode().isMasterMode())
-        {
-            String id = rspDuoTuner1.getId();
-            id = id.replace(DiscoveredRspDuoTuner1.RSP_DUO_ID_PREFIX + "1", DiscoveredRspDuoTuner1.RSP_DUO_ID_PREFIX + "2");
-            DiscoveredTuner rspDuoTuner2 = mDiscoveredTunerRegistry.find(id);
-
-            if(rspDuoTuner2 != null)
-            {
-                if(previous == TunerStatus.ENABLED && current == TunerStatus.DISABLED)
-                {
-                    rspDuoTuner2.setEnabled(false);
-                }
-                else if(previous == TunerStatus.DISABLED && current == TunerStatus.ENABLED)
-                {
-                    rspDuoTuner2.setEnabled(true);
-                    rspDuoTuner2.start();
-                }
-            }
-
-            //Notify tuner configuration manager to apply tuner configurations & update disabled tuner states
-            mTunerConfigurationManager.tunerStatusUpdated(rspDuoTuner1, previous, current);
-
-            if(rspDuoTuner2 != null)
-            {
-                mTunerConfigurationManager.tunerStatusUpdated(rspDuoTuner2, previous, current);
-            }
-        }
-        else
-        {
-            //Notify tuner configuration manager to apply tuner configuration
-            mTunerConfigurationManager.tunerStatusUpdated(discoveredTuner, previous, current);
-        }
+        mTunerConfigurationManager.tunerStatusUpdated(discoveredTuner, previous, current);
     }
 
     /**
@@ -837,7 +793,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     if(source instanceof TunerChannelSource)
                     {
                         retVal = new MultiFrequencyTunerChannelSource(this, (TunerChannelSource)source,
-                                sourceConfigTuner.getFrequencies(), channelSpecification,
+                                sourceConfigTuner::getFrequencies, channelSpecification,
                                 sourceConfigTuner.getPreferredTuner(), threadName + " MULTI FREQ",
                                 sourceConfigTuner.getMinimumFrequency(), sourceConfigTuner.getMaximumFrequency(), context);
                     }

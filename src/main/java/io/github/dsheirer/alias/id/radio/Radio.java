@@ -55,7 +55,7 @@ public class Radio extends AliasID implements Comparable<Radio>
     public void setValue(int value)
     {
         mValue = value;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public Protocol getProtocol()
@@ -66,7 +66,7 @@ public class Radio extends AliasID implements Comparable<Radio>
     public void setProtocol(Protocol protocol)
     {
         mProtocol = protocol;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

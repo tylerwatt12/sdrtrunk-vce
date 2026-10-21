@@ -38,7 +38,7 @@ public class Esn extends AliasID
 	public void setEsn(String esn )
 	{
 		mEsn = esn;
-		updateValueProperty();
+		notifyChanged();
 	}
 	
 	public String toString()

@@ -57,7 +57,7 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
     public void setValue(int value)
     {
         mValue = value;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @JacksonXmlProperty(isAttribute = true, localName = "protocol")
@@ -69,7 +69,7 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
     public void setProtocol(Protocol protocol)
     {
         mProtocol = protocol;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

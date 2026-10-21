@@ -22,7 +22,6 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import javafx.beans.binding.Bindings;
 
 @JsonSubTypes.Type(value=IcecastHTTPConfiguration.class, name="icecastHTTPConfiguration")
 public class IcecastHTTPConfiguration extends IcecastConfiguration
@@ -40,9 +39,6 @@ public class IcecastHTTPConfiguration extends IcecastConfiguration
     {
         super(format);
         setPassword("change me!");
-
-        mValid.bind(Bindings.and(Bindings.and(Bindings.and(Bindings.isNotNull(mHost), Bindings.greaterThan(mPort, 0)),
-            Bindings.isNotNull(mMountPoint)), Bindings.isNotNull(mPassword)));
     }
 
     @Override
@@ -77,5 +73,10 @@ public class IcecastHTTPConfiguration extends IcecastConfiguration
     public BroadcastServerType getBroadcastServerType()
     {
         return BroadcastServerType.ICECAST_HTTP;
+    }
+    @Override
+    public boolean isValid()
+    {
+        return getHost() != null && getPort() > 0 && getMountPoint() != null && getPassword() != null;
     }
 }

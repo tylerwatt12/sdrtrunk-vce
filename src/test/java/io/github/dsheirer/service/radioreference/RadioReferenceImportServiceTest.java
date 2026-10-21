@@ -23,6 +23,7 @@ import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.Module;
@@ -36,7 +37,6 @@ import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
-import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
@@ -58,6 +58,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -968,10 +969,10 @@ class RadioReferenceImportServiceTest
             assertThrows(ChannelAdministrationService.StaleRevisionException.class,
                 () -> fixture.importer.applyChannelEnrichment(preview.previewId(), true));
             var identityPreview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
-            savedChannel(fixture, id).setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x124, 1, 1));
+            commitSiteIdentity(fixture, id, new P25SiteIdentity(0xBEE00, 0x124, 1, 1));
             assertThrows(ChannelAdministrationService.StaleRevisionException.class,
                 () -> fixture.importer.applyChannelEnrichment(identityPreview.previewId(), true));
-            savedChannel(fixture, id).setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
+            commitSiteIdentity(fixture, id, new P25SiteIdentity(0xBEE00, 0x123, 1, 1));
             var sessionPreview = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
             fixture.importer.clearSessionData();
             assertThrows(RadioReferenceImportService.PreviewNotFoundException.class,
@@ -1086,6 +1087,22 @@ class RadioReferenceImportServiceTest
             .filter(channel -> channel.getConfigurationId().equals(id)).findFirst().orElseThrow();
     }
 
+    private static void commitSiteIdentity(Fixture fixture, String id, P25SiteIdentity identity)
+    {
+        fixture.manager.executeConfigurationTask(() ->
+        {
+            List<Channel> channels = fixture.manager.getChannelModel().getChannels().stream().map(channel ->
+            {
+                Channel candidate = channel.copyOfPreservingIdentity();
+                if(id.equals(candidate.getConfigurationId())) candidate.setP25SiteIdentity(identity);
+                return candidate;
+            }).toList();
+            fixture.manager.commitAndPublishChannelConfiguration(new ChannelConfigurationSnapshot(channels),
+                Set.of(id), false);
+            return null;
+        });
+    }
+
     private static ChannelDefinition copy(ChannelDefinition source, ChannelDefinition.Source sourceConfiguration,
                                           Map<String,Object> settings, List<String> recorders)
     {
@@ -1134,14 +1151,11 @@ class RadioReferenceImportServiceTest
         @Override
         public void close()
         {
-            try
-            {
-                manager.flushConfiguration();
-            }
-            finally
-            {
-                MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
-            }
+            manager.quiesceAdministration();
+            manager.getChannelProcessingManager().close();
+            manager.getBroadcastModel().close();
+            manager.close();
+            manager.getRadioReferenceDirectoryService().close();
         }
     }
 

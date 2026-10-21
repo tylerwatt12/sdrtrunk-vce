@@ -32,7 +32,6 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
-import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -44,14 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
-import javafx.application.Platform;
 
 /**
  * Command boundary for Alias administration. Each command mutates a detached candidate,
@@ -65,22 +57,14 @@ public final class AliasAdministrationService
     public static final int MAX_SCAN_LISTS = 100;
     public static final int MAX_ALIAS_LISTS = 500;
     public static final int MAX_SCAN_LIST_COVERAGE_ALIASES = 5_000;
-    private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
 
     private final ConfigurationManager mConfigurationManager;
-    private final boolean mUseDesktopThread;
     private MutationWorkspace mMutationWorkspace;
 
     public AliasAdministrationService(ConfigurationManager configurationManager)
     {
-        this(configurationManager, !GraphicsEnvironment.isHeadless());
-    }
-
-    AliasAdministrationService(ConfigurationManager configurationManager, boolean useDesktopThread)
-    {
         mConfigurationManager = Objects.requireNonNull(configurationManager);
-        mUseDesktopThread = useDesktopThread;
     }
 
     /**
@@ -1733,107 +1717,18 @@ public final class AliasAdministrationService
 
     private <T> T onConfigurationThread(Supplier<T> operation)
     {
-        Objects.requireNonNull(operation);
         requireInitialized();
-
-        if(!mUseDesktopThread)
+        try
         {
-            AtomicReference<T> result = new AtomicReference<>();
-            AtomicReference<RuntimeException> failure = new AtomicReference<>();
-            mConfigurationManager.runHeadlessWebConfigurationTask(() ->
-            {
-                try
-                {
-                    requireInitialized();
-                    result.set(operation.get());
-                }
-                catch(RuntimeException exception)
-                {
-                    failure.set(exception);
-                }
-            });
-            if(failure.get() != null)
-            {
-                throw failure.get();
-            }
-            return result.get();
-        }
-
-        if(Platform.isFxApplicationThread())
-        {
-            requireInitialized();
-            return operation.get();
-        }
-
-        CompletableFuture<T> result = new CompletableFuture<>();
-        AtomicReference<DispatchState> state = new AtomicReference<>(DispatchState.QUEUED);
-        Platform.runLater(() ->
-        {
-            if(!state.compareAndSet(DispatchState.QUEUED, DispatchState.RUNNING))
-            {
-                return;
-            }
-
-            try
+            return mConfigurationManager.executeConfigurationTask(() ->
             {
                 requireInitialized();
-                result.complete(operation.get());
-            }
-            catch(Throwable throwable)
-            {
-                result.completeExceptionally(throwable);
-            }
-        });
-
-        try
-        {
-            return result.get(FX_QUEUE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                return operation.get();
+            });
         }
-        catch(TimeoutException exception)
+        catch(io.github.dsheirer.configuration.ConfigurationExecutor.BusyException exception)
         {
-            if(state.compareAndSet(DispatchState.QUEUED, DispatchState.CANCELLED))
-            {
-                throw new ConfigurationBusyException();
-            }
-
-            //The task started before the timeout. Wait for its unambiguous success or failure instead of returning
-            //while a configuration transaction is still running.
-            return joinResult(result);
-        }
-        catch(InterruptedException exception)
-        {
-            if(state.compareAndSet(DispatchState.QUEUED, DispatchState.CANCELLED))
-            {
-                Thread.currentThread().interrupt();
-                throw new ConfigurationBusyException();
-            }
-
-            Thread.currentThread().interrupt();
-            return joinResult(result);
-        }
-        catch(ExecutionException exception)
-        {
-            if(exception.getCause() instanceof RuntimeException runtimeException)
-            {
-                throw runtimeException;
-            }
-            throw new CompletionException(exception.getCause());
-        }
-    }
-
-    private static <T> T joinResult(CompletableFuture<T> result)
-    {
-        try
-        {
-            return result.join();
-        }
-        catch(CompletionException exception)
-        {
-            if(exception.getCause() instanceof RuntimeException runtimeException)
-            {
-                throw runtimeException;
-            }
-            throw exception;
+            throw new ConfigurationBusyException();
         }
     }
 
@@ -2172,7 +2067,6 @@ public final class AliasAdministrationService
 
     }
 
-
     private record ScanListMutation(ScanList scanList, int affected)
     {
     }
@@ -2214,7 +2108,7 @@ public final class AliasAdministrationService
     {
         public ConfigurationBusyException()
         {
-            super("The desktop configuration thread is busy");
+            super("Configuration is busy. Try again.");
         }
     }
 

@@ -1,72 +1,47 @@
-/*
- * *****************************************************************************
- * Copyright (C) 2026 Dennis Sheirer
- * *****************************************************************************
- */
+/* Copyright (C) 2026 Dennis Sheirer */
 package io.github.dsheirer.gui;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
-/** Source guard for the receiver lifecycle that must not require a desktop toolkit. */
+/** Architectural guard; lifetime behavior is exercised by ReceiverRuntimeTest. */
 class HeadlessReceiverLifecycleContractTest
 {
-    private static final Path APPLICATION = Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java");
-    private static final Path WEB_SERVICE = Path.of("src/main/java/io/github/dsheirer/stats/StatsWebServerService.java");
+    @Test
+    void receiverRuntimeDoesNotImportDesktopToolkits() throws Exception
+    {
+        Path runtime = Path.of("src/main/java/io/github/dsheirer/receiver/ReceiverRuntime.java");
+        String source = Files.readString(runtime);
+        assertFalse(Pattern.compile("(?m)^import (javafx\\.|javax\\.swing\\.|java\\.awt\\.|io\\.github\\.dsheirer\\.gui\\.)")
+            .matcher(source).find());
+    }
 
     @Test
-    void headlessStartupAndShutdownAreIndependentOfTheDesktopEventLoop() throws Exception
+    void receiverOwnsTheOnlyShutdownHookAndClosesCodecLibrariesAfterOutputDrains() throws Exception
     {
-        String source = Files.readString(APPLICATION).replace("\r\n", "\n");
-        String headlessStartup = source.substring(source.indexOf("if(!mGuiAvailable)\n        {\n            mLog.info(\"starting main application headless\")"),
-            source.indexOf("private void startPostLaunchExperience()"));
-        String shutdown = source.substring(source.indexOf("private synchronized void processShutdown(boolean releaseDataRootLock)"),
-            source.indexOf("private void releaseDataRootLock()"));
-
-        assertTrue(source.contains("mGuiAvailable = !GraphicsEnvironment.isHeadless()"));
-        assertTrue(headlessStartup.contains("SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);\n" +
-            "            startPostLaunchExperience();"));
-        assertTrue(headlessStartup.contains("else\n        {\n            mLog.info(\"starting main application gui\")"));
-        assertTrue(headlessStartup.lastIndexOf("SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);") >
-            headlessStartup.indexOf("initGUI();"));
-        assertTrue(headlessStartup.lastIndexOf("SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);") <
-            headlessStartup.indexOf("EventQueue.invokeLater"));
-        assertTrue(source.contains("mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE)"));
-        String guiShutdown = source.substring(source.indexOf("private void requestGuiShutdown()"),
-            source.indexOf("private void processShutdown()"));
-        assertTrue(guiShutdown.indexOf("processShutdown();") < guiShutdown.indexOf("System.exit(0);"));
-        assertTrue(guiShutdown.contains("catch(RuntimeException exception)"));
-        assertTrue(guiShutdown.indexOf("catch(RuntimeException exception)") < guiShutdown.indexOf("System.exit(0);"));
-        assertFalse(guiShutdown.contains("JOptionPane.showMessageDialog"));
-        assertTrue(source.contains("public void windowClosing(WindowEvent e)\n        {\n            requestGuiShutdown();"));
-        assertTrue(headlessStartup.indexOf("EventQueue.invokeLater") > headlessStartup.indexOf("else\n        {"));
-        assertFalse(headlessStartup.substring(0, headlessStartup.indexOf("else\n        {")).contains("EventQueue.invokeLater"));
-        int guiShutdownStart = shutdown.indexOf("if(mGuiAvailable)");
-        int desktopUnregister = shutdown.indexOf("MyEventBus.getGlobalEventBus().unregister(this);");
-        assertTrue(guiShutdownStart >= 0 && desktopUnregister > guiShutdownStart);
-        assertTrue(shutdown.contains("if(mMapSnapshotService != null)\n        {\n            mMapSnapshotService.close();"));
-        assertTrue(shutdown.indexOf("mStatsWebServerService.close()") <
-            shutdown.indexOf("if(mGuiAvailable)"));
-        assertTrue(shutdown.indexOf("ApplicationSettingsStore.flushPendingWritesNow()") >
-            shutdown.indexOf("mStatsWebServerService.close()"));
-        assertTrue(shutdown.indexOf("ApplicationSettingsStore.flushPendingWritesNow()") <
-            shutdown.indexOf("channelProcessingManager.close()"));
-        assertTrue(shutdown.indexOf("mStatsWebServerService.close()") <
-            shutdown.indexOf("channelProcessingManager.close()"));
-        assertTrue(shutdown.contains("if(!releaseDataRootLock)\n            {\n                mShutdownProcessed = false;"));
-        String quit = source.substring(source.indexOf("private void registerQuitHandler()"),
-            source.indexOf("private JPanel getMainControlPanel()"));
-        assertTrue(quit.indexOf("catch(Exception e)") < quit.indexOf("quitResponse.performQuit();"));
-        assertTrue(quit.indexOf("quitResponse.cancelQuit();") < quit.indexOf("processShutdown();"));
-        String webService = Files.readString(WEB_SERVICE).replace("\r\n", "\n");
-        String webClose = webService.substring(webService.indexOf("public synchronized void close()"),
-            webService.indexOf("static final class MultiplexOutput"));
-        assertTrue(webClose.indexOf("mTunerSettingsService.close()") < webClose.indexOf("mClosed = true"));
-        assertFalse(source.contains("new MapService("));
-        assertFalse(source.contains("new ControllerPanel("));
+        Path root = Path.of("src/main/java/io/github/dsheirer");
+        Path runtime = root.resolve("receiver/ReceiverRuntime.java");
+        try(var paths = Files.walk(root))
+        {
+            assertEquals(java.util.List.of(runtime), paths.filter(path -> path.toString().endsWith(".java"))
+                .filter(path -> {
+                    try { return Files.readString(path).contains(".addShutdownHook("); }
+                    catch(java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+                }).toList());
+        }
+        String source = Files.readString(runtime);
+        int codecClose = source.indexOf("JmbeLibraryLoader.getInstance()::close");
+        assertTrue(codecClose > 0);
+        for(String drain: java.util.List.of("mCalls.disposeAndAwait(", "mStreaming::stop", "mRecording::stop"))
+        {
+            int position = source.indexOf(drain);
+            assertTrue(position >= 0 && position < codecClose, drain);
+        }
     }
 }

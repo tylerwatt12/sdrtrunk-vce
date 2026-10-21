@@ -90,33 +90,28 @@ class TunerManagerFrequencyPersistenceTest
     }
 
     @Test
-    void incomingTunerEventsStillPersistPpmAndNotifyInventoryBeforeShutdown() throws Exception
+    void incomingTunerEventsStillPersistPpmAndReleaseInventoryBeforeShutdown() throws Exception
     {
         TrackingConfigurationManager configurationManager = new TrackingConfigurationManager();
         TrackingTunerController controller = createController(853_000_000L);
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner("event-persistence", controller);
         TunerManager manager = new TunerManager(null, configurationManager);
         DiscoveredTunerRegistry registry = manager.getDiscoveredTunerRegistry();
-        List<DiscoveredTunerRegistry.Change> changes = new ArrayList<>();
-        registry.addChangeListener((change, tuner, index) -> changes.add(change));
         registry.add(discoveredTuner);
         try
         {
             controller.setFrequency(854_000_000L);
             controller.setFrequencyCorrection(-0.25);
             assertEquals(List.of(-0.25), configurationManager.mPpmUpdates);
-            assertTrue(changes.contains(DiscoveredTunerRegistry.Change.ADDED));
-            assertTrue(changes.contains(DiscoveredTunerRegistry.Change.UPDATED));
+            assertEquals(List.of(discoveredTuner), registry.snapshot());
 
-            changes.clear();
             controller.setMeasuredFrequencyError(-125);
             assertEquals(-125, controller.getMeasuredFrequencyError());
-            assertTrue(changes.isEmpty(), "a display measurement must not change tuner inventory or configuration");
+            assertEquals(List.of(discoveredTuner), registry.snapshot());
             assertEquals(List.of(-0.25), configurationManager.mPpmUpdates);
 
             registry.release();
             assertTrue(registry.snapshot().isEmpty());
-            assertEquals(List.of(DiscoveredTunerRegistry.Change.RESET), changes);
             assertEquals(1, controller.mStopCount);
         }
         finally

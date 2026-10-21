@@ -42,6 +42,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
  * Multiple-frequency tuner channel source.  Provides a wrapper around a tuner channel source and listens for external
@@ -53,7 +54,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 
     private TunerManager mTunerManager;
     private volatile TunerChannelSource mTunerChannelSource;
-    private List<Long> mFrequencies;
+    private final Supplier<List<Long>> mFrequencies;
     private Set<Long> mLockedFrequencies = ConcurrentHashMap.newKeySet();
     private int mFrequencyListPointer = 0;
     private ChannelSpecification mChannelSpecification;
@@ -84,6 +85,25 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
                                             String preferredTuner, String threadName, Long minimumFrequency,
                                             Long maximumFrequency, TunerAllocationContext allocationContext)
     {
+        this(tunerManager, tunerChannelSource, () -> frequencies, channelSpecification, preferredTuner, threadName,
+            minimumFrequency, maximumFrequency, allocationContext);
+    }
+
+    public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
+                                            Supplier<List<Long>> frequencies, ChannelSpecification channelSpecification,
+                                            String preferredTuner, String threadName, Long minimumFrequency,
+                                            Long maximumFrequency)
+    {
+        this(tunerManager, tunerChannelSource, frequencies, channelSpecification, preferredTuner, threadName,
+            minimumFrequency, maximumFrequency, null);
+    }
+
+    /** Production supplies current immutable configuration snapshots; rotation reads one snapshot per decision. */
+    public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
+                                            Supplier<List<Long>> frequencies, ChannelSpecification channelSpecification,
+                                            String preferredTuner, String threadName, Long minimumFrequency,
+                                            Long maximumFrequency, TunerAllocationContext allocationContext)
+    {
         super(null, tunerChannelSource.getTunerChannel(), threadName, null);
         mTunerManager = tunerManager;
         mTunerChannelSource = tunerChannelSource;
@@ -91,7 +111,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
         mFrequencies = frequencies;
 
-        int initialFrequencyIndex = mFrequencies.indexOf(tunerChannelSource.getFrequency());
+        int initialFrequencyIndex = mFrequencies.get().indexOf(tunerChannelSource.getFrequency());
 
         if(initialFrequencyIndex >= 0)
         {
@@ -395,18 +415,19 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
      */
     private long getNextFrequency()
     {
-        if(mFrequencies.size() <= 1)
+        List<Long> frequencies = mFrequencies.get();
+        if(frequencies.size() <= 1)
         {
             return 0;
         }
 
         int attempts = 0;
 
-        mFrequencyListPointer = ++mFrequencyListPointer % mFrequencies.size();
+        mFrequencyListPointer = ++mFrequencyListPointer % frequencies.size();
 
-        long frequency = mFrequencies.get(mFrequencyListPointer);
+        long frequency = frequencies.get(mFrequencyListPointer);
 
-        while((mLockedFrequencies.contains(frequency) || frequency == getFrequency()) && attempts < mFrequencies.size())
+        while((mLockedFrequencies.contains(frequency) || frequency == getFrequency()) && attempts < frequencies.size())
         {
             //If we loop through the entire list back to the current frequency, return 0;
             if(frequency == getFrequency())
@@ -414,9 +435,9 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
                 return 0;
             }
 
-            mFrequencyListPointer = ++mFrequencyListPointer % mFrequencies.size();
+            mFrequencyListPointer = ++mFrequencyListPointer % frequencies.size();
 
-            frequency = mFrequencies.get(mFrequencyListPointer);
+            frequency = frequencies.get(mFrequencyListPointer);
 
             attempts++;
         }
@@ -438,6 +459,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
      */
     private SortedSet<TunerChannel> getAllFrequencyChannels()
     {
+        List<Long> frequencies = mFrequencies.get();
         SortedSet<TunerChannel> channels = new TreeSet<>();
 
         if(hasFrequencyEnvelope())
@@ -450,7 +472,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
             return channels;
         }
 
-        for(long frequency: mFrequencies)
+        for(long frequency: frequencies)
         {
             channels.add(new TunerChannel(frequency, mChannelSpecification.getBandwidth()));
         }

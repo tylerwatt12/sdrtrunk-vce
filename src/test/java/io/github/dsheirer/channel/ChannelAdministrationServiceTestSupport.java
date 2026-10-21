@@ -22,6 +22,6 @@ public final class ChannelAdministrationServiceTestSupport
 
     public static ChannelAdministrationService create(ConfigurationManager manager, Function<String,String> systemNames)
     {
-        return new ChannelAdministrationService(manager, new ChannelProtocolRegistry(), false, systemNames);
+        return new ChannelAdministrationService(manager, new ChannelProtocolRegistry(), systemNames);
     }
 }

@@ -63,7 +63,7 @@ class StreamingAdministrationServiceTest
         try
         {
             manager.init();
-            StreamingAdministrationService streams=new StreamingAdministrationService(manager,false);
+            StreamingAdministrationService streams=new StreamingAdministrationService(manager);
             var created=streams.save(null,"BROADCASTIFY_CALL",Map.of("name","Calls","api_key","secret-value","system_id",42),null);
             String id=created.configurationId();
             var stored=new ConfigurationDatabaseStore(database).load().broadcastConfigurations().getFirst();
@@ -120,7 +120,7 @@ class StreamingAdministrationServiceTest
         try
         {
             manager.init();
-            var streams=new StreamingAdministrationService(manager,false);
+            var streams=new StreamingAdministrationService(manager);
             String id=streams.save(null,"BROADCASTIFY_CALL",Map.of("name","Primary","api_key","first-secret"),null).configurationId();
             String baseline=streams.get(id).editRevision();
             long catalogBaseline=manager.getStreamingConfigurationRevision();
@@ -134,10 +134,18 @@ class StreamingAdministrationServiceTest
             SourceConfigTuner source=new SourceConfigTuner(); source.setFrequency(155_000_000L);
             channel.setSourceConfiguration(source);
             manager.commitAndPublishChannelConfiguration(new ChannelConfigurationSnapshot(List.of(channel)),Set.of(channel.getConfigurationId()),false);
-            manager.getChannelModel().getChannels().getFirst().processingProperty().set(true);
-            manager.getBroadcastModel().getConfiguredBroadcasts().stream()
-                .filter(item->item.getBroadcastConfiguration().getConfigurationId().equals(id)).findFirst().orElseThrow()
-                .broadcastStateProperty().set(BroadcastState.CONNECTING);
+            io.github.dsheirer.controller.channel.ChannelTestAccess.setProcessing(manager.getChannelModel().getChannels().getFirst(), true);
+            ConfiguredBroadcast configured = manager.getBroadcastModel().getConfiguredBroadcasts().stream()
+                .filter(item->item.getBroadcastConfiguration().getConfigurationId().equals(id)).findFirst().orElseThrow();
+            var sender = new AbstractAudioBroadcaster<BroadcastConfiguration>(configured.getBroadcastConfiguration()) {
+                @Override public void start() {}
+                @Override public void stop() {}
+                @Override public void dispose() {}
+                @Override public void receive(AudioRecording recording) {}
+                @Override public int getAudioQueueSize() { return 0; }
+            };
+            configured.setAudioBroadcaster(sender);
+            sender.setBroadcastState(BroadcastState.CONNECTING);
             assertNotEquals(catalogBaseline,manager.getStreamingConfigurationRevision());
             assertEquals(baseline,streams.get(id).editRevision(), "unrelated edits and runtime events preserve the destination baseline");
             var saved=streams.save(id,"BROADCASTIFY_CALL",Map.of("name","Updated primary"),baseline);
@@ -178,7 +186,7 @@ class StreamingAdministrationServiceTest
             SourceConfigTuner source=new SourceConfigTuner(); source.setFrequency(851_000_000L);
             channel.setSourceConfiguration(source);
             manager.commitAndPublishChannelConfiguration(new ChannelConfigurationSnapshot(List.of(channel)),Set.of(channel.getConfigurationId()),false);
-            var streams=new StreamingAdministrationService(manager,false);
+            var streams=new StreamingAdministrationService(manager);
             String id=streams.save(null,"BROADCASTIFY_CALL_SITE",Map.of("name","County site calls","api_key","fixture-key",
                 "system_id",42,"alias_list_id",listId,"channel_configuration_id",channel.getConfigurationId()),null).configurationId();
             String baseline=streams.get(id).editRevision();
@@ -203,7 +211,7 @@ class StreamingAdministrationServiceTest
         try
         {
             manager.init();
-            var streams=new StreamingAdministrationService(manager,false);
+            var streams=new StreamingAdministrationService(manager);
             String id=streams.save(null,"BROADCASTIFY_CALL",Map.of("name","Calls"),null).configurationId();
             String other=streams.save(null,"BROADCASTIFY_CALL",Map.of("name","Archive"),null).configurationId();
             AliasAdministrationService aliases=AliasAdministrationServiceTestSupport.create(manager);
@@ -240,7 +248,7 @@ class StreamingAdministrationServiceTest
         try
         {
             manager.init();
-            var service=new StreamingAdministrationService(manager,false);
+            var service=new StreamingAdministrationService(manager);
             for(var provider: StreamingConfigurationCodec.providers())
             {
                 assertTrue(service.template(provider.id()).configuredCredentials().isEmpty());

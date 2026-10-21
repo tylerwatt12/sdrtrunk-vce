@@ -36,7 +36,7 @@ import java.util.function.Supplier;
 public final class TunerAdministrationService
 {
     private final Supplier<List<DiscoveredTuner>> mInventory;
-    private final Function<Tuner,String> mSpectrumTargetId;
+    private final Supplier<Function<Tuner,String>> mSpectrumTargets;
     private final TunerSettingsService mSettings;
     private final Function<DiscoveredTuner,Object> mSettingsDescription;
 
@@ -44,28 +44,28 @@ public final class TunerAdministrationService
                                       TunerSettingsService settings)
     {
         this(Objects.requireNonNull(manager).getDiscoveredTunerRegistry()::snapshot,
-            Objects.requireNonNull(diagnostics)::targetIdFor, Objects.requireNonNull(settings), settings::describe);
+            () -> Objects.requireNonNull(diagnostics).targetIds()::get, Objects.requireNonNull(settings), settings::describe);
     }
 
     TunerAdministrationService(Supplier<List<DiscoveredTuner>> inventory,
                                Function<Tuner,String> spectrumTargetId)
     {
-        this(inventory, spectrumTargetId, null, TunerSettingCatalog::describe);
+        this(inventory, () -> spectrumTargetId, null, TunerSettingCatalog::describe);
     }
 
     TunerAdministrationService(Supplier<List<DiscoveredTuner>> inventory,
                                Function<Tuner,String> spectrumTargetId,
                                Function<DiscoveredTuner,Object> settingsDescription)
     {
-        this(inventory, spectrumTargetId, null, settingsDescription);
+        this(inventory, () -> spectrumTargetId, null, settingsDescription);
     }
 
-    private TunerAdministrationService(Supplier<List<DiscoveredTuner>> inventory,
-                                       Function<Tuner,String> spectrumTargetId, TunerSettingsService settings,
+    TunerAdministrationService(Supplier<List<DiscoveredTuner>> inventory,
+                                       Supplier<Function<Tuner,String>> spectrumTargets, TunerSettingsService settings,
                                        Function<DiscoveredTuner,Object> settingsDescription)
     {
         mInventory = Objects.requireNonNull(inventory);
-        mSpectrumTargetId = Objects.requireNonNull(spectrumTargetId);
+        mSpectrumTargets = Objects.requireNonNull(spectrumTargets);
         mSettings = settings;
         mSettingsDescription = Objects.requireNonNull(settingsDescription);
     }
@@ -73,11 +73,12 @@ public final class TunerAdministrationService
     public Snapshot snapshot()
     {
         List<Item> items = new ArrayList<>();
+        Function<Tuner,String> spectrumTargets = mSpectrumTargets.get();
         for(DiscoveredTuner discovered: mInventory.get())
         {
             try
             {
-                items.add(project(discovered));
+                items.add(project(discovered, spectrumTargets));
             }
             catch(RuntimeException ignored)
             {
@@ -87,7 +88,7 @@ public final class TunerAdministrationService
         return new Snapshot(List.copyOf(items));
     }
 
-    public Item item(DiscoveredTuner tuner) { return project(Objects.requireNonNull(tuner)); }
+    public Item item(DiscoveredTuner tuner) { return project(Objects.requireNonNull(tuner), mSpectrumTargets.get()); }
 
     /**
      * Discovered physical SDR profiles for an external RF planner.  Disabled devices use their saved sample rates;
@@ -141,7 +142,7 @@ public final class TunerAdministrationService
             .findFirst().orElse(null);
     }
 
-    private Item project(DiscoveredTuner discovered)
+    private Item project(DiscoveredTuner discovered, Function<Tuner,String> spectrumTargets)
     {
         Tuner tuner = discovered.hasTuner() ? discovered.getTuner() : null;
         TunerConfiguration configuration = discovered.getTunerConfiguration();
@@ -159,7 +160,7 @@ public final class TunerAdministrationService
             tuner.getTunerController() instanceof RecordingTunerController recording ?
             recording.getPlaybackStatus() : tunerType == TunerType.RECORDING ?
             new RecordingTunerController.PlaybackStatus("stopped", 0, 0, 1_500) : null;
-        String spectrumTargetId = diagnosticAvailable ? mSpectrumTargetId.apply(tuner) : null;
+        String spectrumTargetId = diagnosticAvailable ? spectrumTargets.apply(tuner) : null;
         String plannerModel = TunerSettingCatalog.plannerModel(tunerType);
         Planner planner = plannerModel != null && sampleRate != null && sampleRate > 0 ?
             new Planner(plannerModel, sampleRate) : null;
@@ -190,7 +191,8 @@ public final class TunerAdministrationService
             mSettings != null ? mSettings.transition(discovered) : null,
             mSettings != null ? mSettings.stoppedChannels(discovered) : List.of(),
             mSettings != null ? mSettings.restoreResult(discovered) : null,
-            discovered.hasErrorMessage() ? "Tuner error" : null, recordingPlayback);
+            discovered.hasErrorMessage() ? "Tuner error" : null, recordingPlayback,
+            mSettings != null ? mSettings.operation(discovered) : null);
     }
 
     private static String displayName(DiscoveredTuner discovered, Tuner tuner)
@@ -264,5 +266,6 @@ public final class TunerAdministrationService
                        String maintenanceError, String operatorState, String transition,
                        List<TunerSettingsService.ChannelInfo> stoppedChannels,
                        TunerSettingsService.RestoreResult restoreResult, String errorMessage,
-                       RecordingTunerController.PlaybackStatus recordingPlayback) { }
+                       RecordingTunerController.PlaybackStatus recordingPlayback,
+                       TunerSettingsService.OperationStatus operation) { }
 }

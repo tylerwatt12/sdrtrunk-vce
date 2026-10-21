@@ -47,61 +47,61 @@ public final class AliasFactory
                 Dcs original = (Dcs)id;
                 Dcs copy = new Dcs();
                 copy.setDCSCode(original.getDCSCode());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case ESN -> {
                 Esn original = (Esn)id;
                 Esn copy = new Esn();
                 copy.setEsn(original.getEsn());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case P25_FULLY_QUALIFIED_TALKGROUP -> {
                 P25FullyQualifiedTalkgroup original = (P25FullyQualifiedTalkgroup)id;
                 P25FullyQualifiedTalkgroup copy =
                     new P25FullyQualifiedTalkgroup(original.getWacn(), original.getSystem(), original.getValue());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case P25_SUBSCRIBER_IDENTITY -> {
                 P25Subscriber original = (P25Subscriber)id;
                 P25Subscriber copy = new P25Subscriber(original.getHomeWacn(), original.getHomeSystemId(),
                     original.getSubscriberId());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case RADIO_ID -> {
                 Radio original = (Radio)id;
                 Radio copy = new Radio(original.getProtocol(), original.getValue());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case RADIO_ID_RANGE -> {
                 RadioRange original = (RadioRange)id;
                 RadioRange copy =
                     new RadioRange(original.getProtocol(), original.getMinRadio(), original.getMaxRadio());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case STATUS -> {
                 UserStatusID original = (UserStatusID)id;
                 UserStatusID copy = new UserStatusID();
                 copy.setStatus(original.getStatus());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case TALKGROUP -> {
                 Talkgroup original = (Talkgroup)id;
                 Talkgroup copy = new Talkgroup(original.getProtocol(), original.getValue());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case TALKGROUP_RANGE -> {
                 TalkgroupRange original = (TalkgroupRange)id;
                 TalkgroupRange copy = new TalkgroupRange(original.getProtocol(), original.getMinTalkgroup(),
                     original.getMaxTalkgroup());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case TONES -> {
@@ -109,14 +109,14 @@ public final class AliasFactory
                 TonesID copy = new TonesID();
                 copy.setToneSequence(original.getToneSequence() != null ?
                     original.getToneSequence().copyOf() : null);
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             case UNIT_STATUS -> {
                 UnitStatusID original = (UnitStatusID)id;
                 UnitStatusID copy = new UnitStatusID();
                 copy.setStatus(original.getStatus());
-                copy.setOverlap(original.overlapProperty().get());
+                copy.setOverlap(original.isOverlap());
                 yield copy;
             }
             default -> null;

@@ -67,7 +67,7 @@ public class Priority extends AliasID
     public void setPriority(int priority)
     {
         mPriority = priority;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public String toString()

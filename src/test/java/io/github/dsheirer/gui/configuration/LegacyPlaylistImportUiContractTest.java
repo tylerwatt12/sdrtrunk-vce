@@ -59,7 +59,11 @@ class LegacyPlaylistImportUiContractTest
         assertTrue(manager.contains("if(mExternalConfigurationOperation)"));
         assertFalse(manager.contains("applyExternalConfigurationSnapshot"));
         assertFalse(manager.contains("ExternalConfigurationReloadException"));
-        assertTrue(manager.contains("if(hasDirtyConfiguration())"));
+        assertFalse(manager.contains("hasDirtyConfiguration"));
+        String flush = manager.substring(manager.indexOf("public void flushConfiguration()"),
+            manager.indexOf("/** Executes one detached configuration command"));
+        assertTrue(flush.contains("executeConfigurationTask("));
+        assertTrue(flush.contains("if(mExternalConfigurationOperation)"));
         assertFalse(manager.contains("allowDuringExternalOperation"));
     }
 }

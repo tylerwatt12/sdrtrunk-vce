@@ -34,7 +34,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
     private static final String LIBRARY_CLASS = "jmbe.JMBEAudioLibrary";
     private static final String ENABLE_VOICE_QUALITY_METADATA_METHOD = "setVoiceQualityMetadataEnabled";
     private static final String SET_TONE_AUDIO_ENABLED_METHOD = "setToneAudioEnabled";
-    private static final JmbeLibraryLoader INSTANCE = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader(), true);
+    private static final JmbeLibraryLoader INSTANCE = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader());
 
     private final ClassLoader mParentClassLoader;
     private final List<URLClassLoader> mClassLoaders = new ArrayList<>();
@@ -44,14 +44,9 @@ public final class JmbeLibraryLoader implements AutoCloseable
     private boolean mAudioOutputChecked;
     private String mLastError;
 
-    JmbeLibraryLoader(ClassLoader parentClassLoader, boolean registerShutdownHook)
+    JmbeLibraryLoader(ClassLoader parentClassLoader)
     {
         mParentClassLoader = parentClassLoader;
-
-        if(registerShutdownHook)
-        {
-            Runtime.getRuntime().addShutdownHook(new Thread(this::close, "jmbe-library-loader-shutdown"));
-        }
     }
 
     public static JmbeLibraryLoader getInstance()
@@ -62,7 +57,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
     /** Worker-only compatibility check that leaves the active library and its codecs unchanged. */
     public static void validateLibrary(Path libraryPath) throws IOException
     {
-        try(var loader = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader(), false))
+        try(var loader = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader()))
         {
             for(String name: List.of("IMBE", "AMBE 3600 x 2450"))
             {

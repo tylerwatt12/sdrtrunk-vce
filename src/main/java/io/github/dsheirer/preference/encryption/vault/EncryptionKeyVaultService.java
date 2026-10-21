@@ -36,19 +36,14 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.prefs.Preferences;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
 import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
-import javafx.application.Platform;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,11 +69,9 @@ public class EncryptionKeyVaultService
     private final ObjectMapper mObjectMapper = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         .enable(SerializationFeature.INDENT_OUTPUT);
-    private final ObjectProperty<EncryptionKeyVaultState> mState =
-        new SimpleObjectProperty<>(EncryptionKeyVaultState.MISSING);
-    private final StringProperty mStatus = new SimpleStringProperty("Encryption vault missing");
-    private final BooleanProperty mSavedPasswordPresent = new SimpleBooleanProperty(false);
-    private final BooleanProperty mPromptOnLaunch = new SimpleBooleanProperty(false);
+    private volatile Status mStatus = new Status(EncryptionKeyVaultState.MISSING, "Encryption vault missing",
+        false, false);
+    private final CopyOnWriteArrayList<BiConsumer<Status,Status>> mStatusListeners = new CopyOnWriteArrayList<>();
     private List<VoiceEncryptionKey> mKeys = List.of();
     private byte[] mVaultKey;
     private EncryptionKeyVaultState mCurrentState = EncryptionKeyVaultState.MISSING;
@@ -89,10 +82,8 @@ public class EncryptionKeyVaultService
     public EncryptionKeyVaultService(Path vaultPath)
     {
         mVaultPath = Objects.requireNonNull(vaultPath).toAbsolutePath().normalize();
-        mSavedPasswordPresent.set(hasSavedPasswordStored());
-        mPromptOnLaunch.set(mPreferences.getBoolean(KEY_PROMPT_ON_LAUNCH, isVaultInitialized()));
-        mPromptOnLaunch.addListener((observable, oldValue, newValue) ->
-            mPreferences.putBoolean(KEY_PROMPT_ON_LAUNCH, newValue));
+        mStatus = new Status(EncryptionKeyVaultState.MISSING, "Encryption vault missing",
+            hasSavedPasswordStored(), mPreferences.getBoolean(KEY_PROMPT_ON_LAUNCH, isVaultInitialized()));
         refreshState();
     }
 
@@ -101,20 +92,19 @@ public class EncryptionKeyVaultService
         return mVaultPath;
     }
 
-    public ObjectProperty<EncryptionKeyVaultState> stateProperty()
+    public Status statusSnapshot() { return mStatus; }
+    public String getStatus() { return mStatus.message(); }
+
+    /** Control-plane status only. Key material is never included in a presentation snapshot. */
+    public void addStatusListener(BiConsumer<Status,Status> listener)
     {
-        return mState;
+        mStatusListeners.addIfAbsent(Objects.requireNonNull(listener));
     }
 
-    public StringProperty statusProperty()
-    {
-        return mStatus;
-    }
+    public void removeStatusListener(BiConsumer<Status,Status> listener) { mStatusListeners.remove(listener); }
 
-    public BooleanProperty savedPasswordPresentProperty()
-    {
-        return mSavedPasswordPresent;
-    }
+    public record Status(EncryptionKeyVaultState state, String message, boolean savedPasswordPresent,
+                         boolean promptOnLaunch) {}
 
     public synchronized EncryptionKeyVaultState getState()
     {
@@ -133,17 +123,20 @@ public class EncryptionKeyVaultService
 
     public boolean isPromptOnLaunch()
     {
-        return mPromptOnLaunch.get();
+        return mStatus.promptOnLaunch();
     }
 
-    public void setPromptOnLaunch(boolean promptOnLaunch)
+    public synchronized void setPromptOnLaunch(boolean promptOnLaunch)
     {
-        mPromptOnLaunch.set(promptOnLaunch);
+        Status current = mStatus;
+        if(current.promptOnLaunch() == promptOnLaunch) return;
+        mPreferences.putBoolean(KEY_PROMPT_ON_LAUNCH, promptOnLaunch);
+        publishStatus(new Status(current.state(), current.message(), current.savedPasswordPresent(), promptOnLaunch));
     }
 
     public boolean hasSavedPassword()
     {
-        return mSavedPasswordPresent.get();
+        return mStatus.savedPasswordPresent();
     }
 
     public synchronized List<VoiceEncryptionKey> getKeys()
@@ -360,7 +353,8 @@ public class EncryptionKeyVaultService
     public synchronized void forgetSavedPassword()
     {
         mPreferences.remove(KEY_SAVED_PASSWORD);
-        mSavedPasswordPresent.set(false);
+        Status current = mStatus;
+        publishStatus(new Status(current.state(), current.message(), false, current.promptOnLaunch()));
     }
 
     public synchronized void exportVault(Path destination) throws EncryptionKeyVaultException
@@ -683,33 +677,25 @@ public class EncryptionKeyVaultService
     private void savePassword(char[] password)
     {
         mPreferences.put(KEY_SAVED_PASSWORD, new String(password));
-        mSavedPasswordPresent.set(true);
+        Status current = mStatus;
+        publishStatus(new Status(current.state(), current.message(), true, current.promptOnLaunch()));
     }
 
     private void setState(EncryptionKeyVaultState state, String status)
     {
         mCurrentState = state;
+        publishStatus(new Status(state, status, hasSavedPasswordStored(), mStatus.promptOnLaunch()));
+    }
 
-        Runnable updater = () -> {
-            mState.set(state);
-            mStatus.set(status);
-            mSavedPasswordPresent.set(hasSavedPasswordStored());
-        };
-
-        try
+    private void publishStatus(Status next)
+    {
+        Status previous = mStatus;
+        mStatus = next;
+        if(previous.equals(next)) return;
+        for(BiConsumer<Status,Status> listener: mStatusListeners)
         {
-            if(Platform.isFxApplicationThread())
-            {
-                updater.run();
-            }
-            else
-            {
-                Platform.runLater(updater);
-            }
-        }
-        catch(IllegalStateException e)
-        {
-            updater.run();
+            try { listener.accept(previous, next); }
+            catch(RuntimeException failure) { mLog.warn("Encryption vault status observer failed"); }
         }
     }
 

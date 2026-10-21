@@ -113,19 +113,13 @@ public class ChannelEvent
         NOTIFICATION_PROCESSING_START,
         //Channel has stopped processing/decoding
         NOTIFICATION_PROCESSING_STOP,
-        //Channel's selection state has changed
-        NOTIFICATION_SELECTION_CHANGE,
         //Channel's channel-state has been reset
         NOTIFICATION_STATE_RESET,
         //Request to delete the channel
         REQUEST_DELETE,
-        //Request to deselect the channel
-        REQUEST_DESELECT,
         //Request to disable a channel - response will be a PROCESSING_STOP_NOTIFICATION
         REQUEST_DISABLE,
         //Request to enable a channel - response will be a PROCESSING_START_NOTIFICATION
-        REQUEST_ENABLE,
-        //Request to select the channel
-        REQUEST_SELECT;
+        REQUEST_ENABLE;
     }
 }

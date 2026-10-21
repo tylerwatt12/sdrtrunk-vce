@@ -18,13 +18,12 @@
  ******************************************************************************/
 package io.github.dsheirer.audio.broadcast.icecast;
 
+import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 
 import java.util.Base64;
 
@@ -36,7 +35,7 @@ import java.util.Base64;
 public abstract class IcecastConfiguration extends BroadcastConfiguration
 {
     protected String mUserName = "source";
-    protected StringProperty mMountPoint = new SimpleStringProperty("/stream");
+    protected String mMountPoint = "/stream";
     private String mDescription;
     private String mGenre;
     private boolean mPublic;
@@ -100,7 +99,7 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
      */
     public String getMountPoint()
     {
-        return mMountPoint.get();
+        return mMountPoint;
     }
 
     /**
@@ -114,18 +113,26 @@ public abstract class IcecastConfiguration extends BroadcastConfiguration
         {
             if(mountPoint.startsWith("/"))
             {
-                mMountPoint.setValue(mountPoint);
+                if(!Objects.equals(mMountPoint, mountPoint))
+                {
+                    mMountPoint = mountPoint;
+                    notifyChanged();
+                }
             }
             else
             {
-                mMountPoint.setValue("/" + mountPoint);
+                if(!Objects.equals(mMountPoint, "/" + mountPoint))
+                {
+                    mMountPoint = "/" + mountPoint;
+                    notifyChanged();
+                }
             }
         }
     }
 
     public boolean hasMountPoint()
     {
-        return mMountPoint.get() != null;
+        return mMountPoint != null;
     }
 
     public String getDescription()

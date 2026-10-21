@@ -19,14 +19,10 @@
 
 package io.github.dsheirer.audio.broadcast.rdioscanner;
 
+import java.util.Objects;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import javafx.beans.binding.Bindings;
-import javafx.beans.property.IntegerProperty;
-import javafx.beans.property.SimpleIntegerProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 
 /**
  * Streaming configuration for Rdio Scanner API.
@@ -36,8 +32,8 @@ import javafx.beans.property.StringProperty;
  */
 public class RdioScannerConfiguration extends BroadcastConfiguration
 {
-    private IntegerProperty mSystemID = new SimpleIntegerProperty();
-    private StringProperty mApiKey = new SimpleStringProperty();
+    private int mSystemID = 0;
+    private String mApiKey = null;
 
     /**
      * Constructor for faster jackson
@@ -55,31 +51,10 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
     {
         super(format);
 
-        //The parent class binds this property, so we unbind it and rebind it here
-        mValid.unbind();
-        mValid.bind(Bindings.and(Bindings.and(Bindings.greaterThan(mSystemID, 0), Bindings.isNotNull(mApiKey)),
-            Bindings.isNotNull(mHost)));
-
-        if(mHost.getValue() == null || mHost.getValue().isEmpty())
+        if(getHost() == null || getHost().isEmpty())
         {
-            mHost.set("http://localhost");
+            setHost("http://localhost");
         }
-    }
-
-    /**
-     * System ID as a property
-     */
-    public IntegerProperty systemIDProperty()
-    {
-        return mSystemID;
-    }
-
-    /**
-     * API key as a property
-     */
-    public StringProperty apiKeyProperty()
-    {
-        return mApiKey;
     }
 
     /**
@@ -87,7 +62,7 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
      */
     public String getApiKey()
     {
-        return mApiKey.get();
+        return mApiKey;
     }
 
     /**
@@ -96,7 +71,11 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
      */
     public void setApiKey(String apiKey)
     {
-        mApiKey.setValue(apiKey);
+        if(!Objects.equals(mApiKey, apiKey))
+        {
+            mApiKey = apiKey;
+            notifyChanged();
+        }
     }
 
     /**
@@ -104,7 +83,7 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
      */
     public int getSystemID()
     {
-        return mSystemID.get();
+        return mSystemID;
     }
 
     /**
@@ -112,7 +91,11 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
      */
     public void setSystemID(int systemID)
     {
-        mSystemID.set(systemID);
+        if(!Objects.equals(mSystemID, systemID))
+        {
+            mSystemID = systemID;
+            notifyChanged();
+        }
     }
 
     @Override
@@ -127,5 +110,10 @@ public class RdioScannerConfiguration extends BroadcastConfiguration
         RdioScannerConfiguration copy = new RdioScannerConfiguration();
         copy.setSystemID(getSystemID());
         return copy;
+    }
+    @Override
+    public boolean isValid()
+    {
+        return getSystemID() > 0 && getApiKey() != null && getHost() != null;
     }
 }

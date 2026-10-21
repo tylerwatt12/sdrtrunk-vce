@@ -46,7 +46,7 @@ public class P25Subscriber extends AliasID
     public void setHomeWacn(int homeWacn)
     {
         mHomeWacn = homeWacn;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public int getHomeSystemId()
@@ -57,7 +57,7 @@ public class P25Subscriber extends AliasID
     public void setHomeSystemId(int homeSystemId)
     {
         mHomeSystemId = homeSystemId;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public int getSubscriberId()
@@ -68,7 +68,7 @@ public class P25Subscriber extends AliasID
     public void setSubscriberId(int subscriberId)
     {
         mSubscriberId = subscriberId;
-        updateValueProperty();
+        notifyChanged();
     }
 
     public P25SubscriberIdentity identity()

@@ -44,11 +44,8 @@ import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
-import javafx.beans.Observable;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.util.Callback;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
@@ -78,29 +75,18 @@ import javafx.util.Callback;
 @JacksonXmlRootElement(localName = "id")
 public abstract class AliasID
 {
-    private SimpleStringProperty mValueProperty = new SimpleStringProperty();
-    private BooleanProperty mOverlapProperty = new SimpleBooleanProperty();
+    private boolean mOverlap;
+    private final List<Runnable> mChangeListeners = new CopyOnWriteArrayList<>();
 
     protected AliasID()
     {
     }
 
-    /**
-     * String property representation of this alias ID
-     */
+    /** Whether this matcher overlaps another matcher in its Alias List. */
     @JsonIgnore
-    public SimpleStringProperty valueProperty()
+    public boolean isOverlap()
     {
-        return mValueProperty;
-    }
-
-    /**
-     * Indicates if this alias identifier overlaps with any other alias identifier in the same alias list
-     */
-    @JsonIgnore
-    public BooleanProperty overlapProperty()
-    {
-        return mOverlapProperty;
+        return mOverlap;
     }
 
     /**
@@ -109,28 +95,16 @@ public abstract class AliasID
      */
     public void setOverlap(boolean overlap)
     {
-        mOverlapProperty.set(overlap);
-        updateValueProperty();
+        if(mOverlap != overlap)
+        {
+            mOverlap = overlap;
+            notifyChanged();
+        }
     }
 
-    /**
-     * Updates the value property for this alias ID.  Note: this method is intended to be invoked by all subclasses
-     * each time that any of the subclass member variable values change.
-     */
-    public void updateValueProperty()
-    {
-        if(overlapProperty().get())
-        {
-            valueProperty().set(toString() + " - Error: Overlap");
-        }
-        else
-        {
-            valueProperty().set(toString());
-        }
-
-        //Hack: harmless, but the list extractor does not consistently update unless we do this.
-        valueProperty().get();
-    }
+    public void addChangeListener(Runnable listener) { mChangeListeners.add(listener); }
+    public void removeChangeListener(Runnable listener) { mChangeListeners.remove(listener); }
+    protected final void notifyChanged() { mChangeListeners.forEach(Runnable::run); }
 
     @JsonIgnore
     public abstract AliasIDType getType();
@@ -140,11 +114,4 @@ public abstract class AliasID
     @JsonIgnore
     public abstract boolean isValid();
 
-    /**
-     * Creates an observable property extractor for use with observable lists to detect changes internal to this object.
-     */
-    public static Callback<AliasID,Observable[]> extractor()
-    {
-        return (AliasID aid) -> new Observable[] {aid.valueProperty(), aid.overlapProperty()};
-    }
 }

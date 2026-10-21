@@ -19,16 +19,10 @@
 
 package io.github.dsheirer.audio.broadcast.broadcastify;
 
+import java.util.Objects;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import javafx.beans.binding.Bindings;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.IntegerProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleIntegerProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 
 /**
  * Streaming configuration for Broadcastify Calls API.
@@ -40,10 +34,10 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
 {
     public static final String PRODUCTION_ENDPOINT = "https://api.broadcastify.com/call-upload";
 
-    private IntegerProperty mSystemID = new SimpleIntegerProperty();
-    private StringProperty mApiKey = new SimpleStringProperty();
-    private BooleanProperty mTestEnabled= new SimpleBooleanProperty(false);
-    private IntegerProperty mTestInterval = new SimpleIntegerProperty(15);
+    private int mSystemID = 0;
+    private String mApiKey = null;
+    private boolean mTestEnabled = false;
+    private int mTestInterval = 15;
 
     /**
      * Constructor for faster jackson
@@ -65,27 +59,6 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
         {
             setHost(PRODUCTION_ENDPOINT);
         }
-
-        //The parent class binds this property, so we unbind it and rebind it here
-        mValid.unbind();
-        mValid.bind(Bindings.and(Bindings.and(Bindings.greaterThan(mSystemID, 0), Bindings.isNotNull(mApiKey)),
-            Bindings.isNotNull(mHost)));
-    }
-
-    /**
-     * System ID as a property
-     */
-    public IntegerProperty systemIDProperty()
-    {
-        return mSystemID;
-    }
-
-    /**
-     * API key as a property
-     */
-    public StringProperty apiKeyProperty()
-    {
-        return mApiKey;
     }
 
     /**
@@ -93,7 +66,7 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
      */
     public String getApiKey()
     {
-        return mApiKey.get();
+        return mApiKey;
     }
 
     /**
@@ -102,7 +75,11 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
      */
     public void setApiKey(String apiKey)
     {
-        mApiKey.setValue(apiKey);
+        if(!Objects.equals(mApiKey, apiKey))
+        {
+            mApiKey = apiKey;
+            notifyChanged();
+        }
     }
 
     /**
@@ -110,7 +87,7 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
      */
     public int getSystemID()
     {
-        return mSystemID.get();
+        return mSystemID;
     }
 
     /**
@@ -118,7 +95,11 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
      */
     public void setSystemID(int systemID)
     {
-        mSystemID.set(systemID);
+        if(!Objects.equals(mSystemID, systemID))
+        {
+            mSystemID = systemID;
+            notifyChanged();
+        }
     }
 
     @Override
@@ -132,12 +113,16 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
      */
     public boolean isTestEnabled()
     {
-        return mTestEnabled.get();
+        return mTestEnabled;
     }
 
     public void setTestEnabled(boolean enabled)
     {
-        mTestEnabled.set(enabled);
+        if(!Objects.equals(mTestEnabled, enabled))
+        {
+            mTestEnabled = enabled;
+            notifyChanged();
+        }
     }
 
     /**
@@ -145,12 +130,16 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
      */
     public int getTestInterval()
     {
-        return mTestInterval.get();
+        return mTestInterval;
     }
 
     public void setTestInterval(int interval)
     {
-        mTestInterval.set(interval);
+        if(!Objects.equals(mTestInterval, interval))
+        {
+            mTestInterval = interval;
+            notifyChanged();
+        }
     }
 
     @Override
@@ -159,5 +148,10 @@ public class BroadcastifyCallConfiguration extends BroadcastConfiguration
         BroadcastifyCallConfiguration copy = new BroadcastifyCallConfiguration();
         copy.setSystemID(getSystemID());
         return copy;
+    }
+    @Override
+    public boolean isValid()
+    {
+        return getSystemID() > 0 && getApiKey() != null && getHost() != null;
     }
 }

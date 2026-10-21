@@ -30,6 +30,7 @@ import java.net.URI;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import javafx.application.Platform;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -305,18 +306,25 @@ public class StatusBox extends VBox
 
         if(mModuleManager != null)
         {
-            mModuleManager.loadedProperty().addListener((observable, oldValue, loaded) -> {
-                separator.setVisible(loaded);
-                separator.setManaged(loaded);
-                mVaultStatusBox.setVisible(loaded);
-                mVaultStatusBox.setManaged(loaded);
+            mModuleManager.addStatusListener((previous, current) -> {
+                if(previous.loaded() == current.loaded()) return;
+                updateOnFx(() -> {
+                    separator.setVisible(current.loaded());
+                    separator.setManaged(current.loaded());
+                    mVaultStatusBox.setVisible(current.loaded());
+                    mVaultStatusBox.setManaged(current.loaded());
+                });
             });
         }
 
-        mVaultService.stateProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
-        mVaultService.statusProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
-        mVaultService.savedPasswordPresentProperty().addListener((observable, oldValue, newValue) -> updateVaultStatus());
+        mVaultService.addStatusListener((previous, current) -> updateOnFx(this::updateVaultStatus));
         updateVaultStatus();
+    }
+
+    private static void updateOnFx(Runnable update)
+    {
+        if(Platform.isFxApplicationThread()) update.run();
+        else Platform.runLater(update);
     }
 
     private HBox createCell(double width)
@@ -453,6 +461,6 @@ public class StatusBox extends VBox
         }
 
         String saved = mVaultService.hasSavedPassword() ? " Saved password enabled: unsafe." : "";
-        mVaultTooltip.setText(mVaultService.statusProperty().get() + "." + saved + " Click to manage encryption keys.");
+        mVaultTooltip.setText(mVaultService.getStatus() + "." + saved + " Click to manage encryption keys.");
     }
 }

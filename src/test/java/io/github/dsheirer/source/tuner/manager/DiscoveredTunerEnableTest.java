@@ -17,12 +17,63 @@ import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.test.TestTunerController;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class DiscoveredTunerEnableTest
 {
+    @Test
+    void discoveryIsAnExplicitStartConfigurePublishCommandAndStatusObserversDoNotStartHardware()
+    {
+        TrackingController controller = new TrackingController(false);
+        TestDiscoveredTuner discovered = new TestDiscoveredTuner(controller, false);
+        AirspyTunerConfiguration configuration = configuration();
+        AtomicBoolean publishedReady = new AtomicBoolean();
+        discovered.configureOnStart(tuner -> configuration);
+        discovered.addTunerStatusListener((tuner, previous, current) -> {
+            if(current == TunerStatus.ENABLED)
+                publishedReady.set(controller.mConfigurationApplied && controller.mApplyCount == 1);
+        });
+
+        assertTrue(discovered.startConfigured());
+        assertTrue(publishedReady.get());
+        assertEquals(configuration, discovered.getTunerConfiguration());
+        assertEquals(1, discovered.mStartCount);
+
+        TunerConfigurationManager observer = new TunerConfigurationManager()
+        {
+            @Override public void tunerStatusUpdated(DiscoveredTuner tuner, TunerStatus previous, TunerStatus current) {}
+        };
+        TunerManager manager = new TunerManager(null, observer);
+        manager.tunerStatusUpdated(discovered, TunerStatus.DISABLED, TunerStatus.ENABLED);
+        assertEquals(1, discovered.mStartCount, "a notification cannot command a second hardware startup");
+        assertEquals(1, controller.mApplyCount);
+
+        discovered.setTunerConfiguration(configuration());
+        assertEquals(1, controller.mApplyCount, "assigning saved values is not an implicit hardware command");
+        discovered.stop();
+    }
+
+    @Test
+    void failedInitialConfigurationNeverPublishesEnabled()
+    {
+        TrackingController controller = new TrackingController(true);
+        TestDiscoveredTuner discovered = new TestDiscoveredTuner(controller, false);
+        discovered.configureOnStart(tuner -> configuration());
+        AtomicBoolean enabled = new AtomicBoolean();
+        discovered.addTunerStatusListener((tuner, previous, current) -> {
+            if(current == TunerStatus.ENABLED) enabled.set(true);
+        });
+        assertFalse(discovered.startConfigured());
+        assertFalse(enabled.get());
+        assertFalse(discovered.isEnabled());
+        assertFalse(discovered.isAvailableForAllocation());
+        assertFalse(discovered.hasTuner());
+        assertEquals(1, controller.mApplyCount);
+    }
+
     @Test
     void restoresConfigurationBeforeAdvertisingTunerAsAvailable()
     {
@@ -123,11 +174,17 @@ class DiscoveredTunerEnableTest
     private static class TestDiscoveredTuner extends DiscoveredTuner
     {
         private final TrackingController mController;
+        private int mStartCount;
 
         private TestDiscoveredTuner(TrackingController controller)
         {
+            this(controller, true);
+        }
+
+        private TestDiscoveredTuner(TrackingController controller, boolean disabled)
+        {
             mController = controller;
-            setEnabled(false);
+            if(disabled) setEnabled(false);
         }
 
         @Override
@@ -145,6 +202,7 @@ class DiscoveredTunerEnableTest
         @Override
         public void start()
         {
+            mStartCount++;
             if(isEnabled() && !hasTuner())
             {
                 mTuner = new TestTuner(mController, this);

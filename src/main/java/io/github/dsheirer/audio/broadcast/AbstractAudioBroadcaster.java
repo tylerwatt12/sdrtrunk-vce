@@ -20,8 +20,6 @@
 package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.sample.Listener;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.SimpleObjectProperty;
 
 /**
  * Base Audio Broadcaster class
@@ -30,8 +28,9 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
 {
     private Listener<BroadcastEvent> mBroadcastEventListener;
     private T mBroadcastConfiguration;
-    protected ObjectProperty<BroadcastState> mBroadcastState = new SimpleObjectProperty<>(BroadcastState.READY);
-    protected ObjectProperty<BroadcastState> mLastBadBroadcastState = new SimpleObjectProperty<>();
+    public record StateSnapshot(BroadcastState state, BroadcastState lastBadState) {}
+    private volatile StateSnapshot mState = new StateSnapshot(BroadcastState.READY, null);
+    private final java.util.List<Runnable> mStateListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     protected volatile int mStreamedAudioCount = 0;
     protected volatile int mErrorAudioCount = 0;
     protected volatile int mAgedOffAudioCount = 0;
@@ -45,28 +44,16 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
         mBroadcastConfiguration = broadcastConfiguration;
     }
 
-    /**
-     * Observable broadcast state property
-     */
-    public ObjectProperty<BroadcastState> broadcastStateProperty()
-    {
-        return mBroadcastState;
-    }
-
-    /**
-     * Observable last bad broadcast state property
-     */
-    public ObjectProperty<BroadcastState> lastBadBroadcastStateProperty()
-    {
-        return mLastBadBroadcastState;
-    }
+    public void addStateChangeListener(Runnable listener) { mStateListeners.add(listener); }
+    public void removeStateChangeListener(Runnable listener) { mStateListeners.remove(listener); }
+    public StateSnapshot getStateSnapshot() { return mState; }
 
     /**
      * Current state of the broadcastAudio connection
      */
     public BroadcastState getBroadcastState()
     {
-        return mBroadcastState.get();
+        return mState.state();
     }
 
     /**
@@ -74,15 +61,13 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
      */
     public void setBroadcastState(BroadcastState broadcastState)
     {
-        if(broadcastState == BroadcastState.CONNECTED)
-        {
-            mLastBadBroadcastState.setValue(null);
-        }
-        else if(broadcastState.isErrorState() || broadcastState.isWarningState())
-        {
-            mLastBadBroadcastState.setValue(broadcastState);
-        }
-        mBroadcastState.setValue(broadcastState);
+        StateSnapshot previous = mState;
+        BroadcastState lastBad = previous.lastBadState();
+        if(broadcastState == BroadcastState.CONNECTED) lastBad = null;
+        else if(broadcastState.isErrorState() || broadcastState.isWarningState()) lastBad = broadcastState;
+        StateSnapshot current = new StateSnapshot(broadcastState, lastBad);
+        mState = current;
+        if(!current.equals(previous)) mStateListeners.forEach(Runnable::run);
         broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STATE_CHANGE));
     }
 
@@ -91,7 +76,7 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
      */
     public BroadcastState getLastBadBroadcastState()
     {
-        return mLastBadBroadcastState.get();
+        return mState.lastBadState();
     }
 
     /**

@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.UnaryOperator;
-import javafx.collections.ListChangeListener;
+import java.util.function.Consumer;
 
 /**
  * Receiver-owned remote link control plane.  Runtime identities and discovery are kept separate from host-owned
@@ -95,9 +95,12 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final Set<String> mCatalogSetupRunning = ConcurrentHashMap.newKeySet();
     private final Object mChannelIndexLock = new Object();
     private final Listener<ChannelEvent> mSavedChannelListener = this::indexSavedChannel;
-    private final ListChangeListener<AliasListDefinition> mAliasListListener = change ->
+    private final Consumer<io.github.dsheirer.alias.AliasModel.Change> mAliasListListener = change ->
     {
-        for(String senderId: mPeers.keySet()) scheduleCatalogSetup(senderId);
+        if(change.definitionsChanged())
+        {
+            for(String senderId: mPeers.keySet()) scheduleCatalogSetup(senderId);
+        }
     };
     private volatile Map<String,SavedChannel> mSavedChannels = Map.of();
     private final AtomicBoolean mClosed = new AtomicBoolean();
@@ -132,7 +135,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         mStore = new RemoteLinkSettingsStore(configuration.getDatabasePath());
         mSettings = mStore.load();
         mConfiguration.getChannelModel().addListener(mSavedChannelListener);
-        mConfiguration.getAliasModel().aliasListDefinitions().addListener(mAliasListListener);
+        mConfiguration.getAliasModel().addChangeListener(mAliasListListener);
         mPublisher = Thread.ofPlatform().daemon().name("remote-p25-publisher").unstarted(this::publishLoop);
         mConnector = Thread.ofPlatform().daemon().name("remote-p25-connector").unstarted(this::connectLoop);
     }
@@ -1672,7 +1675,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             if(outbound != null) outbound.close();
             for(PeerState peer: mPeers.values()) if(peer.connection != null) peer.connection.close();
             mConfiguration.getChannelModel().removeListener(mSavedChannelListener);
-            mConfiguration.getAliasModel().aliasListDefinitions().removeListener(mAliasListListener);
+            mConfiguration.getAliasModel().removeChangeListener(mAliasListListener);
             refreshExports();
             mConnector.interrupt();
             mPublisher.interrupt();

@@ -24,7 +24,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyFeedConfiguration;
-import javafx.beans.binding.Bindings;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
@@ -45,9 +44,6 @@ public class IcecastTCPConfiguration extends IcecastConfiguration
     public IcecastTCPConfiguration(BroadcastFormat format)
     {
         super(format);
-
-        mValid.bind(Bindings.and(Bindings.and(Bindings.isNotNull(mHost), Bindings.greaterThan(mPort, 0)),
-            Bindings.isNotNull(mMountPoint)));
     }
 
     @Override
@@ -79,5 +75,10 @@ public class IcecastTCPConfiguration extends IcecastConfiguration
     public BroadcastServerType getBroadcastServerType()
     {
         return BroadcastServerType.ICECAST_TCP;
+    }
+    @Override
+    public boolean isValid()
+    {
+        return getHost() != null && getPort() > 0 && getMountPoint() != null;
     }
 }

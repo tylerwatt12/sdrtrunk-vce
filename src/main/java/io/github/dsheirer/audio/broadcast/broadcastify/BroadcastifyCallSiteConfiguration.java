@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.audio.broadcast.broadcastify;
 
+import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
@@ -28,11 +29,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import javafx.beans.binding.Bindings;
-import javafx.beans.property.LongProperty;
-import javafx.beans.property.SimpleLongProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 
 /**
  * Broadcastify Calls configuration that restricts delivery to calls observed by one saved trunked-site channel.
@@ -40,8 +36,8 @@ import javafx.beans.property.StringProperty;
  */
 public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfiguration
 {
-    private final LongProperty mAliasListId = new SimpleLongProperty(AliasListDefinition.UNASSIGNED_ID);
-    private final StringProperty mChannelConfigurationId = new SimpleStringProperty();
+    private long mAliasListId = AliasListDefinition.UNASSIGNED_ID;
+    private String mChannelConfigurationId = null;
 
     /**
      * Constructor for Jackson.
@@ -57,38 +53,27 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
     public BroadcastifyCallSiteConfiguration(BroadcastFormat format)
     {
         super(format);
-
-        //The parent owns this property, so replace its base Calls binding with the stricter site-provider contract.
-        mValid.unbind();
-        mValid.bind(Bindings.createBooleanBinding(() -> getSystemID() > 0 && getApiKey() != null &&
-                getHost() != null && hasSiteSelection(), systemIDProperty(), apiKeyProperty(), hostProperty(),
-            mAliasListId, mChannelConfigurationId));
-    }
-
-    public LongProperty aliasListIdProperty()
-    {
-        return mAliasListId;
     }
 
     public long getAliasListId()
     {
-        return mAliasListId.get();
+        return mAliasListId;
     }
 
     public void setAliasListId(long aliasListId)
     {
-        mAliasListId.set(aliasListId > AliasListDefinition.UNASSIGNED_ID ? aliasListId :
-            AliasListDefinition.UNASSIGNED_ID);
-    }
-
-    public StringProperty channelConfigurationIdProperty()
-    {
-        return mChannelConfigurationId;
+        if(!Objects.equals(mAliasListId, aliasListId > AliasListDefinition.UNASSIGNED_ID ? aliasListId :
+            AliasListDefinition.UNASSIGNED_ID))
+        {
+            mAliasListId = aliasListId > AliasListDefinition.UNASSIGNED_ID ? aliasListId :
+            AliasListDefinition.UNASSIGNED_ID;
+            notifyChanged();
+        }
     }
 
     public String getChannelConfigurationId()
     {
-        return mChannelConfigurationId.get();
+        return mChannelConfigurationId;
     }
 
     /**
@@ -104,7 +89,11 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
             normalized = UUID.fromString(normalized).toString();
         }
 
-        mChannelConfigurationId.set(normalized);
+        if(!Objects.equals(mChannelConfigurationId, normalized))
+        {
+            mChannelConfigurationId = normalized;
+            notifyChanged();
+        }
     }
 
     /**
@@ -231,5 +220,10 @@ public class BroadcastifyCallSiteConfiguration extends BroadcastifyCallConfigura
         copy.setAliasListId(getAliasListId());
         copy.setChannelConfigurationId(getChannelConfigurationId());
         return copy;
+    }
+    @Override
+    public boolean isValid()
+    {
+        return super.isValid() && hasSiteSelection();
     }
 }

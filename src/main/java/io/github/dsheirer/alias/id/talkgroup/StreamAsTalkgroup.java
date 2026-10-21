@@ -34,7 +34,7 @@ public class StreamAsTalkgroup extends Talkgroup
     public StreamAsTalkgroup(int talkgroup)
     {
         super(Protocol.UNKNOWN, talkgroup);
-        updateValueProperty();
+        notifyChanged();
     }
 
     public StreamAsTalkgroup()

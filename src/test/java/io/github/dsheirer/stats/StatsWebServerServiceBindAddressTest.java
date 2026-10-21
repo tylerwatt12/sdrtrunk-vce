@@ -31,8 +31,8 @@ class StatsWebServerServiceBindAddressTest
     @Test
     void selectsLoopbackOrWildcardBinding()
     {
-        InetSocketAddress localOnly = StatsWebServerService.createBindAddress(8090, false);
-        InetSocketAddress anyIp = StatsWebServerService.createBindAddress(8090, true);
+        InetSocketAddress localOnly = WebListener.createBindAddress(8090, false);
+        InetSocketAddress anyIp = WebListener.createBindAddress(8090, true);
 
         assertTrue(localOnly.getAddress().isLoopbackAddress());
         assertEquals("127.0.0.1", localOnly.getAddress().getHostAddress());
@@ -80,7 +80,7 @@ class StatsWebServerServiceBindAddressTest
     @Test
     void validatesLiveDecoderEventScope()
     {
-        DecodeEventViewService.Scope scope = StatsWebServerService.decodeEventScope(URI.create(
+        DecodeEventViewService.Scope scope = decodeEventScope(URI.create(
             "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2" +
                 "&subscription_id=00000000-0000-0000-0000-000000000002"));
@@ -89,10 +89,10 @@ class StatsWebServerServiceBindAddressTest
         assertEquals(851_012_500L, scope.frequencyHz());
         assertEquals(2, scope.timeslot());
         assertThrows(StatsApiException.class,
-            () -> StatsWebServerService.decodeEventScope(URI.create("/multiplex/decode-events")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(URI.create(
+            () -> decodeEventScope(URI.create("/multiplex/decode-events")));
+        assertThrows(StatsApiException.class, () -> decodeEventScope(URI.create(
             "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001&timeslot=0")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(URI.create(
+        assertThrows(StatsApiException.class, () -> decodeEventScope(URI.create(
             "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&subscription_id=not-a-uuid")));
     }
@@ -100,7 +100,7 @@ class StatsWebServerServiceBindAddressTest
     @Test
     void validatesExactChannelDiagnosticScope()
     {
-        ChannelDiagnosticService.Scope scope = StatsWebServerService.channelDiagnosticScope(URI.create(
+        ChannelDiagnosticService.Scope scope = channelDiagnosticScope(URI.create(
             "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2" +
                 "&subscription_id=00000000-0000-0000-0000-000000000003"));
@@ -108,10 +108,10 @@ class StatsWebServerServiceBindAddressTest
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
         assertEquals(2, scope.timeslot());
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
+        assertThrows(StatsApiException.class, () -> channelDiagnosticScope(URI.create(
             "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&timeslot=2")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
+        assertThrows(StatsApiException.class, () -> channelDiagnosticScope(URI.create(
             "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&subscription_id=not-a-uuid")));
     }
@@ -119,19 +119,19 @@ class StatsWebServerServiceBindAddressTest
     @Test
     void validatesExactDecodeMessageScope()
     {
-        DecodeMessageViewService.Scope scope = StatsWebServerService.decodeMessageScope(URI.create(
+        DecodeMessageViewService.Scope scope = decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500" +
                 "&subscription_id=00000000-0000-0000-0000-000000000004"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
+        assertThrows(StatsApiException.class, () -> decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
+        assertThrows(StatsApiException.class, () -> decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
+        assertThrows(StatsApiException.class, () -> decodeMessageScope(URI.create(
             "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&subscription_id=not-a-uuid")));
     }
@@ -141,10 +141,10 @@ class StatsWebServerServiceBindAddressTest
     {
         String aggregate = "?scope=conventional&subscription_id=00000000-0000-0000-0000-000000000005";
         assertEquals(DecodeEventViewService.Mode.CONVENTIONAL,
-            StatsWebServerService.decodeEventScope(URI.create("/multiplex/decode-events" + aggregate)).mode());
-        assertTrue(StatsWebServerService.decodeMessageScope(
+            decodeEventScope(URI.create("/multiplex/decode-events" + aggregate)).mode());
+        assertTrue(decodeMessageScope(
             URI.create("/multiplex/decode-messages" + aggregate)).aggregate());
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(
+        assertThrows(StatsApiException.class, () -> channelDiagnosticScope(
             URI.create("/multiplex/channel-diagnostics" + aggregate)));
 
         for(String invalid: List.of("scope=all", "scope=trunked", "scope=conventional&scope=conventional",
@@ -154,9 +154,9 @@ class StatsWebServerServiceBindAddressTest
             "scope=conventional&timeslot=", "scope=conventional&subscription_id=not-a-uuid",
             "scope=conventional&unknown=true"))
         {
-            assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(
+            assertThrows(StatsApiException.class, () -> decodeEventScope(
                 URI.create("/multiplex/decode-events?" + invalid)), invalid);
-            assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(
+            assertThrows(StatsApiException.class, () -> decodeMessageScope(
                 URI.create("/multiplex/decode-messages?" + invalid)), invalid);
         }
     }
@@ -296,6 +296,42 @@ class StatsWebServerServiceBindAddressTest
             headers.getFirst("Content-Disposition"));
         assertEquals("no-store", headers.getFirst("Cache-Control"));
         assertEquals("nosniff", headers.getFirst("X-Content-Type-Options"));
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode parameters(URI uri)
+    {
+        var object = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+        String query = uri.getRawQuery();
+        if(query != null) for(String pair: query.split("&"))
+        {
+            String[] parts = pair.split("=", 2);
+            String key = java.net.URLDecoder.decode(parts[0], java.nio.charset.StandardCharsets.UTF_8);
+            String value = parts.length == 2 ?
+                java.net.URLDecoder.decode(parts[1], java.nio.charset.StandardCharsets.UTF_8) : "";
+            var previous = object.get(key);
+            if(previous == null) object.put(key, value);
+            else if(previous.isArray()) ((com.fasterxml.jackson.databind.node.ArrayNode)previous).add(value);
+            else object.putArray(key).add(previous).add(value);
+        }
+        return object;
+    }
+
+    private static DecodeEventViewService.Scope decodeEventScope(URI uri)
+    {
+        return ((StatsWebServerService.DecodeEventRequest)StatsWebServerService.parseMultiplexSubscription(
+            "decode_events", parameters(uri))).scope();
+    }
+
+    private static io.github.dsheirer.message.DecodeMessageViewService.Scope decodeMessageScope(URI uri)
+    {
+        return ((StatsWebServerService.DecodeMessageRequest)StatsWebServerService.parseMultiplexSubscription(
+            "decode_messages", parameters(uri))).scope();
+    }
+
+    private static ChannelDiagnosticService.Scope channelDiagnosticScope(URI uri)
+    {
+        return ((StatsWebServerService.ChannelDiagnosticRequest)StatsWebServerService.parseMultiplexSubscription(
+            "channel_diagnostics", parameters(uri))).scope();
     }
 
 }

@@ -58,10 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import javafx.beans.InvalidationListener;
-import javafx.beans.value.ChangeListener;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
+import java.util.function.Consumer;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,12 +70,12 @@ public class AliasList
 {
     private static final Logger mLog = LoggerFactory.getLogger(AliasList.class);
     private final Object mMutationLock = new Object();
-    private final Map<Alias,AliasObserver> mAliasObservers = new IdentityHashMap<>();
+    private final Map<Alias,Consumer<Alias.LookupChange>> mAliasObservers = new IdentityHashMap<>();
     private volatile LookupIndex mLookupIndex = new LookupIndex();
     private boolean mRebuilding;
     private final String mName;
     private volatile AliasListDefinition mDefinition;
-    private final ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
+    private final List<Alias> mAliases = new ArrayList<>();
 
     /**
      * Frozen classification of the destination talkgroup for one call.  Only {@link #UNMATCHED} qualifies for an
@@ -142,12 +139,10 @@ public class AliasList
         mDefinition = definition;
     }
 
-    /**
-     * Observable list of aliases contained in this alias list
-     */
-    public ObservableList<Alias> aliases()
+    /** Snapshot for administration; decoder lookups use the published index directly. */
+    public List<Alias> aliases()
     {
-        return mAliases;
+        synchronized(mMutationLock) { return List.copyOf(mAliases); }
     }
 
     /**
@@ -496,7 +491,8 @@ public class AliasList
             List<Alias> observedAliases = new ArrayList<>(mAliasObservers.keySet());
             observedAliases.stream().filter(alias -> !desiredAliases.contains(alias)).forEach(this::unobserve);
             desired.stream().filter(alias -> !mAliasObservers.containsKey(alias)).forEach(this::observe);
-            mAliases.setAll(desired);
+            mAliases.clear();
+            mAliases.addAll(desired);
             rebuildIndexes();
         }
     }
@@ -510,51 +506,30 @@ public class AliasList
     {
         if(!mAliasObservers.containsKey(alias))
         {
-            AliasObserver observer = new AliasObserver(alias);
-            mAliasObservers.put(alias, observer);
-            observer.attach();
+            Consumer<Alias.LookupChange> listener = change -> aliasLookupConfigurationChanged(alias, change);
+            mAliasObservers.put(alias, listener);
+            alias.addLookupChangeListener(listener);
         }
     }
 
     private void unobserve(Alias alias)
     {
-        AliasObserver observer = mAliasObservers.remove(alias);
-
-        if(observer != null)
-        {
-            observer.detach();
-        }
-
+        Consumer<Alias.LookupChange> listener = mAliasObservers.remove(alias);
+        if(listener != null) alias.removeLookupChangeListener(listener);
     }
 
-    private void aliasLookupConfigurationChanged(Alias alias)
+    private void aliasLookupConfigurationChanged(Alias alias, Alias.LookupChange change)
     {
         synchronized(mMutationLock)
         {
-            if(mRebuilding || !mAliasObservers.containsKey(alias))
+            if(mRebuilding || !mAliasObservers.containsKey(alias)) return;
+            if(change == Alias.LookupChange.MEMBERSHIP)
             {
-                return;
-            }
-
-            rebuildIndexes();
-        }
-    }
-
-    private void aliasListMembershipChanged(Alias alias)
-    {
-        synchronized(mMutationLock)
-        {
-            if(mRebuilding || !mAliasObservers.containsKey(alias))
-            {
-                return;
-            }
-
-            if(!belongsToThisList(alias))
-            {
+                if(belongsToThisList(alias)) return;
                 mAliases.remove(alias);
                 unobserve(alias);
-                rebuildIndexes();
             }
+            rebuildIndexes();
         }
     }
 
@@ -574,7 +549,7 @@ public class AliasList
             {
                 AliasID aliasID = alias.getMatchIdentifier();
 
-                if(aliasID != null && aliasID.overlapProperty().get())
+                if(aliasID != null && aliasID.isOverlap())
                 {
                     aliasID.setOverlap(false);
                 }
@@ -583,7 +558,6 @@ public class AliasList
             for(Alias alias: mAliases)
             {
                 addAliasID(alias.getMatchIdentifier(), alias, rebuilt);
-
             }
 
             rebuilt.prepare();
@@ -595,11 +569,6 @@ public class AliasList
         }
     }
 
-    private boolean isLookupIdentifier(AliasID aliasID)
-    {
-        return AliasMatchRegistry.isOperational(mDefinition, aliasID);
-    }
-
     private void requireOperationalMatcher(Alias alias)
     {
         AliasID matcher = alias.getMatchIdentifier();
@@ -608,56 +577,6 @@ public class AliasList
         {
             throw new IllegalArgumentException("Alias [" + alias.getName() +
                 "] must have one valid matcher supported by alias list [" + getName() + "]");
-        }
-    }
-
-    private class AliasObserver
-    {
-        private final Alias mAlias;
-        private final InvalidationListener mAliasIDValueListener;
-        private final InvalidationListener mAliasListNameListener;
-        private final ChangeListener<AliasID> mMatchIdentifierListener;
-
-        private AliasObserver(Alias alias)
-        {
-            mAlias = alias;
-            mAliasIDValueListener = observable -> aliasLookupConfigurationChanged(mAlias);
-            mAliasListNameListener = observable -> aliasListMembershipChanged(mAlias);
-            mMatchIdentifierListener = (_, previous, current) -> {
-                detach(previous);
-                attach(current);
-                aliasLookupConfigurationChanged(mAlias);
-            };
-        }
-
-        private void attach()
-        {
-            attach(mAlias.getMatchIdentifier());
-            mAlias.matchIdentifierProperty().addListener(mMatchIdentifierListener);
-            mAlias.aliasListNameProperty().addListener(mAliasListNameListener);
-        }
-
-        private void detach()
-        {
-            detach(mAlias.getMatchIdentifier());
-            mAlias.matchIdentifierProperty().removeListener(mMatchIdentifierListener);
-            mAlias.aliasListNameProperty().removeListener(mAliasListNameListener);
-        }
-
-        private void attach(AliasID aliasID)
-        {
-            if(isLookupIdentifier(aliasID))
-            {
-                aliasID.valueProperty().addListener(mAliasIDValueListener);
-            }
-        }
-
-        private void detach(AliasID aliasID)
-        {
-            if(isLookupIdentifier(aliasID))
-            {
-                aliasID.valueProperty().removeListener(mAliasIDValueListener);
-            }
         }
     }
 

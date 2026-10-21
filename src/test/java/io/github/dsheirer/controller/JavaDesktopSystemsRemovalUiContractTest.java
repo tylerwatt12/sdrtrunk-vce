@@ -22,6 +22,7 @@ class JavaDesktopSystemsRemovalUiContractTest
     private static final Path CONTROLLER =
         Path.of("src/main/java/io/github/dsheirer/controller/ControllerPanel.java");
     private static final Path APPLICATION = Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java");
+    private static final Path RUNTIME = Path.of("src/main/java/io/github/dsheirer/receiver/ReceiverRuntime.java");
     private static final Path CHANNEL_PROCESSING_MANAGER =
         Path.of("src/main/java/io/github/dsheirer/controller/channel/ChannelProcessingManager.java");
     private static final Path PREFERENCE =
@@ -41,15 +42,18 @@ class JavaDesktopSystemsRemovalUiContractTest
     void mapIsReceiverOwnedWithoutSwingController() throws Exception
     {
         String application = Files.readString(APPLICATION);
+        String runtime = Files.readString(RUNTIME);
 
         assertFalse(Files.exists(CONTROLLER));
         assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/map/MapPanel.java")));
         assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/map/MapService.java")));
-        assertTrue(application.contains("new MapSnapshotService(aliasModel)"));
-        assertTrue(application.contains("addDecodeEventListener(mMapSnapshotService)"));
-        assertTrue(application.contains("setMapSnapshotService(mMapSnapshotService)"));
+        assertTrue(runtime.contains("new MapSnapshotService(aliases)"));
+        assertTrue(runtime.contains("addDecodeEventListener(mMap)"));
+        assertTrue(runtime.contains("setMapSnapshotService(mMap)"));
+        assertFalse(application.contains("new MapSnapshotService("));
         assertFalse(application.contains("mControllerPanel"));
         assertFalse(application.contains("new MapService("));
+        assertFalse(runtime.contains("new MapService("));
     }
 
     @Test

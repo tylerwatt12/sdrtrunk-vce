@@ -32,6 +32,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Optional;
+import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -85,8 +86,7 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         mModuleManager = userPreferences.getVoiceDecryptionModulePreference().getModuleManager();
         mPreference = userPreferences.getEncryptionKeyPreference();
         mVaultService = mPreference.getVaultService();
-        mVaultService.stateProperty().addListener((observable, oldValue, newValue) -> refresh());
-        mVaultService.savedPasswordPresentProperty().addListener((observable, oldValue, newValue) -> updateButtons());
+        mVaultService.addStatusListener((previous, current) -> updateOnFx(this::refresh));
         setPadding(new Insets(10, 10, 10, 10));
         setCenter(createContent());
         refresh();
@@ -101,6 +101,12 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         {
             promptForVaultAccess();
         }
+    }
+
+    private static void updateOnFx(Runnable update)
+    {
+        if(Platform.isFxApplicationThread()) update.run();
+        else Platform.runLater(update);
     }
 
     private VBox createContent()
@@ -348,7 +354,7 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
         boolean unlocked = mVaultService.isUnlocked();
         boolean hasVault = mVaultService.hasVault();
         boolean selected = getTableView().getSelectionModel().getSelectedItem() != null;
-        getVaultStatusLabel().setText("Vault: " + state + " - " + mVaultService.statusProperty().get());
+        getVaultStatusLabel().setText("Vault: " + state + " - " + mVaultService.getStatus());
         getTableView().setDisable(!unlocked);
         getCreateVaultButton().setDisable(hasVault);
         getUnlockVaultButton().setDisable(!hasVault || unlocked);

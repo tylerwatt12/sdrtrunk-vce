@@ -21,10 +21,9 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.ServiceLoader;
-import javafx.beans.property.ReadOnlyBooleanProperty;
-import javafx.beans.property.ReadOnlyBooleanWrapper;
-import javafx.beans.property.ReadOnlyStringProperty;
-import javafx.beans.property.ReadOnlyStringWrapper;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,8 +33,8 @@ import org.slf4j.LoggerFactory;
 public class VoiceDecryptionModuleManager implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(VoiceDecryptionModuleManager.class);
-    private final ReadOnlyBooleanWrapper mLoaded = new ReadOnlyBooleanWrapper(false);
-    private final ReadOnlyStringWrapper mStatus = new ReadOnlyStringWrapper("No module selected");
+    private volatile Status mStatus = new Status(false, "No module selected");
+    private final CopyOnWriteArrayList<BiConsumer<Status,Status>> mStatusListeners = new CopyOnWriteArrayList<>();
     private volatile boolean mRuntimeLoaded;
     private volatile List<VoiceFrameDecryptorProvider> mProviders = List.of();
     private volatile EnumSet<VoiceEncryptionAlgorithm> mSupportedAlgorithms =
@@ -55,13 +54,13 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         try
         {
             candidate = open(path);
-            mStatus.set("Module file accepted");
+            publishStatus("Module file accepted");
             return true;
         }
         catch(Exception | LinkageError | java.util.ServiceConfigurationError e)
         {
             setLoadError(message(e));
-            mLog.warn("Unable to inspect optional module from {}: {}", path, mStatus.get());
+            mLog.warn("Unable to inspect optional module from {}: {}", path, mStatus.message());
             return false;
         }
         finally
@@ -106,8 +105,8 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
             mModuleVersion = module.getVersion();
             mProviders = providers;
             mSupportedAlgorithms = algorithms;
-            setLoaded(true);
-            mStatus.set(displayName() + " loaded");
+            mRuntimeLoaded = true;
+            publishStatus(displayName() + " loaded");
             mLog.info("Loaded optional module {} from {}", displayName(), mPath);
             candidate = null;
             return true;
@@ -115,7 +114,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         catch(Exception | LinkageError | java.util.ServiceConfigurationError e)
         {
             setLoadError(message(e));
-            mLog.warn("Unable to load optional module from {}: {}", path, mStatus.get());
+            mLog.warn("Unable to load optional module from {}: {}", path, mStatus.message());
             return false;
         }
         finally
@@ -127,7 +126,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
     public synchronized void unload()
     {
         unloadCurrent();
-        mStatus.set("No module selected");
+        publishStatus("No module selected");
     }
 
     public boolean isLoaded()
@@ -135,20 +134,19 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         return mRuntimeLoaded;
     }
 
-    public ReadOnlyBooleanProperty loadedProperty()
+    public String getStatus() { return mStatus.message(); }
+
+    public Status statusSnapshot() { return mStatus; }
+
+    /** Control-plane notification. GUI listeners marshal their own presentation updates. */
+    public void addStatusListener(BiConsumer<Status,Status> listener)
     {
-        return mLoaded.getReadOnlyProperty();
+        mStatusListeners.addIfAbsent(Objects.requireNonNull(listener));
     }
 
-    public String getStatus()
-    {
-        return mStatus.get();
-    }
+    public void removeStatusListener(BiConsumer<Status,Status> listener) { mStatusListeners.remove(listener); }
 
-    public ReadOnlyStringProperty statusProperty()
-    {
-        return mStatus.getReadOnlyProperty();
-    }
+    public record Status(boolean loaded, String message) {}
 
     public Path getPath()
     {
@@ -188,7 +186,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
 
     private void setLoadError(String message)
     {
-        mStatus.set(isLoaded() ? displayName() + " remains loaded; rejected selection: " + message :
+        publishStatus(isLoaded() ? displayName() + " remains loaded; rejected selection: " + message :
             "Not loaded: " + message);
     }
 
@@ -243,7 +241,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
 
     private void unloadCurrent()
     {
-        setLoaded(false);
+        mRuntimeLoaded = false;
         close(mClassLoader);
         mClassLoader = null;
         mPath = null;
@@ -251,15 +249,20 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         mModuleVersion = null;
         mProviders = List.of();
         mSupportedAlgorithms = EnumSet.noneOf(VoiceEncryptionAlgorithm.class);
+        publishStatus("No module selected");
     }
 
-    /**
-     * Updates the non-blocking cross-thread runtime state before notifying JavaFX observers.
-     */
-    private void setLoaded(boolean loaded)
+    private void publishStatus(String message)
     {
-        mRuntimeLoaded = loaded;
-        mLoaded.set(loaded);
+        Status previous = mStatus;
+        Status next = new Status(mRuntimeLoaded, message);
+        mStatus = next;
+        if(previous.equals(next)) return;
+        for(BiConsumer<Status,Status> listener: mStatusListeners)
+        {
+            try { listener.accept(previous, next); }
+            catch(RuntimeException failure) { mLog.warn("Optional module status observer failed"); }
+        }
     }
 
     private void close(URLClassLoader classLoader)

@@ -633,10 +633,17 @@ class AliasImportServiceTest
             });
             manager.init(); service = AliasAdministrationServiceTestSupport.create(manager);
             stream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3); stream.setName("Provider; One");
-            manager.getBroadcastModel().addBroadcastConfiguration(stream);
+            manager.commitAndPublishStreamingConfiguration(List.of(stream), stream.getConfigurationId());
             list = service.createAliasList("County", AliasListFamily.P25).aliasListId();
         }
-        public void close() { MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+        public void close()
+        {
+            manager.quiesceAdministration();
+            manager.getChannelProcessingManager().close();
+            manager.getBroadcastModel().close();
+            manager.close();
+            manager.getRadioReferenceDirectoryService().close();
+        }
     }
     private static class Manager extends ConfigurationManager
     {

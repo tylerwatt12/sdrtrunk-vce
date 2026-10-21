@@ -20,12 +20,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.configuration.ChannelAndBroadcastConfiguration;
+import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -87,7 +94,8 @@ class StatsApiV1HttpContractTest
         ScanListModel scanListModel = new ScanListModel();
         scanListModel.replaceConfiguration(new ScanListConfiguration(List.of(
             new ScanList(1, 0, "Default", null, true, true)), Map.of(), Map.of()));
-        mService = new StatsWebServerService(preferences, null, null, null, null, null, scanListModel);
+        mService = StatsWebTestRuntime.start(preferences);
+        StatsWebTestRuntime.services(mService).mScanListModel.replaceConfiguration(scanListModel.configuration());
         WebServerRuntimeState state = mService.getRuntimeState();
         assertTrue(state.running(), state.statusMessage());
         mOrigin = URI.create("http://127.0.0.1:" + state.port());
@@ -979,36 +987,28 @@ class StatsApiV1HttpContractTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            connection.setAutoCommit(false);
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) " +
                 "VALUES (71, 'HTTP Aliases', 'P25')");
             statement.executeUpdate("UPDATE alias_list SET name='GCRCN' WHERE id=1");
-            statement.executeUpdate("""
-                INSERT INTO configuration_channel (
-                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_id, radioresolve_id, decoder_type, primary_frequency_hz, config_json
-                ) VALUES ('00000000-0000-0000-0000-000000000071', 'TRUNKED', 71,
-                    'HTTP System', 'HTTP Site', 'HTTP Site', 71,
-                    '00000000-0000-0000-0000-000000000071', 'P25_PHASE1', 851012500, '{}')
-                """);
-            statement.executeUpdate("""
-                INSERT INTO configuration_channel (
-                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_id, decoder_type, primary_frequency_hz, config_json
-                ) VALUES ('00000000-0000-0000-0000-000000000072', 'CONVENTIONAL', 72,
-                    'HTTP Conventional', 'HTTP County', 'HTTP Fire',
-                    (SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1), 'NBFM', 154310000, '{}')
-                """);
-            statement.executeUpdate("UPDATE configuration_channel SET " +
-                "radioresolve_id = '728d2d66-de4e-476b-a696-919f32dd4d12' " +
-                "WHERE configuration_id = '00000000-0000-0000-0000-000000000072'");
-            statement.executeUpdate("""
-                INSERT INTO configuration_channel (
-                    configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    alias_list_id, radioresolve_id, decoder_type, primary_frequency_hz, config_json
-                ) VALUES ('4b75217f-2555-4c38-aafc-5d17bc0faf71', 'TRUNKED', 1,
-                    'GCRCN', 'GCRCNSimul', 'GCRCN Control', 1,
-                    '4b75217f-2555-4c38-aafc-5d17bc0faf72', 'P25_PHASE1', 856137500, '{}')
-                """);
+            long nbfmAliasListId;
+            try(var row = statement.executeQuery("SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1"))
+            {
+                assertTrue(row.next());
+                nbfmAliasListId = row.getLong(1);
+            }
+            var channels = List.of(
+                configuredChannel("4b75217f-2555-4c38-aafc-5d17bc0faf71", "GCRCN", "GCRCNSimul",
+                    "GCRCN Control", 1, "4b75217f-2555-4c38-aafc-5d17bc0faf72",
+                    new DecodeConfigP25Phase1(), 856_137_500),
+                configuredChannel("00000000-0000-0000-0000-000000000071", "HTTP System", "HTTP Site",
+                    "HTTP Site", 71, "00000000-0000-0000-0000-000000000071",
+                    new DecodeConfigP25Phase1(), 851_012_500),
+                configuredChannel("00000000-0000-0000-0000-000000000072", "HTTP Conventional", "HTTP County",
+                    "HTTP Fire", nbfmAliasListId, "728d2d66-de4e-476b-a696-919f32dd4d12",
+                    new DecodeConfigNBFM(), 154_310_000));
+            new ConfigurationDatabaseStore(database).replace(connection,
+                new ChannelAndBroadcastConfiguration(channels, List.of()));
             statement.executeUpdate("""
                 INSERT INTO radio_system (
                     id, system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
@@ -1053,7 +1053,25 @@ class StatsApiV1HttpContractTest
                 INSERT INTO alias (id, alias_list_id, name, group_name, matcher_type, protocol, value)
                 VALUES (1, 1, 'CuyCO Jail 35', 'Corrections', 'TALKGROUP', 'APCO25', 56735)
                 """);
+            connection.commit();
         }
+    }
+
+    private static Channel configuredChannel(String id, String system, String site, String name,
+                                               long aliasListId, String radioResolveId,
+                                               DecodeConfiguration decoder, long frequency)
+    {
+        Channel channel = new Channel(name);
+        channel.setConfigurationId(id);
+        channel.setSystem(system);
+        channel.setSite(site);
+        channel.setAliasListId(aliasListId);
+        channel.setRadioResolveId(radioResolveId);
+        channel.setDecodeConfiguration(decoder);
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(frequency);
+        channel.setSourceConfiguration(source);
+        return channel;
     }
 
     private HttpResponse<String> get(String path) throws Exception

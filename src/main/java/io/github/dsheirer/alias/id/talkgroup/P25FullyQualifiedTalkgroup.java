@@ -74,7 +74,7 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
     public void setWacn(int wacn)
     {
         mWacn = wacn;
-        updateValueProperty();
+        notifyChanged();
     }
 
     /**
@@ -104,7 +104,7 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
     public void setSystem(int system)
     {
         mSystem = system;
-        updateValueProperty();
+        notifyChanged();
     }
 
     @Override

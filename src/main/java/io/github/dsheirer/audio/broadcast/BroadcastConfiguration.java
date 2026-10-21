@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.audio.broadcast;
 
+import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
@@ -28,16 +29,6 @@ import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.audio.broadcast.openmhz.OpenMHzConfiguration;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
 import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
-import javafx.beans.Observable;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.IntegerProperty;
-import javafx.beans.property.LongProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleIntegerProperty;
-import javafx.beans.property.SimpleLongProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.util.Callback;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -55,18 +46,23 @@ import java.util.UUID;
 })
 public abstract class BroadcastConfiguration
 {
+    private final java.util.List<Runnable> mChangeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public void addChangeListener(Runnable listener) { mChangeListeners.add(listener); }
+    public void removeChangeListener(Runnable listener) { mChangeListeners.remove(listener); }
+    protected final void notifyChanged() { mChangeListeners.forEach(Runnable::run); }
+
     // Static unique channel identifier tracking
     private static int UNIQUE_ID = 0;
 
     private BroadcastFormat mBroadcastFormat = BroadcastFormat.MP3;
-    protected StringProperty mName = new SimpleStringProperty();
-    protected StringProperty mHost = new SimpleStringProperty();
-    protected IntegerProperty mPort = new SimpleIntegerProperty(80);
-    protected StringProperty mPassword = new SimpleStringProperty();
-    protected LongProperty mDelay = new SimpleLongProperty();
-    protected LongProperty mMaximumRecordingAge = new SimpleLongProperty(10 * 60 * 1000); //10 minutes default
-    protected BooleanProperty mEnabled = new SimpleBooleanProperty(false);
-    protected BooleanProperty mValid = new SimpleBooleanProperty();
+    protected String mName = null;
+    protected String mHost = null;
+    protected int mPort = 80;
+    protected String mPassword = null;
+    protected long mDelay = 0;
+    protected long mMaximumRecordingAge = 10 * 60 * 1000; //10 minutes default
+    protected boolean mEnabled = false;
     private int mId = ++UNIQUE_ID;
     private String mConfigurationId = UUID.randomUUID().toString();
     private boolean mConfigurationIdPersistenceRequired = true;
@@ -150,70 +146,6 @@ public abstract class BroadcastConfiguration
     }
 
     /**
-     * Stream name
-     */
-    public StringProperty nameProperty()
-    {
-        return mName;
-    }
-
-    /**
-     * Server host name
-     */
-    public StringProperty hostProperty()
-    {
-        return mHost;
-    }
-
-    /**
-     * Feed port
-     */
-    public IntegerProperty portProperty()
-    {
-        return mPort;
-    }
-
-    /**
-     * Feed password
-     */
-    public StringProperty passwordProperty()
-    {
-        return mPassword;
-    }
-
-    /**
-     * Delay introduced for each recording before streaming
-     */
-    public LongProperty delayProperty()
-    {
-        return mDelay;
-    }
-
-    /**
-     * Maximum allowable age of a recording to stream.  Recordings that exceed this threshold will be aged off.
-     */
-    public LongProperty maximumRecordingAgeProperty()
-    {
-        return mMaximumRecordingAge;
-    }
-
-    /**
-     * Stream enabled property
-     */
-    public BooleanProperty enabledProperty()
-    {
-        return mEnabled;
-    }
-
-    /**
-     * Configuration valid property
-     */
-    public BooleanProperty validProperty()
-    {
-        return mValid;
-    }
-
-    /**
      * Broadcast server type
      */
     public abstract BroadcastServerType getBroadcastServerType();
@@ -229,7 +161,7 @@ public abstract class BroadcastConfiguration
      */
     public String getName()
     {
-        return mName.get();
+        return mName;
     }
 
     /**
@@ -239,7 +171,11 @@ public abstract class BroadcastConfiguration
      */
     public void setName(String name)
     {
-        mName.set(name);
+        if(!Objects.equals(mName, name))
+        {
+            mName = name;
+            notifyChanged();
+        }
     }
 
     /**
@@ -247,7 +183,7 @@ public abstract class BroadcastConfiguration
      */
     public boolean hasName()
     {
-        return mName != null;
+        return true;
     }
 
     /**
@@ -255,7 +191,7 @@ public abstract class BroadcastConfiguration
      */
     public String getHost()
     {
-        return mHost.get();
+        return mHost;
     }
 
     /**
@@ -265,7 +201,11 @@ public abstract class BroadcastConfiguration
      */
     public void setHost(String host)
     {
-        mHost.set(host);
+        if(!Objects.equals(mHost, host))
+        {
+            mHost = host;
+            notifyChanged();
+        }
     }
 
     /**
@@ -273,7 +213,7 @@ public abstract class BroadcastConfiguration
      */
     public boolean hasHost()
     {
-        return mHost != null;
+        return true;
     }
 
     /**
@@ -281,7 +221,7 @@ public abstract class BroadcastConfiguration
      */
     public int getPort()
     {
-        return mPort.get();
+        return mPort;
     }
 
     /**
@@ -291,7 +231,11 @@ public abstract class BroadcastConfiguration
      */
     public void setPort(int port)
     {
-        mPort.set(port);
+        if(!Objects.equals(mPort, port))
+        {
+            mPort = port;
+            notifyChanged();
+        }
     }
 
     /**
@@ -299,7 +243,7 @@ public abstract class BroadcastConfiguration
      */
     public boolean hasPort()
     {
-        return mPort.get() > 0;
+        return mPort > 0;
     }
 
     @JsonIgnore
@@ -313,7 +257,7 @@ public abstract class BroadcastConfiguration
      */
     public String getPassword()
     {
-        return mPassword.get();
+        return mPassword;
     }
 
     /**
@@ -323,7 +267,11 @@ public abstract class BroadcastConfiguration
      */
     public void setPassword(String password)
     {
-        mPassword.set(password);
+        if(!Objects.equals(mPassword, password))
+        {
+            mPassword = password;
+            notifyChanged();
+        }
     }
 
     /**
@@ -331,7 +279,7 @@ public abstract class BroadcastConfiguration
      */
     public boolean hasPassword()
     {
-        return mPassword != null;
+        return true;
     }
 
     /**
@@ -352,7 +300,7 @@ public abstract class BroadcastConfiguration
      */
     public long getDelay()
     {
-        return mDelay.get();
+        return mDelay;
     }
 
     /**
@@ -361,7 +309,11 @@ public abstract class BroadcastConfiguration
      */
     public void setDelay(long delay)
     {
-        mDelay.set(delay);
+        if(!Objects.equals(mDelay, delay))
+        {
+            mDelay = delay;
+            notifyChanged();
+        }
     }
 
     /**
@@ -371,7 +323,7 @@ public abstract class BroadcastConfiguration
      */
     public long getMaximumRecordingAge()
     {
-        return mMaximumRecordingAge.get();
+        return mMaximumRecordingAge;
     }
 
     /**
@@ -381,7 +333,11 @@ public abstract class BroadcastConfiguration
      */
     public void setMaximumRecordingAge(long age)
     {
-        mMaximumRecordingAge.set(age);
+        if(!Objects.equals(mMaximumRecordingAge, age))
+        {
+            mMaximumRecordingAge = age;
+            notifyChanged();
+        }
     }
 
     /**
@@ -389,12 +345,16 @@ public abstract class BroadcastConfiguration
      */
     public boolean isEnabled()
     {
-        return mEnabled.get();
+        return mEnabled;
     }
 
     public void setEnabled(boolean enabled)
     {
-        mEnabled.set(enabled);
+        if(!Objects.equals(mEnabled, enabled))
+        {
+            mEnabled = enabled;
+            notifyChanged();
+        }
     }
 
     @Override
@@ -441,15 +401,7 @@ public abstract class BroadcastConfiguration
     @JsonIgnore
     public boolean isValid()
     {
-        return mValid.get();
+        return false;
     }
 
-    /**
-     * Creates an observable property extractor for use with observable lists to detect changes internal to this object.
-     */
-    public static Callback<BroadcastConfiguration, Observable[]> extractor()
-    {
-        return (BroadcastConfiguration b) -> new Observable[] {b.nameProperty(), b.hostProperty(), b.portProperty(),
-                b.passwordProperty(), b.maximumRecordingAgeProperty(), b.delayProperty(), b.enabledProperty()};
-    }
 }

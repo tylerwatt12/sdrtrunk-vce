@@ -50,7 +50,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import javafx.collections.ListChangeListener;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -75,8 +74,9 @@ class AliasAdministrationPersistenceTest
             Alias liveAlias = manager.getAliasModel().getAlias(aliasId);
             AliasListDefinition liveDefinition = liveAlias.getAliasListDefinition();
             AtomicInteger notifications = new AtomicInteger();
-            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
-                notifications.incrementAndGet());
+            manager.getAliasModel().addChangeListener(change -> {
+                if(change.aliasesChanged()) notifications.incrementAndGet();
+            });
             manager.failNextSave();
 
             assertEquals(revision, service.replaceAlias(aliasId, service.getAlias(aliasId).alias(), service.getAlias(aliasId).editRevision()).revision());
@@ -148,27 +148,20 @@ class AliasAdministrationPersistenceTest
             AtomicReference<Boolean> rowWasCommitted = new AtomicReference<>(false);
             AtomicReference<Throwable> listenerFailure = new AtomicReference<>();
 
-            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
-            {
-                while(change.next())
-                {
-                    for(Alias added: change.getAddedSubList())
-                    {
-                        additions.incrementAndGet();
-                        published.set(added);
+            io.github.dsheirer.alias.AliasModelTestAccess.observeAdditions(manager.getAliasModel(), added -> {
+                additions.incrementAndGet();
+                published.set(added);
 
-                        try
-                        {
-                            List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
-                            rowWasCommitted.set(added.getId() > Alias.UNASSIGNED_ID &&
-                                store.loadAliases(definitions).stream()
-                                    .anyMatch(alias -> alias.getId() == added.getId()));
-                        }
-                        catch(Throwable throwable)
-                        {
-                            listenerFailure.set(throwable);
-                        }
-                    }
+                try
+                {
+                    List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+                    rowWasCommitted.set(added.getId() > Alias.UNASSIGNED_ID &&
+                        store.loadAliases(definitions).stream()
+                            .anyMatch(alias -> alias.getId() == added.getId()));
+                }
+                catch(Throwable throwable)
+                {
+                    listenerFailure.set(throwable);
                 }
             });
 
@@ -209,16 +202,9 @@ class AliasAdministrationPersistenceTest
                 new ScanList(ScanList.UNASSIGNED_ID, 1, "Dispatch", null, true, false));
             AtomicBoolean membershipVisible = new AtomicBoolean();
 
-            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
-            {
-                while(change.next())
-                {
-                    for(Alias added: change.getAddedSubList())
-                    {
-                        membershipVisible.set(manager.getScanListModel().scanListIdsForAlias(added.getId())
-                            .contains(scanList.scanListId()));
-                    }
-                }
+            io.github.dsheirer.alias.AliasModelTestAccess.observeAdditions(manager.getAliasModel(), added -> {
+                membershipVisible.set(manager.getScanListModel().scanListIdsForAlias(added.getId())
+                    .contains(scanList.scanListId()));
             });
 
             service.createAlias(alias("Dispatch", list.aliasListId(), 101), List.of(scanList.scanListId()));
@@ -285,17 +271,10 @@ class AliasAdministrationPersistenceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             AliasAdministrationService.MutationResult list = service.createAliasList(
                 "County P25", AliasListFamily.P25);
-            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
-            {
-                while(change.next())
-                {
-                    if(change.wasAdded())
-                    {
-                        Channel channel = new Channel("Publication Channel");
-                        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-                        manager.addChannel(channel);
-                    }
-                }
+            io.github.dsheirer.alias.AliasModelTestAccess.observeAdditions(manager.getAliasModel(), added -> {
+                Channel channel = new Channel("Publication Channel");
+                channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+                manager.addChannel(channel);
             });
 
             service.createAlias(alias("Dispatch", list.aliasListId(), 101));
@@ -369,7 +348,11 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            manager.quiesceAdministration();
+            manager.getChannelProcessingManager().close();
+            manager.getBroadcastModel().close();
+            manager.close();
+            manager.getRadioReferenceDirectoryService().close();
         }
     }
 
@@ -393,15 +376,8 @@ class AliasAdministrationPersistenceTest
                 alias("Operations", list.aliasListId(), 102));
             List<Long> aliasIds = List.of(first.aliasIds().getFirst(), second.aliasIds().getFirst());
             AtomicInteger publications = new AtomicInteger();
-            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
-            {
-                while(change.next())
-                {
-                    if(change.wasAdded() || change.wasRemoved() || change.wasUpdated())
-                    {
-                        publications.incrementAndGet();
-                    }
-                }
+            manager.getAliasModel().addChangeListener(change -> {
+                if(change.aliasesChanged()) publications.incrementAndGet();
             });
 
             manager.failNextSave();
@@ -496,7 +472,7 @@ class AliasAdministrationPersistenceTest
             AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
             BroadcastifyCallConfiguration stream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             stream.setName("Old Stream");
-            manager.getBroadcastModel().addBroadcastConfiguration(stream);
+            manager.commitAndPublishStreamingConfiguration(List.of(stream), stream.getConfigurationId());
             manager.flushConfiguration();
 
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
@@ -510,8 +486,7 @@ class AliasAdministrationPersistenceTest
 
             assertEquals("Old Stream", stream.getName());
             stream.setName("New Stream");
-            manager.getBroadcastModel().process(new BroadcastEvent(stream,
-                BroadcastEvent.Event.CONFIGURATION_CHANGE));
+            manager.commitAndPublishStreamingConfiguration(List.of(stream), stream.getConfigurationId());
             manager.flushConfiguration();
 
             assertEquals("New Stream", stream.getName());
@@ -738,7 +713,11 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            manager.quiesceAdministration();
+            manager.getChannelProcessingManager().close();
+            manager.getBroadcastModel().close();
+            manager.close();
+            manager.getRadioReferenceDirectoryService().close();
         }
     }
 

@@ -12,28 +12,21 @@ import io.github.dsheirer.audio.broadcast.broadcastify.*;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationEditVersion;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.UserFeed;
-import java.awt.GraphicsEnvironment;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
-import javafx.application.Platform;
 
 /** Detached commands and bounded snapshots for the administrator Streaming page. No receiver callback waits on it. */
 public final class StreamingAdministrationService
 {
-    private static final long FX_QUEUE_TIMEOUT_SECONDS = 15;
     private final ConfigurationManager mConfigurationManager;
-    private final boolean mUseDesktopThread;
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Semaphore mNetworkAdmission = new Semaphore(1);
     private volatile List<UserFeed> mFeeds = List.of();
     private volatile long mFeedsExpires;
 
     public StreamingAdministrationService(ConfigurationManager manager)
-    { this(manager, !GraphicsEnvironment.isHeadless()); }
-    StreamingAdministrationService(ConfigurationManager manager, boolean desktop)
-    { mConfigurationManager = Objects.requireNonNull(manager); mUseDesktopThread = desktop; }
+    { mConfigurationManager = Objects.requireNonNull(manager); }
 
     public record Status(String configurationId, String name, String provider, String providerLabel, boolean enabled,
                          String state, String stateLabel, boolean attention, String lastError,
@@ -304,78 +297,16 @@ public final class StreamingAdministrationService
     public static final class NotInitializedException extends RuntimeException {}
     private <T> T onConfigurationThread(Supplier<T> operation)
     {
-        Objects.requireNonNull(operation);
-        requireInitialized();
-        if(!mUseDesktopThread)
+        try
         {
-            AtomicReference<T> result = new AtomicReference<>();
-            AtomicReference<RuntimeException> failure = new AtomicReference<>();
-            mConfigurationManager.runHeadlessWebConfigurationTask(() ->
+            return mConfigurationManager.executeConfigurationTask(() ->
             {
-                try
-                {
-                    requireInitialized();
-                    result.set(operation.get());
-                }
-                catch(RuntimeException exception)
-                {
-                    failure.set(exception);
-                }
+                return operation.get();
             });
-            if(failure.get() != null) throw failure.get();
-            return result.get();
         }
-        if(Platform.isFxApplicationThread()) return operation.get();
-
-        CompletableFuture<T> result = new CompletableFuture<>();
-        AtomicReference<DispatchState> state = new AtomicReference<>(DispatchState.QUEUED);
-        Platform.runLater(() ->
+        catch(io.github.dsheirer.configuration.ConfigurationExecutor.BusyException exception)
         {
-            if(!state.compareAndSet(DispatchState.QUEUED, DispatchState.RUNNING)) return;
-            try
-            {
-                requireInitialized();
-                result.complete(operation.get());
-            }
-            catch(Throwable throwable)
-            {
-                result.completeExceptionally(throwable);
-            }
-        });
-        try
-        {
-            return result.get(FX_QUEUE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        }
-        catch(TimeoutException exception)
-        {
-            if(state.compareAndSet(DispatchState.QUEUED, DispatchState.CANCELLED))
-                throw new ConfigurationBusyException();
-            return joinResult(result);
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-            if(state.compareAndSet(DispatchState.QUEUED, DispatchState.CANCELLED))
-                throw new ConfigurationBusyException();
-            return joinResult(result);
-        }
-        catch(ExecutionException exception)
-        {
-            if(exception.getCause() instanceof RuntimeException runtime) throw runtime;
-            throw new CompletionException(exception.getCause());
-        }
-    }
-
-    private static <T> T joinResult(CompletableFuture<T> result)
-    {
-        try
-        {
-            return result.join();
-        }
-        catch(CompletionException exception)
-        {
-            if(exception.getCause() instanceof RuntimeException runtime) throw runtime;
-            throw exception;
+            throw new ConfigurationBusyException();
         }
     }
 
@@ -384,5 +315,4 @@ public final class StreamingAdministrationService
         if(!mConfigurationManager.isInitialized()) throw new NotInitializedException();
     }
 
-    private enum DispatchState { QUEUED, RUNNING, CANCELLED }
 }

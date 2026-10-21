@@ -104,11 +104,11 @@ class AliasDatabaseStoreTest
         assertEquals(42, loaded.getStreamTalkgroupAlias().getValue());
         assertTrue(loaded.isRecordable());
         assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().getChannelName());
-        assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().valueProperty().get());
+        assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().toString());
         assertEquals(1001, ((Talkgroup)loaded.getMatchIdentifier()).getValue());
-        assertEquals(loaded.getMatchIdentifier().toString(), loaded.getMatchIdentifier().valueProperty().get());
-        assertEquals(loaded.getStreamTalkgroupAlias().toString(),
-            loaded.getStreamTalkgroupAlias().valueProperty().get());
+        assertEquals("Talkgroup:1001 Protocol:APCO-25", loaded.getMatchIdentifier().toString());
+        assertEquals(Protocol.UNKNOWN, loaded.getStreamTalkgroupAlias().getProtocol());
+        assertEquals("Talkgroup:42 Protocol:Unknown **NOT VALID**", loaded.getStreamTalkgroupAlias().toString());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();

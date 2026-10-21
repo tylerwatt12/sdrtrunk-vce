@@ -28,7 +28,6 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
-import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
@@ -38,7 +37,6 @@ import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.util.ThreadPool;
-import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -51,19 +49,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import javafx.application.Platform;
 
 /**
  * Headless command boundary for web-first channel administration. No JavaFX editor class participates in reads,
@@ -72,7 +66,6 @@ import javafx.application.Platform;
 public final class ChannelAdministrationService
 {
     public static final int MAXIMUM_BULK_CHANNELS = 100;
-    private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
     private static final long SQUELCH_PREVIEW_LEASE_SECONDS = 10L;
     private static final long CONTROL_QUALITY_FRESHNESS_MILLISECONDS = 5_000L;
@@ -80,29 +73,21 @@ public final class ChannelAdministrationService
     private final ConfigurationManager mConfigurationManager;
     private final ChannelProtocolRegistry mProtocolRegistry;
     private final ChannelDefinitionCodec mCodec;
-    private final boolean mUseDesktopThread;
     private final Function<String,String> mDiscoverySystemNames;
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
     public ChannelAdministrationService(ConfigurationManager configurationManager)
     {
-        this(configurationManager, new ChannelProtocolRegistry(), !GraphicsEnvironment.isHeadless());
+        this(configurationManager, new ChannelProtocolRegistry(), RadioSystemNameCatalog.bundled()::nameFor);
     }
 
     ChannelAdministrationService(ConfigurationManager configurationManager, ChannelProtocolRegistry protocolRegistry,
-                                 boolean useDesktopThread)
-    {
-        this(configurationManager, protocolRegistry, useDesktopThread, RadioSystemNameCatalog.bundled()::nameFor);
-    }
-
-    ChannelAdministrationService(ConfigurationManager configurationManager, ChannelProtocolRegistry protocolRegistry,
-                                 boolean useDesktopThread, Function<String,String> discoverySystemNames)
+                                 Function<String,String> discoverySystemNames)
     {
         mConfigurationManager = Objects.requireNonNull(configurationManager);
         mProtocolRegistry = Objects.requireNonNull(protocolRegistry);
         mCodec = new ChannelDefinitionCodec(mProtocolRegistry);
-        mUseDesktopThread = useDesktopThread;
         mDiscoverySystemNames = Objects.requireNonNull(discoverySystemNames);
     }
 
@@ -1127,7 +1112,7 @@ public final class ChannelAdministrationService
                 return null;
             });
             StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearChannel(id);
-            MyEventBus.getGlobalEventBus().post(request);
+            mConfigurationManager.dispatchMaintenance(request);
             try
             {
                 ReceiverActivityMaintenance.Result result = request.result().get(30, TimeUnit.SECONDS);
@@ -1427,78 +1412,18 @@ public final class ChannelAdministrationService
 
     private <T> T onConfigurationThread(Supplier<T> operation)
     {
-        Objects.requireNonNull(operation);
         requireInitialized();
-        if(!mUseDesktopThread)
+        try
         {
-            AtomicReference<T> result = new AtomicReference<>();
-            AtomicReference<RuntimeException> failure = new AtomicReference<>();
-            mConfigurationManager.runHeadlessWebConfigurationTask(() ->
-            {
-                try
-                {
-                    requireInitialized();
-                    result.set(operation.get());
-                }
-                catch(RuntimeException exception)
-                {
-                    failure.set(exception);
-                }
-            });
-            if(failure.get() != null) throw failure.get();
-            return result.get();
-        }
-        if(Platform.isFxApplicationThread()) return operation.get();
-
-        CompletableFuture<T> result = new CompletableFuture<>();
-        AtomicReference<DispatchState> state = new AtomicReference<>(DispatchState.QUEUED);
-        Platform.runLater(() ->
-        {
-            if(!state.compareAndSet(DispatchState.QUEUED, DispatchState.RUNNING)) return;
-            try
+            return mConfigurationManager.executeConfigurationTask(() ->
             {
                 requireInitialized();
-                result.complete(operation.get());
-            }
-            catch(Throwable throwable)
-            {
-                result.completeExceptionally(throwable);
-            }
-        });
-        try
-        {
-            return result.get(FX_QUEUE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                return operation.get();
+            });
         }
-        catch(TimeoutException exception)
+        catch(io.github.dsheirer.configuration.ConfigurationExecutor.BusyException exception)
         {
-            if(state.compareAndSet(DispatchState.QUEUED, DispatchState.CANCELLED))
-                throw new ConfigurationBusyException();
-            return joinResult(result);
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-            if(state.compareAndSet(DispatchState.QUEUED, DispatchState.CANCELLED))
-                throw new ConfigurationBusyException();
-            return joinResult(result);
-        }
-        catch(ExecutionException exception)
-        {
-            if(exception.getCause() instanceof RuntimeException runtime) throw runtime;
-            throw new CompletionException(exception.getCause());
-        }
-    }
-
-    private static <T> T joinResult(CompletableFuture<T> result)
-    {
-        try
-        {
-            return result.join();
-        }
-        catch(CompletionException exception)
-        {
-            if(exception.getCause() instanceof RuntimeException runtime) throw runtime;
-            throw exception;
+            throw new ConfigurationBusyException();
         }
     }
 
@@ -1515,7 +1440,6 @@ public final class ChannelAdministrationService
 
     public enum ProcessingState { STOPPED, RUNNING }
     public enum Direction { EARLIER, LATER }
-    private enum DispatchState { QUEUED, RUNNING, CANCELLED }
 
     public record Catalog(long revision, List<ChannelSummary> channels)
     {

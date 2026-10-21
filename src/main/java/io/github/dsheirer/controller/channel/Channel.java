@@ -49,16 +49,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
-import javafx.beans.Observable;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
-import javafx.util.Callback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,18 +72,17 @@ public class Channel extends Configuration
     private RecordConfiguration mRecordConfiguration = new RecordConfiguration();
 
     private volatile long mAliasListId = AliasListDefinition.UNASSIGNED_ID;
-    private StringProperty mAliasListName = new SimpleStringProperty();
-    private StringProperty mSystem = new SimpleStringProperty();
-    private StringProperty mSite = new SimpleStringProperty();
-    private StringProperty mName = new SimpleStringProperty();
-    private StringProperty mRadioResolveId = new SimpleStringProperty();
-    private ObjectProperty<P25SiteIdentity> mP25SiteIdentity = new SimpleObjectProperty<>();
+    private volatile String mAliasListName;
+    private volatile String mSystem;
+    private volatile String mSite;
+    private volatile String mName;
+    private volatile String mRadioResolveId;
+    private volatile P25SiteIdentity mP25SiteIdentity;
     private TrunkedDiscoveryIdentity mTrunkedDiscoveryIdentity;
     private String mConfigurationId;
     private boolean mConfigurationIdPersistenceRequired;
-    private ObservableList<Long> mFrequencyList;
 
-    private BooleanProperty mProcessing = new SimpleBooleanProperty();
+    private volatile boolean mProcessing;
     /** Manager-owned transient identity for the currently mapped processing-chain run. */
     private transient volatile long mProcessingIncarnation;
     private transient volatile boolean mProcessingIncarnationActive;
@@ -101,9 +90,8 @@ public class Channel extends Configuration
     private transient volatile long mSiteEvidenceProcessingIncarnation;
     /** Control-source tuning epoch; standard channels own it and traffic channels inherit it per allocation. */
     private final transient AtomicLong mSiteEvidenceTuningGeneration = new AtomicLong();
-    private BooleanProperty mAutoStart = new SimpleBooleanProperty();
-    private ObjectProperty<Integer> mAutoStartOrder = new SimpleObjectProperty<>();
-    private boolean mSelected;
+    private volatile boolean mAutoStart;
+    private volatile Integer mAutoStartOrder;
     private List<TunerChannel> mTunerChannels = null;
 
     private ChannelType mChannelType = ChannelType.STANDARD;
@@ -129,7 +117,7 @@ public class Channel extends Configuration
     public Channel(String channelName)
     {
         this();
-        mName.set(channelName);
+        mName = channelName;
     }
 
     /**
@@ -160,13 +148,13 @@ public class Channel extends Configuration
      */
     public Channel copyOf()
     {
-        Channel channel = new Channel(mName.get());
-        channel.setSystem(mSystem.get());
-        channel.setSite(mSite.get());
-        channel.setAliasListName(mAliasListName.get());
+        Channel channel = new Channel(mName);
+        channel.setSystem(mSystem);
+        channel.setSite(mSite);
+        channel.setAliasListName(mAliasListName);
         channel.setAliasListId(mAliasListId);
-        channel.setAutoStart(mAutoStart.get());
-        channel.setAutoStartOrder(mAutoStartOrder.get());
+        channel.setAutoStart(mAutoStart);
+        channel.setAutoStartOrder(mAutoStartOrder);
 
         AuxDecodeConfiguration auxCopy = new AuxDecodeConfiguration();
 
@@ -291,99 +279,6 @@ public class Channel extends Configuration
     }
 
     /**
-     * Updates the frequencies property as the source configuration changes or is initialized.
-     */
-    private void updateFrequencies()
-    {
-        getFrequencyList().clear();
-
-        if(mSourceConfiguration instanceof SourceConfigTuner)
-        {
-            getFrequencyList().add(((SourceConfigTuner)mSourceConfiguration).getFrequency());
-        }
-        else if(mSourceConfiguration instanceof SourceConfigTunerMultipleFrequency)
-        {
-            getFrequencyList().addAll(((SourceConfigTunerMultipleFrequency)mSourceConfiguration).getFrequencies());
-        }
-        else if(mSourceConfiguration instanceof SourceConfigRemote)
-        {
-            getFrequencyList().add(((SourceConfigRemote)mSourceConfiguration).getFrequency());
-        }
-    }
-
-    /**
-     * Alias list name property
-     */
-    public StringProperty aliasListNameProperty()
-    {
-        return mAliasListName;
-    }
-
-    /**
-     * System property
-     */
-    public StringProperty systemProperty()
-    {
-        return mSystem;
-    }
-
-    /**
-     * Site property
-     */
-    public StringProperty siteProperty()
-    {
-        return mSite;
-    }
-
-    /**
-     * Channel name property
-     */
-    public StringProperty nameProperty()
-    {
-        return mName;
-    }
-
-    /**
-     * Stable identifier used to correlate this configured RF source with RadioResolve.
-     */
-    public StringProperty radioResolveIdProperty()
-    {
-        return mRadioResolveId;
-    }
-
-    /**
-     * Immutable learned P25 site identity property.
-     */
-    public ObjectProperty<P25SiteIdentity> p25SiteIdentityProperty()
-    {
-        return mP25SiteIdentity;
-    }
-
-    /**
-     * Processing property.  Indicates if this channel configuration is currently processing.
-     */
-    public BooleanProperty processingProperty()
-    {
-        return mProcessing;
-    }
-
-    /**
-     * Auto-Start property.  Indicates if this channel is setup for auto-start
-     */
-    public BooleanProperty autoStartProperty()
-    {
-        return mAutoStart;
-    }
-
-    /**
-     * Auto-start order property.  Indicates the order for starting channels that are flagged for auto-start.
-     */
-    public ObjectProperty<Integer> autoStartOrderProperty()
-    {
-        return mAutoStartOrder;
-    }
-
-    /**
      * Unique identifier for this channel.  Value is transient (not persisted).
      */
     @JsonIgnore
@@ -392,44 +287,18 @@ public class Channel extends Configuration
         return mChannelID;
     }
 
-    /**
-     * List of frequencies extracted from the source configuration.  This method only exists to support JavaFX
-     * monitoring of frequency list changes.  Use the source configuration to manage frequencies.
-     */
+    /** Frequencies projected directly from the saved source configuration. */
     @JsonIgnore
     @Transient
-    public ObservableList<Long> getFrequencyList()
+    public List<Long> getFrequencyList()
     {
-        if(mFrequencyList == null)
+        return switch(mSourceConfiguration)
         {
-            mFrequencyList = FXCollections.observableArrayList();
-            updateFrequencies();
-        }
-
-        return mFrequencyList;
-    }
-
-    /**
-     * Indicates if this channel has been selected for display of processing chain products.
-     */
-    @JsonIgnore
-    public boolean isSelected()
-    {
-        return mSelected;
-    }
-
-    /**
-     * Sets selection status of the channel.
-     *
-     * NOTE: this method is package private so that only the ChannelSelectionManager
-     * can toggle the selection state.  Use the channel model to broadcast a
-     * request select/deselect channel event.
-     *
-     * @param selected
-     */
-    void setSelected(boolean selected)
-    {
-        mSelected = selected;
+            case SourceConfigTuner source -> List.of(source.getFrequency());
+            case SourceConfigTunerMultipleFrequency source -> List.copyOf(source.getFrequencies());
+            case SourceConfigRemote source -> List.of(source.getFrequency());
+            case null, default -> List.of();
+        };
     }
 
     @JsonIgnore
@@ -455,17 +324,17 @@ public class Channel extends Configuration
      */
     public String getSystem()
     {
-        return mSystem.get();
+        return mSystem;
     }
 
     public void setSystem(String system)
     {
-        mSystem.set(system);
+        mSystem = system;
     }
 
     public boolean hasSystem()
     {
-        return mSystem != null && mSystem.get() != null;
+        return mSystem != null;
     }
 
     /**
@@ -473,17 +342,17 @@ public class Channel extends Configuration
      */
     public String getSite()
     {
-        return mSite.get();
+        return mSite;
     }
 
     public void setSite(String site)
     {
-        mSite.set(site);
+        mSite = site;
     }
 
     public boolean hasSite()
     {
-        return mSite != null && mSite.get() != null;
+        return mSite != null;
     }
 
     /**
@@ -491,7 +360,7 @@ public class Channel extends Configuration
      */
     public String getName()
     {
-        return mName.get();
+        return mName;
     }
 
     /**
@@ -499,7 +368,7 @@ public class Channel extends Configuration
      */
     public void setName(String name)
     {
-        mName.set(name);
+        mName = name;
     }
 
     /**
@@ -578,10 +447,10 @@ public class Channel extends Configuration
     {
         if(isStandardChannel() && !hasRadioResolveId())
         {
-            mRadioResolveId.set(UUID.randomUUID().toString());
+            mRadioResolveId = UUID.randomUUID().toString();
         }
 
-        return mRadioResolveId.get();
+        return mRadioResolveId;
     }
 
     /** Restores the stable RadioResolve correlation identifier. */
@@ -591,16 +460,16 @@ public class Channel extends Configuration
         {
             try
             {
-                mRadioResolveId.set(UUID.fromString(radioResolveId.trim()).toString());
+                mRadioResolveId = UUID.fromString(radioResolveId.trim()).toString();
             }
             catch(IllegalArgumentException _)
             {
-                mRadioResolveId.set(null);
+                mRadioResolveId = null;
             }
         }
         else
         {
-            mRadioResolveId.set(null);
+            mRadioResolveId = null;
         }
     }
 
@@ -610,7 +479,7 @@ public class Channel extends Configuration
     @JsonIgnore
     public boolean hasRadioResolveId()
     {
-        return mRadioResolveId != null && mRadioResolveId.get() != null && !mRadioResolveId.get().isBlank();
+        return mRadioResolveId != null && !mRadioResolveId.isBlank();
     }
 
     /**
@@ -618,7 +487,7 @@ public class Channel extends Configuration
      */
     public P25SiteIdentity getP25SiteIdentity()
     {
-        return mP25SiteIdentity.get();
+        return mP25SiteIdentity;
     }
 
     /**
@@ -626,7 +495,7 @@ public class Channel extends Configuration
      */
     public void setP25SiteIdentity(P25SiteIdentity identity)
     {
-        mP25SiteIdentity.set(identity);
+        mP25SiteIdentity = identity;
     }
 
     /** Persisted receiver proof; ordinary channel documents cannot supply this through the administration API. */
@@ -689,7 +558,7 @@ public class Channel extends Configuration
     @JsonIgnore
     public boolean isProcessing()
     {
-        return mProcessing.get();
+        return mProcessing;
     }
 
     /**
@@ -803,7 +672,7 @@ public class Channel extends Configuration
      */
     void setProcessing(boolean processing)
     {
-        mProcessing.set(processing);
+        mProcessing = processing;
     }
 
     /**
@@ -817,7 +686,7 @@ public class Channel extends Configuration
     @JacksonXmlProperty(isAttribute = true, localName = "enabled")
     public boolean getAutoStart()
     {
-        return mAutoStart.get();
+        return mAutoStart;
     }
 
     /**
@@ -826,7 +695,7 @@ public class Channel extends Configuration
     @JsonIgnore
     public boolean isAutoStart()
     {
-        return mAutoStart.get();
+        return mAutoStart;
     }
 
     /**
@@ -837,7 +706,7 @@ public class Channel extends Configuration
     @JsonAlias("enabled")
     public void setAutoStart(boolean autoStart)
     {
-        mAutoStart.set(autoStart);
+        mAutoStart = autoStart;
     }
 
     /**
@@ -848,7 +717,7 @@ public class Channel extends Configuration
      */
     public Integer getAutoStartOrder()
     {
-        return mAutoStartOrder.get();
+        return mAutoStartOrder;
     }
 
     /**
@@ -860,7 +729,7 @@ public class Channel extends Configuration
     @JacksonXmlProperty(isAttribute = true, localName = "order")
     public void setAutoStartOrder(Integer order)
     {
-        mAutoStartOrder.set(order);
+        mAutoStartOrder = order;
     }
 
     /**
@@ -871,7 +740,7 @@ public class Channel extends Configuration
     @JsonIgnore
     public boolean hasAutoStartOrder()
     {
-        return mAutoStartOrder != null && mAutoStartOrder.getValue() != null;
+        return mAutoStartOrder != null;
     }
 
     /**
@@ -880,7 +749,7 @@ public class Channel extends Configuration
      */
     public String getAliasListName()
     {
-        return mAliasListName.get();
+        return mAliasListName;
     }
 
     /**
@@ -889,7 +758,7 @@ public class Channel extends Configuration
      */
     public void setAliasListName(String name)
     {
-        mAliasListName.set(name);
+        mAliasListName = name;
 
         if(name == null || name.isBlank())
         {
@@ -923,12 +792,12 @@ public class Channel extends Configuration
         if(definition == null)
         {
             mAliasListId = AliasListDefinition.UNASSIGNED_ID;
-            mAliasListName.set(null);
+            mAliasListName = null;
         }
         else
         {
             mAliasListId = definition.getId();
-            mAliasListName.set(definition.getName());
+            mAliasListName = definition.getName();
         }
     }
 
@@ -991,8 +860,6 @@ public class Channel extends Configuration
             mTrunkedDiscoveryIdentity = null;
             mSourceConfiguration = config;
         }
-
-        updateFrequencies();
 
         //Clear the tune channels object so that it can be recreated if the source configuration changes
         mTunerChannels = null;
@@ -1124,13 +991,4 @@ public class Channel extends Configuration
         return Objects.hash(getChannelID());
     }
 
-    /**
-     * Creates an observable property extractor for use with observable lists to detect changes internal to this object.
-     */
-    public static Callback<Channel,Observable[]> extractor()
-    {
-        return (Channel c) -> new Observable[] {c.nameProperty(), c.aliasListNameProperty(),
-            c.autoStartOrderProperty(), c.autoStartProperty(), c.siteProperty(), c.systemProperty(),
-            c.radioResolveIdProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
-    }
 }

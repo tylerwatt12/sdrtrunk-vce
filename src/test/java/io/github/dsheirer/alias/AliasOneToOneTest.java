@@ -38,9 +38,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import javafx.collections.ListChangeListener;
-import javafx.collections.transformation.FilteredList;
-import javafx.collections.transformation.SortedList;
 import org.junit.jupiter.api.Test;
 
 class AliasOneToOneTest
@@ -110,7 +107,7 @@ class AliasOneToOneTest
         for(AliasID matcher: List.of(dcs, esn, tones))
         {
             matcher.setOverlap(true);
-            assertTrue(AliasFactory.copyOf(matcher).overlapProperty().get());
+            assertTrue(AliasFactory.copyOf(matcher).isOverlap());
         }
     }
 
@@ -249,15 +246,19 @@ class AliasOneToOneTest
         Alias replacement = alias(41, definition, "Replacement", 101);
         AliasModel model = new AliasModel();
         model.setAliasListDefinitions(List.of(definition));
-        FilteredList<Alias> filtered = new FilteredList<>(model.aliasList(), alias -> true);
-        SortedList<Alias> visibleRows = new SortedList<>(filtered, Comparator.comparing(Alias::getName));
+        java.util.concurrent.atomic.AtomicReference<List<Alias>> visibleRows =
+            new java.util.concurrent.atomic.AtomicReference<>(List.of());
+        model.addChangeListener(change -> {
+            if(change.aliasesChanged()) visibleRows.set(model.aliasList().stream()
+                .sorted(Comparator.comparing(Alias::getName)).toList());
+        });
         model.addAlias(original);
         AliasList runtime = model.getAliasList(definition);
 
         model.addAlias(replacement);
 
         assertEquals(List.of(replacement), model.getAliases());
-        assertEquals(List.of(replacement), visibleRows);
+        assertEquals(List.of(replacement), visibleRows.get());
         assertSame(replacement, model.getAlias(41));
         assertTrue(runtime.getAliases(APCO25Talkgroup.create(100)).isEmpty());
         assertSame(replacement, runtime.getAliases(APCO25Talkgroup.create(101)).getFirst());
@@ -266,7 +267,7 @@ class AliasOneToOneTest
 
         assertTrue(model.getAliases().isEmpty(),
             "A stale detached object must delete the current row with the same durable ID");
-        assertTrue(visibleRows.isEmpty());
+        assertTrue(visibleRows.get().isEmpty());
         assertTrue(runtime.getAliases(APCO25Talkgroup.create(101)).isEmpty());
     }
 
@@ -328,7 +329,7 @@ class AliasOneToOneTest
     }
 
     @Test
-    void observableModelProjectionsAreReadOnly()
+    void publishedModelSnapshotsAreReadOnly()
     {
         AliasListDefinition definition = definition(12);
         Alias alias = alias(41, definition, "Dispatch", 100);
@@ -350,20 +351,15 @@ class AliasOneToOneTest
         Alias existing = alias(41, definition, "Existing", 100);
         AliasModel model = new AliasModel();
         model.replaceCommittedConfiguration(List.of(definition), List.of(existing));
-        FilteredList<Alias> visible = new FilteredList<>(model.aliasList(),
-            candidate -> candidate.getAliasListId() == definition.getId());
+        List<Alias> before = model.aliasList();
         int[] added = {0};
         int[] removed = {0};
         int[] listNameChanges = {0};
-        model.aliasList().addListener((ListChangeListener<Alias>)change ->
-        {
-            while(change.next())
-            {
-                added[0] += change.getAddedSize();
-                removed[0] += change.getRemovedSize();
-            }
+        AliasModelTestAccess.observeAdditions(model, alias -> added[0]++);
+        model.addChangeListener(change -> {
+            if(change.aliasesChanged()) removed[0] += before.stream().filter(alias -> !model.aliasList().contains(alias)).count();
+            if(change.namesChanged()) listNameChanges[0]++;
         });
-        model.aliasListNames().addListener((ListChangeListener<String>)change -> listNameChanges[0]++);
 
         AliasListDefinition committedDefinition = definition(12);
         Alias unchangedDatabaseCopy = alias(41, committedDefinition, "Existing", 100);
@@ -375,7 +371,9 @@ class AliasOneToOneTest
         assertEquals(0, removed[0]);
         assertEquals(0, listNameChanges[0]);
         assertEquals(List.of(existing, created), model.getAliases());
-        assertEquals(List.of(existing, created), visible);
+        assertEquals(List.of(existing, created), model.aliasList().stream()
+            .filter(candidate -> candidate.getAliasListId() == definition.getId()).toList());
+        assertEquals(List.of(existing), before, "Published snapshots remain immutable after later commits");
         assertSame(existing, model.getAlias(existing.getId()));
         assertSame(created, model.getAlias(created.getId()));
     }
@@ -398,7 +396,8 @@ class AliasOneToOneTest
         model.addAliases(liveAliases);
         AliasList cached = model.getAliasList(definition);
         int[] runtimeListChanges = {0};
-        cached.aliases().addListener((ListChangeListener<Alias>)change -> runtimeListChanges[0]++);
+        Object previousIndex = AliasModelTestAccess.lookupIndex(cached);
+        model.addChangeListener(change -> { if(change.aliasesChanged()) runtimeListChanges[0]++; });
 
         AliasListDefinition committedDefinition = definition(12);
         List<Alias> committedAliases = new ArrayList<>();
@@ -416,6 +415,7 @@ class AliasOneToOneTest
 
         assertEquals(1, runtimeListChanges[0],
             "One committed publication should rebuild each cached runtime list once");
+        assertNotSame(previousIndex, AliasModelTestAccess.lookupIndex(cached));
         assertSame(liveAliases.getFirst(), model.getAlias(100),
             "Unchanged committed rows must retain their live instances");
         assertSame(committedAliases.getLast(),
