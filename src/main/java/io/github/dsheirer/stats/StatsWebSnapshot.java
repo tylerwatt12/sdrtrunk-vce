@@ -10,13 +10,13 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** One bounded read shared by visitors. Only the refreshing web worker waits for database work. */
+/** One read shared by visitors, with a bounded wait when no usable data is cached. */
 final class StatsWebSnapshot<T> implements Supplier<T>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(StatsWebSnapshot.class);
     private static final long FAILURE_RETRY_NANOS = TimeUnit.SECONDS.toNanos(1);
     private static final long STALE_GRACE_NANOS = TimeUnit.SECONDS.toNanos(10);
-    private static final long INITIAL_WAIT_SECONDS = 2;
+    private static final long REFRESH_WAIT_SECONDS = 2;
     private final Supplier<T> mRead;
     private final LongSupplier mClock;
     private final long mLifetimeNanos;
@@ -47,10 +47,11 @@ final class StatsWebSnapshot<T> implements Supplier<T>
         if(!mRefresh.tryLock())
         {
             current = mSnapshot;
-            if(current != null) return staleOrUnavailable(current, now);
+            now = mClock.getAsLong();
+            if(usable(current, now)) return current.value();
             try
             {
-                if(!mRefresh.tryLock(INITIAL_WAIT_SECONDS, TimeUnit.SECONDS))
+                if(!mRefresh.tryLock(REFRESH_WAIT_SECONDS, TimeUnit.SECONDS))
                     throw unavailable();
             }
             catch(InterruptedException exception)
@@ -99,9 +100,13 @@ final class StatsWebSnapshot<T> implements Supplier<T>
 
     private T staleOrUnavailable(Snapshot<T> snapshot, long now)
     {
-        if(snapshot != null && now - snapshot.createdAt() - mLifetimeNanos <= STALE_GRACE_NANOS)
-            return snapshot.value();
+        if(usable(snapshot, now)) return snapshot.value();
         throw unavailable();
+    }
+
+    private boolean usable(Snapshot<T> snapshot, long now)
+    {
+        return snapshot != null && now - snapshot.createdAt() - mLifetimeNanos <= STALE_GRACE_NANOS;
     }
 
     private static StatsApiException unavailable()
