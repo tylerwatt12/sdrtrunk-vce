@@ -1705,13 +1705,15 @@ class StatsAliasResolver
         {
             List<P25SubscriberRuleTarget> chunk = pairs.subList(offset,
                 Math.min(pairs.size(), offset + RULE_TARGET_CHUNK));
+            //Keep requested identities first even when imported Alias counts have outgrown SQLite's statistics.
             String sql = """
                 WITH requested(alias_list_id, p25_subscriber_identity_id) AS (VALUES %s)
                 SELECT requested.alias_list_id, requested.p25_subscriber_identity_id,
                     definition.id AS alias_id, definition.name, definition.description,
                     definition.group_name, definition.color, list.name AS alias_list_name
                 FROM requested
-                JOIN alias_p25_subscriber_identity subscriber_alias
+                CROSS JOIN alias_p25_subscriber_identity subscriber_alias
+                    INDEXED BY idx_alias_p25_subscriber_identity
                   ON subscriber_alias.p25_subscriber_identity_id = requested.p25_subscriber_identity_id
                 JOIN alias definition
                   ON definition.id = subscriber_alias.alias_id

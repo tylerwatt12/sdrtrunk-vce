@@ -5469,7 +5469,8 @@ class StatsWebDatabase
     {
         if(core.isEmpty()) return List.of();
         return read(connection -> {
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(250);
+            // A cold shared seed names up to 10,000 current affiliations, rather than a 500-row Activity page.
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
             try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
             org.sqlite.ProgressHandler.setHandler(connection,1000,new org.sqlite.ProgressHandler()
             {

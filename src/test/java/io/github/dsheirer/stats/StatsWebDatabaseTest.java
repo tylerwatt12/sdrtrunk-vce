@@ -3250,6 +3250,29 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> corrected = mDatabase.p25RawSnapshot().affiliations();
         assertFalse(core.equals(corrected),"same current radio key must notice canonical corrections");
         assertEquals(777,((Map<?,?>)mDatabase.presentP25Affiliations(corrected).getFirst().get("radio_canonical_identity")).get("subscriber_id"));
+        // A first subscriber presents the entire current table, not a single 500-row Activity page.
+        List<Map<String,Object>> bulk = new ArrayList<>();
+        for(int index = 0; index < P25ActivityLiveService.MAXIMUM_AFFILIATIONS; index++)
+        {
+            Map<String,Object> value = new LinkedHashMap<>(corrected.getFirst());
+            int radio = 100_000 + index;
+            value.put("source_identity_key", "v1-r-bee00-49f-" + radio);
+            value.put("source_native_id", radio);
+            value.put("source_radio_id", radio);
+            value.put("source_observed_working_id", radio);
+            value.put("source_p25_subscriber_identity_id", (long)radio);
+            value.put("source_canonical_wacn", 0xBEE00);
+            value.put("source_canonical_system_id", 0x49F);
+            value.put("source_canonical_subscriber_id", radio);
+            bulk.add(value);
+        }
+        List<Map<String,Object>> presented = mDatabase.presentP25Affiliations(bulk);
+        assertEquals(10_000, presented.size());
+        assertEquals("v1-r-bee00-49f-100000", presented.getFirst().get("radio_identity_key"));
+        assertEquals("v1-r-bee00-49f-109999", presented.getLast().get("radio_identity_key"));
+        assertEquals(row.get("talkgroup_alias_name"), presented.getLast().get("talkgroup_alias_name"));
+        assertEquals(109_999, ((Map<?,?>)presented.getLast().get("radio_canonical_identity")).get("subscriber_id"));
+        assertFalse(bulk.getFirst().containsKey("source_alias_name"), "presentation must not mutate native reader rows");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         { statement.executeUpdate("DELETE FROM trunked_radio_affiliation"); }

@@ -1430,6 +1430,85 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void seeksFiveHundredCanonicalSubscriberTargetsWithoutScanningOrdinaryAliases() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("requested-canonical-subscriber-volume.sqlite");
+        createDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'Selected','P25'),(2,'Other','P25')");
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<50000)
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                SELECT value,1,'Working '||value,'RADIO_ID','APCO25',value FROM ids
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<10500)
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                SELECT value,0xABCDE,0x123,value FROM ids
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type) VALUES
+                    (50001,1,'Selected canonical','P25_SUBSCRIBER_IDENTITY'),
+                    (50002,2,'Other canonical','P25_SUBSCRIBER_IDENTITY')
+                """);
+            statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity VALUES(50001,1),(50002,2)");
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 501 UNION ALL SELECT value+1 FROM ids WHERE value<10500)
+                INSERT INTO alias(id,alias_list_id,name,matcher_type)
+                SELECT 60000+value,2,'Unrelated canonical','P25_SUBSCRIBER_IDENTITY' FROM ids
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                SELECT id,id-60000 FROM alias WHERE id>60000
+                """);
+            statement.execute("ANALYZE");
+            //A lookup that once had one rule can retain sparse statistics after a bulk import.
+            statement.executeUpdate("UPDATE sqlite_stat1 SET stat='1 1 1' WHERE idx='idx_alias_p25_subscriber_identity'");
+            statement.execute("ANALYZE sqlite_schema");
+            List<Map<String,Object>> identities = new ArrayList<>();
+            for(int identity = 1; identity <= 500; identity++)
+            {
+                Map<String,Object> row = activityRow("APCO25",1,1,identity,700,1);
+                row.put("source_p25_subscriber_identity_id", (long)identity);
+                row.put("source_observed_working_id", identity);
+                identities.add(row);
+            }
+            List<String> canonicalQueries = new ArrayList<>();
+            Connection observed = (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),
+                new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
+                    if("prepareStatement".equals(method.getName()) && arguments != null &&
+                        arguments[0] instanceof String sql && sql.contains("alias_p25_subscriber_identity subscriber_alias"))
+                        canonicalQueries.add(sql);
+                    try { return method.invoke(connection, arguments); }
+                    catch(InvocationTargetException exception) { throw exception.getCause(); }
+                });
+            AtomicInteger progress = new AtomicInteger();
+            ProgressHandler.setHandler(connection, 1000, new ProgressHandler()
+            {
+                @Override protected int progress() { return progress.incrementAndGet() > 1000 ? 1 : 0; }
+            });
+            try { new StatsAliasResolver().enrichActivity(observed, identities); }
+            finally { ProgressHandler.clearHandler(connection); }
+            assertEquals("Selected canonical", identities.getFirst().get("source_alias_name"),
+                "The selected channel's canonical Alias must retain precedence over its Working-ID Alias");
+            assertEquals("Working 2", identities.get(1).get("source_alias_name"),
+                "Another Alias List's canonical definition must not replace the selected channel's Working ID");
+            assertEquals("Working 500", identities.getLast().get("source_alias_name"));
+            assertEquals(1, canonicalQueries.size(), "Five hundred requested pairs should use one bounded query");
+            List<Object> parameters = new ArrayList<>();
+            for(int identity = 1; identity <= 500; identity++) { parameters.add(1L); parameters.add((long)identity); }
+            parameters.add(StatsAliasResolver.MAX_LOADED_RULES + 1);
+            String plan = queryPlan(connection, canonicalQueries.getFirst(), parameters.toArray());
+            assertTrue(plan.contains("SEARCH subscriber_alias USING COVERING INDEX idx_alias_p25_subscriber_identity"), plan);
+            assertFalse(plan.contains("SCAN definition"), plan);
+            assertTrue(progress.get() < 100, "Canonical lookup scanned unrelated Alias definitions: " + progress);
+        }
+    }
+
+    @Test
     void deduplicatesMatchingRangesBeforeApplyingTheLoadedRuleBudget() throws Exception
     {
         Path database = mTemporaryFolder.resolve("shared-range-rules.sqlite");
