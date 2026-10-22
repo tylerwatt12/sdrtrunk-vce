@@ -59,6 +59,7 @@ final class ReceiverHealthIncidentTracker
                           String observed, String likelyCause, String impact, String checkNext)
     {
         String key = code + '\u0000' + scopeId;
+        mObservedThisSample.add(key);
         if(!mActive.containsKey(key))
         {
             PendingIncident pending = mPending.get(key);
@@ -71,6 +72,12 @@ final class ReceiverHealthIncidentTracker
             if(mSampleNanos - pending.firstSeenNanos < RECURRENCE_HOLD_NANOSECONDS) return;
         }
         observe(code, severity, title, scopeId, scope, now, count, observed, likelyCause, impact, checkNext);
+    }
+
+    /** An interrupted sample cannot establish that an unconfirmed loss continued. */
+    void discardPending()
+    {
+        mPending.clear();
     }
 
     /** Missing measurements preserve existing incidents, but cannot establish recurring evidence. */
@@ -121,8 +128,8 @@ final class ReceiverHealthIncidentTracker
 
     void endSample(long now)
     {
-        mPending.values().removeIf(pending ->
-            mSampleNanos - pending.lastSeenNanos >= RECURRENCE_HOLD_NANOSECONDS);
+        mPending.entrySet().removeIf(entry -> !mObservedThisSample.contains(entry.getKey()) ||
+            mSampleNanos - entry.getValue().lastSeenNanos >= RECURRENCE_HOLD_NANOSECONDS);
         List<String> resolvedKeys = new ArrayList<>();
 
         for(Map.Entry<String,MutableIncident> entry: mActive.entrySet())

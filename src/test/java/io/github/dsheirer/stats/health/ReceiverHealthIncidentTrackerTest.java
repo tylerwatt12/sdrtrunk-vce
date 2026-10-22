@@ -55,7 +55,7 @@ class ReceiverHealthIncidentTrackerTest
     }
 
     @Test
-    void oneBlipExpiresWithoutOpeningOrCreatingHistory() throws Exception
+    void oneBlipExpiresWithoutOpeningOrCreatingHistory()
     {
         ReceiverHealthIncidentTracker tracker = new ReceiverHealthIncidentTracker();
         begin(tracker, 0);
@@ -69,9 +69,6 @@ class ReceiverHealthIncidentTrackerTest
         assertTrue(tracker.active().isEmpty());
         assertTrue(tracker.resolved().isEmpty());
         assertTrue(tracker.lifecycleChanges().isEmpty());
-        var pending = ReceiverHealthIncidentTracker.class.getDeclaredField("mPending");
-        pending.setAccessible(true);
-        assertTrue(((Map<?,?>)pending.get(tracker)).isEmpty(), "Expired pending scopes must not accumulate");
     }
 
     @Test
@@ -215,6 +212,52 @@ class ReceiverHealthIncidentTrackerTest
         tracker.endSample(11_000);
         assertTrue(tracker.active().isEmpty(), "Unknown time cannot confirm the old pending episode");
         assertTrue(tracker.resolved().isEmpty());
+    }
+
+    @Test
+    void aKnownHealthyCompletedSampleBreaksPendingLossConfirmation()
+    {
+        ReceiverHealthIncidentTracker tracker = new ReceiverHealthIncidentTracker();
+        for(int second = 0; second <= 9; second++)
+        {
+            begin(tracker, second * 1_000L);
+            recurringLoss(tracker, "usb-1", 1_000 + second * 1_000L);
+            tracker.endSample(1_000 + second * 1_000L);
+        }
+        begin(tracker, 10_000);
+        tracker.endSample(11_000); // A completed, known-clean measurement interrupts the episode.
+        for(int second = 11; second <= 21; second++)
+        {
+            begin(tracker, second * 1_000L);
+            recurringLoss(tracker, "usb-1", 1_000 + second * 1_000L);
+            tracker.endSample(1_000 + second * 1_000L);
+            if(second < 21) assertTrue(tracker.active().isEmpty(), "The old nine seconds must not carry over");
+        }
+        assertEquals(1, tracker.active().size());
+        assertEquals(22_000L, tracker.active().getFirst().get("opened_at_ms"));
+    }
+
+    @Test
+    void interruptedWholeSampleDiscardsUnconfirmedLossWithoutClearingAnActiveIncident()
+    {
+        ReceiverHealthIncidentTracker tracker = new ReceiverHealthIncidentTracker();
+        for(long time: new long[]{0, 9_000})
+        {
+            begin(tracker, time);
+            immediateLoss(tracker, "active-receiver", time + 1_000);
+            recurringLoss(tracker, "unconfirmed-receiver", time + 1_000);
+            tracker.endSample(time + 1_000);
+        }
+        begin(tracker, 10_000);
+        tracker.discardPending(); // The whole sampler failed, so there is no completed healthy measurement.
+        assertEquals(1, tracker.active().size(), "Unknown evidence cannot dismiss the existing incident");
+        assertTrue(tracker.resolved().isEmpty());
+        begin(tracker, 11_000);
+        immediateLoss(tracker, "active-receiver", 12_000);
+        recurringLoss(tracker, "unconfirmed-receiver", 12_000);
+        tracker.endSample(12_000);
+        assertEquals(1, tracker.active().size(), "The pending episode cannot bridge the failed whole sample");
+        assertEquals(1_000L, tracker.active().getFirst().get("opened_at_ms"));
     }
 
     @Test

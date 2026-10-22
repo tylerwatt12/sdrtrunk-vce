@@ -44,8 +44,9 @@ final class ReceiverHealthDiagnosticCore
             mTimingAvailable = false;
             mGcAvailable = false;
         }
-        boolean intervalAvailable = mTimingAvailable && nowNanos >= mPreviousStartNanos;
-        long interval = intervalAvailable ? nowNanos - mPreviousStartNanos : 0;
+        long elapsed = nowNanos - mPreviousStartNanos;
+        boolean intervalAvailable = mTimingAvailable && elapsed >= 0;
+        long interval = intervalAvailable ? elapsed : 0;
         long expected = TimeUnit.MILLISECONDS.toNanos(EXPECTED_INTERVAL_MS) + mPreviousDurationNanos;
         Sample sample = new Sample(startedAtMs, nowMs, nowNanos, ++mSequence, intervalAvailable,
             TimeUnit.NANOSECONDS.toMillis(interval), intervalAvailable ?

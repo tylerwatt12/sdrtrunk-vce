@@ -210,6 +210,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
         catch(Throwable throwable)
         {
+            mIncidents.discardPending();
             mDiagnosticCore.disabled();
             long now = System.currentTimeMillis();
 
@@ -355,12 +356,14 @@ public final class ReceiverHealthService implements AutoCloseable
                 (serial.isBlank() ? "" : "Serial " + serial + " · ") + channels + " channel" +
                     (channels == 1 ? "" : "s") + (controller != null ? " · Center " +
                         controller.getFrequency() + " Hz · Sample rate " +
-                        Math.round(controller.getSampleRate()) + " samples/s" : "")));
+                        Math.round(controller.getSampleRate()) + " samples/s" : "") +
+                    (tunerStatus == TunerStatus.ERROR ? " · " + discovered.getErrorMessage() : "")));
 
             if(discovered.isEnabled() && tunerRequired && tunerStatus == TunerStatus.ERROR)
             {
                 mIncidents.observe("tuner-error", "critical", "Tuner is not working", scope, display, now, 1,
-                    discovered.getErrorMessage(), "The USB connection, device access, driver, power, or tuner startup failed",
+                    "The tuner stopped providing radio data to its assigned channels",
+                    "The USB connection, driver or tuner may have stopped working",
                     "Channels assigned to this tuner cannot receive radio data",
                     "Open the tuner details, then check its error message, USB cable, driver, and power");
             }
@@ -391,7 +394,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(nativeDropDelta > 0)
                 {
-                    mIncidents.observeRecurring("receiver-iq-drop", "critical", "Radio data keeps being lost", scope,
+                    mIncidents.observeRecurring("receiver-iq-drop", "warning", "Radio data keeps being lost", scope,
                         display, now, nativeStatus.droppedBuffers(), "VCE has repeatedly lost incoming radio data",
                         "The computer or a receiving function may not be keeping up",
                         "Calls on channels using this tuner may be missed or interrupted",
@@ -407,7 +410,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(ifftDropDelta > 0)
                 {
-                    mIncidents.observeRecurring("channelizer-drop", "critical", "Radio data keeps being lost while separating channels",
+                    mIncidents.observeRecurring("channelizer-drop", "warning", "Radio data keeps being lost while separating channels",
                         scope, display, now, pipeline.ifftDroppedBatches(), "VCE keeps losing radio data while separating this tuner's channels",
                         "VCE ran out of room while separating this tuner's data into channels",
                         "Calls on channels using this tuner may be missed or interrupted",
@@ -451,7 +454,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(channelDropDelta > 0)
                 {
-                    mIncidents.observeRecurring("channel-output-drop", "critical", "A channel keeps losing radio data",
+                    mIncidents.observeRecurring("channel-output-drop", "warning", "A channel keeps losing radio data",
                         scope, display, now, aggregateChannelDrops, "A channel keeps missing some of its incoming radio data",
                         "The computer or a receiving function may not be keeping up",
                         "Calls on affected channels may be missed or interrupted",
@@ -572,7 +575,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(ingressLossDelta > 0)
         {
-            mIncidents.observeRecurring("receiver-ingress-drop", "critical",
+            mIncidents.observeRecurring("receiver-ingress-drop", "warning",
                 "Radio data from the tuner keeps being lost", scope, display, now, ingressLossCount,
                 "VCE keeps losing incoming radio data after it reaches the computer",
                 "The computer is not processing the tuner's radio data quickly enough",
@@ -591,7 +594,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
         else if(assessment.integrityDelta() > 0)
         {
-            mIncidents.observeRecurring("usb-sample-loss", "critical", "Radio data from the USB tuner is incomplete",
+            mIncidents.observeRecurring("usb-sample-loss", "warning", "Radio data from the USB tuner is incomplete",
                 scope, display, now, integrityCount, "Incoming radio data keeps arriving incomplete or cannot be read",
                 "The tuner connection or VCE's handling of incoming radio data is failing",
                 "Calls may be missed or interrupted",

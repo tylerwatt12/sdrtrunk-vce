@@ -327,6 +327,8 @@ class ReceiverHealthServiceTest
                     if(second < 11) assertTrue(usb.codes().isEmpty(), "kind=" + kind + ", second=" + second);
                 }
                 assertEquals(Set.of(kind == 0 ? "receiver-ingress-drop" : "usb-sample-loss"), usb.codes());
+                assertEquals("warning", usb.incidents.active().getFirst().get("severity"),
+                    "Continuing loss needs attention without claiming that reception has stopped");
             }
         }
     }
@@ -403,6 +405,7 @@ class ReceiverHealthServiceTest
             assertTrue(usb.codes().isEmpty());
             usb.sample(11_000, 10_000, 0);
             assertEquals(Set.of("usb-sample-loss"), usb.codes());
+            assertEquals("critical", usb.incidents.active().getFirst().get("severity"));
             assertTrue(String.valueOf(usb.incidents.active().getFirst().get("observed")).contains("10 seconds"));
         }
     }
@@ -488,6 +491,26 @@ class ReceiverHealthServiceTest
                 if(second < 24) assertTrue(usb.codes().isEmpty(), "Idle work cannot confirm receiver loss");
             }
             assertEquals(Set.of("usb-sample-loss"), usb.codes());
+        }
+    }
+
+    @Test
+    void scatteredSmallUsbFaultsDoNotAccumulateAcrossHealthyMeasurements() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            usb.sample(0, 0, 0);
+            for(int second = 1; second <= 20; second++)
+            {
+                if(second == 1 || second == 5 || second == 9 || second == 13 || second == 17)
+                    usb.copyFailures++;
+                usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+                assertTrue(usb.codes().isEmpty(), "A few separated faults are not continuing receiver loss");
+            }
+            assertTrue(usb.incidents.resolved().isEmpty(), "No hidden incident should have opened between checks");
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Processing errors 5")),
+                "All isolated faults must remain visible in the diagnostic counters");
         }
     }
 

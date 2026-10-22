@@ -43,6 +43,22 @@ class ReceiverHealthDiagnosticCoreTest
     }
 
     @Test
+    void elapsedIntervalsSurviveSignedMonotonicClockWrap()
+    {
+        for(long origin : new long[]{0, -1, Long.MIN_VALUE, Long.MAX_VALUE - nanos(500)})
+        {
+            ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
+            core.begin(1, 1, 1_000, origin).finish(origin + nanos(20));
+            Map<String,Object> next = core.begin(1, 1, 2_100, origin + nanos(1_100))
+                .finish(origin + nanos(1_125));
+            assertEquals(true, next.get("sample_interval_available"));
+            assertEquals(1_100L, next.get("sample_interval_ms"));
+            assertEquals(80L, next.get("sample_lateness_ms"));
+            assertEquals(25L, next.get("sample_duration_ms"));
+        }
+    }
+
+    @Test
     void unavailableReadingsAreExplicitAndDoNotSeedAFutureDelta()
     {
         ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
