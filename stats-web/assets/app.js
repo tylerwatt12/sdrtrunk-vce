@@ -19536,7 +19536,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=51');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=52');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -19552,10 +19552,12 @@ async function renderP25Visualizer() {
     saveEventSettings: saveP25VisualizerEventSettings,
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
+    requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
     requestActivitySeed: (parameters, options) => api('/api/v1/activity/live/seed', parameters, options),
     openActivityStream: (callbacks) => {
       const source = liveConnection('p25_activity', { subscription_id: randomLiveClientId() }, false);
-      [['source_change', 'boundary'], ['p25_state_delta', 'delta'], ['resync_required', 'resync'],
+      [['source_change', 'boundary'], ['p25_state_delta', 'delta'], ['activity_append', 'append'],
+        ['activity_reset', 'historyReset'], ['resync_required', 'resync'],
         ['live_gap', 'resync']].forEach(([eventName, callbackName]) => {
         source.addEventListener(eventName, (event) => {
           try { callbacks[callbackName]?.(JSON.parse(event.data), event.data); }

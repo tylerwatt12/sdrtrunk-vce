@@ -93,8 +93,11 @@ class ReceiverActivityWriter implements AutoCloseable
     private long mObservationDropBaseline;
     private long mPersistedObservationDrops;
     private long mPersistedObservationDropMs;
+    private boolean mDropDiagnosticsDirty;
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
+    /* Shared by replacement writers belonging to one service, including a writer finishing its final commit. */
+    private AtomicLong mHistoryGeneration = new AtomicLong();
     /* Writer-thread-owned evidence that the matching logical-call counters committed successfully. */
     private final Map<LogicalCallId,Long> mResolvedLogicalCalls = new LinkedHashMap<>(1024, 0.75f, true);
     private ActivityToneAssociations mActivityToneAssociations = new ActivityToneAssociations();
@@ -237,6 +240,21 @@ class ReceiverActivityWriter implements AutoCloseable
     long getWrittenRecords()
     {
         return mWrittenRecords.get();
+    }
+
+    /** Committed history maintenance only; ordinary observations do not invalidate saved history seeds. */
+    public long historyGeneration()
+    {
+        return mHistoryGeneration.get();
+    }
+
+    void setHistoryGeneration(AtomicLong generation)
+    {
+        if(mRunning.get() || mExecutorService != null)
+        {
+            throw new IllegalStateException("History generation must be assigned before writer startup");
+        }
+        mHistoryGeneration = java.util.Objects.requireNonNull(generation, "generation cannot be null");
     }
 
     boolean isWorkerTerminated()
@@ -639,7 +657,7 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             ReceiverActivityMaintenance.Result result = mRunning.get() ?
                 ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, mDatabasePath, request,
-                    mDroppedRecords.get()) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
+                    mDroppedRecords.get(), mHistoryGeneration) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
             request.observeWriter(mQueue.size(), mDroppedRecords.get());
             if(result == null) mDeletionJobs.addLast(request);
             else request.result().complete(result);
@@ -704,17 +722,17 @@ class ReceiverActivityWriter implements AutoCloseable
                 if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS)
                 {
                     result = ReceiverActivityMaintenance.clearChannelStats(connection, mDatabasePath,
-                        request.configurationId());
+                        request.configurationId(), mHistoryGeneration);
                 }
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
                 {
                     result = ReceiverActivityMaintenance.deleteRetainedStats(connection, mDatabasePath,
-                        request.deletionTarget());
+                        request.deletionTarget(), mHistoryGeneration);
                 }
                 else
                 {
                     result = ReceiverActivityMaintenance.run(connection, mDatabasePath, mRetentionDays,
-                        request.operation());
+                        request.operation(), mHistoryGeneration);
                 }
 
                 if(request.operation() == ReceiverActivityMaintenance.Operation.MAINTAIN ||
@@ -797,11 +815,12 @@ class ReceiverActivityWriter implements AutoCloseable
     {
         long count = observationDrops();
         long lastDrop = lastObservationDropMs();
-        if(count != mPersistedObservationDrops || lastDrop != mPersistedObservationDropMs)
+        if(mDropDiagnosticsDirty || count != mPersistedObservationDrops || lastDrop != mPersistedObservationDropMs)
         {
             persistDropDiagnosticsWithRetry(connection);
             mPersistedObservationDrops = count;
             mPersistedObservationDropMs = lastDrop;
+            mDropDiagnosticsDirty = false;
         }
     }
 
@@ -835,6 +854,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
     private void persistDropDiagnostics(Connection connection) throws SQLException
     {
+        ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
         ReceiverActivitySchema.updateStatus(connection, "writer_queue_overflow_drops", Long.toString(mQueueOverflowDrops.get()));
         ReceiverActivitySchema.updateStatus(connection, "constraint_rejection_drops", Long.toString(mConstraintDrops.get()));
         ReceiverActivitySchema.updateStatus(connection, "last_writer_queue_overflow_ms", Long.toString(mLastQueueOverflowMs.get()));
@@ -908,15 +928,14 @@ class ReceiverActivityWriter implements AutoCloseable
         if(batch.size() == 1)
         {
             ReceiverActivityRecord rejected = batch.getFirst();
-            long droppedRecords = mDroppedRecords.incrementAndGet();
+            mDroppedRecords.incrementAndGet();
             mConstraintDrops.incrementAndGet();
             mDroppedCategories.incrementAndGet(DropCategory.of(rejected).ordinal());
             mLastConstraintDropMs.set(System.currentTimeMillis());
+            mDropDiagnosticsDirty = true;
             String warning = "Discarded invalid statistics record [" + diagnosticSummary(rejected) + "]: " +
                 batchFailure.getMessage();
             mLog.warn(warning);
-            ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(droppedRecords));
-            persistDropDiagnostics(connection);
             return;
         }
 
@@ -1195,12 +1214,12 @@ class ReceiverActivityWriter implements AutoCloseable
             long writtenTotal = mWrittenRecords.get() + writtenRecords;
             long successfulWrite = System.currentTimeMillis();
             ReceiverActivitySchema.updateStatus(connection, "records_written", Long.toString(writtenTotal));
-            ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
             persistDropDiagnostics(connection);
             ReceiverActivitySchema.updateStatus(connection, "last_successful_write_ms",
                 Long.toString(successfulWrite));
 
             connection.commit();
+            mDropDiagnosticsDirty = false;
             mActivityToneAssociations = toneAssociations;
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
             for(ToneReceipt receipt: acceptedToneSequences) mCompletedToneReceipts.put(receipt, successfulWrite);
@@ -1364,7 +1383,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private ReceiverActivityMaintenance.RetentionResult cleanupRetention(Connection connection) throws SQLException
     {
         ReceiverActivityMaintenance.RetentionResult result =
-            ReceiverActivityMaintenance.cleanupRetentionPass(connection, mRetentionDays);
+            ReceiverActivityMaintenance.cleanupRetentionPass(connection, mRetentionDays, mHistoryGeneration);
         mLastRetentionCleanup = System.currentTimeMillis();
         return result;
     }

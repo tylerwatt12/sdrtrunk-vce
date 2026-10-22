@@ -3,18 +3,18 @@
 P25 Visualizer shows P25 systems, talkgroups, radios, and their observed relationships in an interactive 3D scene.
 Open **Listen > P25 Visualizer** to explore current observed affiliations and activity saved by your receiver.
 
-This guide describes current Nightly. The scene loads the receiver’s current accepted P25 affiliations plus the
-latest 500 saved P25 activity records, then updates automatically. The recent event set stays at the latest 500 Activity
-records; current affiliations are kept separately. Use the Activity pages to browse retained history. The status
-shows live updates, reconnection, or a pause while the tab is hidden.
+This guide describes current Nightly. The scene loads the receiver’s current accepted P25 affiliations and the
+selected **1h** or **24h** of saved P25 activity, then updates automatically. Current affiliations can appear while
+history is still loading. The status shows history progress, live updates, reconnection, or a pause while the tab is hidden.
+Historical details age out of the selected window within a minute. Current affiliations remain visible regardless of age.
 
 ## Get started
 
 1. Select a system sphere to enter it, then select a talkgroup to look more closely at its radios.
-2. Open **Events** to read noteworthy activity.
+2. Choose **1h** or **24h**, then open **Events** to read noteworthy activity.
 3. Choose **Auto** to let the camera follow selected new events, or **Manual** to explore at your own pace.
 4. Use **Settings** to choose which recent saved events highlight the scene or move the automatic camera.
-5. Use **Refresh** to reload current state, recent activity, and names when needed. Normal updates arrive automatically.
+5. Use **Refresh** to reload current state, the selected history window, and names when needed. Normal updates arrive automatically.
 
 Use **← System** to leave a talkgroup view and **← All systems** to return to the overview. The fullscreen control
 gives the scene more room.
@@ -41,8 +41,9 @@ describe observations; they do not replace that current state. A fresh current-s
 observation channel can appear as an **Observed affiliation change**. A request, denial, or ordinary voice call does
 not prove that change.
 
-Larger inventories show the most recently confirmed 10,000 associations and a **Partial view** indicator. If a data read fails, the view keeps the last complete snapshot and marks it stale until it recovers. A system scene displays at most 900 radios and 220 talkgroups; **Partial
-view** indicates that some nodes are omitted. Select a talkgroup to narrow the scene.
+The view loads all current P25 associations. If a data read fails, it keeps the last complete affiliation snapshot
+and marks it stale until it recovers. A system scene draws at most 900 radios and 220 talkgroups; **Partial view**
+indicates that some nodes are omitted from the drawing. Select a talkgroup to narrow the scene.
 
 Positions represent radio relationships. They do not show geography, coverage, or proof that a radio is currently
 listening. Use the website's **Map** page for decoded geographic positions when available.
@@ -84,8 +85,8 @@ The **Events** panel groups:
 - pages/call alerts and radio checks; and
 - patch activity supported by the stored record.
 
-Repeated denials for the same radio and system are combined into one current entry. Routine calls and grants can
-appear in the scene without filling this noteworthy-events panel.
+Repeated observations for the same radio and system are grouped. Calls and grants can also appear when their
+Settings choices are enabled.
 
 An emergency means an emergency event was observed. Stored history does not establish a reliable clear time, so it
 does not indicate a continuing emergency state. The history also lacks enough detail to identify individual denial
@@ -103,18 +104,19 @@ not create empty system spheres.
 <details>
 <summary>How history updates and automatic attention work</summary>
 
-The visualizer starts from shared current affiliation state and a small set of recent saved Activity records. It
-builds the scene without replaying old camera animations. New saved activity and corrections to existing records update the scene
-automatically. Highlights use the time an event was observed, so delayed details do not look like a new radio event.
-As new records enter the latest 500, older observations leave the scene and Events panel. On busy systems this
-can cover a short time. Current associations and their radio and talkgroup nodes remain independent of that limit.
+The visualizer starts from shared current affiliation state while it loads the selected saved history in pages.
+It folds each page into the scene and discards the raw page, without replaying old camera animations. All pages
+in the selected scope load automatically. New saved activity arrives over the live connection; routine traffic
+does not evict older noteworthy history. Highlights use the observation time, so delayed details do not look like
+a new radio event. Current associations remain independent of the selected history window.
 
-A connection loss or missed update reloads one shared complete snapshot of current state and the latest 500
-records, without replaying missed camera animations. A failed reload keeps the previous scene
-visible while retrying. Hidden tabs pause their subscription and recover when you return.
+A connection loss or missed native update reloads the shared complete affiliation snapshot and catches up saved
+activity from its cursor. A saved-history clear or retention change reloads the selected history while preserving
+current affiliations. A failed read retains the previous scene while retrying. Hidden tabs pause their
+subscription and recover when you return.
 The existing `?view=network-visualizer` URL remains valid.
 
-After loading, the view automatically enters the system with the most supported recent activity. Refresh keeps
+The first available scene automatically enters a system. History loading keeps that selection, and Refresh keeps
 your selected system or talkgroup when it remains in the scene. Radios stay within their system spheres.
 
 An automatic focus holds for five seconds and returns smoothly. Emergencies have highest priority; affiliation

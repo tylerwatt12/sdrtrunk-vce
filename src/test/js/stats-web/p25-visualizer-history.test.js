@@ -46,8 +46,8 @@ function affiliation(value) {
 
 async function main() {
   const history = await import(`${pathToFileURL(path.join(feature, 'history.js')).href}?history-test=1`);
-  const applyRows = (state, rows, options = {}) => history.applyP25State(state, { rows, removed_ids: options.removedIds }, options);
-  const applyAffiliations = (state, affiliations, options = {}) => history.applyP25State(state, { affiliations }, options);
+  const applyRows = (state, rows, options = {}) => history.applyP25ActivityRows(state, rows, options);
+  const applyAffiliations = (state, affiliations, options = {}) => history.applyP25Affiliations(state, { affiliations }, options);
   const settings = await import(`${pathToFileURL(path.join(feature, 'settings.js')).href}?settings-test=1`);
 
   assert.deepEqual(history.P25_HISTORY_ACTIONS, [
@@ -151,6 +151,25 @@ async function main() {
 
   // Run the actual graph repaint against a local clock, with no polling or network work.
   const indexSource = fs.readFileSync(path.join(feature, 'index.js'), 'utf8');
+  const parametersSource = indexSource.slice(indexSource.indexOf('  function historyParameters('),
+    indexSource.indexOf('  function acceptHistory('));
+  let clockReads = 0;
+  const clockNow = 1_790_000_000_000, clockOffset = 2_500;
+  const windowContext = { Date: { now: () => { clockReads++; return clockNow; } },
+    serverTimeOffsetMs: clockOffset, historyHours: 1, eventSettings: {},
+    routineP25ActivityEnabled: () => false, P25_HISTORY_ACTIONS: history.P25_HISTORY_ACTIONS,
+    P25_ROUTINE_ACTIONS: history.P25_ROUTINE_ACTIONS };
+  vm.createContext(windowContext); vm.runInContext(parametersSource, windowContext);
+  for (const hours of [1, 24]) {
+    windowContext.historyHours = hours; clockReads = 0;
+    const bounds = windowContext.historyParameters(), oldest = clockNow + clockOffset - hours * 3_600_000;
+    assert.equal(bounds.from_ms, oldest, 'the complete selected history window includes its oldest minute');
+    assert.equal(bounds.to_ms, clockNow + clockOffset);
+    assert.equal(bounds.to_ms - bounds.from_ms, hours * 3_600_000, 'the24h request stays within the API maximum');
+    assert.equal(clockReads, 1, 'both window boundaries share one receiver-adjusted clock reading');
+    assert.ok(oldest + 1 >= bounds.from_ms && oldest + 59_999 <= bounds.to_ms);
+    assert.ok(oldest - 1 < bounds.from_ms, 'an observation before the selected window remains outside the query');
+  }
   const renderGraphSource = indexSource.slice(indexSource.indexOf('  function renderGraph('),
     indexSource.indexOf('  function renderScopeTitle('));
   let now = 10_800;
@@ -391,64 +410,41 @@ async function main() {
   assert.equal(unknownDenial.systems.size, 0,
     'a denial without a scoped radio must not create a system or fabricated entity');
 
-  const corrected = history.createP25HistoryState();
-  applyRows(corrected, [row(90, 'JOIN'), row(91, 'LOGOUT')], { initial: true });
-  const correction = applyRows(corrected, [row(90, 'JOIN', {
-    source_identity_key: 'v1-r-8001', source_radio_id: 8001, source_alias_name: 'Corrected source'
-  })], { atMs: 2_000_000_000_000 });
-  assert.equal(correction.rebuilt, true);
-  assert.deepEqual(correction.focusCandidates, [], 'source enrichment does not replay camera attention');
-  assert.equal(corrected.radios.get(`${SYSTEM_A}:v1-r-8001`).label, 'Corrected source');
-  assert.equal(corrected.radios.get(`${SYSTEM_A}:v1-r-7001`).visualGroupKey, '',
-    'Activity corrections cannot create a canonical current association');
-  const deletion = applyRows(corrected, [], { removedIds: [90] });
-  assert.equal(deletion.changed, true);
-  assert.equal(corrected.radios.has(`${SYSTEM_A}:v1-r-8001`), false,
-    'removing a saved row removes the facts it contributed');
-  applyRows(corrected, [], { removedIds: [91] });
-  assert.equal(corrected.systems.size, 0, 'deleting the remaining saved row removes its graph facts');
-
-  const mixedCorrection = history.createP25HistoryState();
-  applyRows(mixedCorrection, [row(100, 'JOIN')], { initial: true });
-  const mixed = applyRows(mixedCorrection, [row(100, 'JOIN', {
-    source_identity_key: 'v1-r-8001', source_radio_id: 8001
-  }), row(101, 'EMERGENCY', { source_identity_key: 'v1-r-8001', source_radio_id: 8001,
-    observed_at_ms: 1_700_000_001_000 })], { atMs: 1_700_000_001_100, highlightAtObservationTime: true });
-  assert.equal(mixed.rebuilt, true);
-  assert.deepEqual(mixed.focusCandidates.map((event) => event.category), ['emergency'],
-    'a mixed replacement/new batch preserves fresh attention without replaying the replaced row');
-  assert.equal(mixedCorrection.radios.has(`${SYSTEM_A}:v1-r-7001`), false);
-  assert.equal(history.buildP25Graph(mixedCorrection, SYSTEM_A, 1_700_000_001_100).nodes
-    .find((node) => node.id === `${SYSTEM_A}:v1-r-8001`).signalAction, 'emergency');
-  const changedClouds = history.createP25HistoryState();
-  applyRows(changedClouds, [row(110, 'JOIN'), row(111, 'JOIN', {
-    source_identity_key: 'v1-r-8001', target_identity_key: 'v1-g-202', target_id: 202
-  })], { initial: true });
-  applyRows(changedClouds, [row(110, 'JOIN', {
-    target_identity_key: 'v1-g-303', target_id: 303
-  })], { initial: true });
-  const clouds = history.buildP25Graph(changedClouds, SYSTEM_A).nodes.filter((node) => node.type === 'talkgroup');
-  assert.ok(Math.hypot(clouds[0].x - clouds[1].x, clouds[0].y - clouds[1].y,
-    clouds[0].z - clouds[1].z) > 104, 'new cloud ordinals cannot overlap preserved old anchors');
-
-  const bounded = history.createP25HistoryState();
-  applyRows(bounded, Array.from({ length: 500 }, (_, index) => row(index + 1, 'GRANT', {
-    source_identity_key: `v1-r-${index + 1}`, source_radio_id: index + 1,
-    observed_at_ms: 1_700_000_000_000 + index
+  const incremental = history.createP25HistoryState();
+  applyRows(incremental, [row(1, 'EMERGENCY', { source_identity_key: 'v1-r-8001', source_radio_id: 8001 })], { initial: true });
+  applyRows(incremental, Array.from({ length: 1_500 }, (_, index) => row(index + 2, 'GRANT', {
+    source_identity_key: 'v1-r-7001', observed_at_ms: 1_700_000_000_000 + index
   })), { initial: true });
-  applyRows(bounded, [row(501, 'GRANT', { source_identity_key: 'v1-r-501', source_radio_id: 501 })], { removedIds: [1] });
-  assert.equal(bounded.recentRows.size, 500, 'server removals keep the exact latest 500 records');
-  assert.equal(bounded.radios.has(`${SYSTEM_A}:v1-r-1`), false, 'events leaving the shared recent set leave no old graph facts');
-  const revealed = applyRows(bounded, [row(1, 'EMERGENCY', { observed_at_ms: 1_700_000_000_600 })], {
-    removedIds: [501], atMs: 1_700_000_000_700, highlightAtObservationTime: true });
-  assert.deepEqual(revealed.focusCandidates, [], 'an old saved ID revealed by a deletion cannot replay attention');
-  assert.equal(bounded.highestSavedId, 501, 'removals never regress the observation watermark');
-  assert.throws(() => applyRows(bounded, [row(999, 'GRANT')]), /bounds/, 'clients do not invent local history eviction');
-  assert.equal(bounded.recentRows.size, 500, 'an invalid combined batch cannot partially mutate the model');
-  assert.doesNotMatch(indexSource, /historyHours|pruneHistory|setInterval|requestForwardPage|from_ms|to_ms|requestActivityCatchup/,
-    'the Visualizer has no history scope, background expiry or per-viewer event catchup');
+  assert.equal(incremental.radios.has(`${SYSTEM_A}:v1-r-8001`), true,
+    'routine traffic cannot evict earlier noteworthy graph facts');
+  assert.equal(history.groupedP25Events(incremental).some(event => event.category === 'emergency'), true);
+  assert.equal(Object.hasOwn(incremental, 'recentRows'), false, 'history folds into entities without retaining raw rows');
+  assert.match(indexSource, /History scope/);
+  assert.match(indexSource, /from_ms:.*historyHours/s, 'the selected 1h/24h scope is pushed into SQL');
+  assert.doesNotMatch(indexSource, /MAX_SEED_ROWS|seedRows|250_000/, 'every history page folds immediately without a total dataset cutoff');
 
-  const overlap = applyRows(state, [state.recentRows.get(7)]);
+  const shuffled = history.createP25HistoryState();
+  const joinAt = (id, group, at) => row(id, 'JOIN', { target_identity_key: `v1-g-${group}`, target_id: group,
+    target_alias_name: '', observed_at_ms: at });
+  applyRows(shuffled, [joinAt(1, 101, 50_000), joinAt(2, 102, 30_000)], { initial: true });
+  applyRows(shuffled, [joinAt(3, 103, 40_000), joinAt(4, 104, 20_000), joinAt(5, 105, 40_000)], { initial: true });
+  assert.deepEqual([...shuffled.radios.values()][0].priorGroupKeys,
+    [101, 105, 103].map(id => `${SYSTEM_A}:v1-g-${id}`),
+    'prior groups follow observation time and ID across cursor pages, rather than page arrival');
+  applyRows(shuffled, [row(6, 'CALL', { target_identity_key: 'v1-g-105', observed_at_ms: 60_000 })], { initial: true });
+  applyRows(shuffled, [row(7, 'CALL', { target_identity_key: 'v1-g-103', observed_at_ms: 10_000 }),
+    row(8, 'CALL', { target_identity_key: 'v1-g-101', observed_at_ms: 60_000 })], { initial: true });
+  assert.equal([...shuffled.radios.values()][0].activityGroupKey, `${SYSTEM_A}:v1-g-101`,
+    'a higher ID wins equal-time activity and older timestamps never overwrite newer groups');
+  applyAffiliations(shuffled, [affiliation(joinAt(8, 104, 100_000))], { initial: true });
+  applyRows(shuffled, [joinAt(9, 106, 200_000)], { initial: true });
+  assert.equal(history.buildP25Graph(shuffled, SYSTEM_A).links.filter(link => link.kind === 'current')[0].target,
+    `${SYSTEM_A}:v1-g-104`, 'later history pages cannot replace native current state');
+  applyAffiliations(shuffled, [], { replace: true, initial: true });
+  assert.equal(history.buildP25Graph(shuffled, SYSTEM_A).links.some(link => link.kind === 'current'), false,
+    'native absence remains authoritative after historical joins');
+
+  const overlap = applyRows(state, [row(7, 'DENIAL')]);
   assert.equal(overlap.accepted, 0);
   assert.equal(overlap.ignored, 1, 'overlapping forward pages must deduplicate by stored row ID');
 

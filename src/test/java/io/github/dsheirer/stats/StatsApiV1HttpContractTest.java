@@ -1104,7 +1104,7 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void combinedP25SeedWorksWithoutCurrentWriterAndRetiredCatchupIsAbsent() throws Exception
+    void currentP25SeedWorksWithoutCurrentWriterAndHistoricalCatchupIsSeparate() throws Exception
     {
         assertEquals(404, get(StatsApiV1.ACTIVITY + "/live").statusCode());
         assertEquals(404, get(StatsApiV1.ACTIVITY + "/live?source_epoch=unknown&after_sequence=0").statusCode());
@@ -1116,9 +1116,9 @@ class StatsApiV1HttpContractTest
             JsonNode seed = OBJECT_MAPPER.readTree(response.body()).path("data");
             assertNotNull(java.util.UUID.fromString(seed.path("source_epoch").asText()));
             assertTrue(seed.path("available").asBoolean());
-            assertTrue(seed.path("rows").isArray());
+            assertFalse(seed.has("rows"), "current state must not silently replace selected history");
             assertTrue(seed.path("affiliations").isArray());
-            assertTrue(seed.path("affiliations_truncated").isBoolean());
+            assertFalse(seed.has("affiliations_truncated"));
             assertFalse(seed.has("affiliation_revision"));
             assertFalse(seed.has("affiliations_complete"));
         }
@@ -1126,7 +1126,7 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void p25RecentSeedIsCompactSharedGzipAndMatchesLiveRows() throws Exception
+    void p25NativeSeedIsSharedGzipAndCompactHistoryKeepsItsCursorAndLabels() throws Exception
     {
         P25ActivityLiveService live = StatsWebTestRuntime.services(mService).mP25ActivityLiveService;
         try(var subscriber = live.subscribe())
@@ -1138,25 +1138,9 @@ class StatsApiV1HttpContractTest
             assertNotNull(java.util.UUID.fromString(seed.path("source_epoch").asText()));
             assertTrue(seed.path("sequence").asLong() > 0);
             assertTrue(seed.path("captured_at_ms").asLong() > 0);
-            assertFalse(seed.has("server_time_ms"));
             assertTrue(seed.path("available").asBoolean());
-            assertEquals(1, seed.path("rows").size());
-            JsonNode row = seed.path("rows").get(0);
-            assertEquals("p25", row.path("protocol").asText());
-            assertEquals("trunked_site", row.path("channel_kind").asText());
-            assertEquals("GCRCN", row.path("system_name").asText());
-            assertEquals("CuyCO Jail 35", row.path("target_alias_name").asText());
-            assertEquals("Unit 2 OTA", row.path("source_talker_alias").asText());
-            assertFalse(row.has("system_identity"));
-            assertFalse(row.has("source_entity_ref"));
-            assertFalse(row.has("target_alias_description"));
-            assertFalse(row.has("frequency_hz"));
-            StatsWebDatabase database = StatsWebTestRuntime.services(mService).mDatabase;
-            var liveRows = database.presentP25ActivityRows(database.p25RawSnapshot().rows());
-            assertEquals(seed.path("rows"), OBJECT_MAPPER.readTree(OBJECT_MAPPER.writeValueAsBytes(liveRows)));
-            byte[] frame = StatsLiveEventHub.LiveEvent.prepared("p25_state_delta", Map.of("rows", liveRows), 7).frame(7).bytes(false);
-            JsonNode delta = OBJECT_MAPPER.readTree(java.util.Arrays.copyOfRange(frame, LiveMultiplexFrame.HEADER_BYTES, frame.length));
-            assertEquals(seed.path("rows"), delta.at("/data/rows"));
+            assertTrue(seed.path("affiliations").isArray());
+            assertFalse(seed.has("rows"));
             HttpRequest compressed = HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.ACTIVITY + "/live/seed"))
                 .header("Accept-Encoding", "gzip").GET().build();
             HttpResponse<byte[]> gzip = mClient.send(compressed, HttpResponse.BodyHandlers.ofByteArray());
@@ -1165,9 +1149,24 @@ class StatsApiV1HttpContractTest
             try(var input = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(gzip.body())))
             { assertEquals(response.body(), new String(input.readAllBytes(), StandardCharsets.UTF_8)); }
         }
+        var response = get(StatsApiV1.ACTIVITY +
+            "?projection=p25_visualizer&from_ms=1&to_ms=5000&actions=GRANT&after_id=0&limit=5000");
+        assertEquals(200,response.statusCode(),response.body());
+        JsonNode history = OBJECT_MAPPER.readTree(response.body());
+        assertEquals(1,history.path("data").size());
+        JsonNode row = history.path("data").get(0);
+        assertEquals("p25",row.path("protocol").asText());
+        assertEquals("trunked_site",row.path("channel_kind").asText());
+        assertEquals("GCRCN",row.path("system_name").asText());
+        assertEquals("CuyCO Jail 35",row.path("target_alias_name").asText());
+        assertEquals("Unit 2 OTA",row.path("source_talker_alias").asText());
+        for(String field:List.of("system_identity","source_entity_ref","target_alias_description","frequency_hz","has_recording"))
+            assertFalse(row.has(field),field);
+        for(String field:List.of("next_after_id","watermark_id","has_more","reset_required"))
+            assertTrue(history.path("meta").has(field),field);
         assertStructuredError(get(StatsApiV1.ACTIVITY + "?projection=p25_visualizer"),
-            400, "unknown_parameter", "projection");
-        assertEquals(400, get(StatsApiV1.ACTIVITY + "/live/seed?limit=501").statusCode());
+            400,"invalid_parameter","projection");
+        assertEquals(400,get(StatsApiV1.ACTIVITY + "/live/seed?limit=501").statusCode());
     }
 
     private static void seedSystemDirectory(Path database) throws Exception

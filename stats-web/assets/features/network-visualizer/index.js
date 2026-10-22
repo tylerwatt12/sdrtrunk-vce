@@ -1,14 +1,18 @@
 'use strict';
 
 import {
+  P25_HISTORY_ACTIONS,
+  P25_ROUTINE_ACTIONS,
   createP25HistoryState,
-  applyP25State,
+  applyP25ActivityRows,
+  applyP25Affiliations,
+  expireP25History,
   buildP25Graph,
   nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=18';
-import { createP25ActivityFeed } from './live.js?v=3';
+} from './history.js?v=19';
+import { createP25ActivityFeed } from './live.js?v=4';
 import { createP25CameraCoordinator } from './camera.js?v=4';
 import { createP25Renderer } from './renderer.js?v=8';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=4';
@@ -35,13 +39,13 @@ function formatTime(value) {
 
 
 function createP25Visualizer(dependencies = {}) {
-  const required = ['node', 'iconGlyph', 'iconButton', 'requestActivitySeed', 'openReadOnlyModal',
+  const required = ['node', 'iconGlyph', 'iconButton', 'requestActivity', 'requestActivitySeed', 'openReadOnlyModal',
     'preferenceCheckbox', 'settingsCard', 'settingsCardGrid', 'modalFooter',
     'loadEventSettings', 'saveEventSettings', 'openActivityStream'];
   required.forEach((name) => {
     if (typeof dependencies[name] !== 'function') throw new TypeError(`P25 Visualizer dependency ${name} is required.`);
   });
-  const { node, iconGlyph, iconButton, requestActivitySeed, openReadOnlyModal, preferenceCheckbox,
+  const { node, iconGlyph, iconButton, requestActivity, requestActivitySeed, openReadOnlyModal, preferenceCheckbox,
     settingsCard, settingsCardGrid, modalFooter, loadEventSettings, saveEventSettings } = dependencies;
   const layout = node('section', 'network-visualizer-layout');
   layout.setAttribute('aria-label', 'P25 Visualizer');
@@ -65,11 +69,17 @@ function createP25Visualizer(dependencies = {}) {
   cameraControls.append(auto, manual);
   const eventsToggle = textButton(node, 'Events');
   eventsToggle.setAttribute('aria-pressed', 'false');
+  const scopes = node('div', 'network-visualizer-choice-group');
+  scopes.setAttribute('role', 'group');
+  scopes.setAttribute('aria-label', 'History scope');
+  const hour = textButton(node, '1h'), day = textButton(node, '24h');
+  hour.setAttribute('aria-pressed', 'true'); day.setAttribute('aria-pressed', 'false');
+  scopes.append(hour, day);
   const refresh = textButton(node, 'Refresh');
   const settingsButton = textButton(node, 'Settings');
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   fullscreen.classList.add('network-visualizer-fullscreen');
-  actions.append(refresh, cameraControls, eventsToggle, settingsButton, fullscreen);
+  actions.append(scopes, refresh, cameraControls, eventsToggle, settingsButton, fullscreen);
   toolbar.append(brand, status, actions);
 
   const stage = node('div', 'network-visualizer-stage');
@@ -132,6 +142,8 @@ function createP25Visualizer(dependencies = {}) {
   let collectionEnabled = true;
   let sourceEpoch = '';
   let partialView = false;
+  let historyHours = 1, historyLoading = false, historySceneDirty = false;
+  let nextHistoryExpiryAtMs = 0;
   let feedStatus = 'connecting';
   let highlightTimer = 0;
   let grantActivityTimeoutMs = 1_000;
@@ -264,8 +276,7 @@ function createP25Visualizer(dependencies = {}) {
         highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
         autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
       }, { saving: 'Saving visualizer choices…',
-        onSuccess: () => { if (modal.close()) acceptState({ rows: [...state.recentRows.values()],
-          affiliations: [...state.currentAffiliations.values()], available: state.available }, true); },
+        onSuccess: () => { if (modal.close()) feed?.reloadHistory(); },
         onError: (error) => ({ state: 'error', message: error?.message ||
           'Visualizer choices could not be saved in this browser.' }) });
     });
@@ -445,13 +456,41 @@ function createP25Visualizer(dependencies = {}) {
     applyAttention(result.focusCandidates);
   }
 
-  function acceptState(document, replace = false) {
+  function acceptAffiliations(document, replace = false) {
     collectionEnabled = document.collection_enabled ?? collectionEnabled;
     const timing = document.traffic_grant_age_out_milliseconds;
     if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
-    const result = applyP25State(state, document, { ...activityOptions(replace), replace,
-      sequence: document.sequence, includeRoutine: routineP25ActivityEnabled(eventSettings) });
+    const result = applyP25Affiliations(state, document, { ...activityOptions(replace), replace, sequence: document.sequence });
     if (result.changed || replace) { snapshotLoadedAtMs = Date.now(); updateScene(result, replace); }
+  }
+
+  function resetHistory() {
+    historySceneDirty = false;
+    nextHistoryExpiryAtMs = 0;
+    const affiliations = [...state.currentAffiliations.values()], available = state.available;
+    state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
+    const result = applyP25Affiliations(state, { affiliations, available }, { ...activityOptions(true), replace: true });
+    clearAutoFocus(); camera.reset(); updateScene(result, true);
+  }
+
+  function historyParameters() {
+    const now = Date.now() + serverTimeOffsetMs;
+    const actions = routineP25ActivityEnabled(eventSettings) ?
+      [...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS] : P25_HISTORY_ACTIONS;
+    return { from_ms: now - historyHours * 3_600_000, to_ms: now,
+      actions: actions.join(','), projection: 'p25_visualizer', limit: 5_000 };
+  }
+
+  function acceptHistory(rows, initial) {
+    const now = Date.now() + serverTimeOffsetMs;
+    const selected = rows.filter(row => row.observed_at_ms >= now - historyHours * 3_600_000 &&
+      row.observed_at_ms <= now + 60_000 &&
+      (routineP25ActivityEnabled(eventSettings) || !P25_ROUTINE_ACTIONS.includes(row.action)));
+    const result = applyP25ActivityRows(state, selected, activityOptions(initial));
+    if (result.changed) {
+      snapshotLoadedAtMs = Date.now();
+      if (initial) historySceneDirty = true; else updateScene(result);
+    }
   }
 
   function setLiveStatus(value) {
@@ -460,10 +499,9 @@ function createP25Visualizer(dependencies = {}) {
     if (value === 'live') {
       const label = !state.available ? 'P25 data unavailable · Showing previous data' :
         collectionEnabled ? `Live · Updated ${formatTime(snapshotLoadedAtMs || Date.now())}` : 'Live affiliations · Activity collection off';
-      const partial = partialView || state.affiliationsTruncated;
-      status.title = (state.affiliationsTruncated ? 'Includes the most recently confirmed 10,000 affiliations. ' : '') +
-        (partial ? 'Showing up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '');
-      setStatus(label + (partial ? ' · Partial view' : ''), state.available ? 'current' : 'stale');
+      const partial = partialView;
+      status.title = partial ? 'Showing up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '';
+      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : '') + (partial ? ' · Partial view' : ''), state.available ? 'current' : 'stale');
     }
     else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
     else if (value === 'loading') setStatus('Loading recent activity', 'stale');
@@ -477,7 +515,16 @@ function createP25Visualizer(dependencies = {}) {
 
   function onVisibilityChanged() {
     pressedKeys.clear();
+    if (!document.hidden) expireHistory();
     feed?.visibilityChanged();
+  }
+
+  function expireHistory() {
+    const now = Date.now() + serverTimeOffsetMs;
+    if (now < nextHistoryExpiryAtMs) return;
+    nextHistoryExpiryAtMs = now + 60_000;
+    const result = expireP25History(state, now - historyHours * 3_600_000);
+    if (result.changed) { historySceneDirty = false; updateScene(result); }
   }
 
 
@@ -513,6 +560,10 @@ function createP25Visualizer(dependencies = {}) {
   function animate(at) {
     animationFrame = 0;
     if (closed) return;
+    if (!document.hidden) expireHistory();
+    if (historySceneDirty && renderer) {
+      historySceneDirty = false; updateScene({ focusCandidates: [], affiliationChanges: [] });
+    }
     const delta = Math.min(0.05, Math.max(0, (at - lastAnimationAt) / 1_000));
     lastAnimationAt = at;
     if (mode === 'manual') renderer?.moveManualCamera({
@@ -534,6 +585,14 @@ function createP25Visualizer(dependencies = {}) {
     animationFrame = requestAnimationFrame(animate);
   }
 
+  function selectHistory(hours) {
+    if (hours === historyHours) return;
+    historyHours = hours;
+    hour.setAttribute('aria-pressed', String(hours === 1)); day.setAttribute('aria-pressed', String(hours === 24));
+    feed?.reloadHistory();
+  }
+  hour.addEventListener('click', () => selectHistory(1));
+  day.addEventListener('click', () => selectHistory(24));
   refresh.addEventListener('click', () => void loadSnapshot({ refresh: true }));
   auto.addEventListener('click', () => mode !== 'auto' && setMode('auto'));
   manual.addEventListener('click', () => mode !== 'manual' && setMode('manual'));
@@ -594,14 +653,22 @@ function createP25Visualizer(dependencies = {}) {
   const rendererReady = initialize();
   feed = createP25ActivityFeed({
     openStream: dependencies.openActivityStream,
-    loadSeed, onDelta: acceptState, onStatus: setLiveStatus,
+    loadSeed, onDelta: acceptAffiliations, onStatus: setLiveStatus,
+    historyParameters, loadHistory: (parameters, signal) => requestActivity(parameters, { signal }),
+    onHistory: async (rows, signal) => {
+      await waitForRenderer(signal);
+      if (!closed && !signal.aborted) acceptHistory(rows, true);
+    },
+    onAppend: (rows) => acceptHistory(rows, false), onHistoryReset: resetHistory,
+    onHistoryStatus: (loading) => { historyLoading = loading; if (feedStatus === 'live') setLiveStatus('live'); },
     onSeed: async (document, signal) => {
       await waitForRenderer(signal);
-      if (!closed && !signal.aborted) acceptState(document, true);
+      if (!closed && !signal.aborted) acceptAffiliations(document, true);
     },
     onBoundary: (boundary) => {
       if (sourceEpoch && sourceEpoch !== boundary.source_epoch) {
         state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
+        nextHistoryExpiryAtMs = 0;
         snapshotLoadedAtMs = 0;
         clearAutoFocus();
         if (renderer) renderGraph(false);

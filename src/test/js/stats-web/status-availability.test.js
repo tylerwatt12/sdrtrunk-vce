@@ -68,6 +68,7 @@ vm.runInContext(`
   ${functionSource('function serviceStatusRetryDelay(milliseconds)')}
   ${functionSource('async function requestServiceStatus()')}
   ${functionSource('function statsLoggingState()')}
+  ${functionSource('function p25VisualizerMenuAvailable()')}
   ${functionSource('function detailedHistoryAvailable()')}
   ${functionSource('function detailedHistoryNotice()')}
   ${functionSource('function databaseLoggingNotice(view)')}
@@ -84,6 +85,8 @@ vm.runInContext(`
   globalThis.noticeFor = databaseLoggingNotice;
   globalThis.historyAvailable = detailedHistoryAvailable;
   globalThis.historyNotice = detailedHistoryNotice;
+  globalThis.visualizerAvailable = p25VisualizerMenuAvailable;
+  globalThis.rejectStatus = rejectServiceStatusRequest;
 `, context);
 
 async function main() {
@@ -168,6 +171,14 @@ async function main() {
   assert.equal(context.historyAvailable(), true);
   assert.match(noticeText(historyNotice()), /Saved activity status could not be checked/);
   assert.match(historyNotice().className, /ui-notice-danger/);
+
+  context.acceptStatus({ p25_visualizer_available: true, stats_logging: {
+    summary_active: false, detailed_history_active: false, state: 'DISABLED' } });
+  assert.equal(context.visualizerAvailable(), true, 'live native affiliations remain navigable with collection off');
+  context.rejectStatus();
+  assert.equal(context.visualizerAvailable(), false, 'a failed service-status check cannot expose stale availability');
+  context.acceptStatus({ p25_visualizer_available: false });
+  assert.equal(context.visualizerAvailable(), false, 'server access and receiver availability remain authoritative');
 
   const acceptHistory = (state, retained, settings = {}) => context.acceptStatus({
     stats_logging: {

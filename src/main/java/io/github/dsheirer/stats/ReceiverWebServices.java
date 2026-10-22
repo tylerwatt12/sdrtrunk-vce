@@ -170,9 +170,19 @@ public final class ReceiverWebServices implements AutoCloseable
                         return mDatabase.affiliationPresentationGeneration();
                     }
                     @Override
-                    public List<ObjectNode> presentRows(List<Map<String,Object>> rows)
+                    public long historyGeneration()
                     {
-                        return mDatabase.presentP25ActivityRows(rows);
+                        return mActivityLogService.historyGeneration();
+                    }
+                    @Override
+                    public long watermark()
+                    {
+                        return mDatabase.savedActivityWatermark();
+                    }
+                    @Override
+                    public Map<String,Object> after(long afterId, Long watermarkId)
+                    {
+                        return mDatabase.savedActivityAfter(afterId, watermarkId);
                     }
                     @Override
                     public List<ObjectNode> presentAffiliations(List<Map<String,Object>> rows)

@@ -100,6 +100,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Semaphore mObservationWakeup = new Semaphore(0);
     private final AtomicLong mObservationDrops = new AtomicLong();
     private final AtomicLong mLastObservationDropMs = new AtomicLong();
+    private final AtomicLong mHistoryGeneration = new AtomicLong();
     private final AtomicBoolean mDisposed = new AtomicBoolean();
     private final AtomicBoolean mObservationStateClearRequested = new AtomicBoolean();
     private final AtomicBoolean mWriterTransitionActive = new AtomicBoolean();
@@ -838,6 +839,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         try
         {
+            writer.setHistoryGeneration(mHistoryGeneration);
             writer.setObservationDropProviders(mObservationDrops::get, mLastObservationDropMs::get);
             writer.start();
             return writer;
@@ -1708,6 +1710,12 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 break;
             }
         }
+    }
+
+    /** Constant-time maintenance version shared across this service's active and retiring writers. */
+    public long historyGeneration()
+    {
+        return mHistoryGeneration.get();
     }
 
     /**

@@ -932,7 +932,7 @@ public class StatsWebServerService implements AutoCloseable
         status.put("database", mServices.mDatabase.status());
         status.put("stats_logging", statsLoggingStatusResponse());
         ReceiverActivityStatus logging = statsLoggingStatus();
-        status.put("p25_visualizer_available", logging.summaryActive() && logging.detailedHistoryActive() &&
+        status.put("p25_visualizer_available", logging.summaryActive() &&
             mServices.mChannelAdministrationService != null &&
             mServices.mChannelAdministrationService.hasRunningP25TrunkedChannel());
         return status;
@@ -2454,7 +2454,8 @@ public class StatsWebServerService implements AutoCloseable
                     observeOutputDrops(output, TOPIC_P25_ACTIVITY);
                     P25ActivityLiveService.State state = mServices.mP25ActivityLiveService.state();
                     writeMultiplexRecoveryJson(output, TOPIC_P25_ACTIVITY, "resync_required",
-                        Map.of("reason", "transport_gap", "source_epoch", state.epoch(), "sequence", state.sequence()));
+                        Map.of("reason", "transport_gap", "source_epoch", state.epoch(), "sequence", state.sequence(),
+                            "history_generation", state.historyGeneration()));
                     wrote = true;
                 }
             }
@@ -2725,7 +2726,7 @@ public class StatsWebServerService implements AutoCloseable
 
         private boolean pumpP25ActivityState(LiveMultiplexOutput output) throws IOException
         {
-            if(mP25Activity == null) return false;
+            if(mP25Activity == null || !mServices.mP25ActivityLiveService.ready()) return false;
             P25ActivityLiveService.State state = mServices.mP25ActivityLiveService.state();
             if(state.revision() == mP25StateRevision) return false;
             writeMultiplexRecoveryJson(output, TOPIC_P25_ACTIVITY, "source_change",
@@ -2825,6 +2826,14 @@ public class StatsWebServerService implements AutoCloseable
                 if(event == null)
                 {
                     break;
+                }
+
+                if(topic == TOPIC_P25_ACTIVITY)
+                {
+                    // A fresh native seed and REST history cover initialization. Never send a new epoch's
+                    // incremental frames ahead of its initialized source boundary.
+                    if(!mServices.mP25ActivityLiveService.ready()) continue;
+                    wrote |= pumpP25ActivityState(output);
                 }
 
                 if(topic == TOPIC_DECODE_EVENTS && mDecodeEventScope != null &&

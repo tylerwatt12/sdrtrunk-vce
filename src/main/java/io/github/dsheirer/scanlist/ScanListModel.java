@@ -252,8 +252,9 @@ public final class ScanListModel
             throw new IllegalArgumentException("Membership owner requires a positive durable ID");
         }
 
-        Map<Long,Set<Long>> updated = mutable(source);
         Set<Long> prepared = scanListIds != null ? new LinkedHashSet<>(scanListIds) : new LinkedHashSet<>();
+        if(prepared.equals(source.getOrDefault(ownerId, Set.of()))) return source;
+        Map<Long,Set<Long>> updated = mutable(source);
         if(prepared.isEmpty())
         {
             updated.remove(ownerId);

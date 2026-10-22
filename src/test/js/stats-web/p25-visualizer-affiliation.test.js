@@ -12,8 +12,8 @@ const row = (id, group, observedAtMs, scope = 'site-a') => ({ id, action: 'JOIN'
 
 async function main() {
   const history = await import(pathToFileURL(path.join(feature, 'history.js')).href);
-  const applyRows = (state, rows, options = {}) => history.applyP25State(state, { rows, removed_ids: options.removedIds }, options);
-  const applyAffiliations = (state, affiliations, options = {}) => history.applyP25State(state, { affiliations,
+  const applyRows = (state, rows, options = {}) => history.applyP25ActivityRows(state, rows, options);
+  const applyAffiliations = (state, affiliations, options = {}) => history.applyP25Affiliations(state, { affiliations,
     removed_radio_keys: options.removedRadioKeys, available: options.available }, { ...options, sequence: options.revision });
   const { enqueueAffiliationChange } = await import(pathToFileURL(path.join(feature, 'renderer.js')).href);
   const fact = (group, at, overrides = {}) => ({ radio_system_key: 'system', radio_identity_key: 'radio',
@@ -22,7 +22,7 @@ async function main() {
   const state = history.createP25HistoryState();
   const seed = applyAffiliations(state, [fact('A', 1_000)], { replace: true, initial: true });
   assert.deepEqual(seed.affiliationChanges, [], 'current-state seed never queues fresh motion');
-  assert.equal(state.recentRows.size, 0, 'current state does not fabricate Activity records');
+  assert.equal(state.historyAfterId, 0, 'current state does not fabricate Activity records');
   assert.equal(history.groupedP25Events(state).length, 0);
   assert.equal(history.buildP25Graph(state, 'system').links[0].kind, 'current',
     'a long-lived affiliation appears without any recent Activity');
@@ -76,10 +76,11 @@ async function main() {
   const retained = history.createP25HistoryState();
   applyAffiliations(retained, [fact('A', 100)], { initial: true });
   applyRows(retained, [row(1, 'B', 1_000)], { initial: true });
-  history.applyP25State(retained, { rows: [row(2, 'C', 2_000)], removed_ids: [1], affiliations: [fact('D', 2_000)] }, { initial: true });
-  assert.equal(retained.recentRows.size, 1, 'events exactly follow the combined server removals');
+  applyRows(retained, [row(2, 'C', 2_000)], { initial: true });
+  applyAffiliations(retained, [fact('D', 2_000)], { initial: true });
+  assert.equal(retained.groups.has('system:B'), true, 'new native facts never erase selected historical facts');
   assert.equal(retained.radios.get(radioKey).visualGroupKey, 'system:D');
-  history.applyP25State(retained, { rows: [], affiliations: [], available: false }, { replace: true, initial: true });
+  applyAffiliations(retained, [], { replace: true, initial: true, available: false });
   assert.equal(retained.currentAffiliations.size, 0, 'a complete stale snapshot can carry an authoritative empty map');
   assert.equal(retained.available, false);
   const aliasRefresh = history.createP25HistoryState();
@@ -94,14 +95,14 @@ async function main() {
     radio_home_system_name: 'County P25', radio_observed_working_id: 501 })], { initial: true });
   assert.equal([...nativeLabels.radios.values()][0].label, 'County P25 · 9001 (Working ID 501)',
     'current state shares canonical identity and home-name formatting with Activity');
-  assert.throws(() => applyAffiliations(state, Array.from({ length: 10_001 }, (_, index) => fact('A', 1, { radio_identity_key: `r${index}` }))),
-    /bounds/, 'native state has an independent 10k bound');
+  const complete = history.createP25HistoryState();
+  applyAffiliations(complete, Array.from({ length: 10_001 }, (_, index) => fact('A', 1, { radio_identity_key: `r${index}` })));
+  assert.equal(complete.currentAffiliations.size, 10_001, 'all native affiliations survive beyond the removed 10k cutoff');
+  assert.equal(complete.radios.size, 10_001);
 
   const partial = history.createP25HistoryState();
   applyAffiliations(partial, Array.from({ length: 901 }, (_, index) => fact('A', 100, {
     radio_identity_key: `r${index}`, radio_id: index })), { initial: true });
-  history.applyP25State(partial, { affiliations_truncated: true });
-  assert.equal(partial.affiliationsTruncated, true, 'server inventory truncation remains independent of local display caps');
   const partialGraph = history.buildP25Graph(partial, 'system');
   assert.equal(partial.currentAffiliations.size, 901, 'display caps do not discard canonical knowledge');
   assert.equal(partialGraph.nodes.filter((node) => node.type === 'radio').length, 900);

@@ -205,11 +205,6 @@ final class StatsAliasCatalog
         mResolver = resolver;
     }
 
-    void invalidateActivitySnapshots()
-    {
-        //Alias activity is persisted transactionally.  This compatibility hook intentionally has no cache to clear.
-    }
-
     Map<String,Object> aliasLists(Connection connection, StatsRequest request) throws SQLException
     {
         List<Map<String,Object>> rows = queryRows(connection, """

@@ -196,8 +196,14 @@ final class StatsApiV1Controller
                     "radio_system_key", "configuration_id", "hide_grants", "has_tones", "limit", "from_ms", "to_ms",
                     "action", "actions", "event_type", "encryption", "radio_role", "group_match", "source_identity_key",
                     "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
-                    "timeslot");
+                    "timeslot", "projection");
                 Map<String,Object> activity = new LinkedHashMap<>(mDatabase.activity(request));
+                boolean visualizer = "p25_visualizer".equals(request.text("projection"));
+                if(visualizer)
+                {
+                    activity.put("traffic_grant_age_out_milliseconds", mTrafficGrantAgeOutMilliseconds.getAsInt());
+                    return page(activity);
+                }
                 if(mActivityRecordingAvailability != null)
                     mActivityRecordingAvailability.enrich(activity,
                         mRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.RECORDINGS_VIEW));
@@ -566,8 +572,10 @@ final class StatsApiV1Controller
             }
             else if(result instanceof JsonBody body)
             {
-                Object data = StatsApiV1Payload.present(
-                    mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data())));
+                Object enriched = mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data()));
+                Object data = StatsApiV1.ACTIVITY.equals(prefix) &&
+                    "p25_visualizer".equals(request.text("projection")) ?
+                    StatsApiV1Payload.p25VisualizerRows(enriched) : StatsApiV1Payload.present(enriched);
                 ApiHttpResponse.sendDataWithMeta(exchange, 200,
                     data, StatsApiV1Payload.present(body.meta()));
             }

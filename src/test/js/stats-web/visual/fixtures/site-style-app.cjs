@@ -416,24 +416,20 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       `/api/v1/radio-systems/${systemKey}/radios/${radioKey}/activity`].includes(p)) {
       return respond({ totals, series: [] });
     }
-    if (p === '/api/v1/activity') return respond({ ...pageOf([{ id: 1, observed_at_ms: now,
+    if (p === '/api/v1/activity') return route.fulfill({ json: { data: Number(url.searchParams.get('after_id') || 0) >= 1 ? [] : [{ id: 1, observed_at_ms: now,
       action: 'GRANT', protocol: 'P25', channel_kind: 'TRUNKED_SITE', radio_system_key: systemKey,
       system_name: systemName, configuration_id: channelId, source_radio_id: 30914, source_native_id: 30914,
       source_identity_key: radioKey, source_alias_name: 'Engine 4', target_id: 1201, target_native_id: 1201,
-      target_identity_key: groupKey, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }]),
-      watermark_id: 1, next_after_id: 1 });
-    if (p === '/api/v1/activity/live/seed') return respond({ source_epoch: 'fixture-p25', sequence: 0, available: true, affiliations_truncated: false, ...defaultP25Affiliations,
-      captured_at_ms: now, traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true,
-      rows: [{ id: 1, observed_at_ms: now, action: 'GRANT', protocol: 'P25', channel_kind: 'TRUNKED_SITE',
-        radio_system_key: systemKey, system_name: systemName, configuration_id: channelId,
-        source_radio_id: 30914, source_native_id: 30914, source_identity_key: radioKey, source_alias_name: 'Engine 4',
-        target_id: 1201, target_native_id: 1201, target_identity_key: groupKey,
-        target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }] });
+      target_identity_key: groupKey, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }],
+      meta: { watermark_id: 1, next_after_id: 1, has_more: false, reset_required: false } } });
+    if (p === '/api/v1/activity/live/seed') return respond({ source_epoch: 'fixture-p25', sequence: 0,
+      available: true, ...defaultP25Affiliations, captured_at_ms: now,
+      traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true });
     if (p === '/api/v1/live/multiplex/control') {
       const subscription = request.postDataJSON()?.subscriptions?.p25_activity;
       if (subscription) await page.evaluate((subscriptionId) => {
         window.fixtureSendLiveFrame?.(7, 'source_change', { subscription_id: subscriptionId,
-          source_epoch: 'fixture-p25', sequence: 0,
+          source_epoch: 'fixture-p25', sequence: 0, watermark_id: 1, history_generation: 0,
           server_time_ms: Date.now(), traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true });
       }, subscription.subscription_id);
       return respond({ accepted: true });

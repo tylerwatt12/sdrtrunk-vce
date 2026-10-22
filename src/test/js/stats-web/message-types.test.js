@@ -80,10 +80,10 @@ async function checkMessageTypes(core, source) {
   assert.equal(updatedRow.children[2].text, 'NXDN', 'Protocol edits are reflected on the next render.');
   const history = await import(pathToFileURL(path.resolve(core, '../features/network-visualizer/history.js')).href);
   const historyState = history.createP25HistoryState({ actionLabel: (name) => catalog.label('ACTION', name) });
-  history.applyP25State(historyState, { rows: [{ id: 1, observed_at_ms: 1_790_000_000_000,
+  history.applyP25ActivityRows(historyState, [{ id: 1, observed_at_ms: 1_790_000_000_000,
     protocol: 'p25', channel_kind: 'trunked_site', configuration_id: 'site',
     radio_system_key: 'system', action: 'EMERGENCY', source_identity_key: 'v1-r-123',
-    source_radio_id: 123, target_identity_key: 'v1-g-456', target_kind: 'talkgroup', target_id: 456 }] });
+    source_radio_id: 123, target_identity_key: 'v1-g-456', target_kind: 'talkgroup', target_id: 456 }]);
   assert.equal(history.groupedP25Events(historyState)[0].title, 'Receiver emergency wording',
     'The visualizer uses the same database action label as tables and charts.');
   assert.match(source, /activityDefinitions\(\)\.map\(\(definition\) => \(\{ value: definition\.name, label: definition\.label \}\)\)/,

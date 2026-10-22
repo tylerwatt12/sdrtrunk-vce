@@ -21,6 +21,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.ToLongFunction;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -150,6 +152,12 @@ public final class ReceiverActivityMaintenance
     static Result run(Connection connection, Path databasePath, int retentionDays, Operation operation)
         throws IOException, SQLException
     {
+        return run(connection, databasePath, retentionDays, operation, null);
+    }
+
+    static Result run(Connection connection, Path databasePath, int retentionDays, Operation operation,
+                      AtomicLong historyGeneration) throws IOException, SQLException
+    {
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
         int rowsDeleted = 0;
@@ -157,10 +165,10 @@ public final class ReceiverActivityMaintenance
 
         switch(operation)
         {
-            case MAINTAIN -> rowsDeleted = runLightMaintenance(connection, retentionDays);
+            case MAINTAIN -> rowsDeleted = runLightMaintenancePass(connection, retentionDays, historyGeneration).deletedRows();
             case SHRINK ->
             {
-                rowsDeleted = runLightMaintenance(connection, retentionDays);
+                rowsDeleted = runLightMaintenancePass(connection, retentionDays, historyGeneration).deletedRows();
                 vacuum(connection);
                 checkpoint(connection);
                 optimize(connection);
@@ -175,7 +183,7 @@ public final class ReceiverActivityMaintenance
             }
             case RESET_STATS ->
             {
-                rowsDeleted = resetStats(connection);
+                rowsDeleted = resetStats(connection, historyGeneration);
                 checkpoint(connection);
                 optimize(connection);
             }
@@ -207,6 +215,12 @@ public final class ReceiverActivityMaintenance
     static Result clearChannelStats(Connection connection, Path databasePath, String configurationId)
         throws IOException, SQLException
     {
+        return clearChannelStats(connection, databasePath, configurationId, null);
+    }
+
+    static Result clearChannelStats(Connection connection, Path databasePath, String configurationId,
+                                    AtomicLong historyGeneration) throws IOException, SQLException
+    {
         if(configurationId == null || configurationId.isBlank())
         {
             throw new IllegalArgumentException("Channel configuration ID is required");
@@ -214,7 +228,7 @@ public final class ReceiverActivityMaintenance
 
         long databaseBytesBefore = size(databasePath);
         long walBytesBefore = size(walPath(databasePath));
-        int rowsDeleted = clearChannelStats(connection, configurationId);
+        int rowsDeleted = clearChannelStats(connection, configurationId, historyGeneration);
         checkpoint(connection);
         optimize(connection);
         return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
@@ -226,6 +240,13 @@ public final class ReceiverActivityMaintenance
                                       StatsDatabaseMaintenanceRequest.DeletionTarget target)
         throws IOException, SQLException
     {
+        return deleteRetainedStats(connection, databasePath, target, null);
+    }
+
+    static Result deleteRetainedStats(Connection connection, Path databasePath,
+                                      StatsDatabaseMaintenanceRequest.DeletionTarget target,
+                                      AtomicLong historyGeneration) throws IOException, SQLException
+    {
         if(target == null)
         {
             throw new IllegalArgumentException("Deletion target is required");
@@ -235,7 +256,8 @@ public final class ReceiverActivityMaintenance
         long walBytesBefore = size(walPath(databasePath));
         ReceiverActivityDeletion.Result deleted = ReceiverActivityDeletion.legacySelectionTooLarge(connection, target) ?
             ReceiverActivityDeletion.Result.tooLarge() : inTransaction(connection,
-                () -> ReceiverActivityDeletion.delete(connection, target));
+                () -> ReceiverActivityDeletion.delete(connection, target), historyGeneration,
+                ReceiverActivityDeletion.Result::rowsDeleted);
         return new Result(Operation.DELETE_RETAINED_STATS, deleted.rowsDeleted(), null, databaseBytesBefore,
             size(databasePath), walBytesBefore, size(walPath(databasePath)),
             deleted.outcome());
@@ -245,6 +267,13 @@ public final class ReceiverActivityMaintenance
     static Result deleteRetainedStatsPass(Connection connection, Path databasePath,
                                           StatsDatabaseMaintenanceRequest request, long droppedRecords)
         throws IOException, SQLException
+    {
+        return deleteRetainedStatsPass(connection, databasePath, request, droppedRecords, null);
+    }
+
+    static Result deleteRetainedStatsPass(Connection connection, Path databasePath,
+                                          StatsDatabaseMaintenanceRequest request, long droppedRecords,
+                                          AtomicLong historyGeneration) throws IOException, SQLException
     {
         if(!(request.deletionTarget() instanceof ScopedData target))
             throw new IllegalArgumentException("Batched cleanup requires a scoped retained-data target");
@@ -279,7 +308,8 @@ public final class ReceiverActivityMaintenance
             try
             {
                 ReceiverActivityScopedDeletion.Batch active = batch;
-                int changed = inTransaction(connection, () -> active.runPass(connection));
+                int changed = inTransaction(connection, () -> active.runPass(connection), historyGeneration,
+                    Integer::longValue);
                 request.committedBatch(changed, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
             }
             catch(SQLException | RuntimeException failure)
@@ -320,7 +350,13 @@ public final class ReceiverActivityMaintenance
 
     static RetentionResult runLightMaintenancePass(Connection connection, int retentionDays) throws SQLException
     {
-        RetentionResult retention = cleanupRetentionPass(connection, retentionDays);
+        return runLightMaintenancePass(connection, retentionDays, null);
+    }
+
+    private static RetentionResult runLightMaintenancePass(Connection connection, int retentionDays,
+                                                           AtomicLong historyGeneration) throws SQLException
+    {
+        RetentionResult retention = cleanupRetentionPass(connection, retentionDays, historyGeneration);
         int deleted = retention.deletedRows();
         checkpoint(connection);
         optimize(connection);
@@ -331,8 +367,14 @@ public final class ReceiverActivityMaintenance
 
     static RetentionResult cleanupRetentionPass(Connection connection, int retentionDays) throws SQLException
     {
+        return cleanupRetentionPass(connection, retentionDays, null);
+    }
+
+    static RetentionResult cleanupRetentionPass(Connection connection, int retentionDays,
+                                                 AtomicLong historyGeneration) throws SQLException
+    {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
-        ReceiverActivityRetention.Pass pass = ReceiverActivityRetention.runPass(connection, cutoff);
+        ReceiverActivityRetention.Pass pass = ReceiverActivityRetention.runPass(connection, cutoff, historyGeneration);
         int deleted = pass.deletedRows();
 
         ReceiverActivitySchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
@@ -346,17 +388,18 @@ public final class ReceiverActivityMaintenance
     {
     }
 
-    private static int resetStats(Connection connection) throws SQLException
+    private static int resetStats(Connection connection, AtomicLong historyGeneration) throws SQLException
     {
         return inTransaction(connection, () -> {
             int deleted = DmrActivitySchema.resetStats(connection) + ReceiverActivitySchema.resetStats(connection) +
                 TrunkedSiteSchema.resetStats(connection);
             updateStatus(connection, "last_stats_reset_ms");
             return deleted;
-        });
+        }, historyGeneration, Integer::longValue);
     }
 
-    private static int clearChannelStats(Connection connection, String configurationId) throws SQLException
+    private static int clearChannelStats(Connection connection, String configurationId, AtomicLong historyGeneration)
+        throws SQLException
     {
         return inTransaction(connection, () -> {
             int deleted = DmrActivitySchema.clearChannelStats(connection, configurationId) +
@@ -365,10 +408,11 @@ public final class ReceiverActivityMaintenance
             ReceiverActivitySchema.updateStatus(connection, "last_channel_stats_clear_ms",
                 Long.toString(System.currentTimeMillis()));
             return deleted;
-        });
+        }, historyGeneration, Integer::longValue);
     }
 
-    private static <T> T inTransaction(Connection connection, SqlOperation<T> operation) throws SQLException
+    private static <T> T inTransaction(Connection connection, SqlOperation<T> operation, AtomicLong historyGeneration,
+                                        ToLongFunction<T> deletedRows) throws SQLException
     {
         boolean previousAutoCommit = connection.getAutoCommit();
 
@@ -383,6 +427,10 @@ public final class ReceiverActivityMaintenance
         {
             T result = operation.run();
             connection.commit();
+            if(historyGeneration != null && deletedRows.applyAsLong(result) > 0)
+            {
+                historyGeneration.incrementAndGet();
+            }
             return result;
         }
         catch(SQLException | RuntimeException e)

@@ -67,6 +67,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("recordings playback", "recordings-playback.test.js", RECORDINGS),
         contract("Listen map", "listen-map.test.js", LISTEN_MAP),
         contract("P25 Visualizer history", "p25-visualizer-history.test.js", NETWORK_VISUALIZER),
+        contract("P25 Visualizer rolling expiry", "p25-visualizer-expiry.test.js", NETWORK_VISUALIZER),
         contract("P25 Visualizer live", "p25-visualizer-live.test.js", NETWORK_VISUALIZER),
         contract("P25 Visualizer camera", "p25-visualizer-camera.test.js", NETWORK_VISUALIZER),
         contract("P25 Visualizer affiliation", "p25-visualizer-affiliation.test.js", NETWORK_VISUALIZER),

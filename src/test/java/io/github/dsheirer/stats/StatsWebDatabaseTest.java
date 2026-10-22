@@ -3263,7 +3263,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void recentP25SeedFiltersBeforeItsLimitAndPreservesOwnedLabelsAndCanonicalIdentities() throws Exception
+    void p25HistoryFiltersBeforePagingAndPreservesOwnedLabelsAndCanonicalIdentities() throws Exception
     {
         seedActivityFilterRows();
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -3310,8 +3310,11 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("ANALYZE");
         }
-        List<ObjectNode> actual = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
-        assertTrue(actual.size() < 500);
+        StatsWebDatabase.ActivityQuery[] query = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> page = mDatabase.activity(request("/?projection=p25_visualizer&from_ms=9000&to_ms=15002" +
+            "&actions=CALL,DENIAL,GRANT&after_id=0&limit=500"), value -> query[0] = value);
+        List<ObjectNode> actual = StatsApiV1Payload.p25VisualizerRows(StatsApiV1Payload.source(rows(page)));
+        assertFalse(actual.isEmpty());
         assertFalse(actual.stream().anyMatch(row -> row.path("id").asLong() > 10000 && row.path("id").asLong() < 12001));
         assertFalse(actual.stream().anyMatch(row -> row.path("id").asLong() == 12002));
         ObjectNode north = actual.stream().filter(row -> row.path("observed_at_ms").asLong() == 10000).findFirst().orElseThrow();
@@ -3323,31 +3326,27 @@ class StatsWebDatabaseTest
         assertEquals(777, StatsApiV1Payload.present(north).at("/source_canonical_identity/subscriber_id").intValue());
         assertFalse(north.has("frequency_hz"));
         assertFalse(north.has("event_type"));
-        assertEquals(actual, mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows()),
-            "Every shared seed and delta uses the same compact projection");
+        assertEquals(actual, StatsApiV1Payload.p25VisualizerRows(StatsApiV1Payload.source(rows(mDatabase.activity(
+            request("/?projection=p25_visualizer&from_ms=9000&to_ms=15002&actions=CALL,DENIAL,GRANT&after_id=0&limit=500"))))),
+            "Repeated history reads use the same compact projection");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
-            List<String> plan = explain(connection, StatsWebDatabase.RECENT_P25_ACTIVITY_IDS_SQL,71,0L);
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_receiver_activity_event_system_time")),
-                () -> "Recent selection must use the per-system time index: " + plan);
-            List<String> projectionPlan = explain(connection, StatsWebDatabase.P25_ACTIVITY_PROJECTION_SQL +
-                " FROM receiver_activity_event_resolved activity " + StatsWebDatabase.ACTIVITY_RELATED_JOINS_SQL +
-                " WHERE activity.id IN (?,?,?) ORDER BY activity.observed_at_ms DESC,activity.id DESC", 1, 2, 12001);
-            assertTrue(projectionPlan.stream().anyMatch(detail -> detail.contains("SEARCH") &&
-                detail.contains("INTEGER PRIMARY KEY")), () -> "Recent rows must use saved-ID point reads: " + projectionPlan);
-            assertFalse(projectionPlan.stream().anyMatch(detail -> detail.startsWith("SCAN event") ||
-                detail.startsWith("SCAN activity")), () -> "Resolved projection cannot scan Activity history: " + projectionPlan);
+            List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("INTEGER PRIMARY KEY")),
+                () -> "Forward history must seek by saved row ID: " + plan);
+            assertFalse(query[0].sql().contains("activity.frequency_hz"));
+            assertTrue(query[0].sql().indexOf("candidate.action_code IN") < query[0].sql().indexOf("LIMIT ?"));
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<501)
                 SELECT 20000+n,71,71,20000+n,4 FROM rows
                 """);
         }
-        List<ObjectNode> bounded = mDatabase.presentP25ActivityRows(mDatabase.p25RawSnapshot().rows());
-        assertEquals(500, bounded.size());
-        assertEquals(20501, bounded.getFirst().path("id").asLong());
-        assertEquals(20002, bounded.getLast().path("id").asLong());
+        Map<String,Object> noteworthy = mDatabase.activity(request("/?projection=p25_visualizer&from_ms=9000&to_ms=22000" +
+            "&actions=DENIAL&after_id=0&limit=500"));
+        assertEquals(List.of(12_000L), activityTimes(noteworthy),
+            "More than500 newer routine calls cannot evict earlier matching history");
     }
 
     @Test
@@ -3394,7 +3393,7 @@ class StatsWebDatabaseTest
         assertEquals(777,mDatabase.presentP25Affiliations(corrected).getFirst().at("/radio_canonical_identity/subscriber_id").asInt());
         // A first subscriber presents the entire current table, not a single 500-row Activity page.
         List<Map<String,Object>> bulk = new ArrayList<>();
-        for(int index = 0; index < P25ActivityLiveService.MAXIMUM_AFFILIATIONS; index++)
+        for(int index = 0; index < 10_001; index++)
         {
             Map<String,Object> value = new LinkedHashMap<>(corrected.getFirst());
             int radio = 100_000 + index;
@@ -3409,11 +3408,11 @@ class StatsWebDatabaseTest
             bulk.add(value);
         }
         List<ObjectNode> presented = mDatabase.presentP25Affiliations(bulk);
-        assertEquals(10_000, presented.size());
+        assertEquals(10_001, presented.size());
         assertEquals("v1-r-bee00-49f-100000", presented.getFirst().path("radio_identity_key").textValue());
-        assertEquals("v1-r-bee00-49f-109999", presented.getLast().path("radio_identity_key").textValue());
+        assertEquals("v1-r-bee00-49f-110000", presented.getLast().path("radio_identity_key").textValue());
         assertEquals(row.get("talkgroup_alias_name"), presented.getLast().get("talkgroup_alias_name"));
-        assertEquals(109_999, presented.getLast().at("/radio_canonical_identity/subscriber_id").asInt());
+        assertEquals(110_000, presented.getLast().at("/radio_canonical_identity/subscriber_id").asInt());
         assertFalse(bulk.getFirst().containsKey("source_alias_name"), "presentation must not mutate native reader rows");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())

@@ -93,8 +93,8 @@ final class StatsApiV1Payload
         return transform(value instanceof JsonNode tree ? tree : source(value), StatsApiProtocol.UNKNOWN);
     }
 
-    /** Identical compact public trees for the shared saved baseline and state deltas. */
-    static List<ObjectNode> p25VisualizerRows(JsonNode value)
+    /** Identical compact public trees for paged history and the shared saved-activity append stream. */
+    static List<ObjectNode> p25VisualizerRows(Object value)
     {
         List<ObjectNode> rows = new ArrayList<>();
         for(JsonNode row: present(value)) rows.add(((ObjectNode)row).retain(P25_VISUALIZER_FIELDS));
