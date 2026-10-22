@@ -11587,7 +11587,7 @@ function scannerCallRenderKey(call, state, site) {
     scannerDetailMode, sourceNameDisplayMode(), scannerSourceAlias(call),
     call.call_id || '', call.started_at_ms || '',
     call.source_id || '', call.source_canonical_identity || '', call.source_observed_working_id || '',
-    call.target_id || '', call.target_canonical_identity || '', call.target_observed_working_id || '',
+    call.target_id ?? '', call.target_canonical_identity || '', call.target_observed_working_id || '',
     scannerMatchedScanLists(call, state), site?.p25_decoder_mode || '',
     site?.modulation || '', site?.configuration_id || '', site?.channel_kind || '',
     site?.entity_ref?.key || ''
@@ -18025,7 +18025,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const identifiers = [];
     rows.forEach((row) => (row.tableIdentifiers || []).forEach((identifier) => {
       const label = String(identifier?.label || '').trim();
-      const value = String(identifier?.value || '').trim();
+      const value = String(identifier?.value ?? '').trim();
       if (label && value) identifiers.push({ label, value });
     }));
     [...new Set(identifiers.map((identifier) => identifier.label))].forEach((label) =>
@@ -18038,7 +18038,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     add('Timeslot', activityValues(rows, (row) => row.timeslot));
 
     const identityRows = rows.filter((row) => !isAnalogChannel(row));
-    const targetForms = [...new Set(identityRows.filter((row) => row.target_id)
+    const targetForms = [...new Set(identityRows.filter((row) => row.target_id != null && row.target_id !== '')
       .map((row) => String(row.target_form || '').toUpperCase()))];
     (targetForms.length ? targetForms : ['']).forEach((form) => add(targetIdentifierLabel(form),
       activityValues(identityRows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
@@ -21996,7 +21996,6 @@ function specialIdentifierLabel(row, value, kind, prefix = '') {
   if (protocolFamily(row) === 'NXDN' && row.address_domain !== 'nxdn_type_d') {
     if (kind === 'talkgroup') {
       return ({
-        0x0000: 'Null Group',
         0xFFF0: 'Reserved Group',
         0xFFFF: 'All Groups'
       })[identifier] || '';

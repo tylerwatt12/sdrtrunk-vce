@@ -591,6 +591,27 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.matcherPayload(canonicalForm,
 assert.equal(context.matcherBoundText('homeWacn', 0xFFFFF), 'FFFFF');
 assert.equal(context.matcherBoundText('homeSystemId', 0xFFF), 'FFF');
 assert.equal(context.matcherBoundText('subscriberId', 0xFFFFFC), '16777212');
+const nxdnTalkgroupDescriptor = {
+  type: 'talkgroup', protocol: 'nxdn', fields: ['value'], minimum: 0, maximum: 65535
+};
+assert.equal(context.matcherDefault(nxdnTalkgroupDescriptor).value, 0);
+assert.deepEqual(JSON.parse(JSON.stringify(context.matcherPayload({ elements: {
+  matcherType: { value: 'talkgroup:nxdn', dataset: {} }, 'matcher-value': { value: '0' }
+} }, nxdnTalkgroupDescriptor))), { type: 'talkgroup', protocol: 'nxdn', value: 0 },
+  'The Alias editor submits NXDN talkgroup zero as a numeric identifier.');
+const aliasFields = vm.runInNewContext(`${functionSource('function aliasMatcherFieldValue(matcher, field)')}\n${
+  functionSource('function aliasMatcherCanonicalField(field)')}\n${
+  functionSource('function aliasMatcherFields(host, descriptor, matcher, options)')}\n({aliasMatcherFields});`, {
+  identifierNumber: value => String(value),
+  aliasTextInput: (name, value, type) => ({ name, value: String(value), type }),
+  aliasFormField: (label, input, help) => ({ label, input, help })
+});
+const zeroFieldHost = { children: [], replaceChildren() { this.children = []; },
+  append(child) { this.children.push(child); } };
+aliasFields.aliasMatcherFields(zeroFieldHost, nxdnTalkgroupDescriptor, { value: 0 }, {});
+assert.equal(zeroFieldHost.children[0].input.value, '0');
+assert.equal(zeroFieldHost.children[0].help, '0 through 65535',
+  'Alias-editor guidance displays the server-advertised NXDN minimum of zero.');
 
 const routedList = {
   alias_list_id: 41,
@@ -602,6 +623,13 @@ const routedOptions = { matchers: [{
   home_system_id_minimum: 0, home_system_id_maximum: 0xFFF,
   subscriber_id_minimum: 1, subscriber_id_maximum: 0xFFFFFC
 }, { type: 'radio', protocol: 'p25', variant: 'phase_1', minimum: 1, maximum: 0xFFFFFF }] };
+const nxdnZeroRoute = '?createAlias=1&createType=talkgroup&createProtocol=nxdn&createValue=0&createName=Security';
+assert.equal(context.routedPrefill(nxdnZeroRoute, routedList,
+  { matchers: [nxdnTalkgroupDescriptor] }).matcher.value, 0,
+  'Creating an alias from an NXDN talkgroup-zero drilldown preserves the exact identifier.');
+assert.equal(context.routedPrefill(nxdnZeroRoute, routedList,
+  { matchers: [{ ...nxdnTalkgroupDescriptor, minimum: 1 }] }), null,
+  'Routed alias validation still follows the server-advertised minimum.');
 const canonicalPrefill = context.routedPrefill(
   '?createAlias=1&createType=p25_subscriber_identity&createHomeWacn=BEE00&createHomeSystemId=348' +
     '&createSubscriberId=501&createWorkingAddress=501&createName=Portable+501', routedList, routedOptions);

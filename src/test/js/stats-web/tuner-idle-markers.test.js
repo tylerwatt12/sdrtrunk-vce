@@ -311,6 +311,18 @@ function embeddedSpectrumInteractionHarness(wheelZoom = false) {
 const row = (status, frequency_hz = 150_250_000, extra = {}) => ({ status, frequency_hz, ...extra });
 const table = (rows) => ({ table_id: 'test', channel_name: 'Dispatch', system_name: 'Local', rows });
 const statuses = (carriers) => Array.from(carriers, (carrier) => carrier.status);
+test('active Spectrum fields retain the explicit NXDN talkgroup-zero target', () => {
+  const h = harness();
+  const fields = h.context.activeCarrierFields({ status: 'CALL', rows: [{
+    protocol: 'NXDN', target_form: 'TALKGROUP', target_id: 0, target_alias: 'Security', source_id: 19,
+    tableIdentifiers: [{ label: 'Identifier', value: 0 }]
+  }] });
+  assert.equal(fields.find(field => field.label === 'TGID')?.value, '0',
+    'Talkgroup zero remains in the active carrier identity fields.');
+  assert.equal(fields.find(field => field.label === 'Target alias')?.value, 'Security');
+  assert.equal(fields.find(field => field.label === 'Identifier')?.value, '0',
+    'A numeric zero in shared channel identity fields remains visible.');
+});
 
 test('frequency cursor stays aligned and visible across FFT and waterfall plots', () => {
   const h = sharedCursorHarness();

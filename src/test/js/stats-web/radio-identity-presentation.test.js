@@ -93,6 +93,7 @@ const behavior = vm.runInNewContext(`(() => {
     return { tag, className, textContent, setAttribute() {} };
   }
   function radioLink(_row, value, label) { return { value, label }; }
+  function groupIdentityLink(_row, value, label, reference) { return { value, label, reference }; }
   function isAnalogChannel() { return false; }
   function href(view, values) {
     const parameters = new URLSearchParams();
@@ -169,7 +170,7 @@ const behavior = vm.runInNewContext(`(() => {
   return { radioSystemLabel, trunkedSiteLabel, dashboardChannelContext,
     channelDirectoryRfIdentity, channelLocationIdentity, dmrChannelDetailRows,
     scannerNetworkSiteIdentity, observedGroupIdentityKey, radioIdentifierText, groupIdentifierText, partyIdentifierText,
-    activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias, activityPartyValue,
+    specialIdentifierLabel, activityIdentifier, activitySourceAlias, activitySourceTalkerAlias, activityTargetAlias, activityPartyValue,
     activityIdentitySuggestion, activityIdentityInitialSelection, liveIdentifierAliasValue,
     liveEventRadioRow, liveEventIdentifierText, liveEventPartyText, liveEventDetailsText,
     liveEventMatchesQuery };
@@ -380,14 +381,42 @@ for (const protocol of ['P25', 'DMR', 'NXDN']) {
   }
 }
 for (const [protocol, sourceLabel, targetLabel] of [['P25', 'No Unit', 'No Talkgroup'],
-  ['DMR', 'Reserved', 'Reserved'], ['NXDN', 'No Unit', 'Null Group']]) {
+  ['DMR', 'Reserved', 'Reserved'], ['NXDN', 'No Unit', '0']]) {
   const row = { protocol, source_radio_id: 0, target_id: 0, target_kind: 'talkgroup' };
   for (const [party, expectedLabel] of [['source', sourceLabel], ['target', targetLabel]]) {
     const summary = behavior.activityPartyValue(row, party);
     assert.equal(summary.primary, expectedLabel, `${protocol} retains its actual zero-ID meaning.`);
-    assert.equal(summary.secondary, '0', 'A reported special zero ID remains explicitly visible.');
+    assert.equal(summary.secondary, expectedLabel === '0' ? '' : '0',
+      'A reported zero ID remains visible without repeating an ordinary identifier.');
   }
 }
+const nxdnZero = { protocol: 'NXDN', target_id: 0, target_kind: 'talkgroup',
+  target_alias_name: 'Security', target_entity_ref: { href: '/?view=group&identity=v1-g-x-x-0' } };
+assert.equal(behavior.activityPartyValue(nxdnZero, 'target').primary, 'Security');
+assert.equal(behavior.activityPartyValue(nxdnZero, 'target').secondary, '0',
+  'NXDN talkgroup zero keeps its configured name primary and exact identifier beneath it.');
+assert.equal(behavior.activityTargetAlias(nxdnZero).label, 'Security',
+  'NXDN talkgroup zero uses ordinary group navigation instead of a special signaling label.');
+assert.equal(behavior.activityTargetAlias(nxdnZero).reference, nxdnZero.target_entity_ref,
+  'The configured alias retains the exact talkgroup-zero drilldown.');
+assert.equal(behavior.specialIdentifierLabel(nxdnZero, 0, 'talkgroup'), '');
+assert.equal(behavior.specialIdentifierLabel(nxdnZero, 0xFFF0, 'talkgroup'), 'Reserved Group');
+assert.equal(behavior.specialIdentifierLabel(nxdnZero, 0xFFFF, 'talkgroup'), 'All Groups');
+assert.equal(behavior.specialIdentifierLabel({ ...nxdnZero, address_domain: 'nxdn_type_d' },
+  0xFFFF, 'talkgroup'), '', 'NXDN Type-D identities keep their existing interpretation.');
+const nxdnZeroSuggestion = behavior.activityIdentitySuggestion({ protocol: 'NXDN', native_id: 0,
+  identity_key: 'v1-g-x-x-0', alias_name: 'Security' }, 'talkgroup');
+assert.equal(nxdnZeroSuggestion.id, 0);
+assert.equal(nxdnZeroSuggestion.key, 'v1-g-x-x-0');
+assert.equal(nxdnZeroSuggestion.label, 'Talkgroup 0 · Security',
+  'Activity name-search suggestions retain the exact zero identity and configured alias.');
+const scannerRenderKeys = vm.runInNewContext(`${functionSource('scannerCallRenderKey')}\n({scannerCallRenderKey});`, {
+  scannerDetailMode: 'compact', sourceNameDisplayMode: () => 'talker_alias', scannerSourceAlias: () => '',
+  scannerMatchedScanLists: () => []
+});
+assert.notEqual(scannerRenderKeys.scannerCallRenderKey({ target_id: 0 }, {}, {}),
+  scannerRenderKeys.scannerCallRenderKey({ target_id: null }, {}, {}),
+  'A late talkgroup-zero identifier refreshes the listening details instead of matching an absent target.');
 const namedSpecial = behavior.activityPartyValue({ protocol: 'P25', source_radio_id: 16_777_212,
   source_alias_name: 'Console' }, 'source');
 assert.equal(namedSpecial.primary, 'Console');
@@ -767,7 +796,7 @@ assert.equal(links.radioLink({ protocol: 'P25', native_id: 9001, entity_ref: loc
   'A missing target reference never falls back to the directory owner’s link.');
 const groupLinks = vm.runInNewContext(`${functionSource('groupIdentityDisplayId')}\n${functionSource('groupIdentityLink')}` +
   '\n({groupIdentityLink});', { groupIdentifierText: behavior.groupIdentifierText,
-    rowGroupIdentityKind: () => 'talkgroup', specialIdentifierLabel: () => '',
+    rowGroupIdentityKind: () => 'talkgroup', specialIdentifierLabel: behavior.specialIdentifierLabel,
     ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
     entityTarget: reference => reference?.identity_key || '', anchor: (label, target) => ({ label, target }) });
 const groupOwner = { protocol: 'P25', native_id: 7001,
@@ -777,6 +806,13 @@ assert.equal(groupLinks.groupIdentityLink(groupOwner, 42, undefined, undefined, 
   'A missing group-party reference cannot borrow the owner’s drilldown.');
 assert.equal(groupLinks.groupIdentityLink(groupOwner).target, 'v1-g-bee00-348-7001',
   'Own directory rows keep their complete identity links.');
+const nxdnZeroGroup = { protocol: 'NXDN', native_id: 0,
+  entity_ref: { kind: 'talkgroup', identity_key: 'v1-g-x-x-0' } };
+assert.equal(groupLinks.groupIdentityLink(nxdnZeroGroup).label, '0');
+assert.equal(groupLinks.groupIdentityLink(nxdnZeroGroup).target, 'v1-g-x-x-0',
+  'An unmatched NXDN talkgroup zero keeps its ordinary numeric drilldown.');
+assert.equal(groupLinks.groupIdentityLink(nxdnZeroGroup, 0, 'Security').label, 'Security',
+  'The configured talkgroup-zero alias stays primary in linked catalog rows.');
 let tableNavigationAllowed = true;
 const tableCells = vm.runInNewContext([
   'identitySummaryValue', 'radioDisplayId', 'groupIdentityDisplayId', 'tableIdentityParts',

@@ -351,6 +351,17 @@ async function main() {
       protocol: 'P25', target_id: 1201,
       playback_target: { key: 'channel:p25-conventional', kind: 'channel', label: 'P25 Conventional' }
     }), 'P25 Conventional', 'Hold and Avoid must remain channel-scoped for conventional P25');
+    const nxdnZero = {
+      channel: 'Security channel', protocol: 'NXDN', target_form: 'TALKGROUP', target_id: 0,
+      target_alias: 'Security', source_form: 'RADIO', source_id: 19,
+      playback_target: { key: 'channel:conventional-nxdn', kind: 'channel', label: 'Security channel' }
+    };
+    assert.equal(labels.callLabel(nxdnZero), 'Security · TGID 0 ← Radio 19',
+      'Listening preserves a named NXDN talkgroup zero and its transmitting radio.');
+    assert.equal(labels.callLabel({ ...nxdnZero, target_alias: '' }), 'TGID 0 ← Radio 19',
+      'An unmatched NXDN talkgroup zero remains an ordinary visible target.');
+    assert.equal(labels.targetLabel(nxdnZero), 'Security channel',
+      'Hold and Avoid retain the conventional channel scope when its decoded talkgroup is zero.');
     assert.equal(labels.callLabel({ target_id: 77, source_id: '' }), 'ID 77');
     assert.equal(labels.callLabel({ target_form: 'UNKNOWN', target_id: 78, source_id: '' }), 'ID 78');
     assert.equal(labels.callLabel({ target_form: 'TELEPHONE_NUMBER', target_id: 5551212, source_id: '' }),

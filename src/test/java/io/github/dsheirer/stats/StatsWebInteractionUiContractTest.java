@@ -619,7 +619,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(labels.contains("0xFFFEC0: 'PSTN Gateway'"));
         assertTrue(labels.contains("0xFFFECA: 'Trunking System Controller'"));
         assertTrue(labels.contains("0xFFFFFD: 'All Radios at Site'"));
-        assertTrue(labels.contains("0x0000: 'Null Group'"));
+        assertFalse(labels.contains("0x0000: 'Null Group'"));
         assertTrue(labels.contains("0xFFF0: 'Reserved Group'"));
         assertTrue(labels.contains("0xFFF0: 'Trunking Controller'"));
         assertTrue(labels.contains("row.address_domain !== 'nxdn_type_d'"));
