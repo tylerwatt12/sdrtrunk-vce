@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.module.log;
 
+import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
@@ -109,17 +110,17 @@ public class DecodeEventLogger extends EventLogger implements IDecodeEventListen
 
         Identifier toIdentifier = event.getIdentifierCollection().getToIdentifier();
 
-            if(toIdentifier != null)
-            {
-                Identifier identifier = event.getIdentifierCollection()
-                    .getIdentifier(IdentifierClass.CONFIGURATION,Form.ALIAS_LIST,Role.ANY);
+        if(toIdentifier != null)
+        {
+            Identifier identifier = event.getIdentifierCollection()
+                .getIdentifier(IdentifierClass.CONFIGURATION, Form.ALIAS_LIST, Role.ANY);
             AliasList aliasList = mAliasModel.getAliasList((AliasListConfigurationIdentifier)identifier);
 
             if(aliasList != null)
             {
-                String mystring = (!aliasList.getAliases(toIdentifier).isEmpty()) ?
-                    aliasList.getAliases(toIdentifier).toString() : "";
-                cells.add(mystring + " (" + toIdentifier + ")");
+                List<Alias> aliases = aliasList.getAliases(toIdentifier);
+                String aliasNames = aliases.isEmpty() ? "" : aliases.toString();
+                cells.add(aliasNames + " (" + toIdentifier + ")");
             }
             else
             {
