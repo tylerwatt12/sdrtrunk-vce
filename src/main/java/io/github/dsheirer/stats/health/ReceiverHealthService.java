@@ -96,7 +96,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private volatile WebDiagnosticLogService mWebDiagnosticLogService;
     private long mLastStorageSampleMs;
     private StorageSnapshot mStorageSnapshot = StorageSnapshot.unavailable();
-    private long mLastGcCollectionTimeMs = -1;
+    private long mLastGcPauseTimeMs = -1;
     private long mLastFailureLogMs;
     private long mLastIncidentPersistenceFailureLogMs;
     private boolean mLegacySnapshotCleanupAttempted;
@@ -766,6 +766,12 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("decoders", "Control channel", rows));
     }
 
+    /** ZGC cycle counters include concurrent work; its separate pause counters measure stopped application time. */
+    static long gcPauseTime(String collectorName, long collectionTimeMs)
+    {
+        return collectorName != null && collectorName.endsWith(" Cycles") ? 0 : Math.max(0, collectionTimeMs);
+    }
+
     private void collectHost(long now, List<Map<String,Object>> measurements,
                              ReceiverHealthDiagnosticCore.Sample core)
     {
@@ -776,6 +782,7 @@ public final class ReceiverHealthService implements AutoCloseable
         double heapPercent = heapMaximum > 0 ? 100.0 * heapUsed / heapMaximum : 0;
         double cpuPercent = processCpuPercent();
         long gcTimeMs = 0;
+        long gcPauseTimeMs = 0;
         long gcCount = 0;
         boolean gcAvailable = true;
 
@@ -784,21 +791,22 @@ public final class ReceiverHealthService implements AutoCloseable
             long time = bean.getCollectionTime();
             long count = core != null ? bean.getCollectionCount() : 0;
             gcTimeMs += Math.max(0, time);
+            gcPauseTimeMs += gcPauseTime(bean.getName(), time);
             gcCount += Math.max(0, count);
             gcAvailable &= time >= 0 && count >= 0;
         }
         if(core != null) core.host(cpuPercent, heapUsed, heapMaximum, heapPercent,
             gcAvailable ? gcCount : -1, gcAvailable ? gcTimeMs : -1);
 
-        long gcIntervalMs = mLastGcCollectionTimeMs >= 0 ? Math.max(0, gcTimeMs - mLastGcCollectionTimeMs) : 0;
-        mLastGcCollectionTimeMs = gcTimeMs;
+        long gcPauseIntervalMs = mLastGcPauseTimeMs >= 0 ? Math.max(0, gcPauseTimeMs - mLastGcPauseTimeMs) : 0;
+        mLastGcPauseTimeMs = gcPauseTimeMs;
         rows.add(row("Computer", "VCE processor use", Double.isFinite(cpuPercent) ? round(cpuPercent) : "Unavailable", "%",
             Double.isFinite(cpuPercent) && cpuPercent >= 90 ? "warning" : "healthy", ""));
         rows.add(row("Computer", "VCE memory use", round(heapPercent), "%", heapPercent >= 90 ? "critical" :
             heapPercent >= 80 ? "warning" : "healthy",
             "Used " + formatBytes(heapUsed) + " of " + formatBytes(heapMaximum)));
-        rows.add(row("Computer", "Time spent freeing memory", gcIntervalMs, "ms in last sample",
-            gcIntervalMs >= 500 ? "warning" : "healthy", "Total since startup " + gcTimeMs + " ms"));
+        rows.add(row("Computer", "Time spent freeing memory", gcPauseIntervalMs, "ms in last sample",
+            gcPauseIntervalMs >= 500 ? "warning" : "healthy", "Total pauses since startup " + gcPauseTimeMs + " ms"));
 
         if(sustained("host:cpu", Double.isFinite(cpuPercent) && cpuPercent >= 90, now))
         {
@@ -818,10 +826,10 @@ public final class ReceiverHealthService implements AutoCloseable
                 "Check calls waiting for output and incoming radio data, then reduce load or increase the app's memory limit");
         }
 
-        if(gcIntervalMs >= 500)
+        if(gcPauseIntervalMs >= 500)
         {
             mIncidents.observe("gc-pause", "warning", "VCE spent extra time freeing memory", "Computer", now,
-                gcTimeMs, gcIntervalMs + " ms in the last sample", "High memory use or a burst of activity",
+                gcPauseTimeMs, gcPauseIntervalMs + " ms in the last sample", "High memory use or a burst of activity",
                 "This extra work can make incoming radio data and channel processing fall behind",
                 "Compare this with memory use, incoming radio data, and open diagnostic views");
         }

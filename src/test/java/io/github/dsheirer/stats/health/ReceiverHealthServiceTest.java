@@ -41,6 +41,36 @@ class ReceiverHealthServiceTest
     Path mTemporaryDirectory;
 
     @Test
+    void zgcConcurrentCycleTimeDoesNotCountAsPauseTime()
+    {
+        long pauses = ReceiverHealthService.gcPauseTime("ZGC Minor Cycles", 1_200) +
+            ReceiverHealthService.gcPauseTime("ZGC Major Cycles", 800) +
+            ReceiverHealthService.gcPauseTime("ZGC Minor Pauses", 1) +
+            ReceiverHealthService.gcPauseTime("ZGC Major Pauses", 2);
+
+        assertEquals(3L, pauses, "Concurrent cycle work must not trigger the 500 ms pause warning");
+    }
+
+    @Test
+    void g1PauseCountersAreRetainedIncludingItsConcurrentCollectorName()
+    {
+        long pauses = ReceiverHealthService.gcPauseTime("G1 Young Generation", 21) +
+            ReceiverHealthService.gcPauseTime("G1 Old Generation", 34) +
+            ReceiverHealthService.gcPauseTime("G1 Concurrent GC", 55);
+
+        assertEquals(110L, pauses, "G1 Concurrent GC reports stop-the-world phases despite its name");
+        assertEquals(500L, ReceiverHealthService.gcPauseTime("Unknown collector", 500));
+    }
+
+    @Test
+    void unavailableGcTimesDoNotBecomeNegativePauseTime()
+    {
+        assertEquals(0L, ReceiverHealthService.gcPauseTime("ZGC Minor Pauses", -1));
+        assertEquals(0L, ReceiverHealthService.gcPauseTime("G1 Concurrent GC", -1));
+        assertEquals(0L, ReceiverHealthService.gcPauseTime("ZGC Major Cycles", -1));
+    }
+
+    @Test
     void compactEvidenceIsOnlyBuiltWhileLoggingIsEnabledAndDoesNotChangeTheHealthApi() throws Exception
     {
         ApplicationPreference preferences = new ApplicationPreference(ignored -> {})
@@ -178,8 +208,10 @@ class ReceiverHealthServiceTest
 
             clock.set(11_000);
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-            assertTrue(rows(service.snapshot().get("resolved")).isEmpty());
+            assertTrue(rows(service.snapshot().get("active")).isEmpty(),
+                () -> "Unexpected active incidents: " + service.snapshot().get("active"));
+            assertTrue(rows(service.snapshot().get("resolved")).isEmpty(),
+                () -> "Unexpected resolved incidents: " + service.snapshot().get("resolved"));
         }
     }
 
