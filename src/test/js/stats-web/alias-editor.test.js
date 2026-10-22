@@ -928,6 +928,14 @@ async function verifySharedFormWorkflowLifecycle() {
   assert.equal(feedback.textContent, '', 'Reverting the failed draft clears its error');
   assert.equal(feedback.hidden, true);
   assert.equal(submit.hidden, true);
+
+  const actionWorkflow = createFormWorkflow({ form, submit, feedback, changed: () => false,
+    allowUnchangedSubmit: true, hideCleanSubmit: false });
+  assert.equal(submit.disabled, false, 'A direct action does not require an unsaved draft');
+  assert.equal(form.classList.contains('is-dirty'), false);
+  assert.equal(await actionWorkflow.save(async () => true), true);
+  assert.equal(submit.disabled, false, 'The next direct action stays available after success');
+  assert.equal(submit.hidden, false);
 }
 
 async function verifyAliasSaveLifecycle() {

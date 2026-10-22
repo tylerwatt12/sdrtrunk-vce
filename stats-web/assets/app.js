@@ -13,7 +13,7 @@ import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
-import { createFormWorkflow } from './core/form-workflows.js?v=5';
+import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
@@ -52,6 +52,7 @@ import { createAudioDock } from './core/audio-dock.js?v=27';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
+import { createRemoteSupportWorkspace } from './features/remote-support.js?v=2';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
@@ -33794,7 +33795,9 @@ function adminSettingsGroups() {
       { id: 'web-diagnostic-log', label: 'Web server log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Record web activity and receiver conditions to investigate tuner errors and lost radio data.' },
       { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Create and submit a support report.' }
+        description: 'Create and submit a support report.' },
+      { id: 'remote-support', label: 'Remote Support', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Allow Tyler full access to this installation’s web interface.' }
     ] },
     { label: 'Decisions engine', items: [
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -33898,6 +33901,13 @@ async function renderAdmin() {
   else if (active === 'application-log') renderAdminApplicationLog(renderContext);
   else if (active === 'web-diagnostic-log') renderAdminWebDiagnosticLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
+  else if (active === 'remote-support') {
+    const workspace = createRemoteSupportWorkspace({ node, formField, uiSelectFrame, metricCard, uiActionButton,
+      fetchDocument: jsonDocumentFetch, signal: renderContext.signal, isCurrent: () => renderIsCurrent(renderContext) });
+    body.append(workspace.element);
+    await workspace.load({ initial: true });
+    if (renderIsCurrent(renderContext)) pageInterval(() => workspace.load(), 5_000);
+  }
   else if (active === 'display') {
     const display = node('div', 'admin-display-settings');
     content.append(display);

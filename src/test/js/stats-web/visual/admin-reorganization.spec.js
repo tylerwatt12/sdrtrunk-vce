@@ -61,6 +61,10 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
   const writes = [];
   const requests = [];
   let failedOperationalRequest = false;
+  let remoteSupport = { enabled: false, connected: false, code: '', expires_at_ms: 0,
+    unlimited: false, can_start: true, ...options.remoteSupport };
+  let remoteSupportFailure = options.remoteSupportFailure === true;
+  let remoteSupportStopNotSaved = options.remoteSupportStopNotSavedOnce === true;
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -71,6 +75,27 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         primary: true, capabilities });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
+    } else if (pathname === '/api/v1/remote-support') {
+      if (remoteSupportFailure) {
+        remoteSupportFailure = false;
+        await route.fulfill({ status: 503, json: { error: { message: 'Unavailable' } } });
+      } else {
+        if (request.method() === 'POST') {
+          const change = request.postDataJSON(); writes.push(change);
+          if (change.action === 'stop' && remoteSupportStopNotSaved) {
+            remoteSupportStopNotSaved = false;
+            remoteSupport = { ...remoteSupport, enabled: false, connected: false, code: '', stop_not_saved: true };
+            await route.fulfill({ status: 503, json: { error: { code: 'remote_support_stop_not_saved',
+              message: 'Private file details must not be shown.' } } });
+            return;
+          }
+          remoteSupport = change.action === 'stop' ? { ...remoteSupport, enabled: false, stop_not_saved: false } :
+            { ...remoteSupport, enabled: true, connected: false, code: '482719356',
+              expires_at_ms: change.duration_seconds ? Date.now() + change.duration_seconds * 1000 : 0,
+              unlimited: change.duration_seconds === 0 };
+        }
+        await data(remoteSupport);
+      }
     } else if (pathname === '/api/v1/admin/paging-tone-detection') {
       await route.fulfill({ json: { revision: '1'.repeat(64), enabled: true, status: 'ready' } });
     } else if (pathname === '/api/v1/admin/operational-preferences') {
@@ -158,11 +183,11 @@ test('desktop administration navigation includes every grouped page and its icon
   await openAdmin(page);
   const navigation = page.getByRole('navigation', { name: 'Administration sections' });
   const links = navigation.getByRole('link');
-  await expect(links).toHaveText(['Receiver status', 'Application log', 'Web server log', 'Report a problem',
+  await expect(links).toHaveText(['Receiver status', 'Application log', 'Web server log', 'Report a problem', 'Remote Support',
     'Call matching', 'Tuner allocation', 'Recording settings', 'Audio quality', 'Transcription',
     'Push setup', 'Activity settings', 'Saved data cleanup',
     'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(17);
+  await expect(links.locator('svg')).toHaveCount(18);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const label of ['Status & support', 'Decisions engine', 'Audio & recordings', 'Alerts', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {
@@ -171,6 +196,86 @@ test('desktop administration navigation includes every grouped page and its icon
   await expect(navigation.getByRole('link', { name: 'Audio quality', exact: true }))
     .toHaveAttribute('aria-current', 'page');
   await expect(navigation.getByRole('link', { name: 'Call output & activity' })).toHaveCount(0);
+});
+
+test('remote support stays simple in light and dark desktop and phone layouts', async ({ page }) => {
+  for (const theme of ['light', 'dark']) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const app = await openAdmin(page, 'remote-support', [], { theme });
+      const workspace = page.locator('[data-remote-support]');
+      await expect(page.getByRole('heading', { level: 1, name: 'Remote Support', exact: true })).toBeVisible();
+      await expect(page.getByText('Allow Tyler full access to this installation’s web interface.', { exact: true })).toBeVisible();
+      await expect(workspace.getByLabel('Allow access for')).toHaveValue('21600');
+      await expect(workspace.locator('option')).toHaveText(['30 minutes', '1 hour', '6 hours', '24 hours', 'Unlimited']);
+      await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeEnabled();
+      await workspace.getByLabel('Allow access for').selectOption('0');
+      await expect(workspace.getByText('Unsaved changes', { exact: true })).toHaveCount(0);
+      await workspace.getByRole('button', { name: 'Allow remote support', exact: true }).click();
+      await expect(workspace.getByText('482 719 356', { exact: true })).toBeVisible();
+      await expect(workspace.getByText('No time limit', { exact: true })).toBeVisible();
+      await expect(workspace.getByText('Connecting… VCE will keep trying.', { exact: true })).toBeVisible();
+      await expect(workspace.getByRole('button', { name: 'Copy', exact: true })).toBeEnabled();
+      await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.supportCodeCopied = text; }; });
+      await workspace.getByRole('button', { name: 'Copy', exact: true }).click();
+      await expect(workspace.getByText('Code copied.', { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => window.supportCodeCopied)).toBe('482719356');
+      await expect(workspace.getByLabel('Allow access for')).toBeHidden();
+      await expect(workspace.getByRole('button', { name: 'Stop remote support', exact: true })).toBeEnabled();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await workspace.screenshot({ path: `build/playwright-results/remote-support-${theme}-${width}.png` });
+      await workspace.getByRole('button', { name: 'Stop remote support', exact: true }).click();
+      await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeEnabled();
+      expect(app.writes).toEqual([{ action: 'start', duration_seconds: 0 }, { action: 'stop' }]);
+    }
+  }
+});
+
+test('remote support retries safely, permits remote stop, and stops polling after navigation', async ({ page }) => {
+  const app = await openAdmin(page, 'remote-support', [], { remoteSupportFailure: true,
+    remoteSupport: { enabled: true, connected: true, code: '482719356', can_start: false,
+      expires_at_ms: Date.now() + 21_600_000 } });
+  const workspace = page.locator('[data-remote-support]');
+  await expect(workspace.getByText('Remote support status is unavailable. Try again.', { exact: true })).toBeVisible();
+  await workspace.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(workspace.getByText('Ready for Tyler.', { exact: true })).toBeVisible();
+  await expect(workspace.getByText(/^Access ends /)).toBeVisible();
+  await workspace.getByRole('button', { name: 'Stop remote support', exact: true }).click();
+  await expect(workspace.getByText('Start remote support from this installation.', { exact: true })).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeHidden();
+  await page.getByRole('navigation', { name: 'Administration sections' }).getByRole('link', { name: 'Audio quality', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Audio quality' })).toBeVisible();
+  const count = app.requests.filter(pathname => pathname === '/api/v1/remote-support').length;
+  await page.waitForTimeout(5500);
+  expect(app.requests.filter(pathname => pathname === '/api/v1/remote-support')).toHaveLength(count);
+});
+
+test('remote support keeps the unsaved-stop warning and Stop retry until the setting is saved', async ({ page }) => {
+  await page.clock.install();
+  await page.setViewportSize({ width: 390, height: 900 });
+  const app = await openAdmin(page, 'remote-support', [], { remoteSupportStopNotSavedOnce: true,
+    remoteSupport: { enabled: true, connected: true, code: '482719356', expires_at_ms: Date.now() + 21_600_000 } });
+  const workspace = page.locator('[data-remote-support]');
+  const warning = workspace.locator('p.ui-notice-warning');
+  await workspace.getByRole('button', { name: 'Stop remote support', exact: true }).click();
+  await expect(warning).toHaveText('Remote access is off for now, but this setting could not be saved. Check the application data folder before restarting VCE.');
+  await expect(warning).toBeVisible();
+  await expect(workspace.locator('.ui-notice-warning:visible')).toHaveCount(1);
+  await expect(workspace.getByRole('button', { name: 'Stop remote support', exact: true })).toBeEnabled();
+  await expect(workspace.getByLabel('Allow access for')).toBeHidden();
+  const count = app.requests.filter(pathname => pathname === '/api/v1/remote-support').length;
+  await page.clock.runFor(5100);
+  await expect.poll(() => app.requests.filter(pathname => pathname === '/api/v1/remote-support').length).toBeGreaterThan(count);
+  await expect(warning).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'Stop remote support', exact: true })).toBeEnabled();
+  await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await workspace.screenshot({ path: 'build/playwright-results/remote-support-stop-warning.png' });
+  await workspace.getByRole('button', { name: 'Stop remote support', exact: true }).click();
+  await expect(warning).toBeHidden();
+  await expect(workspace.getByLabel('Allow access for')).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeEnabled();
+  expect(app.writes).toEqual([{ action: 'stop' }, { action: 'stop' }]);
 });
 
 test('alert management opens under Manage and legacy links keep the selected topic', async ({ page }) => {
