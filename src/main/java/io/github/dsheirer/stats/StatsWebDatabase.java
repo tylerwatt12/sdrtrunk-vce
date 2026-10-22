@@ -5970,8 +5970,8 @@ class StatsWebDatabase
                                                         boolean sourceRole) throws SQLException
     {
         String source = activityCandidateSource(filters);
-        // Forward polling orders by row ID, so a history/time index can make it slower.
-        if(filters.afterId() != null)
+        // Forward polling and sparse tone evidence seek event IDs instead of scanning a role's history.
+        if(filters.afterId() != null || filters.hasTones())
         {
             return source;
         }
@@ -5998,6 +5998,11 @@ class StatsWebDatabase
      */
     private static String activityCandidateSource(ActivityFilters filters)
     {
+        // Seek the sparse tone IDs even before SQLite has owner/history index statistics.
+        if(filters.hasTones())
+        {
+            return "receiver_activity_event candidate NOT INDEXED";
+        }
         String index = activityEncryptedOwnerIndex(filters);
         return index != null ? "receiver_activity_event AS candidate INDEXED BY " + index :
             "receiver_activity_event candidate";
@@ -6005,7 +6010,7 @@ class StatsWebDatabase
 
     private static String activityEncryptedOwnerIndex(ActivityFilters filters)
     {
-        if(filters.afterId() != null || !Integer.valueOf(1).equals(filters.encryption()) ||
+        if(filters.afterId() != null || filters.hasTones() || !Integer.valueOf(1).equals(filters.encryption()) ||
             filters.groupIdentitySummaryId() != null || filters.radioIdentitySummaryId() != null ||
             filters.sourceIdentitySummaryId() != null || filters.targetIdentitySummaryId() != null ||
             filters.actionCode() != null || filters.actionCodes() != null || filters.eventTypeCode() != null ||
@@ -6058,7 +6063,7 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.event_type_code = ?", filters.eventTypeCode());
         if(filters.hasTones())
         {
-            sql.append("\n  AND EXISTS (SELECT 1 FROM receiver_activity_tone_sequence tones WHERE tones.event_id = candidate.id)");
+            sql.append("\n  AND candidate.id IN (SELECT event_id FROM receiver_activity_tone_sequence)");
         }
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms >= ?", filters.fromMilliseconds());
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms < ?", filters.toMilliseconds());

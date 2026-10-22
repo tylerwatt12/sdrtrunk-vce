@@ -3238,9 +3238,8 @@ class StatsWebDatabaseTest
                 (990001,1,593750,NULL,NULL,500,500,990000)
                 """);
         }
-        StatsWebDatabase.ActivityQuery[] query = new StatsWebDatabase.ActivityQuery[1];
         Map<String,Object> response = mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
-            "&action=CALL&event_type=CALL_GROUP&has_tones=true&limit=1"), value -> query[0] = value);
+            "&action=CALL&event_type=CALL_GROUP&has_tones=true&limit=1"));
         List<Map<String,Object>> found = rows(response);
         assertEquals(1, found.size());
         assertEquals(990001L, ((Number)found.getFirst().get("id")).longValue());
@@ -3249,11 +3248,95 @@ class StatsWebDatabaseTest
         assertTrue(found.getFirst().containsKey("paging_tone_summary"));
         assertTrue(rows(mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
             "&event_type=CALL&has_tones=true"))).isEmpty());
+    }
+
+    @Test
+    void sparseToneHistoryKeepsScopeFiltersAndBothCursorOrders() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms)
+                VALUES(7105,71,2,0xBEE00,0x49F,303,1000,40000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
+                    action_code,event_type_code,source_identity_summary_id,source_observed_local_id,
+                    target_identity_summary_id,target_observed_local_id,target_kind_code,encrypted) VALUES
+                (990001,71,71,10000,4,7,7102,202,7102,202,2,0),
+                (990002,71,71,10000,4,7,7102,202,7101,101,1,1),
+                (990003,71,71,20000,4,7,7102,202,7101,101,1,1),
+                (990004,72,71,30000,4,7,7102,202,7101,101,1,1),
+                (990005,71,71,40000,4,7,7105,303,7101,101,1,0)
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE events(value) AS (
+                    VALUES(1) UNION ALL SELECT value+1 FROM events WHERE value<10000
+                )
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
+                    action_code,event_type_code,encrypted)
+                SELECT 1000000+value,71,71,1000000+value,4,7,1 FROM events
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone_sequence
+                SELECT id,1,3,1,observed_at_ms-1000,observed_at_ms-1000,observed_at_ms+500,1
+                FROM receiver_activity_event WHERE id BETWEEN 990001 AND 990005
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone
+                SELECT event_id,0,437500,NULL,NULL,0,500,990000 FROM receiver_activity_tone_sequence
+                """);
+        }
+
+        List<StatsWebDatabase.ActivityQuery> queries = new ArrayList<>();
+        String scope = "/?configuration_id=" + P25_CHANNEL_A + "&has_tones=true";
+        Map<String,Object> first = mDatabase.activity(request(scope + "&limit=2"), queries::add);
+        assertEquals(List.of(990005L, 990003L), rows(first).stream().map(row -> number(row.get("id"))).toList());
+        assertTrue((Boolean)first.get("has_more"));
+        Map<String,Object> second = mDatabase.activity(request(scope + "&limit=1&before_id=" +
+            first.get("next_before_id")));
+        assertEquals(990002, number(rows(second).getFirst().get("id")));
+        assertTrue((Boolean)second.get("has_more"));
+        Map<String,Object> third = mDatabase.activity(request(scope + "&limit=1&before_id=" +
+            second.get("next_before_id")));
+        assertEquals(990001, number(rows(third).getFirst().get("id")));
+        assertFalse((Boolean)third.get("has_more"));
+
+        Map<String,Object> forward = mDatabase.activity(request(scope +
+            "&limit=2&after_id=0&watermark_id=990003"));
+        assertEquals(List.of(990001L, 990002L), rows(forward).stream().map(row -> number(row.get("id"))).toList());
+        assertTrue((Boolean)forward.get("has_more"));
+        Map<String,Object> forwardNext = mDatabase.activity(request(scope + "&limit=2&after_id=" +
+            forward.get("next_after_id") + "&watermark_id=990003"));
+        assertEquals(List.of(990003L), rows(forwardNext).stream().map(row -> number(row.get("id"))).toList());
+        assertFalse((Boolean)forwardNext.get("has_more"));
+
+        Map<String,Object> encrypted = mDatabase.activity(request(scope + "&encryption=encrypted&limit=10"), queries::add);
+        assertEquals(List.of(990003L, 990002L), rows(encrypted).stream().map(row -> number(row.get("id"))).toList());
+        Map<String,Object> radio = mDatabase.activity(request(scope + "&radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO,202) + "&limit=10"), queries::add);
+        assertEquals(List.of(990003L, 990002L, 990001L), rows(radio).stream().map(row -> number(row.get("id"))).toList(),
+            "A tone event matching both source and target roles is returned once");
+        Map<String,Object> window = mDatabase.activity(request(scope + "&from_ms=10000&to_ms=20000&limit=10"));
+        assertEquals(List.of(990002L, 990001L), rows(window).stream().map(row -> number(row.get("id"))).toList());
+
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
-            assertTrue(plan.stream().anyMatch(line -> line.startsWith("SEARCH tones ") && line.contains("USING INTEGER PRIMARY KEY")),
-                () -> "Tone existence must seek the selected event key: " + plan);
+            for(StatsWebDatabase.ActivityQuery query: queries)
+            {
+                List<String> plan = explain(connection, query.sql(), query.parameters().toArray());
+                List<String> candidateAccess = plan.stream().filter(line ->
+                    line.startsWith("SEARCH candidate ") || line.startsWith("SCAN candidate ")).toList();
+                assertFalse(candidateAccess.isEmpty(), () -> "Missing Activity candidate access: " + plan);
+                assertTrue(candidateAccess.stream().allMatch(line -> line.contains("USING INTEGER PRIMARY KEY")),
+                    () -> "Every tone-filtered branch must seek event IDs instead of scanning owner history: " + plan);
+                assertTrue(plan.stream().anyMatch(line -> line.contains("receiver_activity_tone_sequence") &&
+                        line.contains("FOR IN-OPERATOR")),
+                    () -> "Tone evidence must supply the sparse event-ID set: " + plan);
+            }
         }
     }
 
