@@ -7,18 +7,18 @@
 @layer reset, tokens, components, compositions, features, utilities;
 
 @import url("./styles/base.css?v=2") layer(reset);
-@import url("./styles/tokens.css?v=46") layer(tokens);
+@import url("./styles/tokens.css?v=47") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=6") layer(components);
-@import url("./styles/components/controls.css?v=46") layer(components);
+@import url("./styles/components/controls.css?v=47") layer(components);
 @import url("./styles/components/audio-controls.css?v=12") layer(components);
-@import url("./styles/compositions/workspaces.css?v=35") layer(compositions);
+@import url("./styles/compositions/workspaces.css?v=36") layer(compositions);
 @import url("./styles/compositions/tables.css?v=19") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=22") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=20") layer(compositions);
 @import url("./styles/compositions/charts.css?v=9") layer(compositions);
 @import url("./styles/compositions/modals.css?v=15") layer(compositions);
-@import url("./styles/compositions/settings.css?v=14") layer(compositions);
+@import url("./styles/compositions/settings.css?v=15") layer(compositions);
 @import url("./styles/features/access-landing.css?v=2") layer(features);
 @import url("./styles/features/about.css?v=2") layer(features);
 @import url("./styles/features/channels.css?v=27") layer(features);

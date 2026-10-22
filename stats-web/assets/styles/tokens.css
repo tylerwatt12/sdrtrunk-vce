@@ -388,6 +388,27 @@
   --settings-panel-title-size: var(--font-size-section-title);
   --settings-heading-weight: var(--font-weight-heading);
   --settings-group-letter-spacing: .035em;
+  --settings-focused-sidebar-width: 190px;
+  --settings-focused-sidebar-compact-width: 160px;
+  --settings-focused-workspace-gap: 28px;
+  --settings-focused-panel-padding: 20px;
+  --settings-focused-nav-height: 42px;
+  --settings-focused-nav-padding-block: 10px;
+  --settings-focused-nav-gap: 10px;
+  --settings-focused-reset-gap: 36px;
+  --settings-focused-field-gap: 10px;
+  --settings-focused-choice-padding: 14px;
+  --settings-focused-disclosure-height: 50px;
+  --settings-focused-toggle-padding: 11px;
+  --settings-focused-palette-gap: 6px;
+  --settings-focused-palette-padding: 3px;
+  --settings-focused-palette-label-gap: 7px;
+  --settings-focused-swatch-size: 28px;
+  --settings-focused-swatch-lightness: 62%;
+  --settings-focused-swatch-chroma: .12;
+  --settings-focused-swatch-ink: oklch(25% .008 var(--theme-hue, 185));
+  --settings-focused-preview-mark-size: 36px;
+  --settings-focused-preview-copy-gap: 1px;
   --metric-value-size: 29px;
   --metric-value-mobile-size: 24px;
   --metric-value-inline-mobile-size: 22px;
@@ -417,6 +438,7 @@
   --font-size-title-small: 20px;
   --font-size-page-title: 28px;
   --font-size-page-title-mobile: 24px;
+  --page-focused-title-size: 22px;
   --font-size-display: 32px;
   --radius-segment: 6px;
   --radius-selection: 4px;
@@ -427,6 +449,8 @@
 }
 
 :root[data-theme="dark"] {
+  --settings-focused-swatch-lightness: 74%;
+  --settings-focused-swatch-chroma: .11;
   color-scheme: dark;
   --qr-code-filter: invert(1);
   --info: #99c3e6;

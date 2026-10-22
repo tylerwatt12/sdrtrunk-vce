@@ -99,21 +99,20 @@ for (const viewport of viewports) {
       await expect(settings).toHaveAttribute('aria-current', 'page');
       await expect(navigation.locator('[data-nav-group="settings"]')).toHaveAttribute('open');
       await page.keyboard.press('Escape');
-      const statusIcon = page.getByRole('button', { name: 'Change Status Icon', exact: true });
-      const reset = page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true });
-      const personalActions = page.locator('.user-settings-summary > .ui-action-row');
-      await expect(personalActions.getByRole('button')).toHaveText([
-        'Change Appearance', 'Change Source Names', 'Change Status Icon'
-      ]);
-      await expect(personalActions.locator('button > svg[aria-hidden="true"]')).toHaveCount(3);
-      const actionsBox = await personalActions.boundingBox();
-      const summaryBox = await page.locator('.user-settings-summary .settings-card').first().boundingBox();
-      expect(summaryBox.y - (actionsBox.y + actionsBox.height)).toBeGreaterThanOrEqual(16);
-      await expect(statusIcon).toBeVisible();
+      const reset = page.getByRole('button', { name: 'Reset personal preferences', exact: true }).filter({ visible: true });
+      const category = page.getByRole('combobox', { name: 'Section', exact: true });
+      if (await category.isVisible()) await expect(category).toHaveValue('appearance');
+      else await expect(page.getByRole('button', { name: 'Appearance', exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(page.getByRole('form', { name: 'Appearance', exact: true })).toBeVisible();
+      await expect(page.locator('.user-settings-summary')).toHaveCount(0);
+      if (await category.isVisible()) await category.selectOption('status');
+      else await page.getByRole('button', { name: 'Status icon', exact: true }).click();
+      await expect(page.getByRole('form', { name: 'Status icon', exact: true })).toBeVisible();
       await expect(reset).toBeVisible();
       await reset.click();
       await expect(page.getByRole('dialog', { name: 'Reset personal preferences', exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Reset personal preferences', exact: true })
+        .getByRole('button', { name: 'Cancel', exact: true }).click();
       await expect(reset).toBeFocused();
     });
 }

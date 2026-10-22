@@ -1074,8 +1074,8 @@
   line-height: var(--line-height-body);
   padding: var(--ui-choice-card-padding, var(--space-3));
   color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--ui-choice-card-background, var(--surface-2));
+  border: 1px solid var(--ui-choice-card-border, var(--line));
   border-radius: var(--radius-control);
   box-shadow: none;
   cursor: pointer;

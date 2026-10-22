@@ -38,7 +38,7 @@ async function verifyDetailPageOrientation() {
     querySelector() { return this.children.find((child) => child.className === 'page-header'); }
   };
   const context = {
-    URLSearchParams, AbortController, node, content,
+    URLSearchParams, AbortController, node, content, personalSettingsWorkspace: null,
     route: new URLSearchParams('view=radio'), activeRenderEpoch: 0,
     activeRenderController: null, document: { body: { dataset: {} } },
     ACCESS_CAPABILITIES: { RECORDINGS: 'recordings' },

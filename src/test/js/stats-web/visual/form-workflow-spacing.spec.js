@@ -137,13 +137,23 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await inspectWithoutFields(p25, `p25-workspace-${suffix}`, false);
   });
 
-  test(`personal preference dialogs keep their footer outside dirty fields ${suffix}`, async ({ page }) => {
+  test(`personal preferences keep actions outside dirty fields ${suffix}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await installApplication(page, theme);
+    for (const [category, title] of [['appearance', 'Appearance'], ['names', 'Source names'], ['status', 'Status icon']]) {
+      await page.goto('/app.html?view=settings');
+      await expect(page.locator('.ui-settings-workspace-focused')).toBeVisible();
+      const picker = page.getByRole('combobox', { name: 'Section', exact: true });
+      if (await picker.isVisible()) await picker.selectOption(category);
+      else if (category !== 'appearance') await page.getByRole('button', { name: title, exact: true }).click();
+      const form = page.getByRole('form', { name: title, exact: true });
+      if (category === 'status') await form.locator('details > summary').first().click();
+      await inspectDirty(form, `settings-${title}-${suffix}`, false);
+      const footer = form.locator(':scope > .settings-form-footer');
+      await expect(footer).toBeVisible();
+      expect(await footer.locator('..').evaluate(element => element.classList.contains('ui-form-workflow-body'))).toBe(false);
+    }
     for (const [view, trigger, title] of [
-      ['settings', '#appearance-settings', 'Appearance'],
-      ['settings', '#source-name-settings', 'Source names'],
-      ['settings', '#status-icon-settings', 'Status icon issues'],
       ['live', '.live-presentation-button', 'Live presentation'],
       ['scanner', '#scanner-settings', 'Scanner settings']
     ]) {

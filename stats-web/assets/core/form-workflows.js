@@ -1,7 +1,7 @@
 // Reuse map: shared feedback, action rows, and modal busy/dirty guards serve
 // inline settings and dialog forms in both themes and viewport sizes.
 export function createFormWorkflow({ form, submit, feedback, modal = null,
-  ready = true, changed = null, renderFeedback = null, surface = null }) {
+  ready = true, changed = null, renderFeedback = null, surface = null, hideCleanSubmit = true }) {
   let busy = false;
   let dirty = false;
   let saved = false;
@@ -54,7 +54,7 @@ export function createFormWorkflow({ form, submit, feedback, modal = null,
     if (typeof changed === 'function') dirty = Boolean(changed());
     const clean = !dirty && (typeof changed === 'function' || saved);
     submit.disabled = busy || !ready || clean;
-    submit.hidden = clean && !busy;
+    submit.hidden = hideCleanSubmit && clean && !busy;
     form.classList[dirty ? 'add' : 'remove']('is-dirty');
     modal?.setDirty(dirty);
   };

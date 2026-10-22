@@ -13,7 +13,8 @@ import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
-import { createFormWorkflow } from './core/form-workflows.js?v=4';
+import { createFormWorkflow } from './core/form-workflows.js?v=5';
+import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
@@ -290,6 +291,7 @@ let accessSessionAvailable = false;
 let applicationRoutes = null;
 let userPreferenceError = null;
 let appearanceHuePreview = null;
+let personalSettingsWorkspace = null;
 const tableLayoutResetPending = new Set();
 const tableSchemaRegistry = new Map();
 let tableLayoutPanelSequence = 0;
@@ -403,8 +405,8 @@ function sourceNameDisplayMode() {
 function applyUserPreferenceSnapshot(snapshot) {
   if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
   const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
+  personalSettingsWorkspace?.onSnapshot(snapshot);
   applyTheme();
-  appearanceHuePreview?.onSnapshot(snapshot);
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
   const player = webCallPlayer;
   if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback, { identity: snapshot.identity });
@@ -663,14 +665,14 @@ function updateThemeButton(toggle, theme) {
 }
 
 function applyTheme() {
-  const theme = storedTheme();
+  const preview = appearanceHuePreview?.identity === userPreferenceController.snapshot().identity ?
+    appearanceHuePreview : null;
+  const theme = preview?.theme || storedTheme();
   if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
   else document.documentElement.removeAttribute('data-theme');
   updateThemeButton(document.getElementById('theme-toggle'), theme);
   applyThemeHue(activeUserPreferences().appearance.hue);
-  if (appearanceHuePreview?.identity === userPreferenceController.snapshot().identity) {
-    applyThemeHue(appearanceHuePreview.hue);
-  }
+  if (preview) applyThemeHue(preview.hue);
 }
 
 function setTheme(theme) {
@@ -1841,6 +1843,7 @@ function navigateTo(target, options = {}) {
   if (!closeReadOnlyModal(false, false, (closed) => {
     if (closed) navigateTo(target, options);
   })) return false;
+  if (personalSettingsWorkspace && !personalSettingsWorkspace.requestLeave(() => navigateTo(target, options))) return false;
   if (aliasEditorWorkspaceController?.isCurrent?.() &&
       aliasEditorWorkspaceController.canNavigate(target)) {
     void aliasEditorWorkspaceController.navigate(target, options);
@@ -11082,6 +11085,10 @@ function closePageConnections() {
 }
 
 window.addEventListener('beforeunload', (event) => {
+  if (personalSettingsWorkspace?.isDirty() || personalSettingsWorkspace?.isBusy()) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
   for (let current = activeReadOnlyModal; current; current = current.parent) {
     if (!current.isDirty?.()) continue;
     event.preventDefault();
@@ -29837,331 +29844,6 @@ function settingsCardGrid(...cards) {
   return grid;
 }
 
-function settingsSummary(rows) {
-  const summary = node('dl', 'settings-summary');
-  rows.forEach(([label, value]) => {
-    summary.append(node('dt', '', label), node('dd', '', value));
-  });
-  return summary;
-}
-
-function settingsEnabled(value) {
-  return value === true ? 'On' : 'Off';
-}
-
-function sourceNameDisplayLabel(mode) {
-  return ({ talker_alias: 'Talker Alias preferred', source_alias: 'Source Alias preferred', both: 'Both' })[mode];
-}
-
-function selectedScanListSummary(ids) {
-  if (!ids.length) return 'None';
-  const names = new Map((webCallPlayer?.viewState()?.scanLists || [])
-    .map((scanList) => [Number(scanList.id), scanList.name]));
-  return ids.map((id) => names.get(id) || `Scan list ${id}`).join(', ');
-}
-
-function disabledHealthAlertSummary(codes) {
-  if (!codes.length) return 'None';
-  const names = new Map(receiverHealthAlertGroups.flatMap((group) => group.alerts)
-    .map((alert) => [alert.id, alert.name]));
-  return codes.map((code) => names.has(code) ? `${names.get(code)} — ${code}` : code).join(', ');
-}
-
-function tableLayoutSummary(tables) {
-  const entries = Object.entries(tables);
-  if (!entries.length) return node('div', 'muted', 'No customized table layouts.');
-  const list = node('div', 'settings-table-layouts');
-  entries.forEach(([tableId, layout]) => {
-    const details = node('details', 'settings-table-layout');
-    details.append(node('summary', '', semanticLabel(tableId)), settingsSummary([
-      ['Available columns', layout.schema.map(semanticLabel).join(', ')],
-      ['Column order', layout.column_order.map(semanticLabel).join(', ')],
-      ['Hidden columns', layout.hidden_columns.length ? layout.hidden_columns.map(semanticLabel).join(', ') : 'None'],
-      ['Custom widths', Object.entries(layout.column_widths)
-        .map(([column, width]) => `${semanticLabel(column)} ${number(width)} px`).join(', ') || 'Defaults']
-    ]));
-    list.append(details);
-  });
-  return list;
-}
-
-function appearanceColorSchemeLabel(hue) {
-  return APPEARANCE_SCHEMES.find((scheme) => scheme.hue === hue)?.name || 'Saved custom color';
-}
-
-function userPreferenceSummaryCards(preferences) {
-  const disabledAlerts = preferences.health_alerts.disabled_codes;
-  const knownDisabledAlerts = receiverHealthAlertIds.filter((id) => disabledAlerts.includes(id)).length;
-  return settingsCardGrid(
-    settingsCard('Appearance', 'Choose coordinated colors here or switch the theme in the header.', settingsSummary([
-      ['Theme', semanticLabel(preferences.appearance.theme)],
-      ['Color scheme', appearanceColorSchemeLabel(preferences.appearance.hue)]
-    ])),
-    settingsCard('Scanner', 'Changed on the Scanner page.', settingsSummary([
-      ['Playing call in every page title', settingsEnabled(preferences.page_titles.prepend_playing_call)],
-      ['Playback volume', `${Math.round(preferences.playback.volume * 100)}%`],
-      ['Selected scan lists', selectedScanListSummary(preferences.playback.selected_scan_list_ids)],
-      ['Group calls by target', settingsEnabled(preferences.playback.target_grouping)],
-      ['Calls per target', number(preferences.playback.target_burst_limit)],
-      ['Detail level', semanticLabel(preferences.scanner.detail_mode)]
-    ])),
-    settingsCard('Source names', 'Changed here in My Settings.', settingsSummary([
-      ['Source name display', sourceNameDisplayLabel(preferences.presentation.source_name_display)]
-    ])),
-    settingsCard('Live presentation', 'Changed from the presentation icon on the Live page.', settingsSummary([
-      ['Row density', preferences.presentation.live_row_density === 'dense' ? 'Dense' : 'Normal'],
-      ['Show only active trunked channels', settingsEnabled(preferences.presentation.show_only_active_trunked_channels)],
-      ['Sort calls by', ({ lcn: 'LCN', order_appeared: 'Order appeared', frequency: 'Frequency' })[
-        liveChannelSortMethod(preferences.presentation)]],
-      ['Retain the last call on idle rows', settingsEnabled(preferences.presentation.retain_last_call_on_idle_rows)],
-      ['Clear voice quality on idle rows', settingsEnabled(preferences.presentation.clear_voice_quality_when_idle)],
-      ['Show encryption algorithm and key ID', settingsEnabled(preferences.presentation.show_encryption_details)],
-      ['Show control-channel quality', settingsEnabled(preferences.presentation.show_control_decode_quality)],
-      ['Show voice-channel quality', settingsEnabled(preferences.presentation.show_voice_decode_quality)],
-      ['Decode quality format', semanticLabel(preferences.presentation.decode_quality_display_mode)],
-      ['Matching rows shown', number(preferences.presentation.live_detail_row_limit)]
-    ])),
-    settingsCard('Tuner spectrum', 'Changed from a tuner Spectrum view.', settingsSummary([
-      ['Display floor', `${number(preferences.tuner.floor_db)} dB`],
-      ['Display ceiling', `${number(preferences.tuner.ceiling_db)} dB`],
-      ['Waterfall speed', `${number(preferences.tuner.waterfall_speed)}×`],
-      ['Snap frequency', settingsEnabled(preferences.tuner.snap_frequency)],
-      ['Smooth FFT', settingsEnabled(preferences.tuner.smooth_fft)],
-      ['Idle FFT markers', settingsEnabled(preferences.tuner.show_idle_channels)],
-      ['Performance profile', semanticLabel(preferences.tuner.profile)]
-    ])),
-    settingsCard('Status icon', 'Changed here in My Settings.', settingsSummary([
-      ['Issue types shown', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
-        number(receiverHealthAlertIds.length)],
-      ['Hidden issue types', disabledHealthAlertSummary(disabledAlerts)]
-    ])),
-    settingsCard('Table layouts', 'Changed with the Columns control on each table.',
-      tableLayoutSummary(preferences.tables))
-  );
-}
-
-// Reuse map: My Settings summary, shared choice cards and palette composition, form feedback,
-// and the shared modal lifecycle cover light/dark and desktop/phone layouts.
-async function openAppearanceSettings(returnFocusSelector = null) {
-  const snapshot = userPreferenceController.snapshot();
-  if (!snapshot.loaded) return;
-  const identity = snapshot.identity;
-  let savedHue = snapshot.preferences.appearance.hue;
-  let draftHue = savedHue;
-  let sessionChanged = false;
-  const form = node('form', 'admin-form');
-  const field = node('div', 'ui-field');
-  const label = node('span', 'ui-field-label', 'Color scheme');
-  label.id = 'appearance-color-scheme';
-  const palette = node('div', 'ui-palette-grid');
-  palette.setAttribute('role', 'radiogroup');
-  palette.setAttribute('aria-labelledby', label.id);
-  const customColor = node('p', 'ui-field-detail',
-    'Saved custom color. Choose a scheme to replace it.');
-  customColor.id = 'appearance-custom-color';
-  let refreshPreview = () => {};
-  const schemeInputs = APPEARANCE_SCHEMES.map((scheme) => {
-    const choice = node('label', 'ui-choice-card ui-palette-choice');
-    const input = node('input', 'ui-choice-radio');
-    input.type = 'radio';
-    input.name = 'appearance-scheme';
-    input.value = scheme.name;
-    input.checked = scheme.hue === savedHue;
-    const swatch = node('span', 'ui-palette-swatch');
-    swatch.setAttribute('aria-hidden', 'true');
-    swatch.style.setProperty('--palette-hue', String(scheme.previewHue));
-    choice.append(input, swatch, node('strong', '', scheme.name));
-    input.addEventListener('change', () => {
-      if (!input.checked) return;
-      draftHue = scheme.hue;
-      refreshPreview();
-    });
-    palette.append(choice);
-    return { input, scheme };
-  });
-  customColor.hidden = schemeInputs.some(({ input }) => input.checked);
-  if (!customColor.hidden) palette.setAttribute('aria-describedby', customColor.id);
-  field.append(label, palette, customColor);
-  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
-  cancel.type = 'button';
-  const save = node('button', 'ui-button ui-button-primary', 'Save appearance');
-  save.type = 'submit';
-  const feedback = node('div', 'admin-form-message');
-  const actions = aliasModalFooter(cancel, save);
-  form.append(field, feedback, actions);
-  let preview = null;
-  const modal = openReadOnlyModal('Appearance', form, {
-    id: 'appearance-settings', className: 'admin-modal', returnFocusSelector,
-    cleanup: () => {
-      if (appearanceHuePreview === preview) appearanceHuePreview = null;
-      applyTheme();
-    }
-  });
-  if (!modal) return;
-  const workflow = createFormWorkflow({ form, submit: save, feedback, modal,
-    changed: () => !sessionChanged && draftHue !== savedHue });
-  refreshPreview = () => {
-    schemeInputs.forEach(({ input, scheme }) => { input.checked = scheme.hue === draftHue; });
-    customColor.hidden = schemeInputs.some(({ input }) => input.checked);
-    if (customColor.hidden) palette.removeAttribute('aria-describedby');
-    else palette.setAttribute('aria-describedby', customColor.id);
-    if (appearanceHuePreview === preview) {
-      preview.hue = draftHue;
-      applyTheme();
-    }
-  };
-  const loadSavedHue = (current) => {
-    savedHue = current.preferences.appearance.hue;
-    draftHue = savedHue;
-    refreshPreview();
-    workflow.refresh();
-  };
-  const closeForChangedSession = () => {
-    let owned = activeReadOnlyModal;
-    while (owned && owned !== modal.state) owned = owned.parent;
-    if (!owned) return;
-    // The former account's draft and any discard confirmation share this root.
-    // Close only that owned stack through the shared cleanup/focus lifecycle.
-    closeReadOnlyModal(true);
-    void render();
-  };
-  preview = {
-    identity, hue: savedHue,
-    onSnapshot: (current) => {
-      if (current.identity === identity) return;
-      sessionChanged = true;
-      if (appearanceHuePreview === preview) appearanceHuePreview = null;
-      workflow.setReady(false);
-      if (!workflow.isBusy()) closeForChangedSession();
-    }
-  };
-  cancel.addEventListener('click', modal.close);
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const selectedHue = draftHue;
-    await workflow.save(async () => {
-      await updateUserPreferences((preferences) => {
-        preferences.appearance.hue = selectedHue;
-      }, false);
-      loadSavedHue(userPreferenceController.snapshot());
-    }, {
-      saving: 'Saving appearance…',
-      onSuccess: async () => {
-        modal.setDirty(false);
-        if (modal.close()) await render();
-        document.querySelector(returnFocusSelector || '#appearance-settings')?.focus({ preventScroll: true });
-      },
-      onError: (error) => {
-        if (sessionChanged || error?.code === 'preference_session_changed') {
-          sessionChanged = true;
-          workflow.setReady(false);
-          return { state: 'warning', message: 'The signed-in account changed. Reopen Appearance for this account.' };
-        }
-        if (error?.code === 'preference_conflict' && !error.reloadError) {
-          loadSavedHue(userPreferenceController.snapshot());
-          return { state: 'warning', message: 'Appearance changed in another session. The saved colors were loaded.' };
-        }
-        refreshPreview();
-        return { state: 'error', message: error?.code === 'preference_conflict' ?
-          'Appearance changed in another session, but the saved colors could not be loaded. Try saving again or reload the page.' :
-          'Appearance could not be saved. Your color choice is still here. Try saving again.' };
-      }
-    });
-    if (sessionChanged) {
-      modal.setDirty(false);
-      closeForChangedSession();
-    }
-  });
-  if (!await modal.ready) return;
-  if (userPreferenceController.snapshot().identity !== identity) {
-    modal.close();
-    return;
-  }
-  appearanceHuePreview = preview;
-  modal.focus(schemeInputs.find(({ input }) => input.checked)?.input || schemeInputs[0]?.input);
-}
-
-// Reuse map: shared settings summary, select, form feedback and modal footer
-// provide the same source-name choice on phones and desktops in both themes.
-async function openSourceNameSettings(returnFocusSelector = null) {
-  const snapshot = userPreferenceController.snapshot();
-  if (!snapshot.loaded) return;
-  const identity = snapshot.identity;
-  let savedMode = snapshot.preferences.presentation.source_name_display;
-  let sessionChanged = false;
-  const form = node('form', 'admin-form');
-  const select = preferenceSelect('source-name-display', [
-    ['talker_alias', 'Talker Alias preferred'], ['source_alias', 'Source Alias preferred'], ['both', 'Both']
-  ], savedMode);
-  select.setAttribute('aria-label', 'Source name display');
-  const feedback = node('div', 'admin-form-message');
-  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
-  cancel.type = 'button';
-  const save = node('button', 'ui-button ui-button-primary', 'Save source names');
-  save.type = 'submit';
-  form.append(formField('Source name display', select,
-    'Use the other name when the preferred name is unavailable. Both shows each distinct name once.'),
-  feedback, aliasModalFooter(cancel, save));
-  const modal = openReadOnlyModal('Source names', form, {
-    id: 'source-name-settings', className: 'admin-modal', returnFocusSelector
-  });
-  if (!modal) return;
-  const workflow = createFormWorkflow({ form, submit: save, feedback, modal,
-    changed: () => !sessionChanged && select.value !== savedMode });
-  const loadSavedMode = () => {
-    savedMode = userPreferenceController.snapshot().preferences.presentation.source_name_display;
-    select.value = savedMode;
-    workflow.refresh();
-  };
-  const refreshSettings = () => {
-    void render().then(() => document.querySelector(returnFocusSelector || '#source-name-settings')
-      ?.focus({ preventScroll: true }));
-  };
-  cancel.addEventListener('click', modal.close);
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const selectedMode = select.value;
-    await workflow.save(async () => {
-      if (userPreferenceController.snapshot().identity !== identity) {
-        const error = new Error('The signed-in account changed. Reopen Source names for this account.');
-        error.code = 'preference_session_changed';
-        throw error;
-      }
-      await updateUserPreferences((preferences) => {
-        preferences.presentation.source_name_display = selectedMode;
-      }, false);
-      loadSavedMode();
-    }, {
-      saving: 'Saving source names…',
-      onSuccess: () => {
-        modal.setDirty(false);
-        if (modal.close(refreshSettings)) refreshSettings();
-      },
-      onError: (error) => {
-        if (error?.code === 'preference_session_changed') {
-          sessionChanged = true;
-          workflow.setReady(false);
-          modal.setDirty(false);
-          return { state: 'warning', message: 'The signed-in account changed. Reopen Source names for this account.' };
-        }
-        if (error?.code === 'preference_conflict' && !error.reloadError) {
-          loadSavedMode();
-          return { state: 'warning', message: 'Source names changed in another session. The saved choice was loaded.' };
-        }
-        return { state: 'error', message: error?.code === 'preference_conflict' ?
-          'Source names changed in another session, but the saved choice could not be loaded. Try saving again or reload the page.' :
-          'Source names could not be saved. Your choice is still here. Try saving again.' };
-      }
-    });
-  });
-  if (!await modal.ready) return;
-  if (userPreferenceController.snapshot().identity !== identity) {
-    modal.close();
-    return;
-  }
-  modal.focus(select);
-}
-
 async function savePreferenceForm(workflow, modal, mutate, options) {
   const { identity, saving, apply, renderAfterSave = true,
     conflictMessage = 'These settings changed in another session. The current saved values were loaded.',
@@ -30495,15 +30177,20 @@ function openResetUserPreferences(returnFocusSelector = null) {
   });
 }
 
+function saveFocusedUserPreferences(mutator) {
+  return updateUserPreferences(mutator, false);
+}
+
 async function renderSettings() {
   const renderContext = captureRenderContext();
   const statusIconRequested = route.get('section') === 'status-icon';
   if (statusIconRequested) {
-    route.delete('section');
+    route.set('section', 'status');
     window.history.replaceState({}, '', currentHref());
   }
-  if (!beginPage(renderContext, pageHeader('My Settings',
-    'Review and customize personal preferences for this account'))) return;
+  const header = pageHeader('My Settings', 'Customize your appearance and personal listening preferences.');
+  header.classList.add('ui-page-header-focused');
+  if (!beginPage(renderContext, header)) return;
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message || 'My Settings could not be loaded.');
@@ -30517,31 +30204,26 @@ async function renderSettings() {
     content.append(section('Preferences unavailable', unavailable, retry));
     return;
   }
-
-  const current = snapshot.preferences;
-  const overview = node('div', 'settings-page-form user-settings-summary');
-  const appearance = uiActionButton('Change Appearance', 'icon-display',
-    () => { void openAppearanceSettings('#appearance-settings'); });
-  appearance.id = 'appearance-settings';
-  const reset = node('button', 'ui-button ui-button-danger-quiet', 'Reset All Personal Preferences');
-  reset.type = 'button';
-  reset.id = 'reset-user-preferences';
-  reset.addEventListener('click', () => openResetUserPreferences('#reset-user-preferences'));
-  const statusIcon = uiActionButton('Change Status Icon', 'icon-health',
-    () => openStatusIconSettings('#status-icon-settings'));
-  statusIcon.id = 'status-icon-settings';
-  const sourceNames = uiActionButton('Change Source Names', 'icon-identities',
-    () => { void openSourceNameSettings('#source-name-settings'); });
-  sourceNames.id = 'source-name-settings';
-  const personalActions = node('div', 'ui-action-row ui-action-row-start');
-  personalActions.append(appearance, sourceNames, statusIcon);
-  const footer = node('div', 'settings-summary-footer');
-  const actions = node('div', 'admin-form-actions');
-  actions.append(reset);
-  footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
-  overview.append(personalActions, userPreferenceSummaryCards(current), footer);
-  content.append(section('Personal preferences', overview));
-  if (statusIconRequested && renderIsCurrent(renderContext)) openStatusIconSettings('#status-icon-settings');
+  const workspace = createMySettingsWorkspace({
+    node, iconGlyph, uiToggle, createFormWorkflow, schemes: APPEARANCE_SCHEMES,
+    alertGroups: receiverHealthAlertGroups,
+    readSnapshot: () => userPreferenceController.snapshot(),
+    updatePreferences: saveFocusedUserPreferences,
+    setAppearancePreview: (preview) => { appearanceHuePreview = preview; applyTheme(); },
+    confirmAction, openReset: openResetUserPreferences,
+    initialSection: route.get('section') || 'appearance',
+    onSectionChange: (section) => {
+      route.set('section', section);
+      window.history.replaceState({}, '', currentHref());
+    },
+    onSessionChanged: () => { if (renderIsCurrent(renderContext)) void render(); }
+  });
+  personalSettingsWorkspace = workspace;
+  content.append(workspace.element);
+  pageConnections.add({ close() {
+    if (personalSettingsWorkspace === workspace) personalSettingsWorkspace = null;
+    workspace.close();
+  } });
 }
 
 async function renderStreaming() {
@@ -34618,6 +34300,7 @@ async function render() {
   const view = routeFoundation.requestedView(route);
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal(false, false, (closed) => { if (closed) void render(); })) return;
+  if (personalSettingsWorkspace && !personalSettingsWorkspace.requestLeave(() => { void render(); })) return;
   restorePlaybackBarBeforeRender();
   const epoch = ++activeRenderEpoch;
   activeRenderController?.abort();
@@ -34710,6 +34393,10 @@ window.addEventListener('popstate', () => {
   const previous = `/?${route.toString()}`;
   const target = window.location.href;
   if (!closeReadOnlyModal(false, false, (closed) => { if (closed) navigateTo(target); })) {
+    window.history.pushState({}, '', previous);
+    return;
+  }
+  if (personalSettingsWorkspace && !personalSettingsWorkspace.requestLeave(() => navigateTo(target))) {
     window.history.pushState({}, '', previous);
     return;
   }

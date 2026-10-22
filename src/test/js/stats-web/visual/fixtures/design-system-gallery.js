@@ -1,4 +1,5 @@
-import { applyThemeHue } from '/assets/core/theme.js?v=2';
+import { applyThemeHue, APPEARANCE_SCHEMES } from '/assets/core/theme.js?v=2';
+import { receiverHealthAlertGroups } from '/assets/core/receiver-health-alerts.js?v=3';
 import { setIconHintDetails } from '/assets/core/icon-hints.js';
 import { formatPagingToneSummary } from '/assets/core/call-audio-details.js';
 import * as tableDefaults from '/assets/core/table-defaults.js';
@@ -424,7 +425,7 @@ function initializeScanListCatalog() {
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
-  'admin-navigation', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
+  'admin-navigation', 'focused-settings', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'comparison-table',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alerts', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
@@ -435,6 +436,72 @@ document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+
+if (view === 'focused-settings') {
+  const { createMySettingsWorkspace } = await import('/assets/features/my-settings.js?v=1');
+  const { confirmAction } = await createGalleryModalFoundation();
+  const host = document.querySelector('[data-focused-settings-gallery]');
+  const defaults = () => ({ appearance: { theme, hue: null },
+    presentation: { source_name_display: 'talker_alias' }, health_alerts: { disabled_codes: [] } });
+  let preferences = defaults();
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  const iconGlyph = (name) => {
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    icon.setAttribute('aria-hidden', 'true');
+    use.setAttribute('href', `#visual-${name}`);
+    icon.append(use);
+    return icon;
+  };
+  const uiToggle = (checked, label) => {
+    const control = node('label', 'ui-toggle');
+    const input = node('input');
+    input.type = 'checkbox';
+    input.checked = checked;
+    input.setAttribute('aria-label', label);
+    const track = node('span', 'ui-toggle-track');
+    track.append(node('span', 'ui-toggle-thumb'));
+    const state = node('span', 'ui-toggle-state', checked ? 'On' : 'Off');
+    input.addEventListener('change', () => { state.textContent = input.checked ? 'On' : 'Off'; });
+    control.append(input, track, state);
+    return control;
+  };
+  const readSnapshot = () => ({ identity: 'focused-gallery', loaded: true, preferences });
+  const applyAppearance = (preview) => {
+    const appearance = preview || preferences.appearance;
+    document.documentElement.dataset.theme = appearance.theme;
+    applyThemeHue(appearance.hue);
+  };
+  const workspace = createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFormWorkflow,
+    schemes: APPEARANCE_SCHEMES, alertGroups: receiverHealthAlertGroups, readSnapshot,
+    updatePreferences: async (mutator) => {
+      if (parameters.get('state') === 'error') throw new Error('Gallery save failed.');
+      const next = structuredClone(preferences);
+      mutator(next);
+      preferences = next;
+      return preferences;
+    },
+    setAppearancePreview: applyAppearance, confirmAction,
+    openReset: async (returnFocusSelector) => {
+      const accepted = await confirmAction('Reset every personal preference for this account to its default value?', {
+        title: 'Reset personal preferences', confirmLabel: 'Reset personal preferences',
+        returnFocusSelector, tone: 'danger'
+      });
+      if (!accepted) return;
+      preferences = defaults();
+      applyAppearance(null);
+      workspace.onSnapshot(readSnapshot());
+    },
+    initialSection: parameters.get('section') || 'appearance'
+  });
+  host.append(workspace.element);
+  host.dataset.focusedSettingsReady = 'true';
+}
 
 if (view === 'app-chrome') {
   const example = document.querySelector('.visual-app-chrome-example');

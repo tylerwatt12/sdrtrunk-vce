@@ -209,7 +209,7 @@ test('Live idle-row options require visible idle rows on load, toggle, save and 
   });
 
   await page.goto('/app.html?view=settings');
-  await page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).press('Enter');
+  await page.getByRole('button', { name: 'Reset personal preferences', exact: true }).filter({ visible: true }).press('Enter');
   const resetDialog = page.getByRole('dialog', { name: 'Reset personal preferences', exact: true });
   await resetDialog.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
   await expect(resetDialog).toBeHidden();
@@ -643,13 +643,16 @@ test('Live density keeps a failed draft, reloads a conflict and resets to Normal
   await expect(liveTable(page)).toHaveAttribute('data-row-density', 'dense');
   expect(app.preferences().presentation.live_channel_sort).toBe('frequency');
   await page.goto('/app.html?view=settings');
-  await expect(page.locator('.user-settings-summary')).toContainText('Row density');
-  await expect(page.locator('.user-settings-summary')).toContainText('Dense');
-  await page.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
+  const sections = page.getByRole('combobox', { name: 'Section', exact: true });
+  await expect(sections).toBeVisible();
+  await sections.selectOption('pages');
+  await expect(page.locator('.ui-settings-destinations')).toContainText('Row density, sorting and decoded details');
+  await expect(page.locator('.user-settings-summary')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Reset personal preferences', exact: true }).filter({ visible: true }).click();
   const reset = page.getByRole('dialog', { name: 'Reset personal preferences', exact: true });
   await reset.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
   await expect(reset).toBeHidden();
-  await expect(page.locator('.user-settings-summary')).toContainText('Normal');
+  await expect(page.locator('.ui-settings-workspace-focused')).toBeVisible();
   await page.goto('/app.html?view=live&channel=metro-north');
   await expect(liveTable(page)).toHaveAttribute('data-row-density', 'normal');
   await expect(rowDensity(await presentationDialog(page))).toHaveValue('normal');

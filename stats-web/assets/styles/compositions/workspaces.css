@@ -51,6 +51,12 @@
   line-height: 1.2;
 }
 
+.ui-page-header-focused {
+  --font-size-page-title: var(--page-focused-title-size);
+  --font-size-page-title-mobile: var(--page-focused-title-size);
+  --font-weight-heading: var(--font-weight-medium);
+}
+
 @media (max-width: 560px) {
   .ui-page-header .page-title {
     font-size: var(--font-size-page-title-mobile);

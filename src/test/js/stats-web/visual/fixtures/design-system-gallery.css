@@ -628,6 +628,7 @@ body:not([data-gallery-view="activity-filters"]) .visual-activity-filters-exampl
 body:not([data-gallery-view="health-alert-modal"]) .visual-health-alert-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
 body:not([data-gallery-view="settings"]) .visual-settings-example,
+body:not([data-gallery-view="focused-settings"]) .visual-focused-settings-example,
 body:not([data-gallery-view="health"]) .visual-health-example,
 body:not([data-gallery-view="status-primitives"]) .visual-status-primitives-example,
 body:not([data-gallery-view="p25"]) .visual-p25-example,

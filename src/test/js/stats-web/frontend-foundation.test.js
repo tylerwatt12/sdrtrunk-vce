@@ -850,23 +850,19 @@ async function main() {
   assert.doesNotMatch(appSource, /logging-notice/);
   assert.doesNotMatch(appCssSource, /\.logging-notice\b|\.preference-status\.preference-error/);
   const settingsSource = functionBinding(appSource, 'renderSettings');
-  assert.match(settingsSource, /Review and customize personal preferences for this account/);
-  assert.match(settingsSource, /userPreferenceSummaryCards\(current\)/);
-  assert.match(settingsSource, /Reset All Personal Preferences/);
+  assert.match(settingsSource, /Customize your appearance and personal listening preferences./);
+  assert.match(settingsSource, /createMySettingsWorkspace\(/);
   assert.match(settingsSource, /openResetUserPreferences/);
-  assert.match(settingsSource, /openStatusIconSettings\('#status-icon-settings'\)/);
   assert.match(settingsSource, /statusIconRequested/);
-  assert.doesNotMatch(settingsSource, /href\('settings', \{ section: 'status-icon' \}\)/);
+  assert.doesNotMatch(settingsSource, /userPreferenceSummaryCards|Change Appearance|Change Source Names/);
   assert.doesNotMatch(settingsSource, /preferenceCheckbox\(|updateUserPreferences\(/);
-  const summarySource = functionBinding(appSource, 'userPreferenceSummaryCards');
-  assert.match(summarySource,
-    /appearance\.theme|page_titles\.prepend_playing_call|playback\.volume|selected_scan_list_ids/);
-  assert.match(summarySource,
-    /target_grouping|target_burst_limit|scanner\.detail_mode|preferences\.presentation/);
-  assert.match(summarySource, /Show encryption algorithm and key ID/,
-    'My Settings must distinguish a reported encryption key ID from key material');
-  assert.match(summarySource,
-    /preferences\.tuner|health_alerts\.disabled_codes|preferences\.tables/);
+  const focusedSettingsSource = fs.readFileSync(path.resolve(core, '../features/my-settings.js'), 'utf8');
+  assert.match(focusedSettingsSource, /export function createMySettingsWorkspace/);
+  for (const label of ['Appearance', 'Source names', 'Status icon', 'Page preferences']) {
+    assert.ok(focusedSettingsSource.includes(label), `Focused settings includes ${label}`);
+  }
+  assert.match(focusedSettingsSource, /source_name_display/);
+  assert.match(focusedSettingsSource, /disabled_codes/);
   const resetSource = functionBinding(appSource, 'openResetUserPreferences');
   assert.match(resetSource, /updateUserPreferences\(\(\) => preferenceSchema\.defaults, false\)/);
   assert.match(resetSource, /does not change the username, password/);
