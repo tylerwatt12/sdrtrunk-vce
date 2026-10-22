@@ -381,6 +381,27 @@ class StatsApiV1HttpContractTest
             assertFalse(row.has("detail_supported"), actionsResponse.body());
         }
 
+        HttpResponse<String> radiosResponse = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=GRANT&limit=1&offset=0");
+        assertEquals(200, radiosResponse.statusCode(), radiosResponse.body());
+        JsonNode radios = OBJECT_MAPPER.readTree(radiosResponse.body());
+        assertEquals(2, radios.size(), radiosResponse.body());
+        assertTrue(radios.path("data").isArray(), radiosResponse.body());
+        assertEquals(13, radios.path("meta").size(), radiosResponse.body());
+        assertEquals("24h", radios.at("/meta/range").textValue(), radiosResponse.body());
+        assertEquals("grant", radios.at("/meta/action").textValue(), radiosResponse.body());
+        assertTrue(radios.at("/meta/from_ms").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/to_ms").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/action_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/retained_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/identified_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/unknown_source_observation_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/total_count").isIntegralNumber(), radiosResponse.body());
+        assertEquals(1, radios.at("/meta/limit").intValue(), radiosResponse.body());
+        assertEquals(0, radios.at("/meta/offset").intValue(), radiosResponse.body());
+        assertTrue(radios.at("/meta/has_more").isBoolean(), radiosResponse.body());
+        assertTrue(radios.path("meta").has("next_offset"), radiosResponse.body());
+
         HttpResponse<String> systemsResponse = get(StatsApiV1.RADIO_SYSTEMS + "?limit=1");
         assertEquals(200, systemsResponse.statusCode(), systemsResponse.body());
         JsonNode systems = OBJECT_MAPPER.readTree(systemsResponse.body());
@@ -587,6 +608,17 @@ class StatsApiV1HttpContractTest
                 "&configuration_id=4b75217f-2555-4c38-aafc-5d17bc0faf71"),
             400, "invalid_parameter", "configuration_id");
 
+        HttpResponse<String> missingRadioAction = get(StatsApiV1.ACTIVITY_RADIOS + "?range=24h");
+        assertStructuredError(missingRadioAction, 400, "invalid_parameter", "action");
+
+        HttpResponse<String> invalidRadioAction = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=not-real");
+        assertStructuredError(invalidRadioAction, 400, "invalid_parameter", "action");
+
+        HttpResponse<String> continueRadioAction = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=CONTINUE");
+        assertStructuredError(continueRadioAction, 400, "invalid_parameter", "action");
+
         HttpResponse<String> legacyActionsGroupBy = get(StatsApiV1.ACTIVITY_ACTIONS +
             "?range=24h&group_by=action");
         assertStructuredError(legacyActionsGroupBy, 400, "unknown_parameter", "group_by");
@@ -594,6 +626,10 @@ class StatsApiV1HttpContractTest
         HttpResponse<String> legacyActionsLimit = get(StatsApiV1.ACTIVITY_ACTIONS +
             "?range=24h&limit=1");
         assertStructuredError(legacyActionsLimit, 400, "unknown_parameter", "limit");
+
+        HttpResponse<String> legacyRadiosGroupBy = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=GRANT&group_by=radio");
+        assertStructuredError(legacyRadiosGroupBy, 400, "unknown_parameter", "group_by");
 
         HttpResponse<String> doubleEncodedPath = get(StatsApiV1.RADIO_SYSTEMS + "/p25%253Atest");
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
@@ -852,6 +888,7 @@ class StatsApiV1HttpContractTest
             Map.entry("CHANNELS", "/api/v1/channels"),
             Map.entry("ACTIVITY", "/api/v1/activity"),
             Map.entry("ACTIVITY_ACTIONS", "/api/v1/activity/actions"),
+            Map.entry("ACTIVITY_RADIOS", "/api/v1/activity/radios"),
             Map.entry("ACTIVITY_MESSAGE_TYPES", "/api/v1/activity/message-types"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),

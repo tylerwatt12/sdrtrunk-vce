@@ -128,6 +128,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
 | `GET /api/v1/activity/live/seed` | Shared complete current P25 affiliations. |
 | `GET /api/v1/activity/actions` | Activity action totals for a selected time range. Dashboard access is required. |
+| `GET /api/v1/activity/radios` | Paged source-radio counts for an activity category and time range. Radio access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
 | `GET /api/v1/recordings/status` | Recording mode, catalog availability, and whether indexed recordings exist. |
@@ -233,8 +234,14 @@ points require a channel-specific request.
 
 `GET /api/v1/activity/actions` accepts `range=1h|6h|24h|7d|30d`. Its metadata includes `range`, `from_ms`, `to_ms`,
 and `total_observation_count`. The response omits `CONTINUE`. Totals use compact hourly buckets and share a prepared
-response for up to two seconds per range. Detailed Activity remains scoped through the existing channel, system,
-group and radio views; the dashboard does not aggregate retained detailed events into a source-radio ranking.
+response for up to two seconds per range.
+
+`GET /api/v1/activity/radios` accepts `range`, required `action`, and normal `limit`/`offset` paging. It groups every
+retained matching event before paging; rows remain separate by trunked system/subscriber or conventional channel/radio.
+Summary buckets supply `action_observation_count`; retained detail supplies `retained_observation_count`,
+`identified_observation_count`, `unknown_source_observation_count` and `total_count`. Summary totals can exceed retained
+detail after pruning, and all metadata remains available on an empty page. Matching concurrent requests share the
+prepared response for up to two seconds. `CALL`, `CONTINUE` and `TONE` are excluded from this signaling breakdown.
 
 `GET /api/v1/activity` retains its newest-first `before_id` paging contract. It also supports a history-consumer mode
 with comma-separated canonical `actions`, `after_id`, and optional `watermark_id`. Forward mode orders rows by

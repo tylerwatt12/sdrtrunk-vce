@@ -163,6 +163,10 @@ class StatsWebDatabaseTest
         Map<String,Object> totals = mDatabase.dashboardActivityActions(request("/?range=24h"));
         assertEquals(2L, number(rowWith(rowsFrom(totals,"rows"),"action","STUN").get("observation_count")));
         assertEquals(1L, number(rowWith(rowsFrom(totals,"rows"),"action","REVIVE").get("observation_count")));
+        Map<String,Object> radios = mDatabase.dashboardActivityRadios(request("/?range=24h&action=STUN"));
+        assertEquals(2L, number(radios.get("action_observation_count")));
+        assertEquals(1L, number(radios.get("identified_observation_count")));
+        assertEquals(303L, number(rowsFrom(radios,"rows").getFirst().get("native_id")));
         Map<String,Object> activity = mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL +
             "&action=STUN&event_type=STUN&limit=10"));
         assertEquals(1, rowsFrom(activity,"rows").size());
@@ -946,6 +950,143 @@ class StatsWebDatabaseTest
         assertEquals(List.of("Silent Dispatch"), rows(zeroCallPublicAliases).stream()
             .map(row -> row.get("name")).toList());
 
+        Map<String,Object> activity = mDatabase.dashboardActivityRadios(
+            request("/?range=1h&action=UNKNOWN&limit=20"));
+        Map<String,Object> trunkedActivity = rowWith(rows(activity),
+            "radio_system_key", "dmr:tier3:small:42");
+        Map<String,Object> conventionalActivity = rowWith(rows(activity),
+            "configuration_id", DMR_CHANNEL);
+        assertEquals("Shared Unit", trunkedActivity.get("alias_name"));
+        assertEquals("Conventional Unit", conventionalActivity.get("alias_name"));
+    }
+
+    @Test
+    void dashboardActivityRanksBothChannelKindsWithExactCountsAndStablePaging() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long hour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
+        long older = hour - 3 * 86_400_000L;
+        long expired = hour - 8 * 86_400_000L;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET " +
+                "last_talker_alias='Unit 202 OTA',last_talker_alias_seen_ms=4000 WHERE id=7102");
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, source_identity_summary_id) VALUES
+                (71,71,%1$d,20,202,7102), (72,71,%1$d,20,202,7102),
+                (71,71,%2$d+100,20,202,7102), (71,71,%1$d,20,NULL,NULL),
+                (73,NULL,%1$d,20,202,NULL), (74,NULL,%1$d,20,202,NULL),
+                (74,NULL,%1$d-500,20,303,NULL), (74,NULL,%2$d+100,20,0,NULL),
+                (71,71,%3$d+100,20,202,7102), (71,71,%1$d,13,202,7102)
+                """.formatted(now, older, expired));
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket(channel_id, radio_system_id, bucket_start_ms,
+                    register_count, join_count) VALUES
+                (71,71,%1$d,2,1), (72,71,%1$d,1,0), (71,71,%2$d,1,0), (71,71,%3$d,1,0)
+                """.formatted(hour, older, expired));
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_bucket(channel_id, frequency_hz, timeslot, bucket_start_ms,
+                    register_count) VALUES (73,0,-1,%1$d,1), (74,0,-1,%1$d,2), (74,0,-1,%2$d,1)
+                """.formatted(hour, older));
+        }
+        Map<String,Object> page = mDatabase.dashboardActivityRadios(request("/?range=7d&action=REGISTER&limit=2"));
+        assertEquals(4, number(page.get("total_count")));
+        assertEquals(8, number(page.get("retained_observation_count")));
+        assertEquals(6, number(page.get("identified_observation_count")));
+        assertTrue((Boolean)page.get("has_more"));
+        List<Map<String,Object>> first = rows(page);
+        assertEquals(RADIO_SYSTEM_KEY, first.getFirst().get("radio_system_key"));
+        assertEquals("Unit 202 OTA", first.getFirst().get("last_talker_alias"));
+        assertEquals(4000, number(first.getFirst().get("last_talker_alias_seen_ms")));
+        assertEquals(3, number(first.getFirst().get("observation_count")));
+        assertEquals(ANALOG_CHANNEL, first.get(1).get("configuration_id"));
+        Map<String,Object> next = mDatabase.dashboardActivityRadios(
+            request("/?range=7d&action=REGISTER&limit=2&offset=2"));
+        assertEquals(4, number(next.get("total_count")));
+        assertFalse((Boolean)next.get("has_more"));
+        assertTrue(rows(next).stream().allMatch(row -> DMR_CHANNEL.equals(row.get("configuration_id"))));
+        Map<String,Object> recent = mDatabase.dashboardActivityRadios(
+            request("/?range=24h&action=REGISTER&limit=100"));
+        assertEquals(6, number(recent.get("retained_observation_count")));
+        assertEquals(5, number(recent.get("identified_observation_count")));
+    }
+
+    @Test
+    void dashboardActivityCountsEachRetainedEventOnceAndKeepsTotalsAfterPagingOrRetention() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long hour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
+        int stun = ReceiverActivityFilterCatalog.actionCode("STUN");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("UPDATE receiver_channel SET radio_system_id=NULL, " +
+                "radio_system_assigned_at_ms=NULL WHERE id=71");
+            // Historical counts can span channel kinds, frequencies and slots within one channel-hour.
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket(channel_id, radio_system_id, bucket_start_ms,
+                    stun_count) VALUES (71,71,%1$d,2), (74,71,%1$d,3)
+                """.formatted(hour));
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_bucket(channel_id, frequency_hz, timeslot, bucket_start_ms,
+                    stun_count) VALUES (74,460012500,1,%1$d,3), (74,460012500,2,%1$d,2),
+                    (74,460025000,1,%1$d,4), (73,0,-1,%1$d,5)
+                """.formatted(hour));
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, source_identity_summary_id) VALUES
+                (71,71,%1$d,%2$d,202,7102), (74,71,%1$d,%2$d,202,NULL),
+                (74,71,%1$d,%2$d,202,NULL), (74,NULL,%1$d,%2$d,0,NULL),
+                (74,NULL,%1$d,%2$d,NULL,NULL)
+                """.formatted(now, stun));
+        }
+
+        String scope = "/?range=24h&action=STUN&limit=10";
+        Map<String,Object> page = mDatabase.dashboardActivityRadios(request(scope));
+        assertEquals(19, number(page.get("action_observation_count")));
+        assertEquals(5, number(page.get("retained_observation_count")));
+        assertEquals(3, number(page.get("identified_observation_count")));
+        assertEquals(2, number(page.get("unknown_source_observation_count")));
+        assertEquals(2, number(page.get("total_count")));
+        assertEquals(2, rows(page).size());
+        Map<String,Object> trunked = rowWith(rows(page), "radio_system_key", RADIO_SYSTEM_KEY);
+        Map<String,Object> conventional = rowWith(rows(page), "configuration_id", DMR_CHANNEL);
+        assertEquals(1, number(trunked.get("observation_count")),
+            "Retained events keep their original system after the receiver channel is reassigned");
+        assertEquals(2, number(conventional.get("observation_count")),
+            "Each event is counted once despite multiple matching summary buckets");
+        assertEquals(202, number(trunked.get("native_id")));
+        assertEquals(202, number(conventional.get("native_id")));
+        assertEquals("radio", map(trunked, "radio_entity_ref").get("kind"));
+        assertEquals("channel", map(conventional, "radio_entity_ref").get("kind"));
+
+        Map<String,Object> beyondEnd = mDatabase.dashboardActivityRadios(request(scope + "&offset=2"));
+        assertTrue(rows(beyondEnd).isEmpty());
+        assertFalse((Boolean)beyondEnd.get("has_more"));
+        assertNull(beyondEnd.get("next_offset"));
+        for(String field: List.of("action_observation_count", "retained_observation_count",
+            "identified_observation_count", "unknown_source_observation_count", "total_count"))
+        {
+            assertEquals(page.get(field), beyondEnd.get(field), field);
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM receiver_activity_event WHERE action_code=" + stun);
+        }
+        Map<String,Object> summaryOnly = mDatabase.dashboardActivityRadios(request(scope));
+        assertEquals(19, number(summaryOnly.get("action_observation_count")));
+        assertEquals(0, number(summaryOnly.get("retained_observation_count")));
+        assertEquals(0, number(summaryOnly.get("identified_observation_count")));
+        assertEquals(0, number(summaryOnly.get("unknown_source_observation_count")));
+        assertEquals(0, number(summaryOnly.get("total_count")));
+        assertTrue(rows(summaryOnly).isEmpty());
+        assertFalse((Boolean)summaryOnly.get("has_more"));
+        assertNull(summaryOnly.get("next_offset"));
     }
 
     @Test

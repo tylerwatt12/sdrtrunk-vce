@@ -64,7 +64,7 @@ final class StatsApiV1Controller
     private final StatsWebSnapshot<MainSnapshot> mMain;
     private final StatsWebSnapshot<byte[]> mDashboard;
     private final StatsWebSnapshot<byte[]> mMessageTypes;
-    private final StatsBrowseReadCache mActivityActions = new StatsBrowseReadCache(1);
+    private final StatsBrowseReadCache mActivityReads = new StatsBrowseReadCache(1);
     private final Semaphore mCsvExportPermit = new Semaphore(1);
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
@@ -219,20 +219,17 @@ final class StatsApiV1Controller
                 if(!Set.of("1h", "6h", "24h", "7d", "30d").contains(range))
                     throw new StatsApiException(400, "range must be one of 1h, 6h, 24h, 7d, or 30d");
                 URI key = URI.create(StatsApiV1.ACTIVITY_ACTIONS + "?range=" + range);
-                try
-                {
-                    return new PreparedJson(mActivityActions.get(mDatabase, key, () -> {
-                        JsonBody body = collection(mDatabase.dashboardActivityActions(request), "rows");
-                        return ApiHttpResponse.prepareDataWithMeta(StatsApiV1Payload.present(body.data()),
-                            StatsApiV1Payload.present(body.meta()));
-                    }));
-                }
-                catch(IOException | java.sql.SQLException exception)
-                {
-                    LOGGER.warn("Unable to prepare shared Activity totals", exception);
-                    throw new StatsApiException(503, "activity_unavailable",
-                        "Radio activity is temporarily unavailable. Try again shortly.");
-                }
+                return activityRead(key, () -> collection(mDatabase.dashboardActivityActions(request), "rows"));
+            }));
+        create(server, StatsApiV1.ACTIVITY_RADIOS, WebCapability.RADIO_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_RADIOS, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly("range", "action", "limit", "offset");
+                request.requiredText("action");
+                request.text("range");
+                request.limit();
+                request.longOffset();
+                return activityRead(exchange.getRequestURI(), () -> page(mDatabase.dashboardActivityRadios(request)));
             }));
         create(server, StatsApiV1.ACTIVITY_MESSAGE_TYPES, WebCapability.WEB_ACCESS,
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_MESSAGE_TYPES, (request, segments) -> {
@@ -329,6 +326,25 @@ final class StatsApiV1Controller
         }
 
         throw notFound();
+    }
+
+    private PreparedJson activityRead(URI key, Supplier<JsonBody> read)
+    {
+        try
+        {
+            return new PreparedJson(mActivityReads.get(mDatabase, key, () -> {
+                JsonBody body = read.get();
+                Object data = mDatabase.enrichSystemNames(StatsApiV1Payload.source(body.data()));
+                return ApiHttpResponse.prepareDataWithMeta(StatsApiV1Payload.present(data),
+                    StatsApiV1Payload.present(body.meta()));
+            }));
+        }
+        catch(IOException | java.sql.SQLException exception)
+        {
+            LOGGER.warn("Unable to prepare shared Activity data", exception);
+            throw new StatsApiException(503, "activity_unavailable",
+                "Radio activity is temporarily unavailable. Try again shortly.");
+        }
     }
 
     private Object aliases(StatsRequest request, List<String> segments)
