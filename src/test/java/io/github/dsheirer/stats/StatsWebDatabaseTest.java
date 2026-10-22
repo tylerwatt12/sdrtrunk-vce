@@ -2352,7 +2352,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void unassignedP25GroupsReuseExactCoverageAndSeekOnlyTheirProtocolRanges() throws Exception
+    void unassignedP25GroupsReuseExactCoverageAndDeduplicateTheirProtocolRanges() throws Exception
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -2386,7 +2386,9 @@ class StatsWebDatabaseTest
                 VALUES (7112,71,'Phase 2 exact','TALKGROUP','APCO25_PHASE2',102,NULL,NULL),
                        (7113,71,'Phase 2 range','TALKGROUP_RANGE','APCO25_PHASE2',NULL,104,105),
                        (7114,72,'Other list','TALKGROUP_RANGE','APCO25',NULL,103,104),
-                       (7115,71,'Other protocol','TALKGROUP_RANGE','DMR',NULL,103,104)
+                       (7115,71,'Other protocol','TALKGROUP_RANGE','DMR',NULL,103,104),
+                       (7116,71,'Same bounds phase 1','TALKGROUP_RANGE','APCO25',NULL,104,105),
+                       (7117,71,'Same bounds phase 2','TALKGROUP_RANGE','APCO25_PHASE2',NULL,104,105)
                 """);
             insertP25ChannelIdentity(calls,bucket,710,71,1,1,7101,101,null,1);
             insertP25ChannelIdentity(calls,bucket,710,71,1,1,7112,102,null,1);
@@ -2420,8 +2422,139 @@ class StatsWebDatabaseTest
         {
             List<String> plan = explain(connection,query[0].sql(),query[0].parameters().toArray());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains(
-                "idx_alias_activity_talkgroup_range (alias_list_id=? AND protocol=? AND min_value<?")),plan.toString());
+                "idx_alias_activity_talkgroup_range (alias_list_id=? AND protocol=?")),plan.toString());
             assertFalse(plan.stream().anyMatch(detail -> detail.contains("MULTI-INDEX OR")),plan.toString());
+        }
+    }
+
+    @Test
+    void unassignedRangesKeepEachFamiliesExactAliasesAndInclusiveBounds() throws Exception
+    {
+        for(String family : List.of("P25", "DMR", "NXDN"))
+        {
+            int id = switch(family) { case "P25" -> 91; case "DMR" -> 92; default -> 93; };
+            String protocol = "P25".equals(family) ? "APCO25_PHASE2" : family;
+            String other = "DMR".equals(family) ? "NXDN" : "DMR";
+            String configuration = "90000000-0000-4000-8000-0000000000" + id;
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+                Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(" + id + ",'" + family + " ranges','" + family + "')");
+                statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                    "name,alias_list_id,decoder_type,address_domain_code,primary_frequency_hz,config_json) VALUES('" + configuration +
+                    "','CONVENTIONAL'," + id + ",'Range receiver'," + id + ",'" +
+                    ("P25".equals(family) ? "P25_PHASE1" : family) + "'," + ("NXDN".equals(family) ? 1 : 0) +
+                    ",460012500,'{\"decodeConfiguration\":{\"channelMode\":\"CONVENTIONAL\"}}')");
+                statement.executeUpdate("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms) " +
+                    "VALUES(" + id + ",'" + configuration + "',1000,2000)");
+                for(int group = 11; group <= 17; group++)
+                {
+                    statement.executeUpdate("DMR".equals(family) ?
+                        "INSERT INTO dmr_conventional_talkgroup_summary(channel_id,frequency_hz,timeslot,talkgroup_id," +
+                            "first_seen_ms,last_seen_ms,call_count,encrypted_count) VALUES(" + id +
+                            ",460012500,1," + group + ",1000,2000,1,0)" :
+                        "INSERT INTO conventional_call_identity_bucket(channel_id,bucket_start_ms,identity_role_code," +
+                            "identity_kind_code,identity_id,call_count) VALUES(" + id + ",0,1,1," + group + ",1)");
+                }
+                statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) VALUES(" +
+                    id + ",'Exact','TALKGROUP','" + protocol + "',11)");
+                statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,min_value,max_value) VALUES" +
+                    "(" + id + ",'Range','TALKGROUP_RANGE','" + protocol + "',12,14)," +
+                    "(" + id + ",'Duplicate','TALKGROUP_RANGE','" + protocol + "',12,14)," +
+                    "(" + id + ",'Other protocol','TALKGROUP_RANGE','" + other + "',15,17)," +
+                    "(72,'Other list','TALKGROUP_RANGE','" + protocol + "',15,17)," +
+                    "(" + id + ",'Radio range','RADIO_ID_RANGE','" + protocol + "',15,17)");
+            }
+            var result = mDatabase.unassignedGroupIdentities(id,
+                request("/?include_exact=true&limit=100&sort=group_identity&direction=asc"));
+            assertEquals(3,number(result.get("total_count")),family);
+            assertEquals(List.of(15L,16L,17L),rows(result).stream()
+                .map(row -> number(row.get("group_identity_id"))).toList(),family);
+        }
+    }
+
+    @Test
+    void unassignedRangeCoverageKeepsNullInvertedAndBoundarySqlSemantics() throws Exception
+    {
+        StatsWebDatabase.ObservedGroupIdentityQuery[] captured = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        mDatabase.observedGroupIdentities(71,request("/?limit=1"),query -> captured[0] = query,true);
+        String sql = captured[0].sql();
+        int select = sql.indexOf(" SELECT observed.*");
+        String coverage = sql.substring(sql.indexOf(", unassigned_ranges AS MATERIALIZED"),select);
+        String exclusion = sql.substring(sql.indexOf(" AND NOT EXISTS (",select),sql.indexOf(" ORDER BY",select));
+        // VALUES exercise SQL truth without admitting invalid bounds into the current persisted schema.
+        String facts = """
+            WITH alias(alias_list_id,matcher_type,protocol,min_value,max_value) AS (
+                VALUES (71,'TALKGROUP_RANGE','APCO25',10,20),
+                       (71,'TALKGROUP_RANGE','APCO25_PHASE2',10,20),
+                       (71,'TALKGROUP_RANGE','APCO25',NULL,25),
+                       (71,'TALKGROUP_RANGE','APCO25',5,NULL),
+                       (71,'TALKGROUP_RANGE','APCO25',25,5),
+                       (71,'TALKGROUP_RANGE','APCO25',30,30),
+                       (71,'TALKGROUP_RANGE','DMR',1,40),
+                       (72,'TALKGROUP_RANGE','APCO25',1,40)
+            ), observed(group_identity_id) AS (VALUES(NULL),(9),(10),(15),(20),(21),(30))
+            """;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement(facts + coverage +
+                " SELECT group_identity_id FROM observed WHERE 1=1" + exclusion + " ORDER BY group_identity_id"))
+        {
+            statement.setLong(1,71);
+            try(ResultSet result = statement.executeQuery())
+            {
+                List<Long> missing = new ArrayList<>();
+                while(result.next()) { long group = result.getLong(1); missing.add(result.wasNull() ? null : group); }
+                assertEquals(java.util.Arrays.asList(null,9L,21L),missing);
+            }
+        }
+    }
+
+    @Test
+    void unassignedDuplicateRangesDoNotMultiplyCoverageWork() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                "name,alias_list_id,decoder_type,config_json) VALUES('" + CONVENTIONAL_P25_CHANNEL +
+                "','CONVENTIONAL',75,'P25 receiver',71,'P25_PHASE1','{}')");
+            statement.executeUpdate("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(75,'" + CONVENTIONAL_P25_CHANNEL + "',1000,2000)");
+            statement.executeUpdate("""
+                WITH RECURSIVE groups(value) AS (VALUES(3001) UNION ALL SELECT value+1 FROM groups WHERE value<3100)
+                INSERT INTO conventional_call_identity_bucket(channel_id,bucket_start_ms,identity_role_code,
+                    identity_kind_code,identity_id,call_count) SELECT 75,0,1,1,value,1 FROM groups
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE ranges(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM ranges WHERE value<5000)
+                INSERT INTO alias(alias_list_id,name,matcher_type,protocol,min_value,max_value)
+                SELECT 71,'Repeated range '||value,'TALKGROUP_RANGE','APCO25',1,3000 FROM ranges
+                """);
+        }
+        StatsWebDatabase.ObservedGroupIdentityQuery[] captured = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        var page = mDatabase.observedGroupIdentities(71,request("/?limit=100"),query -> captured[0] = query,true);
+        assertEquals(100,number(page.get("total_count")));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            StatsSystemNameResolver.installCatalog(connection);
+            AtomicInteger progressCalls = new AtomicInteger();
+            ProgressHandler.setHandler(connection,1000,new ProgressHandler()
+            {
+                @Override protected int progress() { return progressCalls.incrementAndGet() >= 500 ? 1 : 0; }
+            });
+            try(PreparedStatement statement = connection.prepareStatement(captured[0].sql()))
+            {
+                for(int index = 0; index < captured[0].parameters().size(); index++)
+                    statement.setObject(index + 1,captured[0].parameters().get(index));
+                try(ResultSet result = statement.executeQuery())
+                {
+                    int count = 0;
+                    while(result.next()) count++;
+                    assertEquals(100,count);
+                }
+            }
+            finally { ProgressHandler.clearHandler(connection); }
+            assertTrue(progressCalls.get() < 500,"Repeated aliases must not be tested again for every observed identity");
         }
     }
 

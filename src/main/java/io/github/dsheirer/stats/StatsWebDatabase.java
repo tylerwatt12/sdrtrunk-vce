@@ -1627,8 +1627,7 @@ class StatsWebDatabase
                     JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
                     WHERE %d = 3 AND config.alias_list_id = ?
                       AND config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR'
-                ) SELECT observed.*, count(*) OVER () AS result_total_count
-                FROM observed WHERE 1 = 1
+                )
                 """.formatted(StatsSystemNameResolver.displayNameSql("system"), protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
                     IDENTITY_KEY_SQL.formatted("identity"), protocolCode, protocolCode,
                     protocolCode, protocolCode, decoderPredicate, protocolCode));
@@ -1639,6 +1638,20 @@ class StatsWebDatabase
                 aliasListId, aliasListName, family, family, aliasListId, aliasListId,
                 aliasListId, aliasListName, family, aliasListId, aliasListId));
 
+            if(onlyUnassigned)
+            {
+                String protocols = "P25".equals(family) ? "('APCO25', 'APCO25_PHASE2')" : "('" + family + "')";
+                sql.append("""
+                    , unassigned_ranges AS MATERIALIZED (
+                        SELECT DISTINCT min_value, max_value FROM alias
+                        WHERE alias_list_id = ? AND matcher_type = 'TALKGROUP_RANGE'
+                          AND protocol IN %s AND min_value <= max_value
+                    )
+                    """.formatted(protocols));
+                parameters.add(aliasListId);
+            }
+            sql.append(" SELECT observed.*, count(*) OVER () AS result_total_count FROM observed WHERE 1 = 1");
+
             if(!includeExact || onlyUnassigned)
             {
                 sql.append(" AND has_exact_definition = 0");
@@ -1646,15 +1659,11 @@ class StatsWebDatabase
 
             if(onlyUnassigned)
             {
-                String protocols = "P25".equals(family) ? "('APCO25', 'APCO25_PHASE2')" : "('" + family + "')";
                 sql.append("""
                      AND NOT EXISTS (
-                       SELECT 1 FROM alias definition
-                       WHERE definition.alias_list_id = observed.alias_list_id
-                         AND definition.matcher_type = 'TALKGROUP_RANGE'
-                         AND observed.group_identity_id BETWEEN definition.min_value AND definition.max_value
-                         AND definition.protocol IN %s)
-                    """.formatted(protocols));
+                       SELECT 1 FROM unassigned_ranges coverage
+                       WHERE observed.group_identity_id BETWEEN coverage.min_value AND coverage.max_value)
+                    """);
             }
 
             if(request.search() != null)
