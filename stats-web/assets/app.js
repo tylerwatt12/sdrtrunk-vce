@@ -26372,7 +26372,7 @@ function aliasCoverageSearch(placeholder, onNavigate) {
   return form;
 }
 
-function aliasCoverageSummaryCards(totals, unassigned, countFailed = false, analog = false) {
+function aliasCoverageSummaryCards(totals, unassigned, analog = false) {
   const configured = Number(totals.configured_alias_count || 0);
   const activityEligible = Number(totals.activity_eligible_alias_count ?? configured);
   const recent = Number(totals.active_alias_count || 0);
@@ -26380,8 +26380,8 @@ function aliasCoverageSummaryCards(totals, unassigned, countFailed = false, anal
     ['Configured aliases', configured, 'icon-identities', 'blue'],
     ['Heard recently', recent, 'icon-live', 'success'],
     ['Not heard recently', Math.max(0, activityEligible - recent), 'icon-pause', 'neutral'],
-    [analog ? 'Unmatched assignments' : 'Unknown aliases', unassigned?.total_count, 'icon-warning',
-      unassigned ? 'warning' : 'neutral', unassigned ? undefined : countFailed ? 'Unavailable' : 'Loading…'],
+    ...(unassigned ? [[analog ? 'Unmatched assignments' : 'Unknown aliases',
+      unassigned.total_count, 'icon-warning', 'warning']] : []),
     ...(totals.logical_call_count != null ? [
       ['Total calls', totals.logical_call_count, 'icon-live', 'blue'],
       ['Matched calls', totals.matched_logical_call_count, 'icon-identities', 'success'],
@@ -26485,7 +26485,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   let selectedModel = null;
   let updateSequence = 0;
   let updateController = null;
-  let countController = null;
   const navigateCoverage = (target, options = {}) => routeFoundation.navigate(window, target, (nextRoute) => {
     route = nextRoute;
     void refreshCoverage(nextRoute, options);
@@ -26536,7 +26535,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     const totals = overview.totals || {};
     const selectedList = overview.alias_list || lists.rows.find((row) => row.alias_list_id === selectedListId);
     const analog = analogAliasList(selectedList);
-    const summary = aliasCoverageSummaryCards(totals, unassigned, model.unassignedCountFailed, analog);
+    const summary = aliasCoverageSummaryCards(totals, unassigned, analog);
 
     const tabs = uiSegmentedControl([
       { value: 'configured', label: 'Configured aliases' },
@@ -26604,35 +26603,9 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     return wrapper;
   };
 
-  const hydrateUnassignedCount = async (model) => {
-    if (!model?.selectedListId || model.activeTab !== 'configured' || model.unassigned ||
-        !renderIsCurrent(renderContext) || renderContext.signal?.aborted) return;
-    countController?.abort();
-    const controller = new AbortController();
-    countController = controller;
-    const sequence = updateSequence;
-    const isCurrent = () => !controller.signal.aborted && sequence === updateSequence &&
-      selectedModel === model && renderIsCurrent(renderContext) && directory.host.isConnected;
-    try {
-      const count = await apiPage(`/api/v1/identities/lists/${encodeURIComponent(model.selectedListId)}/unassigned`,
-        { limit: 1, offset: 0, sort: 'logical_call_count', direction: 'desc' }, { signal: controller.signal });
-      if (!isCurrent()) return;
-      model.unassigned = count;
-    } catch (error) {
-      if (error?.name === 'AbortError' || !isCurrent()) return;
-      model.unassignedCountFailed = true;
-    } finally {
-      if (countController === controller) countController = null;
-    }
-    if (isCurrent()) directory.host.querySelector('.alias-coverage-summary')?.replaceWith(
-      aliasCoverageSummaryCards(model.overview.totals || {}, model.unassigned, model.unassignedCountFailed,
-        analogAliasList(model.overview.alias_list || model.lists.rows.find((row) => row.alias_list_id === model.selectedListId))));
-  };
-
   const refreshCoverage = async (parameters, options = {}) => {
     const sequence = ++updateSequence;
     updateController?.abort();
-    countController?.abort();
     updateController = new AbortController();
     const tableSection = directory.host.querySelector('.alias-coverage-table-section');
     const oldTop = tableSection?.getBoundingClientRect().top;
@@ -26646,7 +26619,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       if (sequence !== updateSequence || !renderIsCurrent(renderContext) || !directory.host.isConnected) return;
       directory.host.replaceChildren(present(model));
       selectedModel = model;
-      void hydrateUnassignedCount(model);
       const newTable = directory.host.querySelector('.alias-coverage-table-section');
       const newTop = newTable?.getBoundingClientRect().top;
       if (options.scrollToTable) newTable?.scrollIntoView({ block: 'start', behavior: 'instant' });
@@ -26658,7 +26630,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       failure.append(node('span', '', error.message || 'Alias inventory could not be updated.'),
         uiActionButton('Retry', null, () => void refreshCoverage(new URLSearchParams(route))));
       (tableSection || directory.host).prepend(failure);
-      void hydrateUnassignedCount(selectedModel);
     } finally {
       if (sequence === updateSequence) {
         status.remove();
@@ -26668,11 +26639,9 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   };
   renderContext.signal?.addEventListener('abort', () => {
     updateController?.abort();
-    countController?.abort();
   }, { once: true });
   await directory.load(() => loadAliasCoverageModel(new URLSearchParams(route), null, renderContext.signal),
     (model) => { selectedModel = model; return present(model); }, renderContext);
-  void hydrateUnassignedCount(selectedModel);
 }
 
 function channelTabItems(channel) {

@@ -14,8 +14,8 @@ test.beforeAll(async () => {
 
 test('Alias inventory waits for a list selection and includes analog lists', async ({ page }) => {
   const coverageRequests = [];
-  let releaseUnassignedCount;
-  const unassignedCountReady = new Promise((resolve) => { releaseUnassignedCount = resolve; });
+  let releaseUnassignedPage;
+  const unassignedPageReady = new Promise((resolve) => { releaseUnassignedPage = resolve; });
   const pageOf = (rows) => ({ rows, total_count: rows.length, limit: 100, offset: 0,
     has_more: false, next_offset: null });
   const lists = pageOf([
@@ -64,7 +64,7 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname.startsWith('/api/v1/identities/lists')) coverageRequests.push(pathname);
-    if (pathname === '/api/v1/identities/lists/2/unassigned') await unassignedCountReady;
+    if (pathname === '/api/v1/identities/lists/2/unassigned') await unassignedPageReady;
     const data = pathname === '/api/v1/auth/session' ? {
       configured: true, authenticated: true, username: 'operator', tier: 'admin', primary: true,
       csrf_token: 'test-token', capabilities: { dashboard: true, radio: true, 'admin-aliases': true }
@@ -187,8 +187,6 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(inventory.getByRole('heading', { name: 'Alias inventory' })).toBeVisible();
   await expect(inventory.getByRole('button', { name: 'Other', exact: true })).toBeVisible();
   await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
-  await expect(inventory.locator('.alias-coverage-summary')).toContainText('Loading…');
-  releaseUnassignedCount();
   await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Loading…');
   expect(await inventory.evaluate((element) => [...element.childNodes]
     .filter((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim() === 'null')
@@ -202,8 +200,21 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(toneRow).toContainText('123.0 Hz');
   await expect(toneRow).toContainText('Not tracked');
   expect(coverageRequests).toEqual(['/api/v1/identities/lists',
-    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases',
-    '/api/v1/identities/lists/2/unassigned']);
+    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases']);
+
+  await inventory.getByRole('button', { name: 'Unknown aliases', exact: true }).click();
+  await expect(inventory.locator('.alias-coverage-table-section')).toHaveAttribute('aria-busy', 'true');
+  await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
+  releaseUnassignedPage();
+  await expect(inventory.getByRole('button', { name: 'Unknown aliases (0)', exact: true })).toBeVisible();
+  await expect(inventory.locator('.alias-coverage-summary')).toContainText('Unknown aliases');
+  await expect(inventory.locator('.alias-coverage-table-section')).not.toHaveAttribute('aria-busy');
+  expect(coverageRequests.filter((pathname) => pathname.endsWith('/unassigned'))).toHaveLength(1);
+
+  await inventory.getByRole('button', { name: 'Configured aliases', exact: true }).click();
+  await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
+  expect(coverageRequests.filter((pathname) => pathname.endsWith('/unassigned'))).toHaveLength(1);
+  await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Unknown aliases');
 
   await listSelect.selectOption('');
   await expect(inventory.getByRole('combobox', { name: 'Alias List' })).toHaveValue('');
@@ -212,7 +223,7 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
     .evaluate((select) => select.matches(':focus-visible'))).toBe(true);
   await expect(inventory.locator('.alias-coverage-summary, .alias-coverage-scope, .alias-coverage-table-section'))
     .toHaveCount(0);
-  expect(coverageRequests).toHaveLength(4);
+  expect(coverageRequests.filter((pathname) => pathname.endsWith('/unassigned'))).toHaveLength(1);
   await page.setViewportSize({ width: 390, height: 844 });
   const [headingBox, selectBox] = await Promise.all([
     inventoryHeader.locator('.ui-heading-group').boundingBox(), listSelect.boundingBox()

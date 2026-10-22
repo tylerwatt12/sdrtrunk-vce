@@ -384,7 +384,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
   assert.equal(staleHost.children[0].textContent, 'Loading radios…');
 }
 
-async function checkAliasCoverageIndependentCount(aliasFamily) {
+async function checkAliasCoverageOnDemandUnassigned(aliasFamily) {
   function node(tag, className = '', text = '') {
     const classes = new Set(className.split(/\s+/).filter(Boolean));
     const element = {
@@ -423,7 +423,7 @@ async function checkAliasCoverageIndependentCount(aliasFamily) {
   const segments = [];
   const tables = [];
   const requests = [];
-  const pendingCounts = [];
+  const pendingPages = [];
   const pageController = new AbortController();
   let current = true;
   const directory = { element: host, host,
@@ -440,7 +440,7 @@ async function checkAliasCoverageIndependentCount(aliasFamily) {
     uiSelect: () => node('select'), uiSelectFrame: (select) => select,
     uiSegmentedControl: (choices, selected, onChange) => {
       const control = node('div'); control.onChange = onChange;
-      control.selected = selected; segments.push(control); return control;
+      control.selected = selected; control.choices = choices; segments.push(control); return control;
     },
     aliasCoverageScope: () => node('section'), aliasCoverageSearch: () => node('form'),
     aliasCoverageAliasesColumns: () => [], aliasCoverageUnassignedColumns: () => [],
@@ -449,7 +449,8 @@ async function checkAliasCoverageIndependentCount(aliasFamily) {
       tables.push({ page, type }); return node('div', 'test-table');
     },
     metrics: (entries) => { const summary = node('div'); summary.entries = entries; return summary; },
-    uiStatus: (text) => node('span', '', text), uiActionButton: (text) => node('button', '', text),
+    uiStatus: (text) => node('span', '', text),
+    uiActionButton: (text, _icon, onClick) => Object.assign(node('button', '', text), { onClick }),
     currentHref: (values) => {
       const next = new URLSearchParams(context.route);
       Object.entries(values).forEach(([key, value]) => value === null ? next.delete(key) : next.set(key, value));
@@ -463,25 +464,24 @@ async function checkAliasCoverageIndependentCount(aliasFamily) {
       ] });
       if (path.endsWith('/aliases')) return Promise.resolve({ rows: [{ name: 'Dispatch' }], total_count: 2 });
       requests.push({ parameters, signal: options.signal, tablesPresented: tables.length });
-      return pendingCounts.shift().promise;
+      return pendingPages.shift().promise;
     }
   };
   vm.createContext(context);
-  for (const signature of ['aliasCoverageSummaryCards(totals, unassigned, countFailed = false, analog = false)',
+  for (const signature of ['aliasCoverageSummaryCards(totals, unassigned, analog = false)',
     'async loadAliasCoverageModel(parameters, previous = null, signal = null)',
     'async renderAliasCoverageDirectory(renderContext, embedded = false)']) {
     const [asyncPrefix, declaration] = signature.startsWith('async ') ? ['async ', signature.slice(6)] : ['', signature];
     const name = declaration.slice(0, declaration.indexOf('('));
     vm.runInContext(`${asyncPrefix}function ${declaration} ${functionBinding(appSource, name)}`, context);
   }
-  const summary = () => host.querySelector('.alias-coverage-summary').entries[3];
+  const unknownLabel = aliasFamily === 'P25' ? 'Unknown aliases' : 'Unmatched assignments';
+  const summary = () => host.querySelector('.alias-coverage-summary').entries.find((entry) => entry[0] === unknownLabel);
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   const navigateTab = async (value) => {
     segments.findLast((segment) => segment.attributes['aria-label'] === 'Alias inventory').onChange(value);
     await flush();
   };
-  const slowCount = deferred();
-  pendingCounts.push(slowCount);
   await context.renderAliasCoverageDirectory({ signal: pageController.signal });
   const layout = host.children[0];
   assert.deepEqual(layout.children.filter((child) => child.nodeType === 3).map((child) => child.textContent), [],
@@ -491,47 +491,66 @@ async function checkAliasCoverageIndependentCount(aliasFamily) {
     'Only analog Alias Lists show the saved-history note');
   if (notes.length) assert.equal(notes[0].textContent,
     'Calls include saved history since alias tracking began. Heard within filters when each assignment was last heard.');
-  assert.equal(tables.length, 1, 'Configured aliases appear while their Unassigned count remains pending');
-  assert.equal(requests[0].tablesPresented, 1, 'The independent count starts after Configured presentation');
-  assert.equal(summary()[2], 'Loading…', 'A pending count must not look like zero');
-  slowCount.reject(new Error('Count unavailable'));
-  await flush();
-  assert.equal(tables.length, 1, 'Count failure must preserve the Configured table');
-  assert.equal(summary()[2], 'Unavailable');
-  assert.equal(host.querySelector('.alias-coverage-refresh-error'), null);
+  assert.equal(tables.length, 1, 'Configured aliases appear without an Unassigned query');
+  assert.equal(requests.length, 0, 'Configured presentation must not launch a background count request');
+  assert.equal(summary(), undefined, 'Configured view must not invent a loading or zero Unassigned count');
+  assert.equal(segments.findLast((segment) => segment.attributes['aria-label'] === 'Alias inventory')
+    .choices.find((choice) => choice.value === 'unassigned').label, unknownLabel,
+  'Unassigned remains directly available before a count has been requested');
 
   const observations = deferred();
-  pendingCounts.push(observations);
+  pendingPages.push(observations);
   await navigateTab('unassigned');
-  assert.equal(requests[1].parameters.limit, 100, 'Selecting Unassigned loads its actual page');
+  assert.equal(requests[0].parameters.limit, 100, 'Selecting Unassigned loads its actual page');
+  assert.equal(tables.length, 1, 'The prior table remains visible until the requested page arrives');
+  assert.equal(host.querySelector('.alias-coverage-table-section').attributes['aria-busy'], 'true');
   observations.resolve({ rows: [{ native_id: 101 }], total_count: 55, limit: 100, offset: 0 });
   await flush();
   assert.equal(tables.at(-1).type, 'alias-coverage-unassigned-v1');
   assert.equal(summary()[1], 55, 'The active Unassigned tab keeps its exact count');
 
-  const staleCount = deferred();
-  pendingCounts.push(staleCount);
   await navigateTab('configured');
-  assert.equal(summary()[2], 'Loading…');
-  const refreshedObservations = deferred();
-  pendingCounts.push(refreshedObservations);
+  assert.equal(requests.length, 1, 'Returning to Configured must not refresh or cache an unused count');
+  assert.equal(summary(), undefined);
+  const failedPage = deferred();
+  pendingPages.push(failedPage);
   await navigateTab('unassigned');
-  assert.equal(requests[2].signal.aborted, true, 'Tab navigation cancels the previous count');
-  refreshedObservations.resolve({ rows: [], total_count: 56 });
+  failedPage.reject(new Error('Unassigned page unavailable'));
   await flush();
-  staleCount.resolve({ rows: [], total_count: 999 });
+  const failure = host.querySelector('.alias-coverage-refresh-error');
+  assert.ok(failure, 'A requested Unassigned page keeps the existing Retry flow');
+  assert.equal(tables.at(-1).type, 'alias-coverage-configured-v1', 'Page failure retains the prior table');
+  const retryPage = deferred();
+  pendingPages.push(retryPage);
+  failure.children[1].onClick();
   await flush();
-  assert.equal(summary()[1], 56, 'A stale Configured count cannot replace the selected Unassigned count');
-
-  const abandonedCount = deferred();
-  pendingCounts.push(abandonedCount);
+  assert.equal(requests[2].parameters.limit, 100, 'Retry requests the actual page, not a badge count');
+  retryPage.resolve({ rows: [], total_count: 56 });
+  await flush();
+  assert.equal(summary()[1], 56);
   await navigateTab('configured');
+  assert.equal(requests.length, 3);
+
+  const stalePage = deferred();
+  pendingPages.push(stalePage);
+  await navigateTab('unassigned');
+  await navigateTab('configured');
+  assert.equal(requests[3].signal.aborted, true, 'Tab navigation cancels the requested Unassigned page');
+  stalePage.resolve({ rows: [], total_count: 999 });
+  await flush();
+  assert.equal(summary(), undefined, 'A late Unassigned page cannot replace the selected Configured view');
+  assert.equal(tables.at(-1).type, 'alias-coverage-configured-v1');
+
+  const abandonedPage = deferred();
+  pendingPages.push(abandonedPage);
+  await navigateTab('unassigned');
+  const presentedTables = tables.length;
   current = false;
   pageController.abort();
-  assert.equal(requests[4].signal.aborted, true, 'Leaving the page cancels its independent count');
-  abandonedCount.resolve({ rows: [], total_count: 777 });
+  assert.equal(requests[4].signal.aborted, true, 'Leaving the page cancels its actual Unassigned request');
+  abandonedPage.resolve({ rows: [], total_count: 777 });
   await flush();
-  assert.equal(summary()[2], 'Loading…', 'An abandoned page must not receive late count presentation');
+  assert.equal(tables.length, presentedTables, 'An abandoned page must not receive late table presentation');
 }
 
 async function checkAlertTopicsAvailability() {
@@ -1986,8 +2005,8 @@ async function main() {
   ], talkerSystem), 'radios.talker-alias-affiliation-channel');
   assert.match(appSource, /radioTableType\('group-identity-radios', columns, groupIdentity\)/);
   await checkGroupIdentityRadiosLoading(browsing, tableLayouts);
-  await checkAliasCoverageIndependentCount('P25');
-  await checkAliasCoverageIndependentCount('NBFM');
+  await checkAliasCoverageOnDemandUnassigned('P25');
+  await checkAliasCoverageOnDemandUnassigned('NBFM');
   assert.match(appSource, /signalingMetrics\(signalingActionRows\(response\.action_counts\)/);
   assert.match(functionBinding(appSource, 'signalingMetrics'), /values\.filter\(\(\[, count\]\) => Number\(count\) > 0\)/);
   assert.equal(tableDefaults.width('channel-frequencies-p25', { id: 'tags' }), 130);
