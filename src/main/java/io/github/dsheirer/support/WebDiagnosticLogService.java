@@ -364,7 +364,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
                         Map<String,Object> fields = project(pending);
                         activity(pending.kind(), fields);
                         projected(System.nanoTime() - projectionStarted);
-                        write(pending.time(), safeKind(pending.kind()), fields);
+                        write(pending.time(), safeKind(pending.kind()), fields, false, pending.requestId() != 0);
                     }
                 }
                 catch(Exception exception)
@@ -633,6 +633,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
 
     private void write(long time, String kind, Map<String,Object> fields, boolean finalRecord) throws IOException
     {
+        write(time, kind, fields, finalRecord, false);
+    }
+
+    private void write(long time, String kind, Map<String,Object> fields, boolean finalRecord,
+                       boolean sanitizedRequest) throws IOException
+    {
         if(!finalRecord && (!mEnabled || mWorkerGeneration != mGeneration.get() || mClosed.get())) return;
         long writeStarted = System.nanoTime();
         Map<String,Object> timed = new LinkedHashMap<>(fields);
@@ -640,7 +646,9 @@ public final class WebDiagnosticLogService implements AutoCloseable
         timed.put("recorded_at_ms", mClock.getAsLong());
         String line = LOG_TIME.format(Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())) +
             " [web diagnostic writer] " + level(kind, fields) + " web.diagnostic - " + kind + " " + MAPPER.writeValueAsString(timed) + "\n";
-        byte[] bytes = ApplicationLogService.redact(line).getBytes(StandardCharsets.UTF_8);
+        // Request projection contains only fixed fields and an already-redacted ASCII route. Event kinds do not
+        // confer this trust: all other records still need the final pass, including text exposed by control cleanup.
+        byte[] bytes = (sanitizedRequest ? line : ApplicationLogService.redact(line)).getBytes(StandardCharsets.UTF_8);
         if(bytes.length > MAXIMUM_RECORD_BYTES || bytes.length > mMaximumBytes)
         {
             mDropped.incrementAndGet();

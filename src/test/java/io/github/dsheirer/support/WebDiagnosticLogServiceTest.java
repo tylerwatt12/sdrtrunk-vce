@@ -3,6 +3,8 @@ package io.github.dsheirer.support;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -459,6 +461,105 @@ class WebDiagnosticLogServiceTest
     }
 
     @Test
+    void typedRequestsRetainTheirFieldsAndSanitizeRoutesBeforeSerialization() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            String route = "/api/v1/channels/{value}/activity";
+            long id = service.requestStarted("GET", route);
+            service.requestFinished(id, "GET", route, 12_500_000, 503, true);
+            long endpointId = service.requestStarted("GET\" password=method-secret", "/api/v1/127.0.0.1:8094");
+            service.requestFinished(endpointId, "GET\" password=method-secret", "/api/v1/127.0.0.1:8094",
+                1_000_000, 204, false);
+            List<String> unsafeRoutes = List.of(
+                "/api/v1/channels/\"password=quoted-secret\"",
+                "/api/v1/channels/C:\\Users\\private-route\\recording.wav",
+                "/api/v1/channels/pa" + (char)0 + "ssword=control-secret",
+                "/api/v1/channels/https://private.invalid/stream?token=endpoint-secret");
+            List<Long> rejectedIds = new ArrayList<>();
+            for(String unsafe: unsafeRoutes)
+            {
+                long rejectedId = service.requestStarted("GET", unsafe);
+                rejectedIds.add(rejectedId);
+                service.requestFinished(rejectedId, "GET", unsafe, 1_000_000, 200, false);
+            }
+            int requests = unsafeRoutes.size() + 2;
+            await(() -> service.status().writtenRecords() >= requests * 2L + 1);
+            List<JsonNode> starts = records("request_started");
+            List<JsonNode> finishes = records("request_finished");
+            assertEquals(requests, starts.size());
+            assertEquals(requests, finishes.size());
+            for(JsonNode start: starts)
+            {
+                JsonNode finish = finishes.stream().filter(value -> value.path("request_id").asLong() ==
+                    start.path("request_id").asLong()).findFirst().orElseThrow();
+                assertEquals(5, start.size());
+                assertEquals(8, finish.size());
+                assertEquals(start.get("method"), finish.get("method"));
+                assertEquals(start.get("route"), finish.get("route"));
+                assertEquals(clock.get(), start.path("observed_at_ms").asLong());
+                assertEquals(clock.get(), start.path("recorded_at_ms").asLong());
+                assertEquals(clock.get(), finish.path("observed_at_ms").asLong());
+                assertEquals(clock.get(), finish.path("recorded_at_ms").asLong());
+            }
+            JsonNode finished = finishes.stream().filter(value -> value.path("request_id").asLong() == id)
+                .findFirst().orElseThrow();
+            assertEquals("GET", finished.path("method").asText());
+            assertEquals(route, finished.path("route").asText());
+            assertEquals(12.5, finished.path("duration_ms").asDouble());
+            assertEquals(503, finished.path("status").asInt());
+            assertTrue(finished.path("failed").asBoolean());
+            JsonNode endpoint = starts.stream().filter(value -> value.path("request_id").asLong() == endpointId)
+                .findFirst().orElseThrow();
+            assertEquals("OTHER", endpoint.path("method").asText());
+            assertEquals("/api/v1/[endpoint hidden]", endpoint.path("route").asText());
+            for(long rejectedId: rejectedIds)
+                assertEquals("other", starts.stream().filter(value -> value.path("request_id").asLong() == rejectedId)
+                    .findFirst().orElseThrow().path("route").asText());
+            for(String secret: List.of("quoted-secret", "method-secret", "control-secret", "endpoint-secret",
+                "private-route", "private.invalid", "127.0.0.1"))
+                assertFalse(read().contains(secret), secret);
+            assertEquals(0, service.status().droppedRecords());
+        }
+    }
+
+    @Test
+    void counterfeitRequestEventsAndHealthRetainTheFinalPrivacyPass() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            service.event("request_finished", Map.of("reason", "pa" + (char)0 +
+                "ssword=counterfeit-secret retained", "operation", "preserved-event"));
+            service.recordHealth(Map.of("generated_at_ms", clock.get(), "active", List.of(),
+                    "summary", Map.of("title", "pa" + (char)0 +
+                        "ssword=health-secret retained C:\\Users\\private-health\\recording.wav")),
+                Map.of("capture_generation", service.captureGeneration(),
+                    "note", "password=core-secret retained https://private-core.invalid/stream"));
+            await(() -> service.status().writtenRecords() >= 3);
+            JsonNode event = records("request_finished").getFirst();
+            assertFalse(event.has("request_id"));
+            assertEquals("preserved-event", event.path("operation").asText());
+            assertEquals("password=[removed] retained", event.path("reason").asText());
+            JsonNode health = records("receiver_health").getFirst();
+            assertTrue(health.path("summary").path("title").asText().contains("password=[removed]"));
+            assertTrue(health.path("summary").path("title").asText().contains("[path hidden]"));
+            assertTrue(health.path("core").path("note").asText().contains("password=[removed]"));
+            assertEquals(service.captureGeneration(), health.path("core").path("capture_generation").asLong());
+            for(String secret: List.of("counterfeit-secret", "health-secret", "core-secret", "private-health",
+                "private-core.invalid"))
+                assertFalse(read().contains(secret), secret);
+        }
+    }
+
+    @Test
     void retainsOneMinuteBeforeAlertAndThirtySecondsAfterWithoutRepeatingAnOngoingAlert() throws Exception
     {
         AtomicLong clock = new AtomicLong(System.currentTimeMillis());
@@ -701,6 +802,16 @@ class WebDiagnosticLogServiceTest
     {
         try { return Files.readString(mDirectory.resolve(WebDiagnosticLogService.FILE_NAME)); }
         catch(Exception exception) { return ""; }
+    }
+
+    private List<JsonNode> records(String kind) throws Exception
+    {
+        ObjectMapper mapper = new ObjectMapper();
+        List<JsonNode> records = new ArrayList<>();
+        for(String line: read().lines().toList())
+            if(line.contains(" web.diagnostic - " + kind + " "))
+                records.add(mapper.readTree(line.substring(line.indexOf('{'))));
+        return records;
     }
 
     private static void await(BooleanSupplier condition) throws Exception
