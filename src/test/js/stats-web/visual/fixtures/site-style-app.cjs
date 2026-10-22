@@ -368,6 +368,23 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/dashboard/main') return respond({ quality: { current: [quality] },
       directory: { systems: [{ ...identity, entity_ref: { kind: 'radio_system', key: systemKey },
         children: [channel], child_count: 1, running_count: 1 }], channels: [] } });
+    if (p === '/api/v1/activity/actions') return respond({ rows: [
+      { action: 'GRANT', observation_count: 1000 }, { action: 'AFFILIATE', observation_count: 500 }
+    ] });
+    if (p === '/api/v1/activity/radios') {
+      const offset = Number(url.searchParams.get('offset') || 0);
+      return respond({ rows: Array.from({ length: Math.min(100, Math.max(0, 101 - offset)) }, (_, index) => {
+        const id = 30914 + offset + index;
+        return { ...radio, channel_kind: 'TRUNKED', native_id: id, radio_id: id,
+          alias_name: index === 0 && offset === 0 ? 'Engine 4' : `Field unit ${id}`,
+          alias_description: 'North station', observation_count: 20, last_seen_ms: now,
+          radio_entity_ref: { kind: 'radio', radio_system_key: systemKey,
+            identity_key: `v1-r-00001-001-${id}` } };
+      }), total_count: 101, offset, limit: 100, has_more: offset === 0,
+      next_offset: offset === 0 ? 100 : null, action_observation_count: 1000,
+      retained_observation_count: 900, identified_observation_count: 800,
+      unknown_source_observation_count: 100 });
+    }
     if (p === '/api/v1/receiver-health') return respond(health);
     if (p === '/api/v1/remote-support') return respond({ enabled: false, connected: false, code: '',
       expires_at_ms: 0, unlimited: false, can_start: true });

@@ -205,6 +205,10 @@ const TABLE_DEFAULTS = Object.freeze({
   'channel-foreign-frequency-bands': {
     widths: { system: 250 }, grow: ['system']
   },
+  'dashboard-activity-radios': {
+    widths: { system: 280, radio: 300, observations: 110, 'last-seen': 174 },
+    grow: ['system', 'radio']
+  },
   'dashboard-call-sources': {
     widths: { receiver: 300, mode: 80, 'logical-calls': 85,
       'recorded-logical-calls': 70, 'stream-submitted-logical-calls': 90 },

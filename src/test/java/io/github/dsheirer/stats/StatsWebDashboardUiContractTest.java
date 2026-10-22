@@ -59,12 +59,15 @@ class StatsWebDashboardUiContractTest
     }
 
     @Test
-    void rendersAccessibleActivityTotalsWithoutDetailedHistoryRanking() throws Exception
+    void rendersAccessibleActivityTotalsAndSourceRadioDrilldown() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String actionRows = function(source, "function dashboardActivityActionRows(response)");
-        String mix = function(source, "function dashboardActivityMix(response)");
+        String mix = function(source, "function dashboardActivityMix(response, selectedAction, onSelect)");
         String activity = function(source, "async function renderDashboardActivity(renderContext)");
+        String radio = function(source, "function dashboardActivityRadio(row)");
+        String pager = function(source, "function dashboardActivityRadioPager(page, onOffset)");
+        String note = function(source, "function dashboardActivityRadioNote(page)");
         String failure = function(source, "function asyncSectionFailure(error, fallbackMessage, retry)");
         assertTrue(source.contains("['6h', '6h'], ['24h', '24h'], ['7d', '7d']"));
         assertTrue(actionRows.contains("row.action !== 'CONTINUE'"));
@@ -74,9 +77,12 @@ class StatsWebDashboardUiContractTest
         assertTrue(mix.contains("event.key !== 'Enter' && event.key !== ' '"));
         assertTrue(mix.contains("selected?.label || 'Events'"));
         assertTrue(mix.contains("updateSelection(row.action)"));
+        assertTrue(mix.contains("if (notify && selected) onSelect(selected)"));
         assertFalse(mix.contains("api("));
         assertTrue(activity.contains("api('/api/v1/activity/actions'"));
-        assertTrue(activity.contains("signal: renderContext.signal"));
+        assertTrue(activity.contains("signal: request.controller.signal"));
+        assertTrue(activity.contains("renderContext.signal.addEventListener('abort'"));
+        assertTrue(activity.contains("previous?.controller.abort()"));
         assertTrue(activity.contains("renderIsCurrent(renderContext)"));
         assertTrue(activity.contains("error?.name === 'AbortError'"));
         assertTrue(activity.contains("error?.status === 401 || error?.status === 403"));
@@ -85,12 +91,27 @@ class StatsWebDashboardUiContractTest
         assertTrue(activity.contains("asyncSectionFailure(error"));
         assertTrue(failure.contains("setAttribute('role', 'alert')"));
         assertTrue(activity.contains("activityMetricGuide()"));
-        assertFalse(activity.contains("apiPage("));
-        assertFalse(activity.contains("source radios"));
-        assertFalse(activity.contains("detailedHistoryAvailable()"));
+        assertTrue(activity.contains("apiPage('/api/v1/activity/radios'"));
+        assertTrue(activity.contains("range: selectedRange, action, limit: 100, offset: selectedOffset"));
+        assertTrue(activity.contains("'Source radios'"));
+        assertTrue(activity.contains("detailedHistoryAvailable()"));
+        assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
+        assertTrue(activity.contains("sequence !== radioSequence || action !== selectedAction"));
+        assertTrue(activity.contains("cleanupTableLayoutMenu(radioTableController)"));
+        assertTrue(activity.contains("node('p', 'ui-muted dashboard-activity-radio-status')"));
+        assertTrue(radio.contains("radioIdentityValue(row, { reference: row.radio_entity_ref"));
+        assertTrue(radio.contains("row.alias_description"));
+        assertTrue(pager.contains("browsingWorkflows.createBrowsingPager"));
+        assertTrue(pager.contains("page.has_more"));
+        assertTrue(pager.contains("onOffset(page.next_offset)"));
+        assertTrue(note.contains("page.action_observation_count"));
+        assertTrue(note.contains("page.retained_observation_count"));
+        assertTrue(note.contains("page.identified_observation_count"));
+        assertTrue(note.contains("page.unknown_source_observation_count"));
         assertFalse(activity.contains("pageInterval"));
-        assertFalse(source.contains("function dashboardActivityRadio("));
-        assertFalse(source.contains("const dashboardActivityRadioColumns = ["));
+        assertTrue(source.contains("const dashboardActivityRadioColumns = ["));
+        assertTrue(declaration(source, "const dashboardActivityRadioColumns = [")
+            .contains("render: dashboardIdentitySystem"));
     }
 
     @Test
@@ -236,8 +257,12 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains(".dashboard-activity-layout"));
         assertTrue(css.contains(".dashboard-activity-donut"));
         assertTrue(css.contains(".dashboard-activity-segment:focus-visible"));
-        assertFalse(css.contains(".dashboard-activity-radio-status"));
+        String radioStatus = function(css, ".dashboard-activity-radio-status");
+        assertTrue(radioStatus.contains("padding: var(--space-2) var(--space-3)"));
+        assertFalse(radioStatus.contains("color:"));
+        assertFalse(radioStatus.contains("border-"));
         assertFalse(css.contains(".dashboard-activity-radio-result > .ui-section-note"));
+        assertTrue(function(css, "\n.ui-section-note").contains("border-top: 1px solid var(--line)"));
         assertTrue(css.contains("--chart-grant: #2d6f9f"));
         assertTrue(css.contains("--chart-grant: #78b7e5"));
         assertFalse(css.contains(".dashboard-activity-breakdown-toolbar"));

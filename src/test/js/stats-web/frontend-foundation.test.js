@@ -639,6 +639,7 @@ async function main() {
   await require('./guide-persistence.test').checkGuidePersistence(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
   await require('./dashboard-data.test').checkDashboardData(appSource, functionBinding);
+  await require('./dashboard-activity.test').checkDashboardActivity(appSource, functionBinding);
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
@@ -1280,8 +1281,9 @@ async function main() {
     /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
   const dashboardActivity = functionBinding(appSource, 'renderDashboardActivity');
   assert.match(dashboardActivity, /api\('\/api\/v1\/activity\/actions'/);
-  assert.doesNotMatch(dashboardActivity, /apiPage\(|Source radios|source radios|radioRequest/,
-    'The activity chart only reads lightweight activity totals.');
+  assert.match(dashboardActivity, /apiPage\('\/api\/v1\/activity\/radios'/,
+    'Selecting an activity type restores its paged source-radio drilldown.');
+  assert.match(dashboardActivity, /cleanupTableLayoutMenu\(radioTableController\)/);
   const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
   assert.match(tunerSpectrumPanel,
     /iconButton\('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button'\)/);
@@ -1558,7 +1560,7 @@ async function main() {
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 20, 'Every application table call must be audited');
   const issiRenderer = functionBinding(appSource, 'renderRadioSystemIssi');
   assert.match(issiRenderer, /layoutMenuHost: groupAssociationActions, controller: groupAssociationController/,
     'Talkgroup association refreshes must retain their own table controls');
@@ -1591,7 +1593,7 @@ async function main() {
     assert.equal(new Set(ids).size, ids.length, `${name} repeats a column ID`);
   });
   [
-    'radioSystemChannelColumns', 'dashboardCallSourceColumns',
+    'radioSystemChannelColumns', 'dashboardCallSourceColumns', 'dashboardActivityRadioColumns',
     'groupIdentityColumns'
   ].forEach((name) => {
     const ids = [...arrayBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
