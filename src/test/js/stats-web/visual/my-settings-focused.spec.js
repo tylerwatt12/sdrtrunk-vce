@@ -1,6 +1,9 @@
 'use strict';
 
 const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
+const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
 test.setTimeout(12_000);
 const { openSettingsApp, selectSettingsCategory } = require('./fixtures/my-settings-app.cjs');
 const { presentations } = require('./fixtures/site-style-cases.cjs');
@@ -121,3 +124,53 @@ test('leaving My Settings confirms a dirty draft and resumes accepted navigation
   await expect(page.locator('html[data-custom-hue]')).toHaveCount(0);
   expect(state.writes).toHaveLength(0);
 });
+
+for (const [name, theme, viewport] of [
+  ['desktop', 'light', { width: 1280, height: 900 }], ['phone', 'dark', { width: 390, height: 844 }]
+]) {
+  test(`listening keeps personal settings actions reachable in every player size on ${name}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openAudioApp(page, { view: 'settings', theme, admin: false });
+    const form = page.getByRole('form', { name: 'Appearance', exact: true });
+    await expect(form).toBeVisible();
+    await form.getByRole('radio', { name: 'Ocean', exact: true }).check();
+    const player = page.locator('#audio-dock');
+    const handle = player.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
+    await handle.press('End');
+    await player.getByRole('button', { name: 'Listen live', exact: true }).click();
+    await expect(player.getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+    const observations = [];
+    for (const size of ['collapsed', 'minimal', 'full']) {
+      await handle.press(size === 'full' ? 'End' : 'Home');
+      if (size === 'minimal') await handle.press('ArrowUp');
+      await expect(player).toHaveAttribute('data-state', size);
+      await expect.poll(() => player.evaluate(element => Math.abs(element.getBoundingClientRect().height -
+        parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--audio-dock-height')))))
+        .toBeLessThanOrEqual(1);
+      for (const action of ['Cancel', 'Save changes']) {
+        const control = form.getByRole('button', { name: action, exact: true });
+        // Explicit scrolling uses the page's reserved space and scroll padding around the fixed player.
+        await control.evaluate(element => element.scrollIntoView({ block: 'end', behavior: 'instant' }));
+        await expect.poll(() => control.evaluate(element => {
+          const bounds = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+          return bounds.top >= 0 && bounds.bottom <= innerHeight && element.contains(hit);
+        }), { message: `${name} ${size}: ${action} remains reachable above the player` }).toBe(true);
+      }
+      await expectNoHorizontalOverflow(page);
+      const geometry = await player.evaluate(element => ({
+        playerTop: element.getBoundingClientRect().top,
+        scrollMax: document.documentElement.scrollHeight - innerHeight
+      }));
+      observations.push({ size, ...geometry });
+      const auditDirectory = process.env.MY_SETTINGS_LISTENING_AUDIT_DIR;
+      if (auditDirectory) {
+        fs.mkdirSync(auditDirectory, { recursive: true });
+        await page.screenshot({ path: path.join(auditDirectory, `listening-${name}-${size}.png`) });
+      }
+    }
+    if (process.env.MY_SETTINGS_LISTENING_AUDIT_DIR) fs.writeFileSync(
+      path.join(process.env.MY_SETTINGS_LISTENING_AUDIT_DIR, `listening-${name}-check.json`),
+      JSON.stringify(observations, null, 2) + '\n');
+  });
+}
