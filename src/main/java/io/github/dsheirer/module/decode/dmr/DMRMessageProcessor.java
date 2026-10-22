@@ -65,7 +65,6 @@ import org.slf4j.LoggerFactory;
 public class DMRMessageProcessor implements Listener<IMessage>
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRMessageProcessor.class);
-    private final DecodeConfigDMR mConfigDMR;
     private final VoiceSuperFrameProcessor mSuperFrameProcessor1 = new VoiceSuperFrameProcessor();
     private final VoiceSuperFrameProcessor mSuperFrameProcessor2 = new VoiceSuperFrameProcessor();
     private final FLCAssembler mFLCAssemblerTimeslot1;
@@ -80,6 +79,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
     private Listener<IMessage> mMessageListener;
     private final Map<Integer,TimeslotFrequency> mTimeslotFrequencyMap = new TreeMap<>();
     private final DMRCrcMaskManager mCrcMaskManager;
+    private final boolean mUseCompressedTalkgroups;
 
     /**
      * Constructs an instance
@@ -88,7 +88,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
      */
     public DMRMessageProcessor(DecodeConfigDMR config, DMRCrcMaskManager crcMaskManager)
     {
-        mConfigDMR = config;
+        mUseCompressedTalkgroups = config.isTrunked() && config.isUseCompressedTalkgroups();
         mCrcMaskManager = crcMaskManager;
         mMBCAssembler = new MBCAssembler(crcMaskManager.isIgnoreCRCChecksums());
         mFLCAssemblerTimeslot1 = new FLCAssembler(1, crcMaskManager);
@@ -336,7 +336,7 @@ public class DMRMessageProcessor implements Listener<IMessage>
         if(generation == mReceptionGeneration.get() && mMessageListener != null && message != null)
         {
             //Configure compressed talkgroups for the DMR talkgroup identifiers in the message.
-            if(mConfigDMR.isUseCompressedTalkgroups())
+            if(mUseCompressedTalkgroups)
             {
                 try
                 {

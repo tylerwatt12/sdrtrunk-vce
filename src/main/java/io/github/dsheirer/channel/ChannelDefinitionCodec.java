@@ -47,6 +47,7 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -90,8 +91,9 @@ public final class ChannelDefinitionCodec
                 settings.put("ignore_encrypted_calls", dmr.getIgnoreEncryptedCalls());
                 settings.put("ignore_crc_checksums", dmr.getIgnoreCRCChecksums());
                 settings.put("use_compressed_talkgroups", dmr.isUseCompressedTalkgroups());
-                dmr.getTimeslotMap().forEach(entry -> frequencyMap.add(new ChannelDefinition.FrequencyMapEntry(
-                    entry.getNumber(), entry.getDownlinkFrequency(), entry.getUplinkFrequency())));
+                if(dmr.isTrunked()) dmr.getTimeslotMap().forEach(entry ->
+                    frequencyMap.add(new ChannelDefinition.FrequencyMapEntry(entry.getNumber(),
+                        entry.getDownlinkFrequency(), entry.getUplinkFrequency())));
             }
             case NXDN -> {
                 DecodeConfigNXDN nxdn = (DecodeConfigNXDN)decoder;
@@ -101,7 +103,7 @@ public final class ChannelDefinitionCodec
                 settings.put("traffic_channel_pool_size", nxdn.getTrafficChannelPoolSize());
                 settings.put("ignore_data_calls", nxdn.isIgnoreDataCalls());
                 settings.put("ignore_encrypted_calls", nxdn.isIgnoreEncryptedCalls());
-                if(nxdn.getChannelMap() != null)
+                if(nxdn.isTrunked() && nxdn.getChannelMap() != null)
                 {
                     nxdn.getChannelMap().forEach(entry -> frequencyMap.add(
                         new ChannelDefinition.FrequencyMapEntry(entry.getChannel(), entry.getDownlink(),
@@ -127,13 +129,16 @@ public final class ChannelDefinitionCodec
             default -> throw new IllegalArgumentException("Unsupported channel decoder: " + decoder.getDecoderType());
         }
 
+        settings = mRegistry.normalizeInactiveProtocolSettings(profile, settings);
+        boolean conventional = ChannelConfigurationPolicy.requireChannelKind(channel) ==
+            ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL;
         return new ChannelDefinition(channel.getConfigurationId(), profile.id(), channel.getSystem(), channel.getSite(),
             channel.getName(), channel.hasRadioResolveId() ? channel.getRadioResolveId() : null,
             channel.getAliasListId(), sourceFrom(channel.getSourceConfiguration()), settings, frequencyMap,
-            enumNames(channel.getEventLogConfiguration() != null ? channel.getEventLogConfiguration().getLoggers() :
-                List.of()),
-            enumNames(channel.getRecordConfiguration() != null ? channel.getRecordConfiguration().getRecorders() :
-                List.of()),
+            applicableOutputs(enumNames(channel.getEventLogConfiguration() != null ?
+                channel.getEventLogConfiguration().getLoggers() : List.of()), conventional),
+            applicableOutputs(enumNames(channel.getRecordConfiguration() != null ?
+                channel.getRecordConfiguration().getRecorders() : List.of()), conventional),
             enumNames(channel.getAuxDecodeConfiguration() != null ?
                 channel.getAuxDecodeConfiguration().getAuxDecoders() : List.of()), observedFrom(channel));
     }
@@ -148,7 +153,8 @@ public final class ChannelDefinitionCodec
             throw new IllegalArgumentException("Channel protocol cannot be changed; clone a new channel instead");
         }
         validateCommon(submitted, aliasList, profile);
-        Map<String,Object> settings = mRegistry.validateSettings(profile, submitted.settings());
+        Map<String,Object> settings = mRegistry.validateSettings(profile, submitted.settings(),
+            existing != null ? fromChannel(existing).settings() : Map.of());
         SourceConfiguration source = sourceTo(submitted.source(), profile);
         if(existing != null && existing.getSourceConfiguration() instanceof SourceConfigRemote currentRemote &&
             (!(source instanceof SourceConfigRemote updatedRemote) ||
@@ -159,6 +165,8 @@ public final class ChannelDefinitionCodec
             throw new IllegalArgumentException("Remote channel source cannot be changed");
         }
         DecodeConfiguration decoder = decoderTo(profile, settings, submitted.frequencyMap(), existing);
+        boolean conventional = profile.channelKind() == ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL ||
+            "CONVENTIONAL".equals(settings.get("channel_mode"));
         if(profile.channelKind() != null)
         {
             Channel probe = new Channel();
@@ -187,8 +195,8 @@ public final class ChannelDefinitionCodec
         channel.setSourceConfiguration(source);
         channel.setDecodeConfiguration(decoder);
         channel.setAuxDecodeConfiguration(auxiliaryTo(profile, submitted.auxiliaryDecoders()));
-        channel.setEventLogConfiguration(loggersTo(profile, submitted.eventLogs()));
-        channel.setRecordConfiguration(recordersTo(profile, submitted.recorders()));
+        channel.setEventLogConfiguration(loggersTo(profile, submitted.eventLogs(), conventional));
+        channel.setRecordConfiguration(recordersTo(profile, submitted.recorders(), conventional));
         if(existing != null)
         {
             channel.setAutoStart(existing.getAutoStart());
@@ -320,7 +328,7 @@ public final class ChannelDefinitionCodec
         return analog;
     }
 
-    private static DecodeConfigDMR dmrTo(ChannelProtocolRegistry.Profile profile, Map<String,Object> settings,
+    private DecodeConfigDMR dmrTo(ChannelProtocolRegistry.Profile profile, Map<String,Object> settings,
                                          List<ChannelDefinition.FrequencyMapEntry> submitted)
     {
         DecodeConfigDMR dmr = new DecodeConfigDMR();
@@ -331,7 +339,7 @@ public final class ChannelDefinitionCodec
         dmr.setIgnoreCRCChecksums(bool(settings, "ignore_crc_checksums"));
         dmr.setUseCompressedTalkgroups(bool(settings, "use_compressed_talkgroups"));
         List<TimeslotFrequency> result = new ArrayList<>();
-        validateMap(profile, submitted).forEach(entry -> {
+        applicableMap(profile, settings, submitted).forEach(entry -> {
             TimeslotFrequency mapping = new TimeslotFrequency();
             mapping.setNumber(entry.number());
             mapping.setDownlinkFrequency(entry.downlinkHz());
@@ -342,7 +350,7 @@ public final class ChannelDefinitionCodec
         return dmr;
     }
 
-    private static DecodeConfigNXDN nxdnTo(ChannelProtocolRegistry.Profile profile, Map<String,Object> settings,
+    private DecodeConfigNXDN nxdnTo(ChannelProtocolRegistry.Profile profile, Map<String,Object> settings,
                                            List<ChannelDefinition.FrequencyMapEntry> submitted)
     {
         DecodeConfigNXDN nxdn = new DecodeConfigNXDN();
@@ -354,10 +362,17 @@ public final class ChannelDefinitionCodec
         nxdn.setTrafficChannelPoolSize(integer(settings, "traffic_channel_pool_size"));
         nxdn.setIgnoreDataCalls(bool(settings, "ignore_data_calls"));
         nxdn.setIgnoreEncryptedCalls(bool(settings, "ignore_encrypted_calls"));
-        List<ChannelFrequency> result = validateMap(profile, submitted).stream()
+        List<ChannelFrequency> result = applicableMap(profile, settings, submitted).stream()
             .map(entry -> new ChannelFrequency(entry.number(), entry.downlinkHz(), entry.uplinkHz())).toList();
         nxdn.setChannelMap(result);
         return nxdn;
+    }
+
+    private List<ChannelDefinition.FrequencyMapEntry> applicableMap(ChannelProtocolRegistry.Profile profile,
+        Map<String,Object> settings, List<ChannelDefinition.FrequencyMapEntry> submitted)
+    {
+        return mRegistry.isFieldApplicable(profile, "frequency_map", settings) ? validateMap(profile, submitted) :
+            List.of();
     }
 
     private static List<ChannelDefinition.FrequencyMapEntry> validateMap(ChannelProtocolRegistry.Profile profile,
@@ -510,20 +525,27 @@ public final class ChannelDefinitionCodec
         throw new IllegalArgumentException("Only active channel sources can be administered on the web");
     }
 
-    private static EventLogConfiguration loggersTo(ChannelProtocolRegistry.Profile profile, List<String> values)
+    private static EventLogConfiguration loggersTo(ChannelProtocolRegistry.Profile profile, List<String> values,
+                                                   boolean conventional)
     {
         EventLogConfiguration configuration = new EventLogConfiguration();
-        uniqueNames(values, profile.eventLogs(), "event log").forEach(value ->
+        applicableOutputs(uniqueNames(values, profile.eventLogs(), "event log"), conventional).forEach(value ->
             configuration.addLogger(enumValue(EventLogType.class, value, "Event log")));
         return configuration;
     }
 
-    private static RecordConfiguration recordersTo(ChannelProtocolRegistry.Profile profile, List<String> values)
+    private static RecordConfiguration recordersTo(ChannelProtocolRegistry.Profile profile, List<String> values,
+                                                    boolean conventional)
     {
         RecordConfiguration configuration = new RecordConfiguration();
-        uniqueNames(values, profile.recorders(), "recorder").forEach(value ->
+        applicableOutputs(uniqueNames(values, profile.recorders(), "recorder"), conventional).forEach(value ->
             configuration.addRecorder(enumValue(RecorderType.class, value, "Recorder")));
         return configuration;
+    }
+
+    private static List<String> applicableOutputs(Collection<String> values, boolean conventional)
+    {
+        return values.stream().filter(value -> !conventional || !value.startsWith("TRAFFIC_")).toList();
     }
 
     private static AuxDecodeConfiguration auxiliaryTo(ChannelProtocolRegistry.Profile profile, List<String> values)

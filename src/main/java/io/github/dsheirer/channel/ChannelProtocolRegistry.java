@@ -100,8 +100,15 @@ public final class ChannelProtocolRegistry
         return profile;
     }
 
-    /** Applies manifest defaults and validates every submitted protocol setting against its declared field. */
+    /** Applies defaults, removes inapplicable values, and validates the effective protocol settings. */
     public Map<String,Object> validateSettings(Profile profile, Map<String,Object> submitted)
+    {
+        return validateSettings(profile, submitted, Map.of());
+    }
+
+    /** Prior settings preserve valid dormant preferences omitted by an editor when their dependency is disabled. */
+    public Map<String,Object> validateSettings(Profile profile, Map<String,Object> submitted,
+                                               Map<String,Object> previous)
     {
         Map<String,Object> normalized = new LinkedHashMap<>(profile.defaults());
         if(submitted != null)
@@ -113,15 +120,43 @@ public final class ChannelProtocolRegistry
                 {
                     throw new IllegalArgumentException("Unknown " + profile.label() + " setting: " + entry.getKey());
                 }
-                validateScalar(rule, entry.getValue());
                 normalized.put(entry.getKey(), entry.getValue());
+            }
+        }
+        profile.fields().values().stream().map(FieldRule::visibleWhen).filter(Objects::nonNull)
+            .map(VisibleWhen::path).distinct().forEach(path -> validateScalar(profile.fields().get(path),
+                normalized.get(path.substring("settings.".length()))));
+        for(FieldRule rule: profile.fields().values())
+        {
+            if(rule.path().startsWith("settings.") && !isFieldApplicable(profile, rule.path(), normalized))
+            {
+                String key = rule.path().substring("settings.".length());
+                //Channel mode changes remove settings from the protocol's effective feature set. Other conditions
+                //only hide dormant tuning preferences, which may be restored when their feature is enabled again.
+                if(!"settings.channel_mode".equals(rule.visibleWhen().path()))
+                {
+                    Object dormant = (submitted == null || !submitted.containsKey(key)) && previous != null &&
+                        previous.containsKey(key) ? previous.get(key) : normalized.get(key);
+                    try
+                    {
+                        validateScalar(rule, dormant);
+                        normalized.put(key, dormant);
+                        continue;
+                    }
+                    catch(IllegalArgumentException invalidDormantValue)
+                    {
+                        //Malformed inactive inputs must not prevent saving the active settings.
+                    }
+                }
+                resetToDefault(profile, normalized, key);
             }
         }
         for(Map.Entry<String,Object> entry: normalized.entrySet())
         {
             validateScalar(profile.fields().get("settings." + entry.getKey()), entry.getValue());
         }
-        profile.fields().values().stream().filter(rule -> rule.path().startsWith("settings.") && rule.required())
+        profile.fields().values().stream().filter(rule -> rule.path().startsWith("settings.") && rule.required() &&
+            isFieldApplicable(profile, rule.path(), normalized))
             .forEach(rule ->
             {
                 String key = rule.path().substring("settings.".length());
@@ -131,6 +166,42 @@ public final class ChannelProtocolRegistry
                 }
             });
         return Collections.unmodifiableMap(normalized);
+    }
+
+    /** Keeps legacy active values readable while removing settings that cannot apply to the selected channel mode. */
+    public Map<String,Object> normalizeInactiveProtocolSettings(Profile profile, Map<String,Object> settings)
+    {
+        Map<String,Object> normalized = new LinkedHashMap<>(settings);
+        for(FieldRule rule: profile.fields().values())
+        {
+            if(rule.path().startsWith("settings.") && rule.visibleWhen() != null &&
+                "settings.channel_mode".equals(rule.visibleWhen().path()) &&
+                !isFieldApplicable(profile, rule.path(), normalized))
+            {
+                resetToDefault(profile, normalized, rule.path().substring("settings.".length()));
+            }
+        }
+        return Collections.unmodifiableMap(normalized);
+    }
+
+    private static void resetToDefault(Profile profile, Map<String,Object> settings, String key)
+    {
+        if(profile.defaults().containsKey(key)) settings.put(key, profile.defaults().get(key));
+        else settings.remove(key);
+    }
+
+    /** Evaluates catalog applicability against the effective settings, including their controlling defaults. */
+    public boolean isFieldApplicable(Profile profile, String fieldPath, Map<String,Object> settings)
+    {
+        FieldRule rule = profile.fields().get(fieldPath);
+        if(rule == null) throw new IllegalArgumentException("Unknown protocol field: " + fieldPath);
+        VisibleWhen condition = rule.visibleWhen();
+        if(condition == null) return true;
+        String key = condition.path().substring("settings.".length());
+        Object actual = settings != null && settings.containsKey(key) ? settings.get(key) : profile.defaults().get(key);
+        return actual instanceof Number number && condition.equalsValue() instanceof Number expected ?
+            Double.compare(number.doubleValue(), expected.doubleValue()) == 0 :
+            Objects.equals(actual, condition.equalsValue());
     }
 
     private static void validateScalar(FieldRule rule, Object value)
@@ -235,7 +306,7 @@ public final class ChannelProtocolRegistry
                     field.path("nullable").asBoolean(false), optionalDouble(field, "minimum"),
                     optionalDouble(field, "maximum"), optionalInteger(field, "number_minimum"),
                     optionalInteger(field, "number_maximum"), field.path("show_uplink").asBoolean(false),
-                    Set.copyOf(options), defaultValue);
+                    Set.copyOf(options), defaultValue, visibleWhen(field));
                 if(fields.put(path, rule) != null)
                 {
                     throw new IllegalStateException("Duplicate field path in " + id + ": " + path);
@@ -254,9 +325,28 @@ public final class ChannelProtocolRegistry
                 }
             }
         }
+        for(FieldRule rule: fields.values())
+        {
+            if(rule.visibleWhen() != null && (!rule.visibleWhen().path().startsWith("settings.") ||
+                !fields.containsKey(rule.visibleWhen().path()) ||
+                fields.get(rule.visibleWhen().path()).visibleWhen() != null))
+            {
+                throw new IllegalStateException("Protocol field condition must reference an unconditional setting: " +
+                    rule.path());
+            }
+        }
         return new Profile(id, requiredText(node, "label"), decoderType, aliasFamily, kind, sourceMode, settingIds,
             defaults, fields, textSet(node, "event_logs"), textSet(node, "recorders"),
             textSet(node, "auxiliary_decoders"));
+    }
+
+    private static VisibleWhen visibleWhen(JsonNode field)
+    {
+        JsonNode condition = field.get("visible_when");
+        if(condition == null) return null;
+        if(!condition.isObject() || !condition.has("equals"))
+            throw new IllegalStateException("Invalid protocol field condition");
+        return new VisibleWhen(requiredText(condition, "path"), scalar(condition.get("equals"), "visible_when.equals"));
     }
 
     private static Double optionalDouble(JsonNode node, String field)
@@ -355,11 +445,13 @@ public final class ChannelProtocolRegistry
 
     public record FieldRule(String path, String label, String type, boolean required, boolean nullable,
                             Double minimum, Double maximum, Integer numberMinimum, Integer numberMaximum,
-                            boolean showUplink, Set<String> options, Object defaultValue)
+                            boolean showUplink, Set<String> options, Object defaultValue, VisibleWhen visibleWhen)
     {
         public FieldRule
         {
             options = Set.copyOf(options);
         }
     }
+
+    public record VisibleWhen(String path, Object equalsValue) {}
 }

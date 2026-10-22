@@ -17,6 +17,12 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
+import io.github.dsheirer.module.log.EventLogType;
+import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigRemote;
 import java.util.List;
@@ -232,6 +238,153 @@ class ChannelDefinitionCodecTest
                 List.of(154_325_000L), false), aliases, null);
             assertEquals(123.0, mCodec.fromChannel(selected).settings().get("ctcss_frequency_hz"));
         }
+    }
+
+    @Test
+    void conventionalDigitalWritesDiscardHiddenSettingsMalformedMapsAndTrafficOutputs()
+    {
+        for(String protocol: List.of("dmr", "nxdn"))
+        {
+            ChannelProtocolRegistry.Profile profile = mRegistry.require(protocol);
+            AliasListDefinition aliases = aliasList(10, profile.aliasFamily());
+            Map<String,Object> settings = new LinkedHashMap<>(profile.defaultSettings());
+            settings.put("channel_mode", "CONVENTIONAL");
+            settings.put("traffic_channel_pool_size", "stale");
+            settings.put("ignore_data_calls", null);
+            settings.put("ignore_encrypted_calls", "stale");
+            if(protocol.equals("dmr")) settings.put("use_compressed_talkgroups", true);
+            ChannelDefinition submitted = digitalDefinition(protocol, aliases.getId(), settings,
+                List.of(new ChannelDefinition.FrequencyMapEntry(-1, -20, -30)));
+
+            Channel channel = mCodec.toChannel(submitted, aliases, null);
+            ChannelDefinition read = mCodec.fromChannel(channel);
+            assertTrue(read.frequencyMap().isEmpty(), protocol);
+            assertEquals(List.of("CALL_EVENT"), read.eventLogs(), protocol);
+            assertEquals(List.of("BASEBAND"), read.recorders(), protocol);
+            assertEquals(false, read.settings().get("ignore_encrypted_calls"), protocol);
+            if(channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr)
+            {
+                assertTrue(dmr.getTimeslotMap().isEmpty());
+                assertFalse(dmr.isUseCompressedTalkgroups());
+            }
+            else assertTrue(((DecodeConfigNXDN)channel.getDecodeConfiguration()).getChannelMap().isEmpty());
+
+            settings.put("channel_mode", "TRUNKED");
+            assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(
+                digitalDefinition(protocol, aliases.getId(), settings, submitted.frequencyMap()), aliases, null));
+            settings.put("traffic_channel_pool_size", 20);
+            settings.put("ignore_data_calls", false);
+            settings.put("ignore_encrypted_calls", false);
+            assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(
+                digitalDefinition(protocol, aliases.getId(), settings, submitted.frequencyMap()), aliases, null));
+        }
+    }
+
+    @Test
+    void existingConventionalProjectionAndModeChangesCannotReviveTrunkedOptions()
+    {
+        for(String protocol: List.of("dmr", "nxdn"))
+        {
+            ChannelProtocolRegistry.Profile profile = mRegistry.require(protocol);
+            AliasListDefinition aliases = aliasList(11, profile.aliasFamily());
+            Map<String,Object> settings = new LinkedHashMap<>(profile.defaultSettings());
+            settings.put("channel_mode", "TRUNKED");
+            settings.put("traffic_channel_pool_size", 7);
+            settings.put("ignore_encrypted_calls", true);
+            if(protocol.equals("dmr")) settings.put("use_compressed_talkgroups", true);
+            Channel trunked = mCodec.toChannel(digitalDefinition(protocol, aliases.getId(), settings,
+                List.of(new ChannelDefinition.FrequencyMapEntry(7, 451_012_500L, 0))), aliases, null);
+            assertEquals(2, mCodec.fromChannel(trunked).eventLogs().size());
+            settings.put("channel_mode", "CONVENTIONAL");
+            Channel conventional = mCodec.toChannel(digitalDefinition(protocol, aliases.getId(), settings,
+                List.of(new ChannelDefinition.FrequencyMapEntry(7, 451_012_500L, 0))), aliases, trunked);
+
+            //Simulate older persisted conventional state containing dormant trunked settings and invalid maps.
+            if(conventional.getDecodeConfiguration() instanceof DecodeConfigDMR dmr)
+            {
+                dmr.setUseCompressedTalkgroups(true);
+                dmr.setIgnoreEncryptedCalls(true);
+                TimeslotFrequency invalid = new TimeslotFrequency();
+                invalid.setNumber(-1);
+                dmr.setTimeslotMap(List.of(invalid));
+            }
+            else
+            {
+                DecodeConfigNXDN nxdn = (DecodeConfigNXDN)conventional.getDecodeConfiguration();
+                nxdn.setIgnoreEncryptedCalls(true);
+                nxdn.setChannelMap(List.of(new ChannelFrequency(-1, -20, -30)));
+            }
+            conventional.getEventLogConfiguration().addLogger(EventLogType.TRAFFIC_CALL_EVENT);
+            conventional.getRecordConfiguration().addRecorder(RecorderType.TRAFFIC_BASEBAND);
+            ChannelDefinition projected = mCodec.fromChannel(conventional);
+            assertTrue(projected.frequencyMap().isEmpty(), protocol);
+            assertEquals(List.of("CALL_EVENT"), projected.eventLogs(), protocol);
+            assertEquals(List.of("BASEBAND"), projected.recorders(), protocol);
+            assertEquals(false, projected.settings().get("ignore_encrypted_calls"), protocol);
+            if(protocol.equals("dmr")) assertEquals(false, projected.settings().get("use_compressed_talkgroups"));
+
+            Map<String,Object> restoredSettings = new LinkedHashMap<>(projected.settings());
+            restoredSettings.put("channel_mode", "TRUNKED");
+            ChannelDefinition restored = new ChannelDefinition(projected.configurationId(), protocol,
+                projected.system(), projected.site(), projected.name(), projected.radioResolveId(), aliases.getId(),
+                projected.source(), restoredSettings, projected.frequencyMap(), projected.eventLogs(),
+                projected.recorders(), projected.auxiliaryDecoders(), projected.observed());
+            ChannelDefinition roundTrip = mCodec.fromChannel(mCodec.toChannel(restored, aliases, conventional));
+            assertTrue(roundTrip.frequencyMap().isEmpty(), protocol);
+            assertEquals(false, roundTrip.settings().get("ignore_encrypted_calls"), protocol);
+            assertEquals(List.of("CALL_EVENT"), roundTrip.eventLogs(), protocol);
+        }
+    }
+
+    @Test
+    void disabledAnalogTuningSurvivesProjectionAndAnEditorOmittingHiddenFields()
+    {
+        for(String protocol: List.of("am", "nbfm"))
+        {
+            AliasListDefinition aliases = aliasList(12, AliasListFamily.NBFM);
+            Map<String,Object> settings = new LinkedHashMap<>(mRegistry.require(protocol).defaultSettings());
+            settings.put("low_pass_cutoff_hz", 2800);
+            settings.put("squelch_tail_ms", 80);
+            settings.put("squelch_head_ms", 25);
+            Channel existing = mCodec.toChannel(definition(protocol, aliases.getId(), settings,
+                List.of(154_325_000L), false), aliases, null);
+            for(String hidden: List.of("low_pass_cutoff_hz", "squelch_tail_ms", "squelch_head_ms"))
+                settings.remove(hidden);
+            Channel saved = mCodec.toChannel(definition(protocol, aliases.getId(), settings,
+                List.of(154_325_000L), false), aliases, existing);
+            ChannelDefinition read = mCodec.fromChannel(saved);
+            assertEquals(2800, read.settings().get("low_pass_cutoff_hz"), protocol);
+            assertEquals(80, read.settings().get("squelch_tail_ms"), protocol);
+            assertEquals(25, read.settings().get("squelch_head_ms"), protocol);
+        }
+    }
+
+    @Test
+    void legacyOutOfRangeActiveValuesRemainReadableButMustBeCorrectedBeforeSaving()
+    {
+        for(String protocol: List.of("dmr", "nxdn"))
+        {
+            ChannelProtocolRegistry.Profile profile = mRegistry.require(protocol);
+            AliasListDefinition aliases = aliasList(13, profile.aliasFamily());
+            Map<String,Object> settings = new LinkedHashMap<>(profile.defaultSettings());
+            settings.put("channel_mode", "TRUNKED");
+            Channel channel = mCodec.toChannel(digitalDefinition(protocol, aliases.getId(), settings, List.of()),
+                aliases, null);
+            if(channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr) dmr.setTrafficChannelPoolSize(99);
+            else ((DecodeConfigNXDN)channel.getDecodeConfiguration()).setTrafficChannelPoolSize(99);
+            ChannelDefinition projected = mCodec.fromChannel(channel);
+            assertEquals(99, projected.settings().get("traffic_channel_pool_size"), protocol);
+            assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(projected, aliases, channel));
+        }
+    }
+
+    private static ChannelDefinition digitalDefinition(String protocol, long aliasListId,
+        Map<String,Object> settings, List<ChannelDefinition.FrequencyMapEntry> map)
+    {
+        return new ChannelDefinition(null, protocol, "County", "Central", "Dispatch", null, aliasListId,
+            new ChannelDefinition.Source(List.of(451_012_500L), null, null, null, null, null), settings, map,
+            List.of("CALL_EVENT", "TRAFFIC_CALL_EVENT"), List.of("BASEBAND", "TRAFFIC_BASEBAND"), List.of(),
+            ChannelDefinition.Observed.EMPTY);
     }
 
     private static ChannelDefinition definition(String protocol, long aliasListId, Map<String,Object> settings,
