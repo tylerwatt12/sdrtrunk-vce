@@ -52,7 +52,7 @@ public enum CalibrationType
     NXDN_SOFT_SYNC_DETECTOR("NXDN Soft Sync Detector", 3),
     OSCILLATOR_REAL("Real Oscillator", 2),
     P25P1_SOFT_SYNC_DETECTOR("P25 Phase 1 Soft Sync Detector", 2),
-    SAMPLE_UNPACKED_BYTE_CONVERTER("Unpacked 12-Bit Byte Sample Converter", 3),
+    SAMPLE_UNPACKED_BYTE_CONVERTER("Unpacked 12-Bit Byte Sample Converter", 4),
     SAMPLE_UNPACKED_INTERLEAVED_ITERATOR("Unpacked Interleaved Sample Iterator", 2),
     SAMPLE_UNPACKED_ITERATOR("Unpacked Sample Iterator", 2),
     WINDOW("Window", 2);
