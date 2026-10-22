@@ -100,6 +100,52 @@ public class AudioStreamingManagerTest
     @TempDir
     Path mTemporaryFolder;
 
+    @Test
+    void decodedNxdnZeroReachesTheEncodingWorkerAndProviderWithCapturedAlias() throws Exception
+    {
+        AliasList aliases = new AliasList(new AliasListDefinition("NXDN", AliasListFamily.NXDN));
+        Alias alias = new Alias("Dispatch");
+        alias.setMatchIdentifier(new Talkgroup(Protocol.NXDN, 0));
+        alias.addBroadcastChannel(route("NXDN calls"));
+        aliases.addAlias(alias);
+        CompletedAudioCall call = io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture
+            .decodeGroupCall(aliases, 19, 0).audio();
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        List<AudioRecording> delivered = new ArrayList<>();
+        AudioStreamingManager manager = new AudioStreamingManager(delivered::add, BroadcastFormat.MP3,
+            preferences, null, scheduler, (completed, path, prefs, identifiers, normalize) ->
+                AudioCallRecorder.write(completed, path, RecordFormat.MP3, prefs, identifiers, normalize));
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            manager.start();
+            manager.receive(call);
+            assertTrue(delivered.isEmpty(), "Decoder-side ingress does not encode or write files");
+            manager.new AudioSegmentProcessor().run();
+            assertEquals(1, delivered.size());
+            AudioRecording recording = delivered.getFirst();
+            assertEquals(0, recording.getIdentifierCollection().getToIdentifier().getValue());
+            assertEquals(19, recording.getIdentifierCollection().getFromIdentifier().getValue());
+            assertEquals(Set.of(route("NXDN calls")), new HashSet<>(recording.getBroadcastChannels()));
+            assertEquals(1_000, recording.getRecordingLength());
+            var tags = new com.mpatric.mp3agic.Mp3File(recording.getPath().toString()).getId3v2Tag();
+            assertEquals("0x0000 NULL GROUP\"Dispatch\"", tags.getTitle());
+            assertEquals("19", tags.getArtist());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
 
     private static void setPortableDataRoot(String value) throws ReflectiveOperationException
     {

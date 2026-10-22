@@ -40,6 +40,7 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNEncryptionKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
@@ -309,6 +310,20 @@ class ReceiverActivityMapperTest
         assertEquals(ReceiverActivityRecords.NxdnTargetKind.GROUP, record.targetKind());
         assertEquals(0, record.talkgroupId());
         assertEquals(101, record.sourceRadioId());
+    }
+
+    @Test
+    void preservesTheRealDecoderNullGroupCompletionInActivity()
+    {
+        var decoded = NXDNConventionalCallFixture.decodeGroupCall(AliasList.empty("NXDN fixture"), 101, 0);
+        ReceiverActivityRecords.NxdnConventionalCall record = new ReceiverActivityMapper().map(decoded.completion());
+
+        assertNotNull(record);
+        assertEquals(ReceiverActivityRecords.NxdnTargetKind.GROUP, record.targetKind());
+        assertEquals(0, record.talkgroupId());
+        assertEquals(101, record.sourceRadioId());
+        assertNull(record.targetRadioId());
+        assertEquals(decoded.audio().snapshot().activityCallToken(), record.activityCallToken());
     }
 
     @Test

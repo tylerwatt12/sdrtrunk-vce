@@ -54,7 +54,7 @@ The SUID's home system can differ from the receiving system.
 | `VCE_P25_RX_RFSS` | Decimal integer | Captured receiving RF Subsystem ID. |
 | `VCE_P25_RX_SITE` | Decimal integer | Captured receiving site ID. |
 | `VCE_P25_NAC` | Three hexadecimal characters, for example `3A7` | Network Access Code present in the recorded leg's original identifiers. |
-| `VCE_TALKGROUP` | Positive decimal integer | Observed destination talkgroup address for an ordinary group call. |
+| `VCE_TALKGROUP` | Nonnegative decimal integer | Observed destination talkgroup address for an ordinary group call, including NXDN talkgroup `0`. |
 | `VCE_PATCH_GROUP` | Positive decimal integer | Observed primary patch-group address for a patch call. |
 | `VCE_FREQUENCY_HZ` | Positive decimal integer, hertz | Frequency captured for the recorded audio leg. |
 | `VCE_PROTOCOL` | Uppercase protocol family, for example `APCO25`, `DMR`, or `NXDN` | Protocol of the recorded leg; P25 phases share `APCO25`. |

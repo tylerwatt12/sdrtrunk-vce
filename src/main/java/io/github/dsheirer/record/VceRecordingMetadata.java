@@ -122,7 +122,14 @@ public final class VceRecordingMetadata
         }
         else if(destination != null && destination.getForm() == Form.TALKGROUP)
         {
-            positiveInteger(fields, "VCE_TALKGROUP", destination);
+            if(destination.getProtocol() == Protocol.NXDN && Integer.valueOf(0).equals(destination.getValue()))
+            {
+                fields.put("VCE_TALKGROUP", "0");
+            }
+            else
+            {
+                positiveInteger(fields, "VCE_TALKGROUP", destination);
+            }
         }
 
         CallLegSummary winner = call.callLegSummaries().stream().filter(CallLegSummary::winner)

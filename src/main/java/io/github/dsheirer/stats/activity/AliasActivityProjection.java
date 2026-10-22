@@ -157,9 +157,13 @@ final class AliasActivityProjection
                 output.p25SourceIdentity(), output.sourceObservedWorkingId()), delta);
         }
         int targetKind = "RADIO".equals(output.targetKind()) ? RADIO : TALKGROUP;
+        Integer destinationId = positive(output.destinationId());
+        if(protocol == 4 && "TALKGROUP".equals(output.targetKind()) && output.destinationId() == 0)
+        {
+            destinationId = 0;
+        }
         addResolved(deltas, resolver.resolve(output.configurationId(), targetKind,
-            positive(output.destinationId()), output.p25TargetIdentity(),
-            output.targetObservedWorkingId()), delta);
+            destinationId, output.p25TargetIdentity(), output.targetObservedWorkingId()), delta);
         if("PATCH_GROUP".equals(output.targetKind()))
         {
             for(Integer member: output.patchMemberTalkgroupIds())

@@ -6175,8 +6175,10 @@ class StatsWebDatabase
             {
                 int source = (int)number(row.get("source_radio_id"));
                 int target = (int)number(row.get("target_id"));
+                boolean nxdnNullGroup = row.get("target_id") != null && target == 0 &&
+                    targetKind == IDENTITY_KIND_TALKGROUP && "NXDN".equals(row.get("protocol"));
                 sourceReference = source > 0 ? channelReference : null;
-                targetReference = target > 0 && (targetKind == IDENTITY_KIND_TALKGROUP ||
+                targetReference = (target > 0 || nxdnNullGroup) && (targetKind == IDENTITY_KIND_TALKGROUP ||
                     targetKind == IDENTITY_KIND_PATCH_GROUP || targetKind == IDENTITY_KIND_RADIO) ?
                     channelReference : null;
             }

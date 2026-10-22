@@ -19,6 +19,11 @@ import io.github.dsheirer.module.decode.p25.reference.Response;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
@@ -73,6 +78,53 @@ class VceRecordingMetadataFileTest
     private static final VoiceCallQuality QUALITY = new VoiceCallQuality(480, 8, 4, 8, 144, 72_000);
     private static final CallLegSource SOURCE = source(DecoderType.P25_PHASE2, 0xBEE00, 0x456, 1, 7);
     @TempDir Path mDirectory;
+
+    @Test
+    void decodedNxdnZeroSurvivesActualFilesAndCatalogWithoutChangingLegacyTags() throws Exception
+    {
+        AliasList aliases = new AliasList(new io.github.dsheirer.alias.AliasListDefinition("NXDN",
+            io.github.dsheirer.alias.AliasListFamily.NXDN));
+        Alias alias = new Alias("Dispatch");
+        alias.setMatchIdentifier(new Talkgroup(Protocol.NXDN, 0));
+        alias.setRecordable(true);
+        aliases.addAlias(alias);
+        CompletedAudioCall call = NXDNConventionalCallFixture.decodeGroupCall(aliases, 19, 0).audio();
+        assertEquals("0", call.snapshot().recordingMetadata().destinationValue());
+        assertEquals("Dispatch", call.snapshot().recordingMetadata().destinationAlias());
+        assertTrue(call.snapshot().recordAudio());
+
+        for(RecordFormat format: RecordFormat.values())
+        {
+            String name = "nxdn-zero-" + format;
+            Recording recording = writeAndRead(call, name, format, null);
+            assertExistingFieldsUnchanged(call, call.snapshot().identifierCollection(), recording);
+            ID3v24Tag standard = new ID3v24Tag(recording.id3());
+            assertEquals("0x0000 NULL GROUP\"Dispatch\"", standard.getTitle(),
+                "Legacy title grammar is independent of ordinary web TG 0 presentation");
+            assertEquals("19", standard.getArtist());
+            assertEquals("0", recording.vceFields().get("VCE_TALKGROUP"));
+            assertEquals("NXDN", recording.vceFields().get("VCE_PROTOCOL"));
+            assertFalse(recording.vceFields().keySet().stream().anyMatch(key ->
+                key.contains("OTA") || key.contains("TALKER_ALIAS")), "OTA metadata remains unchanged");
+
+            Path saved = mDirectory.resolve(name + format.getExtension());
+            Path database = mDirectory.resolve(name + ".sqlite");
+            try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(database, mDirectory))
+            {
+                CountDownLatch indexed = new CountDownLatch(1);
+                assertTrue(catalog.submit(saved, call, Files.size(saved), indexed::countDown));
+                assertTrue(indexed.await(5, TimeUnit.SECONDS));
+            }
+            try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(database, mDirectory))
+            {
+                var rows = catalog.search(ManagedRecordingCatalog.SearchFilter.builder()
+                    .fromMs(0L).toMs(5_000L).protocol("NXDN").talkgroupId(0).build()).calls();
+                assertEquals(1, rows.size());
+                assertEquals(0, rows.getFirst().toMap().get("target_id"));
+                assertEquals(19, rows.getFirst().toMap().get("source_id"));
+            }
+        }
+    }
 
     @Test
     void sharedNativeToneEvidenceSurvivesActualFilesAndSavedCatalogWithoutChangingAudioOrLegacyTags() throws Exception

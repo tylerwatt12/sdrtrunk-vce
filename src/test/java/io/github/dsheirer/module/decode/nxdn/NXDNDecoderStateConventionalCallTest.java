@@ -13,7 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.eventbus.Subscribe;
 import com.google.common.eventbus.EventBus;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.audio.call.CallPlaybackTarget;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
@@ -32,6 +34,37 @@ import org.junit.jupiter.api.Test;
 
 class NXDNDecoderStateConventionalCallTest
 {
+    @Test
+    void retainsUnaddressedNormalAndAllGroupDestinationsThroughAudioAndCompletion()
+    {
+        for(int group: new int[]{0, 91, 0xFFFF})
+        {
+            var decoded = NXDNConventionalCallFixture.decodeGroupCall(AliasList.empty("NXDN fixture"), 101, group);
+            var audio = decoded.audio();
+            assertEquals(group, audio.snapshot().identifierCollection().getToIdentifier().getValue());
+            assertEquals(101, audio.snapshot().identifierCollection().getFromIdentifier().getValue());
+            assertTrue(audio.hasAudio());
+            assertEquals(1_000L, audio.getDuration());
+            assertEquals(NXDNConventionalCallEvent.TargetKind.GROUP, decoded.completion().targetKind());
+            assertEquals(group, decoded.completion().talkgroupId());
+            assertEquals(101, decoded.completion().sourceRadioId());
+            assertEquals(decoded.completion().callToken(), audio.snapshot().activityCallToken());
+            assertEquals(CallPlaybackTarget.Kind.CHANNEL,
+                CallPlaybackTarget.from(audio.snapshot(), audio.snapshot().identifierCollection().getToIdentifier()).kind());
+        }
+    }
+
+    @Test
+    void retainsNullGroupWithoutInventingASourceRadioForZero()
+    {
+        var decoded = NXDNConventionalCallFixture.decodeGroupCall(AliasList.empty("NXDN fixture"), 0, 0);
+        assertEquals(0, decoded.audio().snapshot().identifierCollection().getToIdentifier().getValue());
+        assertNull(decoded.audio().snapshot().identifierCollection().getFromIdentifier());
+        assertEquals(0, decoded.completion().talkgroupId());
+        assertNull(decoded.completion().sourceRadioId());
+        assertNull(decoded.completion().targetRadioId());
+    }
+
     @Test
     void publishesOneImmutableCompletionWithoutTrafficManager()
     {

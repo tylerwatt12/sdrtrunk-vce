@@ -15,6 +15,28 @@ import org.junit.jupiter.api.Test;
 class ShoutcastV1BroadcastMetadataUpdaterTest
 {
     @Test
+    void nxdnZeroKeepsLegacySongGrammarAndStreamAsOverride()
+    {
+        AliasList aliases = new AliasList(new io.github.dsheirer.alias.AliasListDefinition("NXDN",
+            io.github.dsheirer.alias.AliasListFamily.NXDN));
+        var alias = new io.github.dsheirer.alias.Alias("Dispatch");
+        alias.setMatchIdentifier(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(
+            io.github.dsheirer.protocol.Protocol.NXDN, 0));
+        aliases.addAlias(alias);
+        var model = new AliasModel()
+        {
+            @Override public AliasList getAliasList(IdentifierCollection collection) { return aliases; }
+        };
+        var identifiers = io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture
+            .decodeGroupCall(aliases, 19, 0).audio().snapshot().identifierCollection();
+        var updater = new ShoutcastV1BroadcastMetadataUpdater(new ShoutcastV1Configuration(), model);
+        assertEquals("TO:0x0000 NULL GROUP Dispatch FROM:19", updater.getSong(identifiers, null));
+        alias.setStreamTalkgroupAlias(new io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup(900));
+        assertEquals("TO:900 Dispatch FROM:19", updater.getSong(identifiers, null));
+        assertEquals(0, identifiers.getToIdentifier().getValue());
+    }
+
+    @Test
     void unattachedTalkerNamesCannotBecomeTheSongSource()
     {
         var aliases = new AliasModel()

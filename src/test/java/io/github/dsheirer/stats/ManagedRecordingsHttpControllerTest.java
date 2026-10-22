@@ -436,6 +436,41 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void nxdnZeroRecordingKeepsItsAliasInBrowsingDetailsAndFriendlyNameFilters() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'NXDN Conventional','NXDN')");
+            statement.executeUpdate("INSERT INTO alias(alias_list_id,name,description,group_name,matcher_type,protocol,value) " +
+                "VALUES(700,'Harbor Dispatch','County operations','Public Works','TALKGROUP','NXDN',0)");
+        }
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET alias_list_id=700,protocol=4,target_id=0 WHERE id=1");
+        }
+        String browse = ManagedRecordingsHttpController.BROWSE_PATH;
+        JsonNode detail = json(send(request(browse + "/calls/1").GET())).at("/data");
+        assertEquals(0, detail.get("talkgroup_id").intValue());
+        assertEquals("Harbor Dispatch", detail.get("group_alias").textValue());
+        assertEquals("County operations", detail.get("group_description").textValue());
+        assertEquals("Public Works", detail.get("group_group").textValue());
+        for(String query: List.of("Harbor", "County", "Public"))
+        {
+            HttpResponse<String> response = send(request(browse + "/calls?from_ms=0&to_ms=5000&q=" + query).GET());
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode calls = json(response).at("/data/calls");
+            assertEquals(1, calls.size(), query);
+            assertEquals(0, calls.get(0).get("talkgroup_id").intValue());
+            assertEquals("Harbor Dispatch", calls.get(0).get("group_alias").textValue());
+        }
+        assertEquals(0, json(send(request(browse + "/calls?from_ms=0&to_ms=5000&q=Unrelated").GET()))
+            .at("/data/calls").size());
+        assertEquals(200, send(request(browse + "/calls/1/audio").GET()).statusCode());
+    }
+
+    @Test
     void foreignCanonicalPatchGroupCannotMatchAnUnrelatedLocalAliasName() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +

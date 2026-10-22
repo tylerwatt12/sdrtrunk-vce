@@ -45,17 +45,20 @@ class AliasIdentifierFormatTest
         TalkgroupFormat format = TalkgroupFormat.get(Protocol.NXDN);
 
         assertSame(TalkgroupFormat.NXDN, format);
-        assertEquals(1, format.getMinimumValidValue());
+        assertEquals(0, format.getMinimumValidValue());
         assertEquals(65_535, format.getMaximumValidValue());
-        assertFalse(format.isValid(0));
+        assertFalse(format.isValid(-1));
+        assertTrue(format.isValid(0));
         assertTrue(format.isValid(1));
         assertTrue(format.isValid(65_535));
         assertFalse(format.isValid(65_536));
 
-        assertFalse(new Talkgroup(Protocol.NXDN, 0).isValid());
+        assertFalse(new Talkgroup(Protocol.NXDN, -1).isValid());
+        assertTrue(new Talkgroup(Protocol.NXDN, 0).isValid());
         assertTrue(new Talkgroup(Protocol.NXDN, 1).isValid());
-        assertTrue(new TalkgroupRange(Protocol.NXDN, 1, 65_535).isValid());
-        assertFalse(new TalkgroupRange(Protocol.NXDN, 0, 1).isValid());
+        assertTrue(new TalkgroupRange(Protocol.NXDN, 0, 65_535).isValid());
+        assertTrue(new TalkgroupRange(Protocol.NXDN, 0, 1).isValid());
+        assertFalse(new TalkgroupRange(Protocol.NXDN, -1, 1).isValid());
         assertFalse(new TalkgroupRange(Protocol.NXDN, 1, 65_536).isValid());
     }
 

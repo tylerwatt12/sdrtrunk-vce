@@ -56,6 +56,7 @@ class CallPlaybackTargetTest
             new ConventionalCase(DecoderType.AM, new AMTalkgroup(1)),
             new ConventionalCase(DecoderType.NBFM, new NBFMTalkgroup(1)),
             new ConventionalCase(DecoderType.P25_CONVENTIONAL, APCO25Talkgroup.create(3101)),
+            new ConventionalCase(DecoderType.NXDN, NXDNTalkgroupIdentifier.createTo(0)),
             new ConventionalCase(DecoderType.NXDN, NXDNTalkgroupIdentifier.createTo(4201))))
         {
             CallPlaybackTarget first = target(source(testCase.decoderType(), CHANNEL_A, null,

@@ -118,7 +118,8 @@ final class ManagedRecordingLabels
                 Integer targetId = integer(call.get("talkgroup_id"));
                 Integer sourceId = integer(call.get("source_id"));
                 Integer destinationRadioId = integer(call.get("destination_radio_id"));
-                if(aliasListId != null && targetId != null && targetId > 0)
+                if(aliasListId != null && targetId != null &&
+                    (targetId > 0 || targetId == 0 && "NXDN".equals(protocol)))
                 {
                     String key = aliasListId + ":g:" + protocol + ':' + targetId;
                     AliasLabels label = aliases.computeIfAbsent(key,

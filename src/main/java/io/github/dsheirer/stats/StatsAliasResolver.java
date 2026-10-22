@@ -701,8 +701,9 @@ class StatsAliasResolver
                 default -> null;
             } : null;
             Rule best = null;
-            boolean validIdentifier = identifier != null && identifier > 0 &&
-                (protocol == null || protocol != 10 && protocol != 11 || identifier <= 65535);
+            boolean validIdentifier = identifier != null &&
+                (identifier > 0 || protocol != null && protocol == 4 && identifier == 0) &&
+                (protocol == null || protocol != 4 && protocol != 10 && protocol != 11 || identifier <= 65535);
             boolean validScope = validIdentifier && aliasListId != null && rules != null;
             boolean promotionSupported = validScope && protocol != 1;
             String promotionReason = validScope ? null : "The observation has no supported assigned identity";

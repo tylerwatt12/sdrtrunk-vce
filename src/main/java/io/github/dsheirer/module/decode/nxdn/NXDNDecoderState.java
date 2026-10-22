@@ -1320,7 +1320,7 @@ public class NXDNDecoderState extends DecoderState
         Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
         Integer sourceRadio = source instanceof RadioIdentifier radio ? positive(radio.getValue()) : null;
-        Integer talkgroup = target instanceof TalkgroupIdentifier group ? positive(group.getValue()) : null;
+        Integer talkgroup = target instanceof TalkgroupIdentifier group ? talkgroup(group.getValue()) : null;
         Integer targetRadio = target instanceof RadioIdentifier radio ? positive(radio.getValue()) : null;
         NXDNConventionalCallEvent.TargetKind targetKind = talkgroup != null ?
             NXDNConventionalCallEvent.TargetKind.GROUP : targetRadio != null ?
@@ -1450,6 +1450,12 @@ public class NXDNDecoderState extends DecoderState
     private static Integer positive(Integer value)
     {
         return value != null && value > 0 && value <= 0xFFFF ? value : null;
+    }
+
+    /** NXDN TS 1-B v2.0, section 8.1.1.1: conventional unaddressed calls carry Null Group ID zero. */
+    private static Integer talkgroup(Integer value)
+    {
+        return value != null && value >= 0 && value <= 0xFFFF ? value : null;
     }
 
     /**

@@ -32,6 +32,7 @@ import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
@@ -60,6 +61,50 @@ class BasicRecordingContractTest
         .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
 
     @TempDir Path mDirectory;
+
+    @Test
+    void nxdnZeroKeepsTheExistingFilenameAndIdentifierGrammar()
+    {
+        var identifiers = new IdentifierCollection(List.of(SystemConfigurationIdentifier.create("System"),
+            SiteConfigurationIdentifier.create("Site"), ChannelNameConfigurationIdentifier.create("Channel"),
+            NXDNTalkgroupIdentifier.createTo(0), NXDNRadioIdentifier.createFrom(19)));
+        for(RecordFormat format: RecordFormat.values())
+        {
+            assertEquals("20261007_123456_System_Site_Channel__TO_0x0000-NULL-GROUP_FROM_19" + format.getExtension(),
+                BasicRecordingContract.filename(identifiers, format, WRITER_TIME, 1, 1));
+            assertEquals("20261007_123456_System_Site_Channel__TO_0x0000-NULL-GROUP_FROM_19_V2" + format.getExtension(),
+                BasicRecordingContract.filename(identifiers, format, WRITER_TIME, 1, 2));
+        }
+        assertEquals("0x0000 NULL GROUP", BasicRecordingContract.targetIdentifier(identifiers.getToIdentifier()));
+        assertEquals("19", BasicRecordingContract.sourceIdentifier(identifiers.getFromIdentifier()));
+    }
+
+    @Test
+    void nxdnZeroRetainsContinuousStreamTitleAndExplicitRemapping()
+    {
+        var aliases = new io.github.dsheirer.alias.AliasList(new io.github.dsheirer.alias.AliasListDefinition(
+            "NXDN", io.github.dsheirer.alias.AliasListFamily.NXDN));
+        var alias = new io.github.dsheirer.alias.Alias("Dispatch");
+        alias.setMatchIdentifier(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(
+            io.github.dsheirer.protocol.Protocol.NXDN, 0));
+        aliases.addAlias(alias);
+        var model = new io.github.dsheirer.alias.AliasModel()
+        {
+            @Override public io.github.dsheirer.alias.AliasList getAliasList(IdentifierCollection identifiers)
+            {
+                return aliases;
+            }
+        };
+        var call = io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture
+            .decodeGroupCall(aliases, 19, 0).audio();
+        var identifiers = call.snapshot().identifierCollection();
+        assertEquals("TO:0x0000 NULL GROUP Dispatch FROM:19",
+            io.github.dsheirer.audio.broadcast.icecast.IcecastMetadata.getTitle(identifiers, model));
+        alias.setStreamTalkgroupAlias(new io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup(900));
+        assertEquals("TO:900 FROM:19",
+            io.github.dsheirer.audio.broadcast.icecast.IcecastMetadata.getTitle(identifiers, model));
+        assertEquals(0, identifiers.getToIdentifier().getValue(), "Output mapping never replaces decoded identity");
+    }
 
     @Test
     void sourceLessAuxiliaryFactsStayUnknownInFilenamesTagsAndStreamTitles()

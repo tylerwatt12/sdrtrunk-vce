@@ -2,7 +2,10 @@
 package io.github.dsheirer.alerts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.module.decode.event.DecodeEventViewService;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,6 +21,58 @@ class TopicAlertServiceTest
     @TempDir Path mDirectory;
     private static final String CHANNEL = "00000000-0000-4000-8000-000000000001";
     private static final long START = Instant.parse("2026-10-13T12:00:00Z").toEpochMilli();
+
+    @Test void decodedConventionalNxdnGroupZeroMatchesAnExactTalkgroupRule() throws Exception
+    {
+        var decoded = NXDNConventionalCallFixture.decodeGroupCall(AliasList.empty("NXDN"), 0, 0);
+        var rule = new AlertRule("nxdn-zero", "Dispatch", "fire", true, "call", "", "",
+            decoded.completion().channelConfigurationId(), "NXDN",
+            new AlertRule.Condition("", null, "talkgroup", "is", "0"), AlertRule.Timing.immediate(),
+            AlertRule.Schedule.always(), 0, "talkgroup", false, "Group {talkgroup}", "NXDN call", "details");
+        AtomicLong clock = new AtomicLong(2_000L);
+        try(TopicAlertService service = configured(clock, rule))
+        {
+            assertEquals("0", service.rules().getFirst().conditions().value(), "Saved conditions accept numeric zero");
+            service.receiveCompletedCall(decoded.audio());
+            service.drain();
+            assertEquals(1, service.history(null, 100, 0).get("total"));
+            clock.addAndGet(TopicAlertService.RECORDING_WAIT_MILLISECONDS);
+            assertEquals("Group 0", service.pendingDeliveries(1).getFirst().title());
+        }
+    }
+
+    @Test void otherProtocolGroupsAndRadioZeroDoNotBecomeAlertIdentities() throws Exception
+    {
+        for(var party: List.of(
+            new DecodeEventViewService.PartyIdentifier("0", "TALKGROUP", "DMR", null, null, List.of(),
+                null, List.of(), false, false, null, 0),
+            new DecodeEventViewService.PartyIdentifier("0", "TALKGROUP", "APCO25", null, null, List.of(),
+                null, List.of(), false, false, null, 0),
+            new DecodeEventViewService.PartyIdentifier("0", "RADIO", "NXDN", null, null, List.of(),
+                null, List.of(), false, false, null, 0)))
+        {
+            var rule = new AlertRule("zero", "Zero", "fire", true, "call", "", "", CHANNEL, "",
+                new AlertRule.Condition("any", List.of(
+                    new AlertRule.Condition("", null, "talkgroup", "is", "0"),
+                    new AlertRule.Condition("", null, "radio", "is", "0"),
+                    new AlertRule.Condition("", null, "target_radio", "is", "0")), "", "", ""),
+                AlertRule.Timing.immediate(), AlertRule.Schedule.always(), 0, "rule", false,
+                "Unexpected zero", "Unexpected zero", "details");
+            AtomicLong clock = new AtomicLong(START);
+            try(TopicAlertService service = configured(clock, rule))
+            {
+                var view = new DecodeEventViewService.EventView("zero", CHANNEL, START, 1_000L,
+                    "CALL_GROUP", "Call", "calls", "", "", "0", "", "", null, null, "",
+                    party.protocol(), List.of(), List.of(party), 0L, "Channel", null, null, null,
+                    new DecodeEventViewService.AlertFacts(List.of(), List.of(), List.of(), null));
+                service.setCallProjector(call -> view);
+                service.receiveCompletedCall(RecordingReadyAlertDeliveryTest.call(1, "zero",
+                    io.github.dsheirer.audio.call.CallEncryptionState.CLEAR));
+                service.drain();
+                assertEquals(0, service.history(null, 100, 0).get("total"));
+            }
+        }
+    }
 
     @Test void exactCallSourceSurvivesDetachedObservationAndCountAlertsOnlyKeepTheTriggeringCall() throws Exception
     {

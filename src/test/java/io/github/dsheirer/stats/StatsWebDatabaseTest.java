@@ -1810,6 +1810,46 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void conventionalNxdnZeroActivityKeepsItsAliasSearchAndChannelDrilldown() throws Exception
+    {
+        conventionalP25AndNxdnExposeRealChannelOwnedGroupsAndRadios();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                VALUES(7603,76,'Unaddressed Dispatch','TALKGROUP','NXDN',0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code,event_type_code,
+                    target_kind_code,target_observed_local_id)
+                VALUES(76,5000,%1$d,7,1,0),(76,6000,%1$d,7,2,0),(76,7000,%1$d,7,NULL,NULL),(75,8000,%1$d,7,1,0)
+                """.formatted(ReceiverActivityFilterCatalog.actionCode("CALL")));
+        }
+
+        List<Map<String,Object>> found = rows(mDatabase.activity(request("/?configuration_id=" +
+            CONVENTIONAL_NXDN_CHANNEL + "&target_id=0&target_kind=talkgroup&q=Unaddressed&from_ms=4000&to_ms=9000")));
+        assertEquals(1, found.size());
+        assertEquals(0, number(found.getFirst().get("target_id")));
+        assertEquals("Unaddressed Dispatch", found.getFirst().get("target_alias_name"));
+        assertEquals(Map.of("kind", "channel", "key", CONVENTIONAL_NXDN_CHANNEL),
+            found.getFirst().get("target_entity_ref"));
+        assertNull(found.getFirst().get("source_entity_ref"));
+
+        List<Map<String,Object>> nxdn = rows(mDatabase.activity(request("/?configuration_id=" +
+            CONVENTIONAL_NXDN_CHANNEL + "&from_ms=4000&to_ms=9000")));
+        assertNull(nxdn.stream().filter(row -> number(row.get("observed_at_ms")) == 6_000L)
+                .findFirst().orElseThrow().get("target_entity_ref"),
+            "Radio zero remains an unspecified destination");
+        assertNull(nxdn.stream().filter(row -> number(row.get("observed_at_ms")) == 7_000L)
+                .findFirst().orElseThrow().get("target_entity_ref"),
+            "A missing NXDN group is not converted to Null Group");
+        List<Map<String,Object>> p25 = rows(mDatabase.activity(request("/?configuration_id=" +
+            CONVENTIONAL_P25_CHANNEL + "&from_ms=4000&to_ms=9000")));
+        assertNull(p25.getFirst().get("target_entity_ref"), "The zero exception is specific to NXDN talkgroups");
+    }
+
+    @Test
     void conventionalP25AndNxdnExposeRealChannelOwnedGroupsAndRadios() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

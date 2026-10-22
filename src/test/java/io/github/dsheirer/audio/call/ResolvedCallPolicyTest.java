@@ -13,6 +13,7 @@ package io.github.dsheirer.audio.call;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -200,6 +201,23 @@ class ResolvedCallPolicyTest
 
         assertEquals(AliasList.TalkgroupMatchStatus.UNMATCHED,
             policy.matchContexts().getFirst().talkgroupMatchStatus());
+    }
+
+    @Test
+    void nxdnNullGroupDestinationMatchesOnlyItsOwnProtocolAndKind()
+    {
+        var zero = ResolvedCallPolicy.DestinationIdentity.from(NXDNTalkgroupIdentifier.createTo(0));
+        assertNotNull(zero);
+        assertTrue(zero.matches(ResolvedCallPolicy.DestinationIdentity.from(NXDNTalkgroupIdentifier.createTo(0))));
+        assertFalse(zero.matches(ResolvedCallPolicy.DestinationIdentity.from(NXDNTalkgroupIdentifier.createTo(91))));
+        assertFalse(zero.matches(new ResolvedCallPolicy.DestinationIdentity(Protocol.DMR,
+            io.github.dsheirer.identifier.Form.TALKGROUP, 0, 0, null)));
+        var missingRadio = new ResolvedCallPolicy.DestinationIdentity(Protocol.NXDN,
+            io.github.dsheirer.identifier.Form.RADIO, 0, 0, null);
+        assertFalse(missingRadio.matches(missingRadio));
+        var missingP25Group = new ResolvedCallPolicy.DestinationIdentity(Protocol.APCO25,
+            io.github.dsheirer.identifier.Form.TALKGROUP, 0, 0, null);
+        assertFalse(missingP25Group.matches(missingP25Group));
     }
 
     private static AudioCallSnapshot snapshot(Identifier<?> destination)

@@ -28,6 +28,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CallEncryptionState;
@@ -42,6 +43,7 @@ import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
@@ -55,10 +57,14 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.util.TimeStamp;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -67,6 +73,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +84,161 @@ class AudioRecordingManagerTest
     @TempDir
     Path mTemporaryFolder;
     private RecordingMode mOriginalMode;
+
+    @Test
+    void decodedNxdnZeroPassesClassicRecordingQueueForBothFormats() throws Exception
+    {
+        CompletedAudioCall source = decodedNxdnZeroCall();
+        assertTrue(source.snapshot().recordAudio());
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        try
+        {
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            for(RecordFormat format: RecordFormat.values())
+            {
+                Path directory = Files.createDirectory(mTemporaryFolder.resolve("classic-nxdn-" + format));
+                preferences.getDirectoryPreference().setDirectoryRecording(directory);
+                preferences.getRecordPreference().setAudioRecordFormat(format);
+                ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+                List<Path> written = new ArrayList<>();
+                List<CompletedAudioCall> observed = new ArrayList<>();
+                AudioRecordingManager manager = new AudioRecordingManager(preferences, observed::add, scheduler,
+                    (call, path, selectedFormat, prefs, normalize) -> {
+                        AudioCallRecorder.write(call, path, selectedFormat, prefs, normalize);
+                        written.add(path);
+                    }, null, null, call -> null);
+                try
+                {
+                    manager.start();
+                    manager.receive(source);
+                    assertEquals(1, manager.getQueueStatus().queuedCalls());
+                    assertTrue(written.isEmpty(), "Completed-call ingress must not encode or write audio");
+                    manager.stop();
+                    assertEquals(1, written.size());
+                    assertEquals(1, observed.size());
+                    assertSame(source, observed.getFirst());
+                    Path saved = written.getFirst();
+                    assertTrue(saved.getFileName().toString().matches(
+                        "\\d{8}_\\d{6}__TO_0x0000-NULL-GROUP_FROM_19" + Pattern.quote(format.getExtension())),
+                        "Basic filenames retain their existing NXDN identifier grammar");
+                    ID3v24Tag tag = standardRecordingTag(saved, format);
+                    assertEquals("0x0000 NULL GROUP\"Security\"", tag.getTitle());
+                    assertEquals("19", tag.getArtist());
+                    assertEquals(0, manager.getQueueStatus().droppedRecordings());
+                }
+                finally
+                {
+                    manager.stop();
+                    scheduler.shutdownNow();
+                }
+            }
+        }
+        finally
+        {
+            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+        }
+    }
+
+    @Test
+    void decodedNxdnZeroPassesManagedQueueAndCatalogAsRawZero() throws Exception
+    {
+        CompletedAudioCall source = decodedNxdnZeroCall();
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        Path managed = mTemporaryFolder.resolve("managed-nxdn");
+        CountDownLatch recorded = new CountDownLatch(1);
+        List<Path> written = new ArrayList<>();
+        List<RecordFormat> formats = new ArrayList<>();
+        try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(
+            mTemporaryFolder.resolve("managed-nxdn.sqlite"), managed))
+        {
+            AudioRecordingManager manager = new AudioRecordingManager(preferences,
+                ignored -> recorded.countDown(), scheduler, (call, path, format, prefs, normalize) -> {
+                    AudioCallRecorder.write(call, path, format, prefs, normalize);
+                    written.add(path);
+                    formats.add(format);
+                }, catalog::submit, managed, call -> null);
+            try
+            {
+                preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+                preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.WAVE);
+                preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+                manager.start();
+                manager.receive(source);
+                assertEquals(1, manager.getQueueStatus().queuedCalls());
+                assertTrue(written.isEmpty(), "Managed ingress must leave encoding to the recording worker");
+                manager.stop();
+                assertTrue(recorded.await(5, TimeUnit.SECONDS));
+                assertEquals(List.of(RecordFormat.MP3), formats,
+                    "Managed recordings keep their existing MP3 format regardless of the Basic preference");
+                assertEquals(1, written.size());
+                Path saved = written.getFirst();
+                assertTrue(saved.startsWith(managed));
+                assertEquals("tg-0", saved.getParent().getFileName().toString());
+                assertTrue(saved.getFileName().toString().matches(
+                    "\\d{8}T\\d{9}Z_0_19_[0-9a-f-]{36}\\.mp3"));
+                ID3v24Tag tag = standardRecordingTag(saved, RecordFormat.MP3);
+                assertEquals("0x0000 NULL GROUP\"Security\"", tag.getTitle());
+                assertEquals("19", tag.getArtist());
+                var rows = catalog.search(ManagedRecordingCatalog.SearchFilter.builder()
+                    .fromMs(0L).toMs(5_000L).protocol("NXDN").talkgroupId(0).build()).calls();
+                assertEquals(1, rows.size());
+                assertEquals(0, rows.getFirst().targetId());
+                assertEquals(19, rows.getFirst().sourceId());
+                assertEquals(Files.size(saved), rows.getFirst().sizeBytes());
+                assertEquals(saved, catalog.audioPath(rows.getFirst().id()));
+                assertEquals(0, manager.getQueueStatus().droppedRecordings());
+            }
+            finally
+            {
+                manager.stop();
+            }
+        }
+        finally
+        {
+            scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+        }
+    }
+
+    private static CompletedAudioCall decodedNxdnZeroCall()
+    {
+        AliasListDefinition definition = new AliasListDefinition("NXDN fixture", AliasListFamily.NXDN);
+        definition.setId(7);
+        Alias alias = new Alias("Security");
+        alias.setMatchIdentifier(new Talkgroup(Protocol.NXDN, 0));
+        alias.setRecordable(true);
+        AliasList aliases = new AliasList(definition);
+        aliases.addAlias(alias);
+        return NXDNConventionalCallFixture.decodeGroupCall(aliases, 19, 0).audio();
+    }
+
+    private static ID3v24Tag standardRecordingTag(Path file, RecordFormat format) throws Exception
+    {
+        byte[] bytes = Files.readAllBytes(file);
+        if(format == RecordFormat.MP3) return new ID3v24Tag(bytes);
+        for(int offset = 12; offset + 8 <= bytes.length; )
+        {
+            int size = ByteBuffer.wrap(bytes, offset + 4, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            assertTrue(size >= 0 && size <= bytes.length - offset - 8, "WAV metadata chunks must remain valid");
+            if("id3 ".equals(new String(bytes, offset, 4, StandardCharsets.US_ASCII)))
+                return new ID3v24Tag(Arrays.copyOfRange(bytes, offset + 8, offset + 8 + size));
+            offset += 8 + size + (size & 1);
+        }
+        throw new AssertionError("WAV recording is missing its existing ID3 metadata chunk");
+    }
 
 
     private static void setPortableDataRoot(String value) throws ReflectiveOperationException

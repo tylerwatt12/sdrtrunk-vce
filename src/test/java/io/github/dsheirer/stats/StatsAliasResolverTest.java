@@ -114,6 +114,56 @@ class StatsAliasResolverTest
     }
 
     @Test
+    void observedNxdnZeroMatchesItsAssignedListAndCanBePromotedWithoutChangingOtherZeroPolicies() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("observed-nxdn-zero.sqlite");
+        createDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES" +
+                "(1,'NXDN Selected','NXDN'),(2,'NXDN Other','NXDN')");
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value,min_value,max_value) VALUES" +
+                "(1,1,'Low groups','TALKGROUP_RANGE','NXDN',NULL,0,10)," +
+                "(2,1,'Dispatch','TALKGROUP','NXDN',0,NULL,NULL)," +
+                "(3,2,'Other Dispatch','TALKGROUP','NXDN',0,NULL,NULL)");
+            Map<String,Object> observed = new LinkedHashMap<>(Map.of("protocol_code", 4,
+                "topology", "CONVENTIONAL", "group_identity_id", 0, "alias_list_id", 1L));
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            resolver.resolveObservedGroupIdentities(connection, rows(observed));
+            assertEquals("exact", observed.get("match_kind"));
+            assertEquals("Dispatch", observed.get("matched_alias_name"));
+            assertEquals(true, observed.get("promotion_supported"));
+            assertNull(observed.get("promotion_reason"));
+            statement.executeUpdate("DELETE FROM alias WHERE id=2");
+            resolver.resolveObservedGroupIdentities(connection, rows(observed));
+            assertEquals("range", observed.get("match_kind"));
+            assertEquals("Low groups", observed.get("matched_alias_name"));
+            statement.executeUpdate("DELETE FROM alias WHERE id=1");
+            resolver.resolveObservedGroupIdentities(connection, rows(observed));
+            assertEquals("none", observed.get("match_kind"));
+            assertNull(observed.get("matched_alias_name"), "Another list cannot name this channel's TG0");
+            assertEquals(true, observed.get("promotion_supported"));
+
+            for(int protocol: List.of(1, 3, 10, 11))
+            {
+                Map<String,Object> otherZero = new LinkedHashMap<>(observed);
+                otherZero.put("protocol_code", protocol);
+                resolver.resolveObservedGroupIdentities(connection, rows(otherZero));
+                assertEquals(false, otherZero.get("promotion_supported"));
+            }
+            for(int invalid: List.of(-1, 65_536))
+            {
+                Map<String,Object> invalidNxdn = new LinkedHashMap<>(observed);
+                invalidNxdn.put("group_identity_id", invalid);
+                resolver.resolveObservedGroupIdentities(connection, rows(invalidNxdn));
+                assertEquals(false, invalidNxdn.get("promotion_supported"));
+            }
+        }
+    }
+
+    @Test
     void resolvesAssignedListDescriptionsWithoutChangingAliasPrecedence() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");

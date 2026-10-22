@@ -373,7 +373,9 @@ public final class TopicAlertService implements AutoCloseable
                 if(java.util.Objects.equals(servingKey, io.github.dsheirer.module.decode.traffic.RadioSystemKey.p25(group.wacn(), group.systemId()))) local = group.talkgroupId();
             }
             if("RADIO".equals(party.form()) && local != null && local > 0) add(facts, source ? "radio" : "target_radio", local.toString());
-            if(("TALKGROUP".equals(party.form()) || "PATCH_GROUP".equals(party.form())) && local != null && local > 0) add(facts, "talkgroup", local.toString());
+            if(("TALKGROUP".equals(party.form()) || "PATCH_GROUP".equals(party.form())) && local != null &&
+                (local > 0 || local == 0 && "NXDN".equals(party.protocol()) && "TALKGROUP".equals(party.form())))
+                add(facts, "talkgroup", local.toString());
             parties(facts, party.talkgroupMembers(), source, servingKey); parties(facts, party.radioMembers(), source, servingKey);
         }
     }

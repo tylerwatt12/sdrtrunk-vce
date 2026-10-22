@@ -130,6 +130,43 @@ class UnmatchedTalkgroupPolicyTest
     }
 
     @Test
+    void nxdnZeroUsesExactThenRangeAliasAndReturnsToUnmatchedAfterRemoval()
+    {
+        UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of(route("Unknown")));
+        AliasList aliases = new AliasList(new AliasListDefinition("NXDN", AliasListFamily.NXDN, policy));
+        NXDNTalkgroupIdentifier zero = NXDNTalkgroupIdentifier.createTo(0);
+        Alias range = alias("Low groups", new TalkgroupRange(Protocol.NXDN, 0, 10), false, "Range");
+        Alias exact = alias("Dispatch", new Talkgroup(Protocol.NXDN, 0), false, "Exact");
+        aliases.addAliases(List.of(range, exact));
+
+        assertSame(exact, aliases.getAliases(zero).getFirst());
+        assertNull(aliases.getUnmatchedTalkgroupPolicy(zero));
+        MutableAudioCallBuilder exactCall = new MutableAudioCallBuilder(aliases, 1);
+        exactCall.addIdentifier(zero);
+        assertFalse(exactCall.isRecordAudio());
+        assertEquals("Dispatch", exactCall.getRecordingMetadata().destinationAlias());
+        assertEquals(Set.of("Exact"), destinations(exactCall));
+
+        aliases.removeAlias(exact);
+        assertSame(range, aliases.getAliases(zero).getFirst());
+        MutableAudioCallBuilder rangeCall = new MutableAudioCallBuilder(aliases, 1);
+        rangeCall.addIdentifier(zero);
+        assertFalse(rangeCall.isRecordAudio());
+        assertEquals("Low groups", rangeCall.getRecordingMetadata().destinationAlias());
+        assertEquals(Set.of("Range"), destinations(rangeCall));
+
+        aliases.removeAlias(range);
+        assertTrue(aliases.getAliases(zero).isEmpty());
+        assertSame(policy, aliases.getUnmatchedTalkgroupPolicy(zero));
+        MutableAudioCallBuilder unmatched = new MutableAudioCallBuilder(aliases, 1);
+        unmatched.addIdentifier(zero);
+        assertTrue(unmatched.isRecordAudio());
+        assertNull(unmatched.getRecordingMetadata().destinationAlias());
+        assertEquals("0", unmatched.getRecordingMetadata().destinationValue());
+        assertEquals(Set.of("Unknown"), destinations(unmatched));
+    }
+
+    @Test
     void doesNotApplyPolicyAcrossProtocolFamilies()
     {
         UnmatchedTalkgroupPolicy policy = new UnmatchedTalkgroupPolicy(true, List.of(route("Wrong Protocol")));

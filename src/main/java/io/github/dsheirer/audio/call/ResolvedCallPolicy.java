@@ -356,7 +356,9 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationRecordE
                 return canonicalIdentity == other.canonicalIdentity && qualifier.equals(other.qualifier);
             }
 
-            return localAddress > 0 && localAddress == other.localAddress;
+            return localAddress == other.localAddress && (localAddress > 0 ||
+                protocol == Protocol.NXDN && kind == Form.TALKGROUP && localAddress == 0 &&
+                    qualifier == null && other.qualifier == null);
         }
 
         /** Home identities may match native addresses only in their proven receiving system. */

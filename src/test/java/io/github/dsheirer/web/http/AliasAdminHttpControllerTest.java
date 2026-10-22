@@ -20,17 +20,20 @@ import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
+import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import java.io.ByteArrayInputStream;
@@ -835,6 +838,130 @@ class AliasAdminHttpControllerTest
             server.stop(0);
             closeConfigurationManager(manager);
         }
+    }
+
+    @Test
+    void nxdnZeroAliasesSupportHttpCrudPersistenceAndRuntimeFallback() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("nxdn-zero-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        AliasAdminHttpController controller = new AliasAdminHttpController(service);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
+        server.createContext(AliasAdminHttpController.ALIASES_PATH, controller::handle);
+        server.start();
+
+        try(HttpClient client = HttpClient.newHttpClient())
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            long listId = json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIAS_LISTS_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("name", "Conventional NXDN", "family", "nxdn"))))))
+                .get("alias_list_id").longValue();
+            json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId +
+                "/defaults").PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "edit_revision", service.getAliasListDefaults(listId).editRevision(),
+                    "unknown_alias_behavior", Map.of("recordable", true,
+                        "broadcast_configuration_ids", List.of(), "scan_list_ids", List.of()),
+                    "new_alias_behavior", Map.of("recordable", false,
+                        "broadcast_configuration_ids", List.of(), "scan_list_ids", List.of())))))));
+            JsonNode options = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + listId).GET()));
+            assertEquals(0, matcher(options, "talkgroup").get("minimum").intValue());
+            assertEquals(65_535, matcher(options, "talkgroup").get("maximum").intValue());
+            assertEquals(1, matcher(options, "radio").get("minimum").intValue());
+
+            List<Map<String,Object>> invalidMatchers = new ArrayList<>(List.of(
+                Map.of("type", "talkgroup", "protocol", "nxdn", "value", -1),
+                Map.of("type", "talkgroup", "protocol", "nxdn", "value", 65_536),
+                Map.of("type", "talkgroup", "protocol", "nxdn"),
+                Map.of("type", "radio", "protocol", "nxdn", "value", 0),
+                Map.of("type", "talkgroup_range", "protocol", "nxdn", "minimum", -1, "maximum", 2),
+                Map.of("type", "talkgroup_range", "protocol", "nxdn", "minimum", 0, "maximum", 65_536),
+                Map.of("type", "talkgroup_range", "protocol", "nxdn", "minimum", 2, "maximum", 0)));
+            Map<String,Object> nullMatcher = new java.util.LinkedHashMap<>();
+            nullMatcher.put("type", "talkgroup");
+            nullMatcher.put("protocol", "nxdn");
+            nullMatcher.put("value", null);
+            invalidMatchers.add(nullMatcher);
+            for(Map<String,Object> invalidMatcher: invalidMatchers)
+            {
+                Map<String,Object> payload = alias(listId, "Invalid", false);
+                payload.put("matcher", invalidMatcher);
+                assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                        Map.of("alias", payload))))).statusCode());
+            }
+
+            ConfigurationRepository repository = new ConfigurationRepository(database);
+            for(boolean range: List.of(false, true))
+            {
+                Map<String,Object> payload = alias(listId, range ? "Low groups" : "Dispatch", false);
+                payload.put("matcher", range ? Map.of("type", "talkgroup_range", "protocol", "nxdn",
+                    "minimum", 0, "maximum", 2) : Map.of("type", "talkgroup", "protocol", "nxdn", "value", 0));
+                long aliasId = json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                        Map.of("alias", payload)))))).at("/alias_ids/0").longValue();
+                String name = (String)payload.get("name");
+                assertNxdnZeroCall(manager.getAliasModel().getAliasList(
+                    manager.getAliasModel().getAliasListDefinition(listId)), name, false);
+                assertNxdnZeroCall(reloadedAliasList(repository, listId), name, false);
+
+                payload.put("name", name + " Updated");
+                json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH + "/" + aliasId)
+                    .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                        "edit_revision", service.getAlias(aliasId).editRevision(), "alias", payload))))));
+                JsonNode updated = json(send(client, request(origin,
+                    AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET())).get("alias");
+                assertEquals(name + " Updated", updated.get("name").textValue());
+                assertEquals(0, updated.at(range ? "/matcher/minimum" : "/matcher/value").intValue());
+                assertNxdnZeroCall(manager.getAliasModel().getAliasList(
+                    manager.getAliasModel().getAliasListDefinition(listId)), name + " Updated", false);
+                assertNxdnZeroCall(reloadedAliasList(repository, listId), name + " Updated", false);
+
+                json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH + "/" + aliasId)
+                    .method("DELETE", HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                        Map.of("edit_revision", service.getAlias(aliasId).editRevision()))))));
+                assertEquals(404, send(client, request(origin,
+                    AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET()).statusCode());
+                assertNxdnZeroCall(manager.getAliasModel().getAliasList(
+                    manager.getAliasModel().getAliasListDefinition(listId)), null, true);
+                assertNxdnZeroCall(reloadedAliasList(repository, listId), null, true);
+            }
+        }
+        finally
+        {
+            server.stop(0);
+            closeConfigurationManager(manager);
+        }
+    }
+
+    private static AliasList reloadedAliasList(ConfigurationRepository repository, long listId) throws Exception
+    {
+        var stored = repository.loadAliasConfiguration();
+        AliasListDefinition definition = stored.definitions().stream().filter(list -> list.getId() == listId)
+            .findFirst().orElseThrow();
+        AliasList runtime = new AliasList(definition);
+        runtime.addAliases(stored.aliases().stream().filter(alias -> alias.getAliasListId() == listId).toList());
+        return runtime;
+    }
+
+    private static void assertNxdnZeroCall(AliasList aliases, String expectedName, boolean recordable)
+    {
+        NXDNTalkgroupIdentifier zero = NXDNTalkgroupIdentifier.createTo(0);
+        MutableAudioCallBuilder call = new MutableAudioCallBuilder(aliases, 1);
+        call.addIdentifier(zero);
+        assertEquals(expectedName, call.getRecordingMetadata().destinationAlias());
+        assertEquals("0", call.getRecordingMetadata().destinationValue());
+        assertEquals(recordable, call.isRecordAudio());
+        assertEquals(expectedName != null ? AliasList.TalkgroupMatchStatus.MATCHED :
+            AliasList.TalkgroupMatchStatus.UNMATCHED, aliases.getTalkgroupMatchStatus(call.getIdentifierCollection()));
     }
 
     @Test

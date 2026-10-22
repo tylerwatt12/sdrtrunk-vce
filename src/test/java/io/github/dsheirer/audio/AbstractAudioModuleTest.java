@@ -33,6 +33,7 @@ import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotificat
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -346,6 +347,35 @@ class AbstractAudioModuleTest
         assertEquals(APCO25Talkgroup.create(200),last.snapshot().identifierCollection().getToIdentifier());
         assertEquals("Group 200",last.snapshot().recordingMetadata().destinationAlias());
         assertNotEquals(old.snapshot().callLegId(),last.snapshot().callLegId());
+    }
+
+    @Test
+    void nxdnNullGroupTransitionsCloseAudioBeforeRelabellingThePreviousDestination()
+    {
+        for(int[] groups: new int[][]{{91, 0}, {0, 91}, {0, 0xFFFF}, {0xFFFF, 0}})
+        {
+            TestAudioModule module = new TestAudioModule(AliasList.empty("NXDN"), 60_000);
+            List<AudioCallEvent> events = new ArrayList<>();
+            module.setAudioCallEventListener(events::add);
+            module.activityCallBound(new AudioActivityCallEvent("old-call", 0));
+            module.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(
+                NXDNTalkgroupIdentifier.createTo(groups[0]), IdentifierUpdateNotification.Operation.ADD, 0));
+            module.appendFrameAt(1_000, 0);
+            module.getIdentifierUpdateListener().receive(new IdentifierUpdateNotification(
+                NXDNTalkgroupIdentifier.createTo(groups[1]), IdentifierUpdateNotification.Operation.ADD, 0));
+
+            var previous = events.stream().filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+                .findFirst().orElseThrow();
+            assertEquals(groups[0], previous.snapshot().identifierCollection().getToIdentifier().getValue());
+            assertEquals("old-call", previous.snapshot().activityCallToken());
+            module.activityCallBound(new AudioActivityCallEvent("new-call", 0));
+            module.appendFrameAt(2_000, 0);
+            module.closeAt(2_020);
+            var next = events.stream().filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED)
+                .toList().getLast();
+            assertEquals(groups[1], next.snapshot().identifierCollection().getToIdentifier().getValue());
+            assertEquals("new-call", next.snapshot().activityCallToken());
+        }
     }
 
     @Test

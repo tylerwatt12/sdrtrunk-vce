@@ -45,6 +45,7 @@ import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.talkgroup.ResolvedTalkgroupIdentity;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.Module;
@@ -170,6 +171,11 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         if(!AudioCallRecordingMetadata.isDestination(next)) return false;
         Identifier<?> previous = primaryDestination(mCurrentAudioCall.getIdentifierCollection().getToIdentifier());
         next = primaryDestination(next);
+        if(isNxdnNullGroup(previous) || isNxdnNullGroup(next))
+        {
+            return previous != null && next != null && previous.isValid() && next.isValid() &&
+                !previous.equals(next);
+        }
         CurrentCallSource current = mCurrentCallSource.get();
         CallLegSource source = current != null ? current.source() : CallLegSource.UNKNOWN;
         if(!knownDestination(previous, source) || !knownDestination(next, source)) return false;
@@ -186,6 +192,11 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     {
         return identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null ?
             patch.getValue().getPatchGroup() : identifier;
+    }
+
+    private static boolean isNxdnNullGroup(Identifier<?> identifier)
+    {
+        return identifier instanceof NXDNTalkgroupIdentifier group && !group.isTypeD() && group.getValue() == 0;
     }
 
     private static boolean knownDestination(Identifier<?> identifier, CallLegSource source)

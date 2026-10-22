@@ -11,7 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.LogicalCallId;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import java.nio.file.Path;
@@ -494,6 +496,85 @@ class AliasActivityProjectionTest
                 assertEquals(1, rows.getInt(2));
                 assertEquals(1, rows.getInt(3));
                 assertEquals(1, rows.getInt(4));
+            }
+        }
+    }
+
+    @Test
+    void realDecodedNullGroupPersistsItsIdentityAndAssignedAliasWithoutCreditingAnotherChannel() throws Exception
+    {
+        var decoded = NXDNConventionalCallFixture.decodeGroupCall(AliasList.empty("NXDN fixture"), 101, 0);
+        String configurationId = decoded.completion().channelConfigurationId();
+        String otherChannel = "83000000-0000-4000-8000-000000000003";
+        try(Connection connection = open("decoded-nxdn-zero.sqlite"); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id,name,family) VALUES(3,'NXDN Conventional','NXDN'),(4,'Other NXDN','NXDN')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) VALUES
+                    (41,3,'Dispatch','TALKGROUP','NXDN',0),
+                    (42,4,'Wrong-list Dispatch','TALKGROUP','NXDN',0)
+                """);
+            insertConventionalConfiguration(statement, configurationId, 3, "NXDN");
+            insertConventionalConfiguration(statement, otherChannel, 3, "NXDN");
+            var mapped = new ReceiverActivityMapper().map(decoded.completion());
+            assertNotNull(ReceiverActivitySchema.recordNxdnConventionalCall(connection, mapped, true));
+            assertEquals(1, metric(connection, 41, "logical_call_count"));
+            assertEquals(0, metric(connection, 42, "logical_call_count"));
+            for(var output: List.of(ReceiverActivityRecords.CallOutput.RECORDED,
+                ReceiverActivityRecords.CallOutput.STREAMED))
+            {
+                var outputRecord = new ReceiverActivityMapper().mapConventionalCallOutput(decoded.audio(), output);
+                assertNotNull(outputRecord);
+                assertEquals("TALKGROUP", outputRecord.targetKind());
+                assertEquals(0, outputRecord.destinationId());
+                assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection, outputRecord));
+            }
+            assertEquals(1, metric(connection, 41, "logical_call_count"), "Outputs do not count the call again");
+            assertEquals(1, metric(connection, 41, "recorded_logical_call_count"));
+            assertEquals(1, metric(connection, 41, "stream_submitted_logical_call_count"));
+            assertEquals(0, metric(connection, 42, "recorded_logical_call_count"));
+            assertEquals(0, metric(connection, 42, "stream_submitted_logical_call_count"));
+            for(String targetKind: java.util.Arrays.asList(null, "RADIO"))
+            {
+                AliasActivityProjection.recordConventionalCallOutput(connection,
+                    new ReceiverActivityRecords.ConventionalCallOutput(mapped.callStartEpochMilliseconds(),
+                        configurationId, ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_NXDN, "NXDN",
+                        mapped.frequencyHertz(), null, 0, targetKind, List.of(), null,
+                        ReceiverActivityRecords.CallOutput.RECORDED, mapped.identityDomain(),
+                        ReceiverActivityRecords.P25Identity.UNKNOWN, List.of()));
+            }
+            assertEquals(1, metric(connection, 41, "recorded_logical_call_count"),
+                "A missing destination or radio zero cannot borrow the TG0 Alias");
+
+            try(ResultSet rows = statement.executeQuery("""
+                SELECT event.target_observed_local_id, event.target_kind_code, bucket.call_count,
+                    bucket.recorded_count, bucket.streamed_count
+                FROM receiver_activity_event event
+                JOIN receiver_channel channel ON channel.id=event.channel_id
+                JOIN conventional_call_identity_bucket bucket ON bucket.channel_id=event.channel_id
+                    AND bucket.identity_kind_code=1 AND bucket.identity_id=0
+                WHERE channel.configuration_id='%s'
+                """.formatted(configurationId)))
+            {
+                assertTrue(rows.next());
+                assertEquals(0, rows.getInt(1));
+                assertTrue(!rows.wasNull(), "Null Group is a known numeric destination, not SQL NULL");
+                assertEquals(1, rows.getInt(2));
+                assertEquals(1, rows.getInt(3));
+                assertEquals(1, rows.getInt(4));
+                assertEquals(1, rows.getInt(5));
+                assertTrue(!rows.next());
+            }
+            try(ResultSet rows = statement.executeQuery("""
+                SELECT count(*) FROM conventional_call_identity_bucket bucket
+                JOIN receiver_channel channel ON channel.id=bucket.channel_id
+                WHERE channel.configuration_id='%s'
+                """.formatted(otherChannel)))
+            {
+                assertTrue(rows.next());
+                assertEquals(0, rows.getInt(1), "A reused Alias List does not transfer call totals to another channel");
             }
         }
     }
