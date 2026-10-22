@@ -22,6 +22,7 @@ import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.stats.WebListener.RequestedConfiguration;
 import io.github.dsheirer.stats.WebListener.PreparedConfiguration;
@@ -68,6 +69,9 @@ import io.github.dsheirer.web.http.RemoteLinksHttpController;
 import io.github.dsheirer.web.http.RecordingTunerHttpController;
 import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
+import io.github.dsheirer.web.http.RemoteSupportService;
+import io.github.dsheirer.web.http.RemoteSupportHttpController;
+import io.github.dsheirer.web.http.RemoteSupportHttpServer;
 import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.WebReceiverSettingsHttpController;
 import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
@@ -167,6 +171,9 @@ public class StatsWebServerService implements AutoCloseable
     private WebAccessService mWebAccessService;
     private WebAuthenticationService mWebAuthenticationService;
     private volatile WebRequestSecurity mWebRequestSecurity;
+    private RemoteSupportService mRemoteSupportService;
+    private HttpServer mSupportOnlyServer;
+    private Map<String,HttpContext> mSupportOnlyContexts = Map.of();
     private boolean mClosed;
 
     private final ReceiverWebServices mServices;
@@ -198,6 +205,13 @@ public class StatsWebServerService implements AutoCloseable
         if(mStarted) return;
         mStarted = true;
         MyEventBus.getGlobalEventBus().register(this);
+        try
+        {
+            if(RemoteSupportService.hasSavedWork(mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot()))
+                ensureAuthenticationServices();
+        }
+        catch(IOException | SQLException exception)
+        { mLog.warn("Saved remote support could not be initialized. Its private state was preserved."); }
         updateServerState();
         mTlsMaintenanceExecutor.scheduleWithFixedDelay(this::maintainAutomaticCertificate,
             AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES, AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES,
@@ -289,6 +303,7 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             stopActiveListener();
+            ensureSupportOnlyContexts();
             setRuntimeState(stoppedState("Web server is disabled."));
             return mRuntimeState;
         }
@@ -501,8 +516,9 @@ public class StatsWebServerService implements AutoCloseable
         }
     }
 
-    private void registerContexts(HttpServer server, Path assetRoot, String webClientRevision)
+    private Map<String,HttpContext> registerContexts(HttpServer actualServer, Path assetRoot, String webClientRevision)
     {
+        RemoteSupportHttpServer server = new RemoteSupportHttpServer(actualServer);
         CallRelationsService callRelations = new CallRelationsService(mServices.mDatabase, () -> mServices.mManagedRecordingCatalog,
             mServices.mTopicAlertService, new ManagedRecordingLabels(mUserPreferences));
         CallRelationsHttpController relatedCalls = new CallRelationsHttpController(callRelations, mWebRequestSecurity);
@@ -518,6 +534,13 @@ public class StatsWebServerService implements AutoCloseable
         }
         new WebSessionHttpController(mWebAccessService, mWebAuthenticationService, mWebRequestSecurity)
             .register(server);
+        if(mRemoteSupportService != null)
+        {
+            RemoteSupportHttpController remoteSupport = new RemoteSupportHttpController(mRemoteSupportService,
+                mWebRequestSecurity);
+            server.createContext(RemoteSupportHttpController.PATH,
+                mWebRequestSecurity.protectApi(WebCapability.ADMIN_SETTINGS, remoteSupport::handle));
+        }
         WebUserAdminHttpController users =
             new WebUserAdminHttpController(mWebAccessService, mWebAuthenticationService);
         server.createContext(WebUserAdminHttpController.PATH, mWebRequestSecurity.protectApi(
@@ -683,6 +706,27 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext("/api", StatsWebServerService::handleApiNotFound);
         server.createContext("/live", StatsWebServerService::handleApiNotFound);
         server.createContext("/", exchange -> handleStatic(exchange, assetRoot, webClientRevision));
+        if(mRemoteSupportService != null) mRemoteSupportService.setContexts(server.contexts());
+        return server.contexts();
+    }
+
+    /** The same handlers remain available to an enabled support grant without binding any local network port. */
+    private void ensureSupportOnlyContexts()
+    {
+        if(mRemoteSupportService == null || !mRemoteSupportService.hasActivePermission()) return;
+        try
+        {
+            if(mSupportOnlyServer == null)
+            {
+                HttpServer unbound = HttpServer.create();
+                Path assets = StatsWebPath.getAssetsPath();
+                mSupportOnlyContexts = registerContexts(unbound, assets, readWebClientRevision(assets));
+                mSupportOnlyServer = unbound;
+            }
+            else mRemoteSupportService.setContexts(mSupportOnlyContexts);
+        }
+        catch(IOException | RuntimeException exception)
+        { mLog.warn("Remote support handlers could not be initialized without a local web listener."); }
     }
 
     private HttpHandler protectDiscoveryAliasImports(HttpHandler handler)
@@ -707,6 +751,15 @@ public class StatsWebServerService implements AutoCloseable
             mWebAccessService = accessService;
             mWebAuthenticationService = authenticationService;
             mWebRequestSecurity = new WebRequestSecurity(accessService, authenticationService);
+            try
+            {
+                mRemoteSupportService = new RemoteSupportService(
+                    mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot(), authenticationService);
+            }
+            catch(IOException exception)
+            {
+                mLog.warn("Remote support is unavailable because its private state could not be read.");
+            }
         }
     }
 
@@ -1102,7 +1155,8 @@ public class StatsWebServerService implements AutoCloseable
                 long lastHeartbeat = System.nanoTime();
                 long lastAuthorizationCheck = 0;
 
-                while(mListener != null && mListener.server() == server && !client.isClosed() &&
+                while((RemoteSupportService.isSupportRequest(exchange) ? RemoteSupportService.isSupportRequestActive(exchange) :
+                    mListener != null && mListener.server() == server) && !client.isClosed() &&
                     !connectedOutput.isFailed())
                 {
                     long now = System.nanoTime();
@@ -2191,6 +2245,8 @@ public class StatsWebServerService implements AutoCloseable
     {
         if(mClosed) return;
         mClosed = true;
+        if(mRemoteSupportService != null) mRemoteSupportService.close();
+        if(mSupportOnlyServer != null) mSupportOnlyServer.stop(0);
         mTlsMaintenanceExecutor.shutdownNow();
         if(mStarted) MyEventBus.getGlobalEventBus().unregister(this);
         stopActiveListener();

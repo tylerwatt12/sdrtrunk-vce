@@ -128,6 +128,15 @@ public final class WebAuthenticationService implements AutoCloseable
         return mSessionManager.resolve(sessionId, mAccessService);
     }
 
+    /**
+     * An application-owned support connector holds this token privately and revokes it when its connection ends.
+     * This never provisions an account or bypasses first-time primary administrator setup.
+     */
+    public Optional<WebAccessSession> openRemoteSupportSession()
+    {
+        return !mClosed.get() ? mAccessService.primaryAdmin().flatMap(mSessionManager::create) : Optional.empty();
+    }
+
     /** The desktop chooses from fixed destinations; the browser cannot supply a redirect location. */
     public synchronized boolean armDesktopAdministratorHandoff(DesktopHandoffDestination destination)
     {
