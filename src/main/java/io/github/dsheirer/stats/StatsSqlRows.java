@@ -20,10 +20,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
- * Last-resort row materialization ceiling for v1 read models. Endpoint SQL is expected to use substantially smaller
- * limits; this boundary prevents an accidentally uncapped query from exhausting the heap.
+ * Shared JDBC row decoder. Paged v1 read models retain a last-resort collection ceiling; complete shared native
+ * reads consume rows explicitly without inheriting a browse-page limit.
  */
 final class StatsSqlRows
 {
@@ -35,6 +36,21 @@ final class StatsSqlRows
 
     static List<Map<String,Object>> queryRows(Connection connection, String sql, Object... parameters)
         throws SQLException
+    {
+        List<Map<String,Object>> rows = new ArrayList<>();
+        forEachRow(connection, sql, row -> {
+            if(rows.size() >= MAXIMUM_MATERIALIZED_ROWS)
+            {
+                throw new StatsApiException(413, "query_result_too_large",
+                    "Query result exceeded the server safety limit");
+            }
+            rows.add(row);
+        }, parameters);
+        return rows;
+    }
+
+    static void forEachRow(Connection connection, String sql, Consumer<Map<String,Object>> consumer,
+                           Object... parameters) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(sql))
         {
@@ -52,16 +68,8 @@ final class StatsSqlRows
                 {
                     columnLabels[column - 1] = metaData.getColumnLabel(column);
                 }
-                List<Map<String,Object>> rows = new ArrayList<>();
-
                 while(resultSet.next())
                 {
-                    if(rows.size() >= MAXIMUM_MATERIALIZED_ROWS)
-                    {
-                        throw new StatsApiException(413, "query_result_too_large",
-                            "Query result exceeded the server safety limit");
-                    }
-
                     Map<String,Object> row = new LinkedHashMap<>();
 
                     for(int column = 1; column <= columnCount; column++)
@@ -69,10 +77,8 @@ final class StatsSqlRows
                         row.put(columnLabels[column - 1], resultSet.getObject(column));
                     }
 
-                    rows.add(row);
+                    consumer.accept(row);
                 }
-
-                return rows;
             }
         }
     }

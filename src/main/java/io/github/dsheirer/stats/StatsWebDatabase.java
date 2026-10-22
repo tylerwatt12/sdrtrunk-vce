@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats;
 
+import static io.github.dsheirer.stats.StatsSqlRows.forEachRow;
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -5391,16 +5392,23 @@ class StatsWebDatabase
     {
         Object identity = p25SourceIdentity();
         return readSnapshot(connection -> {
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500);
+            long[] deadline = {System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500)};
             try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
             org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
             {
                 @Override protected int progress()
-                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline ? 1 : 0; }
+                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline[0] ? 1 : 0; }
             });
             try
             {
-                List<Map<String,Object>> affiliations = queryRows(connection, P25_AFFILIATION_CORE_SQL);
+                List<Map<String,Object>> affiliations = new ArrayList<>();
+                forEachRow(connection, P25_AFFILIATION_CORE_SQL, row -> {
+                    if(Thread.currentThread().isInterrupted()) throw new StatsApiException(503, "P25 read interrupted");
+                    affiliations.add(row);
+                    // Keep stalled SQL cancellable without timing out a complete read that is making progress.
+                    if(affiliations.size() % 64 == 0)
+                        deadline[0] = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500);
+                });
                 if(!identity.equals(p25SourceIdentity()))
                     throw new StatsApiException(503, "P25 source changed during its read");
                 return new P25ActivityLiveService.RawSnapshot(identity, affiliations);
@@ -5440,43 +5448,50 @@ class StatsWebDatabase
     List<ObjectNode> presentP25Affiliations(List<Map<String,Object>> core)
     {
         if(core.isEmpty()) return List.of();
-        return read(connection -> {
+        return readSnapshot(connection -> {
             // Naming runs only for changed native current identities on the shared observer worker.
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            long[] deadline = new long[1];
             try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
             org.sqlite.ProgressHandler.setHandler(connection,1000,new org.sqlite.ProgressHandler()
             {
                 @Override protected int progress()
-                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline ? 1 : 0; }
+                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline[0] ? 1 : 0; }
             });
             try
             {
-                List<Map<String,Object>> rows = core.stream().map(row -> (Map<String,Object>)new LinkedHashMap<>(row)).toList();
-                mAliasResolver.enrichActivity(connection,rows);
-                com.fasterxml.jackson.databind.JsonNode named = new StatsSystemNameResolver(connection).enrich(rows);
-                List<ObjectNode> result = new ArrayList<>();
-                for(com.fasterxml.jackson.databind.JsonNode row: named)
+                List<ObjectNode> result = new ArrayList<>(core.size());
+                // Each fact can name a serving system and two home systems. Process all facts in SQL-sized batches.
+                for(int offset = 0; offset < core.size(); offset += 64)
                 {
-                    ObjectNode value = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
-                    for(String field: List.of("radio_system_key","configuration_id","confirmed_at_ms","wacn","system_id",
-                        "radio_home_wacn","radio_home_system_id","talkgroup_home_wacn","talkgroup_home_system_id",
-                        "system_name","system_names"))
-                        if(row.has(field)) value.set(field,row.get(field));
-                    value.put("protocol","p25");
-                    for(String[] field: new String[][]{{"radio_identity_key","source_identity_key"},
-                        {"talkgroup_identity_key","target_identity_key"},{"radio_id","source_native_id"},
-                        {"talkgroup_id","target_native_id"},{"radio_observed_local_id","source_radio_id"},
-                        {"talkgroup_observed_local_id","target_id"},{"radio_observed_working_id","source_observed_working_id"},
-                        {"radio_alias_name","source_alias_name"},{"radio_talker_alias","source_talker_alias"},
-                        {"talkgroup_alias_name","target_alias_name"},{"radio_home_system_name","source_home_system_name"},
-                        {"talkgroup_home_system_name","target_home_system_name"}})
-                        if(row.has(field[1])) value.set(field[0],row.get(field[1]));
-                    if(row.hasNonNull("source_canonical_wacn") && row.hasNonNull("source_canonical_system_id") &&
-                        row.hasNonNull("source_canonical_subscriber_id"))
-                        value.putObject("radio_canonical_identity").put("wacn",row.path("source_canonical_wacn").asInt())
-                            .put("system_id",row.path("source_canonical_system_id").asInt())
-                            .put("subscriber_id",row.path("source_canonical_subscriber_id").asInt());
-                    result.add(value);
+                    if(Thread.currentThread().isInterrupted()) throw new SQLException("P25 naming interrupted");
+                    deadline[0] = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+                    List<Map<String,Object>> rows = core.subList(offset, Math.min(core.size(), offset + 64)).stream()
+                        .map(row -> (Map<String,Object>)new LinkedHashMap<>(row)).toList();
+                    mAliasResolver.enrichActivity(connection,rows);
+                    var named = new StatsSystemNameResolver(connection).enrich(rows);
+                    for(com.fasterxml.jackson.databind.JsonNode row: named)
+                    {
+                        ObjectNode value = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+                        for(String field: List.of("radio_system_key","configuration_id","confirmed_at_ms","wacn","system_id",
+                            "radio_home_wacn","radio_home_system_id","talkgroup_home_wacn","talkgroup_home_system_id",
+                            "system_name","system_names"))
+                            if(row.has(field)) value.set(field,row.get(field));
+                        value.put("protocol","p25");
+                        for(String[] field: new String[][]{{"radio_identity_key","source_identity_key"},
+                            {"talkgroup_identity_key","target_identity_key"},{"radio_id","source_native_id"},
+                            {"talkgroup_id","target_native_id"},{"radio_observed_local_id","source_radio_id"},
+                            {"talkgroup_observed_local_id","target_id"},{"radio_observed_working_id","source_observed_working_id"},
+                            {"radio_alias_name","source_alias_name"},{"radio_talker_alias","source_talker_alias"},
+                            {"talkgroup_alias_name","target_alias_name"},{"radio_home_system_name","source_home_system_name"},
+                            {"talkgroup_home_system_name","target_home_system_name"}})
+                            if(row.has(field[1])) value.set(field[0],row.get(field[1]));
+                        if(row.hasNonNull("source_canonical_wacn") && row.hasNonNull("source_canonical_system_id") &&
+                            row.hasNonNull("source_canonical_subscriber_id"))
+                            value.putObject("radio_canonical_identity").put("wacn",row.path("source_canonical_wacn").asInt())
+                                .put("system_id",row.path("source_canonical_system_id").asInt())
+                                .put("subscriber_id",row.path("source_canonical_subscriber_id").asInt());
+                        result.add(value);
+                    }
                 }
                 return List.copyOf(result);
             }

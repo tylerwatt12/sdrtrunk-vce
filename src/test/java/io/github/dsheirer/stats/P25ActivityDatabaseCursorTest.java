@@ -121,7 +121,7 @@ class P25ActivityDatabaseCursorTest
         assertEquals(0,number(reset.get("next_after_id")));assertTrue(rows(reset).isEmpty());
     }
 
-    @Test void nativeSnapshotReturnsAllCurrentAffiliationsAcrossMoreThan256Systems() throws Exception
+    @Test void nativePresenterNamesEveryCurrentAffiliationAcrossMoreThan256SystemsAndAliasLists() throws Exception
     {
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
         {
@@ -130,10 +130,19 @@ class P25ActivityDatabaseCursorTest
             {
                 int owner = 1000 + system;
                 String configuration = "00000000-0000-0000-0000-%012d".formatted(owner);
+                sql.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(" + owner + ", 'Aliases " + owner + "','P25')");
+                sql.executeUpdate("""
+                    INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,min_value,max_value)
+                    VALUES(%1$d,%2$d,'Radio %2$d','RADIO_ID_RANGE','APCO25_PHASE2',100000,100100)
+                    """.formatted(10 * owner,owner));
+                sql.executeUpdate("""
+                    INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                    VALUES(%1$d,%2$d,'Talkgroup %2$d','TALKGROUP','APCO25',101)
+                    """.formatted(10 * owner + 1,owner));
                 sql.executeUpdate("""
                     INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,system_name,site_name,name,
                         alias_list_id,radioresolve_id,decoder_type,primary_frequency_hz,config_json)
-                    VALUES('%1$s','TRUNKED',%2$d,'System %2$d','Site','Control',71,'%1$s','P25_PHASE1',851012500,'{}')
+                    VALUES('%1$s','TRUNKED',%2$d,'System %2$d','Site','Control',%2$d,'%1$s','P25_PHASE1',851012500,'{}')
                     """.formatted(configuration,owner));
                 sql.executeUpdate("""
                     INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms)
@@ -147,7 +156,7 @@ class P25ActivityDatabaseCursorTest
                     INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms)
                     VALUES(%1$d,%2$d,1,0xBEE00,%3$d,101,1,10000)
                     """.formatted(1000000+owner,owner,system));
-                for(int radio = 1; radio <= 40; radio++)
+                for(int radio = 1; radio <= 80; radio++)
                 {
                     int identity = 2000000 + 100 * system + radio;
                     sql.executeUpdate("""
@@ -170,8 +179,24 @@ class P25ActivityDatabaseCursorTest
             assertFalse(plan.stream().anyMatch(row -> row.contains("receiver_activity_event")),plan.toString());
         }
         var snapshot = database.p25RawSnapshot();
-        assertEquals(10280,snapshot.affiliations().size());
+        assertEquals(20560,snapshot.affiliations().size());
         assertEquals(257,snapshot.affiliations().stream().map(row -> row.get("radio_system_key")).distinct().count());
+        assertEquals(257,snapshot.affiliations().stream().map(row -> row.get("alias_list_id")).distinct().count());
+        var presented = database.presentP25Affiliations(snapshot.affiliations());
+        assertEquals(20560,presented.size(), "Real presentation must not inherit browse-page row or alias-list limits");
+        assertEquals(20560,presented.stream().map(row -> row.path("radio_system_key").asText() + ":" +
+            row.path("radio_identity_key").asText()).distinct().count());
+        for(var row: presented)
+        {
+            int owner = Integer.parseInt(row.path("configuration_id").asText().substring(24));
+            assertEquals("Radio " + owner,row.path("radio_alias_name").asText());
+            assertEquals("Talkgroup " + owner,row.path("talkgroup_alias_name").asText());
+            assertEquals("System " + owner,row.path("system_name").asText());
+            assertEquals("System " + owner,row.path("radio_home_system_name").asText());
+            assertEquals("System " + owner,row.path("talkgroup_home_system_name").asText());
+        }
+        assertTrue(snapshot.affiliations().stream().noneMatch(row -> row.containsKey("source_alias_name")),
+            "Presentation cannot mutate retained native facts");
         assertTrue(database.savedActivityAfter(0,null).get("rows") instanceof List<?>);
         assertTrue(rows(database.savedActivityAfter(0,null)).isEmpty(),"native current state does not impersonate saved events");
     }
