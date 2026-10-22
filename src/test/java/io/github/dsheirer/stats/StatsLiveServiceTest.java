@@ -243,7 +243,7 @@ class StatsLiveServiceTest
                 try { return service.snapshotWire().revision() >= expectedRevision; }
                 catch(java.io.IOException initializing) { return false; }
             });
-            String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            String encoded = snapshotWireText(service);
             assertFalse(encoded.contains(neverStartedTableId));
             assertTrue(encoded.contains(startedTableId));
         }
@@ -279,8 +279,8 @@ class StatsLiveServiceTest
             assertEquals(List.of("conventional"), tables(service).stream()
                 .map(table -> String.valueOf(table.get("table_id"))).toList(),
                 "a browser recovery snapshot must contain only active channels");
-            assertFalse(new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8)
-                .contains(stoppedTableId), "refresh uses the encoded recovery snapshot");
+            assertFalse(snapshotWireText(service).contains(stoppedTableId),
+                "refresh uses the encoded recovery snapshot");
         }
         finally
         {
@@ -375,7 +375,7 @@ class StatsLiveServiceTest
             Map<String,Object> rowOrigin = (Map<String,Object>)firstRow(event).get("remote_origin");
             assertEquals(Map.of("remote", true), tableOrigin);
             assertEquals(Map.of("remote", true), rowOrigin);
-            String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            String encoded = snapshotWireText(service);
             assertFalse(encoded.contains("sender_id"));
             assertFalse(encoded.contains("sender_name"));
             assertFalse(encoded.contains("feed_id"));
@@ -527,6 +527,13 @@ class StatsLiveServiceTest
         assertEquals(false, rows.getFirst().get("tx_end_certain"));
         assertEquals(3L, rows.getFirst().get("tx_burst_generation"));
         assertEquals(1_025L, rows.getFirst().get("tx_burst_started_at_ms"));
+    }
+
+    private static String snapshotWireText(StatsLiveService service) throws java.io.IOException
+    {
+        byte[] wire = service.snapshotWire().frame().bytes(false);
+        return new String(wire, LiveMultiplexFrame.HEADER_BYTES, wire.length - LiveMultiplexFrame.HEADER_BYTES,
+            java.nio.charset.StandardCharsets.UTF_8);
     }
 
     @SuppressWarnings("unchecked")

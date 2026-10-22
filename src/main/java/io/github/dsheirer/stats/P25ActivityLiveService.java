@@ -61,9 +61,9 @@ final class P25ActivityLiveService implements AutoCloseable
         Map<String,Object> payload() { return Map.of("radio_system_key", system, "radio_identity_key", radio); }
     }
     private record Row(Map<String,Object> core, ObjectNode value, int bytes) {}
-    private record Table(Map<RadioKey,Row> entries, List<ObjectNode> values)
+    private record Table(Map<RadioKey,Row> entries)
     {
-        static Table empty() { return new Table(Map.of(), List.of()); }
+        static Table empty() { return new Table(Map.of()); }
     }
 
     /** All viewers reuse the same complete native dataset and its lazily prepared response. */
@@ -89,7 +89,8 @@ final class P25ActivityLiveService implements AutoCloseable
         {
             if(prepared == null)
                 prepared = ApiHttpResponse.prepareNormalizedData(Map.of("source_epoch", epoch, "sequence", sequence,
-                    "affiliations", affiliations.values(), "available", available, "captured_at_ms", captured,
+                    "affiliations", affiliations.entries().values().stream().map(Row::value).toList(),
+                    "available", available, "captured_at_ms", captured,
                     "traffic_grant_age_out_milliseconds", timeout, "collection_enabled", enabled));
             return prepared;
         }
@@ -350,7 +351,6 @@ final class P25ActivityLiveService implements AutoCloseable
                 throw new IllegalStateException("Duplicate P25 projection");
         if(projected.size() != changed.size()) throw new IllegalStateException("Incomplete P25 projection");
         Map<RadioKey,Row> next = new LinkedHashMap<>();
-        List<ObjectNode> values = new ArrayList<>();
         for(var entry: core.entrySet())
         {
             Row value = previous.entries().get(entry.getKey());
@@ -359,9 +359,9 @@ final class P25ActivityLiveService implements AutoCloseable
                 value = new Row(Collections.unmodifiableMap(new LinkedHashMap<>(entry.getValue())), replacement,
                     ApiHttpResponse.encodeNormalizedPayload(replacement).length);
             if(value == null) throw new IllegalStateException("P25 projection changed its identity");
-            next.put(entry.getKey(), value); values.add(value.value());
+            next.put(entry.getKey(), value);
         }
-        return new Table(Collections.unmodifiableMap(next), List.copyOf(values));
+        return new Table(Collections.unmodifiableMap(next));
     }
 
     private static RadioKey key(Map<String,Object> row, String radioField)

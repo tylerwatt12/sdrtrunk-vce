@@ -67,6 +67,8 @@ class P25ActivityLiveServiceTest
             var prepared = service.seed(); assertTrue(prepared.identity().length > 12 * 1024 * 1024);
             var seed = JSON.readTree(prepared.identity()).path("data");
             assertEquals(11_001, seed.path("affiliations").size()); assertTrue(seed.path("available").asBoolean());
+            for(int id = 1; id <= 11_001; id++)
+                assertEquals(id, seed.path("affiliations").get(id - 1).path("radio_id").asInt());
             assertFalse(seed.has("affiliations_truncated")); assertSame(prepared, service.seed());
         }
     }

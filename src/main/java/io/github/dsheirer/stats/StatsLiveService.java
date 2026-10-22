@@ -369,6 +369,9 @@ final class StatsLiveService implements AutoCloseable
             return true;
         }
 
+        PublishedState published = run.mPublishedState;
+        Map<String,Map<String,Object>> previousTables = published != null ? published.tables() : Map.of();
+        long baseRevision = published != null ? published.source().revision() : 0;
         List<Map<String,Object>> changes = new ArrayList<>();
         List<Map<String,Object>> fullChanges = new ArrayList<>();
         List<Map<String,Object>> markerChanges = new ArrayList<>();
@@ -379,19 +382,19 @@ final class StatsLiveService implements AutoCloseable
             Map<String,Object> table = run.mProjectedTables.get(tableId);
             var prepared = new PreparedActivityEvent(table == null ? ChannelActivityEvent.Operation.REMOVE :
                 ChannelActivityEvent.Operation.UPSERT, tableId, table);
-            changes.add(activityChange(prepared, run.mFanoutTables.get(tableId), false));
+            changes.add(activityChange(prepared, previousTables.get(tableId), false));
             fullChanges.add(activityChange(prepared, null, true));
-            Map<String,Object> marker = table != null ? markerTable(table, run.mFanoutTables.get(tableId),
+            Map<String,Object> marker = table != null ? markerTable(table, previousTables.get(tableId),
                 run.mMarkerTables.get(tableId)) : null;
             var markerPrepared = new PreparedActivityEvent(prepared.operation(), tableId, marker);
             markerChanges.add(activityChange(markerPrepared, run.mMarkerTables.get(tableId), false));
             fullMarkerChanges.add(activityChange(markerPrepared, null, true));
             if(marker == null) nextMarkers.remove(tableId); else nextMarkers.put(tableId, marker);
         }
-        StatsLiveEventHub.LiveEvent full = batch(run, fullChanges, null, false);
-        StatsLiveEventHub.LiveEvent normal = batch(run, changes, full, false);
-        StatsLiveEventHub.LiveEvent fullMarkers = batch(run, fullMarkerChanges, null, true);
-        StatsLiveEventHub.LiveEvent markers = batch(run, markerChanges, fullMarkers, true);
+        StatsLiveEventHub.LiveEvent full = batch(baseRevision, run.mProcessedRevision, fullChanges, null, false);
+        StatsLiveEventHub.LiveEvent normal = batch(baseRevision, run.mProcessedRevision, changes, full, false);
+        StatsLiveEventHub.LiveEvent fullMarkers = batch(baseRevision, run.mProcessedRevision, fullMarkerChanges, null, true);
+        StatsLiveEventHub.LiveEvent markers = batch(baseRevision, run.mProcessedRevision, markerChanges, fullMarkers, true);
         if(!batchFits(normal) || !batchFits(full) || !batchFits(markers) || !batchFits(fullMarkers))
         {
             publishAuthoritativeResync(run, run.mPublishedNavigation, run.mPublishedRemoteOrigins);
@@ -409,11 +412,11 @@ final class StatsLiveService implements AutoCloseable
         return true;
     }
 
-    private static StatsLiveEventHub.LiveEvent batch(ProjectionRun run, List<Map<String,Object>> changes,
+    private static StatsLiveEventHub.LiveEvent batch(long baseRevision, long revision, List<Map<String,Object>> changes,
                                                     StatsLiveEventHub.LiveEvent baseline, boolean markers)
     {
-        return new StatsLiveEventHub.LiveEvent("activity_batch", Map.of("base_revision", run.mWireRevision,
-            "revision", run.mProcessedRevision, "changes", List.copyOf(changes)), baseline, markers);
+        return new StatsLiveEventHub.LiveEvent("activity_batch", Map.of("base_revision", baseRevision,
+            "revision", revision, "changes", List.copyOf(changes)), baseline, markers);
     }
 
     private static boolean batchFits(StatsLiveEventHub.LiveEvent event) throws IOException
@@ -423,10 +426,7 @@ final class StatsLiveService implements AutoCloseable
 
     private void publishBoundary(ProjectionRun run, ChannelActivityModel.SnapshotSet source)
     {
-        run.mWireRevision = run.mProcessedRevision;
-        run.mFanoutTables.clear();
-        run.mFanoutTables.putAll(run.mProjectedTables);
-        run.mPublishedState = new PublishedState(new ChannelActivityModel.SnapshotSet(run.mWireRevision,
+        run.mPublishedState = new PublishedState(new ChannelActivityModel.SnapshotSet(run.mProcessedRevision,
             List.copyOf(run.mSourceTables.values())), Map.copyOf(run.mProjectedTables), run.mPublishedNavigation,
             run.mPublishedRemoteOrigins,
             (int)source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).count(),
@@ -788,16 +788,6 @@ final class StatsLiveService implements AutoCloseable
         return snapshot != null && ("conventional".equals(snapshot.tableId()) || snapshot.channelRunning());
     }
 
-    byte[] encodedSnapshot() throws IOException
-    {
-        return encodedSnapshotState().payload();
-    }
-
-    LiveMultiplexFrame snapshotFrame() throws IOException
-    {
-        return encodedSnapshotState().frame();
-    }
-
     SnapshotWire snapshotWire() throws IOException
     {
         return snapshotWire(false);
@@ -866,10 +856,8 @@ final class StatsLiveService implements AutoCloseable
                     source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).mapToLong(table -> table.rows().size()).sum()));
             }
             JsonNode bestDocument = StatsApiV1Payload.present(bestProjection);
-            byte[] best = ApiHttpResponse.encodePayload(bestDocument);
-
             EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation,
-                remoteOrigins, best, LiveMultiplexFrame.json(1, "snapshot", bestDocument),
+                remoteOrigins, LiveMultiplexFrame.json(1, "snapshot", bestDocument),
                 LiveMultiplexFrame.json(1, "snapshot", StatsApiV1Payload.present(markerSnapshot(bestProjection))));
 
             if(mRunGeneration.get() == generation && mRowSystemScopeState == rowSystemScopes)
@@ -1420,7 +1408,7 @@ final class StatsLiveService implements AutoCloseable
     private record EncodedSnapshot(long generation, long revision,
                                    WebEntityNavigationCatalog.Snapshot navigation,
                                    RemoteOriginLookup.OriginSnapshot remoteOrigins,
-                                   byte[] payload, LiveMultiplexFrame frame, LiveMultiplexFrame markerFrame)
+                                   LiveMultiplexFrame frame, LiveMultiplexFrame markerFrame)
     {
     }
 
@@ -1446,12 +1434,10 @@ final class StatsLiveService implements AutoCloseable
         private final LinkedHashMap<String,Map<String,Object>> mProjectedTables = new LinkedHashMap<>();
         private final LinkedHashMap<String,ChannelActivitySnapshot> mSourceTables = new LinkedHashMap<>();
         private final LinkedHashMap<String,Map<String,Object>> mMarkerTables = new LinkedHashMap<>();
-        private final LinkedHashMap<String,Map<String,Object>> mFanoutTables = new LinkedHashMap<>();
         private final Set<String> mDirtyTables = new LinkedHashSet<>();
         private final CountDownLatch mBaselineReady = new CountDownLatch(1);
         private volatile PublishedState mPublishedState;
         private long mProcessedRevision;
-        private long mWireRevision;
         private long mBoundaryWaitStartedNanos;
         private long mNextBatchNanos = System.nanoTime() + ACTIVITY_BATCH_INTERVAL_NANOS;
         private boolean mBatchResyncRequired;

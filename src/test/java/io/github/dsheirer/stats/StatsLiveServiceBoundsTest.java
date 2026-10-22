@@ -50,8 +50,9 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            byte[] initial = service.encodedSnapshot();
-            var document = new ObjectMapper().readTree(initial);
+            byte[] initial = service.snapshotWire().frame().bytes(false);
+            var document = new ObjectMapper().readTree(initial, LiveMultiplexFrame.HEADER_BYTES,
+                initial.length - LiveMultiplexFrame.HEADER_BYTES).path("data");
             assertTrue(initial.length <= StatsLiveService.MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
             assertTrue(document.path("metadata_truncated").asBoolean());
             assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, document.path("tables_included").asInt());
@@ -595,7 +596,9 @@ class StatsLiveServiceBoundsTest
             var markers = rows(StatsLiveService.markerTable(projectedTable, null, null));
             assertNull(markers.get(1).get("serving_system_key"));
             assertEquals(known.get("target_canonical_group_identity"), markers.getFirst().get("target_canonical_group_identity"));
-            var encoded = new ObjectMapper().readTree(service.encodedSnapshot());
+            byte[] wire = service.snapshotWire().frame().bytes(false);
+            var encoded = new ObjectMapper().readTree(wire, LiveMultiplexFrame.HEADER_BYTES,
+                wire.length - LiveMultiplexFrame.HEADER_BYTES).path("data");
             assertTrue(encoded.at("/tables/0/rows/1").has("serving_system_key"));
             assertTrue(encoded.at("/tables/0/rows/1/serving_system_key").isNull());
         }
@@ -880,8 +883,9 @@ class StatsLiveServiceBoundsTest
         {
             source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
             service.start();
-            byte[] withoutNavigation = service.encodedSnapshot();
-            assertFalse(new String(withoutNavigation, java.nio.charset.StandardCharsets.UTF_8)
+            byte[] withoutNavigation = service.snapshotWire().frame().bytes(false);
+            assertFalse(new String(withoutNavigation, LiveMultiplexFrame.HEADER_BYTES,
+                withoutNavigation.length - LiveMultiplexFrame.HEADER_BYTES, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
 
             try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
@@ -903,10 +907,11 @@ class StatsLiveServiceBoundsTest
                     "a catalog change must update already-connected live clients without waiting for activity");
             }
 
-            byte[] withNavigation = service.encodedSnapshot();
+            byte[] withNavigation = service.snapshotWire().frame().bytes(false);
             assertFalse(withoutNavigation == withNavigation,
                 "a changed catalog must rebuild a live snapshot whose activity revision is unchanged");
-            assertTrue(new String(withNavigation, java.nio.charset.StandardCharsets.UTF_8)
+            assertTrue(new String(withNavigation, LiveMultiplexFrame.HEADER_BYTES,
+                withNavigation.length - LiveMultiplexFrame.HEADER_BYTES, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
         }
         finally
@@ -1071,7 +1076,7 @@ class StatsLiveServiceBoundsTest
                 StatsLiveEventHub.LiveEvent current = currentSubscription.poll(1, TimeUnit.SECONDS);
                 assertNotNull(current);
                 assertEquals("current-generation", tableId(current));
-                byte[] encodedCurrent = service.encodedSnapshot();
+                byte[] encodedCurrent = service.snapshotWire().frame().bytes(false);
 
                 oldListener.receive(activity("stale-callback", List.of(activityRow("stale-row"))));
                 assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
@@ -1081,7 +1086,7 @@ class StatsLiveServiceBoundsTest
                 waitUntil(() -> !oldProjectionThread.get().isAlive());
                 assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
                     "the retired projection must not publish into the restarted event hub");
-                assertSame(encodedCurrent, service.encodedSnapshot(),
+                assertSame(encodedCurrent, service.snapshotWire().frame().bytes(false),
                     "retired work must not invalidate or replace the current encoded snapshot");
             }
 
@@ -1125,8 +1130,8 @@ class StatsLiveServiceBoundsTest
             assertEquals(2L * StatsLiveService.MAXIMUM_ROWS_PER_TABLE, snapshot.get("rows_omitted"));
             assertEquals(true, snapshot.get("truncated"));
 
-            byte[] first = service.encodedSnapshot();
-            byte[] second = service.encodedSnapshot();
+            byte[] first = service.snapshotWire().frame().bytes(false);
+            byte[] second = service.snapshotWire().frame().bytes(false);
             assertTrue(first.length <= StatsLiveService.MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
             assertSame(first, second, "unchanged subscribers should share one encoded snapshot");
         }
