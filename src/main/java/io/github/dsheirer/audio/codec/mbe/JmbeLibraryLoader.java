@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -241,13 +242,14 @@ public final class JmbeLibraryLoader implements AutoCloseable
         private static LibraryFingerprint from(Path path) throws IOException
         {
             Path normalized = path.toAbsolutePath().normalize();
+            BasicFileAttributes attributes = Files.readAttributes(normalized, BasicFileAttributes.class);
 
-            if(!Files.isRegularFile(normalized))
+            if(!attributes.isRegularFile())
             {
                 throw new IOException("JMBE library does not exist: " + normalized);
             }
 
-            return new LibraryFingerprint(normalized, Files.size(normalized), Files.getLastModifiedTime(normalized));
+            return new LibraryFingerprint(normalized, attributes.size(), attributes.lastModifiedTime());
         }
     }
 }
