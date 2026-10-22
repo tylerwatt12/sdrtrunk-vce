@@ -23,6 +23,8 @@ import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
@@ -1684,21 +1686,34 @@ class ReceiverActivityMapper
             return new IdentifierFacts(Form.RADIO.name().equals(sourceForm) ? value(source) : null, sourceForm,
                 targetValue(target), form(target), patchMemberTalkgroups(target),
                 ReceiverActivityMapper.p25PatchMemberIdentities(target),
-                longValue(first(identifiers, Form.CHANNEL_FREQUENCY)),
-                value(first(identifiers, Form.CHANNEL_DESCRIPTOR)), value(first(identifiers, Form.CHANNEL_NAME)),
+                longValue(configuration(identifiers, Form.CHANNEL_FREQUENCY)),
+                value(configuration(identifiers, Form.CHANNEL_DESCRIPTOR)), value(first(identifiers, Form.CHANNEL_NAME)),
                 encryptionIdentifier != null && encryptionIdentifier.isEncrypted(),
                 encryptionKey != null && encryptionKey.isEncrypted() ? encryptionKey.getAlgorithm() : null,
                 encryptionKey != null && encryptionKey.isEncrypted() ? encryptionKey.getKey() : null,
-                intValue(first(identifiers, Form.WACN)), intValue(first(identifiers, Form.SYSTEM)),
-                intValue(first(identifiers, Form.NETWORK_ACCESS_CODE)),
-                intValue(first(identifiers, Form.RF_SUBSYSTEM)), intValue(first(identifiers, Form.SITE)),
-                value(first(identifiers, Form.UNIQUE_ID)), value(first(identifiers, Form.DECODER_TYPE)),
+                intValue(network(identifiers, Form.WACN)), intValue(network(identifiers, Form.SYSTEM)),
+                intValue(network(identifiers, Form.NETWORK_ACCESS_CODE)),
+                intValue(network(identifiers, Form.RF_SUBSYSTEM)), intValue(network(identifiers, Form.SITE)),
+                value(configuration(identifiers, Form.UNIQUE_ID)), value(configuration(identifiers, Form.DECODER_TYPE)),
                 TalkerAliasIdentifier.valueFor(identifiers), timeslot);
         }
 
         boolean hasTrunkedSiteIdentity()
         {
             return wacn != null || systemId != null || rfss != null || site != null;
+        }
+
+        private static Identifier network(IdentifierCollection identifiers, Form form)
+        {
+            //Configured system/site names can be numeric; only broadcast network identifiers are observed IDs.
+            return identifiers != null ?
+                identifiers.getIdentifier(IdentifierClass.NETWORK, form, Role.BROADCAST) : null;
+        }
+
+        private static Identifier configuration(IdentifierCollection identifiers, Form form)
+        {
+            return identifiers != null ?
+                identifiers.getIdentifier(IdentifierClass.CONFIGURATION, form, Role.ANY) : null;
         }
 
         private static Identifier first(IdentifierCollection identifiers, Form form)

@@ -27,6 +27,14 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.string.SimpleStringIdentifier;
+import io.github.dsheirer.identifier.configuration.ConfigurationStringIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
+import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
@@ -53,6 +61,11 @@ import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
 import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Rfss;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Site;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -208,6 +221,73 @@ class ReceiverActivityMapperTest
             1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, state, true, null,
             VoiceCallQuality.EMPTY, CallLegId.from(id), source, null);
         return new CompletedAudioCall(snapshot, List.of());
+    }
+
+    @Test
+    void activityNetworkIdentityIgnoresNumericConfiguredNamesBeforeBroadcastIdentifiers()
+    {
+        var identifiers = new IdentifierCollection(List.of(
+            SystemConfigurationIdentifier.create("999999999"), SiteConfigurationIdentifier.create("856162500"),
+            new ConfigurationStringIdentifier("773831250", Form.WACN),
+            new ConfigurationStringIdentifier("773831250", Form.NETWORK_ACCESS_CODE),
+            new ConfigurationStringIdentifier("773831250", Form.RF_SUBSYSTEM),
+            new SimpleStringIdentifier("4095", IdentifierClass.NETWORK, Form.SITE, Role.FROM),
+            APCO25Wacn.create(0xBEE00), APCO25System.create(0x348), APCO25Nac.create(0x293),
+            APCO25Rfss.create(2), APCO25Site.create(1), APCO25RadioIdentifier.createFrom(101),
+            APCO25Talkgroup.create(91)));
+
+        var mapped = mapP25Activity(identifiers);
+        assertEquals(0xBEE00, mapped.wacn());
+        assertEquals(0x348, mapped.systemId());
+        assertEquals(0x293, mapped.nac());
+        assertEquals(2, mapped.rfss());
+        assertEquals(1, mapped.site());
+        assertEquals("101", mapped.sourceRadioId());
+        assertEquals("91", mapped.targetId());
+    }
+
+    @Test
+    void activityNetworkIdentityStaysUnknownWithoutBroadcastIdentifiers()
+    {
+        var identifiers = new IdentifierCollection(List.of(
+            SystemConfigurationIdentifier.create("999999999"), SiteConfigurationIdentifier.create("773831250"),
+            new ConfigurationStringIdentifier("856162500", Form.WACN),
+            new ConfigurationStringIdentifier("856162500", Form.NETWORK_ACCESS_CODE),
+            new ConfigurationStringIdentifier("856162500", Form.RF_SUBSYSTEM),
+            new SimpleStringIdentifier("1", IdentifierClass.NETWORK, Form.SITE, Role.FROM),
+            new SimpleStringIdentifier("2", IdentifierClass.USER, Form.RF_SUBSYSTEM, Role.BROADCAST),
+            APCO25RadioIdentifier.createFrom(101), APCO25Talkgroup.create(91)));
+
+        var mapped = mapP25Activity(identifiers);
+        assertNull(mapped.wacn());
+        assertNull(mapped.systemId());
+        assertNull(mapped.nac());
+        assertNull(mapped.rfss());
+        assertNull(mapped.site());
+        assertEquals("101", mapped.sourceRadioId());
+    }
+
+    @Test
+    void activityKeepsDecoderLogicalChannelNamesAndConfiguredFrequency()
+    {
+        var mapped = mapP25Activity(new IdentifierCollection(List.of(
+            DecoderLogicalChannelNameIdentifier.create("LCN 7", Protocol.APCO25),
+            FrequencyConfigurationIdentifier.create(851_012_500L), APCO25Talkgroup.create(91))));
+        assertEquals("LCN 7", mapped.lcn());
+        assertEquals(851_012_500L, mapped.frequencyHertz());
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent mapP25Activity(IdentifierCollection identifiers)
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        DecodeEvent event = new DecodeEvent(DecodeEventType.CALL_GROUP, 1_000L);
+        event.setProtocol(Protocol.APCO25);
+        event.setIdentifierCollection(identifiers);
+        var mapped = new ReceiverActivityMapper().map(channel, event);
+        assertNotNull(mapped);
+        return mapped;
     }
 
     @Test
