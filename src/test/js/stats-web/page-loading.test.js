@@ -121,3 +121,24 @@ test('auth, preferences, status and first-page data share one initial ten-second
   const retryTimer = [...timers.values()][0]; assert.equal(retryTimer.delay, 10_000); retryTimer.callback();
   await assert.rejects(retry, error => error.code === 'request_timeout');
 });
+
+
+test('JSON metadata is available before the body without changing its returned data', async () => {
+  let observed = 0;
+  const headers = new Headers({ 'Content-Type': 'application/json', Date: 'Thu, 22 Oct 2026 12:00:00 GMT' });
+  const { value, timers } = context(async () => ({ ok: true, status: 200, headers,
+    json: async () => {
+      assert.equal(observed, 1, 'Metadata must be captured before reading a delayed body.');
+      return { data: { available: true } };
+    }
+  }));
+  const result = await value.requestJson('/api/v1/receiver-health', {
+    onResponse(response) {
+      observed++;
+      assert.equal(response.headers.get('Date'), 'Thu, 22 Oct 2026 12:00:00 GMT');
+    }
+  });
+  assert.equal(observed, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { available: true });
+  assert.equal(timers.size, 0);
+});

@@ -385,7 +385,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       retained_observation_count: 900, identified_observation_count: 800,
       unknown_source_observation_count: 100 });
     }
-    if (p === '/api/v1/receiver-health') return respond(health);
+    if (p === '/api/v1/receiver-health') return route.fulfill({
+      headers: { Date: new Date(health.generated_at_ms).toUTCString() }, json: { data: health } });
     if (p === '/api/v1/remote-support') return respond({ enabled: false, connected: false, code: '',
       expires_at_ms: 0, unlimited: false, can_start: true });
     if (p === '/api/v1/dashboard') return respond(dashboard);

@@ -23,7 +23,7 @@ import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
   isReceiverHealthAlertEnabled
-} from './core/receiver-health-alerts.js?v=3';
+} from './core/receiver-health-alerts.js?v=4';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
@@ -8814,8 +8814,9 @@ function signalChannelState(channel, now = Date.now()) {
     return { label: 'Offline', className: 'offline', rank: 0 };
   }
   const decode = optionalNumber(channel.decode_health_pct);
-  if (channel?.remote_origin?.remote !== true && !Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
-    return { label: 'No signal', className: 'poor', rank: 1 };
+  if (!Number.isFinite(decode) && channel?.remote_origin?.remote !== true &&
+    !Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
+    return { label: 'Unknown', className: 'unknown', rank: 2 };
   }
   if (!Number.isFinite(decode)) return { label: 'Monitoring', className: 'unknown', rank: 2 };
   if (decode >= DECODE_HEALTHY_MINIMUM_PERCENT) {
@@ -9259,6 +9260,7 @@ async function requestJson(path, options = {}) {
     body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
     keepalive: options.keepalive === true
   }, async (response, signal) => {
+    options.onResponse?.(response);
     let result = null;
     reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'));
     const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
@@ -9518,14 +9520,25 @@ class ReceiverHealthController {
     if (!this.desktopEnabled() || document.hidden || this.requestController) return;
     const controller = new AbortController();
     this.requestController = controller;
+    let serverTime = NaN;
+    let receivedAt = 0;
     try {
       const response = await api('/api/v1/receiver-health', {}, {
-        page: false, signal: controller.signal, timeoutMs: 10_000
+        page: false, signal: controller.signal, timeoutMs: 10_000,
+        onResponse: (response) => {
+          serverTime = Date.parse(response.headers.get('Date'));
+          receivedAt = performance.now();
+        }
       });
       if (this.requestController !== controller || !this.desktopEnabled()) return;
+      // HTTP Date has whole-second precision; a later timestamp cannot establish a current sample.
+      if (!Number.isFinite(serverTime) || Number(response?.generated_at_ms) > serverTime + 1000) {
+        throw new Error('Receiver status time is unavailable.');
+      }
       this.snapshot = normalizeReceiverHealthSnapshot(response);
-      this.stale = this.snapshot.generated_at_ms <= 0 ||
-        Date.now() - this.snapshot.generated_at_ms > RECEIVER_HEALTH_STALE_MILLISECONDS;
+      const age = Math.max(0, serverTime - this.snapshot.generated_at_ms) +
+        Math.max(0, performance.now() - receivedAt);
+      this.stale = this.snapshot.generated_at_ms <= 0 || age > RECEIVER_HEALTH_STALE_MILLISECONDS;
       this.lastError = this.stale ? 'Receiver status has not updated recently.' : '';
     } catch (error) {
       if (controller.signal.aborted || this.requestController !== controller) return;

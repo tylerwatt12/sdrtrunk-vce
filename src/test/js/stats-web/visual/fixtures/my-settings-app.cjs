@@ -28,7 +28,7 @@ async function openSettingsApp(page, options = {}) {
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
-    const data = (value) => route.fulfill({ json: { data: value } });
+    const data = (value) => route.fulfill({ headers: { Date: new Date().toUTCString() }, json: { data: value } });
     if (pathname === '/api/v1/auth/session') return data(state.session);
     if (pathname === '/api/v1/auth/logout') {
       state.session = session(null);

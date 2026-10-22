@@ -133,9 +133,19 @@ assert.equal(behavior.signalChannelState({ ...remoteQuality, decode_health_pct: 
 assert.equal(behavior.signalChannelState({ ...remoteQuality, decode_health_pct: null }, qualityNow).label, 'Monitoring');
 assert.equal(behavior.signalChannelState({ ...remoteQuality, last_observed_ms: qualityNow - 45_001 }, qualityNow).label, 'Offline');
 assert.equal(behavior.signalChannelState({ ...remoteQuality, last_observed_ms: null }, qualityNow).label, 'Offline');
-assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null }, qualityNow).label, 'No signal');
-assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: { remote: false } }, qualityNow).label, 'No signal');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null }, qualityNow).label, 'Healthy');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: { remote: false } }, qualityNow).label, 'Healthy');
 assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null, average_signal_dbfs: -65 }, qualityNow).label, 'Healthy');
+const localUnknown = behavior.signalChannelState({ ...remoteQuality, remote_origin: null,
+  decode_health_pct: null }, qualityNow);
+assert.equal(localUnknown.label, 'Unknown');
+assert.equal(localUnknown.className, 'unknown', 'Missing measurements must stay neutral, not claim failed reception.');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null,
+  decode_health_pct: 0 }, qualityNow).label, 'Poor', 'Measured poor decoding is still a real quality warning.');
+assert.equal(behavior.signalChannelState({ ...remoteQuality, remote_origin: null,
+  last_observed_ms: qualityNow - 45_001 }, qualityNow).label, 'Offline',
+  'A healthy percentage must not make an old observation current.');
+
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'remote-site', remote_origin: { remote: true } }), false);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'conventional', remote_origin: { remote: true } }), true);
 assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'local-site' }), true);

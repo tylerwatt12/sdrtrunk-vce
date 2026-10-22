@@ -68,6 +68,18 @@ function checkMainDirectoryQuality(source, functionBinding) {
   assert.match(result.querySelector('.radio-directory-frequency').textContent, /851\.01250 MHz/);
   assert.match(result.textContent, /-48\.2 dBFS.*30s avg -49\.1.*99\.3%.*Healthy/);
   assert.equal(result.querySelector('meter').attributes.value, '99.3');
+  result = render(row, { ...quality, signal_dbfs: null, average_signal_dbfs: null });
+  assert.match(result.textContent, /Signal—No samples.*99\.3%Healthy/,
+    'Measured decoding proves reception even when no signal-strength reading is available.');
+  assert.doesNotMatch(result.textContent, /No signal/);
+  assert.equal(result.querySelector('meter').hidden, false);
+  result = render(row, { ...quality, signal_dbfs: null, average_signal_dbfs: null, decode_health_pct: null });
+  assert.match(result.textContent, /Unknown/);
+  assert.equal(result.querySelector('.radio-directory-quality-state').className, 'ui-pill-neutral radio-directory-quality-state');
+  assert.equal(result.querySelector('meter').hidden, true);
+  assert.doesNotMatch(result.textContent, /No signal|Healthy/);
+  result = render();
+
   assert.equal(result.querySelector('a').target, `channel:${JSON.stringify({ configuration_id: id })}`);
   for (const sourceKind of ['configured', 'quality', null]) {
     result = render({ ...row, display_frequency_source: sourceKind });

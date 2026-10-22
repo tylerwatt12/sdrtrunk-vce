@@ -62,6 +62,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
   ] }], ...options.p25Document };
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
+  if (options.disabledHealthCodes) preferences.health_alerts.disabled_codes = [...options.disabledHealthCodes];
   const capabilities = Object.fromEntries(accessPolicies.map(({ id }) => [id, !denied.includes(id)]));
   const writes = [];
   const requests = [];
@@ -174,9 +175,11 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         await route.fulfill({ status: 503, json: { error: { message: 'Status temporarily unavailable.' } } });
         return;
       }
-      await data({ started_at_ms: Date.now() - 60_000, generated_at_ms: Date.now(),
+      await route.fulfill({ headers: options.omitHealthDate ? {} : {
+        Date: options.healthDate || new Date().toUTCString()
+      }, json: { data: { started_at_ms: Date.now() - 60_000, generated_at_ms: Date.now(),
         summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
-        active: [], resolved: [], measurements: [], ...options.healthDocument });
+        active: [], resolved: [], measurements: [], ...options.healthDocument } } });
     } else {
       await route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
     }
@@ -576,6 +579,7 @@ test('receiver status can retry a failed load and marks the retained snapshot as
   await openAdmin(page, 'health', [], options);
   await expect(page.locator('#receiver-health-panel-overview')).toContainText(
     'Receiver status is unavailable right now. Select Refresh to try again.');
+  await expect(page.locator('#receiver-health-indicator')).toHaveClass(/receiver-health-stale/);
   await expect(page.locator('.receiver-health-summary')).toHaveCount(0);
   options.healthError = false;
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
@@ -595,18 +599,38 @@ test('receiver status can retry a failed load and marks the retained snapshot as
   await expect(page.locator('.receiver-health-summary')).toContainText('Receiver operating normally');
 });
 
-test('receiver status retains the complete personal status icon issue picker', async ({ page }) => {
-  expect(healthAlertIds).toHaveLength(27);
-  await openAdmin(page, 'health');
-  await page.locator('#receiver-health-alert-settings').click();
-  const dialog = page.getByRole('dialog', { name: 'Status icon issues' });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator('input[type="checkbox"]')).toHaveCount(27);
-  await expect(dialog.getByRole('button', { name: 'Save choices', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(dialog).toBeHidden();
-  await expect(page.locator('#receiver-health-alert-settings')).toBeFocused();
-});
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`receiver status retains the focused personal status icon issue picker in ${theme}`, async ({ page }, testInfo) => {
+    expect(healthAlertIds).toHaveLength(8);
+    await page.setViewportSize(viewport);
+    const hidden = theme === 'dark';
+    await openAdmin(page, 'health', [], { theme, disabledHealthCodes: hidden ? healthAlertIds : [],
+      healthDocument: {
+        summary: { severity: 'critical', active_count: 1, warning_count: 0, critical_count: 1 },
+        active: [{ code: 'receiver-iq-drop', severity: 'critical', title: 'Radio data keeps being lost',
+          scope: 'Main tuner', opened_at_ms: Date.now() - 10_000, last_seen_ms: Date.now() }]
+      }
+    });
+    const indicator = page.locator('#receiver-health-indicator');
+    await expect(indicator).toHaveClass(hidden ? /receiver-health-neutral/ : /receiver-health-critical/);
+    await expect(indicator).not.toHaveClass(/receiver-health-healthy/);
+    await expect(page.locator('.receiver-health-current-issues')).toContainText('Radio data keeps being lost');
+    await page.locator('#receiver-health-alert-settings').click();
+    const dialog = page.getByRole('dialog', { name: 'Status icon issues' });
+    await expect(dialog).toBeVisible();
+    const choices = dialog.locator('input[type="checkbox"]');
+    await expect(choices).toHaveCount(8);
+    expect(await choices.evaluateAll(inputs => inputs.map(input => input.dataset.alertCode))).toEqual(healthAlertIds);
+    for (const choice of await choices.all()) await expect(choice).toBeChecked({ checked: !hidden });
+    await expect(dialog).not.toContainText(/ingress|channelizer|frames|transfers|chunks/i);
+    await expect(dialog.getByRole('button', { name: 'Save choices', exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`health-picker-${theme}.png`) });
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#receiver-health-alert-settings')).toBeFocused();
+  });
+}
 
 test('receiver status preserves issue evidence, cleared history paging, and detailed measurements', async ({ page }) => {
   const incident = { code: 'receiver-iq-drop', severity: 'warning', title: 'Radio data was lost',
@@ -1070,5 +1094,38 @@ for (const [theme, viewport, size] of [
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
     await expect(page.getByRole('button', { name: 'Edit P25 override BEE00-49F', exact: true })).toBeFocused();
+  });
+}
+
+
+for (const clientOffset of [-300_000, 300_000]) {
+  test(`receiver status uses server time with client clock offset ${clientOffset}`, async ({ page }) => {
+    const serverTime = Date.now();
+    await page.clock.install({ time: serverTime + clientOffset });
+    const options = { healthDate: new Date(serverTime).toUTCString(),
+      healthDocument: { generated_at_ms: serverTime } };
+    await openAdmin(page, 'health', [], options);
+    const indicator = page.locator('#receiver-health-indicator');
+    await expect(indicator).toHaveClass(/receiver-health-healthy/);
+    const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
+    options.healthDate = new Date(serverTime + 30_000).toUTCString();
+    await refresh.click();
+    await expect(indicator).toHaveClass(/receiver-health-stale/);
+    await expect(page.locator('.receiver-health-summary')).toContainText('Receiver status out of date');
+    options.healthDocument.generated_at_ms = serverTime + 30_000;
+    await refresh.click();
+    await expect(indicator).toHaveClass(/receiver-health-healthy/);
+    const headerTime = Date.parse(options.healthDate);
+    options.healthDocument.generated_at_ms = headerTime + 1001;
+    await refresh.click();
+    await expect(indicator).toHaveClass(/receiver-health-stale/);
+    await expect(page.locator('.receiver-health-summary')).toContainText('Receiver status is unavailable right now.');
+    options.healthDocument.generated_at_ms = headerTime + 1000;
+    await refresh.click();
+    await expect(indicator).toHaveClass(/receiver-health-healthy/);
+    options.omitHealthDate = true;
+    await refresh.click();
+    await expect(indicator).toHaveClass(/receiver-health-stale/);
+    await expect(page.locator('.receiver-health-summary')).toContainText('Receiver status is unavailable right now.');
   });
 }

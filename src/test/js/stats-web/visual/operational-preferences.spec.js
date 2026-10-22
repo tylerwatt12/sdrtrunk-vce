@@ -121,7 +121,8 @@ async function openCurrentStatus(page, tab = 'health') {
       } } });
     } else if (pathname === '/api/v1/receiver-health') {
       requests.health += 1;
-      await route.fulfill({ json: { data: { started_at_ms: Date.now() - 60_000,
+      await route.fulfill({ headers: { Date: new Date().toUTCString() },
+        json: { data: { started_at_ms: Date.now() - 60_000,
         generated_at_ms: Date.now(), summary: { severity: 'healthy', active_count: 0,
           warning_count: 0, critical_count: 0 }, active: [], resolved: [], measurements: [] } } });
     } else {

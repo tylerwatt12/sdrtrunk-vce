@@ -28,12 +28,13 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       qualityRow(id(2), 'Remote degraded', { decode_health_pct: 75 }),
       qualityRow(id(3), 'Remote poor', { decode_health_pct: 74.9 }),
       qualityRow(id(4), 'Remote monitoring', { decode_health_pct: null }),
-      qualityRow(id(5), 'Local no RF', { remote_origin: null }),
+      qualityRow(id(5), 'Local signal reading unavailable', { remote_origin: null }),
       qualityRow(id(6), 'Remote stale', { last_observed_ms: sampleTime - 45_001 }),
       qualityRow(id(7), 'Remote no samples', { last_observed_ms: null }),
       qualityRow(id(8), 'Local control', { remote_origin: null, signal_dbfs: -51,
         average_signal_dbfs: -52 }),
-      qualityRow(id(9), 'Stopped control', { processing_state: 'STOPPED' })];
+      qualityRow(id(9), 'Stopped control', { processing_state: 'STOPPED' }),
+      qualityRow(id(11), 'Local quality unknown', { remote_origin: null, decode_health_pct: null })];
     const directory = directoryFor(rows);
     directory.channels.push({ configuration_id: id(10), name: 'Fire Dispatch',
       system_name: 'Local channels', protocol: 'NBFM', frequencies_hz: [154_430_000], processing_state: 'STOPPED' });
@@ -42,7 +43,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
     } } }));
     await page.goto('/app.html?view=dashboard');
     await expect(page.locator('.radio-directory-system-card')).toHaveCount(1);
-    await expect(page.locator('.radio-directory-site-row')).toHaveCount(8);
+    await expect(page.locator('.radio-directory-site-row')).toHaveCount(9);
     await expect(page.getByText('Trunked site signal quality', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Export signal health as CSV', exact: true })).toBeVisible();
     const remote = site(page, channelId);
@@ -67,7 +68,11 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
     await expect(site(page, id(6)).locator('.radio-directory-quality-state')).toHaveText('Out of date');
     await expect(site(page, id(6)).locator('meter')).toBeHidden();
     await expect(site(page, id(7)).locator('.radio-directory-quality-state')).toHaveText('No samples');
-    await expect(site(page, id(5)).locator('.radio-directory-quality-state')).toHaveText('No signal');
+    await expect(site(page, id(5)).locator('.radio-directory-quality-state')).toHaveText('Healthy');
+    await expect(site(page, id(5)).getByRole('group', { name: 'Signal', exact: true })).toContainText('—No samples');
+    await expect(site(page, id(11)).locator('.radio-directory-quality-state')).toHaveText('Unknown');
+    await expect(site(page, id(11)).locator('.radio-directory-quality-state')).toHaveClass(/ui-pill-neutral/);
+    await expect(site(page, id(11)).locator('meter')).toBeHidden();
     const local = site(page, id(8));
     await expect(local.getByRole('group', { name: 'Signal', exact: true })).toContainText('-51.0 dBFS');
     await expect(local).toContainText('30s avg -52.0');
