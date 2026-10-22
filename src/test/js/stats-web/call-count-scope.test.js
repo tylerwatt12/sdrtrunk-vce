@@ -288,6 +288,7 @@ async function checkSelectedHistory() {
     signalingMetrics: () => node('signals'),
     signalingCounts: () => [],
     activityMetricGuide: () => node('help'),
+    disconnectPageObserversWithin() {},
     renderIsCurrent: () => false,
     rethrowPageHandlingError(error) { throw error; }
   });

@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
 const applicationPath = process.argv[2];
@@ -36,7 +37,7 @@ function functionSource(signature) {
   throw new Error(`Unterminated ${signature}`);
 }
 
-const context = {};
+const context = { CSS: { escape: (value) => value }, HTMLSelectElement: class {}, Event: class {} };
 const squelchTunerSource = functionSource('function channelSquelchTuner(');
 vm.createContext(context);
 vm.runInContext(`
@@ -44,11 +45,25 @@ vm.runInContext(`
   ${functionSource('function channelDefaultAliasListName(aliasFamily)')}
   ${functionSource('function channelCreationDefaults(channel, profile, options)')}
   ${functionSource('function channelCreationPrefill(channel, profile, initialChannel)')}
+  ${functionSource('function channelValueAt(value, path)')}
+  ${functionSource('function channelFieldOptions(field, profile, options)')}
+  ${functionSource('function channelEditorControl(field, profile, options, channel, protocolCatalog)')}
   ${functionSource('function spectrumDiscoveryManualChannel(selection, probe = {})')}
   ${functionSource('function setUiToggle(input, checked)')}
   const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
   ${functionSource('function channelEncryptedCallSkipLocked(field, protocolCatalog)')}
+  ${functionSource('function channelParseFrequency(value, label, nullable = false)')}
   ${functionSource('function channelEditorFieldValue(control, field)')}
+  ${functionSource('function channelEditorConditionMatches(form, path, expected)')}
+  ${functionSource('function channelEditorFieldActive(form, field)')}
+  ${functionSource('function channelEditorConventional(form, profile = null)')}
+  ${functionSource('function channelEditorFieldLabel(field, conventional)')}
+  ${functionSource('function channelEditorSetVisible(wrapper, visible)')}
+  ${functionSource('function channelEditorVisibility(form)')}
+  ${functionSource('function channelEditorDependencies(form)')}
+  ${functionSource('function channelRestoreProtocolDefaults(form, profile)')}
+  ${functionSource('function spectrumDiscoverySettingFields(profile)')}
+  ${functionSource('function spectrumDiscoverySettings(form, profile)')}
   ${functionSource('function channelIsRemote(channel)')}
   ${functionSource('function channelEnrichmentSupported(channel, profile)')}
   ${functionSource('function channelEnrichmentAvailability(channel, profile, account)')}
@@ -405,6 +420,7 @@ context.remoteForm = {
     if (path === 'settings.traffic_channel_pool_size') return { value: '12' };
     if (path === 'settings.use_bandplan_override') return { checked: true, dataset: {} };
     if (path === 'event_logs') return { querySelectorAll: () => [{ value: 'CALL_EVENT' }] };
+    if (path === 'settings.channel_mode') return null;
     throw new Error(`Unexpected remote field ${path}`);
   }
 };
@@ -473,3 +489,197 @@ assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(channelEnrichmentCha
   [{ field: 'system', before: 'Unknown', after: 'County Radio' },
     { field: 'name', before: 'My control', after: 'County Radio · North' }],
   'Review all changed names while excluding source, RadioResolve, and other fields');
+
+const protocolCatalog = JSON.parse(fs.readFileSync(path.resolve(path.dirname(applicationPath),
+  '../../src/main/resources/channel-protocols.json'), 'utf8'));
+
+const selectCalls = [];
+context.uiSelect = (entries, selected, allowEmpty) => {
+  selectCalls.push({ entries, selected, allowEmpty });
+  return { dataset: {}, required: false };
+};
+for (const profile of protocolCatalog.profiles) {
+  for (const field of profile.sections.flatMap((section) => section.fields).filter((entry) =>
+    entry.type === 'enum' || entry.type === 'number' && Array.isArray(entry.options))) {
+    context.catalogField = field;
+    context.catalogProfile = profile;
+    vm.runInContext('channelEditorControl(catalogField, catalogProfile, {}, {}, {})', context);
+    assert.equal(selectCalls.at(-1).allowEmpty, field.nullable === true,
+      `${profile.id} ${field.path}: a nonnullable choice must not offer an unsupported blank value`);
+  }
+}
+
+// Supply form controls for the real catalog; browser contracts cover their native validation and labels.
+function protocolForm(profile, mode = profile.channel_kind) {
+  const fields = profile.sections.flatMap((section) => section.fields);
+  const controls = new Map();
+  const conditional = [];
+  const traffic = [];
+  const labels = [];
+  const input = (value = '') => ({ value: String(value), checked: false, disabled: false, dataset: {},
+    attributes: {}, setAttribute(name, entry) { this.attributes[name] = entry; }, dispatchEvent() {} });
+  fields.filter((field) => field.type !== 'read_only').forEach((field) => {
+    const control = input(field.default ?? (field.path === 'alias_list_id' ? 1 : ''));
+    control.dataset.channelType = field.type;
+    control.checked = Boolean(field.default);
+    let children = [control];
+    if (field.type === 'frequency_list') {
+      children = [input('451.0125')];
+      control.querySelectorAll = () => children;
+    } else if (field.type === 'frequency_map') {
+      children = [input(''), input('')];
+      control.rows = [];
+      control.querySelectorAll = () => control.rows;
+    } else if (field.type === 'multi_select') {
+      children = (field.options || (profile[field.path] || []).map((value) => ({ value })))
+        .map((entry) => ({ ...input(entry.value), checked: true }));
+      control.querySelectorAll = () => children.filter((entry) => entry.checked);
+      if (['event_logs', 'recorders'].includes(field.path)) children.filter((entry) =>
+        entry.value.startsWith('TRAFFIC_')).forEach((entry) => traffic.push({
+          hidden: false, dataset: { channelTrafficOption: '' }, querySelectorAll: () => [entry]
+        }));
+    }
+    control.children = children;
+    controls.set(field.path, control);
+    if (field.visible_when) conditional.push({ hidden: false, dataset: {
+      visiblePath: field.visible_when.path, visibleEquals: JSON.stringify(field.visible_when.equals)
+    }, querySelectorAll: () => children });
+    if (field.conventional_label) {
+      const label = { textContent: field.label };
+      labels.push({ dataset: { channelDefaultLabel: field.label,
+        channelConventionalLabel: field.conventional_label }, label,
+      querySelector: () => label,
+      querySelectorAll: () => field.type === 'frequency_list' ? children : [] });
+    }
+  });
+  if (controls.has('settings.channel_mode')) controls.get('settings.channel_mode').value = mode;
+  return { dataset: { channelKind: profile.channel_kind }, controls, conditional, traffic, labels,
+    querySelector(selector) {
+      const fieldPath = selector.match(/data-channel-path="([^"]+)"/)?.[1];
+      return controls.get(fieldPath) || null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-visible-path]' ? conditional :
+        selector === '[data-channel-traffic-option]' ? traffic : labels;
+    }
+  };
+}
+
+const editorPayload = (form, profile) => {
+  context.catalogForm = form;
+  context.catalogProfile = profile;
+  return JSON.parse(vm.runInContext('JSON.stringify(channelEditorPayload(catalogForm, catalogProfile))', context));
+};
+const refreshVisibility = (form) => {
+  context.catalogForm = form;
+  vm.runInContext('channelEditorVisibility(catalogForm)', context);
+};
+
+for (const profile of protocolCatalog.profiles) {
+  const modes = profile.channel_kind === 'DYNAMIC' ? ['CONVENTIONAL', 'TRUNKED'] : [profile.channel_kind];
+  for (const mode of modes) {
+    const form = protocolForm(profile, mode);
+    refreshVisibility(form);
+    const payload = editorPayload(form, profile);
+    assert.equal(payload.protocol_id, profile.id);
+    for (const field of profile.sections.flatMap((section) => section.fields)
+      .filter((entry) => entry.visible_when?.path === 'settings.channel_mode')) {
+      const wrapper = form.conditional.find((entry) => entry.dataset.visiblePath === 'settings.channel_mode' &&
+        entry.querySelectorAll().includes(form.controls.get(field.path)));
+      if (field.path.startsWith('settings.')) {
+        assert.equal(Object.hasOwn(payload.settings, field.path.substring(9)), mode === 'TRUNKED',
+          `${profile.id} ${mode}: ${field.path} must follow channel mode`);
+        assert.equal(wrapper.hidden, mode === 'CONVENTIONAL');
+      }
+    }
+    for (const output of ['event_logs', 'recorders']) {
+      assert.deepEqual(payload[output], (profile[output] || []).filter((entry) =>
+        mode !== 'CONVENTIONAL' || !entry.startsWith('TRAFFIC_')),
+      `${profile.id} ${mode}: primary output choices must remain available`);
+    }
+    assert.equal(form.traffic.every((entry) => entry.hidden), mode === 'CONVENTIONAL' || !form.traffic.length);
+    if (profile.id !== 'p25-phase2') assert.equal(Object.hasOwn(payload.settings, 'scramble_nac'), false,
+      `${profile.id} must never submit a P25 scramble NAC`);
+    if (profile.channel_kind === 'DYNAMIC') {
+      assert.deepEqual(form.labels.map((entry) => entry.label.textContent), mode === 'CONVENTIONAL' ?
+        ['Frequencies', 'Preferred frequency'] : ['Control frequencies', 'Preferred control frequency']);
+      assert.equal(form.controls.get('source.frequencies_hz').children[0].attributes['aria-label'],
+        mode === 'CONVENTIONAL' ? 'Frequencies in MHz' : 'Control frequencies in MHz');
+    }
+  }
+}
+
+for (const protocolId of ['dmr', 'nxdn']) {
+  const profile = protocolCatalog.profiles.find((entry) => entry.id === protocolId);
+  const form = protocolForm(profile, 'TRUNKED');
+  const pool = form.controls.get('settings.traffic_channel_pool_size');
+  pool.value = 'invalid draft';
+  const encryptedSkip = form.controls.get('settings.ignore_encrypted_calls');
+  encryptedSkip.disabled = true;
+  encryptedSkip.dataset.channelPreservedValue = 'true';
+  const map = form.controls.get('frequency_map');
+  map.rows = [{ querySelectorAll: () => map.children }];
+  form.controls.get('settings.channel_mode').value = 'CONVENTIONAL';
+  refreshVisibility(form);
+  const conventionalPayload = editorPayload(form, profile);
+  assert.equal(Object.hasOwn(conventionalPayload.settings, 'traffic_channel_pool_size'), false);
+  assert.deepEqual(conventionalPayload.frequency_map, [], 'An incomplete hidden map must not be parsed');
+  assert.equal(pool.disabled, true, 'Hidden invalid controls must be excluded from native validation');
+  assert.ok(form.traffic.every((entry) => entry.querySelectorAll()[0].disabled));
+  assert.ok(form.traffic.every((entry) => entry.querySelectorAll()[0].checked),
+    'Changing mode must retain the unsaved traffic selections');
+  form.controls.get('settings.channel_mode').value = 'TRUNKED';
+  refreshVisibility(form);
+  assert.equal(pool.disabled, false);
+  assert.equal(pool.value, 'invalid draft', 'Showing a field must restore its unsaved draft');
+  assert.equal(encryptedSkip.disabled, true, 'The voice-module lock must survive mode changes');
+  assert.ok(form.traffic.every((entry) => !entry.hidden && !entry.querySelectorAll()[0].disabled &&
+    entry.querySelectorAll()[0].checked));
+  assert.throws(() => editorPayload(form, profile), /Maximum traffic channels must be a whole number/);
+  pool.value = '20';
+  assert.throws(() => editorPayload(form, profile), /needs a valid/,
+    'The incomplete map must still be rejected when trunking makes it applicable');
+  map.rows = [];
+  assert.deepEqual(editorPayload(form, profile).recorders, profile.recorders);
+  if (protocolId === 'nxdn') {
+    for (const transmission of ['M4800', 'M9600', 'TYPE_D']) {
+      form.controls.get('settings.channel_mode').value = 'CONVENTIONAL';
+      form.controls.get('settings.transmission_mode').value = transmission;
+      assert.equal(editorPayload(form, profile).settings.transmission_mode, transmission,
+        'Conventional transmission choices remain available, including Type-D direct/talkaround');
+    }
+  } else {
+    form.controls.get('settings.channel_mode').value = 'CONVENTIONAL';
+    pool.value = 'preserved hidden draft';
+    context.catalogForm = form;
+    context.catalogProfile = profile;
+    vm.runInContext('channelRestoreProtocolDefaults(catalogForm, catalogProfile)', context);
+    assert.equal(pool.value, 'preserved hidden draft', 'Restore defaults must skip inactive controls');
+  }
+}
+
+for (const protocolId of ['am', 'nbfm', 'p25-phase2']) {
+  const profile = protocolCatalog.profiles.find((entry) => entry.id === protocolId);
+  const form = protocolForm(profile);
+  const path = protocolId === 'p25-phase2' ? 'settings.scramble_nac' : 'settings.low_pass_cutoff_hz';
+  const dependency = protocolId === 'p25-phase2' ? 'settings.auto_detect_scramble_parameters' :
+    'settings.low_pass_enabled';
+  form.controls.get(path).value = 'invalid hidden draft';
+  form.controls.get(dependency).checked = protocolId === 'p25-phase2';
+  refreshVisibility(form);
+  assert.equal(form.controls.get(path).disabled, true);
+  assert.equal(Object.hasOwn(editorPayload(form, profile).settings, path.substring(9)), false,
+    'Dependency-hidden values must be omitted for server preservation rather than parsed from drafts');
+  if (protocolId !== 'p25-phase2') {
+    context.catalogForm = form;
+    context.catalogProfile = profile;
+    const wizardSettings = JSON.parse(vm.runInContext(
+      'JSON.stringify(spectrumDiscoverySettings(catalogForm, catalogProfile))', context));
+    assert.equal(Object.hasOwn(wizardSettings, 'low_pass_cutoff_hz'), false,
+      'Spectrum audio settings must use the same hidden-field rules');
+  }
+  form.controls.get(dependency).checked = protocolId !== 'p25-phase2';
+  refreshVisibility(form);
+  assert.equal(form.controls.get(path).disabled, false);
+  assert.throws(() => editorPayload(form, profile), /must be a whole number/);
+}

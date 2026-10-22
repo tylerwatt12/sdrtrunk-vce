@@ -14616,7 +14616,8 @@ function spectrumDiscoverySettings(form, profile) {
   const settings = {};
   spectrumDiscoverySettingFields(profile).forEach((field) => {
     const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
-    if (control) settings[field.path.substring(9)] = channelEditorFieldValue(control, field);
+    if (control && channelEditorFieldActive(form, field))
+      settings[field.path.substring(9)] = channelEditorFieldValue(control, field);
   });
   return settings;
 }
@@ -25173,7 +25174,7 @@ function channelEditorControl(field, profile, options, channel, protocolCatalog)
       entries.unshift({ value, label: `Current (unavailable): ${value}` });
     }
     control = uiSelect(entries, value ?? field.default ?? '',
-      field.type === 'number' ? field.nullable === true : field.required !== true);
+      field.type === 'dynamic_select' ? field.required !== true : field.nullable === true);
   } else if (field.type === 'multi_select') {
     const selected = new Set(value || []);
     control = node('fieldset', 'channel-multi-select');
@@ -25183,6 +25184,8 @@ function channelEditorControl(field, profile, options, channel, protocolCatalog)
       const input = toggle.querySelector('input');
       input.value = entry.value;
       const option = node('div', 'channel-output-option ui-toggle-field ui-toggle-field-compact');
+      if (['event_logs', 'recorders'].includes(field.path) && String(entry.value).startsWith('TRAFFIC_'))
+        option.dataset.channelTrafficOption = '';
       option.append(node('span', '', entry.label), toggle);
       control.append(option);
     });
@@ -25308,12 +25311,58 @@ function channelEditorSectionDisclosureLayout(stack, groupName) {
   };
 }
 
+function channelEditorConditionMatches(form, path, expected) {
+  const source = form.querySelector(`[data-channel-path="${CSS.escape(path)}"]`);
+  const actual = source?.dataset.channelType === 'boolean' ? source.checked : source?.value;
+  return actual === expected || String(actual) === String(expected);
+}
+
+function channelEditorFieldActive(form, field) {
+  return !field.visible_when || channelEditorConditionMatches(form,
+    field.visible_when.path, field.visible_when.equals);
+}
+
+function channelEditorConventional(form, profile = null) {
+  const mode = form.querySelector('[data-channel-path="settings.channel_mode"]')?.value;
+  return String(mode || form.dataset?.channelKind || profile?.channel_kind || '').toUpperCase() === 'CONVENTIONAL';
+}
+
+function channelEditorFieldLabel(field, conventional) {
+  return conventional && field.conventional_label ? field.conventional_label : field.label;
+}
+
+function channelEditorSetVisible(wrapper, visible) {
+  wrapper.hidden = !visible;
+  wrapper.querySelectorAll('input, select, textarea, button').forEach((control) => {
+    if (!visible) {
+      if (control.dataset.channelVisibilityDisabled == null)
+        control.dataset.channelVisibilityDisabled = String(control.disabled);
+      control.disabled = true;
+    } else if (control.dataset.channelVisibilityDisabled != null) {
+      control.disabled = control.dataset.channelVisibilityDisabled === 'true';
+      delete control.dataset.channelVisibilityDisabled;
+    }
+  });
+}
+
 function channelEditorVisibility(form) {
   form.querySelectorAll('[data-visible-path]').forEach((wrapper) => {
-    const source = form.querySelector(`[data-channel-path="${CSS.escape(wrapper.dataset.visiblePath)}"]`);
-    const actual = source?.dataset.channelType === 'boolean' ? source.checked : source?.value;
-    const expected = JSON.parse(wrapper.dataset.visibleEquals);
-    wrapper.hidden = actual !== expected && String(actual) !== String(expected);
+    channelEditorSetVisible(wrapper, channelEditorConditionMatches(form,
+      wrapper.dataset.visiblePath, JSON.parse(wrapper.dataset.visibleEquals)));
+  });
+  const conventional = channelEditorConventional(form);
+  const summary = form.querySelector('[data-channel-protocol-summary]');
+  if (summary) {
+    const kind = form.querySelector('[data-channel-path="settings.channel_mode"]')?.value || form.dataset.channelKind;
+    summary.textContent = [summary.dataset.channelProtocolSummary, semanticLabel(kind)].filter(Boolean).join(' · ');
+  }
+  form.querySelectorAll('[data-channel-traffic-option]').forEach((wrapper) =>
+    channelEditorSetVisible(wrapper, !conventional));
+  form.querySelectorAll('[data-channel-conventional-label]').forEach((wrapper) => {
+    const label = conventional ? wrapper.dataset.channelConventionalLabel : wrapper.dataset.channelDefaultLabel;
+    wrapper.querySelector('.ui-field-label').textContent = label;
+    wrapper.querySelectorAll('[data-channel-type="frequency_list"] input[type="number"]').forEach((input) =>
+      input.setAttribute('aria-label', `${label} in MHz`));
   });
 }
 
@@ -25412,15 +25461,19 @@ function channelEditorSections(profile, channel) {
 
 function channelEditorPayload(form, profile, channel = null) {
   const remote = channelIsRemote(channel);
+  const conventional = channelEditorConventional(form, profile);
   const payload = { protocol_id: profile.id,
     settings: remote ? { ...channel.settings } : {},
     source: remote ? { ...channel.source, frequencies_hz: [...channel.source.frequencies_hz] } : {},
     frequency_map: [], event_logs: [],
     recorders: remote ? [...(channel.recorders || [])] : [], auxiliary_decoders: [] };
   profile.sections.forEach((section) => section.fields.forEach((field) => {
-    if (field.type === 'read_only') return;
+    if (field.type === 'read_only' || !channelEditorFieldActive(form, field)) return;
     const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
-    const value = channelEditorFieldValue(control, field);
+    let value = channelEditorFieldValue(control, { ...field,
+      label: channelEditorFieldLabel(field, conventional) });
+    if (conventional && ['event_logs', 'recorders'].includes(field.path))
+      value = value.filter((entry) => !String(entry).startsWith('TRAFFIC_'));
     if (field.path.startsWith('settings.')) payload.settings[field.path.substring(9)] = value;
     else if (field.path.startsWith('source.')) payload.source[field.path.substring(7)] = value;
     else payload[field.path] = value;
@@ -25432,7 +25485,7 @@ function channelRestoreProtocolDefaults(form, profile) {
   profile.sections.flatMap((section) => section.fields).filter((field) =>
     field.path.startsWith('settings.') && Object.hasOwn(field, 'default')).forEach((field) => {
       const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
-      if (!control) return;
+      if (!control || !channelEditorFieldActive(form, field)) return;
       if (field.type === 'boolean') {
         control.checked = Boolean(field.default);
         control.dispatchEvent(new Event('change', { bubbles: true }));
@@ -26005,10 +26058,12 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       refreshEnrichmentAvailability = null;
       const form = node('form', 'channel-editor-form editor-workspace');
       form.dataset.uiDensity = 'comfortable';
+      form.dataset.channelKind = profile.channel_kind;
       const hero = node('div', 'channel-editor-hero');
       const identity = node('div');
-      identity.append(node('strong', '', channel.name || 'New channel'),
-        node('span', '', `${profile.label} · ${semanticLabel(profile.channel_kind || 'Dynamic')}`));
+      const protocolSummary = node('span');
+      protocolSummary.dataset.channelProtocolSummary = profile.label;
+      identity.append(node('strong', '', channel.name || 'New channel'), protocolSummary);
       const systemName = node('span', '', String(channel.system || '').trim());
       systemName.hidden = !systemName.textContent;
       identity.append(systemName);
@@ -26164,6 +26219,10 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           if (field.visible_when) {
             wrapper.dataset.visiblePath = field.visible_when.path;
             wrapper.dataset.visibleEquals = JSON.stringify(field.visible_when.equals);
+          }
+          if (field.conventional_label) {
+            wrapper.dataset.channelConventionalLabel = field.conventional_label;
+            wrapper.dataset.channelDefaultLabel = field.label;
           }
           if (sectionDefinition.id === 'protocol' && CHANNEL_SQUELCH_PATHS.has(field.path) &&
               (profile.id === 'am' || profile.id === 'nbfm')) squelchFields.push(wrapper);
@@ -26354,6 +26413,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             errors.focus({ preventScroll: true });
           }
         });
+        channelEditorDependencies(form);
       });
       host.replaceChildren(form);
       channelEditorDependencies(form);
@@ -26986,7 +27046,8 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
       ['Protocol', protocolFamily(channel)], ['Decoder', decoderDisplay(channel.decoder)],
       ['Alias List', aliasListLink(channel.alias_list_name, channel.alias_list_id)],
       ['Frequency', frequency(channel.primary_frequency_hz)],
-      ['NAC', hexDecimalPair(channel.nac, 3)], ['First Seen', dateTime(channel.first_seen_ms)],
+      ...(isP25(channel) && channel.nac != null ? [['NAC', hexDecimalPair(channel.nac, 3)]] : []),
+      ['First Seen', dateTime(channel.first_seen_ms)],
       ['Last Seen', dateTime(channel.last_seen_ms)]
     ])));
     content.append(tableSection('Frequency Summaries', data.summaries || [], [
@@ -27003,9 +27064,9 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
       { id: 'stream-submitted-logical-calls', label: 'Sent to Streamer', fullLabel: 'Sent to Streamer',
         render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric',
         sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) },
-      { id: 'encrypted-logical-calls', label: 'Enc', fullLabel: 'Encrypted Calls',
+      ...(!isAnalogChannel(channel) ? [{ id: 'encrypted-logical-calls', label: 'Enc', fullLabel: 'Encrypted Calls',
         render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted',
-        sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
+        sortValue: (row) => Number(row.encrypted_logical_call_count || 0) }] : []),
       { id: 'first-seen', label: 'First', fullLabel: 'First activity', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Latest activity', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No frequency summaries recorded', { type: 'channel-frequencies' }));

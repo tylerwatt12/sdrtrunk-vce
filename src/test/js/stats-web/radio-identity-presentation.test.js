@@ -501,7 +501,7 @@ const pageContext = {
   radioSystemTabItems: () => [{ id: 'info' }], radioSystemTabs: () => null
 };
 const pageFunctions = [
-  'protocol', 'protocolFamily', 'isP25', 'identifierNumber', 'identityNumber', 'hex', 'frequency',
+  'protocol', 'protocolFamily', 'isP25', 'isAnalogChannel', 'identifierNumber', 'identityNumber', 'hex', 'frequency',
   'normalizedSiteText', 'sameSiteText', 'siteNameValue', 'nameValue', 'channelDisplayParts',
   'channelLabel', 'channelValue', 'observedSiteLabel', 'trunkedSiteLabel', 'trunkedVariant',
   'semanticLabel', 'channelLocationIdentity', 'channelSiteIdentity', 'savedChannelScopeLabel',
@@ -547,6 +547,36 @@ async function pageHeading(renderer, response) {
       protocol: 'NBFM', decoder: 'NBFM', channel_kind: 'CONVENTIONAL', name: 'Dispatch',
       auxiliary_decoders: [auxiliary] } });
     assert.equal(heading.title, 'Channel: Dispatch', `${auxiliary} does not change primary channel topology`);
+  }
+
+  const conventionalSections = [];
+  const conventionalContext = {
+    ...pageContext, beginPage: () => true,
+    content: { append: (...sections) => conventionalSections.push(...sections) },
+    section: (title, entries) => ({ title, entries }), keyValues: (entries) => entries,
+    tableSection: (title, rows, columns) => ({ title, rows, columns }),
+    radioSystemInfoFact: () => '', aliasListLink: () => '', decoderDisplay: (value) => value,
+    hexDecimalPair: (value) => value == null ? '' : String(value), dateTime: () => ''
+  };
+  vm.createContext(conventionalContext);
+  vm.runInContext(['isP25', 'isAnalogChannel', 'renderConventionalChannel'].map((name) =>
+    `${name === 'renderConventionalChannel' ? 'async ' : ''}${functionSource(name)}`).join('\n'),
+  conventionalContext);
+  for (const [protocol, decoder] of [
+    ['P25', 'P25_CONVENTIONAL'], ['DMR', 'DMR'], ['NXDN', 'NXDN'], ['AM', 'AM'], ['NBFM', 'NBFM']
+  ]) {
+    for (const nac of [undefined, 0, 0x293]) {
+      conventionalSections.length = 0;
+      await conventionalContext.renderConventionalChannel({ summaries: [] }, {
+        protocol, decoder, nac, channel_kind: 'CONVENTIONAL'
+      }, configurationId, {});
+      const info = conventionalSections.find((section) => section.title === 'Channel Info');
+      assert.equal(info.entries.some(([label]) => label === 'NAC'), protocol === 'P25' && nac != null,
+        `${protocol} shows NAC only when it is meaningful and observed, including valid zero`);
+      const summary = conventionalSections.find((section) => section.title === 'Frequency Summaries');
+      assert.equal(summary.columns.some((column) => column.id === 'encrypted-logical-calls'),
+        !['AM', 'NBFM'].includes(protocol), `${protocol} only shows relevant encryption counts`);
+    }
   }
   for (const kind of [undefined, 'FUTURE']) {
     const heading = await pageHeading('renderChannel', { channel: { configuration_id: configurationId,
