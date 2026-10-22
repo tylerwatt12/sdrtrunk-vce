@@ -8,6 +8,7 @@ package io.github.dsheirer.channel.quality;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -42,6 +43,110 @@ import org.junit.jupiter.api.Test;
 class ControlChannelQualityMonitorTest
 {
     private static final String CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
+
+    @Test
+    void validFrameSequenceSurvivesWindowChangesAndBackwardDecodedTimestamps()
+    {
+        ControlChannelQualityMonitor monitor = new ControlChannelQualityMonitor(
+            channel(new DecodeConfigP25Phase2()), 856_137_500L, null);
+        monitor.start();
+        long publishedAt = System.currentTimeMillis() + ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS;
+        try
+        {
+            monitor.publishIfDue(publishedAt);
+            assertEquals(0, monitor.getValidFrameSequence());
+            monitor.getMessageListener().receive(mac(1_000L, 0, true, 0));
+            monitor.getMessageListener().receive(mac(1_001L, 0, false, 0));
+            monitor.getMessageListener().receive(new DroppedSamplesMessage(1_002L, 320, Protocol.APCO25_PHASE2));
+            monitor.getMessageListener().receive(new SyncLossMessage(1_003L, 320, Protocol.APCO25_PHASE2));
+            monitor.publishIfDue(publishedAt += ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertEquals(1, monitor.getValidFrameSequence());
+
+            ControlChannelQualityMonitor.ReceiverObservation previous = monitor.getReceiverObservation();
+            monitor.getMessageListener().receive(mac(500L, 0, true, 0));
+            monitor.publishIfDue(publishedAt - ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertSame(previous, monitor.getReceiverObservation(), "A backward publication clock has not caught up");
+            assertEquals(2, monitor.getValidFrameSequence(),
+                "A valid frame still proves progress when its wall timestamp moves backward");
+            monitor.publishIfDue(publishedAt += ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertEquals(1_000L, monitor.getCurrentSnapshot().lastValidDecodeMs(),
+                "The existing presentation timestamp contract remains unchanged");
+
+            monitor.getSourceEventListener().receive(SourceEvent.frequencyChange(null, 855_137_500L));
+            assertEquals(2, monitor.getValidFrameSequence());
+            monitor.publishIfDue(publishedAt += ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertEquals(0, monitor.getCurrentSnapshot().validFrames());
+            assertEquals(2, monitor.getValidFrameSequence(),
+                "Hunting an alternate frequency must not erase cumulative receiver progress");
+
+            long lifecycle = monitor.getReceiverObservation().lifecycleGeneration();
+            monitor.reset();
+            assertNull(monitor.getReceiverObservation());
+            monitor.publishIfDue(publishedAt += ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertNotEquals(lifecycle, monitor.getReceiverObservation().lifecycleGeneration());
+            assertEquals(2, monitor.getValidFrameSequence());
+            monitor.getMessageListener().receive(mac(400L, 0, true, 0));
+            monitor.publishIfDue(publishedAt += ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertEquals(3, monitor.getValidFrameSequence());
+        }
+        finally { monitor.stop(); }
+
+        monitor.start();
+        try
+        {
+            assertFalse(monitor.getReceiverObservation().snapshot().active());
+            assertNull(monitor.getCurrentSnapshot());
+            monitor.publishIfDue(publishedAt + ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertEquals(3, monitor.getValidFrameSequence(),
+                "Lifecycle identity, rather than a counter reset, distinguishes a restarted receiver");
+        }
+        finally { monitor.stop(); }
+    }
+
+    @Test
+    void startSeedsInactiveReceiverEvidenceWithoutPublishingOrReusingThePreviousWindow()
+    {
+        List<ControlChannelQualitySnapshot> snapshots = new CopyOnWriteArrayList<>();
+        Channel channel = channel(new DecodeConfigP25Phase2());
+        ControlChannelQualityMonitor monitor = new ControlChannelQualityMonitor(channel, 856_137_500L, snapshots::add);
+        monitor.start();
+        ControlChannelQualityMonitor.ReceiverObservation initial = monitor.getReceiverObservation();
+        try
+        {
+            assertNotNull(initial, "A receiver with no heartbeat or samples still has current health ownership");
+            assertSame(channel, initial.snapshot().channel());
+            assertEquals(CONFIGURATION_ID, initial.snapshot().configurationId());
+            assertFalse(initial.snapshot().active());
+            assertEquals(0, initial.snapshot().validFrames());
+            assertNull(monitor.getCurrentSnapshot());
+            assertTrue(snapshots.isEmpty());
+            assertTrue(monitor.isPublicationIdleForTest());
+
+            monitor.getMessageListener().receive(mac(1_000L, 0, true, 0));
+            monitor.publishIfDue(System.currentTimeMillis() + ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            awaitSnapshotCount(snapshots, 1);
+            assertEquals(1, monitor.getCurrentSnapshot().validFrames());
+        }
+        finally { monitor.stop(); }
+
+        awaitPublicationIdle(monitor);
+        int delivered = snapshots.size();
+        monitor.start();
+        try
+        {
+            ControlChannelQualityMonitor.ReceiverObservation restarted = monitor.getReceiverObservation();
+            assertNotEquals(initial.lifecycleGeneration(), restarted.lifecycleGeneration());
+            assertFalse(restarted.snapshot().active());
+            assertEquals(0, restarted.snapshot().validFrames());
+            assertEquals(0, restarted.snapshot().lastValidDecodeMs());
+            assertNull(restarted.snapshot().decodeHealthPercent());
+            assertNull(monitor.getCurrentSnapshot());
+            assertEquals(1, monitor.getValidFrameSequence(), "The cumulative counter does not claim a new decoded frame");
+            assertEquals(delivered, snapshots.size(), "Startup ownership must not publish an observer update");
+            assertTrue(monitor.isPublicationIdleForTest());
+        }
+        finally { monitor.stop(); }
+    }
 
     @Test
     void receiverEvidenceDoesNotRequireAnObserver()
@@ -243,6 +348,8 @@ class ControlChannelQualityMonitorTest
         Thread decoderCallback = new Thread(() ->
         {
             monitor.getMessageListener().receive(dmr(5_000L, true, false, 0));
+            monitor.getMessageListener().receive(dmr(5_001L, false, false, 0));
+            monitor.getMessageListener().receive(dmr(5_002L, true, false, 0, false));
             callbacksReturned.countDown();
         }, "test-quality-contended-decoder");
         Thread sourceCallback = new Thread(() ->
@@ -259,6 +366,8 @@ class ControlChannelQualityMonitorTest
             sourceCallback.start();
             assertTrue(callbacksReturned.await(1, TimeUnit.SECONDS),
                 "real-time callbacks waited for contended quality state");
+            assertEquals(1, monitor.getValidFrameSequence(),
+                "Valid decoder progress must survive diagnostic contention; invalid payload or slot type must not count");
         }
         finally
         {
@@ -499,11 +608,13 @@ class ControlChannelQualityMonitorTest
                 "realtime producer waited for the blocked quality consumer");
             assertEquals(8_099L, monitor.getCurrentSnapshot().lastValidDecodeMs(),
                 "Receiver health must advance while publication and UI consumers are blocked");
+            assertEquals(100, monitor.getValidFrameSequence());
             releaseFirstPublication.countDown();
             assertTrue(firstConsumerEntered.await(5, TimeUnit.SECONDS), "quality consumer did not block");
             assertEquals(1, snapshots.size());
             assertEquals(8_099L, monitor.getCurrentSnapshot().lastValidDecodeMs(),
                 "A delayed older observer delivery must not rewind receiver evidence");
+            assertEquals(100, monitor.getValidFrameSequence());
         }
         finally
         {

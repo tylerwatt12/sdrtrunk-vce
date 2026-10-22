@@ -397,9 +397,10 @@ public final class TopicAlertService implements AutoCloseable
         {
             if(!(raw instanceof Map<?,?> incident)) continue;
             String key = snapshot.get("started_at_ms") + ":" + incident.get("occurrence_id"); present.add(key);
-            String signature = incident.get("severity") + ":" + incident.get("title");
-            String previous = mHealthLifecycle.put(key, signature);
-            String phase = previous == null ? "opened" : !previous.equals(signature) ? "escalated" : "active";
+            String severity = String.valueOf(incident.get("severity"));
+            String previous = mHealthLifecycle.put(key, severity);
+            String phase = previous == null ? "opened" :
+                "warning".equals(previous) && "critical".equals(severity) ? "escalated" : "active";
             observeHealthIncident(key, incident, phase);
         }
         for(Object raw: list(snapshot.get("resolved")))

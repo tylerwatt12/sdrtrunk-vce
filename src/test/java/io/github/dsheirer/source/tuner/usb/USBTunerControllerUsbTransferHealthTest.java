@@ -21,6 +21,32 @@ import org.usb4java.LibUsb;
 class USBTunerControllerUsbTransferHealthTest
 {
     @Test
+    void pairsUsableBytesWithItsCaptureTickBeforeReadingLaterCallbackMetadata()
+    {
+        USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+        health.beginStreaming(1_024, 2);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, 0);
+
+        for(long tick: new long[]{0, -1, Long.MAX_VALUE, Long.MIN_VALUE, Long.MIN_VALUE + 1})
+        {
+            long capturedBytes = health.snapshot().usableBytes();
+            int[] clockReads = {0};
+            USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot(null, () ->
+            {
+                clockReads[0]++;
+                // A callback after the paired read must not enter this snapshot's rate numerator.
+                health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_001, tick);
+                return tick;
+            });
+
+            assertEquals(1, clockReads[0]);
+            assertEquals(tick, snapshot.observedAtNanoseconds());
+            assertEquals(capturedBytes, snapshot.usableBytes());
+            assertEquals(capturedBytes + 1_024, health.snapshot().usableBytes());
+        }
+    }
+
+    @Test
     void recordsEachSupportedStatusAndUnexpectedStatuses()
     {
         USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();

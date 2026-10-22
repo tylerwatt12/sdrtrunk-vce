@@ -66,23 +66,21 @@ public final class ReceiverHealthService implements AutoCloseable
     private static final long STORAGE_SAMPLE_INTERVAL_MILLISECONDS = 30_000L;
     private static final long FAILURE_LOG_INTERVAL_MILLISECONDS = 60_000L;
     private static final long COUNTER_BASELINE_RETENTION_MILLISECONDS = 60_000L;
-    private static final long USB_STALE_DELIVERY_MILLISECONDS = 1_000L;
+    private static final long USB_STALE_DELIVERY_MILLISECONDS = 10_000L;
     private static final double USB_LOW_DELIVERY_PERCENT = 90.0;
-    private static final double USB_WARNING_DELIVERY_PERCENT = 98.0;
     private final UserPreferences mUserPreferences;
     private final TunerManager mTunerManager;
     private final ReceiverActivityService mActivityLogService;
     private final LongSupplier mClock;
+    private final LongSupplier mMonotonicClock;
     private final long mStartedAtMs;
     private final ScheduledExecutorService mExecutor;
     private final Path mLegacySnapshotPath;
     private final ReceiverHealthIncidentTracker mIncidents = new ReceiverHealthIncidentTracker();
     private final ReceiverHealthDiagnosticCore mDiagnosticCore = new ReceiverHealthDiagnosticCore();
     private final Map<String,CounterBaseline> mCounterBaselines = new HashMap<>();
-    private final Map<String,Long> mConditionStartTimes = new HashMap<>();
-    private final Set<String> mConditionsEvaluatedThisSample = new HashSet<>();
+    private final Map<String,CounterOwner> mCounterOwners = new HashMap<>();
     private final Map<String,UsbDeliveryClassifier> mUsbDeliveryClassifiers = new HashMap<>();
-    private final Map<String,UsbCallbackTimingState> mUsbCallbackTimingStates = new HashMap<>();
     private final Map<String,ControlContinuity> mControlContinuityByReceiver = new HashMap<>();
     private final AtomicBoolean mStarted = new AtomicBoolean();
     private final AtomicBoolean mClosed = new AtomicBoolean();
@@ -121,12 +119,22 @@ public final class ReceiverHealthService implements AutoCloseable
                           ReceiverActivityService activityLogService, LongSupplier clock,
                           Path legacySnapshotPath)
     {
+        this(userPreferences, tunerManager, channelProcessingManager, activityLogService, clock,
+            legacySnapshotPath, System::nanoTime);
+    }
+
+    ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
+                          ChannelProcessingManager channelProcessingManager,
+                          ReceiverActivityService activityLogService, LongSupplier clock,
+                          Path legacySnapshotPath, LongSupplier monotonicClock)
+    {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
         mControlQualitySupplier = channelProcessingManager != null ?
             channelProcessingManager::getControlChannelQualityMonitors : List::of;
         mActivityLogService = activityLogService;
         mClock = clock != null ? clock : System::currentTimeMillis;
+        mMonotonicClock = monotonicClock != null ? monotonicClock : System::nanoTime;
         mLegacySnapshotPath = legacySnapshotPath;
         mStartedAtMs = mClock.getAsLong();
         mSnapshot = emptySnapshot(mStartedAtMs);
@@ -223,23 +231,21 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         long now = mClock.getAsLong();
-        long nowNanos = System.nanoTime();
+        long nowNanos = mMonotonicClock.getAsLong();
         WebDiagnosticLogService diagnostics = mWebDiagnosticLogService;
         long capture = diagnostics != null ? diagnostics.captureGeneration() : 0;
         ReceiverHealthDiagnosticCore.Sample core = capture != 0 ?
             mDiagnosticCore.begin(capture, mStartedAtMs, now, nowNanos) : null;
         if(core == null) mDiagnosticCore.disabled();
-        mIncidents.beginSample();
-        mConditionsEvaluatedThisSample.clear();
+        mIncidents.beginSample(nowNanos);
         List<Map<String,Object>> measurements = new ArrayList<>();
-        collectTuners(now, nowNanos, measurements, core);
-        collectControlChannels(now, measurements);
+        collectTuners(now, measurements, core);
+        collectControlChannels(now, nowNanos, measurements);
         collectHost(now, measurements, core);
         collectOutputs(now, measurements);
         collectSupportingServices(now, measurements, core);
         mCounterBaselines.entrySet().removeIf(entry ->
             now - entry.getValue().lastSeenMs > COUNTER_BASELINE_RETENTION_MILLISECONDS);
-        mConditionStartTimes.keySet().retainAll(mConditionsEvaluatedThisSample);
         mIncidents.endSample(now);
         publishIncidentChanges(mIncidents.lifecycleChanges(), now);
         List<Map<String,Object>> active = mIncidents.active();
@@ -305,7 +311,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    private void collectTuners(long now, long nowNanos, List<Map<String,Object>> measurements,
+    private void collectTuners(long now, List<Map<String,Object>> measurements,
                                ReceiverHealthDiagnosticCore.Sample core)
     {
         List<Map<String,Object>> tunerRows = new ArrayList<>();
@@ -314,6 +320,7 @@ public final class ReceiverHealthService implements AutoCloseable
         List<Map<String,Object>> channelizerRows = new ArrayList<>();
         List<Map<String,Object>> channelRows = new ArrayList<>();
         Set<String> activeUsbScopes = new HashSet<>();
+        Set<String> activeTunerScopes = new HashSet<>();
         List<DiscoveredTuner> tuners = mTunerManager != null ?
             mTunerManager.getDiscoveredTunerRegistry().snapshot() : List.of();
         if(core != null) core.tunersObserved(tuners.size());
@@ -326,6 +333,7 @@ public final class ReceiverHealthService implements AutoCloseable
             {
             String discoveredId = discovered.getId();
             String scope = discoveredId != null && !discoveredId.isBlank() ? discoveredId : fallbackScope;
+            activeTunerScopes.add(scope);
             TunerStatus tunerStatus = discovered.getTunerStatus();
             Tuner tuner = discovered.getTuner();
             String preferredName = tuner != null ? tuner.getPreferredName() : null;
@@ -335,6 +343,10 @@ public final class ReceiverHealthService implements AutoCloseable
             TunerController controller = tuner != null ? tuner.getTunerController() : null;
             ChannelSourceManager sourceManager = tuner != null ? tuner.getChannelSourceManager() : null;
             int channels = sourceManager != null ? sourceManager.getTunerChannelCount() : 0;
+            USBTunerController.UsbTransferHealthSnapshot usbHealth = controller instanceof USBTunerController usb ?
+                usb.getUsbTransferHealthSnapshot() : null;
+            boolean tunerRequired = prepareCounterOwner(scope, controller, sourceManager,
+                usbHealth != null ? usbHealth.streamSequence() : 0);
             ReceiverHealthDiagnosticCore.Tuner compact = core != null ?
                 core.tuner(scope, display, controller, sourceManager, discovered.isEnabled(), tunerStatus == TunerStatus.ERROR,
                     channels) : null;
@@ -345,9 +357,9 @@ public final class ReceiverHealthService implements AutoCloseable
                         controller.getFrequency() + " Hz · Sample rate " +
                         Math.round(controller.getSampleRate()) + " samples/s" : "")));
 
-            if(discovered.isEnabled() && tunerStatus == TunerStatus.ERROR)
+            if(discovered.isEnabled() && tunerRequired && tunerStatus == TunerStatus.ERROR)
             {
-                mIncidents.observe("tuner-error", "critical", "Tuner stopped working", display, now, 1,
+                mIncidents.observe("tuner-error", "critical", "Tuner is not working", scope, display, now, 1,
                     discovered.getErrorMessage(), "The USB connection, device access, driver, power, or tuner startup failed",
                     "Channels assigned to this tuner cannot receive radio data",
                     "Open the tuner details, then check its error message, USB cable, driver, and power");
@@ -359,10 +371,10 @@ public final class ReceiverHealthService implements AutoCloseable
                     "info", display + (serial.isBlank() ? "" : " · " + serial)));
             }
 
-            if(controller instanceof USBTunerController usbController)
+            if(controller instanceof USBTunerController)
             {
                 activeUsbScopes.add(scope);
-                collectUsb(now, nowNanos, scope, display, tuner, usbController.getUsbTransferHealthSnapshot(), usbRows, compact);
+                collectUsb(now, scope, display, tuner, tunerRequired, usbHealth, usbRows, compact);
             }
 
             if(sourceManager instanceof PolyphaseChannelSourceManager polyphase)
@@ -379,24 +391,11 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(nativeDropDelta > 0)
                 {
-                    mIncidents.observe("receiver-iq-drop", "critical", "Radio data was lost before decoding", display,
-                        now, nativeStatus.droppedBuffers(), nativeDropDelta + " new losses · " +
-                            nativeStatus.droppedMilliseconds() + " ms lost since startup",
-                        "The tuner delivered data faster than VCE could process it",
-                        "Every channel using this tuner may lose sync or have missing audio",
-                        "Check the USB connection, computer load, memory use, and incoming radio data");
-                }
-
-                if(sustained(scope + ":native-pressure",
-                    nativeStatus.appliedDurationMilliseconds() > 0 && nativeStatus.queuedMilliseconds() * 4 >=
-                        nativeStatus.appliedDurationMilliseconds() * 3, now))
-                {
-                    mIncidents.observe("receiver-queue-pressure", "warning", "Receiver is falling behind",
-                        display, now, nativeStatus.highWaterMilliseconds(), nativeStatus.queuedMilliseconds() +
-                            " ms waiting · " + nativeStatus.appliedDurationMilliseconds() + " ms limit",
-                        "Radio data is arriving faster than VCE can process it",
-                        "If this continues, every channel using this tuner may lose data",
-                        "Check USB delivery, computer load, memory use, channel separation, and the number of active channels");
+                    mIncidents.observeRecurring("receiver-iq-drop", "critical", "Radio data keeps being lost", scope,
+                        display, now, nativeStatus.droppedBuffers(), "VCE has repeatedly lost incoming radio data",
+                        "The computer or a receiving function may not be keeping up",
+                        "Calls on channels using this tuner may be missed or interrupted",
+                        "Check the USB connection and computer load, then open the detailed measurements below");
                 }
 
                 PolyphaseChannelManager.PipelineStatus pipeline = polyphase.getPipelineStatus();
@@ -408,23 +407,11 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(ifftDropDelta > 0)
                 {
-                    mIncidents.observe("channelizer-drop", "critical", "Channels lost radio data",
-                        display, now, pipeline.ifftDroppedBatches(), ifftDropDelta +
-                            " chunks of radio data lost during channel separation",
+                    mIncidents.observeRecurring("channelizer-drop", "critical", "Radio data keeps being lost while separating channels",
+                        scope, display, now, pipeline.ifftDroppedBatches(), "VCE keeps losing radio data while separating this tuner's channels",
                         "VCE ran out of room while separating this tuner's data into channels",
-                        "Every channel using this tuner may have missing radio data",
-                        "Check computer load, memory use, and channel delays; close unused diagnostic views or reduce active channels");
-                }
-
-                if(sustained(scope + ":ifft-pressure", pipeline.ifftCapacityBatches() > 0 &&
-                    pipeline.ifftQueuedBatches() * 4 >= pipeline.ifftCapacityBatches() * 3, now))
-                {
-                    mIncidents.observe("channelizer-queue-pressure", "warning",
-                        "Channel separation is falling behind", display, now, pipeline.ifftHighWaterBatches(),
-                        pipeline.ifftQueuedBatches() + " chunks waiting · Limit " +
-                            pipeline.ifftCapacityBatches(), "Channel separation is close to falling behind",
-                        "Every channel using this tuner may lose data if this continues",
-                        "Check computer load and memory use, then close unused diagnostic views or reduce active channels");
+                        "Calls on channels using this tuner may be missed or interrupted",
+                        "Check computer load and memory use, then close unused signal views");
                 }
 
                 long aggregateChannelDrops = pipeline.channelDroppedBatches();
@@ -441,20 +428,6 @@ public final class ReceiverHealthService implements AutoCloseable
                         peak += channel.highWaterBatches();
                         capacity += channel.capacityBatches();
                         maximumCapacity = Math.max(maximumCapacity, channel.capacityBatches());
-                    }
-                    String channelScope = scope + ":" + channel.frequencyHz();
-
-                    if(sustained(channelScope + ":pressure", channel.capacityBatches() > 0 &&
-                        channel.queuedBatches() * 4 >= channel.capacityBatches() * 3, now))
-                    {
-                        mIncidents.observe("channel-queue-pressure", "warning",
-                            "One channel is falling behind", display + " · " +
-                                formatFrequency(channel.frequencyHz()), now,
-                            channel.highWaterBatches(), channel.queuedBatches() + " chunks waiting · Limit " +
-                                channel.capacityBatches() + " · " + display,
-                            "Processing for this channel is not keeping up",
-                            "The listed control or voice channel may lose decoding or audio",
-                            "Check computer load and the work associated with this channel");
                     }
                 }
                 if(compact != null) compact.pipeline(pipeline, queued, peak, capacity, maximumCapacity);
@@ -478,24 +451,26 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(channelDropDelta > 0)
                 {
-                    mIncidents.observe("channel-output-drop", "critical", "One or more channels lost radio data",
-                        display, now, aggregateChannelDrops, channelDropDelta + " chunks of radio data lost",
-                        "One or more channel decoders could not keep up",
-                        "Affected control or voice channels may lose decoding or have broken audio",
-                        "Check the per-channel measurements and computer load; reduce the number of active channels if needed");
+                    mIncidents.observeRecurring("channel-output-drop", "critical", "A channel keeps losing radio data",
+                        scope, display, now, aggregateChannelDrops, "A channel keeps missing some of its incoming radio data",
+                        "The computer or a receiving function may not be keeping up",
+                        "Calls on affected channels may be missed or interrupted",
+                        "Check the affected channels and computer load; stop unused channels if needed");
                 }
             }
             }
             catch(RuntimeException exception)
             {
                 if(core != null) core.tunerUnavailable();
+                String failedScope = discovered.getId();
+                if(failedScope != null) mIncidents.preserve(failedScope);
                 tunerRows.add(row(fallbackScope, "Tuner status is temporarily unavailable", "Unavailable", "", "warning",
                     "The tuner changed state while its status was checked."));
             }
         }
 
+        mCounterOwners.keySet().retainAll(activeTunerScopes);
         mUsbDeliveryClassifiers.keySet().retainAll(activeUsbScopes);
-        mUsbCallbackTimingStates.keySet().retainAll(activeUsbScopes);
 
         if(mTunerManager != null)
         {
@@ -505,14 +480,6 @@ public final class ReceiverHealthService implements AutoCloseable
                 failureDelta > 0 ? "warning" : allocation.failures() > 0 ? "info" : "healthy",
                 allocation.requests() + " requested · " + allocation.failures() + " failed"));
 
-            if(failureDelta > 0)
-            {
-                mIncidents.observe("tuner-allocation-failure", "warning", "No tuner was available for a channel",
-                    "Tuner", now, allocation.failures(), failureDelta + " new channel start failures",
-                    "No enabled tuner could receive the requested frequency, an in-use tuner had no room, Lock Center Frequency prevented retuning, or the tuner changed state during the request",
-                    "A conventional channel, control channel, or voice channel may not start",
-                    "Check enabled tuner frequency ranges, Lock Center Frequency, Preferred Tuner settings, and the number of active channels");
-            }
         }
 
         measurements.add(section("tuners", "Tuners", tunerRows));
@@ -522,7 +489,7 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("channels", "Per-channel processing", channelRows));
     }
 
-    private void collectUsb(long now, long nowNanos, String scope, String display, Tuner tuner,
+    private void collectUsb(long now, String scope, String display, Tuner tuner, boolean receiving,
                             USBTunerController.UsbTransferHealthSnapshot usb,
                             List<Map<String,Object>> rows, ReceiverHealthDiagnosticCore.Tuner compact)
     {
@@ -534,7 +501,7 @@ public final class ReceiverHealthService implements AutoCloseable
             usb.submissionFailureCount();
         long bufferFailureCount = usb.nativeIngressCopyFailures() + usb.nativeIngressConversionFailures();
         long integrityCount = usb.shortTransferCount() + usb.zeroLengthTransferCount() +
-            usb.malformedTransferCount() + transferStatusCount + bufferFailureCount;
+            usb.malformedTransferCount() + bufferFailureCount;
         long lastDeliveryNanos = usb.hasTransfer() ?
             usb.lastTransferTimestampNanoseconds() : usb.streamStartedTimestampNanoseconds();
         long ingressLossCount = usb.nativeIngressSaturationDroppedBuffers();
@@ -542,12 +509,9 @@ public final class ReceiverHealthService implements AutoCloseable
         long listenerFailureDelta = delta(scope + ":receiver-listener-failure",
             usb.nativeIngressListenerFailures(), now);
         UsbDeliveryAssessment assessment = mUsbDeliveryClassifiers.computeIfAbsent(scope,
-            ignored -> new UsbDeliveryClassifier()).evaluate(new UsbDeliveryObservation(nowNanos, usb.streaming(),
+            ignored -> new UsbDeliveryClassifier()).evaluate(new UsbDeliveryObservation(usb.observedAtNanoseconds(), usb.streaming(),
                 usb.streamSequence(), usb.expectedBytes(), usb.usableBytes(), transferStatusCount, integrityCount,
                 usb.longTransferGapCount(), lastDeliveryNanos, requiredBytesPerSecond));
-        UsbCallbackTimingState callbackTiming = mUsbCallbackTimingStates.computeIfAbsent(scope,
-            ignored -> new UsbCallbackTimingState());
-        UsbCallbackTimingWindow callbackWindow = callbackTiming.sample(usb);
         double seconds = assessment.windowMilliseconds() / 1_000.0;
         double usableBytesPerSecond = assessment.rateAvailable() && seconds > 0 ?
             assessment.usableBytesDelta() / seconds : 0;
@@ -555,8 +519,7 @@ public final class ReceiverHealthService implements AutoCloseable
             usableBytesPerSecond, requiredBytesPerSecond);
         double displayDeliveryPercent = assessment.rateAvailable() ?
             Math.min(100.0, assessment.rawDeliveryPercent()) : 100.0;
-        String rateSeverity = assessment.rateCritical() ? "critical" :
-            assessment.rateMeasurementWarning() ? "warning" : "healthy";
+        String rateSeverity = assessment.sustainedShortage() ? "warning" : "info";
         rows.add(row(scope, display + " radio data rate", round(usableBytesPerSecond / 1_000_000.0), "MB/s",
             rateSeverity, "Required " + round(requiredBytesPerSecond / 1_000_000.0) +
                 " MB/s · Delivery " + (assessment.rateAvailable() ? round(displayDeliveryPercent) + "%" :
@@ -590,10 +553,8 @@ public final class ReceiverHealthService implements AutoCloseable
                 " ms · Last 25 ms+ this stream " +
                 (usb.lastAtLeast25MsDurationNanoseconds() > 0 ?
                     round(usb.lastAtLeast25MsDurationNanoseconds() / 1_000_000.0) + " ms" : "none") +
-                " · Transfers measured in this sample " +
-                (callbackWindow.available() ? callbackWindow.callbacks() : "warming up") +
-                " · Took at least 25 ms " +
-                (callbackWindow.available() ? callbackWindow.atLeast25Ms() : "warming up")));
+                " · Transfers measured since tuner opened " +
+                usb.callbackCount() + " · Took at least 25 ms " + usb.callbacksAtLeast25MsCount()));
         boolean ingressPressure = usb.nativeIngressCapacity() > 0 &&
             usb.nativeIngressDepth() * 4 >= usb.nativeIngressCapacity() * 3;
         rows.add(row(scope, display + " radio data waiting after USB", usb.nativeIngressDepth(), "chunks",
@@ -607,89 +568,65 @@ public final class ReceiverHealthService implements AutoCloseable
                 " ms · Longest delay " + round(usb.nativeIngressWorstQueueDelayNanoseconds() / 1_000_000.0) +
                 " ms · Delivery failures " + usb.nativeIngressListenerFailures()));
 
+        if(!receiving) return;
+
         if(ingressLossDelta > 0)
         {
-            mIncidents.observe("receiver-ingress-drop", "critical",
-                "Radio data was lost entering the receiver", display, now, ingressLossCount,
-                ingressLossDelta + " new chunks of radio data lost · " +
-                    usb.nativeIngressSaturationDroppedSamples() + " samples dropped",
-                "Receiver processing could not accept data from the USB tuner quickly enough",
-                "Live radio data was lost",
-                "Check the incoming radio data and close unused diagnostic views");
+            mIncidents.observeRecurring("receiver-ingress-drop", "critical",
+                "Radio data from the tuner keeps being lost", scope, display, now, ingressLossCount,
+                "VCE keeps losing incoming radio data after it reaches the computer",
+                "The computer is not processing the tuner's radio data quickly enough",
+                "Calls may be missed or interrupted",
+                "Check the tuner connection and computer load, then close unused signal views");
         }
 
-        if(listenerFailureDelta > 0)
+        if(assessment.stopped())
         {
-            mIncidents.observe("receiver-listener-failure", "warning",
-                "Part of the receiver missed radio data", display, now,
-                usb.nativeIngressListenerFailures(), listenerFailureDelta + " new delivery failures",
-                "Radio data could not reach part of the receiver or an open diagnostic view",
-                "The affected receiver function may miss data",
-                "Check recent application messages for the related error");
+            mIncidents.observe("usb-sample-loss", "critical", "Radio data from the USB tuner has stopped",
+                scope, display, now, 1, "No radio data has arrived for " +
+                    assessment.lastDeliveryAgeMilliseconds() / 1_000 + " seconds",
+                "The tuner, cable, USB connection or driver may have stopped working",
+                "Channels using this tuner cannot receive calls",
+                "Open the tuner details and check its connection, power and error message");
         }
-
-        if(assessment.hardLoss())
+        else if(assessment.integrityDelta() > 0)
         {
-            String timingClue = callbackTiming.incidentClue(now, "usb-sample-loss", true);
-            mIncidents.observe("usb-sample-loss", "critical", "USB tuner data is incomplete", display,
-                now, Math.max(1, integrityCount), assessment.integrityDelta() +
-                    " new USB data errors · Delivery " +
-                    (assessment.rateAvailable() ? round(displayDeliveryPercent) + "%" : "warming up") +
-                    " · Estimated missing " + usb.estimatedMissingBytes() + " bytes",
-                "The USB connection, cable, power, driver, computer load, or tuner may be interrupting radio data. " +
-                    timingClue,
-                "Signal strength may still look normal while channels using this tuner lose decoding or have gaps in audio",
-                "If possible, connect high-rate tuners to separate USB controllers; then check the cable, power, and connection speed");
+            mIncidents.observeRecurring("usb-sample-loss", "critical", "Radio data from the USB tuner is incomplete",
+                scope, display, now, integrityCount, "Incoming radio data keeps arriving incomplete or cannot be read",
+                "The tuner connection or VCE's handling of incoming radio data is failing",
+                "Calls may be missed or interrupted",
+                "Check the USB cable, connection and computer load; details are listed below");
         }
-        else if(assessment.rateCritical() || assessment.rateWarning())
+        else if(assessment.sustainedShortage())
         {
-            String severity = assessment.rateCritical() ? "critical" : "warning";
-            String title = assessment.gapCorrelated() ? "USB tuner data stopped arriving briefly" :
-                assessment.rateCritical() ? "USB tuner data is arriving too slowly" :
-                    "USB tuner data arrived too slowly for a short time";
-            String timingClue = callbackTiming.incidentClue(now, "usb-delivery-rate-low",
-                assessment.rateCritical());
-            mIncidents.observe("usb-delivery-rate-low", severity, title, display, now,
-                Math.max(1, assessment.lowRateWindowCount()), "Delivered " +
-                    round(assessment.rawDeliveryPercent()) + "% of expected USB data during a " +
-                    assessment.windowMilliseconds() + " ms sample · New long pauses " + assessment.gapDelta(),
-                timingClue,
-                assessment.rateCritical() ? "The slowdown lasted long enough to put live decoding at risk" :
-                    "Repeated slowdowns can interrupt decoding",
-                "Compare this with USB data errors, USB pauses, incoming radio data loss, and the next status update");
-        }
-        else if(assessment.gapDelta() > 0)
-        {
-            String timingClue = callbackTiming.incidentClue(now, "usb-transfer-gap", true);
-            mIncidents.observe("usb-transfer-gap", "warning", "USB tuner data paused", display, now,
-                usb.longTransferGapCount(), assessment.gapDelta() + " new pauses of at least 200 ms · Latest " +
-                    usb.lastInterTransferGapMilliseconds() + " ms · Longest " +
-                    usb.worstInterTransferGapMilliseconds() + " ms",
-                timingClue,
-                "A long pause can interrupt the control channel or clip call audio",
-                "Watch for repeated pauses together with incoming radio data or decoder losses");
-        }
-
-        if(sustained(scope + ":usb-pool-degraded", usb.streaming() && usb.retryTransferCount() > 0, now))
-        {
-            mIncidents.observe("usb-transfer-pool-degraded", "warning",
-                "USB tuner has reduced transfer capacity", display, now, usb.retryTransferCount(),
-                usb.activeTransferCount() + " of " + usb.transferPoolSize() + " transfers active · Retrying " +
-                    usb.retryTransferCount() + " · Start failures " + usb.submissionFailureCount(),
-                "One or more USB transfers could not restart",
-                "With fewer transfers running, data pauses and control-channel loss are more likely",
-                "Check USB capacity, hub or controller placement, cable, power, and driver stability");
+            mIncidents.observe("usb-delivery-rate-low", "warning", "Too little radio data is arriving from the USB tuner",
+                scope, display, now, 1, "The tuner delivered " + round(assessment.sustainedDeliveryPercent()) +
+                    "% of the expected radio data over " + assessment.sustainedWindowMilliseconds() / 1_000 + " seconds",
+                "The tuner connection or computer is not keeping up",
+                "Calls may be missed or interrupted",
+                "Check the USB connection, cable, power and computer load");
         }
     }
 
-    private void collectControlChannels(long now, List<Map<String,Object>> measurements)
+    private void collectControlChannels(long now, long nowNanos, List<Map<String,Object>> measurements)
     {
         List<Map<String,Object>> rows = new ArrayList<>();
         Set<String> activeReceivers = new HashSet<>();
         for(ControlChannelQualityMonitor monitor: mControlQualitySupplier.get())
         {
             ControlChannelQualityMonitor.ReceiverObservation observation = monitor.getReceiverObservation();
-            if(observation == null) continue;
+            if(observation == null)
+            {
+                mControlContinuityByReceiver.forEach((scope, continuity) ->
+                {
+                    if(continuity.owner() == monitor)
+                    {
+                        activeReceivers.add(scope);
+                        mIncidents.preserve(scope);
+                    }
+                });
+                continue;
+            }
             ControlChannelQualitySnapshot quality = observation.snapshot();
             SiteReceiverContext receiver = quality.receiverContext();
             if(receiver == null || !receiver.isStandardChannel() ||
@@ -704,10 +641,11 @@ public final class ReceiverHealthService implements AutoCloseable
             if(previous != null && (previous.owner() != monitor ||
                 previous.lifecycleGeneration() != observation.lifecycleGeneration() ||
                 previous.processingIncarnation() != receiver.processingIncarnation())) previous = null;
-            long lastValidDecodeMs = Math.max(quality.lastValidDecodeMs(),
-                previous != null ? previous.lastValidDecodeMs() : 0);
+            long sequence = monitor.getValidFrameSequence();
+            long lastProgressNanos = previous == null || previous.validFrameSequence() != sequence ?
+                nowNanos : previous.lastProgressNanos();
             mControlContinuityByReceiver.put(scope, new ControlContinuity(monitor, observation.lifecycleGeneration(),
-                receiver.processingIncarnation(), lastValidDecodeMs));
+                receiver.processingIncarnation(), sequence, lastProgressNanos));
 
             String systemName = receiver.systemName() != null ? receiver.systemName() : "";
             String siteName = receiver.siteName() != null ? receiver.siteName() : "";
@@ -741,17 +679,14 @@ public final class ReceiverHealthService implements AutoCloseable
             }
             rows.add(measurement);
 
-            if(lastValidDecodeMs > 0 && now >= lastValidDecodeMs &&
-                now - lastValidDecodeMs >= CONDITION_HOLD_MILLISECONDS)
+            long lostForMs = TimeUnit.NANOSECONDS.toMillis(Math.max(0, nowNanos - lastProgressNanos));
+            if(lostForMs >= CONDITION_HOLD_MILLISECONDS)
             {
-                long lostForMs = now - lastValidDecodeMs;
-                mIncidents.observe("control-channel-lock-lost", "critical", "Control channel stopped decoding",
-                    title + " (" + scope + ")", now, 1, "No valid control frames for " + lostForMs + " ms · " +
-                        formatFrequency(quality.frequencyHz()) + " · Signal " + quality.signalDbfs() +
-                        " dBFS · Decoder " + receiver.decoderType(),
-                    "The signal may be weak or interrupted, USB or tuner data may be missing, the frequency may be wrong, or the decoder may not have locked on",
-                    "The receiver is not getting control messages or voice-channel assignments",
-                    "Check the tuner and USB status, then the signal level, spectrum, decoder type, and alternate control frequencies");
+                mIncidents.observe("control-channel-lock-lost", "critical", "Control channel is not receiving messages",
+                    scope, title, now, 1, "No readable control messages for " + lostForMs / 1_000 + " seconds",
+                    "The signal may be weak, the frequency may be wrong, or the tuner may not be providing radio data",
+                    "VCE cannot follow this site's new calls",
+                    "Check the site's signal and selected control frequency, then the tuner connection");
             }
         }
         mControlContinuityByReceiver.keySet().retainAll(activeReceivers);
@@ -800,32 +735,6 @@ public final class ReceiverHealthService implements AutoCloseable
         rows.add(row("Computer", "Time spent freeing memory", gcPauseIntervalMs, "ms in last sample",
             gcPauseIntervalMs >= 500 ? "warning" : "healthy", "Total pauses since startup " + gcPauseTimeMs + " ms"));
 
-        if(sustained("host:cpu", Double.isFinite(cpuPercent) && cpuPercent >= 90, now))
-        {
-            mIncidents.observe("host-cpu-pressure", "warning", "Computer is overloaded", "Computer", now, 1,
-                round(cpuPercent) + "% VCE processor use",
-                "Too much receiver, decoder, diagnostic, or other work is running at once",
-                "Radio data processing may fall behind",
-                "Close unused diagnostic views, review active channels, and check other programs using the processor");
-        }
-
-        if(sustained("host:heap", heapPercent >= 90, now))
-        {
-            mIncidents.observe("heap-pressure", "critical", "VCE is low on memory", "Computer", now, 1,
-                round(heapPercent) + "% of memory limit",
-                "Waiting output work, too little memory assigned to the app, or an unexpected increase in memory use",
-                "Long memory-management pauses can interrupt USB data and channel decoding",
-                "Check calls waiting for output and incoming radio data, then reduce load or increase the app's memory limit");
-        }
-
-        if(gcPauseIntervalMs >= 500)
-        {
-            mIncidents.observe("gc-pause", "warning", "VCE spent extra time freeing memory", "Computer", now,
-                gcPauseTimeMs, gcPauseIntervalMs + " ms in the last sample", "High memory use or a burst of activity",
-                "This extra work can make incoming radio data and channel processing fall behind",
-                "Compare this with memory use, incoming radio data, and open diagnostic views");
-        }
-
         if(now - mLastStorageSampleMs >= STORAGE_SAMPLE_INTERVAL_MILLISECONDS)
         {
             mLastStorageSampleMs = now;
@@ -836,16 +745,6 @@ public final class ReceiverHealthService implements AutoCloseable
             round(mStorageSnapshot.freePercent) : "Unavailable", "%", mStorageSnapshot.freePercent >= 0 &&
             mStorageSnapshot.freePercent < 5 ? "critical" : mStorageSnapshot.freePercent >= 0 &&
             mStorageSnapshot.freePercent < 10 ? "warning" : "healthy", mStorageSnapshot.detail));
-
-        if(mStorageSnapshot.freePercent >= 0 && mStorageSnapshot.freePercent < 10)
-        {
-            String severity = mStorageSnapshot.freePercent < 5 ? "critical" : "warning";
-            mIncidents.observe("disk-space", severity, "Storage space is low", "Application data", now,
-                1, round(mStorageSnapshot.freePercent) + "% free",
-                "Application data or other files are using most of the space on the drive",
-                "Activity history and recordings stored on this drive may not be saved",
-                "Free up space on the drive that holds the application data");
-        }
 
         measurements.add(section("host", "Computer resources", rows));
     }
@@ -860,28 +759,14 @@ public final class ReceiverHealthService implements AutoCloseable
         if(coordinator != null)
         {
             AudioCallCoordinator.CoordinatorQueueStatus status = coordinator.getQueueStatus();
-            long operationDropDelta = observeOutputDrop(now, "audio-coordinator-ingress",
-                "A call’s outputs were incomplete", status.droppedOperations(),
-                "Too many calls were waiting for recording, streaming, or browser audio");
-            long abortedDelta = observeOutputDrop(now, "audio-coordinator-aborted",
-                "A call’s outputs were interrupted", status.abortedCalls(),
-                "Preparing call outputs was overloaded and stopped handling the call");
+            long operationDropDelta = delta("output:audio-coordinator-ingress", status.droppedOperations(), now);
+            long abortedDelta = delta("output:audio-coordinator-aborted", status.abortedCalls(), now);
             String coordinatorSeverity = operationDropDelta + abortedDelta > 0 ? "warning" :
                 queueSeverity(status.ingressDepth(), status.totalIngressCapacity());
             rows.add(row("Call outputs", "Call outputs waiting", status.ingressDepth(), "outputs",
                 coordinatorSeverity, "Limit " + status.totalIngressCapacity() + " · Dropped " +
                     status.droppedOperations() + " · Stopped " + status.abortedCalls()));
 
-            if(sustained("output:audio-pressure", status.totalIngressCapacity() > 0 &&
-                status.ingressDepth() * 4 >= status.totalIngressCapacity() * 3, now))
-            {
-                mIncidents.observe("audio-output-pressure", "warning",
-                    "Call outputs are falling behind", "Audio output", now, status.ingressDepth(),
-                    status.ingressDepth() + " of " + status.totalIngressCapacity() + " call outputs waiting",
-                    "Recording, streaming, or browser audio is falling behind",
-                    "Completed calls may be missing from recordings, streams, or browser audio",
-                    "Check recording, streaming, browser audio, processor use, and disk activity");
-            }
         }
 
         if(recording != null)
@@ -889,25 +774,13 @@ public final class ReceiverHealthService implements AutoCloseable
             AudioRecordingManager.RecordingQueueStatus status = recording.getQueueStatus();
             boolean pressure = status.queuedCalls() * 4 >= status.maximumQueuedCalls() * 3 ||
                 status.queuedSourceBytes() * 4 >= status.maximumQueuedSourceBytes() * 3;
-            long droppedDelta = observeOutputDrop(now, "recording", "A call recording was not saved",
-                status.droppedRecordings(), "Too many calls or too much audio was waiting to be saved");
+            long droppedDelta = delta("output:recording", status.droppedRecordings(), now);
             rows.add(row("Recordings", "Calls waiting to be recorded", status.queuedCalls(), "calls",
                 droppedDelta > 0 || pressure ? "warning" : status.droppedRecordings() > 0 ? "info" : "healthy",
                 "Limit " + status.maximumQueuedCalls() + " calls · Audio waiting " +
                     formatBytes(status.queuedSourceBytes()) + " of " +
                     formatBytes(status.maximumQueuedSourceBytes()) + " · Dropped " + status.droppedRecordings()));
 
-            if(sustained("output:recording-pressure", pressure, now))
-            {
-                mIncidents.observe("recording-output-pressure", "warning", "Saving recordings is falling behind",
-                    "Recording", now, status.queuedCalls(), status.queuedCalls() + " of " +
-                        status.maximumQueuedCalls() + " calls waiting · " +
-                        formatBytes(status.queuedSourceBytes()) + " of " +
-                        formatBytes(status.maximumQueuedSourceBytes()) + " audio waiting",
-                    "Saving recordings or writing to the drive is not keeping up",
-                    "Some recordings may not be saved",
-                    "Check drive performance, free space, and calls waiting to be recorded");
-            }
         }
 
         if(streaming != null)
@@ -916,8 +789,7 @@ public final class ReceiverHealthService implements AutoCloseable
             boolean pressure = status.retainedCalls() * 4 >= status.maximumRetainedCalls() * 3 ||
                 status.retainedSourceBytes() * 4 >= status.maximumRetainedSourceBytes() * 3;
             long outputLosses = status.droppedCalls() + status.failedCalls();
-            long outputLossDelta = observeOutputDrop(now, "streaming", "A call was not sent to the streaming service",
-                outputLosses, "Too many calls were waiting, or preparing or sending the call failed");
+            long outputLossDelta = delta("output:streaming", outputLosses, now);
             rows.add(row("Streaming", "Calls waiting to be streamed", status.retainedCalls(), "calls",
                 outputLossDelta > 0 || pressure ? "warning" : outputLosses > 0 ? "info" : "healthy",
                 "Limit " + status.maximumRetainedCalls() + " calls · Audio waiting " +
@@ -925,17 +797,6 @@ public final class ReceiverHealthService implements AutoCloseable
                     formatBytes(status.maximumRetainedSourceBytes()) + " · Dropped " + status.droppedCalls() +
                     " · Failed " + status.failedCalls()));
 
-            if(sustained("output:streaming-pressure", pressure, now))
-            {
-                mIncidents.observe("streaming-output-pressure", "warning", "Streaming is falling behind",
-                    "Streaming", now, status.retainedCalls(), status.retainedCalls() + " of " +
-                        status.maximumRetainedCalls() + " calls waiting · " +
-                        formatBytes(status.retainedSourceBytes()) + " of " +
-                        formatBytes(status.maximumRetainedSourceBytes()) + " audio waiting",
-                    "Preparing or sending calls to the streaming service is not keeping up",
-                    "Some calls may not be streamed",
-                    "Check the streaming service, network connection, processor use, and calls waiting to be streamed");
-            }
         }
 
         measurements.add(section("outputs", "Recordings, streams, and browser audio", rows));
@@ -1002,15 +863,6 @@ public final class ReceiverHealthService implements AutoCloseable
                 number(webPlayer.get("active_feeds")) + " · Dropped " + webCapacityDrops +
                 " · Audio preparation failures " + webEncoderFailures));
 
-        if(webAudioDelta > 0)
-        {
-            mIncidents.observe("web-audio-drop", "warning", "Browser audio was not available for a call", "Web audio", now,
-                webAudioLosses, webAudioDelta + " browser calls dropped or failed",
-                "Browser audio could not keep up or prepare the call's audio",
-                "Browser listeners may miss the call",
-                "Check processor and memory use and recent application messages; reduce browser-audio demand if calls keep being skipped");
-        }
-
         Map<String,Object> diagnostics = map(webStatus.get("diagnostics"));
         if(core != null) core.web(transport, webPlayer, diagnostics);
         long channelSessions = number(diagnostics.get("channel_sessions"));
@@ -1021,18 +873,21 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("supporting", "Web and browser audio", rows));
     }
 
-    private long observeOutputDrop(long now, String code, String title, long count, String cause)
+    /** Keeps loss counters tied to their producer, and remembers an assignment after a failed tuner is stopped. */
+    private boolean prepareCounterOwner(String scope, TunerController controller, Object sourceManager, long stream)
     {
-        long dropDelta = delta("output:" + code, count, now);
-
-        if(dropDelta > 0)
+        CounterOwner previous = mCounterOwners.get(scope);
+        boolean receiving = sourceManager instanceof ChannelSourceManager manager && manager.getTunerChannelCount() > 0 ||
+            controller == null && previous != null && previous.receiving();
+        mCounterOwners.put(scope, new CounterOwner(controller, sourceManager, stream, receiving));
+        if(previous == null || previous.controller() != controller || previous.sourceManager() != sourceManager ||
+            previous.streamSequence() != stream || previous.receiving() != receiving)
         {
-            mIncidents.observe(code, "warning", title, "Audio output", now, count, dropDelta + " new losses",
-                cause, "The call's intended output may be missing or incomplete",
-                "Check the matching output status and its destination");
+            mCounterBaselines.keySet().removeIf(key -> key.startsWith(scope + ":"));
+            mUsbDeliveryClassifiers.remove(scope);
+            mIncidents.preserve(scope);
         }
-
-        return dropDelta;
+        return receiving;
     }
 
     private long delta(String key, long current, long now)
@@ -1041,24 +896,10 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(previous == null)
         {
-            return Math.max(0, current);
+            return 0;
         }
 
         return current >= previous.value ? current - previous.value : 0;
-    }
-
-    private boolean sustained(String key, boolean condition, long now)
-    {
-        mConditionsEvaluatedThisSample.add(key);
-
-        if(!condition)
-        {
-            mConditionStartTimes.remove(key);
-            return false;
-        }
-
-        long started = mConditionStartTimes.computeIfAbsent(key, ignored -> now);
-        return now - started >= CONDITION_HOLD_MILLISECONDS;
     }
 
     private StorageSnapshot storageSnapshot()
@@ -1275,233 +1116,63 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    /**
-     * Compares monotonic callback counters on the observer thread.  The USB callback only updates primitives;
-     * wording and incident evidence remain here so a later normal sample cannot erase the triggering clue.
-     */
-    private static final class UsbCallbackTimingState
-    {
-        private long mStreamSequence = -1;
-        private long mCallbackCount;
-        private long mAtLeast25MsCount;
-        private long mAtLeast100MsCount;
-        private UsbCallbackTimingWindow mPrevious = UsbCallbackTimingWindow.unavailable();
-        private UsbCallbackTimingWindow mCurrent = UsbCallbackTimingWindow.unavailable();
-        private final Map<String,UsbCallbackIncidentEvidence> mEvidenceByCode = new HashMap<>();
-
-        UsbCallbackTimingWindow sample(USBTunerController.UsbTransferHealthSnapshot usb)
-        {
-            if(!usb.streaming() || mStreamSequence != usb.streamSequence() ||
-                usb.callbackCount() < mCallbackCount ||
-                usb.callbacksAtLeast25MsCount() < mAtLeast25MsCount ||
-                usb.callbacksAtLeast100MsCount() < mAtLeast100MsCount)
-            {
-                mStreamSequence = usb.streamSequence();
-                mPrevious = UsbCallbackTimingWindow.unavailable();
-                mCurrent = UsbCallbackTimingWindow.unavailable();
-            }
-            else
-            {
-                mPrevious = mCurrent;
-                mCurrent = new UsbCallbackTimingWindow(true,
-                    usb.callbackCount() - mCallbackCount,
-                    usb.callbacksAtLeast25MsCount() - mAtLeast25MsCount,
-                    usb.callbacksAtLeast100MsCount() - mAtLeast100MsCount);
-            }
-
-            mCallbackCount = usb.callbackCount();
-            mAtLeast25MsCount = usb.callbacksAtLeast25MsCount();
-            mAtLeast100MsCount = usb.callbacksAtLeast100MsCount();
-            return mCurrent;
-        }
-
-        String incidentClue(long now, String code, boolean includePreviousWindow)
-        {
-            UsbCallbackIncidentEvidence evidence = mEvidenceByCode.computeIfAbsent(code,
-                ignored -> new UsbCallbackIncidentEvidence());
-            evidence.observe(now, mCurrent, includePreviousWindow ? mPrevious :
-                UsbCallbackTimingWindow.unavailable());
-            return evidence.clue();
-        }
-    }
-
-    private static final class UsbCallbackIncidentEvidence
-    {
-        private long mLastIssueMs = -1;
-        private boolean mMeasuredCallbacks;
-        private int mLongestDelayBucket;
-
-        void observe(long now, UsbCallbackTimingWindow current, UsbCallbackTimingWindow previous)
-        {
-            if(mLastIssueMs < 0 || now < mLastIssueMs ||
-                now - mLastIssueMs > CONDITION_HOLD_MILLISECONDS)
-            {
-                mMeasuredCallbacks = false;
-                mLongestDelayBucket = 0;
-            }
-
-            include(current);
-            include(previous);
-            mLastIssueMs = now;
-        }
-
-        String clue()
-        {
-            if(mLongestDelayBucket >= 100)
-            {
-                return "VCE took at least 100 ms to return USB data while this was happening; that delay may have contributed";
-            }
-
-            if(mLongestDelayBucket >= 25)
-            {
-                return "VCE took at least 25 ms to return USB data while this was happening; that delay may have contributed";
-            }
-
-            if(mMeasuredCallbacks)
-            {
-                return "VCE took less than 25 ms to return the USB data it received; the pause may have happened before data reached VCE or between USB deliveries";
-            }
-
-            return "VCE could not measure how quickly it handled USB data during this issue, so the cause is still unclear";
-        }
-
-        private void include(UsbCallbackTimingWindow window)
-        {
-            if(window.available() && window.callbacks() > 0)
-            {
-                mMeasuredCallbacks = true;
-            }
-
-            if(window.atLeast100Ms() > 0)
-            {
-                mLongestDelayBucket = 100;
-            }
-            else if(window.atLeast25Ms() > 0)
-            {
-                mLongestDelayBucket = Math.max(mLongestDelayBucket, 25);
-            }
-        }
-
-    }
-
-    private record UsbCallbackTimingWindow(boolean available, long callbacks, long atLeast25Ms,
-                                           long atLeast100Ms)
-    {
-        private static UsbCallbackTimingWindow unavailable()
-        {
-            return new UsbCallbackTimingWindow(false, 0, 0, 0);
-        }
-    }
-
+    /** Measures short diagnostic windows and separately confirms a shortage over at least ten seconds. */
     static final class UsbDeliveryClassifier
     {
-        private UsbDeliveryBaseline mBaseline;
-        private UsbRateWindow mPreviousRateWindow;
-        private boolean mPreviousRateWindowLow;
-        private boolean mPreviousWindowHadGap;
-        private long mLowRateWindowCount;
+        private UsbDeliveryObservation mBaseline;
+        private UsbDeliveryObservation mRateBaseline;
 
         UsbDeliveryAssessment evaluate(UsbDeliveryObservation observation)
         {
             if(!observation.streaming())
             {
-                reset();
+                mBaseline = null;
+                mRateBaseline = null;
                 return UsbDeliveryAssessment.warming(false, 0);
             }
 
             long lastDeliveryAge = TimeUnit.NANOSECONDS.toMillis(Math.max(0,
                 observation.nowNanos() - observation.lastDeliveryTimestampNanos()));
-            boolean stale = lastDeliveryAge > USB_STALE_DELIVERY_MILLISECONDS;
-            long elapsedNanos = mBaseline != null ? observation.nowNanos() - mBaseline.timestampNanos() : 0;
-            boolean baselineUsable = mBaseline != null && mBaseline.sequence() == observation.sequence() &&
-                elapsedNanos > 0 && observation.expectedBytes() >=
-                mBaseline.expectedBytes() && observation.usableBytes() >= mBaseline.usableBytes() &&
-                observation.statusCount() >= mBaseline.statusCount() && observation.integrityCount() >=
-                mBaseline.integrityCount() && observation.longGapCount() >= mBaseline.longGapCount();
+            boolean stopped = lastDeliveryAge >= USB_STALE_DELIVERY_MILLISECONDS;
+            UsbDeliveryObservation previous = mBaseline;
+            mBaseline = observation;
+            boolean usable = previous != null && previous.sequence() == observation.sequence() &&
+                observation.nowNanos() - previous.nowNanos() > 0 &&
+                observation.requiredBytesPerSecond() == previous.requiredBytesPerSecond() &&
+                observation.expectedBytes() >= previous.expectedBytes() &&
+                observation.usableBytes() >= previous.usableBytes() &&
+                observation.statusCount() >= previous.statusCount() &&
+                observation.integrityCount() >= previous.integrityCount() &&
+                observation.longGapCount() >= previous.longGapCount();
 
-            if(!baselineUsable)
+            if(!usable)
             {
-                setBaseline(observation);
-                resetRateWindow();
-                return UsbDeliveryAssessment.warming(stale, lastDeliveryAge);
+                mRateBaseline = observation;
+                return UsbDeliveryAssessment.warming(stopped, lastDeliveryAge);
             }
 
-            long windowMilliseconds = TimeUnit.NANOSECONDS.toMillis(elapsedNanos);
-            long expectedBytesDelta = observation.expectedBytes() - mBaseline.expectedBytes();
-            long usableBytesDelta = observation.usableBytes() - mBaseline.usableBytes();
-            long statusDelta = observation.statusCount() - mBaseline.statusCount();
-            long integrityDelta = observation.integrityCount() - mBaseline.integrityCount();
-            long gapDelta = observation.longGapCount() - mBaseline.longGapCount();
-            setBaseline(observation);
-            boolean rateAvailable = observation.requiredBytesPerSecond() > 0 && windowMilliseconds > 0;
+            long elapsed = observation.nowNanos() - previous.nowNanos();
+            long windowMs = TimeUnit.NANOSECONDS.toMillis(elapsed);
+            long delivered = observation.usableBytes() - previous.usableBytes();
+            boolean rateAvailable = observation.requiredBytesPerSecond() > 0 && windowMs > 0;
+            double percent = rateAvailable ? 100.0 * delivered /
+                (observation.requiredBytesPerSecond() * elapsed / 1_000_000_000.0) : Double.NaN;
+            long sustainedElapsed = observation.nowNanos() - mRateBaseline.nowNanos();
+            long sustainedMs = TimeUnit.NANOSECONDS.toMillis(sustainedElapsed);
+            double sustainedPercent = Double.NaN;
 
-            if(!rateAvailable)
+            if(rateAvailable && sustainedMs >= CONDITION_HOLD_MILLISECONDS)
             {
-                resetRateWindow();
-                return new UsbDeliveryAssessment(false, windowMilliseconds, expectedBytesDelta, usableBytesDelta,
-                    0, Double.NaN, Double.NaN, statusDelta, integrityDelta, gapDelta, stale, false, false,
-                    false, mLowRateWindowCount, lastDeliveryAge);
+                sustainedPercent = 100.0 * (observation.usableBytes() - mRateBaseline.usableBytes()) /
+                    (observation.requiredBytesPerSecond() * sustainedElapsed / 1_000_000_000.0);
+                mRateBaseline = observation;
             }
 
-            double nominalBytes = observation.requiredBytesPerSecond() * windowMilliseconds / 1_000.0;
-            double rawDeliveryPercent = nominalBytes > 0 ? 100.0 * usableBytesDelta / nominalBytes : 0;
-            boolean currentWindowLow = rawDeliveryPercent < USB_LOW_DELIVERY_PERCENT;
-            boolean gapCorrelated = (currentWindowLow && (gapDelta > 0 || mPreviousWindowHadGap)) ||
-                (gapDelta > 0 && mPreviousRateWindowLow);
-            double twoWindowDeliveryPercent = Double.NaN;
-            boolean aggregateLow = false;
-
-            if(mPreviousRateWindowLow && mPreviousRateWindow != null)
-            {
-                double aggregateNominalBytes = mPreviousRateWindow.nominalBytes() + nominalBytes;
-
-                if(aggregateNominalBytes > 0)
-                {
-                    twoWindowDeliveryPercent = 100.0 *
-                        (mPreviousRateWindow.usableBytes() + usableBytesDelta) / aggregateNominalBytes;
-                    aggregateLow = twoWindowDeliveryPercent < USB_LOW_DELIVERY_PERCENT;
-                }
-            }
-
-            boolean rateCritical = aggregateLow || gapCorrelated;
-            boolean rateWarning = currentWindowLow && !rateCritical;
-
-            if(currentWindowLow)
-            {
-                mLowRateWindowCount++;
-            }
-            else
-            {
-                mLowRateWindowCount = 0;
-            }
-
-            mPreviousRateWindow = new UsbRateWindow(nominalBytes, usableBytesDelta);
-            mPreviousRateWindowLow = currentWindowLow;
-            mPreviousWindowHadGap = gapDelta > 0;
-            return new UsbDeliveryAssessment(true, windowMilliseconds, expectedBytesDelta, usableBytesDelta,
-                nominalBytes, rawDeliveryPercent, twoWindowDeliveryPercent, statusDelta, integrityDelta, gapDelta,
-                stale, rateWarning, rateCritical, gapCorrelated, mLowRateWindowCount, lastDeliveryAge);
-        }
-
-        private void setBaseline(UsbDeliveryObservation observation)
-        {
-            mBaseline = new UsbDeliveryBaseline(observation.nowNanos(), observation.sequence(),
-                observation.expectedBytes(), observation.usableBytes(), observation.statusCount(),
-                observation.integrityCount(), observation.longGapCount());
-        }
-
-        private void reset()
-        {
-            mBaseline = null;
-            resetRateWindow();
-        }
-
-        private void resetRateWindow()
-        {
-            mPreviousRateWindow = null;
-            mPreviousRateWindowLow = false;
-            mPreviousWindowHadGap = false;
-            mLowRateWindowCount = 0;
+            return new UsbDeliveryAssessment(rateAvailable, windowMs, delivered, percent,
+                observation.statusCount() - previous.statusCount(),
+                observation.integrityCount() - previous.integrityCount(),
+                observation.longGapCount() - previous.longGapCount(), stopped, lastDeliveryAge,
+                sustainedMs, sustainedPercent);
         }
     }
 
@@ -1511,36 +1182,24 @@ public final class ReceiverHealthService implements AutoCloseable
     {
     }
 
-    record UsbDeliveryAssessment(boolean rateAvailable, long windowMilliseconds, long expectedBytesDelta,
-                                 long usableBytesDelta, double nominalBytes, double rawDeliveryPercent,
-                                 double twoWindowDeliveryPercent, long statusDelta, long integrityDelta,
-                                 long gapDelta, boolean stale, boolean rateWarning, boolean rateCritical,
-                                 boolean gapCorrelated, long lowRateWindowCount,
-                                 long lastDeliveryAgeMilliseconds)
+    record UsbDeliveryAssessment(boolean rateAvailable, long windowMilliseconds, long usableBytesDelta,
+                                 double rawDeliveryPercent, long statusDelta, long integrityDelta,
+                                 long gapDelta, boolean stopped, long lastDeliveryAgeMilliseconds,
+                                 long sustainedWindowMilliseconds, double sustainedDeliveryPercent)
     {
-        private static UsbDeliveryAssessment warming(boolean stale, long lastDeliveryAgeMilliseconds)
+        private static UsbDeliveryAssessment warming(boolean stopped, long lastDeliveryAgeMilliseconds)
         {
-            return new UsbDeliveryAssessment(false, 0, 0, 0, 0, Double.NaN, Double.NaN, 0, 0, 0, stale,
-                false, false, false, 0, lastDeliveryAgeMilliseconds);
+            return new UsbDeliveryAssessment(false, 0, 0, Double.NaN, 0, 0, 0, stopped,
+                lastDeliveryAgeMilliseconds, 0, Double.NaN);
         }
 
-        boolean hardLoss()
+        boolean sustainedShortage()
         {
-            return integrityDelta > 0 || stale;
-        }
-
-        boolean rateMeasurementWarning()
-        {
-            return rateAvailable && rawDeliveryPercent < USB_WARNING_DELIVERY_PERCENT;
+            return Double.isFinite(sustainedDeliveryPercent) && sustainedDeliveryPercent < USB_LOW_DELIVERY_PERCENT;
         }
     }
 
-    private record UsbDeliveryBaseline(long timestampNanos, long sequence, long expectedBytes, long usableBytes,
-                                       long statusCount, long integrityCount, long longGapCount)
-    {
-    }
-
-    private record UsbRateWindow(double nominalBytes, long usableBytes)
+    private record CounterOwner(TunerController controller, Object sourceManager, long streamSequence, boolean receiving)
     {
     }
 
@@ -1549,7 +1208,7 @@ public final class ReceiverHealthService implements AutoCloseable
     }
 
     private record ControlContinuity(ControlChannelQualityMonitor owner, long lifecycleGeneration,
-                                     long processingIncarnation, long lastValidDecodeMs)
+                                     long processingIncarnation, long validFrameSequence, long lastProgressNanos)
     {
     }
 

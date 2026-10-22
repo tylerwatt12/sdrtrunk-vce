@@ -29,6 +29,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
@@ -78,6 +79,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     private long mFrequency;
     private long mLastPublish;
     private long mLastValidDecode;
+    private final AtomicLong mValidFrameSequence = new AtomicLong();
     private long mLastLcchKey = Long.MIN_VALUE;
     private double mSignalDbfs = Double.NaN;
     private volatile long mStateGeneration;
@@ -175,6 +177,12 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             observation.lifecycleGeneration() == mLifecycleGeneration ? observation : null;
     }
 
+    /** Valid control-message progress; multiple LCCH structures may describe the same physical frame. */
+    public long getValidFrameSequence()
+    {
+        return mValidFrameSequence.get();
+    }
+
     private void receive(SourceEvent event)
     {
         if(event == null || !mStateLock.tryLock())
@@ -225,10 +233,20 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
 
     private void receive(IMessage message)
     {
-        if(message == null || !mStateLock.tryLock())
+        if(message == null || !mRunning)
         {
             return;
         }
+
+        boolean valid = message instanceof TSBKMessage tsbk && tsbk.isValid() ||
+            message instanceof MacMessage mac && mac.getDataUnitID().isLCCH() && mac.isValid() ||
+            mDecoderType == DecoderType.DMR && message instanceof DataMessage data &&
+                data.getSlotType() != null && data.getSlotType().isValid() &&
+                (data.isValid() || mIgnoreDmrCrcChecksums) ||
+            mDecoderType == DecoderType.NXDN && message instanceof NXDNMessage nxdn &&
+                nxdn.isRfFrameQualityCarrier() && nxdn.isRfFrameValid();
+        if(valid) mValidFrameSequence.incrementAndGet();
+        if(!mStateLock.tryLock()) return;
 
         try
         {
@@ -239,7 +257,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
 
             if(message instanceof TSBKMessage tsbk)
             {
-                countFrame(tsbk.isValid(), Math.max(0, tsbk.getMessage().getCorrectedBitCount()), tsbk.getTimestamp());
+                countFrame(valid, Math.max(0, tsbk.getMessage().getCorrectedBitCount()), tsbk.getTimestamp());
             }
             else if(message instanceof MacMessage mac && mac.getDataUnitID().isLCCH())
             {
@@ -248,7 +266,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
                 if(key != mLastLcchKey)
                 {
                     mLastLcchKey = key;
-                    countFrame(mac.isValid(), Math.max(0, mac.getBitErrorCount()), mac.getTimestamp());
+                    countFrame(valid, Math.max(0, mac.getBitErrorCount()), mac.getTimestamp());
                 }
             }
             else if(mDecoderType == DecoderType.DMR && message instanceof DataMessage data)
@@ -259,8 +277,6 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
                  * isValid(); Ignore CRC is a user-selected override.  Slot type integrity remains mandatory because an
                  * invalid slot type means the payload type itself is not trustworthy.
                  */
-                boolean valid = data.getSlotType() != null && data.getSlotType().isValid() &&
-                    (data.isValid() || mIgnoreDmrCrcChecksums);
                 int correctedBits = Math.max(0, data.getMessage().getCorrectedBitCount()) +
                     (data.getSlotType() != null ? data.getSlotType().getCorrectedBitCount() : 0);
                 countFrame(valid, correctedBits, data.getTimestamp());
@@ -268,7 +284,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             else if(mDecoderType == DecoderType.NXDN && message instanceof NXDNMessage nxdn &&
                 nxdn.isRfFrameQualityCarrier())
             {
-                countFrame(nxdn.isRfFrameValid(), nxdn.getRfFrameCorrectedBitCount(), nxdn.getTimestamp());
+                countFrame(valid, nxdn.getRfFrameCorrectedBitCount(), nxdn.getTimestamp());
             }
             else if(message instanceof SyncLossMessage syncLoss)
             {
@@ -599,6 +615,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
                     mReceiverContext.configurationId() : null;
                 mRunning = true;
                 mLastPublish = System.currentTimeMillis();
+                createPublication(false, mLastPublish);
             }
             finally
             {

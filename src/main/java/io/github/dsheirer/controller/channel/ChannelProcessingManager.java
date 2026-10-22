@@ -2593,15 +2593,13 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         List<ControlChannelQualityMonitor> monitors = new ArrayList<>();
         for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
         {
+            Channel channel = entry.getKey();
+            ProcessingChain chain = entry.getValue();
             ControlChannelQualityMonitor monitor = entry.getValue().getControlChannelQualityMonitor();
-            ControlChannelQualityMonitor.ReceiverObservation observation =
-                monitor != null ? monitor.getReceiverObservation() : null;
-            ControlChannelQualitySnapshot snapshot = observation != null ? observation.snapshot() : null;
-            if(snapshot != null && entry.getValue().isProcessing() && snapshot.channel() == entry.getKey() &&
-                snapshot.receiverContext().matchesCurrentQualityReceiver(entry.getKey(), true) &&
-                snapshot.receiverContext().isStandardChannel() &&
-                snapshot.receiverContext().receiverMode() ==
-                    SiteReceiverContext.ReceiverMode.TRUNKED)
+            SiteReceiverContext receiver = monitor != null ? SiteReceiverContext.capture(channel, null) : null;
+            if(receiver != null && chain.isProcessing() && chain.getCurrentChannel() == channel &&
+                channel.matchesProcessingIncarnation(receiver.processingIncarnation(), true) &&
+                receiver.isStandardChannel() && receiver.receiverMode() == SiteReceiverContext.ReceiverMode.TRUNKED)
             {
                 monitors.add(monitor);
             }

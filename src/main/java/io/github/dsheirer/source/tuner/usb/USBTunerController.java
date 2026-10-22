@@ -33,6 +33,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import java.util.function.ToIntFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -832,9 +833,10 @@ public abstract class USBTunerController extends TunerController
      * Immutable USB transfer measurements.  Counts and worst values are cumulative for the life of this controller.
      * The first/last timestamps, last gap, and last slow callback apply to the latest streaming session and exclude
      * time while stopped.  Monotonic ticks are process-local and may be negative or zero; hasTransfer identifies
-     * a callback in this session without using a timestamp sentinel.
+     * a callback in this session without using a timestamp sentinel.  observedAtNanoseconds is captured beside the
+     * usable-byte count, before reading the remaining metadata; the snapshot is not an atomic callback transaction.
      */
-    public record UsbTransferHealthSnapshot(boolean streaming, long streamSequence,
+    public record UsbTransferHealthSnapshot(boolean streaming, long streamSequence, long observedAtNanoseconds,
                                             int expectedTransferLengthBytes, int sampleFrameSizeBytes,
                                             int negotiatedDeviceSpeedCode, String negotiatedDeviceSpeed,
                                             int transferPoolSize, int activeTransferCount, int retryTransferCount,
@@ -1082,6 +1084,13 @@ public abstract class USBTunerController extends TunerController
 
         UsbTransferHealthSnapshot snapshot(UsbNativeBufferIngress.Snapshot ingress)
         {
+            return snapshot(ingress, System::nanoTime);
+        }
+
+        UsbTransferHealthSnapshot snapshot(UsbNativeBufferIngress.Snapshot ingress, LongSupplier clock)
+        {
+            long usableBytes = mUsableBytes;
+            long observedAtNanoseconds = clock.getAsLong();
             int ingressCapacity = ingress != null ? ingress.capacity() : 0;
             int ingressDepth = ingress != null ? ingress.depth() : 0;
             int ingressHighWaterDepth = ingress != null ? ingress.highWaterDepth() : 0;
@@ -1094,12 +1103,12 @@ public abstract class USBTunerController extends TunerController
             long ingressWorstQueueDelay = ingress != null ? ingress.worstQueueDelayNanoseconds() : 0;
             // Acquire callback publication before reading its timestamp, including a valid zero nanoTime tick.
             boolean hasTransfer = mHasPreviousTransfer;
-            return new UsbTransferHealthSnapshot(mStreaming, mStreamSequence, mExpectedTransferLengthBytes,
+            return new UsbTransferHealthSnapshot(mStreaming, mStreamSequence, observedAtNanoseconds, mExpectedTransferLengthBytes,
                     mSampleFrameSizeBytes, mNegotiatedDeviceSpeedCode, mNegotiatedDeviceSpeed, mTransferPoolSize,
                     mActiveTransferCount, mRetryTransferCount, mSubmissionFailureCount, mTransferCount,
                     mCompletedTransferCount, mStalledTransferCount,
                     mTimedOutTransferCount, mErrorTransferCount, mCancelledTransferCount,
-                    mUnexpectedStatusTransferCount, mExpectedBytes, mActualBytes, mUsableBytes,
+                    mUnexpectedStatusTransferCount, mExpectedBytes, mActualBytes, usableBytes,
                     mEstimatedMissingBytes, mUnusableBytes, mShortTransferCount, mZeroLengthTransferCount,
                     mMalformedTransferCount, mMalformedRemainderBytes, mStreamStartedTimestampMilliseconds,
                     mFirstTransferTimestampMilliseconds,

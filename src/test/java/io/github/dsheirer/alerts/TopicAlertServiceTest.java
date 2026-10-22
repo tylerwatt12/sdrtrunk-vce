@@ -332,6 +332,40 @@ class TopicAlertServiceTest
         }
     }
 
+    @Test void healthPushEscalatesOnlyFromWarningToCriticalAndStillRecovers() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(START);
+        var healthRule = new AlertRule("health", "Health", "fire", true, "health", "", "", "", "",
+            AlertRule.Condition.all(), null, null, 0, "rule", true, "{issue_name}", "{state}", "details");
+        try(TopicAlertService service = configured(clock, healthRule))
+        {
+            service.saveTopic(new AlertTopic(AlertTopic.ADMINISTRATOR_TOPIC_ID, "Administrator alerts", "", true,
+                true, true), service.configuration().revision());
+            var issue = new java.util.HashMap<String,Object>(Map.of("occurrence_id", 1, "code", "usb-sample-loss",
+                "severity", "warning", "title", "USB data is incomplete", "scope", "Tuner", "opened_at_ms", START));
+            service.observeHealth(health(List.of(issue), List.of())); service.drain();
+            assertEquals(2, service.history(null, 100, 0).get("total"));
+
+            issue.put("title", "USB data is still incomplete");
+            service.observeHealth(health(List.of(issue), List.of())); service.drain();
+            assertEquals(2, service.history(null, 100, 0).get("total"), "A title edit is not an escalation");
+            issue.put("severity", "critical");
+            service.observeHealth(health(List.of(issue), List.of())); service.drain();
+            assertEquals(4, service.history(null, 100, 0).get("total"), "Both health destinations see the escalation");
+
+            issue.put("title", "USB data is missing");
+            service.observeHealth(health(List.of(issue), List.of())); service.drain();
+            issue.put("severity", "warning");
+            service.observeHealth(health(List.of(issue), List.of())); service.drain();
+            service.observeHealth(health(List.of(issue), List.of())); service.drain();
+            assertEquals(4, service.history(null, 100, 0).get("total"), "Renaming or de-escalating does not send another push");
+
+            service.observeHealth(health(List.of(), List.of(issue))); service.drain();
+            service.observeHealth(health(List.of(), List.of(issue))); service.drain();
+            assertEquals(6, service.history(null, 100, 0).get("total"), "Notified incidents still recover exactly once");
+        }
+    }
+
     @Test void protocolFamilyUsesSourceDecoderAndKeepsDecodedDcsAndP25PhasesIndependent() throws Exception
     {
         var rule = new AlertRule("r", "DCS activity", "fire", true, "dcs", "", "", "", "NBFM", "DCS",

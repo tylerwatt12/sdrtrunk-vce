@@ -8,6 +8,7 @@ package io.github.dsheirer.controller.channel;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.Test;
 
@@ -50,9 +52,10 @@ class ChannelProcessingManagerQualityTest
                 return new ReceiverObservation(snapshot, 1, 1);
             }
         };
+        AtomicBoolean processing = new AtomicBoolean(true);
         ProcessingChain chain = new ProcessingChain(channel, null)
         {
-            @Override public boolean isProcessing() { return true; }
+            @Override public boolean isProcessing() { return processing.get(); }
         };
         chain.addModule(monitor);
         Field mappingsField = ChannelProcessingManager.class.getDeclaredField("mProcessingChainsMap");
@@ -60,6 +63,14 @@ class ChannelProcessingManagerQualityTest
         @SuppressWarnings("unchecked")
         Map<Channel,ProcessingChain> mappings = (Map<Channel,ProcessingChain>)mappingsField.get(manager);
         mappings.put(channel, chain);
+        Channel traffic = channel(ChannelType.TRAFFIC, new DecodeConfigP25Phase1());
+        traffic.activateProcessingIncarnation(9);
+        ProcessingChain trafficChain = new ProcessingChain(traffic, null)
+        {
+            @Override public boolean isProcessing() { return true; }
+        };
+        trafficChain.addModule(new ControlChannelQualityMonitor(traffic, 851_012_500L, null));
+        mappings.put(traffic, trafficChain);
         Field moduleLockField = ProcessingChain.class.getDeclaredField("mModuleLock");
         moduleLockField.setAccessible(true);
         ReentrantLock moduleLock = (ReentrantLock)moduleLockField.get(chain);
@@ -97,6 +108,15 @@ class ChannelProcessingManagerQualityTest
             assertEquals(List.of(nxdnMonitor), manager.getControlChannelQualityMonitors(),
                 "The configured NXDN control receiver supplies its own observation before UI delivery");
 
+            nxdnMonitor.reset();
+            assertNull(nxdnMonitor.getReceiverObservation());
+            assertEquals(List.of(nxdnMonitor), manager.getControlChannelQualityMonitors(),
+                "Missing quality evidence must reach health without admitting the traffic monitor");
+            processing.set(false);
+            assertTrue(manager.getControlChannelQualityMonitors().isEmpty(),
+                "A stopped processing chain must not preserve control health");
+            processing.set(true);
+
             nxdnMonitor.stop();
             nxdn.setChannelMode(NXDNChannelMode.CONVENTIONAL);
             nxdnMonitor.start();
@@ -110,6 +130,7 @@ class ChannelProcessingManagerQualityTest
         {
             mappings.clear();
             chain.dispose();
+            trafficChain.dispose();
             manager.close();
         }
     }
