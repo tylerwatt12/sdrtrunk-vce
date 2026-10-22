@@ -20,7 +20,6 @@
 package io.github.dsheirer.source.tuner.sdrplay;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -69,44 +68,39 @@ public class RspNativeBufferFactory
     public List<RspNativeBuffer> get(short[] i, short[] q, long timestamp)
     {
         updateBufferLength(i.length);
+        int sampleCount = mIResidual.length + i.length;
+        List<RspNativeBuffer> buffers = sampleCount < mOptimalBufferLength ?
+            Collections.emptyList() : new ArrayList<>();
+        int offset = 0;
 
-        short[] iCombined = new short[mIResidual.length + i.length];
-        System.arraycopy(mIResidual, 0, iCombined, 0, mIResidual.length);
-        System.arraycopy(i, 0, iCombined, mIResidual.length, i.length);
-
-        short[] qCombined = new short[mQResidual.length + q.length];
-        System.arraycopy(mQResidual, 0, qCombined, 0, mQResidual.length);
-        System.arraycopy(q, 0, qCombined, mQResidual.length, q.length);
-
-        if(iCombined.length < mOptimalBufferLength)
+        while(sampleCount - offset >= mOptimalBufferLength)
         {
-            mIResidual = iCombined;
-            mQResidual = qCombined;
-            return Collections.emptyList();
-        }
-
-        List<RspNativeBuffer> buffers = new ArrayList<>();
-
-        while(iCombined.length >= mOptimalBufferLength)
-        {
-            short[] iOptimal = Arrays.copyOf(iCombined, mOptimalBufferLength);
-            iCombined = Arrays.copyOfRange(iCombined, mOptimalBufferLength, iCombined.length);
-
-            short[] qOptimal = Arrays.copyOf(qCombined, mOptimalBufferLength);
-            qCombined = Arrays.copyOfRange(qCombined, mOptimalBufferLength, qCombined.length);
-
-            RspNativeBuffer buffer = new RspNativeBuffer(iOptimal, qOptimal, mResidualTimestamp, mSamplesPerMillisecond);
-            buffers.add(buffer);
+            buffers.add(new RspNativeBuffer(copySamples(mIResidual, i, offset, mOptimalBufferLength),
+                copySamples(mQResidual, q, offset, mOptimalBufferLength), mResidualTimestamp, mSamplesPerMillisecond));
+            offset += mOptimalBufferLength;
             mResidualTimestamp += (long)(mOptimalBufferLength / mSamplesPerMillisecond);
         }
 
-        mIResidual = iCombined;
-        mQResidual = qCombined;
+        mIResidual = copySamples(mIResidual, i, offset, sampleCount - offset);
+        mQResidual = copySamples(mQResidual, q, offset, sampleCount - offset);
 
-        //For simplicity, just update the residual timestamp to be the timestamp for this latest update
-        mResidualTimestamp = timestamp;
+        if(offset > 0)
+        {
+            //Preserve the existing timestamp update only when at least one output buffer was emitted.
+            mResidualTimestamp = timestamp;
+        }
 
         return buffers;
+    }
+
+    /** Copies a range of the logical residual + incoming stream into an independently owned array. */
+    private static short[] copySamples(short[] residual, short[] incoming, int offset, int length)
+    {
+        short[] samples = new short[length];
+        int residualCount = Math.min(length, Math.max(0, residual.length - offset));
+        System.arraycopy(residual, Math.min(offset, residual.length), samples, 0, residualCount);
+        System.arraycopy(incoming, Math.max(0, offset - residual.length), samples, residualCount, length - residualCount);
+        return samples;
     }
 
     /**
