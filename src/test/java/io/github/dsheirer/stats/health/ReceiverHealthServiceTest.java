@@ -324,6 +324,31 @@ class ReceiverHealthServiceTest
     }
 
     @Test
+    void usbRatesIgnoreForwardAndBackwardWallClockCorrections() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+            collectUsb.invoke(service, 1_000L, TimeUnit.SECONDS.toNanos(1), "usb-test", "USB test tuner", tuner,
+                usbTimingSnapshot(1_000L, 0, 0, 0, 0), measurements, null);
+            collectUsb.invoke(service, 4_358L, TimeUnit.SECONDS.toNanos(2), "usb-test", "USB test tuner", tuner,
+                usbTimingSnapshot(2_000L, 2_400_000L, 100, 0, 0), measurements, null);
+            collectUsb.invoke(service, 990L, TimeUnit.SECONDS.toNanos(3), "usb-test", "USB test tuner", tuner,
+                usbTimingSnapshot(3_000L, 4_800_000L, 200, 0, 0), measurements, null);
+            assertTrue(incidents.active().isEmpty(), "Clock corrections must not invent low-rate/stale USB incidents");
+            assertEquals(3, measurements.stream().filter(row ->
+                String.valueOf(row.get("label")).contains("radio data rate")).count());
+            assertTrue(measurements.stream().filter(row ->
+                String.valueOf(row.get("label")).contains("radio data rate")).allMatch(row ->
+                    String.valueOf(row.get("detail")).contains("warming up") ||
+                    String.valueOf(row.get("detail")).contains("Delivery 100.0%")));
+        }
+    }
+
+    @Test
     void usbAlertDoesNotBlameVceWhenMeasuredCallbacksWereFast() throws Exception
     {
         Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
@@ -730,12 +755,12 @@ class ReceiverHealthServiceTest
             List<Map<String,Object>> rows = new java.util.ArrayList<>();
 
             incidents.beginSample();
-            collectUsb.invoke(service, 1_000L, "usb-test", "USB test tuner", tuner,
-                usbSnapshot(1_000L, 0, 0, 0, 0), rows);
+            collectUsb.invoke(service, 1_000L, TimeUnit.MILLISECONDS.toNanos(1_000L), "usb-test", "USB test tuner", tuner,
+                usbSnapshot(1_000L, 0, 0, 0, 0), rows, null);
             incidents.endSample(1_000L);
             incidents.beginSample();
-            collectUsb.invoke(service, 2_000L, "usb-test", "USB test tuner", tuner,
-                usbSnapshot(2_000L, saturationDrops, copyFailures, conversionFailures, listenerFailures), rows);
+            collectUsb.invoke(service, 2_000L, TimeUnit.MILLISECONDS.toNanos(2_000L), "usb-test", "USB test tuner", tuner,
+                usbSnapshot(2_000L, saturationDrops, copyFailures, conversionFailures, listenerFailures), rows, null);
             incidents.endSample(2_000L);
             return incidents.active().stream().map(incident -> String.valueOf(incident.get("code")))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -791,7 +816,8 @@ class ReceiverHealthServiceTest
         return new USBTunerController.UsbTransferHealthSnapshot(true, streamSequence, 1_024, 1, 0, "unknown",
             8, 8, 0, 0, deliveredBytes > 0 ? 1 : 0, deliveredBytes > 0 ? 1 : 0,
             0, 0, 0, 0, 0, deliveredBytes, deliveredBytes, deliveredBytes, 0, 0,
-            shortTransfers, 0, 0, 0, 1_000L, now, now, 0, 0, longGaps, 0, 0,
+            shortTransfers, 0, 0, 0, 1_000L, now, now, TimeUnit.MILLISECONDS.toNanos(1_000),
+            TimeUnit.MILLISECONDS.toNanos(now), true, 0, 0, longGaps, 0, 0,
             callbacks, slow25, slow100, slow25 > 0 ? 25_000_000L : 0,
             16, 0, 0, saturationDrops, saturationDrops * 1_024, copyFailures, conversionFailures,
             listenerFailures, 0, 0);
@@ -806,9 +832,9 @@ class ReceiverHealthServiceTest
 
     private static Method usbCollector() throws Exception
     {
-        Method collectUsb = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class,
+        Method collectUsb = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class, long.class,
             String.class, String.class, Tuner.class, USBTunerController.UsbTransferHealthSnapshot.class,
-            List.class);
+            List.class, ReceiverHealthDiagnosticCore.Tuner.class);
         collectUsb.setAccessible(true);
         return collectUsb;
     }
@@ -819,7 +845,7 @@ class ReceiverHealthServiceTest
                                          USBTunerController.UsbTransferHealthSnapshot snapshot) throws Exception
     {
         incidents.beginSample();
-        collectUsb.invoke(service, now, "usb-test", "USB test tuner", tuner, snapshot, measurements);
+        collectUsb.invoke(service, now, TimeUnit.MILLISECONDS.toNanos(now), "usb-test", "USB test tuner", tuner, snapshot, measurements, null);
         incidents.endSample(now);
     }
 

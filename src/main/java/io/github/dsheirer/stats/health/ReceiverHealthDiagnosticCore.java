@@ -222,13 +222,12 @@ final class ReceiverHealthDiagnosticCore
         private Tuner(Device device, String display, boolean enabled, boolean error, int channels)
         { mDevice = device; mDisplay = display; mEnabled = enabled; mError = error; mChannels = channels; }
 
-        void usb(USBTunerController.UsbTransferHealthSnapshot usb, long nowMs, boolean deliveryAvailable,
+        void usb(USBTunerController.UsbTransferHealthSnapshot usb, long lastDeliveryAgeMilliseconds, boolean deliveryAvailable,
                  double deliveryPercent, double usableBytesPerSecond, double requiredBytesPerSecond)
         {
             mDevice.stream(usb.streamSequence());
             long statuses = usb.errorTransferCount() + usb.stalledTransferCount() + usb.timedOutTransferCount() +
                 usb.cancelledTransferCount() + usb.unexpectedStatusTransferCount() + usb.submissionFailureCount();
-            long lastDelivery = usb.lastTransferTimestampMilliseconds();
             Delta completed = mDevice.delta("usb_completed", usb.completedTransferCount());
             Delta errors = mDevice.delta("usb_status_errors", statuses);
             Delta gaps = mDevice.delta("usb_long_gaps", usb.longTransferGapCount());
@@ -241,8 +240,8 @@ final class ReceiverHealthDiagnosticCore
                 Map.entry("delivery_available", deliveryAvailable),
                 Map.entry("delivery_percent", deliveryAvailable && Double.isFinite(deliveryPercent) ? deliveryPercent : 0.0),
                 Map.entry("usable_bytes_s", usableBytesPerSecond), Map.entry("required_bytes_s", requiredBytesPerSecond),
-                Map.entry("last_delivery_available", lastDelivery > 0),
-                Map.entry("last_delivery_age_ms", lastDelivery > 0 ? Math.max(0, nowMs - lastDelivery) : 0),
+                Map.entry("last_delivery_available", usb.hasTransfer()),
+                Map.entry("last_delivery_age_ms", usb.hasTransfer() ? Math.max(0, lastDeliveryAgeMilliseconds) : 0),
                 Map.entry("last_gap_ms", usb.lastInterTransferGapMilliseconds()),
                 Map.entry("max_gap_ms", usb.worstInterTransferGapMilliseconds()),
                 Map.entry("long_gaps", usb.longTransferGapCount()), Map.entry("new_long_gaps", gaps.value()),

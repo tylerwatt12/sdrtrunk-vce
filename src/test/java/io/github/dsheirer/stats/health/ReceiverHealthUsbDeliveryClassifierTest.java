@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class ReceiverHealthUsbDeliveryClassifierTest
@@ -168,14 +169,38 @@ class ReceiverHealthUsbDeliveryClassifierTest
     {
         ReceiverHealthService.UsbDeliveryClassifier classifier = classifierWithBaseline();
         classifier.evaluate(observation(2_000, 1, 1_000, 500, 0, 0, 0, 2_000));
-        classifier.evaluate(new ReceiverHealthService.UsbDeliveryObservation(2_500, false, 1, 1_000, 500,
-            0, 0, 0, 2_000, 0));
+        classifier.evaluate(new ReceiverHealthService.UsbDeliveryObservation(TimeUnit.MILLISECONDS.toNanos(2_500), false, 1, 1_000, 500,
+            0, 0, 0, TimeUnit.MILLISECONDS.toNanos(2_000), 0));
         ReceiverHealthService.UsbDeliveryAssessment restarted = classifier.evaluate(
             observation(3_000, 1, 1_000, 500, 0, 0, 0, 3_000));
 
         assertFalse(restarted.rateAvailable());
         assertFalse(restarted.rateCritical());
         assertFalse(restarted.rateWarning());
+    }
+
+    @Test
+    void rateWindowsAndStalenessSupportSignedAndWrappedMonotonicOrigins()
+    {
+        for(long origin: new long[]{Long.MIN_VALUE, -1_000_000_000L, -1, 0, Long.MAX_VALUE - 500_000_000L})
+        {
+            ReceiverHealthService.UsbDeliveryClassifier classifier = new ReceiverHealthService.UsbDeliveryClassifier();
+            classifier.evaluate(new ReceiverHealthService.UsbDeliveryObservation(origin, true, 1, 0, 0,
+                0, 0, 0, origin, REQUIRED_BYTES_PER_SECOND));
+            long later = origin + TimeUnit.SECONDS.toNanos(1);
+            var normal = classifier.evaluate(new ReceiverHealthService.UsbDeliveryObservation(later, true, 1,
+                1_000, 1_000, 0, 0, 0, later, REQUIRED_BYTES_PER_SECOND));
+            assertEquals(1_000, normal.windowMilliseconds(), "origin=" + origin);
+            assertEquals(100.0, normal.rawDeliveryPercent(), 0.001);
+            assertFalse(normal.hardLoss());
+            assertFalse(normal.rateWarning());
+            var stale = classifier.evaluate(new ReceiverHealthService.UsbDeliveryObservation(
+                later + TimeUnit.MILLISECONDS.toNanos(1_001), true, 1, 1_000, 1_000, 0, 0, 0, later,
+                REQUIRED_BYTES_PER_SECOND));
+            assertEquals(1_001, stale.lastDeliveryAgeMilliseconds(), "origin=" + origin);
+            assertTrue(stale.stale());
+            assertTrue(stale.hardLoss());
+        }
     }
 
     private static ReceiverHealthService.UsbDeliveryClassifier classifierWithBaseline()
@@ -190,7 +215,7 @@ class ReceiverHealthUsbDeliveryClassifierTest
                                                                              long statusCount, long integrityCount,
                                                                              long longGapCount, long lastDelivery)
     {
-        return new ReceiverHealthService.UsbDeliveryObservation(now, true, sequence, expectedBytes, usableBytes,
-            statusCount, integrityCount, longGapCount, lastDelivery, REQUIRED_BYTES_PER_SECOND);
+        return new ReceiverHealthService.UsbDeliveryObservation(TimeUnit.MILLISECONDS.toNanos(now), true, sequence, expectedBytes, usableBytes,
+            statusCount, integrityCount, longGapCount, TimeUnit.MILLISECONDS.toNanos(lastDelivery), REQUIRED_BYTES_PER_SECOND);
     }
 }

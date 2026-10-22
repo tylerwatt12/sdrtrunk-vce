@@ -831,7 +831,8 @@ public abstract class USBTunerController extends TunerController
     /**
      * Immutable USB transfer measurements.  Counts and worst values are cumulative for the life of this controller.
      * The first/last timestamps, last gap, and last slow callback apply to the latest streaming session and exclude
-     * time while stopped.
+     * time while stopped.  Monotonic ticks are process-local and may be negative or zero; hasTransfer identifies
+     * a callback in this session without using a timestamp sentinel.
      */
     public record UsbTransferHealthSnapshot(boolean streaming, long streamSequence,
                                             int expectedTransferLengthBytes, int sampleFrameSizeBytes,
@@ -848,6 +849,8 @@ public abstract class USBTunerController extends TunerController
                                             long streamStartedTimestampMilliseconds,
                                             long firstTransferTimestampMilliseconds,
                                             long lastTransferTimestampMilliseconds,
+                                            long streamStartedTimestampNanoseconds,
+                                            long lastTransferTimestampNanoseconds, boolean hasTransfer,
                                             long lastInterTransferGapMilliseconds,
                                             long worstInterTransferGapMilliseconds, long longTransferGapCount,
                                             long lastCallbackToResubmitDurationNanoseconds,
@@ -900,9 +903,11 @@ public abstract class USBTunerController extends TunerController
         private volatile long mMalformedTransferCount;
         private volatile long mMalformedRemainderBytes;
         private volatile long mStreamStartedTimestampMilliseconds;
+        private volatile long mStreamStartedTimestampNanoseconds;
         private volatile long mFirstTransferTimestampMilliseconds;
         private volatile long mLastTransferTimestampMilliseconds;
-        private volatile long mPreviousTransferTimestampMilliseconds;
+        private volatile long mPreviousTransferTimestampNanoseconds;
+        private volatile boolean mHasPreviousTransfer;
         private volatile long mLastInterTransferGapMilliseconds;
         private volatile long mWorstInterTransferGapMilliseconds;
         private volatile long mLongTransferGapCount;
@@ -919,11 +924,13 @@ public abstract class USBTunerController extends TunerController
             mSampleFrameSizeBytes = Math.max(1, sampleFrameSizeBytes);
             mFirstTransferTimestampMilliseconds = 0;
             mLastTransferTimestampMilliseconds = 0;
-            mPreviousTransferTimestampMilliseconds = 0;
+            mPreviousTransferTimestampNanoseconds = 0;
+            mHasPreviousTransfer = false;
             mLastInterTransferGapMilliseconds = 0;
             mLastCallbackToResubmitDurationNanoseconds = 0;
             mLastAtLeast25MsDurationNanoseconds = 0;
             mStreamStartedTimestampMilliseconds = System.currentTimeMillis();
+            mStreamStartedTimestampNanoseconds = System.nanoTime();
             mStreamSequence++;
             mStreaming = true;
         }
@@ -931,7 +938,8 @@ public abstract class USBTunerController extends TunerController
         void endStreaming()
         {
             mStreaming = false;
-            mPreviousTransferTimestampMilliseconds = 0;
+            mPreviousTransferTimestampNanoseconds = 0;
+            mHasPreviousTransfer = false;
             mLastInterTransferGapMilliseconds = 0;
             mLastCallbackToResubmitDurationNanoseconds = 0;
             mLastAtLeast25MsDurationNanoseconds = 0;
@@ -954,7 +962,7 @@ public abstract class USBTunerController extends TunerController
         /**
          * Records one active-stream callback.  This method must remain allocation-free and non-blocking.
          */
-        void recordTransfer(int status, int actualLength, long timestampMilliseconds)
+        void recordTransfer(int status, int actualLength, long timestampMilliseconds, long callbackStartedNanoseconds)
         {
             int expectedLength = mExpectedTransferLengthBytes;
             int frameSize = mSampleFrameSizeBytes;
@@ -1007,16 +1015,17 @@ public abstract class USBTunerController extends TunerController
                 mUnusableBytes += actualBytes;
             }
 
-            long previousTimestamp = mPreviousTransferTimestampMilliseconds;
+            long previousTimestamp = mPreviousTransferTimestampNanoseconds;
 
-            if(mFirstTransferTimestampMilliseconds == 0)
+            if(!mHasPreviousTransfer)
             {
                 mFirstTransferTimestampMilliseconds = timestampMilliseconds;
             }
 
-            if(previousTimestamp > 0 && timestampMilliseconds >= previousTimestamp)
+            if(mHasPreviousTransfer)
             {
-                long gap = timestampMilliseconds - previousTimestamp;
+                // Subtraction preserves elapsed time across nanoTime's signed wrap; its origin need not be positive.
+                long gap = TimeUnit.NANOSECONDS.toMillis(Math.max(0, callbackStartedNanoseconds - previousTimestamp));
                 mLastInterTransferGapMilliseconds = gap;
 
                 if(gap > mWorstInterTransferGapMilliseconds)
@@ -1035,7 +1044,8 @@ public abstract class USBTunerController extends TunerController
             }
 
             mLastTransferTimestampMilliseconds = timestampMilliseconds;
-            mPreviousTransferTimestampMilliseconds = timestampMilliseconds;
+            mPreviousTransferTimestampNanoseconds = callbackStartedNanoseconds;
+            mHasPreviousTransfer = true;
         }
 
         void recordCallbackToResubmitDuration(long durationNanoseconds)
@@ -1082,6 +1092,8 @@ public abstract class USBTunerController extends TunerController
             long ingressListenerFailures = ingress != null ? ingress.listenerFailures() : 0;
             long ingressLastQueueDelay = ingress != null ? ingress.lastQueueDelayNanoseconds() : 0;
             long ingressWorstQueueDelay = ingress != null ? ingress.worstQueueDelayNanoseconds() : 0;
+            // Acquire callback publication before reading its timestamp, including a valid zero nanoTime tick.
+            boolean hasTransfer = mHasPreviousTransfer;
             return new UsbTransferHealthSnapshot(mStreaming, mStreamSequence, mExpectedTransferLengthBytes,
                     mSampleFrameSizeBytes, mNegotiatedDeviceSpeedCode, mNegotiatedDeviceSpeed, mTransferPoolSize,
                     mActiveTransferCount, mRetryTransferCount, mSubmissionFailureCount, mTransferCount,
@@ -1091,7 +1103,8 @@ public abstract class USBTunerController extends TunerController
                     mEstimatedMissingBytes, mUnusableBytes, mShortTransferCount, mZeroLengthTransferCount,
                     mMalformedTransferCount, mMalformedRemainderBytes, mStreamStartedTimestampMilliseconds,
                     mFirstTransferTimestampMilliseconds,
-                    mLastTransferTimestampMilliseconds, mLastInterTransferGapMilliseconds,
+                    mLastTransferTimestampMilliseconds, mStreamStartedTimestampNanoseconds,
+                    mPreviousTransferTimestampNanoseconds, hasTransfer, mLastInterTransferGapMilliseconds,
                     mWorstInterTransferGapMilliseconds, mLongTransferGapCount,
                     mLastCallbackToResubmitDurationNanoseconds, mWorstCallbackToResubmitDurationNanoseconds,
                     mCallbackCount, mCallbacksAtLeast25MsCount, mCallbacksAtLeast100MsCount,
@@ -1352,7 +1365,7 @@ public abstract class USBTunerController extends TunerController
             if(streaming)
             {
                 timestamp = System.currentTimeMillis();
-                mUsbTransferHealth.recordTransfer(transferStatus, transferLength, timestamp);
+                mUsbTransferHealth.recordTransfer(transferStatus, transferLength, timestamp, callbackStartedNanos);
             }
 
             switch(transferStatus)

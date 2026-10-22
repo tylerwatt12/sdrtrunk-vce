@@ -145,6 +145,29 @@ class ReceiverHealthDiagnosticCoreTest
         assertEquals(List.of(Map.of("occurrence_id", 3L, "tuner_id", 3L)), snapshot.get("alert_tuners"));
     }
 
+    @Test
+    void usbCoreUsesMeasuredDeliveryAgeInsteadOfWallTimestampArithmetic() throws Exception
+    {
+        for(long wallTimestamp: new long[]{Long.MAX_VALUE, 0, -1})
+        {
+            ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
+            var sample = core.begin(1, 0, 0, 0);
+            var tuner = sample.tuner("test", "Receiver", null, null, true, false, 1);
+            tuner.usb(usb(Map.of("lastTransferTimestampMilliseconds", wallTimestamp, "hasTransfer", true)),
+                123, true, 100, 10, 10);
+            Map<String,Object> usb = map(rows(sample.finish(1).get("tuners")).getFirst().get("usb"));
+            assertEquals(true, usb.get("last_delivery_available"));
+            assertEquals(123L, usb.get("last_delivery_age_ms"));
+        }
+        ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
+        var sample = core.begin(1, 0, 0, 0);
+        var tuner = sample.tuner("test", "Receiver", null, null, true, false, 1);
+        tuner.usb(usb(Map.of("hasTransfer", false)), 1_001, false, 0, 0, 10);
+        Map<String,Object> waiting = map(rows(sample.finish(1).get("tuners")).getFirst().get("usb"));
+        assertEquals(false, waiting.get("last_delivery_available"));
+        assertEquals(0L, waiting.get("last_delivery_age_ms"));
+    }
+
     private static Map<String,Object> deviceSample(ReceiverHealthDiagnosticCore core, long generation,
         Object controller, Object manager, long stream, long completed, long dropped) throws Exception
     {

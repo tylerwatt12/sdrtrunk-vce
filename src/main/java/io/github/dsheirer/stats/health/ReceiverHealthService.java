@@ -223,15 +223,16 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         long now = mClock.getAsLong();
+        long nowNanos = System.nanoTime();
         WebDiagnosticLogService diagnostics = mWebDiagnosticLogService;
         long capture = diagnostics != null ? diagnostics.captureGeneration() : 0;
         ReceiverHealthDiagnosticCore.Sample core = capture != 0 ?
-            mDiagnosticCore.begin(capture, mStartedAtMs, now, System.nanoTime()) : null;
+            mDiagnosticCore.begin(capture, mStartedAtMs, now, nowNanos) : null;
         if(core == null) mDiagnosticCore.disabled();
         mIncidents.beginSample();
         mConditionsEvaluatedThisSample.clear();
         List<Map<String,Object>> measurements = new ArrayList<>();
-        collectTuners(now, measurements, core);
+        collectTuners(now, nowNanos, measurements, core);
         collectControlChannels(now, measurements);
         collectHost(now, measurements, core);
         collectOutputs(now, measurements);
@@ -304,7 +305,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    private void collectTuners(long now, List<Map<String,Object>> measurements,
+    private void collectTuners(long now, long nowNanos, List<Map<String,Object>> measurements,
                                ReceiverHealthDiagnosticCore.Sample core)
     {
         List<Map<String,Object>> tunerRows = new ArrayList<>();
@@ -361,7 +362,7 @@ public final class ReceiverHealthService implements AutoCloseable
             if(controller instanceof USBTunerController usbController)
             {
                 activeUsbScopes.add(scope);
-                collectUsb(now, scope, display, tuner, usbController.getUsbTransferHealthSnapshot(), usbRows, compact);
+                collectUsb(now, nowNanos, scope, display, tuner, usbController.getUsbTransferHealthSnapshot(), usbRows, compact);
             }
 
             if(sourceManager instanceof PolyphaseChannelSourceManager polyphase)
@@ -521,14 +522,7 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("channels", "Per-channel processing", channelRows));
     }
 
-    private void collectUsb(long now, String scope, String display, Tuner tuner,
-                            USBTunerController.UsbTransferHealthSnapshot usb,
-                            List<Map<String,Object>> rows)
-    {
-        collectUsb(now, scope, display, tuner, usb, rows, null);
-    }
-
-    private void collectUsb(long now, String scope, String display, Tuner tuner,
+    private void collectUsb(long now, long nowNanos, String scope, String display, Tuner tuner,
                             USBTunerController.UsbTransferHealthSnapshot usb,
                             List<Map<String,Object>> rows, ReceiverHealthDiagnosticCore.Tuner compact)
     {
@@ -541,23 +535,23 @@ public final class ReceiverHealthService implements AutoCloseable
         long bufferFailureCount = usb.nativeIngressCopyFailures() + usb.nativeIngressConversionFailures();
         long integrityCount = usb.shortTransferCount() + usb.zeroLengthTransferCount() +
             usb.malformedTransferCount() + transferStatusCount + bufferFailureCount;
-        long lastDelivery = usb.lastTransferTimestampMilliseconds() > 0 ?
-            usb.lastTransferTimestampMilliseconds() : usb.streamStartedTimestampMilliseconds();
+        long lastDeliveryNanos = usb.hasTransfer() ?
+            usb.lastTransferTimestampNanoseconds() : usb.streamStartedTimestampNanoseconds();
         long ingressLossCount = usb.nativeIngressSaturationDroppedBuffers();
         long ingressLossDelta = delta(scope + ":receiver-ingress-loss", ingressLossCount, now);
         long listenerFailureDelta = delta(scope + ":receiver-listener-failure",
             usb.nativeIngressListenerFailures(), now);
         UsbDeliveryAssessment assessment = mUsbDeliveryClassifiers.computeIfAbsent(scope,
-            ignored -> new UsbDeliveryClassifier()).evaluate(new UsbDeliveryObservation(now, usb.streaming(),
+            ignored -> new UsbDeliveryClassifier()).evaluate(new UsbDeliveryObservation(nowNanos, usb.streaming(),
                 usb.streamSequence(), usb.expectedBytes(), usb.usableBytes(), transferStatusCount, integrityCount,
-                usb.longTransferGapCount(), lastDelivery, requiredBytesPerSecond));
+                usb.longTransferGapCount(), lastDeliveryNanos, requiredBytesPerSecond));
         UsbCallbackTimingState callbackTiming = mUsbCallbackTimingStates.computeIfAbsent(scope,
             ignored -> new UsbCallbackTimingState());
         UsbCallbackTimingWindow callbackWindow = callbackTiming.sample(usb);
         double seconds = assessment.windowMilliseconds() / 1_000.0;
         double usableBytesPerSecond = assessment.rateAvailable() && seconds > 0 ?
             assessment.usableBytesDelta() / seconds : 0;
-        if(compact != null) compact.usb(usb, now, assessment.rateAvailable(), assessment.rawDeliveryPercent(),
+        if(compact != null) compact.usb(usb, assessment.lastDeliveryAgeMilliseconds(), assessment.rateAvailable(), assessment.rawDeliveryPercent(),
             usableBytesPerSecond, requiredBytesPerSecond);
         double displayDeliveryPercent = assessment.rateAvailable() ?
             Math.min(100.0, assessment.rawDeliveryPercent()) : 100.0;
@@ -1415,13 +1409,12 @@ public final class ReceiverHealthService implements AutoCloseable
                 return UsbDeliveryAssessment.warming(false, 0);
             }
 
-            long lastDeliveryAge = observation.lastDeliveryTimestampMs() > 0 &&
-                observation.nowMs() >= observation.lastDeliveryTimestampMs() ?
-                observation.nowMs() - observation.lastDeliveryTimestampMs() : 0;
-            boolean stale = observation.lastDeliveryTimestampMs() > 0 &&
-                lastDeliveryAge > USB_STALE_DELIVERY_MILLISECONDS;
+            long lastDeliveryAge = TimeUnit.NANOSECONDS.toMillis(Math.max(0,
+                observation.nowNanos() - observation.lastDeliveryTimestampNanos()));
+            boolean stale = lastDeliveryAge > USB_STALE_DELIVERY_MILLISECONDS;
+            long elapsedNanos = mBaseline != null ? observation.nowNanos() - mBaseline.timestampNanos() : 0;
             boolean baselineUsable = mBaseline != null && mBaseline.sequence() == observation.sequence() &&
-                observation.nowMs() > mBaseline.timestampMs() && observation.expectedBytes() >=
+                elapsedNanos > 0 && observation.expectedBytes() >=
                 mBaseline.expectedBytes() && observation.usableBytes() >= mBaseline.usableBytes() &&
                 observation.statusCount() >= mBaseline.statusCount() && observation.integrityCount() >=
                 mBaseline.integrityCount() && observation.longGapCount() >= mBaseline.longGapCount();
@@ -1433,7 +1426,7 @@ public final class ReceiverHealthService implements AutoCloseable
                 return UsbDeliveryAssessment.warming(stale, lastDeliveryAge);
             }
 
-            long windowMilliseconds = observation.nowMs() - mBaseline.timestampMs();
+            long windowMilliseconds = TimeUnit.NANOSECONDS.toMillis(elapsedNanos);
             long expectedBytesDelta = observation.expectedBytes() - mBaseline.expectedBytes();
             long usableBytesDelta = observation.usableBytes() - mBaseline.usableBytes();
             long statusDelta = observation.statusCount() - mBaseline.statusCount();
@@ -1492,7 +1485,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
         private void setBaseline(UsbDeliveryObservation observation)
         {
-            mBaseline = new UsbDeliveryBaseline(observation.nowMs(), observation.sequence(),
+            mBaseline = new UsbDeliveryBaseline(observation.nowNanos(), observation.sequence(),
                 observation.expectedBytes(), observation.usableBytes(), observation.statusCount(),
                 observation.integrityCount(), observation.longGapCount());
         }
@@ -1512,9 +1505,9 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    record UsbDeliveryObservation(long nowMs, boolean streaming, long sequence, long expectedBytes,
+    record UsbDeliveryObservation(long nowNanos, boolean streaming, long sequence, long expectedBytes,
                                   long usableBytes, long statusCount, long integrityCount, long longGapCount,
-                                  long lastDeliveryTimestampMs, double requiredBytesPerSecond)
+                                  long lastDeliveryTimestampNanos, double requiredBytesPerSecond)
     {
     }
 
@@ -1542,7 +1535,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    private record UsbDeliveryBaseline(long timestampMs, long sequence, long expectedBytes, long usableBytes,
+    private record UsbDeliveryBaseline(long timestampNanos, long sequence, long expectedBytes, long usableBytes,
                                        long statusCount, long integrityCount, long longGapCount)
     {
     }
