@@ -1300,6 +1300,7 @@ async function main() {
   const embeddedDirectoryPanel = functionBinding(appSource, 'radioDirectoryEmbeddedPanel');
   assert.match(functionBinding(appSource, 'radioDirectoryPerspectiveControl'),
     /\{ value: 'coverage', label: 'Alias inventory' \}/);
+  assert.match(embeddedDirectoryPanel, /if \(view === 'coverage'\) return directory;/);
   assert.match(embeddedDirectoryPanel, /radio-directory-panel-body/);
   assert.match(embeddedDirectoryPanel,
     /body\.append\(directory\)/);
@@ -1310,6 +1311,10 @@ async function main() {
   assert.doesNotMatch(appCssSource, /\.dashboard-identity-split \{[^}]*grid-template-columns: repeat\(2/s);
   assert.match(coverageSource, /radioDirectoryEmbeddedPanel\('coverage', directory\.element\)/);
   assert.match(coverageSource, /alias-coverage ui-catalog data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
+  assert.match(coverageSource, /alias-coverage-header/);
+  assert.match(coverageSource, /alias-coverage-toolbar ui-catalog-toolbar ui-catalog-toolbar-flat/);
+  assert.match(coverageSource, /Find heard aliases and activity without a match\./);
+  assert.match(coverageSource, /Choose a list to get started/);
   assert.doesNotMatch(coverageSource, /aliasCoverageGuidance\(\)/);
   assert.match(coverageSource, /aliasCoverageScope\(overview\)/);
   assert.match(coverageSource, /alias-coverage-table-header/);

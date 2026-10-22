@@ -1275,16 +1275,27 @@ document.querySelectorAll('.live-filter-expand').forEach((button) => {
 });
 if(view === 'radio-directory-panel') {
   const example = document.querySelector('.visual-radio-directory-coverage-example');
-  const panel = document.createElement('section');
-  panel.className = 'section ui-section';
-  const title = document.createElement('div');
-  title.className = 'section-title ui-section-title';
-  title.textContent = 'Alias inventory';
-  const body = document.createElement('div');
-  body.className = 'radio-directory-panel-body';
-  body.append(example.querySelector('.alias-coverage'));
-  panel.append(title, body);
-  example.replaceChildren(panel);
+  const directory = example.querySelector('.alias-coverage');
+  const header = directory.querySelector('.alias-coverage-header');
+  const description = document.createElement('p');
+  description.textContent = 'Find heard aliases and activity without a match.';
+  header.querySelector('.ui-heading-group').append(description);
+  if (new URLSearchParams(location.search).get('state') === 'empty') {
+    const toolbar = header.querySelector('.alias-coverage-toolbar');
+    toolbar.classList.add('alias-coverage-awaiting-selection');
+    toolbar.querySelectorAll('.alias-coverage-field')[1].remove();
+    const select = toolbar.querySelector('select');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select an alias list';
+    placeholder.selected = true;
+    select.prepend(placeholder);
+    const prompt = document.createElement('p');
+    prompt.className = 'alias-coverage-selection-prompt ui-muted';
+    prompt.textContent = 'Choose a list to get started';
+    directory.replaceChildren(header, prompt);
+  }
+  example.replaceChildren(directory);
 }
 if(view === 'live-notice') {
   document.body.dataset.view = 'live';

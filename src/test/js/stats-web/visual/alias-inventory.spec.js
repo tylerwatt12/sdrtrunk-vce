@@ -95,6 +95,17 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(listSelect).toBeFocused();
   expect(await listSelect.evaluate((select) => select.matches(':focus-visible'))).toBe(true);
   await expect(listSelect).toHaveValue('');
+  const inventoryHeader = inventory.locator('.alias-coverage-header');
+  await expect(inventoryHeader.getByRole('heading', { name: 'Alias inventory' })).toBeVisible();
+  await expect(inventoryHeader).toContainText('Find heard aliases and activity without a match.');
+  const [navigationBox, headerBox] = await Promise.all([
+    sectionNavigation.boundingBox(), inventoryHeader.boundingBox()
+  ]);
+  expect(headerBox.y - navigationBox.y - navigationBox.height).toBeGreaterThanOrEqual(24);
+  await expect(inventory.locator('.alias-coverage-selection-prompt')).toHaveText('Choose a list to get started');
+  expect(await inventory.evaluate((element) => Boolean(element.closest('.ui-section')))).toBe(false);
+  expect((await listSelect.boundingBox()).width).toBeLessThanOrEqual(360);
+
   await expect(listSelect.locator('option')).toHaveText([
     'Select an alias list', 'Analog · Conventional Analog (AM/NBFM) · 1 alias',
     'County Public Safety · P25 · 2 aliases', 'Airband · AM · 1 alias',
@@ -107,6 +118,21 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
 
   await listSelect.selectOption('2');
   await expect(inventory.locator('.alias-coverage-summary')).toBeVisible();
+  const tableHeading = inventory.locator('.alias-coverage-table-heading');
+  const listName = await tableHeading.textContent();
+  await tableHeading.locator('h2').evaluate((element) => {
+    element.textContent = 'CountyPublicSafetyAndRegionalEmergencyServices'.repeat(4);
+  });
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await tableHeading.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    const [heading, actions] = await Promise.all([
+      tableHeading.boundingBox(), inventory.locator('.alias-coverage-table-actions').boundingBox()
+    ]);
+    expect(heading.x + heading.width).toBeLessThanOrEqual(actions.x);
+  }
+  await tableHeading.locator('h2').evaluate((element, text) => { element.textContent = text; }, listName);
+  await page.setViewportSize({ width: 1280, height: 900 });
   const channelScope = inventory.locator('details.alias-coverage-scope');
   const channelScopeSummary = channelScope.locator(':scope > summary.ui-section-summary');
   await expect(channelScopeSummary).toContainText('Channels using this Alias List');
@@ -185,4 +211,10 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(inventory.locator('.alias-coverage-summary, .alias-coverage-scope, .alias-coverage-table-section'))
     .toHaveCount(0);
   expect(coverageRequests).toHaveLength(4);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const [headingBox, selectBox] = await Promise.all([
+    inventoryHeader.locator('.ui-heading-group').boundingBox(), listSelect.boundingBox()
+  ]);
+  expect(selectBox.y).toBeGreaterThanOrEqual(headingBox.y + headingBox.height);
+  expect(await page.locator('body').evaluate((body) => body.scrollWidth <= body.clientWidth)).toBe(true);
 });

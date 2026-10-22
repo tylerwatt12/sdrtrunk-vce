@@ -54,7 +54,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
       channel_spacing: 12_500, transmit_offset: -45_000_000 },
     { identifier: 1, type: 'TDMA', base_frequency: 851_000_000, bandwidth: 12_500,
       channel_spacing: 12_500, transmit_offset: -45_000_000 }
-  ] }] };
+  ] }], ...options.p25Document };
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
   const capabilities = Object.fromEntries(accessPolicies.map(({ id }) => [id, !denied.includes(id)]));
@@ -816,11 +816,38 @@ for (const [theme, viewport, size] of [
   }
   test(`P25 records preserve their responsive layout ${theme} ${size}`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    await openAdmin(page, 'protocol-p25', [], { theme });
+    await openAdmin(page, 'protocol-p25', [], { theme, p25Document: { profiles: [
+      { wacn: 0xBEE00, system: 0x49F, rfss: 1, site: 2, bands: [
+        { identifier: 0, type: 'FDMA', base_frequency: 851_006_250, bandwidth: 12_500,
+          channel_spacing: 12_500, transmit_offset: -45_000_000 },
+        { identifier: 1, type: 'TDMA', base_frequency: 851_000_000, bandwidth: 12_500,
+          channel_spacing: 12_500, transmit_offset: -45_000_000 }
+      ] },
+      { wacn: 0xABCDE, system: 0x012, rfss: null, site: null, bands: [
+        { identifier: 2, type: 'FDMA', base_frequency: 450_000_000, bandwidth: 12_500,
+          channel_spacing: 6_250, transmit_offset: 5_000_000 }
+      ] }
+    ] } });
     const inventory = page.locator('.p25-overrides-workspace');
-    await expect(inventory.locator('.p25-override-record')).toHaveCount(1);
-    await expect(inventory.locator('.p25-override-band-record')).toHaveCount(2);
+    const records = inventory.locator('.p25-override-record');
+    await expect(records).toHaveCount(2);
+    await expect(inventory.locator('.p25-override-band-record')).toHaveCount(3);
     await expect(inventory.locator('table')).toHaveCount(0);
+    const appearance = await records.evaluateAll((items) => items.map((record) => {
+      const bounds = record.getBoundingClientRect();
+      const band = record.querySelector('.p25-override-band-record');
+      return { top: bounds.top, bottom: bounds.bottom,
+        fill: getComputedStyle(record).backgroundColor,
+        pageFill: getComputedStyle(record.closest('.ui-section')).backgroundColor,
+        bandFill: getComputedStyle(band).backgroundColor,
+        border: getComputedStyle(record).borderTopWidth };
+    }));
+    for (const record of appearance) {
+      expect(record.fill).not.toBe(record.pageFill);
+      expect(record.bandFill).not.toBe(record.fill);
+      expect(record.border).toBe('0px');
+    }
+    expect(appearance[1].top - appearance[0].bottom).toBeGreaterThanOrEqual(12);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect(page.locator('body')).toHaveScreenshot(`admin-p25-records-${theme}-${size}.png`, { fullPage: true });
   });

@@ -148,11 +148,20 @@ for (const [theme, viewport] of [
   ['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]
 ]) {
-  test(`${theme} remote links groups distinguish both directions and keep consistent spacing`, async ({ page }) => {
+  test(`${theme} remote links tabs distinguish both directions and keep consistent spacing`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await openApp(page, theme);
     const incoming = page.getByRole('region', { name: 'Receive here', exact: true });
-    const outbound = page.getByRole('region', { name: 'Send from here', exact: true });
+    const outbound = page.locator('[data-remote-direction="send"]');
+    const receiveTab = page.getByRole('tab', { name: 'Receive here', exact: true });
+    const sendTab = page.getByRole('tab', { name: 'Send from here', exact: true });
+    await expect(receiveTab).toHaveAttribute('aria-selected', 'true');
+    await expect(sendTab).toHaveAttribute('aria-selected', 'false');
+    await expect(receiveTab).toHaveAttribute('aria-controls', 'remote-links-receive-view');
+    await expect(sendTab).toHaveAttribute('aria-controls', 'remote-links-send-view');
+    await expect(page.locator('#remote-links-receive-view')).toHaveAttribute('role', 'tabpanel');
+    await expect(page.locator('#remote-links-send-view')).toHaveAttribute('role', 'tabpanel');
+    await expect(outbound).toBeHidden();
     await expect(incoming).toHaveAttribute('data-remote-direction', 'receive');
     await expect(outbound).toHaveAttribute('data-remote-direction', 'send');
     const card = incoming.locator('.remote-links-sender-card');
@@ -166,18 +175,13 @@ for (const [theme, viewport] of [
     await expect(incoming).not.toContainText('No optional dependency status reported.');
     await expect(outbound.locator('.ui-fact-list')).toHaveCount(0);
     await expect(outbound).toContainText('Create a trusted sender on the destination receiver');
-    const setup = outbound.getByRole('button', { name: 'Set up sending', exact: true });
-    await expect(setup).toBeVisible();
-    const outboundBox = await outbound.boundingBox();
-    const setupBox = await setup.boundingBox();
-    expect(setupBox.x - outboundBox.x).toBeGreaterThanOrEqual(12);
-    expect(outboundBox.x + outboundBox.width - setupBox.x - setupBox.width).toBeGreaterThanOrEqual(12);
     await expect(incoming.locator('svg use[href="#icon-download"]')).toHaveCount(1);
     await expect(outbound.locator('svg use[href="#icon-upload"]')).toHaveCount(1);
     await expect(incoming.locator('svg use[href="#icon-arrow-right"]')).toHaveCount(1);
     await expect(outbound.locator('svg use[href="#icon-arrow-right"]')).toHaveCount(1);
     await expect(card.locator('.remote-links-feed-title svg')).toHaveCount(1);
-    await expect(page.locator('#icon-cloud path')).toHaveAttribute('fill', 'currentColor');
+    await expect(page.locator('#icon-cloud path')).toHaveAttribute('fill', 'none');
+    await expect(page.locator('#icon-cloud path')).toHaveAttribute('stroke', 'currentColor');
     await expect(incoming).toContainText('1 connected sender');
     await expect(incoming).not.toContainText('waiting');
     await expect(incoming.getByRole('button', { name: 'Add sender', exact: true })).toBeVisible();
@@ -189,6 +193,20 @@ for (const [theme, viewport] of [
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page).toHaveScreenshot(`remote-links-page-${theme}.png`, { fullPage: true });
 
+    await sendTab.click();
+    await expect(sendTab).toHaveAttribute('aria-selected', 'true');
+    await expect(receiveTab).toHaveAttribute('aria-selected', 'false');
+    await expect(incoming).toBeHidden();
+    await expect(outbound).toBeVisible();
+    const setup = outbound.getByRole('button', { name: 'Set up sending', exact: true });
+    await expect(setup).toBeVisible();
+    const outboundBox = await outbound.boundingBox();
+    const setupBox = await setup.boundingBox();
+    expect(setupBox.x - outboundBox.x).toBeGreaterThanOrEqual(12);
+    expect(outboundBox.x + outboundBox.width - setupBox.x - setupBox.width).toBeGreaterThanOrEqual(12);
+    await expect(page.getByRole('button', { name: 'Receive settings' })).toHaveCount(0);
+    await expect(page).toHaveScreenshot(`remote-links-send-page-${theme}.png`, { fullPage: true });
+    await receiveTab.click();
     await page.getByRole('button', { name: 'Receive settings' }).click();
     const dialog = page.getByRole('dialog', { name: 'Receive settings' });
     await expect(dialog).toBeVisible();
@@ -251,6 +269,7 @@ test('the sender preference and local feed stay editable without adoption fields
 
 test('outbound system selection uses the themed checkbox', async ({ page }) => {
   await openApp(page);
+  await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
   await page.getByRole('button', { name: 'Set up sending' }).click();
   const dialog = page.getByRole('dialog', { name: 'Sending settings' });
   const system = dialog.getByRole('checkbox', { name: /Metro North/ });
@@ -430,9 +449,11 @@ for (const [theme, viewport] of [
 test('polling refreshes status and restores a focused remote action', async ({ page }) => {
   const app = await openApp(page);
   const incoming = page.getByRole('region', { name: 'Receive here', exact: true });
-  const outbound = page.getByRole('region', { name: 'Send from here', exact: true });
+  const outbound = page.locator('[data-remote-direction="send"]');
+  const receiveTab = page.getByRole('tab', { name: 'Receive here', exact: true });
+  const sendTab = page.getByRole('tab', { name: 'Send from here', exact: true });
   await expect(outbound.locator('.ui-fact-list')).toHaveCount(0);
-  await expect(outbound.getByRole('button', { name: 'Set up sending', exact: true })).toBeVisible();
+  await expect(outbound).toBeHidden();
   const action = page.getByRole('button', { name: 'Receive settings' });
   await action.focus();
   const handle = await action.elementHandle();
@@ -445,17 +466,37 @@ test('polling refreshes status and restores a focused remote action', async ({ p
     'Destination', 'Selected feeds', 'Authentication', 'Last connected'
   ]);
   await expect(outbound.locator('.ui-fact-list dd').first()).toHaveText('remote.example.test:53800');
-  await expect(outbound.getByRole('button', { name: 'Sending settings', exact: true })).toBeVisible();
-  await expect(outbound.getByRole('button', { name: 'Set up sending', exact: true })).toHaveCount(0);
+  await expect(outbound.locator('[data-remote-action="sender-connection"]')).toHaveText('Sending settings');
   await expect(outbound.locator('.ui-fact-list dd').nth(1)).toContainText(/\b2\b/);
   await expect(outbound.locator('.ui-fact-list dd').nth(2)).toHaveText('Credential saved');
   await expect(outbound.locator('.ui-fact-list dd').nth(3)).toHaveText('Never');
   expect(await handle.evaluate((element) => element.isConnected)).toBe(false);
   await expect(action).toBeFocused();
+  await sendTab.click();
+  await expect(outbound.getByRole('button', { name: 'Sending settings', exact: true })).toBeVisible();
+  await expect(incoming).toBeHidden();
+  const sendTabHandle = await sendTab.elementHandle();
+  await sendTab.focus();
   app.updateSenderConnection({ exported_channel_configuration_ids: [] });
   await expect(outbound.locator('.ui-fact-list dd').nth(1)).toContainText(/\b0\b/, { timeout: 7000 });
   await expect(outbound.locator('.ui-fact-list dd').nth(2)).toHaveText('Credential saved');
   await expect(outbound.locator('.ui-fact-list dd').nth(3)).toHaveText('Never');
+  await expect(sendTab).toHaveAttribute('aria-selected', 'true');
+  await expect(sendTab).toBeFocused();
+  expect(await sendTabHandle.evaluate((element) => element.isConnected)).toBe(true);
+  await sendTab.press('Home');
+  await expect(receiveTab).toHaveAttribute('aria-selected', 'true');
+  await expect(receiveTab).toBeFocused();
+  await receiveTab.press('End');
+  await expect(sendTab).toHaveAttribute('aria-selected', 'true');
+  await expect(sendTab).toBeFocused();
+  await sendTab.press('ArrowRight');
+  await expect(receiveTab).toBeFocused();
+  await expect(receiveTab).toHaveAttribute('aria-selected', 'true');
+  await receiveTab.press('ArrowLeft');
+  await expect(sendTab).toBeFocused();
+  await expect(sendTab).toHaveAttribute('aria-selected', 'true');
+  await sendTab.press('Home');
   await action.click();
   await expect(page.getByRole('dialog', { name: 'Receive settings' })).toBeVisible();
 });
@@ -473,6 +514,12 @@ test('sender disclosure choices and focus survive status polling independently',
   await secondToggle.click();
   await expect(firstToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
+  await expect(senders.nth(1)).toBeHidden();
+  await page.getByRole('tab', { name: 'Receive here', exact: true }).click();
+  await expect(firstToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+  await secondToggle.focus();
   const before = app.reads();
   await expect.poll(() => app.reads(), { timeout: 7000 }).toBeGreaterThan(before);
   await expect(firstToggle).toHaveAttribute('aria-expanded', 'false');
@@ -600,6 +647,7 @@ for (const [theme, viewport] of [
           resolve();
         }; });
       });
+      if (editor.key === 'outbound') await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
       await page.getByRole('button', { name: editor.open, exact: true }).click();
       const dialog = page.getByRole('dialog', { name: editor.title, exact: true });
       await dialog.getByRole('textbox', { name: new RegExp(`^${editor.field}`) }).fill(editor.value);

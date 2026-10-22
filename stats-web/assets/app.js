@@ -36,7 +36,7 @@ import { radioReferenceLocalityCache } from './features/radioreference-locality-
 import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
 import { createStreamingWorkspace } from './features/streaming.js?v=13';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=19';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=20';
 import { createAlertsWorkspace } from './features/alerts.js?v=18';
 import { createCallRelations } from './features/call-relations.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
@@ -12888,8 +12888,7 @@ async function renderDashboard() {
   const descriptions = {
     health: 'Check signal quality and browse systems and channels.',
     calls: 'See call totals, activity over time, and the most active sources and destinations.',
-    activity: 'Explore radio signaling events and see which radios sent them.',
-    inventory: 'Browse aliases, see which have been heard, and find activity without a matching alias.'
+    activity: 'Explore radio signaling events and see which radios sent them.'
   };
   const navigation = tabs([
     { id: 'health', label: 'Overview', href: href('dashboard', { tab: 'health' }) },
@@ -12902,7 +12901,7 @@ async function renderDashboard() {
   navigation.classList.add('ui-page-nav-tabs');
   navigation.setAttribute('aria-label', 'Main sections');
   if (!beginPage(renderContext, pageHeader('Main'), navigation,
-    node('p', 'ui-page-description', descriptions[tab]))) return;
+    ...(tab === 'inventory' ? [] : [node('p', 'ui-page-description', descriptions[tab])]))) return;
 
   if (tab === 'inventory') {
     if (capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) await renderAliasCoverageDirectory(renderContext, true);
@@ -24498,9 +24497,10 @@ function radioDirectoryPerspectiveControl(activeView) {
 }
 
 function radioDirectoryEmbeddedPanel(view, directory) {
+  if (view === 'coverage') return directory;
   const body = node('div', 'radio-directory-panel-body');
   body.append(directory);
-  return section(view === 'coverage' ? 'Alias inventory' : 'Systems & channels', body);
+  return section('Systems & channels', body);
 }
 
 function renderNestedRadioDirectory(renderContext) {
@@ -26638,8 +26638,13 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       selectedRange, activeTab, aliasStatus } = model;
     const wrapper = node('div', 'alias-coverage ui-catalog data-workspace');
     wrapper.dataset.uiDensity = 'compact';
-    const toolbar = node('div', 'alias-coverage-toolbar ui-catalog-toolbar');
+    const header = node('header', 'alias-coverage-header');
+    const heading = node('div', 'ui-heading-group');
+    heading.append(node('h2', '', 'Alias inventory'));
+    if (embedded) heading.append(node('p', '', 'Find heard aliases and activity without a match.'));
+    const toolbar = node('div', 'alias-coverage-toolbar ui-catalog-toolbar ui-catalog-toolbar-flat');
     toolbar.classList.toggle('alias-coverage-awaiting-selection', !selectedListId);
+    header.append(heading, toolbar);
     const listControl = node('label', 'alias-coverage-field ui-field');
     listControl.append(node('span', 'ui-field-label', 'Alias List'));
     const listSelect = uiSelect(lists.rows.map((row) => ({ value: row.alias_list_id,
@@ -26653,7 +26658,9 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     listControl.append(uiSelectFrame(listSelect));
     toolbar.append(listControl);
     if (!selectedListId) {
-      wrapper.append(toolbar);
+      wrapper.append(header);
+      if (lists.rows.length) wrapper.append(node('p', 'alias-coverage-selection-prompt ui-muted',
+        'Choose a list to get started'));
       if (lists.rows.length) queueMicrotask(() => {
         if (renderIsCurrent(renderContext) && directory.host.contains(wrapper))
           listSelect.focus({ preventScroll: true });
@@ -26687,7 +26694,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     const tableHeading = node('div', 'alias-coverage-table-heading');
     const tableActions = sectionActionHost();
     tableActions.classList.add('alias-coverage-table-actions');
-    tableHeading.append(node('h2', '', 'Alias inventory'));
+    tableHeading.append(node('h2', '', selectedList?.name || 'Aliases'));
     tableHeader.append(tableHeading, tabs, tableActions);
     const tableToolbar = node('div', 'alias-coverage-table-toolbar');
     tableToolbar.append(aliasCoverageSearch(activeTab === 'unassigned' ?
@@ -26733,7 +26740,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       event.preventDefault();
       navigateCoverage(link.href, { scrollToTable: Boolean(link.closest('.pager')) });
     });
-    wrapper.append(toolbar, summary);
+    wrapper.append(header, summary);
     if (analog) wrapper.append(node('p', 'ui-section-note',
       'Calls include saved history since alias tracking began. Heard within filters when each assignment was last heard.'));
     wrapper.append(aliasCoverageScope(overview), tableSection);
@@ -28990,7 +28997,7 @@ async function renderAdminP25BandplanOverrides() {
       return;
     }
     list.replaceChildren(...profiles.map((profile, index) => {
-      const record = node('article', 'ui-record-section p25-override-record');
+      const record = node('article', 'ui-record-card p25-override-record');
       const header = node('div', 'ui-record-card-header p25-override-profile-header');
       const label = node('div', 'ui-record-card-copy');
       const title = node('h3', 'ui-record-card-title');
@@ -30557,7 +30564,7 @@ async function renderStreaming() {
 
 function renderAdminRemoteLinks(renderContext) {
   const workspace = createRemoteLinksWorkspace({
-    node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, remoteOriginIcon, createFormWorkflow,
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
   });
   const close = () => workspace.close();

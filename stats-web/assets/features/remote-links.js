@@ -3,10 +3,10 @@ const POLL_MS = 3000;
 
 // Reuse map: ui-section-title/body, ui-surface-inset, ui-record-card/section/header/body,
 // ui-disclosure-toggle/copy, ui-heading-group, ui-fact-list, ui-status, shared glyphs,
-// ui-toggle-field, ui-field, ui-select-frame, ui-notice and the shared modal lifecycle
+// ui-toggle-field, ui-field, ui-select-frame, ui-segmented and the shared modal lifecycle
 // provide the visual language. This feature owns only Remote Links layout geometry.
 export function createRemoteLinksWorkspace(deps) {
-  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph, remoteOriginIcon,
+  const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon,
     openReadOnlyModal, confirmAction, createFormWorkflow, requestJson, modalFooter, signal } = deps;
   const host = node('div', 'remote-links-page data-workspace');
   const message = node('div');
@@ -16,7 +16,52 @@ export function createRemoteLinksWorkspace(deps) {
     'Sender removed. Restart VCE to finish updating its channel list.');
   restartNotice.setAttribute('role', 'status');
   restartNotice.hidden = true;
+  let selectedDirection = 'receive';
+  const directionPanels = new Map(['receive', 'send'].map((direction) => {
+    const panel = node('div', 'remote-links-direction-view');
+    panel.id = `remote-links-${direction}-view`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `remote-links-${direction}-tab`);
+    panel.hidden = direction !== selectedDirection;
+    return [direction, panel];
+  }));
+  const navigation = uiSegmentedControl([
+    { value: 'receive', label: 'Receive here' }, { value: 'send', label: 'Send from here' }
+  ], selectedDirection, (direction) => {
+    selectedDirection = direction;
+    directionPanels.forEach((panel, key) => { panel.hidden = key !== selectedDirection; });
+    receiveContext.hidden = selectedDirection !== 'receive';
+    [...navigation.children].forEach((control) => {
+      const selected = control.dataset.value === selectedDirection;
+      control.setAttribute('aria-selected', String(selected));
+      control.removeAttribute('aria-pressed');
+      control.tabIndex = selected ? 0 : -1;
+    });
+  });
+  navigation.setAttribute('role', 'tablist');
+  navigation.setAttribute('aria-label', 'Remote Link direction');
+  [...navigation.children].forEach((control) => {
+    control.id = `remote-links-${control.dataset.value}-tab`;
+    control.setAttribute('role', 'tab');
+    control.setAttribute('aria-selected', String(control.dataset.value === selectedDirection));
+    control.removeAttribute('aria-pressed');
+    control.tabIndex = control.dataset.value === selectedDirection ? 0 : -1;
+    control.setAttribute('aria-controls', directionPanels.get(control.dataset.value).id);
+  });
+  navigation.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const controls = [...navigation.children];
+    const index = controls.indexOf(event.target);
+    if (index < 0) return;
+    const next = { ArrowLeft: (index + controls.length - 1) % controls.length,
+      ArrowRight: (index + 1) % controls.length, Home: 0, End: controls.length - 1 }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    controls[next].focus();
+    controls[next].click();
+  });
   const overview = node('div', 'remote-links-overview');
+  overview.append(...directionPanels.values());
   const senderHeader = node('div', 'remote-links-section-header');
   const senderHeading = node('div', 'ui-heading-group');
   const senderCount = node('p', 'muted');
@@ -27,9 +72,10 @@ export function createRemoteLinksWorkspace(deps) {
   const senderHost = node('div', 'remote-links-sender-grid ui-record-card');
   const pageMeta = node('footer', 'remote-links-page-meta');
   const freshness = node('span', 'muted');
-  pageMeta.append(freshness,
-    node('span', 'muted', 'Remote channels use this receiver’s Alias Lists and depend on their sender for live traffic.'));
-  host.append(message, restartNotice, overview, pageMeta);
+  const receiveContext = node('span', 'muted',
+    'Remote channels use this receiver’s Alias Lists and depend on their sender for live traffic.');
+  pageMeta.append(freshness, receiveContext);
+  host.append(message, navigation, overview, pageMeta);
 
   let snapshot = null;
   let loading = false;
@@ -276,8 +322,8 @@ export function createRemoteLinksWorkspace(deps) {
         node('p', '', 'Add a sender to create credentials for the installation that will send P25 feeds here.'));
       senderHost.replaceChildren(empty);
     }
-    overview.replaceChildren(drawListener(snapshot.listener || {}),
-      drawSenderConnection(snapshot.sender_connection || {}));
+    directionPanels.get('receive').replaceChildren(restartNotice, drawListener(snapshot.listener || {}));
+    directionPanels.get('send').replaceChildren(drawSenderConnection(snapshot.sender_connection || {}));
     freshness.textContent = 'Status updated just now';
   }
 

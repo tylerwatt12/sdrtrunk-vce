@@ -993,16 +993,32 @@ for (const [, theme, viewport] of galleryCases) {
 }
 
 for(const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`radio-directory-panel-${theme}-${width === 390 ? 'mobile' : 'desktop'}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto(`/design-system.html?theme=${theme}&view=radio-directory-panel`);
-    const panel = page.locator('.visual-radio-directory-coverage-example .ui-section');
-    const body = panel.locator('.radio-directory-panel-body');
-    await expect(body).toHaveCSS('padding', '12px');
-    await expect(panel).toHaveScreenshot(
-      `radio-directory-panel-${theme}-${width === 390 ? 'mobile' : 'desktop'}.png`,
-      { fullPage: true });
-  });
+  for (const empty of [false, true]) {
+    const name = `radio-directory-panel-${theme}-${width === 390 ? 'mobile' : 'desktop'}${empty ? '-empty' : ''}`;
+    test(name, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/design-system.html?theme=${theme}&view=radio-directory-panel${empty ? '&state=empty' : ''}`);
+      const directory = page.locator('.visual-radio-directory-coverage-example .alias-coverage');
+      const header = directory.locator('.alias-coverage-header');
+      await expect(header.getByRole('heading', { name: 'Alias inventory' })).toBeVisible();
+      await expect(header).toContainText('Find heard aliases and activity without a match.');
+      await expect(directory.locator('.radio-directory-panel-body')).toHaveCount(0);
+      const [heading, selector] = await Promise.all([
+        header.locator('.ui-heading-group').boundingBox(), header.getByRole('combobox', { name: 'Alias List' }).boundingBox()
+      ]);
+      if (width > 760) {
+        expect(selector.x).toBeGreaterThanOrEqual(heading.x + heading.width);
+        expect(selector.width).toBeLessThanOrEqual(360);
+      } else expect(selector.y).toBeGreaterThanOrEqual(heading.y + heading.height);
+      if (empty) {
+        await expect(directory.locator('.alias-coverage-selection-prompt')).toHaveText('Choose a list to get started');
+        await expect(directory.locator('.alias-coverage-summary, .alias-coverage-scope, .alias-coverage-table-section'))
+          .toHaveCount(0);
+      } else await expect(directory.locator('.alias-coverage-summary')).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await expect(directory).toHaveScreenshot(`${name}.png`, { fullPage: true });
+    });
+  }
 }
 
 for(const [view, theme, width] of [

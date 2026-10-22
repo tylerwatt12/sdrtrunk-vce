@@ -758,7 +758,48 @@
     <div class="ui-settings-page receiver-health-page" data-visual-receiver-health></div>
   </main>
 
-<main class="visual-feature-example visual-p25-example"><header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>P25 band plans</h1><p>Configure P25 band plan overrides.</p></div></header><section class="ui-section"><header class="ui-section-title"><h2>P25 band plan overrides</h2><button type="button" class="ui-button ui-button-secondary">Add P25 override</button></header><form class="admin-form settings-page-form p25-overrides-form"><p class="p25-overrides-intro">Some P25 trunked systems do not transmit their band plan. Add an override to define it manually. Site overrides take priority over system overrides.</p><div class="p25-override-profile-list"><article class="ui-record-section p25-override-record"><header class="ui-record-card-header p25-override-profile-header"><span class="ui-record-card-icon"><svg aria-hidden="true"><use href="#visual-icon-channel"></use></svg></span><div class="ui-record-card-copy"><h3 class="ui-record-card-title">BEE00-49F · 01-01</h3><p class="ui-muted">Site override</p></div><div class="ui-action-row"><button type="button" class="ui-button ui-button-secondary">Edit</button><button type="button" class="ui-button ui-button-danger-quiet ui-icon-button" aria-label="Delete override"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div></header><div class="ui-record-card-body p25-override-record-body"><dl class="ui-facts ui-record-facts p25-override-profile-facts"><div class="ui-fact"><dt>WACN</dt><dd>BEE00</dd></div><div class="ui-fact"><dt>System ID</dt><dd>49F</dd></div><div class="ui-fact"><dt>RFSS</dt><dd>01</dd></div><div class="ui-fact"><dt>Site ID</dt><dd>01</dd></div></dl><div class="p25-override-bands-heading"><h4 class="ui-record-card-title">Replacement bands</h4><span class="ui-muted">1 band</span></div><div class="p25-override-band-records"><section class="ui-surface-inset p25-override-band-record"><header class="p25-override-band-header"><h5 class="ui-record-card-title">Band 1</h5><span class="ui-pill">P25 2-slot TDMA</span></header><dl class="ui-facts ui-record-facts p25-override-band-facts"><div class="ui-fact"><dt>Band ID</dt><dd>1</dd></div><div class="ui-fact"><dt>Type</dt><dd>P25 2-slot TDMA</dd></div><div class="ui-fact"><dt>Base frequency</dt><dd>851.00625 MHz</dd></div><div class="ui-fact"><dt>Bandwidth</dt><dd>12.5 kHz</dd></div><div class="ui-fact"><dt>Spacing</dt><dd>6.25 kHz</dd></div><div class="ui-fact"><dt>Offset</dt><dd>−45 MHz</dd></div></dl></section></div></div></article></div><footer class="settings-form-footer"><div class="admin-form-message" role="status"></div><button type="button" class="ui-button ui-button-primary">Save overrides</button></footer></form></section></main>
+<main class="visual-feature-example visual-p25-example">
+  <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>P25 band plans</h1><p>Configure P25 band plan overrides.</p></div></header>
+  <section class="ui-section">
+    <header class="ui-section-title"><h2>P25 band plan overrides</h2><button type="button" class="ui-button ui-button-primary"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg>Add P25 override</button></header>
+    <form class="admin-section-body p25-overrides-workspace ui-form-workflow-inset">
+      <p class="p25-overrides-intro ui-muted">Site overrides take priority over system overrides.</p>
+      <div class="p25-override-profile-list">
+      <article class="ui-record-card p25-override-record">
+        <header class="ui-record-card-header p25-override-profile-header">
+          <span class="ui-record-card-icon"><svg aria-hidden="true"><use href="#visual-icon-radio-tower"></use></svg></span>
+          <div class="ui-record-card-copy"><h3 class="ui-record-card-title">BEE00-49F</h3><p class="ui-muted">RFSS 01 · Site 01</p></div>
+          <div class="ui-action-row"><button type="button" class="ui-button ui-button-secondary" aria-label="Edit P25 override BEE00-49F"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg>Edit</button><button type="button" class="ui-button ui-button-danger-quiet ui-icon-button" aria-label="Delete P25 override BEE00-49F"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div>
+        </header>
+        <div class="ui-record-card-body p25-override-record-body">
+          <dl class="ui-facts ui-record-facts p25-override-profile-facts"><div class="ui-fact"><dt>WACN</dt><dd>BEE00</dd></div><div class="ui-fact"><dt>System ID</dt><dd>49F</dd></div><div class="ui-fact"><dt>RFSS</dt><dd>01</dd></div><div class="ui-fact"><dt>Site ID</dt><dd>01</dd></div></dl>
+          <div class="p25-override-bands-heading"><h4 class="ui-record-card-title">Replacement bands</h4><span class="ui-muted">1 band</span></div>
+          <div class="p25-override-band-records"><section class="ui-surface-inset p25-override-band-record">
+            <header class="p25-override-band-header"><h5 class="ui-record-card-title">Band 1</h5><span class="ui-pill">P25 2-slot TDMA</span></header>
+            <dl class="ui-facts ui-record-facts p25-override-band-facts"><div class="ui-fact"><dt>Base frequency</dt><dd>851.006250 MHz</dd></div><div class="ui-fact"><dt>Bandwidth</dt><dd>12.500 kHz</dd></div><div class="ui-fact"><dt>Spacing</dt><dd>12.500 kHz</dd></div><div class="ui-fact"><dt>Offset</dt><dd>−45.000000 MHz</dd></div></dl>
+          </section></div>
+        </div>
+      </article>
+      <article class="ui-record-card p25-override-record">
+        <header class="ui-record-card-header p25-override-profile-header">
+          <span class="ui-record-card-icon"><svg aria-hidden="true"><use href="#visual-icon-radio-tower"></use></svg></span>
+          <div class="ui-record-card-copy"><h3 class="ui-record-card-title">ABCDE-012</h3><p class="ui-muted">Entire system</p></div>
+          <div class="ui-action-row"><button type="button" class="ui-button ui-button-secondary" aria-label="Edit P25 override ABCDE-012"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg>Edit</button><button type="button" class="ui-button ui-button-danger-quiet ui-icon-button" aria-label="Delete P25 override ABCDE-012"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div>
+        </header>
+        <div class="ui-record-card-body p25-override-record-body">
+          <dl class="ui-facts ui-record-facts p25-override-profile-facts"><div class="ui-fact"><dt>WACN</dt><dd>ABCDE</dd></div><div class="ui-fact"><dt>System ID</dt><dd>012</dd></div><div class="ui-fact"><dt>RFSS</dt><dd>All</dd></div><div class="ui-fact"><dt>Site ID</dt><dd>All</dd></div></dl>
+          <div class="p25-override-bands-heading"><h4 class="ui-record-card-title">Replacement bands</h4><span class="ui-muted">1 band</span></div>
+          <div class="p25-override-band-records"><section class="ui-surface-inset p25-override-band-record">
+            <header class="p25-override-band-header"><h5 class="ui-record-card-title">Band 2</h5><span class="ui-pill">FDMA</span></header>
+            <dl class="ui-facts ui-record-facts p25-override-band-facts"><div class="ui-fact"><dt>Base frequency</dt><dd>450.000000 MHz</dd></div><div class="ui-fact"><dt>Bandwidth</dt><dd>12.500 kHz</dd></div><div class="ui-fact"><dt>Spacing</dt><dd>6.250 kHz</dd></div><div class="ui-fact"><dt>Offset</dt><dd>5.000000 MHz</dd></div></dl>
+          </section></div>
+        </div>
+      </article>
+      </div>
+      <footer class="settings-form-footer p25-override-footer"><div class="admin-form-message" role="status"></div><div class="ui-action-row"><button type="button" class="ui-button ui-button-primary">Save overrides</button></div></footer>
+    </form>
+  </section>
+</main>
 
   <main class="visual-feature-example visual-admin-support-example">
     <div class="admin-settings-shell ui-settings-workspace">
@@ -1023,11 +1064,13 @@
   <main class="visual-feature-example visual-radio-directory-coverage-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Radio Directory</p><h1>Radio Directory</h1><p>Browse aliases in a list, their activity, and the channels using them.</p></div></header>
     <div class="alias-coverage ui-catalog data-workspace" data-ui-density="compact">
-      <div class="alias-coverage-toolbar ui-catalog-toolbar">
-        <label class="alias-coverage-field ui-field"><span class="ui-field-label">Alias List</span><span class="ui-select-frame"><select class="ui-select"><option>County Public Safety · P25 · 1,248 aliases</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
-        <label class="alias-coverage-field ui-field"><span class="ui-field-label">Heard within</span><span class="ui-select-frame"><select class="ui-select"><option>Last day</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
-        <button class="ui-button ui-button-secondary alias-coverage-manage" type="button">Manage aliases</button>
-      </div>
+      <header class="alias-coverage-header">
+        <div class="ui-heading-group"><h2>Alias inventory</h2></div>
+        <div class="alias-coverage-toolbar ui-catalog-toolbar ui-catalog-toolbar-flat">
+          <label class="alias-coverage-field ui-field"><span class="ui-field-label">Alias List</span><span class="ui-select-frame"><select class="ui-select"><option>County Public Safety · P25 · 1,248 aliases</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
+          <label class="alias-coverage-field ui-field"><span class="ui-field-label">Heard within</span><span class="ui-select-frame"><select class="ui-select"><option>Last day</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
+        </div>
+      </header>
       <div class="alias-coverage-summary ui-metric-grid ui-metric-grid-embedded">
         <div class="metric ui-metric ui-metric-blue"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg></span>Configured aliases</span><strong>1,248</strong></div></div>
         <div class="metric ui-metric ui-metric-success"><div class="ui-metric-copy"><span class="ui-metric-label"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span>Heard recently</span><strong>386</strong></div></div>
@@ -1059,7 +1102,7 @@
         </div>
       </details>
       <section class="ui-surface alias-coverage-table-section">
-        <header class="alias-coverage-table-header"><div class="alias-coverage-table-heading"><h2>Alias inventory</h2></div><div class="ui-segmented"><button class="ui-segmented-option active" type="button">Configured aliases</button><button class="ui-segmented-option" type="button">Unknown aliases (27)</button></div><div class="section-title-actions ui-section-actions alias-coverage-table-actions"><div class="table-layout-menu"><button class="ui-button ui-button-secondary ui-button-compact table-layout-trigger" type="button" aria-label="Choose table columns"><svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg><span>Columns</span></button></div></div></header>
+        <header class="alias-coverage-table-header"><div class="alias-coverage-table-heading"><h2>County Public Safety</h2></div><div class="ui-segmented"><button class="ui-segmented-option active" type="button">Configured aliases</button><button class="ui-segmented-option" type="button">Unknown aliases (27)</button></div><div class="section-title-actions ui-section-actions alias-coverage-table-actions"><div class="table-layout-menu"><button class="ui-button ui-button-secondary ui-button-compact table-layout-trigger" type="button" aria-label="Choose table columns"><svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg><span>Columns</span></button></div></div></header>
         <div class="alias-coverage-table-toolbar"><form class="alias-coverage-search"><label class="ui-search"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><input class="ui-input" type="search" placeholder="Search configured aliases"></label><button class="ui-button ui-button-primary" type="button">Search</button></form><div class="ui-segmented"><button class="ui-segmented-option active" type="button">All</button><button class="ui-segmented-option" type="button">Recently heard</button><button class="ui-segmented-option" type="button">Zero calls (104)</button><button class="ui-segmented-option" type="button">Never heard (73)</button></div><div class="ui-segmented"><button class="ui-segmented-option active" type="button">All</button><button class="ui-segmented-option" type="button">Talkgroups</button><button class="ui-segmented-option" type="button">Radios</button><button class="ui-segmented-option" type="button">Other</button></div></div>
         <div class="table-wrap ui-table-wrap"><table class="ui-data-table"><thead><tr><th>Alias</th><th>Identity</th><th>Calls</th><th>Signals</th><th>First heard</th><th>Last heard</th></tr></thead><tbody><tr><td><span class="identity-summary"><span class="identity-summary-primary"><a href="#">Fire Dispatch</a></span><small class="identity-summary-context">Primary dispatch · Fire</small></span></td><td>Talkgroup 3101</td><td>1,840</td><td>4,918</td><td><span class="ui-time-pair"><strong>92d ago</strong><time class="ui-time-pair-exact">2026-06-22 08:14:31</time></span></td><td><span class="ui-time-pair"><strong>2m ago</strong><time class="ui-time-pair-exact">2026-09-22 14:18:06</time></span></td></tr><tr><td><span class="identity-summary"><span class="identity-summary-primary"><a href="#">Event 12</a></span><small class="identity-summary-context">Special events · Operations</small></span></td><td>Talkgroup 3396</td><td>0</td><td>0</td><td><span class="ui-time-pair is-empty">Never heard</span></td><td><span class="ui-time-pair is-empty">Never heard</span></td></tr></tbody></table></div>
       </section>
