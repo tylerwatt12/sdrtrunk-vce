@@ -39,7 +39,7 @@ async function checkDashboardData(appSource, functionBinding) {
     captureRenderContext: () => ({}), renderIsCurrent: () => current,
     beginPage: () => true, pageHeader: () => ({}),
     tabs: () => ({ classList: { add() {} }, setAttribute() {} }), href: () => '',
-    node: () => ({ replaceWith() {} }), content: { append() {} }, capabilityAllowed: () => true,
+    node: () => ({ remove() {} }), content: { append() {} }, capabilityAllowed: () => true,
     api: async (path) => { dataRequests.push(path); return {}; },
     loadMainDashboard: async () => {
       loads += 1;
@@ -47,14 +47,13 @@ async function checkDashboardData(appSource, functionBinding) {
       if (failNext) { failNext = false; throw new Error('Temporarily unavailable'); }
       return main;
     },
-    signalHealthSection: (rows) => {
-      assert.strictEqual(rows, main.quality.current);
-      return { element: {}, update(next) { assert.strictEqual(next, rows); qualityUpdates += 1; },
-        failed() { failures += 1; } };
-    },
-    renderNestedRadioDirectory: async (_renderContext, directory) => {
+    renderNestedRadioDirectory: (_renderContext, directory, quality) => {
       assert.strictEqual(directory, main.directory);
-      return { update(next) { assert.strictEqual(next, directory); directoryUpdates += 1; } };
+      assert.strictEqual(quality, main.quality.current);
+      return { update(next, rows) {
+        assert.strictEqual(next, directory); assert.strictEqual(rows, quality);
+        directoryUpdates += 1; qualityUpdates += 1;
+      }, failed() { failures += 1; } };
     },
     pageInterval: (refresh, interval) => { assert.equal(interval, 5_000); callback = refresh; },
     renderDashboardActivity: async () => {}

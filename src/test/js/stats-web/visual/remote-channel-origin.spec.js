@@ -73,8 +73,8 @@ test('Dashboard Main marks a remote site even when no signal samples exist', asy
   await expect(local).toBeVisible();
   await expect(page.locator('.signal-current-tile')).toHaveCount(0);
   await expect(remote.getByLabel('Received from another receiver.')).toHaveText('');
-  await expect(remote.locator('.channel-origin-line svg')).toHaveCount(1);
-  await expect(local.locator('.channel-origin-line')).toHaveCount(0);
+  await expect(remote.locator('.radio-directory-origin svg')).toHaveCount(1);
+  await expect(local.locator('.radio-directory-origin')).toHaveCount(0);
   await expect(page.locator('.radio-directory-system-header .channel-origin-line')).toHaveCount(0);
   await expect(remote).toHaveScreenshot('dashboard-remote-site-light.png');
 });
@@ -101,6 +101,6 @@ test('Channel Setup marks remote configurations with an accessible cloud and no 
   const nameBounds = await remote.getByRole('button', { name: 'North Control', exact: true }).boundingBox();
   expect(nameBounds.width).toBeGreaterThan(40);
   await expect(remote.getByText('Remote', { exact: true })).toHaveCount(0);
-  await expect(local.locator('.channel-origin-line')).toHaveCount(0);
+  await expect(local.locator('.radio-directory-origin')).toHaveCount(0);
   await expect(remote.locator('.channel-origin-line')).toHaveScreenshot('channels-remote-name-dark.png');
 });

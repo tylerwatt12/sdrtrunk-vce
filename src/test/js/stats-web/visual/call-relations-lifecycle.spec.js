@@ -34,7 +34,7 @@ for (const delayed of ['module', 'catalog', 'failed-module']) {
       await expect(page.getByRole('dialog', { name: 'Call actions', exact: true })).toHaveCount(0);
       await page.getByRole('link', { name: 'VCE home', exact: true }).click();
       await expect(page.locator('body')).toHaveAttribute('data-view', 'dashboard');
-      await expect(page.locator('.signal-current-tile')).toHaveCount(1);
+      await expect(page.locator('.radio-directory-site-row')).toHaveCount(1);
       const response = page.waitForResponse(delayed === 'catalog' ? '**/api/v1/activity/message-types' :
         '**/assets/features/call-relations.js*');
       release();

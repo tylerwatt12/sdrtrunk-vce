@@ -44,7 +44,7 @@ test('Directory polling preserves cards, rows, reading geometry, and focused lin
   await expect(row('north').locator('.radio-directory-frequency')).toHaveText('Current control851.01250 MHz');
   await expect(row('stale').locator('.radio-directory-frequency')).toHaveText('Current controlUnavailable');
   await expect(row('conventional').locator('.radio-directory-frequency')).toHaveText('Frequency851.01250 MHz');
-  await expect(directory).not.toContainText(/853\.98750|852\.98750|P25 Phase 1|Alias List:|sites shown|channels shown/);
+  await expect(directory).not.toContainText(/853\.98750|852\.98750|Alias List:|sites shown|channels shown/);
   await expect(directory.locator('.radio-directory-system-header .radio-directory-live-action')).toHaveCount(3);
   await expect(directory.locator('[data-directory-card-key="trunked:p25:00001:001"] .radio-directory-live-action'))
     .toHaveAttribute('href', /view=live&channel=north/);

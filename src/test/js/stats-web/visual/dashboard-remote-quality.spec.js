@@ -9,14 +9,19 @@ const id = number => `${String(number).padStart(8, '0')}-1111-4111-8111-11111111
 const qualityRow = (configurationId, name, overrides = {}) => ({
   configuration_id: configurationId, name, site_name: 'North', system_name: systemName,
   protocol: 'P25', channel_kind: 'TRUNKED', radio_system_key: systemKey,
-  entity_ref: { kind: 'channel', key: configurationId }, quality_frequency_hz: 851_012_500,
   last_observed_ms: sampleTime, signal_dbfs: null, average_signal_dbfs: null,
   decode_health_pct: 99.3, remote_origin: { remote: true }, ...overrides
 });
+const directoryFor = rows => ({ systems: [{ radio_system_key: systemKey,
+  entity_ref: { kind: 'radio_system', key: systemKey }, system_name: systemName, protocol: 'P25',
+  children: rows.filter(row => row.channel_kind === 'TRUNKED').map(row => ({ ...row,
+    processing_state: row.processing_state || 'RUNNING', display_frequency_hz: 851_012_500, display_frequency_source: 'active-control' }))
+}], channels: [] });
+const site = (page, configurationId) => page.locator(`[data-directory-row-key="${configurationId}"]`);
 
 for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]]) {
-  test(`Main trunked site tiles show friendly identities and decode quality in ${theme}`, async ({ page }, testInfo) => {
+  test(`Main grouped rows integrate real quality readings in ${theme}`, async ({ page }, testInfo) => {
     const fixture = await installSiteStyleApplication(page, theme);
     await page.setViewportSize(viewport);
     const rows = [qualityRow(channelId, channelName),
@@ -27,120 +32,136 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
       qualityRow(id(6), 'Remote stale', { last_observed_ms: sampleTime - 45_001 }),
       qualityRow(id(7), 'Remote no samples', { last_observed_ms: null }),
       qualityRow(id(8), 'Local control', { remote_origin: null, signal_dbfs: -51,
-        average_signal_dbfs: -52 })];
+        average_signal_dbfs: -52 }),
+      qualityRow(id(9), 'Stopped control', { processing_state: 'STOPPED' })];
+    const directory = directoryFor(rows);
+    directory.channels.push({ configuration_id: id(10), name: 'Fire Dispatch',
+      system_name: 'Local channels', protocol: 'NBFM', frequencies_hz: [154_430_000], processing_state: 'STOPPED' });
     await page.route('**/api/v1/dashboard/main', route => route.fulfill({ json: { data: {
-      quality: { current: rows }, directory: { systems: [], channels: [] }
+      quality: { current: rows }, directory
     } } }));
     await page.goto('/app.html?view=dashboard');
-    const card = configurationId => page.locator(`.signal-current-tile[data-configuration-id="${configurationId}"]`);
-    await expect(page.locator('.signal-current-tile')).toHaveCount(6);
-    const remote = card(channelId);
+    await expect(page.locator('.radio-directory-system-card')).toHaveCount(1);
+    await expect(page.locator('.radio-directory-site-row')).toHaveCount(8);
+    await expect(page.getByText('Trunked site signal quality', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Export signal health as CSV', exact: true })).toBeVisible();
+    const remote = site(page, channelId);
     await expect(remote.getByRole('link', { name: channelName, exact: true })).toHaveAttribute('href',
       new RegExp(`view=channel.*configuration_id=${channelId}`));
-    await expect(remote.locator('.signal-current-system')).toHaveText(systemName);
-    await expect(remote.locator('.signal-current-context').first()).toHaveText('North');
-    await expect(page.locator('.section-title').filter({ hasText: 'Trunked site signal quality' })).toBeVisible();
-    await expect(remote.locator('.signal-current-power')).toBeEmpty();
-    await expect(remote.locator('.signal-current-power')).toHaveAttribute('aria-hidden', 'true');
-    await expect(remote.locator('meter')).toBeHidden();
-    await expect(remote.locator('.signal-current-details')).toHaveText('Decode 99.3%');
-    await expect(remote).not.toContainText(/No signal|30s avg|dBFS|RFSS|NAC|ago/);
+    await expect(page.locator('.radio-directory-system-name')).toHaveText(systemName);
+    await expect(remote.getByRole('group', { name: 'Current control', exact: true })).toContainText('851.01250 MHz');
+    await expect(remote.getByRole('group', { name: 'Signal', exact: true })).toContainText('—Remote site');
+    await expect(remote).not.toContainText(/No signal|30s avg|dBFS|RFSS|NAC/);
+    await expect(remote.locator('meter')).toBeVisible();
+    await expect(remote.locator('meter')).toHaveJSProperty('value', 99.3);
     for (const [configurationId, label, tone] of [[channelId, 'Healthy', 'success'],
       [id(2), 'Degraded', 'warning'], [id(3), 'Poor', 'danger'], [id(4), 'Monitoring', 'neutral']]) {
-      const pill = card(configurationId).locator('.signal-state');
-      await expect(pill).toHaveText(label);
-      if (tone !== 'neutral') await expect(pill).toHaveClass(new RegExp(`ui-pill-${tone}`));
-      const cloud = card(configurationId).getByRole('img', { name: 'Received from another receiver.' });
+      const row = site(page, configurationId);
+      await expect(row.locator('.radio-directory-quality-state')).toHaveText(label);
+      if (tone !== 'neutral') await expect(row.locator('.radio-directory-quality-state')).toHaveClass(new RegExp(`ui-pill-${tone}`));
+      const cloud = row.getByRole('img', { name: 'Received from another receiver.' });
       await expect(cloud.locator('svg use')).toHaveAttribute('href', '#icon-cloud');
-      await expect(cloud).toHaveAttribute('data-ui-hint', 'Received from another receiver.');
+      await expect(row.locator('.radio-directory-row-context')).toContainText('Remote');
     }
-    await expect(card(id(4)).locator('.signal-current-details')).toHaveText('Decode —');
-    await expect(card(id(6))).toHaveCount(0);
-    await expect(card(id(7))).toHaveCount(0);
-    const localNoRf = card(id(5));
-    await expect(localNoRf.locator('.signal-state')).toHaveText('No signal');
-    await expect(localNoRf.locator('.signal-state svg')).toHaveCount(0);
-    await expect(localNoRf.locator('.signal-current-power strong')).toHaveText('—');
-    await expect(localNoRf.locator('.signal-current-power span')).toHaveText('dBFS');
-    await expect(localNoRf.locator('.signal-current-details')).toContainText('Decode 99.3%');
-    await expect(card(id(8)).locator('.signal-current-power strong')).toHaveText('-51.0');
-    await expect(card(id(8)).locator('.signal-current-power span')).toHaveText('dBFS');
-    await expect(card(id(8)).locator('.signal-state svg')).toHaveCount(0);
-    await expect(card(id(8)).locator('meter')).toHaveJSProperty('value', 99.3);
-    await remote.screenshot({ path: testInfo.outputPath(`remote-quality-card-${theme}.png`) });
-    await page.locator('.signal-health').screenshot({ path: testInfo.outputPath(`signal-quality-cards-${theme}.png`) });
+    await expect(site(page, id(4)).locator('meter')).toBeHidden();
+    await expect(site(page, id(6)).locator('.radio-directory-quality-state')).toHaveText('Out of date');
+    await expect(site(page, id(6)).locator('meter')).toBeHidden();
+    await expect(site(page, id(7)).locator('.radio-directory-quality-state')).toHaveText('No samples');
+    await expect(site(page, id(5)).locator('.radio-directory-quality-state')).toHaveText('No signal');
+    const local = site(page, id(8));
+    await expect(local.getByRole('group', { name: 'Signal', exact: true })).toContainText('-51.0 dBFS');
+    await expect(local).toContainText('30s avg -52.0');
+    await expect(local.locator('meter')).toHaveJSProperty('value', 99.3);
+    await page.getByRole('button', { name: 'All', exact: true }).click();
+    await expect(site(page, id(9)).locator('.radio-directory-quality-state')).toHaveText('Stopped');
+    await expect(site(page, id(9)).locator('.radio-directory-frequency')).toContainText('Unavailable');
+    await expect(site(page, id(9)).locator('meter')).toBeHidden();
+    await expect(site(page, id(10)).locator('.radio-directory-frequency')).toContainText('154.43000 MHz');
+    await expect(site(page, id(10)).locator('.radio-directory-live-state')).toHaveText('Stopped');
+    await page.getByRole('button', { name: 'Running', exact: true }).click();
+    const geometry = await local.evaluate(row => {
+      const bounds = selector => row.querySelector(selector).getBoundingClientRect().toJSON();
+      return { identity: bounds('.radio-directory-item-identity'), control: bounds('.radio-directory-frequency'),
+        signal: bounds('[data-directory-field="signal"]'), decode: bounds('[data-directory-field="decode"]') };
+    });
+    if (viewport.width < 620) {
+      expect(geometry.identity.bottom).toBeLessThanOrEqual(geometry.control.y);
+      expect(geometry.control.x).toBeLessThan(geometry.signal.x);
+      expect(geometry.signal.x).toBeLessThan(geometry.decode.x);
+    } else expect(geometry.identity.x).toBeLessThan(geometry.control.x);
+    for (const width of [viewport.width, 320]) {
+      await page.setViewportSize({ width, height: viewport.height });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await page.locator('.radio-directory-system-card').evaluateAll(cards =>
+        cards.every(card => card.scrollWidth <= card.clientWidth))).toBe(true);
+    }
+    await page.setViewportSize(viewport);
+    await page.locator('.radio-directory-panel-body').screenshot({ path: testInfo.outputPath(`grouped-main-${theme}.png`) });
     expect(fixture.unexpected).toEqual([]);
     expect(fixture.pageErrors).toEqual([]);
   });
 }
 
-test('Trunked signal refresh preserves tiles, order, and focused names', async ({ page }) => {
+test('Grouped quality refresh preserves rows, order, and focused names', async ({ page }) => {
   await page.clock.install({ time: sampleTime });
-  const fixture = await installSiteStyleApplication(page, 'light');
+  const fixture = await installSiteStyleApplication(page);
   let polls = 0;
   await page.route('**/api/v1/dashboard/main', route => {
     polls++;
     const rows = [qualityRow(id(2), polls === 1 ? 'Zulu site' : 'A renamed site'),
-      qualityRow(channelId, channelName, { decode_health_pct: polls === 1 ? 99 : 82 }),
-      qualityRow(id(3), 'Conventional quality', { channel_kind: 'CONVENTIONAL' })];
+      qualityRow(channelId, channelName, { decode_health_pct: polls === 1 ? 99 : 82 })];
     if (polls > 1) rows.reverse();
-    return route.fulfill({ json: { data: { quality: { current: rows },
-      directory: { systems: [], channels: [] } } } });
+    return route.fulfill({ json: { data: { quality: { current: rows }, directory: directoryFor(rows) } } });
   });
   await page.goto('/app.html?view=dashboard');
-  await expect(page.locator('.signal-current-tile')).toHaveCount(2);
-  const link = page.locator(`[data-configuration-id="${channelId}"] .signal-current-name a`);
+  const row = site(page, channelId);
+  const link = row.getByRole('link', { name: channelName, exact: true });
   await link.focus();
-  const tile = await link.evaluateHandle(element => element.closest('.signal-current-tile'));
-  const order = await page.locator('.signal-current-tile').evaluateAll(elements => elements.map(e => e.dataset.configurationId));
+  const prior = await row.elementHandle();
+  const order = await page.locator('.radio-directory-site-row').evaluateAll(rows => rows.map(row => row.dataset.directoryRowKey));
   await page.clock.fastForward(10_100);
   await expect.poll(() => polls).toBeGreaterThan(1);
   await expect(link).toBeFocused();
-  expect(await link.evaluate((element, previous) => element.closest('.signal-current-tile') === previous, tile)).toBe(true);
-  expect(await page.locator('.signal-current-tile').evaluateAll(elements => elements.map(e => e.dataset.configurationId))).toEqual(order);
-  await expect(page.locator(`[data-configuration-id="${channelId}"] .signal-current-details`)).toHaveText('Decode 82.0%');
+  expect(await row.evaluate((row, previous) => row === previous, prior)).toBe(true);
+  expect(await page.locator('.radio-directory-site-row').evaluateAll(rows => rows.map(row => row.dataset.directoryRowKey))).toEqual(order);
+  await expect(row.locator('[data-directory-field="decode"]')).toContainText('82.0%');
+  await expect(row.locator('meter')).toHaveJSProperty('value', 82);
   await expect(page.getByText('A renamed site', { exact: true })).toBeVisible();
   expect(fixture.pageErrors).toEqual([]);
   expect(fixture.unexpected).toEqual([]);
 });
 
-test('Main refreshes one snapshot and keeps search usable through a failed update', async ({ page }) => {
-  await page.clock.install({ time: new Date(sampleTime) });
+test('Main keeps one snapshot, usable search, and retained rows after a failed update', async ({ page }) => {
+  await page.clock.install({ time: sampleTime });
   const fixture = await installSiteStyleApplication(page);
   const requests = [];
-  page.on('request', request => requests.push({ path: new URL(request.url()).pathname,
-    query: new URL(request.url()).search, method: request.method() }));
+  page.on('request', request => requests.push({ path: new URL(request.url()).pathname, method: request.method() }));
   let failNext = false;
   await page.route('**/api/v1/dashboard/main', route => {
     if (!failNext) return route.fallback();
     failNext = false;
-    return route.fulfill({ status: 503, json: { error: { message: 'Update unavailable. Try again shortly.' } } });
+    return route.fulfill({ status: 503, json: { error: { message: 'Update unavailable.' } } });
   });
   await page.goto('/app.html?view=dashboard');
-  await expect(page.locator('.signal-current-tile')).toHaveCount(1);
   const search = page.getByRole('searchbox', { name: 'Search systems, sites, channels, frequencies, protocols, or alias lists' });
   await search.fill('County Public Safety');
-  const channel = page.locator('.radio-directory-site-row').getByRole('link', { name: channelName, exact: true });
-  await expect(channel).toBeVisible();
-  await expect(channel).toHaveAttribute('href', new RegExp(`view=channel.*configuration_id=${channelId}`));
+  const link = site(page, channelId).getByRole('link', { name: channelName, exact: true });
+  await expect(link).toBeVisible();
   const snapshots = () => requests.filter(request => request.path === '/api/v1/dashboard/main').length;
   expect(snapshots()).toBe(1);
   failNext = true;
   await page.clock.runFor(5_100);
-  await expect(page.locator('.signal-health-summary')).toContainText('Signal quality update failed');
-  await expect(channel).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Systems and channels could not be updated.' })).toBeVisible();
+  await expect(link).toBeVisible();
   await expect(search).toHaveValue('County Public Safety');
   await expect(search).toBeFocused();
   await page.clock.runFor(5_100);
-  await expect(page.locator('.signal-health-summary')).toContainText('1 sites reporting');
+  await expect(page.getByRole('status').filter({ hasText: 'Systems and channels could not be updated.' })).toBeHidden();
   expect(snapshots()).toBe(3);
-  expect(requests.filter(request => ['/api/v1/quality', '/api/v1/channel-catalog',
-    '/api/v1/radio-systems', '/api/v1/activity/message-types', '/api/v1/dashboard'].includes(request.path))).toEqual([]);
+  expect(requests.filter(request => ['/api/v1/quality', '/api/v1/channel-catalog', '/api/v1/radio-systems',
+    '/api/v1/activity/message-types', '/api/v1/dashboard'].includes(request.path))).toEqual([]);
   expect(requests.filter(request => request.method === 'HEAD')).toEqual([]);
-  expect(requests.filter(request => /\/(?:alerts|listen-map|remote-links|streaming|retained-statistics|radioreference-import|spectrum-search|application-log|web-diagnostic-log|paging-tone-detection|channel-setup-guide)\.js$/.test(request.path)))
-    .toEqual([]);
-  expect(requests.filter(request => request.path.endsWith('/recordings.js'))).toHaveLength(1);
-  await channel.click();
+  await link.click();
   await expect(page.locator('body')).toHaveAttribute('data-view', 'channel');
   const before = snapshots();
   await page.clock.runFor(10_100);
@@ -149,18 +170,23 @@ test('Main refreshes one snapshot and keeps search usable through a failed updat
   expect(fixture.pageErrors).toEqual([]);
 });
 
-test('Dashboard-only visitors load signal quality without radio directory access', async ({ page }) => {
+test('Dashboard-only visitors get unlinked grouped quality without privileged directory facts', async ({ page }) => {
   const fixture = await installSiteStyleApplication(page);
   await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
-    configured: true, authenticated: false, capabilities: { dashboard: true, radio: false }
+    configured: true, authenticated: false, capabilities: { dashboard: true, radio: false, live: true }
   } } }));
   await page.route('**/api/v1/dashboard/main', route => route.fulfill({ json: { data: {
     quality: { current: [qualityRow(channelId, channelName)] }
   } } }));
   await page.goto('/app.html?view=dashboard');
-  await expect(page.locator('.signal-current-tile')).toHaveCount(1);
-  await expect(page.locator('.signal-health-summary')).toContainText('1 sites reporting');
-  await expect(page.locator('.radio-directory-panel-body')).toHaveCount(0);
+  const row = site(page, channelId);
+  await expect(row).toContainText(channelName);
+  await expect(row).toContainText('99.3%');
+  await expect(row).toContainText('Status unavailable');
+  await expect(row.locator('.radio-directory-frequency')).toContainText('Unavailable');
+  await expect(page.locator('.radio-directory-system-card a')).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Filter radio directory', exact: true })).toHaveCount(0);
+  await expect(page.locator('.radio-directory-local').getByRole('link', { name: /Live/ })).toHaveCount(0);
   await expect(page.locator('#content > .error')).toHaveCount(0);
   expect(fixture.pageErrors).toEqual([]);
   expect(fixture.unexpected).toEqual([]);

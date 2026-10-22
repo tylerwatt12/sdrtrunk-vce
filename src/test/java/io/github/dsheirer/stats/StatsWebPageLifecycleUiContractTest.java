@@ -122,7 +122,8 @@ class StatsWebPageLifecycleUiContractTest
     void preventsObsoleteTimersAndStreamsFromEscapingRouteCleanup() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String signalHealth = function(source, "function signalHealthSection(currentChannels)");
+        String directory = function(source,
+            "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
         String dashboard = function(source, "async function renderDashboard()");
         String mainRefresh = dashboard.substring(dashboard.indexOf("const snapshot = await loadMainDashboard();"));
         String channelSignal = function(source, "async function channelSignalHistorySection(channel)");
@@ -134,12 +135,12 @@ class StatsWebPageLifecycleUiContractTest
         String qualityChart = function(source,
             "function qualityHistoryChart(channel, response, metric, domain, decodeOnly = false)");
 
-        assertFalse(signalHealth.contains("pageInterval("));
-        assertFalse(signalHealth.contains("api("));
+        assertFalse(directory.contains("pageInterval("));
+        assertFalse(directory.contains("api("));
         assertOrdered(mainRefresh, "const snapshot = await loadMainDashboard();",
             "if (!renderIsCurrent(renderContext)) return;");
         assertTrue(mainRefresh.contains("if (refreshing || !renderIsCurrent(renderContext)) return;"));
-        assertTrue(mainRefresh.contains("directory?.update(updated.directory)"));
+        assertTrue(mainRefresh.contains("directory.update(updated.directory, updated.quality.current)"));
         assertTrue(mainRefresh.contains("}, 5_000)"));
         assertOrdered(channelSignal, "await load(rangeControl.buttons, true, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");

@@ -28,7 +28,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
           entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-85' } }]
     } } }));
     await page.goto('/app.html?view=dashboard');
-    await expect(page.locator('.signal-current-tile')).toHaveCount(1);
+    await expect(page.locator('.radio-directory-site-row')).toHaveCount(1);
     await page.getByRole('link', { name: 'Call Statistics', exact: true }).click();
     const destinations = page.locator('[data-table-type="dashboard-destinations"]');
     const sources = page.locator('[data-table-type="dashboard-sources"]');

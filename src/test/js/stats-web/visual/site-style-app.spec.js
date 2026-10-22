@@ -12,7 +12,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const scope = `radio_system_key=${encodeURIComponent(systemKey)}`;
 const routes = [
-  ['dashboard', 'view=dashboard', '.signal-current-tile', channelName],
+  ['dashboard', 'view=dashboard', '.radio-directory-site-row', channelName],
   ['live', `view=live&channel=${channelId}`, '.channels-live-table', channelName],
   ['topics', 'view=topics', '.alerts-public-topics', 'Fire activity'],
   ['recordings', 'view=recordings', '.recordings-library', 'Fire Dispatch'],

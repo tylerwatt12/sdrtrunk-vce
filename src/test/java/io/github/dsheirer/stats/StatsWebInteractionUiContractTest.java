@@ -140,7 +140,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String loggingNotice = function(source, "function databaseLoggingNotice(view)");
-        String signalHealth = function(source, "function signalHealthSection(currentChannels)");
+        String liveLink = function(source, "function radioDirectoryLiveLink(children)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertFalse(loggingNotice.contains("Live Channels"));
@@ -153,9 +153,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(loggingNotice.contains("Last saved update:"));
         assertFalse(loggingNotice.contains("${logging.state}"));
         assertFalse(loggingNotice.contains("logging.lastError"));
-        assertTrue(signalHealth.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
-        assertTrue(signalHealth.contains("Saved signal history is turned off."));
-        assertTrue(signalHealth.contains("anchor('Open Live signal levels', href('live'))"));
+        assertTrue(liveLink.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
+        assertTrue(liveLink.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
+        assertTrue(liveLink.contains("return null"));
+        assertTrue(liveLink.contains("anchor('Live', href('live'"));
         assertFalse(activity.contains("Live Channels remain available"));
     }
 
@@ -377,15 +378,17 @@ class StatsWebInteractionUiContractTest
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String source = source();
-        String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory)");
+        String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
         assertFalse(source.contains("function renderRadioSystems()"));
         assertFalse(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
         assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', wrapper)"));
-        assertTrue(directory.contains("directory.systems.forEach((parent)"));
+        assertTrue(directory.contains("snapshot.systems.forEach((parent)"));
         assertTrue(directory.contains("parent.children.filter((row)"));
-        assertTrue(directory.contains("update(updated) { directory = updated; draw(); }"));
+        assertTrue(directory.contains("update(updated, quality)"));
+        assertTrue(directory.contains("directory = updated; currentQuality = quality"));
         assertFalse(directory.contains("await api("));
         assertTrue(directory.contains("radioDirectoryConventionalGroups(conventionalRows)"));
+        assertTrue(directory.contains("exportCsvLink('signal-health')"));
         assertTrue(directory.contains("value: 'running'"));
         assertTrue(directory.contains("value: 'stopped'"));
         assertFalse(StatsWebStylesheetTestSupport.readAll().contains(".directory-secondary"));

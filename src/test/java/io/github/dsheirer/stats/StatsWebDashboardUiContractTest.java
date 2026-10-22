@@ -34,11 +34,11 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'") <
             dashboard.indexOf("{ id: 'activity', label: 'Radio Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
-        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, snapshot.directory)"));
+        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
         assertTrue(dashboard.contains("await renderDashboardActivity(renderContext)"));
         assertTrue(dashboard.contains("const snapshot = await loadMainDashboard()"));
-        assertTrue(dashboard.contains("signalHealthSection(snapshot.quality.current)"));
+        assertFalse(dashboard.contains("signalHealthSection("));
         assertFalse(dashboard.contains("'Monitored Coverage'"));
         assertFalse(dashboard.contains("'Recent Channels'"));
         assertFalse(dashboard.contains("dashboard.recent_channels"));
@@ -216,24 +216,31 @@ class StatsWebDashboardUiContractTest
     }
 
     @Test
-    void keepsSignalHealthInStableNameOrder() throws Exception
+    void keepsGroupedQualityInStableNameOrder() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String sorter = function(source, "function sortSignalChannels(channels)");
-        String section = function(source, "function signalHealthSection(currentChannels)");
-        assertTrue(sorter.contains("channelLabel(left).localeCompare(channelLabel(right)"));
+        String sorter = function(source, "function radioDirectoryCompare(left, right)");
+        String directory = function(source,
+            "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
+        assertTrue(sorter.contains("left.name || left.site || left.site_name"));
         assertTrue(sorter.contains("left.configuration_id"));
         assertFalse(sorter.contains("decode_health_pct"));
-        assertFalse(section.contains("Highest decode"));
-        assertFalse(section.contains("Weakest signal"));
-        assertTrue(section.contains("canonicalConfigurationId(channel?.configuration_id)"));
-        assertTrue(section.contains("const key = canonicalConfigurationId(channel.configuration_id)"));
-        assertFalse(section.contains("channel.configuration_id || channelLabel(channel)"));
-        String tile = function(source, "function updateSignalCurrentTile(tile, channel)");
-        assertTrue(tile.contains("channel.name || 'Unnamed channel'"));
-        assertTrue(tile.contains("channel.site_name || ''"));
-        assertTrue(tile.contains("channel.system_name || channel.system || ''"));
-        assertTrue(tile.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
+        assertTrue(directory.contains("canonicalConfigurationId(row.configuration_id)"));
+        assertTrue(directory.contains("radioDirectoryQualityOnly(currentQuality)"));
+        assertTrue(directory.contains("radioDirectoryReconcile(directoryHost, ...sections)"));
+        assertFalse(source.contains("function signalHealthSection("));
+        assertFalse(source.contains("function updateSignalCurrentTile("));
+        String row = function(source,
+            "function radioDirectorySiteRow(row, conventional = false, quality = null)");
+        assertTrue(row.contains("row.name || 'Unnamed channel'"));
+        assertTrue(row.contains("row.site || row.site_name"));
+        assertTrue(row.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
+        assertTrue(row.contains("running && row.display_frequency_source === 'active-control'"));
+        assertFalse(row.contains("quality_frequency_hz"));
+        assertTrue(row.contains("SIGNAL_OFFLINE_MILLISECONDS"));
+        assertTrue(row.contains("fresh && !remote"));
+        assertTrue(row.contains("average_signal_dbfs"));
+        assertTrue(row.contains("node('meter', 'ui-quality-meter')"));
         String context = function(source, "function dashboardChannelContext(row)");
         assertTrue(context.contains("dashboardChannelKind(row)"));
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));

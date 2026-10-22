@@ -639,6 +639,7 @@ async function main() {
   await require('./guide-persistence.test').checkGuidePersistence(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
   await require('./dashboard-data.test').checkDashboardData(appSource, functionBinding);
+  require('./main-directory-quality.test').checkMainDirectoryQuality(appSource, functionBinding);
   await require('./dashboard-activity.test').checkDashboardActivity(appSource, functionBinding);
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
@@ -1395,7 +1396,7 @@ async function main() {
     /radioDirectoryCardSection\('Conventional Channels', conventionalSystems, 'conventional'/);
   assert.match(radioDirectorySource, /radioDirectoryConventionalGroups\(conventionalRows\)/);
   assert.doesNotMatch(radioDirectorySource, /\btable\s*\(/,
-    'The read-only Radio Directory must render quiet cards instead of a data table');
+    'The read-only Radio Directory must render grouped site rows without another data table');
   const aliasTransferSource = functionBinding(appSource, 'openAliasTransferModal');
   assert.match(aliasTransferSource, /node\('div', 'ui-table-actions'\)/);
   assert.match(aliasTransferSource, /node\('header', 'ui-table-titlebar'\)/);
@@ -1421,7 +1422,7 @@ async function main() {
   assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);
   assert.match(appCssSource, /\.ui-icon-tile \{[^}]*background: var\(--accent-soft\)/s);
   assert.match(appCssSource,
-    /\.radio-directory-system-grid \{[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+    /\.radio-directory-system-grid \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   const renderLiveSource = functionBinding(appSource, 'renderLive');
   assert.doesNotMatch(appSource, /function liveActivityHistoryNotice\(/);
   assert.doesNotMatch(renderLiveSource, /historyNotice/);

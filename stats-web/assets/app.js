@@ -9016,76 +9016,6 @@ function qualityChartPanel(title, description, chart) {
   return panel;
 }
 
-function updateSignalCurrentTile(tile, channel) {
-  const state = signalChannelState(channel);
-  const remote = channel?.remote_origin?.remote === true;
-  const tone = state.className === 'healthy' ? 'success' :
-    state.className === 'degraded' ? 'warning' : state.className === 'poor' ? 'danger' : 'neutral';
-  const next = node('article', 'signal-current-tile ui-surface ui-surface-soft');
-  next.dataset.configurationId = channel.configuration_id || '';
-  const header = node('div', 'signal-current-header');
-  header.append(node('span', 'signal-current-protocol', protocolFamily(channel) || channel.protocol || 'Trunked site'));
-  const status = node('div', 'signal-current-status');
-  if (remote) status.append(remoteOriginIcon(channel.remote_origin));
-  const statePill = uiPill(state.label, tone);
-  statePill.classList.add('signal-state');
-  status.append(statePill);
-  header.append(status);
-
-  const labels = node('div', 'signal-current-labels');
-  const configured = node('strong', 'signal-current-name');
-  const name = channel.name || 'Unnamed channel';
-  configured.append(capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
-    anchor(name, href('channel', { configuration_id: channel.configuration_id })) : name);
-  labels.append(configured);
-  const site = String(channel.site_name || '').trim();
-  const system = String(channel.system_name || channel.system || '').trim();
-  // Friendly saved names belong here; protocol IDs remain available in channel details.
-  if (site) labels.append(node('span', 'signal-current-context', site));
-  if (system) labels.append(node('span', 'signal-current-context signal-current-system', system));
-
-  const power = node('div', 'signal-current-power');
-  if (!remote) {
-    power.append(node('strong', '', signalNumber(channel.signal_dbfs).replace(/\s*dBFS$/, '')),
-      node('span', '', 'dBFS'));
-    power.title = `30s average ${signalNumber(channel.average_signal_dbfs)}`;
-  } else power.setAttribute('aria-hidden', 'true');
-  const decode = optionalNumber(channel.decode_health_pct);
-  const meter = node('meter', 'ui-quality-meter');
-  meter.min = 0;
-  meter.max = 100;
-  meter.low = DECODE_DEGRADED_MINIMUM_PERCENT;
-  meter.high = DECODE_HEALTHY_MINIMUM_PERCENT;
-  meter.optimum = 100;
-  meter.value = Number.isFinite(decode) ? Math.max(0, Math.min(100, decode)) : 0;
-  meter.setAttribute('aria-label', 'Decode quality');
-  meter.setAttribute('aria-valuetext', percentNumber(channel.decode_health_pct));
-  meter.hidden = remote || !Number.isFinite(decode);
-  const details = node('div', 'signal-current-details');
-  details.append(node('span', '', `Decode ${percentNumber(channel.decode_health_pct)}`));
-  next.append(header, labels, power, meter, details);
-  patchElementTree(tile, next);
-  // Meter state is a property, so it also needs updating when its DOM is retained.
-  const retainedMeter = tile.querySelector('meter');
-  retainedMeter.min = meter.min;
-  retainedMeter.max = meter.max;
-  retainedMeter.low = meter.low;
-  retainedMeter.high = meter.high;
-  retainedMeter.optimum = meter.optimum;
-  retainedMeter.value = meter.value;
-  return tile;
-}
-
-function signalCurrentTile(channel) {
-  return updateSignalCurrentTile(node('article', 'signal-current-tile ui-surface'), channel);
-}
-
-function sortSignalChannels(channels) {
-  return [...channels].sort((left, right) =>
-    channelLabel(left).localeCompare(channelLabel(right), undefined, { sensitivity: 'base' }) ||
-      String(left.configuration_id || '').localeCompare(String(right.configuration_id || '')));
-}
-
 function signalOverview(channel, includeName = true, decodeOnly = channel?.remote_origin?.remote === true) {
   const overview = node('div', 'signal-history-overview ui-metric-grid');
   overview.classList.toggle('without-identity', !includeName);
@@ -9142,75 +9072,6 @@ function signalRangeControls(selectedRange, onChange) {
 
 function rethrowPageHandlingError(error) {
   if (pageLifecycle.requiresPageHandling(error)) throw error;
-}
-
-function signalHealthSection(currentChannels) {
-  const host = node('div', 'signal-health');
-  const currentPanel = node('div', 'signal-current-panel');
-  const currentToolbar = node('div', 'signal-current-toolbar');
-  const summary = node('div', 'signal-health-summary');
-  currentToolbar.append(summary);
-  const tiles = node('div', 'signal-current-grid');
-  currentPanel.append(currentToolbar, tiles);
-  host.append(currentPanel);
-  const block = section('Trunked site signal quality', host, exportCsvLink('signal-health'));
-  const tileNodes = new Map();
-
-  const renderCurrent = () => {
-    const now = Date.now();
-    const channels = sortSignalChannels(currentChannels.filter((channel) =>
-      String(channel.channel_kind || '').toUpperCase() === 'TRUNKED' &&
-      canonicalConfigurationId(channel?.configuration_id) &&
-      now - Number(channel.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
-    const healthy = channels.filter((channel) =>
-      optionalNumber(channel.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
-    const degraded = channels.filter((channel) => {
-      const decode = optionalNumber(channel.decode_health_pct);
-      return Number.isFinite(decode) && decode >= DECODE_DEGRADED_MINIMUM_PERCENT &&
-        decode < DECODE_HEALTHY_MINIMUM_PERCENT;
-    }).length;
-    const poor = channels.filter((channel) => {
-      const decode = optionalNumber(channel.decode_health_pct);
-      return Number.isFinite(decode) && decode < DECODE_DEGRADED_MINIMUM_PERCENT;
-    }).length;
-    const unknown = channels.length - healthy - degraded - poor;
-    summary.textContent = `${number(channels.length)} sites reporting · ${number(healthy)} healthy · ` +
-      `${number(degraded)} degraded · ${number(poor)} poor${unknown ? ` · ${number(unknown)} unknown` : ''}`;
-
-    const activeKeys = new Set();
-    const orderedTiles = channels.map((channel) => {
-      const key = canonicalConfigurationId(channel.configuration_id);
-      activeKeys.add(key);
-      const existing = tileNodes.get(key);
-      const tile = existing ? updateSignalCurrentTile(existing, channel) : signalCurrentTile(channel);
-      tileNodes.set(key, tile);
-      return tile;
-    });
-    [...tileNodes.keys()].filter((key) => !activeKeys.has(key)).forEach((key) => tileNodes.delete(key));
-    reconcileKeyedChildren(tiles, orderedTiles, 'configurationId', () => {});
-    if (!channels.length) tiles.append(node('div', 'empty', 'No trunked sites are currently reporting.'));
-  };
-
-  const logging = statsLoggingState();
-  if (logging.available && !logging.summaryActive) {
-    currentToolbar.hidden = true;
-    const message = node('div', 'empty signal-disabled');
-    message.append('Saved signal history is turned off.');
-    if (capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) {
-      message.append(' ', anchor('Open Live signal levels', href('live')), '.');
-    }
-    tiles.append(message);
-  } else {
-    renderCurrent();
-  }
-  return {
-    element: block,
-    update(channels) {
-      currentChannels = channels;
-      if (!logging.available || logging.summaryActive) renderCurrent();
-    },
-    failed(error) { summary.textContent = `Signal quality update failed: ${error.message}`; }
-  };
 }
 
 async function channelSignalHistorySection(channel) {
@@ -12891,14 +12752,12 @@ async function renderDashboard() {
   }
 
   if (tab === 'health') {
-    const loading = node('div', 'ui-feedback ui-feedback-loading', 'Loading signal quality…');
+    const loading = node('div', 'ui-feedback ui-feedback-loading', 'Loading systems and channels…');
     content.append(loading);
     const snapshot = await loadMainDashboard();
     if (!renderIsCurrent(renderContext)) return;
-    const signal = signalHealthSection(snapshot.quality.current);
-    loading.replaceWith(signal.element);
-    const directory = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
-      await renderNestedRadioDirectory(renderContext, snapshot.directory) : null;
+    loading.remove();
+    const directory = renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current);
     if (!renderIsCurrent(renderContext)) return;
     let refreshing = false;
     pageInterval(async () => {
@@ -12907,10 +12766,9 @@ async function renderDashboard() {
       try {
         const updated = await loadMainDashboard();
         if (!renderIsCurrent(renderContext)) return;
-        signal.update(updated.quality.current);
-        directory?.update(updated.directory);
+        directory.update(updated.directory, updated.quality.current);
       } catch (error) {
-        if (renderIsCurrent(renderContext)) signal.failed(error);
+        if (renderIsCurrent(renderContext)) directory.failed(error);
       } finally { refreshing = false; }
     }, 5_000);
     return;
@@ -24312,7 +24170,7 @@ function radioDirectoryField(element, field) {
 }
 
 function radioDirectoryLiveLink(children) {
-  if (!capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) return null;
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO) || !capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) return null;
   const running = children.filter((row) => row.processing_state === 'RUNNING');
   const target = running[0];
   const link = anchor('Live', href('live', target ? { channel: target.configuration_id } : {}),
@@ -24325,35 +24183,91 @@ function radioDirectoryLiveLink(children) {
   return radioDirectoryField(link, 'live');
 }
 
-function radioDirectorySiteRow(row, conventional = false) {
+function radioDirectoryReading(label, field, value, unit = '') {
+  const reading = radioDirectoryField(node('div', 'radio-directory-reading'), field);
+  reading.setAttribute('role', 'group');
+  reading.setAttribute('aria-label', label);
+  reading.append(node('span', 'ui-muted ui-label radio-directory-reading-label', label));
+  const amount = node('strong', 'radio-directory-value', value);
+  if (unit) amount.append(' ', node('small', 'ui-muted radio-directory-unit', unit));
+  reading.append(amount);
+  return reading;
+}
+
+function radioDirectorySiteRow(row, conventional = false, quality = null) {
   const site = node('div', `radio-directory-site-row${conventional ? ' radio-directory-conventional-row' : ''}`);
   site.dataset.directoryRowKey = String(row.configuration_id);
   const identity = radioDirectoryField(node('div', 'radio-directory-item-identity'), 'identity');
-  const name = anchor(row.name || 'Unnamed channel', href('channel', {
-    configuration_id: row.configuration_id
-  }), 'channel-name-link');
+  const label = row.name || 'Unnamed channel';
+  identity.append(capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+    anchor(label, href('channel', { configuration_id: row.configuration_id }), 'channel-name-link') :
+    node('strong', 'channel-name-link', label));
   const context = String(row.site || row.site_name || '').trim();
-  identity.append(channelOriginName(name, row));
   if (context && context !== String(row.name || '').trim())
-    identity.append(node('span', 'channel-row-context', context));
+    identity.append(node('span', 'ui-muted ui-label', context));
   const running = row.processing_state === 'RUNNING';
+  const stopped = row.processing_state && !running;
+  const operating = node('div', 'ui-muted ui-label radio-directory-row-context');
+  if (!conventional) operating.append(node('span', '', running ? 'Running' : stopped ? 'Stopped' : 'Status unavailable'));
+  const remote = row.remote_origin?.remote === true || quality?.remote_origin?.remote === true;
+  if (remote) {
+    const origin = node('span', 'radio-directory-origin');
+    origin.append(remoteOriginIcon(row.remote_origin?.remote === true ? row.remote_origin : quality.remote_origin), 'Remote');
+    operating.append(origin);
+  }
+  const observed = Number(quality?.last_observed_ms || 0);
+  if (!conventional && observed > 0) operating.append(node('span', '', `Updated ${elapsedLabel(observed)}`));
+  if (operating.children.length) identity.append(operating);
   // Only the catalog's fresh active-control result is a confirmed current control frequency.
   const current = running && row.display_frequency_source === 'active-control' ?
     Number(row.display_frequency_hz) : null;
   const configured = (row.frequencies_hz || []).map(Number).find((value) => Number.isFinite(value) && value > 0);
   const frequencyHz = conventional ? configured : current;
-  const reading = radioDirectoryField(node('span', 'radio-directory-frequency'), 'frequency');
-  reading.append(node('small', '', conventional ? 'Frequency' : 'Current control'),
-    node('strong', '', Number.isFinite(frequencyHz) && frequencyHz > 0 ?
-      `${frequency(frequencyHz)} MHz` : 'Unavailable'));
-  const status = radioDirectoryField(uiStatus(running ? 'Running' : 'Stopped',
-    running ? 'success' : 'neutral'), 'status');
-  status.classList.add('radio-directory-live-state');
-  site.append(identity, reading, status);
+  const frequencyReading = radioDirectoryReading(conventional ? 'Frequency' : 'Current control', 'frequency',
+    Number.isFinite(frequencyHz) && frequencyHz > 0 ? frequency(frequencyHz) : 'Unavailable',
+    Number.isFinite(frequencyHz) && frequencyHz > 0 ? 'MHz' : '');
+  frequencyReading.classList.add('radio-directory-frequency');
+  site.append(identity, frequencyReading);
+  if (conventional) {
+    const status = radioDirectoryField(uiStatus(running ? 'Running' : 'Stopped',
+      running ? 'success' : 'neutral'), 'status');
+    status.classList.add('radio-directory-live-state');
+    site.append(status);
+    return site;
+  }
+  const fresh = !stopped && observed > 0 && observed <= Date.now() + 2000 &&
+    Date.now() - observed <= SIGNAL_OFFLINE_MILLISECONDS;
+  const signal = fresh && !remote ? optionalNumber(quality?.signal_dbfs) : null;
+  const average = fresh && !remote ? optionalNumber(quality?.average_signal_dbfs) : null;
+  const signalReading = radioDirectoryReading('Signal', 'signal',
+    Number.isFinite(signal) ? signal.toFixed(1) : '—', Number.isFinite(signal) ? 'dBFS' : '');
+  signalReading.append(node('small', 'ui-muted radio-directory-average', Number.isFinite(average) ?
+    `30s avg ${average.toFixed(1)}` : remote ? 'Remote site' : 'No samples'));
+  const decode = fresh ? optionalNumber(quality?.decode_health_pct) : null;
+  const state = stopped ? { label: 'Stopped', className: 'offline' } : !fresh ?
+    { label: observed ? 'Out of date' : 'No samples', className: 'offline' } : signalChannelState({ ...quality, remote_origin: { remote } });
+  const tone = state.className === 'healthy' ? 'success' : state.className === 'degraded' ? 'warning' :
+    state.className === 'poor' ? 'danger' : 'neutral';
+  const decodeReading = radioDirectoryReading('Decode', 'decode', percentNumber(decode));
+  const inline = node('div', 'radio-directory-decode-value');
+  const value = decodeReading.querySelector('.radio-directory-value');
+  const pill = uiPill(state.label, tone);
+  pill.classList.add('radio-directory-quality-state');
+  value.replaceWith(inline);
+  inline.append(value, pill);
+  const meter = node('meter', 'ui-quality-meter');
+  Object.assign(meter, { min: 0, max: 100, low: DECODE_DEGRADED_MINIMUM_PERCENT,
+    high: DECODE_HEALTHY_MINIMUM_PERCENT, optimum: 100 });
+  meter.setAttribute('aria-label', 'Decode quality');
+  meter.setAttribute('aria-valuetext', percentNumber(decode));
+  meter.setAttribute('value', String(Number.isFinite(decode) ? Math.max(0, Math.min(100, decode)) : 0));
+  meter.hidden = !Number.isFinite(decode);
+  decodeReading.append(meter);
+  site.append(signalReading, decodeReading);
   return site;
 }
 
-function radioDirectorySystemCard(row, conventional = false) {
+function radioDirectorySystemCard(row, conventional = false, qualityById = new Map()) {
   const children = [...(row.children || [])].sort(radioDirectoryCompare);
   const systemName = conventional ? row.system_name || 'Other channels' :
     radioSystemDisplayName(row) || row.system_name || 'Trunked system';
@@ -24366,21 +24280,33 @@ function radioDirectorySystemCard(row, conventional = false) {
   const heading = radioDirectoryField(node('h3', 'radio-directory-system-name'), 'system-name');
   heading.append(conventional ? systemName : radioSystemLink(row.entity_ref, systemName));
   header.append(heading);
+  const protocol = conventional ? (row.protocol_labels || []).join(' · ') :
+    protocolFamily(row) || row.protocol_label || row.protocol || '';
+  if (protocol) header.append(radioDirectoryField(node('span', 'ui-muted ui-label', protocol), 'protocol'));
   const live = radioDirectoryLiveLink(children);
   if (live) header.append(live);
   const sites = node('div', 'radio-directory-site-list');
-  children.forEach((channel) => sites.append(radioDirectorySiteRow(channel, conventional)));
-  card.append(header, sites);
+  children.forEach((channel) => sites.append(radioDirectorySiteRow(channel, conventional,
+    qualityById.get(canonicalConfigurationId(channel.configuration_id)))));
+  card.append(header);
+  if (!conventional) {
+    const columns = node('div', 'ui-muted ui-label radio-directory-row-head');
+    columns.setAttribute('aria-hidden', 'true');
+    ['Channel / site', 'Current control', 'Signal', 'Decode quality']
+      .forEach((label) => columns.append(node('span', '', label)));
+    card.append(columns);
+  }
+  card.append(sites);
   return card;
 }
 
-function radioDirectoryCardSection(title, rows, kind, emptyText) {
+function radioDirectoryCardSection(title, rows, kind, emptyText, qualityById) {
   const sectionElement = node('section', 'radio-directory-section');
   sectionElement.dataset.directorySectionKey = kind;
   const header = node('header', 'radio-directory-section-header');
   header.append(node('h2', '', title));
   const grid = node('div', 'radio-directory-system-grid');
-  const cards = rows.map((row) => radioDirectorySystemCard(row, kind === 'conventional'));
+  const cards = rows.map((row) => radioDirectorySystemCard(row, kind === 'conventional', qualityById));
   cards.sort((left, right) => left.querySelector('h3').textContent.localeCompare(
     right.querySelector('h3').textContent, undefined, { numeric: true, sensitivity: 'base' }) ||
     left.dataset.directoryCardKey.localeCompare(right.dataset.directoryCardKey));
@@ -24441,10 +24367,21 @@ function radioDirectoryEmbeddedPanel(view, directory) {
   return section('Systems & channels', body);
 }
 
-function renderNestedRadioDirectory(renderContext, directory) {
+function radioDirectoryQualityOnly(currentQuality) {
+  const systems = new Map();
+  for (const row of currentQuality) {
+    if (row.channel_kind !== 'TRUNKED' || !canonicalConfigurationId(row.configuration_id)) continue;
+    const key = row.radio_system_key || JSON.stringify([row.protocol, row.system_name]);
+    if (!systems.has(key)) systems.set(key, { ...row, children: [] });
+    systems.get(key).children.push(row);
+  }
+  return { systems: [...systems.values()], channels: [] };
+}
+
+function renderNestedRadioDirectory(renderContext, directory, currentQuality = []) {
   if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
   const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
-  wrapper.dataset.uiDensity = 'compact';
+  wrapper.dataset.uiDensity = 'comfortable';
   const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
   const searchWrap = node('label', 'ui-search');
   searchWrap.append(iconGlyph('icon-search'));
@@ -24453,7 +24390,8 @@ function renderNestedRadioDirectory(renderContext, directory) {
   search.placeholder = 'Search systems, sites, channels, frequencies, protocols, or alias lists';
   search.setAttribute('aria-label', search.placeholder);
   searchWrap.append(search);
-  let activeView = 'running';
+  const hasDirectory = Boolean(directory);
+  let activeView = hasDirectory ? 'running' : 'all';
   const filters = uiSegmentedControl([
     { value: 'running', label: 'Running' },
     { value: 'stopped', label: 'Stopped' },
@@ -24465,7 +24403,12 @@ function renderNestedRadioDirectory(renderContext, directory) {
     'ui-button ui-button-secondary ui-icon-button');
   refresh.title = 'Refresh radio directory';
   refresh.setAttribute('aria-label', refresh.title);
-  toolbar.append(searchWrap, filters, exportLink, refresh);
+  toolbar.append(searchWrap);
+  if (hasDirectory) toolbar.append(filters, exportLink);
+  toolbar.append(exportCsvLink('signal-health'), refresh);
+  const feedback = node('p', 'ui-notice ui-notice-warning');
+  feedback.hidden = true;
+  feedback.setAttribute('role', 'status');
   const directoryHost = node('div', 'radio-directory-content');
 
   const matches = (row, term) => !term || [row.system_name, row.system, row.site_name, row.site,
@@ -24474,12 +24417,15 @@ function renderNestedRadioDirectory(renderContext, directory) {
     channelAdminFrequencyList(row.frequencies_hz)]
     .some((value) => String(value || '').toLowerCase().includes(term));
   const draw = () => {
+    const qualityById = new Map(currentQuality.filter((row) => canonicalConfigurationId(row.configuration_id))
+      .map((row) => [canonicalConfigurationId(row.configuration_id), row]));
+    const snapshot = directory || radioDirectoryQualityOnly(currentQuality);
     const term = search.value.trim().toLowerCase();
     const matchesState = (row) => activeView === 'all' ||
       activeView === 'running' && row.processing_state === 'RUNNING' ||
       activeView === 'stopped' && row.processing_state !== 'RUNNING';
     const trunkedSystems = [];
-    directory.systems.forEach((parent) => {
+    snapshot.systems.forEach((parent) => {
       const parentMatches = matches(parent, term);
       const children = parent.children.filter((row) => matchesState(row) && (parentMatches || matches(row, term)));
       if (children.length) {
@@ -24487,21 +24433,30 @@ function renderNestedRadioDirectory(renderContext, directory) {
           running_count: children.filter((row) => row.processing_state === 'RUNNING').length });
       }
     });
-    const conventionalRows = directory.channels.filter((row) => matchesState(row) && matches(row, term));
+    const conventionalRows = snapshot.channels.filter((row) => matchesState(row) && matches(row, term));
     const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
-    radioDirectoryReconcile(directoryHost,
-      radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
-        'No trunked systems or sites match this search'),
-      radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
-        'No conventional channels match this search')
-    );
+    const sections = [radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
+      'No trunked systems or sites match this search', qualityById)];
+    if (hasDirectory) sections.push(radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
+      'No conventional channels match this search'));
+    radioDirectoryReconcile(directoryHost, ...sections);
   };
   search.addEventListener('input', draw);
-  wrapper.append(toolbar, directoryHost);
+  wrapper.append(toolbar, feedback, directoryHost);
   draw();
 
   content.append(radioDirectoryEmbeddedPanel('systems', wrapper));
-  return { update(updated) { directory = updated; draw(); } };
+  return {
+    update(updated, quality) {
+      if (!renderIsCurrent(renderContext)) return;
+      directory = updated; currentQuality = quality; feedback.hidden = true; draw();
+    },
+    failed() {
+      feedback.textContent = 'Systems and channels could not be updated. Showing the last update received.';
+      feedback.hidden = false;
+      draw();
+    }
+  };
 }
 
 async function renderModernChannelCatalog(renderContext, revealId = null) {
