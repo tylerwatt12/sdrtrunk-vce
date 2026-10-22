@@ -549,6 +549,15 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], [
       await expect(usb.locator('.ui-disclosure-toggle .ui-status')).toHaveText('Check soon');
       await expect(control.locator('.ui-disclosure-toggle .ui-status')).toHaveText('Action needed');
       await expect(control.locator('.receiver-health-section-body')).toBeHidden();
+      for (const card of await diagnostics.locator('.receiver-health-section').all()) {
+        const inset = await card.evaluate((element) => {
+          const panel = element.getBoundingClientRect();
+          const copy = element.querySelector('.ui-disclosure-copy').getBoundingClientRect();
+          return { top: copy.top - panel.top, bottom: panel.bottom - copy.bottom };
+        });
+        expect(inset.bottom).toBeGreaterThanOrEqual(12);
+        expect(Math.abs(inset.top - inset.bottom)).toBeLessThan(1);
+      }
       if (width > 720) {
         const [left, right] = await Promise.all([tuner.boundingBox(), usb.boundingBox()]);
         expect(right.x).toBeGreaterThan(left.x + left.width);

@@ -12,7 +12,7 @@ import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints } from './core/icon-hints.js?v=5';
+import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=4';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
@@ -48,7 +48,7 @@ import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createAudioDock } from './core/audio-dock.js?v=27';
-import { formatPagingToneSummary } from './core/call-audio-details.js?v=6';
+import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -3481,7 +3481,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
     const menuLabels = options.layoutMenuLabels || {};
     const trigger = iconButton('icon-columns', menuLabels.trigger || 'Choose table columns',
-      'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
+      'ui-button ui-button-secondary ui-button-compact table-layout-trigger');
+    trigger.append(node('span', '', menuLabels.button || 'Columns'));
+    trigger.dataset.uiHint = menuLabels.trigger || 'Choose table columns';
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
@@ -12950,7 +12952,7 @@ async function renderDashboard() {
     { type: 'dashboard-destinations' });
   const sources = tableSection('Top Sources · Last 24h', dashboard.top_sources || [],
     dashboardIdentityColumns('Source'), 'No call sources recorded', { type: 'dashboard-sources' });
-  content.append(node('div', 'split dashboard-identity-split'));
+  content.append(node('div', 'dashboard-identity-split'));
   content.lastChild.append(destinations, sources);
 }
 
@@ -23587,18 +23589,21 @@ function activityCallIcons(row, context) {
   const icons = node('div', 'activity-call-icons');
   const controls = context?.callPlayback?.render(row);
   if (controls) icons.append(controls.button);
-  const indicator = (icon, label, detail) => {
+  const indicator = (icon, label, detail, structuredHint = null) => {
     const value = node('span', 'ui-record-card-icon');
     value.tabIndex = 0;
     value.setAttribute('role', 'img');
     value.setAttribute('aria-label', label);
     value.setAttribute('aria-description', detail);
     value.dataset.uiHint = detail;
+    if (structuredHint) setIconHintDetails(value, structuredHint);
     value.append(iconGlyph(icon));
     icons.append(value);
   };
   const tones = formatPagingToneSummary(row.paging_tone_summary);
-  if (tones) indicator('icon-tones', 'Tones', `Tones · ${tones.source} · ${tones.tones.join('; ')}`);
+  if (tones) indicator('icon-tones', 'Tones', `Tones · ${tones.source} · ${tones.tones.join('; ')}`, {
+    heading: `Tones · ${tones.source}`, columns: ['Tone', 'Duration', 'Start'], rows: tones.rows
+  });
   if (row.encrypted === true || row.encrypted === 1) indicator('icon-lock', 'Encrypted',
     row.encryption_full_display || row.encryption_display || 'Encrypted');
   if (controls) icons.append(controls.feedback);
@@ -29351,7 +29356,7 @@ function receiverHealthResolvedSection(incidents) {
 let receiverHealthSectionSequence = 0;
 
 function receiverHealthSection(key, title, child, action = null, summary = '', status = null) {
-  const wrapper = node('section', 'section ui-section ui-settings-panel ui-section-collapsible receiver-health-section');
+  const wrapper = node('section', 'section ui-section ui-section-collapsible receiver-health-section');
   wrapper.dataset.receiverHealthSection = key;
   const titleBar = node('div', 'section-title ui-section-title');
   const body = node('div', 'ui-settings-panel-body receiver-health-section-body');
@@ -32811,7 +32816,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
     sortable: false, recordList: true, tableClass: 'ui-record-list-compact call-matching-history-list',
     recordListOrder: ['talkgroup', 'radio', 'site', 'action', 'time', 'copies', 'match', 'outputs'],
-    layoutMenuLabels: { trigger: 'Displayed fields', title: 'Displayed fields', item: 'field',
+    layoutMenuLabels: { trigger: 'Displayed fields', button: 'Fields', title: 'Displayed fields', item: 'field',
       description: 'Show and arrange call details.', reset: 'Reset displayed fields' },
     rowKey: (row) => row.decision_sequence,
     rowClass: (row) => [

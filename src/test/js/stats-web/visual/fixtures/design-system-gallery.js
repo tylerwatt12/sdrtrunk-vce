@@ -1,4 +1,6 @@
 import { applyThemeHue } from '/assets/core/theme.js?v=2';
+import { setIconHintDetails } from '/assets/core/icon-hints.js';
+import { formatPagingToneSummary } from '/assets/core/call-audio-details.js';
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
 import { createTableOverflow } from '/assets/core/table-overflow.js?v=1';
@@ -13,6 +15,16 @@ import { openRadioReferenceConnect } from '/assets/features/radioreference-conne
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
   'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));
+
+const toneHint = document.querySelector('[data-tone-hint]');
+const toneSummary = formatPagingToneSummary({ source: 'encoded', tones: Array.from({ length: 13 }, (_, index) => ({
+  frequencies_hz: [index % 2 ? 343.75 : 625], duration_milliseconds: 260,
+  offset_milliseconds: 900 + index * 280
+})) });
+toneHint.dataset.uiHint = `Tones · ${toneSummary.source} · ${toneSummary.tones.join('; ')}`;
+toneHint.setAttribute('aria-description', toneHint.dataset.uiHint);
+setIconHintDetails(toneHint, { heading: `Tones · ${toneSummary.source}`,
+  columns: ['Tone', 'Duration', 'Start'], rows: toneSummary.rows });
 
 async function initializeAliasFilterExamples() {
   const forms = [...document.querySelectorAll('.visual-aliases-example .alias-editor-filter-toolbar, ' +
@@ -210,7 +222,7 @@ function initializeGuidanceTable() {
     chooser.className = 'table-layout-menu';
     chooser.dataset.tableType = tableType;
     const trigger = document.createElement('button');
-    trigger.className = 'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger';
+    trigger.className = 'ui-button ui-button-secondary ui-button-compact table-layout-trigger';
     trigger.type = 'button';
     trigger.setAttribute('aria-label', 'Choose table columns');
     trigger.title = 'Choose table columns';
@@ -218,7 +230,9 @@ function initializeGuidanceTable() {
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
-    trigger.append(icon('visual-icon-columns'));
+    const triggerLabel = document.createElement('span');
+    triggerLabel.textContent = 'Columns';
+    trigger.append(icon('visual-icon-columns'), triggerLabel);
     const popover = document.createElement('div');
     popover.className = 'ui-popover table-layout-panel';
     popover.id = panelId;

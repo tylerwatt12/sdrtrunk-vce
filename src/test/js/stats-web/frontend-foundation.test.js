@@ -678,7 +678,7 @@ async function main() {
   assert.match(appCssSource, /\.ui-choice-card:has\(\.ui-choice-radio:checked\)/);
   assert.match(appCssSource, /\.ui-toggle-field-compact \{/);
   assert.match(appSource,
-    /ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger/);
+    /ui-button ui-button-secondary ui-button-compact table-layout-trigger/);
   assert.match(appCssSource, /\.ui-icon-button-compact \{[^}]*--icon-action-size: var\(--control-height-compact\)/s);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
@@ -1071,6 +1071,7 @@ async function main() {
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
   assert.match(appSource, /const trigger = iconButton\('icon-columns', menuLabels.trigger \|\| 'Choose table columns'/);
+  assert.match(appSource, /trigger\.append\(node\('span', '', menuLabels\.button \|\| 'Columns'\)\)/);
   assert.match(appSource, /const displayLabel = byId\.get\(id\)\.layoutLabel \|\| byId\.get\(id\)\.fullLabel \|\| byId\.get\(id\)\.label \|\| id/);
   assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} \$\{menuLabels.item \|\| 'column'\}`\)/);
   assert.doesNotMatch(appSource, /inline \? '' : 'Columns'/);
@@ -1305,6 +1306,8 @@ async function main() {
   assert.doesNotMatch(embeddedDirectoryPanel, /radioDirectoryPerspectiveControl\(view\)/);
   assert.match(functionBinding(appSource, 'renderDashboard'), /label: 'Alias Inventory'/);
   assert.match(functionBinding(appSource, 'renderDashboard'), /ui-page-nav-tabs/);
+  assert.match(appCssSource, /\.dashboard-identity-split \{[^}]*grid-template-columns: minmax\(0, 1fr\)/s);
+  assert.doesNotMatch(appCssSource, /\.dashboard-identity-split \{[^}]*grid-template-columns: repeat\(2/s);
   assert.match(coverageSource, /radioDirectoryEmbeddedPanel\('coverage', directory\.element\)/);
   assert.match(coverageSource, /alias-coverage ui-catalog data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
   assert.doesNotMatch(coverageSource, /aliasCoverageGuidance\(\)/);

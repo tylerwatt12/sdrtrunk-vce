@@ -190,7 +190,10 @@ test('interface guidance demonstrates the current composition rules', async ({ p
     has: page.locator('h2:text-is("Data workspace")')
   });
   await expect(dataWorkspace.locator('.ui-section-title [aria-label="Choose table columns"]')).toBeVisible();
-  await expect(dataWorkspace.getByRole('button', { name: 'Columns', exact: true })).toHaveCount(0);
+  const columnsTrigger = dataWorkspace.getByRole('button', { name: 'Choose table columns', exact: true });
+  await expect(columnsTrigger).toHaveText('Columns');
+  await expect(columnsTrigger).toHaveClass(/ui-button-compact table-layout-trigger/);
+  await expect(columnsTrigger.locator('svg use')).toHaveAttribute('href', '#visual-icon-columns');
   const exampleTable = dataWorkspace.locator('.ui-table-content table');
   await expect(exampleTable).toBeVisible();
   await expect(exampleTable).toHaveClass(/resizable-table/);
@@ -559,6 +562,57 @@ test('icon actions show hints on hover and keyboard-visible focus only', async (
   await expect(page.locator('.visual-scanner-example .scanner-playback-controls > .ui-icon-button').first())
     .toHaveCSS('width', '40px');
 });
+
+for (const [theme, width, height] of [['light', 1280, 900], ['dark', 1280, 900],
+  ['light', 390, 360], ['dark', 390, 360]]) {
+  test(`tone hints align sequence timings ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+    const tones = page.locator('[data-tone-hint]');
+    await tones.scrollIntoViewIfNeeded();
+    await tones.hover();
+    const hint = page.locator('.ui-icon-hint');
+    await expect(hint).toBeVisible();
+    await expect(hint.locator('th')).toHaveText(['Tone', 'Duration', 'Start']);
+    await expect(hint.locator('tbody tr')).toHaveCount(13);
+    await expect(hint.locator('tbody tr').first().locator('td')).toHaveText(['625 Hz', '260 ms', '900 ms']);
+    await expect(tones).toHaveAttribute('aria-description', /at 4260 ms/);
+    const bounds = await hint.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(height);
+    await expect(hint).toHaveScreenshot(`tone-hint-${theme}-${width}.png`);
+    await hint.hover();
+    await expect(hint).toBeVisible();
+    await hint.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect(hint).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(hint).toBeHidden();
+    await page.keyboard.press('Tab');
+    await tones.evaluate((element) => { element.focus(); });
+    await expect(hint).toBeVisible();
+    if (height < 400) {
+      await page.keyboard.press('Home');
+      await expect.poll(() => hint.evaluate((element) => element.scrollTop)).toBe(0);
+      await page.keyboard.press('ArrowDown');
+      await expect.poll(() => hint.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      await page.keyboard.press('ArrowUp');
+      await expect.poll(() => hint.evaluate((element) => element.scrollTop)).toBe(0);
+      await page.keyboard.press('PageDown');
+      await expect.poll(() => hint.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      await page.keyboard.press('End');
+      await expect.poll(() => hint.evaluate((element) =>
+        element.scrollHeight - element.clientHeight - element.scrollTop)).toBe(0);
+      await page.keyboard.press('PageUp');
+      await expect.poll(() => hint.evaluate((element) => element.scrollTop)).toBe(0);
+      await expect(tones).toBeFocused();
+      await expect(hint).toBeVisible();
+    }
+    await page.keyboard.press('Escape');
+    await expect(hint).toBeHidden();
+  });
+}
 
 test('disabled icon hint stays visible outside a table', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1849,6 +1903,13 @@ test('receiver health gallery shares metric and disclosure structure', async ({ 
   const diagnostics = example.locator('.receiver-health-diagnostics-grid');
   const toggle = diagnostics.locator('.ui-disclosure-toggle').first();
   await expect(toggle).toHaveAccessibleName('Tuners 4 measurements Normal');
+  const inset = await diagnostics.locator('.receiver-health-section').first().evaluate((element) => {
+    const panel = element.getBoundingClientRect();
+    const copy = element.querySelector('.ui-disclosure-copy').getBoundingClientRect();
+    return { top: copy.top - panel.top, bottom: panel.bottom - copy.bottom };
+  });
+  expect(inset.bottom).toBeGreaterThanOrEqual(12);
+  expect(Math.abs(inset.top - inset.bottom)).toBeLessThan(1);
   await toggle.focus();
   await toggle.press('Enter');
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -2247,15 +2308,35 @@ test('dashboard-health-light-desktop', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('dashboard-health-light-desktop.png', { fullPage: true });
 });
 
+async function expectDashboardIdentityStack(page) {
+  const stack = page.locator('.visual-dashboard-calls-example .dashboard-identity-split');
+  const panels = stack.locator(':scope > .ui-section');
+  await expect(panels).toHaveCount(2);
+  await expect(panels.locator('h2')).toHaveText([
+    'Top Destinations · Last 24h', 'Top Sources · Last 24h'
+  ]);
+  await expect(panels.locator('.table-layout-trigger')).toHaveText(['Columns', 'Columns']);
+  const [stackBox, destinationBox, sourceBox] = await Promise.all([
+    stack.boundingBox(), panels.nth(0).boundingBox(), panels.nth(1).boundingBox()
+  ]);
+  expect(destinationBox.width).toBeCloseTo(stackBox.width, 1);
+  expect(sourceBox.width).toBeCloseTo(stackBox.width, 1);
+  expect(sourceBox.x).toBeCloseTo(destinationBox.x, 1);
+  expect(sourceBox.y).toBeGreaterThanOrEqual(destinationBox.y + destinationBox.height);
+  await expectNoHorizontalOverflow(page);
+}
+
 test('dashboard-calls-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=dashboard-calls');
+  await expectDashboardIdentityStack(page);
   await expect(page.locator('body')).toHaveScreenshot('dashboard-calls-dark-desktop.png', { fullPage: true });
 });
 
 test('dashboard-calls-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=dashboard-calls');
+  await expectDashboardIdentityStack(page);
   await expect(page.locator('body')).toHaveScreenshot('dashboard-calls-light-mobile.png', { fullPage: true });
 });
 

@@ -23,8 +23,12 @@ assert.equal(formatPagingToneSummary({ source: 'decoded_audio', method: 'analog_
 const encoded = formatPagingToneSummary({ source: 'encoded', method: 'ambe_tone_v1', tones: [{ ...single(375), code: 'HZ_375_00' }] });
 assert.equal(encoded.source, 'Encoded');
 assert.equal(encoded.tones[0], '375 Hz · 500 ms · at 25 ms');
+assert.equal(JSON.stringify(encoded.rows), JSON.stringify([['375 Hz', '500 ms', '25 ms']]),
+  'Structured tone hints preserve frequency, duration and start time separately');
 const dtmf = formatPagingToneSummary({ source: 'decoded_audio', method: 'analog_pcm_tone_v1',
   tones: [{ frequencies_hz: [697, 1209], code: 'DTMF_1', duration_milliseconds: 100 }] });
 assert.equal(dtmf.tones[0], 'DTMF 1 · 697 + 1209 Hz · 100 ms');
+assert.equal(JSON.stringify(dtmf.rows), JSON.stringify([['DTMF 1 · 697 + 1209 Hz', '100 ms', '—']]),
+  'Dual-frequency tone labels and missing start times stay readable in hint rows');
 
 console.log('Analog paging nominal, legacy P25, encoded tone and DTMF summary contracts passed.');

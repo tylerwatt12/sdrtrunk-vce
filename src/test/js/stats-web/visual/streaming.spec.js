@@ -25,18 +25,22 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       if (text !== null && text !== undefined) element.textContent = String(text);
       return element;
     };
-    const iconGlyph = () => {
+    const iconGlyph = (iconId = '') => {
       const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       icon.setAttribute('viewBox', '0 0 24 24');
-      icon.innerHTML = '<circle cx="12" cy="12" r="7"></circle>';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = iconId === 'icon-columns' ?
+        '<path d="M3 6h3M10 6h11M3 12h11M18 12h3M3 18h5M12 18h9"></path>' +
+          '<circle cx="8" cy="6" r="2"></circle><circle cx="16" cy="12" r="2"></circle>' +
+          '<circle cx="10" cy="18" r="2"></circle>' : '<circle cx="12" cy="12" r="7"></circle>';
       return icon;
     };
-    const iconButton = (_iconId, label, className = 'ui-button ui-button-secondary ui-icon-button') => {
+    const iconButton = (iconId, label, className = 'ui-button ui-button-secondary ui-icon-button') => {
       const control = node('button', className);
       control.type = 'button';
       control.setAttribute('aria-label', label);
       control.title = label;
-      control.append(iconGlyph());
+      control.append(iconGlyph(iconId));
       return control;
     };
     const formField = (labelText, control, detail = '') => {
@@ -101,7 +105,8 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       if (options.layoutMenuHost) {
         const layoutMenu = node('div', 'table-layout-menu');
         const columnsButton = iconButton('icon-columns', 'Choose table columns',
-          'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
+          'ui-button ui-button-secondary ui-button-compact table-layout-trigger');
+        columnsButton.append(node('span', '', 'Columns'));
         layoutMenu.append(columnsButton);
         options.layoutMenuHost.append(layoutMenu);
         if (options.controller) options.controller.layoutMenuCleanup = () => layoutMenu.remove();

@@ -532,6 +532,51 @@
   overflow-wrap: anywhere;
 }
 
+.ui-icon-hint-details {
+  max-width: min(var(--hint-details-max-width), calc(100vw - var(--space-4)));
+  max-height: calc(100dvh - var(--space-4));
+  overflow: auto;
+  text-align: start;
+  font-weight: var(--font-weight-normal);
+  pointer-events: auto;
+}
+
+.ui-icon-hint-heading {
+  margin-bottom: var(--space-2);
+  font-weight: var(--font-weight-control);
+}
+
+.ui-icon-hint-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-icon-hint-table th,
+.ui-icon-hint-table td {
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  vertical-align: top;
+}
+
+.ui-icon-hint-table th {
+  font-weight: var(--font-weight-control);
+}
+
+.ui-icon-hint-table :is(th, td):first-child {
+  padding-inline-start: 0;
+}
+
+.ui-icon-hint-table :is(th, td):not(:first-child) {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.ui-icon-hint-table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
 .ui-icon-button.is-loading {
   cursor: wait;
   opacity: 1;

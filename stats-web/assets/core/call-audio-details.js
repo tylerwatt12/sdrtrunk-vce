@@ -12,6 +12,7 @@ export function formatPagingToneSummary(summary) {
   const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
   const nonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const tones = [];
+  const rows = [];
   for (const tone of summary.tones.slice(0, 32)) {
     if (!tone || !Array.isArray(tone.frequencies_hz) || tone.frequencies_hz.length > 2 ||
         !tone.frequencies_hz.every(positive) || !positive(tone.duration_milliseconds) ||
@@ -37,11 +38,15 @@ export function formatPagingToneSummary(summary) {
     if ((summary.source === 'encoded' || waveformDtmf) && code && !(frequencies.length === 1 && /^HZ_\d+_\d{2}$/.test(code)))
       values.push(code.replace(/_/g, ' '));
     if (frequencies.length) values.push(frequencies.map(value => Number(value.toFixed(3))).join(' + ') + ' Hz');
-    values.push(`${Math.round(tone.duration_milliseconds)} ms`);
-    if (tone.offset_milliseconds !== undefined) values.push(`at ${Math.round(tone.offset_milliseconds)} ms`);
+    const label = values.join(' · ');
+    const duration = `${Math.round(tone.duration_milliseconds)} ms`;
+    const offset = tone.offset_milliseconds !== undefined ? `${Math.round(tone.offset_milliseconds)} ms` : '—';
+    rows.push([label, duration, offset]);
+    values.push(duration);
+    if (tone.offset_milliseconds !== undefined) values.push(`at ${offset}`);
     tones.push(values.join(' · '));
   }
-  return tones.length ? { source: summary.source === 'encoded' ? 'Encoded' : 'Audio detection', tones } : null;
+  return tones.length ? { source: summary.source === 'encoded' ? 'Encoded' : 'Audio detection', tones, rows } : null;
 }
 
 export function callAudioDetailGroups(call = {}) {

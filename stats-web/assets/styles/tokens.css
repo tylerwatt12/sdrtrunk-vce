@@ -365,6 +365,7 @@
   --icon-action-radius: var(--radius-control);
   --icon-glyph-size: 18px;
   --hint-max-width: 260px;
+  --hint-details-max-width: 380px;
   --hint-font-size: 12px;
   --radius-compact: 8px;
   --radius-comfortable: 12px;

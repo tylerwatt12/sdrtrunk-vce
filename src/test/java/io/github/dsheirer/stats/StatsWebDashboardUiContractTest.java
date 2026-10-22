@@ -278,13 +278,13 @@ class StatsWebDashboardUiContractTest
     }
 
     @Test
-    void stacksDashboardSplitsBeforeTabletTablesOverflow() throws Exception
+    void stacksDashboardIdentityTablesAtEveryWidth() throws Exception
     {
         String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".dashboard-identity-split"));
-        assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
-        assertTrue(css.contains("@media (max-width: 1500px)"));
-        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
+        String dashboardCss = Files.readString(Path.of("stats-web", "assets", "styles", "features", "dashboard.css"));
+        assertTrue(dashboardCss.contains("grid-template-columns: minmax(0, 1fr)"));
+        assertFalse(dashboardCss.contains("@media (max-width: 1500px)"));
         assertTrue(css.contains(".dashboard-summary-section .summary-band"));
         assertTrue(css.contains(".dashboard-identity-context"));
         assertTrue(css.contains(".dashboard-activity-layout"));

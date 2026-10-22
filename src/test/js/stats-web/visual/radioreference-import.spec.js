@@ -39,10 +39,14 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       if (text !== null && text !== undefined) element.textContent = String(text);
       return element;
     };
-    const iconGlyph = () => {
+    const iconGlyph = (iconId = '') => {
       const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       icon.setAttribute('viewBox', '0 0 24 24');
-      icon.innerHTML = '<circle cx="12" cy="12" r="7"></circle>';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = iconId === 'icon-columns' ?
+        '<path d="M3 6h3M10 6h11M3 12h11M18 12h3M3 18h5M12 18h9"></path>' +
+          '<circle cx="8" cy="6" r="2"></circle><circle cx="16" cy="12" r="2"></circle>' +
+          '<circle cx="10" cy="18" r="2"></circle>' : '<circle cx="12" cy="12" r="7"></circle>';
       return icon;
     };
     const metricCard = new Function('node', 'iconGlyph', `${metricHelpers}; return metricCard;`)(node, iconGlyph);
@@ -117,10 +121,11 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       if (options.layoutMenuHost) {
         const layoutMenu = node('div', 'table-layout-menu');
         const columnsButton = node('button',
-          'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
+          'ui-button ui-button-secondary ui-button-compact table-layout-trigger');
         columnsButton.type = 'button';
         columnsButton.setAttribute('aria-label', 'Choose table columns');
         columnsButton.append(iconGlyph('icon-columns'));
+        columnsButton.append(node('span', '', 'Columns'));
         layoutMenu.append(columnsButton);
         options.layoutMenuHost.append(layoutMenu);
         if (options.controller) options.controller.layoutMenuCleanup = () => layoutMenu.remove();
