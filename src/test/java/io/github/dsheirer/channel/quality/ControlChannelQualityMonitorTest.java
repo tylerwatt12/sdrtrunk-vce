@@ -44,6 +44,25 @@ class ControlChannelQualityMonitorTest
     private static final String CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
 
     @Test
+    void receiverEvidenceDoesNotRequireAnObserver()
+    {
+        ControlChannelQualityMonitor monitor = new ControlChannelQualityMonitor(
+            channel(new DecodeConfigP25Phase2()), 856_137_500L, null);
+        monitor.start();
+        try
+        {
+            monitor.getMessageListener().receive(mac(1_000L, 0, true, 0));
+            monitor.publishIfDue(System.currentTimeMillis() +
+                ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS);
+            assertEquals(1_000L, monitor.getCurrentSnapshot().lastValidDecodeMs());
+            assertEquals(1, monitor.getCurrentSnapshot().validFrames());
+            assertTrue(monitor.isPublicationIdleForTest());
+        }
+        finally { monitor.stop(); }
+        assertNull(monitor.getReceiverObservation());
+    }
+
+    @Test
     void publishesRollingSignalAndDecodeHealthAndClearsOnRotation()
     {
         Channel channel = new Channel("Test Site", ChannelType.STANDARD);
@@ -429,6 +448,8 @@ class ControlChannelQualityMonitorTest
         List<ControlChannelQualitySnapshot> snapshots = new CopyOnWriteArrayList<>();
         CountDownLatch firstConsumerEntered = new CountDownLatch(1);
         CountDownLatch releaseFirstConsumer = new CountDownLatch(1);
+        CountDownLatch firstPublicationEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstPublication = new CountDownLatch(1);
         CountDownLatch producerReturned = new CountDownLatch(1);
         ControlChannelQualityMonitor monitor = new ControlChannelQualityMonitor(channel, 452_012_500L, snapshot ->
         {
@@ -448,10 +469,16 @@ class ControlChannelQualityMonitorTest
                 }
             }
         });
+        monitor.setBeforeAsyncPublicationForTest(() ->
+        {
+            firstPublicationEntered.countDown();
+            try { releaseFirstPublication.await(); }
+            catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+        });
         monitor.start();
         long firstPublish = System.currentTimeMillis() + ControlChannelQualityMonitor.PUBLISH_INTERVAL_MILLISECONDS;
         monitor.publishIfDue(firstPublish);
-        assertTrue(firstConsumerEntered.await(5, TimeUnit.SECONDS), "quality consumer did not block");
+        assertTrue(firstPublicationEntered.await(5, TimeUnit.SECONDS), "quality publication did not block");
         Thread producer = new Thread(() ->
         {
             for(int index = 0; index < 100; index++)
@@ -470,10 +497,17 @@ class ControlChannelQualityMonitorTest
             producer.start();
             assertTrue(producerReturned.await(1, TimeUnit.SECONDS),
                 "realtime producer waited for the blocked quality consumer");
+            assertEquals(8_099L, monitor.getCurrentSnapshot().lastValidDecodeMs(),
+                "Receiver health must advance while publication and UI consumers are blocked");
+            releaseFirstPublication.countDown();
+            assertTrue(firstConsumerEntered.await(5, TimeUnit.SECONDS), "quality consumer did not block");
             assertEquals(1, snapshots.size());
+            assertEquals(8_099L, monitor.getCurrentSnapshot().lastValidDecodeMs(),
+                "A delayed older observer delivery must not rewind receiver evidence");
         }
         finally
         {
+            releaseFirstPublication.countDown();
             releaseFirstConsumer.countDown();
             producer.join(TimeUnit.SECONDS.toMillis(5));
         }

@@ -44,6 +44,7 @@ import io.github.dsheirer.metadata.site.ProtocolSiteMetadataSnapshotRequest;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshotRequest;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.DecoderFactory;
@@ -2584,6 +2585,28 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeControlChannelQualityListener(Listener<ControlChannelQualitySnapshot> listener)
     {
         mControlChannelQualityListeners.remove(listener);
+    }
+
+    /** Current control monitors without entering a lifecycle/module lock or an observer queue. */
+    public List<ControlChannelQualityMonitor> getControlChannelQualityMonitors()
+    {
+        List<ControlChannelQualityMonitor> monitors = new ArrayList<>();
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        {
+            ControlChannelQualityMonitor monitor = entry.getValue().getControlChannelQualityMonitor();
+            ControlChannelQualityMonitor.ReceiverObservation observation =
+                monitor != null ? monitor.getReceiverObservation() : null;
+            ControlChannelQualitySnapshot snapshot = observation != null ? observation.snapshot() : null;
+            if(snapshot != null && entry.getValue().isProcessing() && snapshot.channel() == entry.getKey() &&
+                snapshot.receiverContext().matchesCurrentQualityReceiver(entry.getKey(), true) &&
+                snapshot.receiverContext().isStandardChannel() &&
+                snapshot.receiverContext().receiverMode() ==
+                    SiteReceiverContext.ReceiverMode.TRUNKED)
+            {
+                monitors.add(monitor);
+            }
+        }
+        return List.copyOf(monitors);
     }
 
     private void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)

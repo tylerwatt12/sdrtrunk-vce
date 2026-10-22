@@ -70,8 +70,8 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     private final ReentrantLock mStateLock = new ReentrantLock();
     private final ReentrantLock mPublicationLock = new ReentrantLock();
     private final ReentrantLock mLifecycleLock = new ReentrantLock();
-    private final AtomicReference<SnapshotPublication> mPendingInactivePublication = new AtomicReference<>();
-    private final AtomicReference<SnapshotPublication> mPendingActivePublication = new AtomicReference<>();
+    private final AtomicReference<ReceiverObservation> mPendingInactivePublication = new AtomicReference<>();
+    private final AtomicReference<ReceiverObservation> mPendingActivePublication = new AtomicReference<>();
     private final AtomicBoolean mPublicationQueued = new AtomicBoolean();
     private final Deque<Bucket> mBuckets = new ArrayDeque<>();
     private Bucket mCurrent = new Bucket();
@@ -83,7 +83,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     private volatile long mStateGeneration;
     private volatile long mLifecycleGeneration;
     private volatile boolean mRunning;
-    private volatile SnapshotPublication mLatestPublication;
+    private volatile ReceiverObservation mLatestObservation;
     private volatile Runnable mBeforeAsyncPublication;
 
     private static Thread startPublicationWorker()
@@ -157,15 +157,22 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     }
 
     /**
-     * Request-side view of the last published active observation. A retune, stop or restart invalidates it
-     * immediately through the existing generation counters, without locking a receiver callback.
+     * Request-side view of the latest receiver-produced active observation, independent of observer delivery.
+     * A retune, stop or restart invalidates it immediately through the existing generation counters,
+     * without locking a receiver callback.
      */
     public ControlChannelQualitySnapshot getCurrentSnapshot()
     {
-        SnapshotPublication publication = mLatestPublication;
-        return publication != null && mRunning && publication.snapshot().active() &&
-            publication.stateGeneration() == mStateGeneration &&
-            publication.lifecycleGeneration() == mLifecycleGeneration ? publication.snapshot() : null;
+        ReceiverObservation observation = getReceiverObservation();
+        return observation != null && observation.snapshot().active() ? observation.snapshot() : null;
+    }
+
+    /** Latest receiver observation, including a frequency closure while this same decoder is hunting. */
+    public ReceiverObservation getReceiverObservation()
+    {
+        ReceiverObservation observation = mLatestObservation;
+        return observation != null && mRunning && observation.stateGeneration() == mStateGeneration &&
+            observation.lifecycleGeneration() == mLifecycleGeneration ? observation : null;
     }
 
     private void receive(SourceEvent event)
@@ -175,7 +182,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             return;
         }
 
-        SnapshotPublication inactivePublication = null;
+        ReceiverObservation inactivePublication = null;
 
         try
         {
@@ -300,7 +307,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             return;
         }
 
-        SnapshotPublication publication = null;
+        ReceiverObservation publication = null;
 
         try
         {
@@ -331,9 +338,9 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     }
 
     /** Creates an immutable publication while the caller owns {@link #mStateLock}. */
-    private SnapshotPublication createPublication(boolean active, long now)
+    private ReceiverObservation createPublication(boolean active, long now)
     {
-        if(mConsumer == null || mFrequency <= 0)
+        if(mFrequency <= 0)
         {
             return null;
         }
@@ -389,13 +396,15 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
             mFrequency, now,
             active, current, average, min, max, health, valid, invalid, corrected, syncLoss, dropped,
             mLastValidDecode);
-        return new SnapshotPublication(snapshot, mStateGeneration, mLifecycleGeneration);
+        ReceiverObservation publication = new ReceiverObservation(snapshot, mStateGeneration, mLifecycleGeneration);
+        mLatestObservation = publication;
+        return publication;
     }
 
     /** Offers the latest active/frequency observation without waiting or invoking an observer on the producer. */
-    private void offerPublication(SnapshotPublication publication)
+    private void offerPublication(ReceiverObservation publication)
     {
-        if(publication == null)
+        if(publication == null || mConsumer == null)
         {
             return;
         }
@@ -438,7 +447,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     {
         try
         {
-            SnapshotPublication publication;
+            ReceiverObservation publication;
             int drained = 0;
 
             while(drained < MAX_PUBLICATIONS_PER_DRAIN &&
@@ -467,9 +476,9 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         }
     }
 
-    private SnapshotPublication pollPendingPublication()
+    private ReceiverObservation pollPendingPublication()
     {
-        SnapshotPublication publication = mPendingInactivePublication.getAndSet(null);
+        ReceiverObservation publication = mPendingInactivePublication.getAndSet(null);
         return publication != null ? publication : mPendingActivePublication.getAndSet(null);
     }
 
@@ -478,7 +487,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         return mPendingInactivePublication.get() != null || mPendingActivePublication.get() != null;
     }
 
-    private void publishAsync(SnapshotPublication publication)
+    private void publishAsync(ReceiverObservation publication)
     {
         mPublicationLock.lock();
 
@@ -499,9 +508,9 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     }
 
     /** Lifecycle publication may wait, but never while holding the state lock used by real-time callbacks. */
-    private void publishStopped(SnapshotPublication publication)
+    private void publishStopped(ReceiverObservation publication)
     {
-        if(publication == null)
+        if(publication == null || mConsumer == null)
         {
             return;
         }
@@ -522,9 +531,8 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         }
     }
 
-    private void accept(SnapshotPublication publication)
+    private void accept(ReceiverObservation publication)
     {
-        mLatestPublication = publication;
         try
         {
             mConsumer.accept(publication.snapshot());
@@ -606,7 +614,7 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
     @Override
     public void stop()
     {
-        SnapshotPublication inactivePublication = null;
+        ReceiverObservation inactivePublication = null;
         mLifecycleLock.lock();
 
         try
@@ -666,8 +674,8 @@ public class ControlChannelQualityMonitor extends Module implements IMessageList
         return !PUBLICATION_WORKER_BUSY.get() && PUBLICATION_QUEUE.size() == 0;
     }
 
-    private record SnapshotPublication(ControlChannelQualitySnapshot snapshot, long stateGeneration,
-                                       long lifecycleGeneration)
+    public record ReceiverObservation(ControlChannelQualitySnapshot snapshot, long stateGeneration,
+                                      long lifecycleGeneration)
     {
     }
 

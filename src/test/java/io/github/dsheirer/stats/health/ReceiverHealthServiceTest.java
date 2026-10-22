@@ -11,8 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.application.ComputerInformation;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
 import io.github.dsheirer.source.tuner.LoggingTunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -514,192 +519,189 @@ class ReceiverHealthServiceTest
     void reportsSiteLevelControlLockLossAcrossAlternateFrequencySearch()
     {
         AtomicLong clock = new AtomicLong(1_000);
-        AtomicReference<ChannelActivityModel.SnapshotSet> activity = new AtomicReference<>(
-            activity(773_831_250L, 1_000L, 1_000L, 10));
-
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 0);
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
         {
-            service.setChannelActivitySnapshotSupplier(activity::get);
+            service.setControlQualitySupplier(() -> List.of(monitor));
             service.sampleNow();
-            assertEquals("healthy", map(service.snapshot().get("summary")).get("severity"));
-
-            clock.set(10_999L);
-            activity.set(activity(774_281_250L, 10_999L, 0, 0));
+            clock.set(10_999);
+            monitor.observe(774_281_250L, 10_999, 0, 0, 0);
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-
-            clock.set(11_000L);
-            activity.set(activity(774_531_250L, 11_000L, 0, 0));
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            clock.set(11_000);
+            monitor.observe(774_531_250L, 11_000, 0, 0, 0);
             service.sampleNow();
-            List<Map<String,Object>> active = rows(service.snapshot().get("active"));
-            assertEquals(1, active.size());
-            assertEquals("control-channel-lock-lost", active.getFirst().get("code"));
+            assertEquals("control-channel-lock-lost", controlIncidents(service.snapshot()).getFirst().get("code"));
             assertEquals("critical", map(service.snapshot().get("summary")).get("severity"));
-
-            clock.set(11_001L);
-            activity.set(activity(774_781_250L, 11_001L, 0, 0));
+            monitor.observe(774_531_250L, 11_001, 11_001, 1, 0);
+            clock.set(11_001);
             service.sampleNow();
-            assertEquals(1, rows(service.snapshot().get("active")).size());
+            clock.set(21_001);
+            monitor.observe(774_531_250L, 21_001, 21_001, 1, 0);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty(), "Received frames resolve the loss after its normal hold");
         }
     }
 
     @Test
-    void doesNotReportControlLockLossBeforeAValidControlFrame()
+    void restartAndReplacementCannotInheritThePreviousDecodersLastFrame()
     {
-        AtomicLong clock = new AtomicLong(30_000L);
-
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        AtomicReference<TestControl> current = new AtomicReference<>(monitor);
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 0);
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
         {
-            service.setChannelActivitySnapshotSupplier(() -> activity(774_281_250L, clock.get(), 0, 0));
+            service.setControlQualitySupplier(() -> List.of(current.get()));
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-            assertEquals("healthy", map(service.snapshot().get("summary")).get("severity"));
+            clock.set(11_000);
+            monitor.generation++;
+            monitor.observe(773_831_250L, 11_000, 0, 0, 0);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            monitor.observe(773_831_250L, 11_001, 11_001, 1, 0);
+            clock.set(11_001);
+            service.sampleNow();
+            current.set(new TestControl("00000000-0000-0000-0000-000000000071"));
+            current.get().observe(773_831_250L, 30_000, 0, 0, 0);
+            clock.set(30_000);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            current.get().observation = null;
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
         }
     }
 
     @Test
-    void keepsRawDecoderDropEvidenceAsAnInformationalMeasurement()
+    void conventionalReceiversNeverBecomeControlLossIncidents()
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-
+        AtomicLong clock = new AtomicLong(30_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.channel.setDecodeConfiguration(new DecodeConfigDMR());
+        monitor.observe(452_012_500L, 30_000, 1_000, 10, 0);
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
         {
-            service.setChannelActivitySnapshotSupplier(() -> activity(773_831_250L, clock.get(), 0, 0, 48));
+            service.setControlQualitySupplier(() -> List.of(monitor));
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-            assertTrue(rows(service.snapshot().get("resolved")).isEmpty());
-            Map<String,Object> summary = map(service.snapshot().get("summary"));
-            assertEquals("healthy", summary.get("severity"));
-            assertEquals(0, summary.get("active_count"));
-            assertFalse(summary.containsKey("diagnostic_count"));
-            assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", "site-table").get("detail"))
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            assertTrue(rows(rows(service.snapshot().get("measurements")).stream()
+                .filter(section -> "decoders".equals(section.get("id"))).findFirst().orElseThrow().get("rows")).isEmpty());
+        }
+    }
+
+    @Test
+    void staleQualityIsUnavailableButStillPreservesEvidenceOfARealDecoderStall()
+    {
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 48);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        {
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.sampleNow();
+            assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", monitor.scope()).get("detail"))
                 .contains("Dropped 48 bits"));
+            clock.set(7_000);
+            service.sampleNow();
+            assertEquals("Unavailable", measurement(service.snapshot(), "decoders", monitor.scope()).get("value"));
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            clock.set(11_000);
+            service.sampleNow();
+            assertEquals("control-channel-lock-lost", controlIncidents(service.snapshot()).getFirst().get("code"));
         }
     }
 
     @Test
     void keepsSameNamedSitesAsSeparateControlLockIncidents()
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        AtomicReference<ChannelActivityModel.SnapshotSet> activity = new AtomicReference<>(
-            new ChannelActivityModel.SnapshotSet(1_000L, List.of(
-                controlTable("site-a", 773_831_250L, 1_000L, 1_000L, 10, 0),
-                controlTable("site-b", 856_162_500L, 1_000L, 1_000L, 10, 0))));
-
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl first = new TestControl("00000000-0000-0000-0000-000000000071");
+        TestControl second = new TestControl("00000000-0000-0000-0000-000000000072");
+        first.observe(773_831_250L, 1_000, 1_000, 10, 0);
+        second.observe(856_162_500L, 1_000, 1_000, 10, 0);
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
         {
-            service.setChannelActivitySnapshotSupplier(activity::get);
+            service.setControlQualitySupplier(() -> List.of(first, second));
             service.sampleNow();
-            clock.set(11_000L);
-            activity.set(new ChannelActivityModel.SnapshotSet(11_000L, List.of(
-                controlTable("site-a", 774_281_250L, 11_000L, 0, 0, 0),
-                controlTable("site-b", 855_987_500L, 11_000L, 0, 0, 0))));
+            clock.set(11_000);
             service.sampleNow();
-            assertEquals(2, rows(service.snapshot().get("active")).size());
-            assertEquals(2, map(service.snapshot().get("summary")).get("active_count"));
+            assertEquals(2, controlIncidents(service.snapshot()).size());
         }
     }
 
     @Test
-    void publishesFreshControlMeasurementsWithFriendlyNamesAndNativeSiteFacts()
+    void publishesReceiverMeasurementsWithFriendlyNamesAndNativeSiteFactsWithoutActivityTables()
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        AtomicLong acknowledgedCalls = new AtomicLong(37L);
-        String configuration = "00000000-0000-0000-0000-000000000071";
-        String tableId = "channel:" + configuration;
-        long frequency = 851_012_500L;
-        ChannelActivitySnapshot control = controlTable(tableId, frequency, 2_000L, 2_000L, 10, 0);
-        ChannelActivitySnapshot named = new ChannelActivitySnapshot(tableId, "BEE00-49F", "GCRCN",
-            "Cleveland", "Cleveland Control", configuration, true, true, List.of(), control.rows(),
-            new ChannelActivitySnapshot.Site(0xBEE00, 0x49F, 1, 2, 0x49F));
-
+        AtomicLong clock = new AtomicLong(2_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.channel.setSystem("GCRCN");
+        monitor.channel.setSite("Cleveland");
+        monitor.channel.setName("Cleveland Control");
+        monitor.channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x49F, 1, 2));
+        monitor.observe(851_012_500L, 2_000, 2_000, 10, 0);
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
         {
-            service.setRadioResolveAcceptedCalls(acknowledgedCalls::get);
-            service.setChannelActivitySnapshotSupplier(() ->
-                new ChannelActivityModel.SnapshotSet(clock.get(), List.of(named)));
-            clock.set(2_000L);
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.setRadioResolveAcceptedCalls(() -> 37);
             service.sampleNow();
-
-            Map<String,Object> snapshot = service.snapshot();
-            assertEquals(2_000L, snapshot.get("generated_at_ms"));
-            assertEquals(37L, snapshot.get("radioresolve_accepted_calls"));
-            Map<String,Object> measurement = measurement(snapshot, "decoders", tableId);
+            Map<String,Object> measurement = measurement(service.snapshot(), "decoders", monitor.scope());
             assertEquals("GCRCN", measurement.get("system_name"));
             assertEquals("Cleveland Control", measurement.get("channel_name"));
-            assertEquals(configuration, measurement.get("configuration_id"));
-            assertEquals(frequency, measurement.get("frequency_hz"));
+            assertEquals(monitor.channel.getConfigurationId(), measurement.get("configuration_id"));
             assertEquals(0xBEE00, measurement.get("wacn"));
             assertEquals(0x49F, measurement.get("system_id"));
             assertEquals(1, measurement.get("rfss"));
             assertEquals(2, measurement.get("site_id"));
-            assertEquals("healthy", map(snapshot.get("summary")).get("severity"));
-
-            clock.set(2_500L);
-            acknowledgedCalls.set(40L);
-            service.sampleNow();
-            assertEquals(2_500L, service.snapshot().get("generated_at_ms"),
-                "Control measurement metadata must not prevent later health snapshots from publishing");
-            assertEquals(40L, service.snapshot().get("radioresolve_accepted_calls"),
-                "The acknowledged upload counter must stay current while control channels are active");
+            assertEquals(37L, service.snapshot().get("radioresolve_accepted_calls"));
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
         }
     }
 
-    @Test
-    void publishesControlMeasurementsBeforeOptionalNamesAndNativeIdentityAreKnown()
+    private static final class TestControl extends ControlChannelQualityMonitor
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        ChannelActivitySnapshot control = controlTable("unnamed-control", 851_012_500L,
-            2_000L, 2_000L, 10, 0);
-        ChannelActivitySnapshot unnamed = new ChannelActivitySnapshot(control.tableId(), "Control channel",
-            null, null, null, null, true, true, List.of(), control.rows(),
-            new ChannelActivitySnapshot.Site(null, null, null, null, null));
+        private final Channel channel;
+        private ReceiverObservation observation;
+        private long generation = 1;
 
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        private TestControl(String configuration)
         {
-            service.setChannelActivitySnapshotSupplier(() ->
-                new ChannelActivityModel.SnapshotSet(clock.get(), List.of(unnamed)));
-            clock.set(2_000L);
-            service.sampleNow();
-
-            assertEquals(2_000L, service.snapshot().get("generated_at_ms"));
-            Map<String,Object> measurement = measurement(service.snapshot(), "decoders", "unnamed-control");
-            assertEquals("", measurement.get("system_name"));
-            assertEquals("", measurement.get("channel_name"));
-            assertEquals("", measurement.get("configuration_id"));
-            assertNull(measurement.get("wacn"));
-            assertNull(measurement.get("system_id"));
-            assertNull(measurement.get("rfss"));
-            assertNull(measurement.get("site_id"));
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
+            this(controlChannel(configuration));
         }
+
+        private TestControl(Channel channel)
+        {
+            super(channel, 773_831_250L, ignored -> {});
+            this.channel = channel;
+        }
+
+        private static Channel controlChannel(String configuration)
+        {
+            Channel channel = new Channel("Control", Channel.ChannelType.STANDARD);
+            channel.setConfigurationId(configuration);
+            channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            channel.setSystem("County");
+            channel.setSite("Downtown");
+            return channel;
+        }
+
+        private void observe(long frequency, long observed, long lastValid, long valid, long dropped)
+        {
+            observation = new ReceiverObservation(new ControlChannelQualitySnapshot(channel,
+                SiteReceiverContext.capture(channel, null, frequency), frequency, observed, true,
+                -45.0, -45.0, -45.0, -45.0, valid > 0 ? 98.0 : null, valid, 0, 0, 0, dropped, lastValid),
+                1, generation);
+        }
+
+        @Override public ReceiverObservation getReceiverObservation() { return observation; }
+        private String scope() { return "channel:" + channel.getConfigurationId(); }
     }
 
-    private static ChannelActivityModel.SnapshotSet activity(long frequencyHz, long observedAtMs,
-                                                              long lastValidDecodeMs, long validFrames)
+    private static List<Map<String,Object>> controlIncidents(Map<String,Object> snapshot)
     {
-        return activity(frequencyHz, observedAtMs, lastValidDecodeMs, validFrames, 0);
-    }
-
-    private static ChannelActivityModel.SnapshotSet activity(long frequencyHz, long observedAtMs,
-                                                              long lastValidDecodeMs, long validFrames,
-                                                              long droppedBits)
-    {
-        return new ChannelActivityModel.SnapshotSet(observedAtMs, List.of(controlTable("site-table", frequencyHz,
-            observedAtMs, lastValidDecodeMs, validFrames, droppedBits)));
-    }
-
-    private static ChannelActivitySnapshot controlTable(String tableId, long frequencyHz, long observedAtMs,
-                                                         long lastValidDecodeMs, long validFrames,
-                                                         long droppedBits)
-    {
-        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("control-" + frequencyHz, "Control",
-            null, "ACTIVE", List.of("CURRENT_CONTROL"), 1L, null, frequencyHz, null, -45.0,
-            validFrames > 0 ? 98.0 : null, observedAtMs, validFrames, 0, 0, 0, droppedBits, lastValidDecodeMs,
-            null, null, null, null, null, null, null, null, null, null, null, null, "P25_PHASE1", null, null,
-            "CURRENT_CONTROL");
-        return new ChannelActivitySnapshot(tableId, "County · Downtown", "County",
-            "Downtown", "Control", null, true, true, List.of(), List.of(row));
+        return rows(snapshot.get("active")).stream()
+            .filter(row -> "control-channel-lock-lost".equals(row.get("code"))).toList();
     }
 
     private static Map<String,Object> measurement(Map<String,Object> snapshot, String sectionId, String scope)

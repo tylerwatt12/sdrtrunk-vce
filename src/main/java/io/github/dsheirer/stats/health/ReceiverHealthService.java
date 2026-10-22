@@ -8,8 +8,10 @@ package io.github.dsheirer.stats.health;
 import io.github.dsheirer.application.ComputerInformation;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -67,10 +69,8 @@ public final class ReceiverHealthService implements AutoCloseable
     private static final long USB_STALE_DELIVERY_MILLISECONDS = 1_000L;
     private static final double USB_LOW_DELIVERY_PERCENT = 90.0;
     private static final double USB_WARNING_DELIVERY_PERCENT = 98.0;
-    private static final Set<String> CURRENT_CONTROL_TAGS = Set.of("CURRENT_CONTROL");
     private final UserPreferences mUserPreferences;
     private final TunerManager mTunerManager;
-    private final ChannelActivityModel mChannelActivityModel;
     private final ReceiverActivityService mActivityLogService;
     private final LongSupplier mClock;
     private final long mStartedAtMs;
@@ -83,7 +83,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final Set<String> mConditionsEvaluatedThisSample = new HashSet<>();
     private final Map<String,UsbDeliveryClassifier> mUsbDeliveryClassifiers = new HashMap<>();
     private final Map<String,UsbCallbackTimingState> mUsbCallbackTimingStates = new HashMap<>();
-    private final Map<String,ControlContinuity> mControlContinuityByTable = new HashMap<>();
+    private final Map<String,ControlContinuity> mControlContinuityByReceiver = new HashMap<>();
     private final AtomicBoolean mStarted = new AtomicBoolean();
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private volatile AudioCallCoordinator mAudioCallCoordinator;
@@ -91,7 +91,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private volatile AudioStreamingManager mAudioStreamingManager;
     private volatile LongSupplier mRadioResolveAcceptedCalls = () -> 0L;
     private volatile Supplier<Map<String,Object>> mWebStatusSupplier = Map::of;
-    private volatile Supplier<ChannelActivityModel.SnapshotSet> mChannelActivitySnapshotSupplier;
+    private volatile Supplier<List<ControlChannelQualityMonitor>> mControlQualitySupplier;
     private volatile Map<String,Object> mSnapshot;
     private volatile WebDiagnosticLogService mWebDiagnosticLogService;
     private long mLastStorageSampleMs;
@@ -123,10 +123,8 @@ public final class ReceiverHealthService implements AutoCloseable
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
-        mChannelActivityModel = channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() :
-            null;
-        mChannelActivitySnapshotSupplier = () -> mChannelActivityModel != null ?
-            mChannelActivityModel.getSnapshotSet() : new ChannelActivityModel.SnapshotSet(0, List.of());
+        mControlQualitySupplier = channelProcessingManager != null ?
+            channelProcessingManager::getControlChannelQualityMonitors : List::of;
         mActivityLogService = activityLogService;
         mClock = clock != null ? clock : System::currentTimeMillis;
         mLegacySnapshotPath = legacySnapshotPath;
@@ -172,10 +170,9 @@ public final class ReceiverHealthService implements AutoCloseable
         mWebStatusSupplier = webStatusSupplier != null ? webStatusSupplier : Map::of;
     }
 
-    void setChannelActivitySnapshotSupplier(Supplier<ChannelActivityModel.SnapshotSet> supplier)
+    void setControlQualitySupplier(Supplier<List<ControlChannelQualityMonitor>> supplier)
     {
-        mChannelActivitySnapshotSupplier = supplier != null ? supplier :
-            () -> new ChannelActivityModel.SnapshotSet(0, List.of());
+        mControlQualitySupplier = supplier != null ? supplier : List::of;
     }
 
     /**
@@ -694,75 +691,76 @@ public final class ReceiverHealthService implements AutoCloseable
     private void collectControlChannels(long now, List<Map<String,Object>> measurements)
     {
         List<Map<String,Object>> rows = new ArrayList<>();
-        ChannelActivityModel.SnapshotSet set = mChannelActivitySnapshotSupplier.get();
-        Set<String> activeTables = new HashSet<>();
-
-        for(ChannelActivitySnapshot table: set.tables())
+        Set<String> activeReceivers = new HashSet<>();
+        for(ControlChannelQualityMonitor monitor: mControlQualitySupplier.get())
         {
-            if(table.controlActive())
+            ControlChannelQualityMonitor.ReceiverObservation observation = monitor.getReceiverObservation();
+            if(observation == null) continue;
+            ControlChannelQualitySnapshot quality = observation.snapshot();
+            SiteReceiverContext receiver = quality.receiverContext();
+            if(receiver == null || !receiver.isStandardChannel() ||
+                receiver.receiverMode() != SiteReceiverContext.ReceiverMode.TRUNKED ||
+                !receiver.matchesCurrentQualityReceiver(quality.channel(), true)) continue;
+
+            String configuration = receiver.configurationId();
+            String scope = configuration != null ? "channel:" + configuration :
+                "transient-channel:" + receiver.runtimeChannelId();
+            activeReceivers.add(scope);
+            ControlContinuity previous = mControlContinuityByReceiver.get(scope);
+            if(previous != null && (previous.owner() != monitor ||
+                previous.lifecycleGeneration() != observation.lifecycleGeneration() ||
+                previous.processingIncarnation() != receiver.processingIncarnation())) previous = null;
+            long lastValidDecodeMs = Math.max(quality.lastValidDecodeMs(),
+                previous != null ? previous.lastValidDecodeMs() : 0);
+            mControlContinuityByReceiver.put(scope, new ControlContinuity(monitor, observation.lifecycleGeneration(),
+                receiver.processingIncarnation(), lastValidDecodeMs));
+
+            String systemName = receiver.systemName() != null ? receiver.systemName() : "";
+            String siteName = receiver.siteName() != null ? receiver.siteName() : "";
+            String channelName = receiver.channelName() != null ? receiver.channelName() : "";
+            String title = !systemName.isBlank() && !siteName.isBlank() ? systemName + " · " + siteName :
+                !siteName.isBlank() ? siteName : !systemName.isBlank() ? systemName :
+                !channelName.isBlank() ? channelName : "Control channel";
+            boolean fresh = quality.active() && now >= quality.observedAtMs() &&
+                now - quality.observedAtMs() <= 5_000;
+            Double health = fresh ? quality.decodeHealthPercent() : null;
+            Map<String,Object> measurement = new LinkedHashMap<>(row(scope,
+                title + " · " + formatFrequency(quality.frequencyHz()),
+                health != null ? round(health) : "Unavailable", "%",
+                !fresh ? "info" : health != null && health < 20 ? "warning" : "healthy",
+                (fresh ? "" : "Last control measurement is unavailable or out of date. ") +
+                    "Signal " + quality.signalDbfs() + " dBFS · Valid frames " + quality.validFrames() +
+                    " · Invalid frames " + quality.invalidFrames() + " · Corrected bits " + quality.correctedBits() +
+                    " · Sync loss " + quality.syncLossBits() + " bits · Dropped " + quality.droppedBits() +
+                    " bits · Decoder " + receiver.decoderType()));
+            measurement.put("system_name", systemName);
+            measurement.put("channel_name", channelName);
+            measurement.put("configuration_id", configuration != null ? configuration : "");
+            measurement.put("frequency_hz", quality.frequencyHz());
+            P25SiteIdentity site = quality.channel().getP25SiteIdentity();
+            if(site != null)
             {
-                activeTables.add(table.tableId());
+                measurement.put("wacn", site.wacn());
+                measurement.put("system_id", site.system());
+                measurement.put("rfss", site.rfss());
+                measurement.put("site_id", site.site());
             }
+            rows.add(measurement);
 
-            for(ChannelActivitySnapshot.Row channel: table.rows())
+            if(lastValidDecodeMs > 0 && now >= lastValidDecodeMs &&
+                now - lastValidDecodeMs >= CONDITION_HOLD_MILLISECONDS)
             {
-                if(channel.tags() == null || !channel.tags().containsAll(CURRENT_CONTROL_TAGS) ||
-                    channel.qualityObservedAtMs() <= 0 || now - channel.qualityObservedAtMs() > 5_000)
-                {
-                    continue;
-                }
-
-                String scope = !table.siteName().isBlank() ? table.siteName() : table.title();
-                String label = scope + " · " + formatFrequency(channel.frequencyHz());
-                Double health = channel.decodeHealthPercent();
-                ControlContinuity previous = mControlContinuityByTable.get(table.tableId());
-                long lastValidDecodeMs = Math.max(channel.controlLastValidDecodeMs(),
-                    previous != null ? previous.lastValidDecodeMs : 0);
-                mControlContinuityByTable.put(table.tableId(), new ControlContinuity(lastValidDecodeMs,
-                    channel.frequencyHz(), channel.decoder(), channel.signalDbfs()));
-                Map<String,Object> measurement = new LinkedHashMap<>(row(table.tableId(), label,
-                    health != null ? round(health) : "Unavailable", "%",
-                    health != null && health < 20 ? "warning" : "healthy", "Signal " + channel.signalDbfs() +
-                        " dBFS · Valid frames " + channel.controlValidFrames() + " · Invalid frames " +
-                        channel.controlInvalidFrames() + " · Corrected bits " + channel.controlCorrectedBits() +
-                        " · Sync loss " + channel.controlSyncLossBits() + " bits · Dropped " +
-                        channel.controlDroppedBits() + " bits · Decoder " + channel.decoder()));
-                measurement.put("system_name", table.systemName());
-                measurement.put("channel_name", table.channelName());
-                measurement.put("configuration_id", table.configurationId());
-                measurement.put("frequency_hz", channel.frequencyHz());
-                if(table.site() != null)
-                {
-                    measurement.put("wacn", table.site().wacn());
-                    measurement.put("system_id", table.site().systemId());
-                    measurement.put("rfss", table.site().rfss());
-                    measurement.put("site_id", table.site().siteId());
-                }
-                rows.add(measurement);
-            }
-
-            ControlContinuity continuity = mControlContinuityByTable.get(table.tableId());
-
-            if(table.controlActive() && continuity != null && continuity.lastValidDecodeMs > 0 &&
-                now >= continuity.lastValidDecodeMs && now - continuity.lastValidDecodeMs >=
-                    CONDITION_HOLD_MILLISECONDS)
-            {
-                String scopeLabel = !table.title().isBlank() ? table.title() :
-                    !table.siteName().isBlank() ? table.siteName() : "Control channel";
-                String stableScope = scopeLabel + " (" + table.tableId() + ")";
-                long lostForMs = now - continuity.lastValidDecodeMs;
+                long lostForMs = now - lastValidDecodeMs;
                 mIncidents.observe("control-channel-lock-lost", "critical", "Control channel stopped decoding",
-                    stableScope, now, 1, "No valid control frames for " + lostForMs + " ms · " +
-                        formatFrequency(continuity.frequencyHz) + " · Signal " + continuity.signalDbfs +
-                        " dBFS · Decoder " + continuity.decoder,
+                    title + " (" + scope + ")", now, 1, "No valid control frames for " + lostForMs + " ms · " +
+                        formatFrequency(quality.frequencyHz()) + " · Signal " + quality.signalDbfs() +
+                        " dBFS · Decoder " + receiver.decoderType(),
                     "The signal may be weak or interrupted, USB or tuner data may be missing, the frequency may be wrong, or the decoder may not have locked on",
                     "The receiver is not getting control messages or voice-channel assignments",
                     "Check the tuner and USB status, then the signal level, spectrum, decoder type, and alternate control frequencies");
             }
         }
-
-        mControlContinuityByTable.keySet().retainAll(activeTables);
-
+        mControlContinuityByReceiver.keySet().retainAll(activeReceivers);
         measurements.add(section("decoders", "Control channel", rows));
     }
 
@@ -1557,7 +1555,8 @@ public final class ReceiverHealthService implements AutoCloseable
     {
     }
 
-    private record ControlContinuity(long lastValidDecodeMs, long frequencyHz, String decoder, Double signalDbfs)
+    private record ControlContinuity(ControlChannelQualityMonitor owner, long lifecycleGeneration,
+                                     long processingIncarnation, long lastValidDecodeMs)
     {
     }
 

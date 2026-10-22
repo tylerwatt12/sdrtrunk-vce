@@ -124,6 +124,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private EventBus mEventBus;
     protected Source mSource;
     private volatile DecodeEventSource mDecodeEventSource;
+    private volatile ControlChannelQualityMonitor mControlChannelQualityMonitor;
     //Lock to protect access to the modules list.
     private ReentrantLock mModuleLock = new ReentrantLock();
     private List<Module> mModules = new ArrayList<>();
@@ -455,6 +456,12 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
     }
 
+    /** Receiver-owned quality observation without acquiring the module or lifecycle lock. */
+    public ControlChannelQualityMonitor getControlChannelQualityMonitor()
+    {
+        return mControlChannelQualityMonitor;
+    }
+
     /**
      * Adds the list of modules to this processing chain
      */
@@ -501,6 +508,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
         try
         {
             mModules.add(module);
+            if(module instanceof ControlChannelQualityMonitor monitor) mControlChannelQualityMonitor = monitor;
         }
         finally
         {
@@ -527,6 +535,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
         try
         {
             mModules.remove(module);
+            if(module == mControlChannelQualityMonitor) mControlChannelQualityMonitor = null;
         }
         finally
         {
