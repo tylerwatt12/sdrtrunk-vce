@@ -426,14 +426,14 @@ class StatsWebInteractionUiContractTest
             .contains("tableSection('Collected Signaling Observations'"));
         assertTrue(function(source, "async function renderRadio()")
             .contains("section('Signaling activity'"));
-        String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters)");
+        String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters, parent, renderContext)");
         assertTrue(history.contains("section('Call history'"));
         assertTrue(history.contains("section('Calls by time'"));
         assertTrue(history.contains("section('Signaling activity'"));
         assertTrue(history.indexOf("section('Call history'") < history.indexOf("section('Calls by time'"));
         assertTrue(history.indexOf("section('Calls by time'") <
             history.indexOf("section('Signaling activity'"));
-        assertTrue(history.contains("panels.append(historySection, chartSection, signalingSection)"));
+        assertTrue(history.contains("parent.append(directory.element)"));
         assertTrue(history.contains("groupIdentityHistoryTotals(response.totals)"));
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("activitySignalingSeries()"));
@@ -493,7 +493,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(groupIdentity.contains(
             "renderActivity({ ...radioSystem, group_identity_key: identityKey, _activity_context:"));
         assertTrue(groupIdentity.contains(
-            "groupIdentityActivityHistorySection({ ...radioSystem,\n      identity_key: identityKey })"));
+            "groupIdentityActivityHistorySection({ ...radioSystem, identity_key: identityKey }, layout, renderContext)"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         assertFalse(activity.contains("scopeParameters.kind === 'patch'"));
         assertTrue(activity.contains("const refreshed = await api('/api/v1/activity'"));
@@ -508,7 +508,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("target_kind_code"));
         assertFalse(activity.contains("identity_kind_code"));
         assertFalse(source.contains("last_talkgroup_kind_code"));
-        String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
+        String channelGroups = function(source, "async function channelTopGroupsSection(channel, parent, renderContext)");
         assertTrue(channelGroups.contains("id: 'group-identity-kind'"));
         assertTrue(channelGroups.contains("groupIdentityLabel(row)"));
     }
@@ -2288,6 +2288,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String request = function(source, "async function requestJson(path, options = {})");
+        String timedFetch = function(source, "async function timedFetch(path, options, consume)");
         String invoke = function(source,
             "function invokeLiveSubscriber(target, callback, ...parameters)");
         String listener = function(source, "function invokeLiveListener(callback, ...parameters)");
@@ -2295,8 +2296,10 @@ class StatsWebInteractionUiContractTest
         String multiplexer = source.substring(source.indexOf("class LiveMultiplexer"),
             source.indexOf("const liveMultiplexer = new LiveMultiplexer()"));
 
-        assertTrue(request.indexOf("result = await response.json()") <
-            request.indexOf("window.clearTimeout(timeout)"));
+        assertTrue(request.contains("await timedFetch(path"));
+        assertTrue(request.contains("result = await response.json()"));
+        assertTrue(timedFetch.indexOf("await consume(response, controller.signal)") <
+            timedFetch.indexOf("window.clearTimeout(timeout)"));
         assertTrue(source.contains("const LIVE_MULTIPLEX_READY_TIMEOUT_MS = 10_000"));
         assertTrue(source.contains("const LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS = 25_000"));
         assertTrue(multiplexer.contains("const watchdog = window.setInterval"));

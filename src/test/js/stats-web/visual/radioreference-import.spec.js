@@ -68,8 +68,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     };
     const uiStatus = (label, tone = 'neutral') => node('span', `ui-status ui-status-${tone}`, label);
     const uiSegmentedControl = new Function('node', `${segmentedHelpers}; return uiSegmentedControl;`)(node);
-    const actualRequestJson = new Function('accessSession', 'activeRenderController', 'snakeCasePayload',
-      'systemLabels', `${requestHelpers}; return requestJson;`)({}, new AbortController(),
+    const actualRequestJson = new Function('accessSession', 'activeRenderController', 'initialPageDeadline', 'snakeCasePayload',
+      'systemLabels', `${requestHelpers}; return requestJson;`)({}, new AbortController(), 0,
       (value) => value, { rememberSystemNames: (value) => value });
     const table = (values, columns, emptyText, options = {}) => {
       options.controller?.layoutMenuCleanup?.();

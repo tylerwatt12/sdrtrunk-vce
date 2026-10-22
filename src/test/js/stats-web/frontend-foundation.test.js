@@ -262,6 +262,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
         contains: (value) => classes.has(value),
         toggle: (value, enabled) => enabled ? classes.add(value) : classes.delete(value) },
       setAttribute(name, value) { this.attributes[name] = value; },
+      removeAttribute(name) { delete this.attributes[name]; },
       append(...values) { values.filter(Boolean).forEach((value) => {
         if (value.tagName === 'FRAGMENT') this.append(...value.children);
         else this.children.push(value);
@@ -1561,7 +1562,10 @@ async function main() {
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 20, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 21, 'Every application table call must be audited');
+  const channelPatches = functionBinding(appSource, 'renderTrunkedChannel');
+  assert.match(channelPatches, /'channel-patches', layoutMenuHost: directory.titleActions, controller: directory.tableController/,
+    'Patch tables retain their stable type and section-owned column controls during Retry');
   const issiRenderer = functionBinding(appSource, 'renderRadioSystemIssi');
   assert.match(issiRenderer, /layoutMenuHost: groupAssociationActions, controller: groupAssociationController/,
     'Talkgroup association refreshes must retain their own table controls');

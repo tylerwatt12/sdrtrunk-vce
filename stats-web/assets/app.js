@@ -254,8 +254,6 @@ const SERVER_TABLE_DEFAULT_SORTS = {
 };
 const CHANNEL_IDENTITY_PAGE_LIMIT = 100;
 const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
-const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
-const SERVICE_STATUS_RETRY_DELAY_MS = 500;
 const ALIAS_BULK_SELECTION_LIMIT = 10_000;
 const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
 let serviceStatus = null;
@@ -276,6 +274,7 @@ let aliasEditorPageController = null;
 let aliasEditorWorkspaceController = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
+let initialPageDeadline = 0;
 let applicationRoutes = null;
 let userPreferenceError = null;
 let appearanceHuePreview = null;
@@ -362,23 +361,19 @@ async function jsonDocumentFetch(path, options = {}) {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
-  const response = await fetch(path, {
-    ...options,
-    method,
-    headers,
-    cache: 'no-store',
-    credentials: 'same-origin'
+  return timedFetch(path, { ...options, method, headers, page: false }, async (response) => {
+    const body = await response.text();
+    let consumed = false;
+    return {
+      ok: response.ok,
+      status: response.status,
+      async json() {
+        if (consumed) throw new Error('The preference response was already read.');
+        consumed = true;
+        return JSON.parse(body);
+      }
+    };
   });
-  let consumed = false;
-  return {
-    ok: response.ok,
-    status: response.status,
-    async json() {
-      if (consumed) throw new Error('The preference response was already read.');
-      consumed = true;
-      return response.json();
-    }
-  };
 }
 
 function activeUserPreferences() {
@@ -2554,26 +2549,16 @@ function serviceStatusWarningRequired() {
   return serviceStatusConsecutiveFailures >= SERVICE_STATUS_FAILURE_WARNING_THRESHOLD;
 }
 
-function serviceStatusRetryDelay(milliseconds) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
 async function requestServiceStatus() {
-  const attempts = serviceStatus ? 1 : SERVICE_STATUS_INITIAL_ATTEMPTS;
-  let lastError = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    beginServiceStatusRequest();
-    try {
-      const value = await api('/api/v1/status', {}, { page: false });
-      acceptServiceStatus(value);
-      return value;
-    } catch (error) {
-      lastError = error;
-      rejectServiceStatusRequest();
-    }
-    if (attempt < attempts) await serviceStatusRetryDelay(SERVICE_STATUS_RETRY_DELAY_MS * attempt);
+  beginServiceStatusRequest();
+  try {
+    const value = await api('/api/v1/status', {}, { page: false });
+    acceptServiceStatus(value);
+    return value;
+  } catch (error) {
+    rejectServiceStatusRequest();
+    throw error;
   }
-  throw lastError;
 }
 
 function detailedHistoryAvailable() {
@@ -9070,18 +9055,16 @@ function signalRangeControls(selectedRange, onChange) {
   return rangeControls(SIGNAL_RANGES, selectedRange, onChange);
 }
 
-function rethrowPageHandlingError(error) {
-  if (pageLifecycle.requiresPageHandling(error)) throw error;
-}
-
-async function channelSignalHistorySection(channel) {
-  const renderContext = captureRenderContext();
-  const host = node('div', 'site-signal-history');
-  const block = section('Control Channel Quality History', host);
-  block.classList.add('site-signal-history-section');
+async function channelSignalHistorySection(channel, parent, renderContext) {
+  const directory = createAsyncSection('Control Channel Quality History', {
+    loadingMessage: 'Loading control channel quality history…',
+    errorMessage: 'The control channel quality history could not be loaded.'
+  });
+  const host = directory.host;
+  host.classList.add('site-signal-history');
+  directory.element.classList.add('site-signal-history-section');
   const configuredDecodeOnly = channel?.remote_origin?.remote === true;
   let selectedRange = '1h';
-  let loadingSequence = 0;
   let loading = false;
   const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
     selectedRange = value;
@@ -9093,57 +9076,41 @@ async function channelSignalHistorySection(channel) {
   const exportLink = exportCsvLink('channel-quality', {
     configuration_id: channel.configuration_id, range: selectedRange
   });
-  const titleActions = node('div', 'section-title-actions ui-section-actions');
-  titleActions.append(rangeControl.controls, exportLink);
-  block.querySelector('.section-title').append(titleActions);
-  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
+  directory.titleActions.append(rangeControl.controls, exportLink);
+  parent.append(directory.element);
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
     if (loading && !interactive) return;
-    const sequence = ++loadingSequence;
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
       disconnectPageObserversWithin(host);
-      host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
     }
     try {
-      const response = await api(channelApiPath(channel.configuration_id, 'quality'), {
+      return await directory.load(() => api(channelApiPath(channel.configuration_id, 'quality'), {
         range: selectedRange, points: 300
-      });
-      if (sequence !== loadingSequence) return;
-      const qualitySite = (response.rows || [])[0];
-      const decodeOnly = configuredDecodeOnly || qualitySite?.remote_origin?.remote === true;
-      disconnectPageObserversWithin(host);
-      host.replaceChildren();
-      if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
-        host.append(node('div', 'empty',
-          decodeOnly ? `No remote decode quality samples are available in the selected ${selectedRange} range` :
-            `No retained control channel quality samples are available in the selected ${selectedRange} range`));
-        return;
-      }
-      const charts = node('div', 'quality-chart-stack');
-      if (!decodeOnly) {
-        charts.append(qualityChartPanel('Signal Strength', '30s average and observed range · dBFS',
-          qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))));
-      }
-      charts.append(qualityChartPanel('Decode Quality', '30s rolling successful-frame rate · percent',
-        qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }, decodeOnly)));
-      if (decodeOnly) {
-        host.append(node('p', 'ui-section-note',
-          'Decode quality reflects frames decoded from the remote bits, not RF signal strength.'));
-      }
-      host.append(signalOverview(qualitySite, false, decodeOnly), charts);
-      host.removeAttribute('title');
-    } catch (error) {
-      if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) {
-        if (interactive) host.replaceChildren(node('div', 'error', error.message));
-        else host.title = `Quality history update failed: ${error.message}`;
-      }
+      }), (response) => {
+        const qualitySite = (response.rows || [])[0];
+        const decodeOnly = configuredDecodeOnly || qualitySite?.remote_origin?.remote === true;
+        disconnectPageObserversWithin(host);
+        if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
+          return node('div', 'empty', decodeOnly ?
+            `No remote decode quality samples are available in the selected ${selectedRange} range` :
+            `No retained control channel quality samples are available in the selected ${selectedRange} range`);
+        }
+        const charts = node('div', 'quality-chart-stack');
+        if (!decodeOnly) {
+          charts.append(qualityChartPanel('Signal Strength', '30s average and observed range · dBFS',
+            qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))));
+        }
+        charts.append(qualityChartPanel('Decode Quality', '30s rolling successful-frame rate · percent',
+          qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }, decodeOnly)));
+        return fragment(decodeOnly ? node('p', 'ui-section-note',
+          'Decode quality reflects frames decoded from the remote bits, not RF signal strength.') : null,
+          signalOverview(qualitySite, false, decodeOnly), charts);
+      }, renderContext, !interactive);
     } finally {
-      if (sequence === loadingSequence) {
-        loading = false;
-        if (interactive) buttons.forEach((button) => { button.disabled = false; });
-      }
+      loading = false;
+      if (interactive) buttons.forEach((button) => { button.disabled = false; });
     }
   };
   const logging = statsLoggingState();
@@ -9151,10 +9118,9 @@ async function channelSignalHistorySection(channel) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Saved control-channel quality history is turned off.'));
   } else {
-    await load(rangeControl.buttons, true, true);
+    await load(rangeControl.buttons, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
-  return block;
 }
 
 function groupIdentityHistoryTotals(totals) {
@@ -9166,91 +9132,71 @@ function groupIdentityHistoryTotals(totals) {
   ]);
 }
 
-async function groupIdentityActivityHistorySection(scopeParameters) {
-  const renderContext = captureRenderContext();
-  const panels = node('div', 'entity-info-column group-identity-activity-panels');
-  const historyHost = node('div', 'group-identity-activity-history');
-  const chartHost = node('div', 'group-identity-call-activity');
-  const signalingHost = node('div', 'group-identity-signaling-totals');
+async function groupIdentityActivityHistorySection(scopeParameters, parent, renderContext) {
+  const directory = createAsyncSection('Call history', {
+    bare: true,
+    loadingMessage: 'Loading group activity history…',
+    errorMessage: 'The group activity history could not be loaded.'
+  });
+  directory.element.classList.add('entity-info-column', 'group-identity-activity-panels');
   let selectedRange = '24h';
-  let loadingSequence = 0;
   let loading = false;
   const rangeControl = rangeControls(ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
     await load(buttons, true);
   });
-  const historySection = section('Call history', historyHost, sectionActionHost(rangeControl.controls));
-  historySection.classList.add('group-identity-history-section');
-  const chartSection = section('Calls by time', chartHost);
-  const signalingSection = section('Signaling activity', signalingHost);
-  panels.append(historySection, chartSection, signalingSection);
-
-  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
+  parent.append(directory.element);
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
     if (loading && !interactive) return;
-    const sequence = ++loadingSequence;
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
-      historyHost.replaceChildren(node('div', 'loading', 'Loading activity totals'));
-      disconnectPageObserversWithin(chartHost);
-      chartHost.replaceChildren(node('div', 'loading', 'Loading call activity'));
-      signalingHost.replaceChildren(node('div', 'loading', 'Loading signaling totals'));
+      disconnectPageObserversWithin(directory.host);
     }
     try {
-      const response = await api(groupIdentityApiPath(scopeParameters.radio_system_key,
-        scopeParameters.identity_key, 'activity'), { range: selectedRange });
-      if (sequence !== loadingSequence) return;
-      historyHost.replaceChildren(
-        groupIdentityHistoryTotals(response.totals), callCountDates(response, 'selected'),
-        node('p', 'ui-section-note', systemCallTitle(scopeParameters)));
-      disconnectPageObserversWithin(chartHost);
-      chartHost.replaceChildren(groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
-        'Group calls and call outcomes by time'));
-      signalingHost.replaceChildren(signalingMetrics(signalingCounts(response.totals || {})),
-        callCountDates({ call_totals_started_at_ms: response.signaling_totals_started_at_ms,
-          call_totals_as_of_ms: response.counts_as_of_ms }, 'totals'),
-        activityMetricGuide(true));
-    } catch (error) {
-      if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) {
-        historyHost.replaceChildren(node('div', 'error', error.message));
-        disconnectPageObserversWithin(chartHost);
-        chartHost.replaceChildren();
-        signalingHost.replaceChildren();
-      }
+      return await directory.load(() => api(groupIdentityApiPath(scopeParameters.radio_system_key,
+        scopeParameters.identity_key, 'activity'), { range: selectedRange }), (response) => {
+        disconnectPageObserversWithin(directory.host);
+        const history = section('Call history', fragment(groupIdentityHistoryTotals(response.totals),
+          callCountDates(response, 'selected'), node('p', 'ui-section-note', systemCallTitle(scopeParameters))),
+          sectionActionHost(rangeControl.controls));
+        history.classList.add('group-identity-history-section');
+        return fragment(history,
+          section('Calls by time', groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
+            'Group calls and call outcomes by time')),
+          section('Signaling activity', fragment(signalingMetrics(signalingCounts(response.totals || {})),
+            callCountDates({ call_totals_started_at_ms: response.signaling_totals_started_at_ms,
+              call_totals_as_of_ms: response.counts_as_of_ms }, 'totals'), activityMetricGuide(true))));
+      }, renderContext, !interactive);
     } finally {
-      if (sequence === loadingSequence) {
-        loading = false;
-        buttons.forEach((button) => { button.disabled = false; });
-      }
+      loading = false;
+      buttons.forEach((button) => { button.disabled = false; });
     }
   };
-
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
-    rangeControl.controls.hidden = true;
-    historyHost.append(node('div', 'empty', 'Saved group activity history is turned off.'));
-    chartSection.hidden = true;
-    signalingSection.hidden = true;
+    directory.host.append(section('Call history',
+      node('div', 'empty', 'Saved group activity history is turned off.')));
   } else {
-    await load(rangeControl.buttons, true, true);
+    await load(rangeControl.buttons, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
-  return panels;
 }
 
-async function channelTopGroupsSection(channel) {
-  const host = node('div', 'channel-top-groups');
+async function channelTopGroupsSection(channel, parent, renderContext) {
+  const directory = createAsyncSection('Calls heard on this channel', {
+    loadingMessage: 'Loading group activity for this channel…',
+    errorMessage: 'The group activity for this channel could not be loaded.'
+  });
+  const host = directory.host;
+  host.classList.add('channel-top-groups');
   let selectedRange = '24h';
-  let loadingSequence = 0;
-  let loading = false;
-  const tableController = {};
   const rangeControl = rangeControls(SIGNAL_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
-    await load(buttons, true);
+    await load(buttons);
   });
-  const titleActions = sectionActionHost(rangeControl.controls);
-  const block = section('Calls heard on this channel', host, titleActions);
+  directory.titleActions.append(rangeControl.controls);
+  parent.append(directory.element);
   const columns = [
     { id: 'group-identity-id', label: 'Group', render: (row) => groupIdentityValue(row),
       className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row) },
@@ -9267,46 +9213,26 @@ async function channelTopGroupsSection(channel) {
       sortValue: (row) => Number(row.encrypted_logical_call_count || 0) }
   ];
 
-  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
-    if (loading && !interactive) return;
-    const sequence = ++loadingSequence;
-    loading = true;
-    if (interactive) {
-      buttons.forEach((button) => { button.disabled = true; });
-      cleanupTableLayoutMenu(tableController);
-      host.replaceChildren(node('div', 'loading', 'Loading group activity for this channel'));
-    }
+  const load = async (buttons = rangeControl.buttons) => {
+    buttons.forEach((button) => { button.disabled = true; });
     try {
-      const response = await api(channelApiPath(channel.configuration_id, 'group-identities'), {
+      return await directory.load(() => api(channelApiPath(channel.configuration_id, 'group-identities'), {
         range: selectedRange, limit: 20
-      });
-      if (sequence !== loadingSequence) return;
-      host.replaceChildren(callCountDates(response, 'selected'), table(response.rows || [], columns,
+      }), (response) => fragment(callCountDates(response, 'selected'), table(response.rows || [], columns,
         'No group activity is available for this range', {
-          type: 'channel-top-groups', controller: tableController, layoutMenuHost: titleActions
-        }));
-    } catch (error) {
-      if (sequence === loadingSequence) cleanupTableLayoutMenu(tableController);
-      if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) {
-        host.replaceChildren(node('div', 'error', error.message));
-      }
+          type: 'channel-top-groups', controller: directory.tableController, layoutMenuHost: directory.titleActions
+        })), renderContext);
     } finally {
-      if (sequence === loadingSequence) {
-        loading = false;
-        buttons.forEach((button) => { button.disabled = false; });
-      }
+      buttons.forEach((button) => { button.disabled = false; });
     }
   };
-
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Saved group activity is turned off.'));
   } else {
-    await load(rangeControl.buttons, true, true);
+    await load();
   }
-  return block;
 }
 
 function snakeCaseKey(value) {
@@ -9328,56 +9254,29 @@ async function requestJson(path, options = {}) {
   if (options.csrf !== false && !['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
-  const controller = new AbortController();
-  const upstreamSignal = options.signal || (options.page === false ? null : activeRenderController?.signal);
-  const timeoutMs = Math.max(250, Number(options.timeoutMs) || 10_000);
-  let timedOut = false;
-  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
-  if (upstreamSignal?.aborted) abortFromUpstream();
-  else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
-  const timeout = window.setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-  let response;
-  let result = null;
-  try {
-    response = await fetch(path, {
-      method,
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
-      cache: 'no-store',
-      credentials: 'same-origin',
-      keepalive: options.keepalive === true,
-      signal: controller.signal
-    });
+  const { response, result } = await timedFetch(path, {
+    ...options, method, headers,
+    body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
+    keepalive: options.keepalive === true
+  }, async (response, signal) => {
+    let result = null;
     reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'));
     const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
     if (response.status !== 204) {
       if (contentType.includes('json')) result = await response.json().catch((error) => {
-        if (controller.signal.aborted) throw error;
+        if (signal.aborted) throw error;
         return null;
       });
       else {
         const message = await response.text().catch((error) => {
-          if (controller.signal.aborted) throw error;
+          if (signal.aborted) throw error;
           return '';
         });
         result = message ? { error: message } : null;
       }
     }
-  } catch (error) {
-    if (timedOut) {
-      const timeoutError = new Error('The receiver did not respond in time.');
-      timeoutError.code = 'request_timeout';
-      timeoutError.path = path;
-      throw timeoutError;
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-    upstreamSignal?.removeEventListener('abort', abortFromUpstream);
-  }
+    return { response, result };
+  });
   if (!response.ok) {
     const failure = result?.error && typeof result.error === 'object' ? result.error : result;
     const fallback = typeof result?.error === 'string' ? result.error : 'The receiver could not complete the request.';
@@ -9399,6 +9298,37 @@ async function requestJson(path, options = {}) {
   const data = Array.isArray(result.data) ? { rows: result.data, ...(result.meta || {}) } :
     result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
   return systemLabels.rememberSystemNames(data);
+}
+
+async function timedFetch(path, options, consume) {
+  const controller = new AbortController();
+  const upstreamSignal = options.signal || (options.page === false ? null : activeRenderController?.signal);
+  const timeoutMs = Math.min(Math.max(250, Number(options.timeoutMs) || 10_000),
+    initialPageDeadline ? Math.max(0, initialPageDeadline - performance.now()) : Infinity);
+  let timedOut = timeoutMs === 0;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+  const timeout = timedOut ? null : window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    if (timedOut) throw new Error('Initial page deadline expired.');
+    const response = await fetch(path, {
+      ...options, cache: 'no-store', credentials: 'same-origin', signal: controller.signal
+    });
+    return await consume(response, controller.signal);
+  } catch (error) {
+    if (!timedOut) throw error;
+    const failure = new Error('The receiver did not respond in time.');
+    failure.code = 'request_timeout';
+    failure.path = path;
+    throw failure;
+  } finally {
+    window.clearTimeout(timeout);
+    upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+  }
 }
 
 function waitForRequestRetry(delayMilliseconds, signal) {
@@ -9754,12 +9684,13 @@ function createAsyncSection(title, options = {}) {
   let loadSequence = 0;
   let focusAfterAttempt = false;
 
-  const load = (loader, present, renderContext) => {
+  const load = (loader, present, renderContext, background = false) => {
     const sequence = ++loadSequence;
     return pageLifecycle.run({
       isCurrent: () => sequence === loadSequence && renderIsCurrent(renderContext) && host.isConnected,
       onLoading: ({ retry }) => {
-        focusAfterAttempt = retry;
+        focusAfterAttempt = !background && retry;
+        if (background) return;
         host.setAttribute('aria-busy', 'true');
         host.classList.remove('ui-table-content');
         const loading = node('div', 'loading', options.loadingMessage || 'Loading…');
@@ -9771,7 +9702,9 @@ function createAsyncSection(title, options = {}) {
       },
       load: loader,
       onReady: (value) => {
+        cleanupTableLayoutMenu(tableController);
         replaceAsyncContent(host, present(value));
+        host.removeAttribute('title');
         host.setAttribute('aria-busy', 'false');
         if (focusAfterAttempt) {
           host.tabIndex = -1;
@@ -9779,6 +9712,10 @@ function createAsyncSection(title, options = {}) {
         }
       },
       onError: (error, retry) => {
+        if (background) {
+          host.title = error?.message || options.errorMessage || 'This section could not be updated.';
+          return;
+        }
         const failure = asyncSectionFailure(error, options.errorMessage, retry);
         cleanupTableLayoutMenu(tableController);
         host.classList.remove('ui-table-content');
@@ -21035,11 +20972,9 @@ async function renderGroupIdentity() {
     ]), node('p', 'ui-section-note', 'Includes calls and signaling.'))));
     infoColumn.append(...blocks);
     const layout = node('div', 'entity-info-layout');
-    const activityHistory = await groupIdentityActivityHistorySection({ ...radioSystem,
-      identity_key: identityKey });
-    if (!renderIsCurrent(renderContext)) return;
-    layout.append(infoColumn, activityHistory);
+    layout.append(infoColumn);
     content.append(layout);
+    await groupIdentityActivityHistorySection({ ...radioSystem, identity_key: identityKey }, layout, renderContext);
   }
 }
 
@@ -21590,14 +21525,13 @@ async function renderTrunkedChannelInfo(channel, renderContext) {
   }
 
   const activityColumn = node('div', 'entity-info-column');
-  if (channelCapability(channel, 'group_identities')) {
-    activityColumn.append(await channelTopGroupsSection(channel));
-  }
+  const showGroups = channelCapability(channel, 'group_identities');
   if (!renderIsCurrent(renderContext)) return;
   const layout = node('div', 'entity-info-layout');
   layout.append(infoColumn);
-  if (activityColumn.childNodes.length) layout.append(activityColumn);
+  if (showGroups) layout.append(activityColumn);
   content.append(metrics(summary), layout);
+  if (showGroups) await channelTopGroupsSection(channel, activityColumn, renderContext);
 }
 
 function renderTrunkedChannelBandPlans(channel, data) {
@@ -21687,9 +21621,7 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
     trunkedChannelTabs(channel, tab))) return;
 
   if (tab === 'quality') {
-    const signalHistory = await channelSignalHistorySection(channel);
-    if (!renderIsCurrent(renderContext)) return;
-    content.append(signalHistory);
+    await channelSignalHistorySection(channel, content, renderContext);
   } else if (tab === 'frequencies') {
     const showFrequencies = channelCapability(channel, 'channels');
     const showBandPlans = channelCapability(channel, 'frequency_bands');
@@ -21720,55 +21652,62 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
   } else if (tab === 'neighbors') {
     await renderChannelNeighbors(channel, renderContext);
   } else if (tab === 'patches') {
-    const data = await api(channelApiPath(configurationId, 'patch-groups'), {
-      offset: route.get('offset'), limit: 100
+    const directory = createAsyncSection('Patches', {
+      loadingMessage: 'Loading patches…',
+      errorMessage: 'The patches could not be loaded.'
     });
-    const talkgroups = patchMembersByLocalGroup(data.talkgroups);
-    const radios = patchMembersByLocalGroup(data.radios);
-    const memberValues = (values, formatter, omitted = 0) => {
-      const span = node('span');
-      const rendered = (values || []).map(formatter).filter((value) =>
-        value !== null && value !== undefined && value !== '');
-      rendered.forEach((value) => span.append(valueNode(value)));
-      if (omitted > 0) {
-        span.append(node('small', 'identity-summary-context', `+${number(omitted)} more`));
-      }
-      return span;
-    };
-    const omittedMembers = (row, member) => Math.max(0,
-      Number(row?.[`${member.slice(0, -1)}_count`] || 0) - Number(row?.[`${member}_included`] || 0));
-    const groups = data.groups || [];
-    const columns = [
-      { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup',
-        render: (row) => groupIdentityValue(row, { id: row.local_patch_group_id, alias: row.patch_alias_name }),
-        className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row, {
-          id: row.local_patch_group_id, alias: row.patch_alias_name
-        }) },
-      { id: 'member-talkgroup-ids', label: 'Local Talkgroups', fullLabel: 'Local Member Talkgroups',
-        className: 'alias-cell', render: (row) =>
-        memberValues(talkgroups.get(row.local_patch_group_id), (member) =>
-          groupIdentityValue(member, { id: member.local_talkgroup_id }), omittedMembers(row, 'talkgroups')) },
-      { id: 'member-radio-ids', label: 'Local Radios', className: 'alias-cell', render: (row) =>
-        memberValues(radios.get(row.local_patch_group_id), (member) =>
-          radioIdentityValue(member, { id: member.local_radio_id }), omittedMembers(row, 'radios')) },
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Observations',
-        render: (row) => number(row.observation_count), className: 'numeric',
-        sortValue: (row) => Number(row.observation_count || 0) },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ];
-    if (groups.some((row) => Number(row.version))) columns.splice(1, 0,
-      { id: 'version', label: 'Version', key: 'version', className: 'numeric' });
-    const patchPage = { rows: groups, offset: Number(data.offset || 0), limit: Number(data.limit || 100),
-      has_more: Boolean(data.has_more), next_offset: data.next_offset };
-    const trailing = fragment();
-    if (data.members_truncated) trailing.append(node('p', 'ui-notice ui-notice-danger ui-notice-spaced',
-      `Large patches are bounded to ${number(data.member_limit_per_group)} members per patch and ` +
-      `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
-    trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
-    content.append(tableSection('Patches', groups, columns, 'No patches recorded',
-      { type: groups.some((row) => Number(row.version)) ? 'channel-patches-versioned' :
-        'channel-patches' }, trailing));
+    content.append(directory.element);
+    await directory.load(() => api(channelApiPath(configurationId, 'patch-groups'), {
+      offset: route.get('offset'), limit: 100
+    }), (data) => {
+      const talkgroups = patchMembersByLocalGroup(data.talkgroups);
+      const radios = patchMembersByLocalGroup(data.radios);
+      const memberValues = (values, formatter, omitted = 0) => {
+        const span = node('span');
+        const rendered = (values || []).map(formatter).filter((value) =>
+          value !== null && value !== undefined && value !== '');
+        rendered.forEach((value) => span.append(valueNode(value)));
+        if (omitted > 0) {
+          span.append(node('small', 'identity-summary-context', `+${number(omitted)} more`));
+        }
+        return span;
+      };
+      const omittedMembers = (row, member) => Math.max(0,
+        Number(row?.[`${member.slice(0, -1)}_count`] || 0) - Number(row?.[`${member}_included`] || 0));
+      const groups = data.groups || [];
+      const columns = [
+        { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup',
+          render: (row) => groupIdentityValue(row, { id: row.local_patch_group_id, alias: row.patch_alias_name }),
+          className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row, {
+            id: row.local_patch_group_id, alias: row.patch_alias_name
+          }) },
+        { id: 'member-talkgroup-ids', label: 'Local Talkgroups', fullLabel: 'Local Member Talkgroups',
+          className: 'alias-cell', render: (row) =>
+          memberValues(talkgroups.get(row.local_patch_group_id), (member) =>
+            groupIdentityValue(member, { id: member.local_talkgroup_id }), omittedMembers(row, 'talkgroups')) },
+        { id: 'member-radio-ids', label: 'Local Radios', className: 'alias-cell', render: (row) =>
+          memberValues(radios.get(row.local_patch_group_id), (member) =>
+            radioIdentityValue(member, { id: member.local_radio_id }), omittedMembers(row, 'radios')) },
+        { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+        { id: 'observations', label: 'Observations',
+          render: (row) => number(row.observation_count), className: 'numeric',
+          sortValue: (row) => Number(row.observation_count || 0) },
+        { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      ];
+      if (groups.some((row) => Number(row.version))) columns.splice(1, 0,
+        { id: 'version', label: 'Version', key: 'version', className: 'numeric' });
+      const patchPage = { rows: groups, offset: Number(data.offset || 0), limit: Number(data.limit || 100),
+        has_more: Boolean(data.has_more), next_offset: data.next_offset };
+      const trailing = fragment();
+      if (data.members_truncated) trailing.append(node('p', 'ui-notice ui-notice-danger ui-notice-spaced',
+        `Large patches are bounded to ${number(data.member_limit_per_group)} members per patch and ` +
+        `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
+      trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
+      return fragment(table(groups, columns, 'No patches recorded',
+        { type: groups.some((row) => Number(row.version)) ? 'channel-patches-versioned' :
+          'channel-patches', layoutMenuHost: directory.titleActions, controller: directory.tableController,
+          overflowLabel: 'Patches' }), trailing);
+    }, renderContext);
   } else if (tab === 'activity') {
     await renderActivity({
       configuration_id: configurationId,
@@ -23535,148 +23474,158 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     }
     return;
   }
-  const data = await api('/api/v1/activity', {
-    ...scopeParameters,
-    ...activityApiFilterParameters(filters, Date.now()),
-    before_id: route.get('before_id'),
-    limit: 200
+  const activitySection = createAsyncSection(title, {
+    loadingMessage: 'Loading activity…',
+    errorMessage: 'Activity could not be loaded.'
   });
-  if (!renderIsCurrent(renderContext)) return;
-  const callPlayback = createActivityCallPlayback({
-    node, iconButton, setIconButton, requestJson, playback: recordingsFeature.playback,
-    canPlay: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS),
-    isCurrent: () => renderIsCurrent(renderContext), signal: renderContext.signal
-  });
-  pageConnections.add(callPlayback);
-  const columns = activityColumnsForContext({ ...activityContext, callPlayback }, filters);
-  const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
-  const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
-    'Detailed event history is enabled, but no matching activity has been recorded yet.';
-  const titleActions = node('div', 'section-title-actions ui-section-actions');
-  const activityTable = table(initialRows, columns, emptyMessage,
-    { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions,
-      layout: activityTableLayout(activityContext, columns) });
-  const refreshSourceNames = () => activityTable.tableController.render();
-  sourceNamePresentationRenderer = refreshSourceNames;
-  pageConnections.add({ close: () => {
-    if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
-  } });
-  activityTable.setAttribute('aria-live', 'off');
-  const block = section(title, activityTable, titleActions);
-  const filterToolbar = activityFilterToolbar(activityContext, filters);
-  block.insertBefore(filterToolbar, activityTable);
-  if (historyNotice) block.insertBefore(historyNotice, filterToolbar);
-  const controls = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' });
-  const updatePager = (page) => {
-    controls.update({
-      previous: { label: 'Newest', enabled: Boolean(route.get('before_id')),
-        href: currentHref({ before_id: null }) },
-      next: { label: 'Older', enabled: Boolean(page?.has_more),
-        href: currentHref({ before_id: page?.next_before_id }) }
-    });
-  };
-  updatePager(data);
-  block.append(controls);
+  const block = activitySection.element;
+  const titleActions = activitySection.titleActions;
   content.append(block);
-
-  if (!route.get('before_id') && filters.range !== 'custom' &&
-      (!statsLoggingState().available || statsLoggingState().historyActive)) {
-    const refreshControls = node('div', 'section-title-actions ui-section-actions activity-refresh-controls');
-    const countdown = node('span', 'activity-refresh-countdown');
-    countdown.setAttribute('role', 'timer');
-    countdown.setAttribute('aria-live', 'off');
-    const announcement = node('span', 'visually-hidden');
-    announcement.setAttribute('role', 'status');
-    announcement.setAttribute('aria-live', 'polite');
-    const pause = node('button', 'ui-button ui-button-secondary', 'Pause refresh');
-    pause.type = 'button';
-    pause.setAttribute('aria-pressed', 'false');
-    refreshControls.append(countdown, pause, announcement);
-    titleActions.prepend(refreshControls);
-    let paused = false;
-    let refreshInFlight = false;
-    let refreshFailed = false;
-    let refreshGeneration = 0;
-    let nextRefreshAt = Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS;
-    const activityRowKey = (row) => row?.id === null || row?.id === undefined ? null : String(row.id);
-    const updateRefreshDisplay = () => {
-      const seconds = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
-      countdown.textContent = paused ? 'Refresh paused' : refreshInFlight ? 'Refreshing…' :
-        `${refreshFailed ? 'Retry' : 'Refresh'} in ${seconds}s`;
-      countdown.classList.toggle('is-error', refreshFailed && !refreshInFlight);
-      pause.textContent = paused ? 'Resume refresh' : 'Pause refresh';
-      pause.setAttribute('aria-pressed', String(paused));
-    };
-    const highlightActivityRows = (rowIds) => {
-      if (!rowIds.size) return;
-      const highlighted = [];
-      activityTable.querySelectorAll('tbody tr[data-id]').forEach((row) => {
-        if (rowIds.has(row.dataset.id)) {
-          row.classList.add('activity-row-new');
-          highlighted.push(row);
-        }
-      });
-      pageTimeout(() => highlighted.forEach((row) => row.classList.remove('activity-row-new')), 8_000);
-    };
-    const refreshActivity = async () => {
-      if (paused || refreshInFlight || document.hidden || !renderIsCurrent(renderContext) ||
-          !block.isConnected) return;
-      const generation = refreshGeneration;
-      refreshInFlight = true;
-      updateRefreshDisplay();
-      try {
-        const refreshed = await api('/api/v1/activity', {
-          ...scopeParameters,
-          ...activityApiFilterParameters(filters, Date.now()),
-          limit: 200
-        });
-        if (generation !== refreshGeneration || paused || document.hidden || !renderIsCurrent(renderContext) ||
-            !block.isConnected) return;
-        const rows = filters.includeGrants ? refreshed.rows : withoutGrantActions(refreshed.rows);
-        const currentRows = activityTable.tableController.rows();
-        const currentIds = new Set(currentRows.map(activityRowKey).filter((key) => key !== null));
-        const newIds = new Set(rows.map(activityRowKey)
-          .filter((key) => key !== null && !currentIds.has(key)));
-        if (JSON.stringify(rows) !== JSON.stringify(currentRows)) {
-          activityTable.tableController.replaceRows(rows);
-          highlightActivityRows(newIds);
-        }
-        updatePager(refreshed);
-        if (newIds.size) {
-          announcement.textContent = `${number(newIds.size)} new activity entr${newIds.size === 1 ? 'y' : 'ies'}.`;
-        } else if (refreshFailed) announcement.textContent = 'Activity refresh recovered.';
-        else announcement.textContent = '';
-        refreshFailed = false;
-      } catch (error) {
-        if (generation !== refreshGeneration || document.hidden || !renderIsCurrent(renderContext) ||
-            !block.isConnected || error?.name === 'AbortError') return;
-        refreshFailed = true;
-        announcement.textContent = 'Activity refresh failed. The current entries are still shown; retrying automatically.';
-      } finally {
-        refreshInFlight = false;
-        if (!renderIsCurrent(renderContext) || !block.isConnected) return;
-        nextRefreshAt = generation === refreshGeneration && !paused && !document.hidden ?
-          Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS : Date.now();
-        updateRefreshDisplay();
-      }
-    };
-    pause.addEventListener('click', () => {
-      paused = !paused;
-      refreshGeneration += 1;
-      nextRefreshAt = paused ? nextRefreshAt : Date.now();
-      updateRefreshDisplay();
-      if (!paused && !refreshInFlight) void refreshActivity();
+  await activitySection.load(async () => {
+    const data = await api('/api/v1/activity', {
+      ...scopeParameters,
+      ...activityApiFilterParameters(filters, Date.now()),
+      before_id: route.get('before_id'),
+      limit: 200
+    }, { signal: renderContext.signal });
+    if (!renderIsCurrent(renderContext)) return;
+    return data;
+  }, (data) => {
+    const callPlayback = createActivityCallPlayback({
+      node, iconButton, setIconButton, requestJson, playback: recordingsFeature.playback,
+      canPlay: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS),
+      isCurrent: () => renderIsCurrent(renderContext), signal: renderContext.signal
     });
-    const refreshTick = () => {
-      if (!renderIsCurrent(renderContext) || !block.isConnected) return;
-      updateRefreshDisplay();
-      if (!paused && !refreshInFlight && !document.hidden && Date.now() >= nextRefreshAt) {
-        void refreshActivity();
-      }
+    pageConnections.add(callPlayback);
+    const columns = activityColumnsForContext({ ...activityContext, callPlayback }, filters);
+    const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
+    const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
+      'Detailed event history is enabled, but no matching activity has been recorded yet.';
+    const activityTable = table(initialRows, columns, emptyMessage,
+      { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions,
+        layout: activityTableLayout(activityContext, columns) });
+    const refreshSourceNames = () => activityTable.tableController.render();
+    sourceNamePresentationRenderer = refreshSourceNames;
+    pageConnections.add({ close: () => {
+      if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
+    } });
+    activityTable.setAttribute('aria-live', 'off');
+    const body = fragment(activityTable);
+    const filterToolbar = activityFilterToolbar(activityContext, filters);
+    body.insertBefore(filterToolbar, activityTable);
+    if (historyNotice) body.insertBefore(historyNotice, filterToolbar);
+    const controls = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' });
+    const updatePager = (page) => {
+      controls.update({
+        previous: { label: 'Newest', enabled: Boolean(route.get('before_id')),
+          href: currentHref({ before_id: null }) },
+        next: { label: 'Older', enabled: Boolean(page?.has_more),
+          href: currentHref({ before_id: page?.next_before_id }) }
+      });
     };
-    updateRefreshDisplay();
-    pageInterval(refreshTick, 1_000);
-  }
+    updatePager(data);
+    body.append(controls);
+
+    if (!route.get('before_id') && filters.range !== 'custom' &&
+        (!statsLoggingState().available || statsLoggingState().historyActive)) {
+      const refreshControls = node('div', 'section-title-actions ui-section-actions activity-refresh-controls');
+      const countdown = node('span', 'activity-refresh-countdown');
+      countdown.setAttribute('role', 'timer');
+      countdown.setAttribute('aria-live', 'off');
+      const announcement = node('span', 'visually-hidden');
+      announcement.setAttribute('role', 'status');
+      announcement.setAttribute('aria-live', 'polite');
+      const pause = node('button', 'ui-button ui-button-secondary', 'Pause refresh');
+      pause.type = 'button';
+      pause.setAttribute('aria-pressed', 'false');
+      refreshControls.append(countdown, pause, announcement);
+      titleActions.prepend(refreshControls);
+      let paused = false;
+      let refreshInFlight = false;
+      let refreshFailed = false;
+      let refreshGeneration = 0;
+      let nextRefreshAt = Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS;
+      const activityRowKey = (row) => row?.id === null || row?.id === undefined ? null : String(row.id);
+      const updateRefreshDisplay = () => {
+        const seconds = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+        countdown.textContent = paused ? 'Refresh paused' : refreshInFlight ? 'Refreshing…' :
+          `${refreshFailed ? 'Retry' : 'Refresh'} in ${seconds}s`;
+        countdown.classList.toggle('is-error', refreshFailed && !refreshInFlight);
+        pause.textContent = paused ? 'Resume refresh' : 'Pause refresh';
+        pause.setAttribute('aria-pressed', String(paused));
+      };
+      const highlightActivityRows = (rowIds) => {
+        if (!rowIds.size) return;
+        const highlighted = [];
+        activityTable.querySelectorAll('tbody tr[data-id]').forEach((row) => {
+          if (rowIds.has(row.dataset.id)) {
+            row.classList.add('activity-row-new');
+            highlighted.push(row);
+          }
+        });
+        pageTimeout(() => highlighted.forEach((row) => row.classList.remove('activity-row-new')), 8_000);
+      };
+      const refreshActivity = async () => {
+        if (paused || refreshInFlight || document.hidden || !renderIsCurrent(renderContext) ||
+            !block.isConnected) return;
+        const generation = refreshGeneration;
+        refreshInFlight = true;
+        updateRefreshDisplay();
+        try {
+          const refreshed = await api('/api/v1/activity', {
+            ...scopeParameters,
+            ...activityApiFilterParameters(filters, Date.now()),
+            limit: 200
+          });
+          if (generation !== refreshGeneration || paused || document.hidden || !renderIsCurrent(renderContext) ||
+              !block.isConnected) return;
+          const rows = filters.includeGrants ? refreshed.rows : withoutGrantActions(refreshed.rows);
+          const currentRows = activityTable.tableController.rows();
+          const currentIds = new Set(currentRows.map(activityRowKey).filter((key) => key !== null));
+          const newIds = new Set(rows.map(activityRowKey)
+            .filter((key) => key !== null && !currentIds.has(key)));
+          if (JSON.stringify(rows) !== JSON.stringify(currentRows)) {
+            activityTable.tableController.replaceRows(rows);
+            highlightActivityRows(newIds);
+          }
+          updatePager(refreshed);
+          if (newIds.size) {
+            announcement.textContent = `${number(newIds.size)} new activity entr${newIds.size === 1 ? 'y' : 'ies'}.`;
+          } else if (refreshFailed) announcement.textContent = 'Activity refresh recovered.';
+          else announcement.textContent = '';
+          refreshFailed = false;
+        } catch (error) {
+          if (generation !== refreshGeneration || document.hidden || !renderIsCurrent(renderContext) ||
+              !block.isConnected || error?.name === 'AbortError') return;
+          refreshFailed = true;
+          announcement.textContent = 'Activity refresh failed. The current entries are still shown; retrying automatically.';
+        } finally {
+          refreshInFlight = false;
+          if (!renderIsCurrent(renderContext) || !block.isConnected) return;
+          nextRefreshAt = generation === refreshGeneration && !paused && !document.hidden ?
+            Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS : Date.now();
+          updateRefreshDisplay();
+        }
+      };
+      pause.addEventListener('click', () => {
+        paused = !paused;
+        refreshGeneration += 1;
+        nextRefreshAt = paused ? nextRefreshAt : Date.now();
+        updateRefreshDisplay();
+        if (!paused && !refreshInFlight) void refreshActivity();
+      });
+      const refreshTick = () => {
+        if (!renderIsCurrent(renderContext) || !block.isConnected) return;
+        updateRefreshDisplay();
+        if (!paused && !refreshInFlight && !document.hidden && Date.now() >= nextRefreshAt) {
+          void refreshActivity();
+        }
+      };
+      updateRefreshDisplay();
+      pageInterval(refreshTick, 1_000);
+    }
+    return body;
+  }, renderContext);
 }
 
 function channelAdminFrequencyList(values) {
@@ -34363,7 +34312,7 @@ async function render() {
     const notice = databaseLoggingNotice(effectiveView);
     const failureHeading = pendingTitle ?
       (content.querySelector(':scope > .page-header') || pageHeader(pendingTitle)) : null;
-    beginPage(renderContext, ...[failureHeading, notice, node('div', 'error', error.message)].filter(Boolean));
+    beginPage(renderContext, ...[failureHeading, notice, asyncSectionFailure(error, 'This page could not be loaded.', render)].filter(Boolean));
   }
 }
 
@@ -34404,9 +34353,17 @@ initializePlaybackHeader();
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAlertTopicsNavigation(true);
 });
+initialPageDeadline = performance.now() + 10_000;
 refreshAccessSession(false)
-  .then(() => Promise.all([loadStatus(false), receiverHealthController.refresh()]))
-  .finally(render);
+  .then(() => loadStatus(false))
+  .finally(async () => {
+    try {
+      await render();
+    } finally {
+      initialPageDeadline = 0;
+      void receiverHealthController.refresh();
+    }
+  });
 let refreshCycle = null;
 window.setInterval(() => {
   if (document.hidden || refreshCycle) return;

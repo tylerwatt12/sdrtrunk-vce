@@ -90,7 +90,8 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(refresh.contains("liveConnection("));
         assertFalse(topics.contains("receiver_health"));
         assertTrue(access.contains("receiverHealthController.synchronizeAccess()"));
-        assertTrue(source.contains("Promise.all([loadStatus(false), receiverHealthController.refresh()])"));
+        assertTrue(source.contains(".then(() => loadStatus(false))"));
+        assertTrue(source.contains("void receiverHealthController.refresh();"));
         assertTrue(source.contains("Promise.all([loadStatus(true), receiverHealthController.refresh()])"));
         assertTrue(refreshButton.contains("'Refresh'"));
         assertTrue(refreshButton.contains("Promise.all([receiverHealthController.refresh(), loadStatus(true)])"));

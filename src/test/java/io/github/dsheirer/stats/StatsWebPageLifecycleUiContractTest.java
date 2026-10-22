@@ -126,9 +126,9 @@ class StatsWebPageLifecycleUiContractTest
             "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
         String dashboard = function(source, "async function renderDashboard()");
         String mainRefresh = dashboard.substring(dashboard.indexOf("const snapshot = await loadMainDashboard();"));
-        String channelSignal = function(source, "async function channelSignalHistorySection(channel)");
+        String channelSignal = function(source, "async function channelSignalHistorySection(channel, parent, renderContext)");
         String groupIdentityHistory = function(source,
-            "async function groupIdentityActivityHistorySection(scopeParameters)");
+            "async function groupIdentityActivityHistorySection(scopeParameters, parent, renderContext)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         String timeout = function(source, "function pageTimeout(callback, delay)");
         String close = function(source, "function closePageConnections()");
@@ -142,9 +142,9 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(mainRefresh.contains("if (refreshing || !renderIsCurrent(renderContext)) return;"));
         assertTrue(mainRefresh.contains("directory.update(updated.directory, updated.quality.current)"));
         assertTrue(mainRefresh.contains("}, 5_000)"));
-        assertOrdered(channelSignal, "await load(rangeControl.buttons, true, true);",
+        assertOrdered(channelSignal, "await load(rangeControl.buttons, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");
-        assertOrdered(groupIdentityHistory, "await load(rangeControl.buttons, true, true);",
+        assertOrdered(groupIdentityHistory, "await load(rangeControl.buttons, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);");
         assertOrdered(activity, "const data = await api('/api/v1/activity'",
             "if (!renderIsCurrent(renderContext)) return;");

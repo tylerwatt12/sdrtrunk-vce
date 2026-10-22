@@ -276,6 +276,10 @@ async function checkSelectedHistory() {
   Object.assign(context, {
     ACTIVITY_RANGES: [], GROUP_IDENTITY_CALL_ACTIVITY_SERIES: [],
     captureRenderContext: () => ({}),
+    createAsyncSection: () => {
+      const host = node('history');
+      return { element: host, host, load: async (loader, present) => host.replaceChildren(present(await loader())) };
+    },
     rangeControls(_ranges, _selected, callback) {
       changeRange = callback;
       return { controls: node('controls'), buttons: [] };
@@ -295,9 +299,10 @@ async function checkSelectedHistory() {
   });
   vm.runInContext(functionSource('groupIdentityHistoryTotals'), context);
   vm.runInContext(functionSource('groupIdentityActivityHistorySection'), context);
-  const history = await context.groupIdentityActivityHistorySection({ radio_system_key: 'p25:00001:001',
-    identity_key: 'v1-g-00001-001-1201' });
-  const calls = sections(history).find((item) => item.title === 'Call history');
+  const history = node('layout');
+  await context.groupIdentityActivityHistorySection({ radio_system_key: 'p25:00001:001',
+    identity_key: 'v1-g-00001-001-1201' }, history, {});
+  let calls = sections(history).find((item) => item.title === 'Call history');
   assert.ok(calls);
   assert.deepEqual(dates(calls), [['From', latestHour - 23 * hour], ['To', snapshot]],
     'The visible history dates must cover the chosen window, not just the first and last nonzero buckets.');
@@ -305,12 +310,14 @@ async function checkSelectedHistory() {
   assert.match(text(calls), /Calls: 945/);
   response = { ...response, totals: { logical_call_count: 55 }, from_ms: latestHour - 5 * hour };
   await changeRange('6h', []);
+  calls = sections(history).find((item) => item.title === 'Call history');
   assert.deepEqual(dates(calls), [['From', latestHour - 5 * hour], ['To', snapshot]],
     'Changing the history range must update its dates together with its count.');
   assert.match(text(calls), /Calls: 55/);
-  const channelHistory = await context.groupIdentityActivityHistorySection({
+  const channelHistory = node('layout');
+  await context.groupIdentityActivityHistorySection({
     radio_system_key: 'nxdn-c:channel:channel-1', identity_key: 'v1-g-1201'
-  });
+  }, channelHistory, {});
   const channelCalls = sections(channelHistory).find((item) => item.title === 'Call history');
   assert.match(text(channelCalls), /Calls heard on this channel/,
     'A channel-owned fallback system keeps that scope in its history panel too.');

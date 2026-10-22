@@ -21,7 +21,6 @@ function functionSource(signature) {
 }
 
 const responses = [];
-const delays = [];
 let requestCount = 0;
 const grantedCapabilities = new Set(['dashboard', 'admin-settings', 'receiver-health']);
 const context = {
@@ -30,13 +29,6 @@ const context = {
     const response = responses.shift();
     if (response instanceof Error) throw response;
     return response;
-  },
-  window: {
-    setTimeout: (callback, delay) => {
-      delays.push(delay);
-      callback();
-      return delays.length;
-    }
   },
   applicationRoutes: { dashboard: { databaseNotice: true } },
   accessSessionAvailable: true,
@@ -55,8 +47,6 @@ const context = {
 vm.createContext(context);
 vm.runInContext(`
   const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
-  const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
-  const SERVICE_STATUS_RETRY_DELAY_MS = 500;
   let serviceStatus = null;
   let serviceStatusRequestPending = false;
   let serviceStatusConsecutiveFailures = 0;
@@ -65,7 +55,6 @@ vm.runInContext(`
   ${functionSource('function rejectServiceStatusRequest()')}
   ${functionSource('function clearServiceStatus()')}
   ${functionSource('function serviceStatusWarningRequired()')}
-  ${functionSource('function serviceStatusRetryDelay(milliseconds)')}
   ${functionSource('async function requestServiceStatus()')}
   ${functionSource('function statsLoggingState()')}
   ${functionSource('function p25VisualizerMenuAvailable()')}
@@ -102,15 +91,17 @@ async function main() {
 
   const recovered = { stats_logging: { summary_active: true } };
   responses.push(new Error('starting'), recovered);
+  await assert.rejects(context.requestStatus(), /starting/);
+  assert.equal(requestCount, 1, 'An initial failure must not silently extend page loading with retries.');
   assert.strictEqual(await context.requestStatus(), recovered);
   assert.equal(requestCount, 2);
-  assert.deepEqual(delays, [500]);
   assert.deepEqual(plainState(), { value: recovered, pending: false, failures: 0, warning: false });
 
   context.clearStatus();
   responses.push(new Error('first'), new Error('second'), new Error('third'));
-  await assert.rejects(context.requestStatus(), /third/);
-  assert.deepEqual(delays, [500, 500, 1000]);
+  for (const message of ['first', 'second', 'third']) {
+    await assert.rejects(context.requestStatus(), new RegExp(message));
+  }
   assert.deepEqual(plainState(), { value: null, pending: false, failures: 3, warning: true });
 
   const cached = { stats_logging: { summary_active: true }, generation: 1 };

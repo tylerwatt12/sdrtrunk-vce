@@ -52,6 +52,7 @@ async function verifyDetailPageOrientation() {
     loadActivityMessageTypes: async () => {},
     clearAliasSelectionOutsideEditor() {}, activateNavigation() {},
     clearInactiveAliasSelection() {}, databaseLoggingNotice: () => null,
+    asyncSectionFailure: (error) => node('div', 'error', error.message),
     pageHeader: (title) => node('h1', 'page-header', title),
     pageTitleController: { update(values) { context.pageTitle = values.pageTitle; } },
     applicationRoutes: Object.fromEntries([
