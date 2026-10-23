@@ -285,6 +285,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     modalFooter, createAliasListPopupTrigger, browsingWorkflows, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
     onLocationSaved = null
   } = dependencies;
+  const initialAliasListId = integerValue(dependencies, ['initialAliasListId']);
 
   const host = node('div', 'radioreference-import-workspace data-workspace');
   const state = {
@@ -509,6 +510,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       entry.kind === 'TALKGROUP_CATEGORY' && entry.parentId === systemIdValue &&
       entry.preferredAliasListId)?.preferredAliasListId || null;
   };
+  const usesInitialAliasList = (systemIdValue) => Boolean(initialAliasListId) &&
+    !state.preferenceRevisions.has(systemIdValue);
   const bookmarked = (value) => state.bookmarks.some((entry) => bookmarkKey(entry) === bookmarkKey(value));
   const bookmarkForEntry = (entry) => {
     const trunked = entryKind(entry) === 'TRUNKED_SYSTEM';
@@ -1024,9 +1027,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const systemName = textValue(systemDocument?.system || systemDocument || system, ['name'], 'System');
     const toolbar = node('div', 'radioreference-talkgroup-toolbar ui-catalog-toolbar');
     const family = compatibleFamily(systemDocument?.system || systemDocument) || compatibleFamily(system);
-    const aliasList = aliasSelect(family, state.talkgroupAliasListId,
-      !state.clearedSystemPreferences.has(systemIdValue));
-    if (aliasList.value) state.talkgroupAliasListId = Number(aliasList.value);
+    const useInitialAliasList = usesInitialAliasList(systemIdValue);
+    // Opening from an Alias List is a temporary destination, not a saved system preference.
+    const aliasList = aliasSelect(family, useInitialAliasList ? initialAliasListId : state.talkgroupAliasListId,
+      !useInitialAliasList && !state.clearedSystemPreferences.has(systemIdValue));
+    state.talkgroupAliasListId = Number(aliasList.value) || null;
     const category = select();
     const categoryStar = node('span', 'radioreference-category-star');
     const categoryField = node('div', 'radioreference-category-field');
@@ -1383,7 +1388,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     state.activeSystemId = id;
     state.talkgroupCatalogId = null;
     state.selectedTalkgroups.clear();
-    state.talkgroupAliasListId = preferredAliasListIdForSystem(id);
+    state.talkgroupAliasListId = usesInitialAliasList(id) ? initialAliasListId : preferredAliasListIdForSystem(id);
     state.talkgroupCategoryId = Number(options.categoryId) || null;
     state.talkgroupStatus = 'ALL';
     state.talkgroupSearch = '';
@@ -1409,7 +1414,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         detailHost.closest('.radioreference-browser')?.classList.remove('radioreference-detail-open');
       });
       header.append(title, starButton(bookmarkForEntry(system), () => state.onBookmarksChanged?.()), close);
-      const initialTab = options.categoryId ? 'talkgroups' : 'sites';
+      const initialTab = initialAliasListId || options.categoryId ? 'talkgroups' : 'sites';
       const tabs = uiSegmentedControl([
         { value: 'sites', label: 'Sites & Channels' },
         { value: 'talkgroups', label: 'Talkgroups & Aliases' }

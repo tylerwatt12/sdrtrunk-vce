@@ -11,10 +11,11 @@ const segmentedHelpers = app.slice(app.indexOf('function uiSegmentedControl('),
 const requestHelpers = app.slice(app.indexOf('async function requestJson('),
   app.indexOf('function waitForRequestRetry('));
 
-async function installWorkspace(page, theme = 'light', large = false, slow = false, scenario = '') {
+async function installWorkspace(page, theme = 'light', large = false, slow = false, scenario = '',
+  initialAliasListId = null) {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}` +
     `${slow ? '&slow=1' : ''}${scenario ? `&scenario=${scenario}` : ''}`);
-  await page.evaluate(async ({ metricHelpers, segmentedHelpers, requestHelpers }) => {
+  await page.evaluate(async ({ metricHelpers, segmentedHelpers, requestHelpers, initialAliasListId }) => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
@@ -398,12 +399,12 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       formatFrequency: (value) => (Number(value) / 1_000_000).toFixed(5),
       formatNumber: (value) => Number(value).toLocaleString('en-US'),
       href: (view, values = {}) => `/?view=${view}&${new URLSearchParams(values)}`,
-      anchor, modalFooter
+      anchor, modalFooter, initialAliasListId
     });
     window.radioReferenceVisual.workspace = workspace;
     body.append(workspace.element);
     workspace.setConfiguration({ account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39, county_id: 49 });
-  }, { metricHelpers, segmentedHelpers, requestHelpers });
+  }, { metricHelpers, segmentedHelpers, requestHelpers, initialAliasListId });
   if (scenario !== 'slow-initialize')
     await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
 }
@@ -771,6 +772,79 @@ test('saved system preference restores from Browse and Bookmarks', async ({ page
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
   await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
 });
+
+test('Alias List entry uses its destination without changing a saved system preference', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'saved-preference', 7);
+  await page.locator('.radioreference-result-open').first().click();
+  const aliases = page.getByLabel('Compare with Alias List');
+  await expect(aliases).toHaveValue('7');
+  await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).toBeVisible();
+  const initialCalls = await page.evaluate(() => window.radioReferenceVisual.calls);
+  expect(initialCalls.some(([path]) => path.includes('/systems/sites/catalog?'))).toBe(false);
+  expect(initialCalls.some(([path, options]) => path.endsWith('/system-preferences') &&
+    options.method === 'PUT')).toBe(false);
+  const catalogRequest = initialCalls.find(([path]) => path.includes('/systems/talkgroups/catalog?'));
+  expect(new URL(catalogRequest[0], 'http://localhost').searchParams.get('alias_list_id')).toBe('7');
+  expect(await page.evaluate(() => window.radioReferenceVisual.systemPreferences.get(2001))).toBe(10);
+
+  // Reviewing a channel keeps its normal saved destination without replacing the entry destination.
+  await page.getByRole('button', { name: 'Sites & Channels' }).click();
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await expect(siteModal.getByLabel('Alias List')).toHaveValue('10');
+  await siteModal.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(aliases).toHaveValue('7');
+  await page.locator('.radioreference-result-open').first().click();
+  await expect(aliases).toHaveValue('7');
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.some(([path, options]) =>
+    path.endsWith('/system-preferences') && options.method === 'PUT'))).toBe(false);
+
+  // An explicit destination change still wins when the same system is reopened.
+  await aliases.selectOption('10');
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.calls.some(([path, options]) =>
+    path.endsWith('/system-preferences') && options.method === 'PUT' &&
+    options.body.preferred_alias_list_id === 10))).toBe(true);
+  await page.locator('.radioreference-result-open').first().click();
+  await expect(aliases).toHaveValue('10');
+});
+
+test('Alias List entry passes its destination to import only after an explicit action', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'saved-preference', 7);
+  await page.locator('.radioreference-result-open').first().click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('7');
+  await page.getByRole('checkbox', { name: 'Select Fireground 2' }).check();
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.some(([path, options]) =>
+    path.endsWith('/system-preferences') && options.method === 'PUT'))).toBe(false);
+  await page.getByRole('button', { name: 'Import selected' }).click();
+  await expect(page.getByRole('dialog', { name: 'Import 1 talkgroup' })).toBeVisible();
+  const preview = await page.evaluate(() => window.radioReferenceVisual.calls.find(([path]) =>
+    path.endsWith('/imports/talkgroups/preview')));
+  expect(preview[1].body.alias_list_id).toBe(7);
+  expect(preview[1].body.talkgroup_ids).toEqual([102]);
+  expect(await page.evaluate(() => window.radioReferenceVisual.systemPreferences.get(2001))).toBe(7);
+});
+
+for (const [kind, id] of [['an incompatible', 9], ['a missing', 999]]) {
+  test(`Alias List entry leaves ${kind} destination unselected`, async ({ page }) => {
+    await installWorkspace(page, 'light', false, false, 'saved-preference', id);
+    await page.locator('.radioreference-result-open').first().click();
+    const aliases = page.getByLabel('Compare with Alias List');
+    await expect(aliases).toHaveValue('');
+    await expect(page.getByRole('checkbox', { name: 'Select Fireground 2' })).toBeVisible();
+    expect(await aliases.locator('option').evaluateAll((options) => options.map((option) => option.value)))
+      .toEqual(['', '7', '10']);
+    await expect(page.getByRole('button', { name: 'Import all system talkgroups' })).toBeDisabled();
+    const calls = await page.evaluate(() => window.radioReferenceVisual.calls);
+    const catalog = calls.find(([path]) => path.includes('/systems/talkgroups/catalog?'));
+    expect(new URL(catalog[0], 'http://localhost').searchParams.has('alias_list_id')).toBe(false);
+    expect(calls.some(([path, options]) => path.endsWith('/system-preferences') &&
+      options.method === 'PUT')).toBe(false);
+    expect(await page.evaluate(() => window.radioReferenceVisual.systemPreferences.get(2001))).toBe(10);
+    await aliases.selectOption('7');
+    await expect(page.getByRole('button', { name: 'Import all system talkgroups' })).toBeEnabled();
+  });
+}
 
 test('clearing a system preference stays cleared after tab switches and reload', async ({ page }) => {
   await installWorkspace(page, 'light', false, false, 'saved-preference');

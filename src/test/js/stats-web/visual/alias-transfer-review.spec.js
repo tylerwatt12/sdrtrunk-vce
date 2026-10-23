@@ -44,6 +44,8 @@ for (const width of [320, 390]) {
       await page.goto('/app.html?view=aliases&list=1&aliasTab=configure');
       await expect(page.locator('.alias-editor-table-section')).toContainText('Fire Dispatch');
       await page.locator('.alias-transfer-import-button').click();
+      await page.getByRole('dialog', { name: 'How would you like to import aliases?', exact: true })
+        .getByRole('button', { name: 'Import from a file', exact: true }).click();
       const modal = page.getByRole('dialog', { name: 'Import aliases into County Public Safety', exact: true });
       await expect(modal).toBeVisible();
       await modal.locator('input[type="file"]').setInputFiles({

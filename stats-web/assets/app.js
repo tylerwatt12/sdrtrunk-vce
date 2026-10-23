@@ -6481,6 +6481,24 @@ function aliasTransferExportIsReady(cookieHeader, token) {
   });
 }
 
+async function openAliasImportChoice(selectedList) {
+  if (!viewAllowed('aliases')) return;
+  return openActionChoiceModal({
+    title: 'How would you like to import aliases?', id: 'import-aliases-choice',
+    returnFocusSelector: '.alias-transfer-import-button',
+    choices: [
+      { id: 'radioreference', title: 'Import from RadioReference', icon: 'icon-radioreference',
+        description: 'Browse radio systems and choose talkgroups to add to this Alias List.',
+        help: 'A RadioReference Premium subscription is required.', view: 'radioreference',
+        restriction: 'RadioReference import is unavailable for this account.',
+        action: () => navigateTo(href('radioreference', { from: 'aliases', list: aliasListId(selectedList) })) },
+      { id: 'file', title: 'Import from a file', icon: 'icon-upload',
+        description: 'Choose a VCE alias configuration CSV or a RadioReference talkgroup CSV.', view: 'aliases',
+        action: () => openAliasTransferModal(selectedList, 'Import') }
+    ]
+  });
+}
+
 function openAliasTransferModal(selectedList, action = 'Import') {
   const importing = action === 'Import';
   const listId = aliasListId(selectedList);
@@ -7911,7 +7929,7 @@ async function renderAliases() {
   listActions.append(add);
   const importAliases = node('button', 'ui-button ui-button-secondary alias-transfer-import-button', 'Import aliases…');
   importAliases.type = 'button';
-  importAliases.addEventListener('click', () => openAliasTransferModal(selectedList, 'Import'));
+  importAliases.addEventListener('click', () => void openAliasImportChoice(selectedList));
   const exportAliases = node('button', 'ui-button ui-button-secondary alias-transfer-export-button', 'Export aliases…');
   exportAliases.type = 'button';
   exportAliases.addEventListener('click', () => openAliasTransferModal(selectedList, 'Export'));
@@ -25613,19 +25631,9 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   return { element: panel, start, close };
 }
 
-async function openChannelCreationChoice(prefetched = null) {
-  if (!viewAllowed('channel-setup')) return;
+async function openActionChoiceModal({ title, id, returnFocusSelector, choices }) {
   const body = node('div', 'ui-confirmation-content');
   let modal;
-  const choices = [
-    { id: 'import', title: 'Import from RadioReference', icon: 'icon-radioreference',
-      description: 'Find radio systems and channels in your area using the RadioReference database.',
-      help: 'A RadioReference Premium subscription is required.', view: 'radioreference',
-      action: () => navigateTo(href('radioreference', { from: 'channel-setup' })) },
-    { id: 'manual', title: 'Create a channel from scratch', icon: 'icon-edit',
-      description: 'Enter a known frequency and configure the channel yourself.', view: 'channel-setup',
-      action: () => void openChannelEditorModal('create', null, prefetched) }
-  ];
   for (const choice of choices) {
     const button = node('button', 'ui-choice-card ui-choice-card-with-icon');
     button.type = 'button';
@@ -25633,18 +25641,18 @@ async function openChannelCreationChoice(prefetched = null) {
     button.disabled = !viewAllowed(choice.view);
     const copy = node('span', 'ui-toggle-copy');
     const description = node('small', 'ui-field-detail', choice.description);
-    description.id = `channel-create-${choice.id}-description`;
+    description.id = `${id}-${choice.id}-description`;
     const describedBy = [description.id];
     copy.append(node('strong', '', choice.title), description);
     if (choice.help) {
       const help = node('small', 'ui-field-detail', choice.help);
-      help.id = `channel-create-${choice.id}-help`;
+      help.id = `${id}-${choice.id}-help`;
       describedBy.push(help.id);
       copy.append(help);
     }
     if (button.disabled) {
-      const restriction = node('small', 'ui-field-detail', 'RadioReference import is unavailable for this account.');
-      restriction.id = `channel-create-${choice.id}-restriction`;
+      const restriction = node('small', 'ui-field-detail', choice.restriction || 'This option is unavailable for this account.');
+      restriction.id = `${id}-${choice.id}-restriction`;
       describedBy.push(restriction.id);
       copy.append(restriction);
     }
@@ -25657,12 +25665,27 @@ async function openChannelCreationChoice(prefetched = null) {
     });
     body.append(button);
   }
-  modal = openReadOnlyModal('How would you like to create a channel?', body, {
-    id: 'create-channel-choice', className: 'modal-size-small',
-    returnFocusSelector: '.channel-creation-actions .ui-button-primary'
-  });
+  modal = openReadOnlyModal(title, body, { id, className: 'modal-size-small', returnFocusSelector });
   if (!modal || !await modal.ready) return;
   modal.focus(body.querySelector('button:not([disabled])'));
+}
+
+async function openChannelCreationChoice(prefetched = null) {
+  if (!viewAllowed('channel-setup')) return;
+  return openActionChoiceModal({
+    title: 'How would you like to create a channel?', id: 'create-channel-choice',
+    returnFocusSelector: '.channel-creation-actions .ui-button-primary',
+    choices: [
+      { id: 'import', title: 'Import from RadioReference', icon: 'icon-radioreference',
+        description: 'Find radio systems and channels in your area using the RadioReference database.',
+        help: 'A RadioReference Premium subscription is required.', view: 'radioreference',
+        restriction: 'RadioReference import is unavailable for this account.',
+        action: () => navigateTo(href('radioreference', { from: 'channel-setup' })) },
+      { id: 'manual', title: 'Create a channel from scratch', icon: 'icon-edit',
+        description: 'Enter a known frequency and configure the channel yourself.', view: 'channel-setup',
+        action: () => void openChannelEditorModal('create', null, prefetched) }
+    ]
+  });
 }
 
 function channelEnrichmentSupported(channel, profile) {
@@ -27761,7 +27784,7 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=31');
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=32');
   if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, pageHeader('RadioReference',
     'Browse systems and agencies, compare changes, and import'))) return;
@@ -27948,7 +27971,8 @@ async function renderAdminRadioReferenceSettings() {
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
     href, anchor, modalFooter: aliasModalFooter, createAliasListPopupTrigger: aliasListPopupTrigger,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
-    mutationTimeoutMs: 65_000
+    mutationTimeoutMs: 65_000,
+    initialAliasListId: route.get('from') === 'aliases' ? route.get('list') : null
   });
   workspace.append(importWorkspace.element);
 
