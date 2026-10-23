@@ -30,7 +30,7 @@
 @import url("./styles/features/listen-map.css?v=5") layer(features);
 @import url("./styles/features/network-visualizer.css?v=15") layer(features);
 @import url("./styles/features/scanner.css?v=16") layer(features);
-@import url("./styles/features/aliases.css?v=21") layer(features);
+@import url("./styles/features/aliases.css?v=22") layer(features);
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=8") layer(features);
 @import url("./styles/features/administration.css?v=15") layer(features);

@@ -15,10 +15,23 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, id === 'channel-setup');
+    assert.equal(guide.authored, ['channel-setup', 'aliases'].includes(id));
   }
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
   assert.equal(createGuideDefinition('missing-page'), null);
+  const preparePlayer = () => {};
+  const aliasesTour = createGuideDefinition('aliases', { preparePlayer });
+  assert.equal(aliasesTour.steps.length, 11, 'The Aliases guide tours the workspace, defaults, views, and listening controls.');
+  assert.equal(new Set(aliasesTour.steps.map(({ id }) => id)).size, aliasesTour.steps.length,
+    'Each Aliases stop has a stable distinct identity for progression and sample cleanup.');
+  for (const step of aliasesTour.steps) {
+    assert.deepEqual(step.samples, [{ id: 'aliases-workspace', value: { section: step.id } }],
+      'Every Aliases stop uses the shared sample presenter instead of operating on real aliases.');
+    assert.doesNotThrow(() => step.targets(), 'A sample target can resolve safely before its page has rendered.');
+  }
+  assert.equal(aliasesTour.steps.at(-1).prepare, preparePlayer,
+    'The listening stop uses the shared player preparation and restoration lifecycle.');
+  assert.equal(aliasesTour.steps.at(-1).nextLabel, 'Finish');
   const makeHarness = (overrides = {}) => {
     const stored = new Map();
     const shown = [];
@@ -79,6 +92,34 @@ async function checkGuides(assetsRoot) {
   dismissedWelcome.context.view = 'channel-setup';
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.at(-1).options.id, 'channel-setup', 'The page guide remains available on the next visit.');
+  dismissedWelcome.finish();
+  dismissedWelcome.context.view = 'aliases';
+  await dismissedWelcome.controller.pageReady();
+  assert.equal(dismissedWelcome.shown.at(-1).options.id, 'aliases',
+    'The authored Aliases tour opens automatically on its first visit after welcome.');
+  dismissedWelcome.finish();
+  const afterAliasesCompletion = dismissedWelcome.shown.length;
+  await dismissedWelcome.controller.pageReady();
+  assert.equal(dismissedWelcome.shown.length, afterAliasesCompletion,
+    'Finishing the Aliases tour remembers completion without reopening another guide.');
+  dismissedWelcome.context.view = 'dashboard';
+  await dismissedWelcome.controller.pageReady();
+  dismissedWelcome.context.view = 'aliases';
+  await dismissedWelcome.controller.pageReady();
+  assert.equal(dismissedWelcome.shown.length, afterAliasesCompletion,
+    'A later Aliases visit keeps its completed tour closed.');
+  await dismissedWelcome.controller.openPage();
+  assert.equal(dismissedWelcome.shown.at(-1).options.id, 'aliases', 'Help replays the Aliases tour after completion.');
+  dismissedWelcome.dismiss();
+
+  const dismissedPlaceholder = makeHarness({ context: { view: 'aliases' }, storage: {
+    getItem: key => /:(welcome|aliases):1$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await dismissedPlaceholder.controller.pageReady();
+  assert.equal(dismissedPlaceholder.shown.at(-1).options.id, 'aliases');
+  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 2,
+    'Dismissing the old coming-soon placeholder cannot suppress the new authored tour.');
 
   const isolation = makeHarness();
   await isolation.controller.pageReady();
@@ -139,6 +180,11 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(replayPage.navigations, ['channel-setup']);
   await replayPage.controller.pageReady();
   assert.equal(replayPage.shown.at(-1).options.id, 'channel-setup', 'A named page URL navigates before replaying its guide.');
+  const replayAliases = makeHarness({ context: { view: 'dashboard', guide: 'aliases' } });
+  await replayAliases.controller.pageReady();
+  assert.deepEqual(replayAliases.navigations, ['aliases']);
+  await replayAliases.controller.pageReady();
+  assert.equal(replayAliases.shown.at(-1).options.id, 'aliases', 'A named Aliases URL navigates before showing its sample tour.');
   const restrictedWelcome = makeHarness({ context: { canSetup: false } });
   await restrictedWelcome.controller.pageReady();
   assert.equal(restrictedWelcome.shown[0].options.steps.at(-1).nextLabel, 'Finish');

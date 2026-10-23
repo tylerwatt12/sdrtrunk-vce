@@ -2,6 +2,11 @@ const { expect, test } = require('@playwright/test');
 
 test('Alias column views keep the current results and switch without rebuilding the page', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(() => {
+    for (const id of ['welcome', 'channel-setup', 'aliases']) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-view-tabs-fixture:${id}:${id === 'aliases' ? 2 : 1}`, '1');
+    }
+  });
   const aliasList = { alias_list_id: 1, name: 'County Public Safety', family: 'P25',
     alias_count: 102, assigned_channel_count: 0 };
   const aliases = [
@@ -17,6 +22,7 @@ test('Alias column views keep the current results and switch without rebuilding 
     if (path === '/api/v1/aliases') aliasQueries.push(url.searchParams.toString());
     const data = path === '/api/v1/auth/session' ? {
       configured: true, authenticated: true, username: 'alias-admin', tier: 'admin', primary: true,
+      guide_dismissal_scope: 'alias-view-tabs-fixture',
       csrf_token: 'test-token', capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true }
     } : path === '/api/v1/alias-lists' ? {
       rows: [aliasList], limit: 500, offset: 0, has_more: false, next_offset: null

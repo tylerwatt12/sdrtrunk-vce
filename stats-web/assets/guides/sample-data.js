@@ -4,6 +4,7 @@ export function createGuideSampleData() {
   const regions = new Map();
   const scopes = [];
   const protectedRoots = new Map();
+  const presentationRoots = new Set();
   const blockedEvents = ['click', 'auxclick', 'dblclick', 'contextmenu', 'beforeinput', 'input', 'change', 'submit',
     'pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'mousemove',
     'touchstart', 'touchmove', 'touchend', 'dragstart', 'dragover', 'drop', 'wheel', 'keydown', 'keyup'];
@@ -65,7 +66,7 @@ export function createGuideSampleData() {
     notify(changed);
   };
 
-  return {
+  const api = {
     register(id, onChange, { root } = {}) {
       if (!validId(id) || typeof onChange !== 'function') {
         throw new TypeError('A guide sample region needs an ID and a rendering callback.');
@@ -91,6 +92,60 @@ export function createGuideSampleData() {
         } catch (error) { unregister(); throw error; }
       }
       return unregister;
+    },
+    // A page can temporarily present whole example views while retaining its
+    // actual controls, drafts and selection by node identity. Renderers receive
+    // only scoped data and may return a cleanup for observers or other resources.
+    registerPresentation(id, render, { root } = {}) {
+      if (typeof render !== 'function' || !root?.childNodes || typeof root.replaceChildren !== 'function') {
+        throw new TypeError('A guide presentation needs a renderer and a UI root.');
+      }
+      if (presentationRoots.has(root)) throw new TypeError('A UI root can have only one guide presentation renderer.');
+      presentationRoots.add(root);
+      let originalNodes = null;
+      let presentationCleanup = null;
+      const cleanPresentation = () => {
+        const cleanup = presentationCleanup;
+        presentationCleanup = null;
+        cleanup?.();
+      };
+      const restore = () => {
+        try { cleanPresentation(); } finally {
+          if (originalNodes) {
+            root.replaceChildren(...originalNodes);
+            originalNodes = null;
+          }
+        }
+      };
+      const updatePresentation = () => {
+        const scope = current(id);
+        if (!scope) { restore(); return; }
+        const presentation = render(structuredClone(scope.get(id)));
+        const element = presentation?.element || presentation;
+        if (!element || typeof element.nodeType !== 'number' ||
+            (presentation?.cleanup != null && typeof presentation.cleanup !== 'function')) {
+          if (typeof presentation?.cleanup === 'function') presentation.cleanup();
+          throw new TypeError('A guide presentation renderer must return a UI node.');
+        }
+        originalNodes ||= [...root.childNodes];
+        try {
+          cleanPresentation();
+          root.replaceChildren(element);
+          presentationCleanup = presentation?.cleanup || null;
+        } catch (error) {
+          try { presentation?.cleanup?.(); } finally { restore(); }
+          throw error;
+        }
+      };
+      let unregister;
+      try { unregister = api.register(id, updatePresentation, { root }); }
+      catch (error) { presentationRoots.delete(root); restore(); throw error; }
+      let disposed = false;
+      return () => {
+        if (disposed) return;
+        disposed = true;
+        try { unregister(); } finally { presentationRoots.delete(root); restore(); }
+      };
     },
     read(id, actual) {
       const scope = current(id);
@@ -123,4 +178,5 @@ export function createGuideSampleData() {
       notify(changed);
     }
   };
+  return api;
 }

@@ -1196,21 +1196,22 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   synchronize();
   // Tours only change the presentation. Neither audio engine is started, stopped,
   // or switched, and closing the step restores the listener's original layout.
-  function prepareGuide() {
-    const previous = { size, superCollapsed, source, panel };
+  function prepareGuide({ minimized = false } = {}) {
+    const previous = { size, superCollapsed, source, panel, guidePresentation };
     cancelSizeGesture(); closeVolume(false); cancelPresentationMotion();
     guidePresentation = true;
-    superCollapsed = false;
-    size = 'minimal';
-    if (access().live) source = 'live';
+    superCollapsed = minimized;
+    if (!minimized) {
+      size = 'minimal';
+      if (access().live) source = 'live';
+    }
     panel = null; panelKey = '';
     render();
     let restored = false;
     return () => {
       if (restored) return;
       restored = true;
-      guidePresentation = false;
-      ({ size, superCollapsed, source, panel } = previous);
+      ({ size, superCollapsed, source, panel, guidePresentation } = previous);
       panelKey = '';
       render();
     };

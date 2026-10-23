@@ -16,8 +16,9 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=3';
-import { createGuideSampleData } from './guides/sample-data.js?v=1';
+import { createGuideController } from './guides/controller.js?v=4';
+import { createGuideSampleData } from './guides/sample-data.js?v=2';
+import { createAliasesGuidePresentation } from './guides/aliases-presentation.js?v=1';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -40,7 +41,7 @@ import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailabil
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=29';
+import { createAudioDock } from './core/audio-dock.js?v=30';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -7117,6 +7118,46 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   setStep(1);
 }
 
+function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) {
+  const panel = node('section', 'alias-defaults-tab-panel ui-form-section');
+  panel.dataset.behavior = kind;
+  panel.append(node('p', 'muted', description));
+  const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls', recordCopy);
+  recordField.classList.add('alias-record-toggle');
+  const record = recordField.querySelector('input');
+  record.name = `${kind}Recordable`;
+  const recording = node('fieldset', 'alias-stream-options alias-defaults-section ui-form-section');
+  recording.append(node('legend', '', 'Recording'), recordField);
+
+  const scanLists = aliasScanListChoices(options, policy?.scan_list_ids || []);
+  const scanListLegend = scanLists.querySelector('legend');
+  if (scanListLegend) scanListLegend.textContent = 'Scan List';
+  scanListLegend?.after(node('p', 'muted', scanCopy));
+
+  const streams = node('fieldset', 'alias-stream-options ui-form-section');
+  streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
+  const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
+  const configuredStreams = new Map((options.streams || []).map((entry) =>
+    [entry.configuration_id, entry.name || entry.configuration_id]));
+  const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
+  if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+  streamIds.forEach((configurationId) => {
+    const missing = !configuredStreams.has(configurationId);
+    const option = aliasAssignmentToggle(missing ? `Missing destination (${configurationId})` :
+      configuredStreams.get(configurationId), selectedStreams.has(configurationId),
+      `${kind}BroadcastChannel`, configurationId,
+      missing ? 'This saved destination is not currently available.' : '');
+    if (missing) option.classList.add('missing');
+    streams.append(option);
+  });
+  const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
+    'Destinations already saved in these defaults remain visible.');
+  if (streamLimitNotice) streams.append(streamLimitNotice);
+  panel.append(recording, scanLists, streams);
+  if (warning) panel.append(warning);
+  return { panel, record, streams };
+}
+
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listId = aliasListId(selectedList);
   const options = aliasEditorContext?.options || {};
@@ -7125,47 +7166,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   form.append(node('p', 'modal-introduction',
     'Set how this Alias List handles unknown traffic and how future Aliases begin.'));
 
-  const behaviorPanel = (kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) => {
-    const panel = node('section', 'alias-defaults-tab-panel ui-form-section');
-    panel.dataset.behavior = kind;
-    panel.append(node('p', 'muted', description));
-    const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls', recordCopy);
-    recordField.classList.add('alias-record-toggle');
-    const record = recordField.querySelector('input');
-    record.name = `${kind}Recordable`;
-    const recording = node('fieldset', 'alias-stream-options alias-defaults-section ui-form-section');
-    recording.append(node('legend', '', 'Recording'), recordField);
-
-    const scanLists = aliasScanListChoices(options, policy?.scan_list_ids || []);
-    const scanListLegend = scanLists.querySelector('legend');
-    if (scanListLegend) scanListLegend.textContent = 'Scan List';
-    scanListLegend?.after(node('p', 'muted', scanCopy));
-
-    const streams = node('fieldset', 'alias-stream-options ui-form-section');
-    streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
-    const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
-    const configuredStreams = new Map((options.streams || []).map((entry) =>
-      [entry.configuration_id, entry.name || entry.configuration_id]));
-    const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
-    if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
-    streamIds.forEach((configurationId) => {
-      const missing = !configuredStreams.has(configurationId);
-      const option = aliasAssignmentToggle(missing ? `Missing destination (${configurationId})` :
-        configuredStreams.get(configurationId), selectedStreams.has(configurationId),
-        `${kind}BroadcastChannel`, configurationId,
-        missing ? 'This saved destination is not currently available.' : '');
-      if (missing) option.classList.add('missing');
-      streams.append(option);
-    });
-    const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
-      'Destinations already saved in these defaults remain visible.');
-    if (streamLimitNotice) streams.append(streamLimitNotice);
-    panel.append(recording, scanLists, streams);
-    if (warning) panel.append(warning);
-    return { panel, record, streams };
-  };
-
-  const unknown = behaviorPanel('unknown', defaults.unknown_alias_behavior ||
+  const unknown = aliasDefaultBehaviorPanel(options, 'unknown', defaults.unknown_alias_behavior ||
     defaults.unmatched_talkgroup_policy || {},
     'Applies when a destination talkgroup or patch group has no exact Alias or covering talkgroup range in this list.',
     'Records completed calls whose talkgroup identity is not covered by an Alias.',
@@ -7176,7 +7177,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       'individually reviewed, including sensitive traffic. If a selected streaming destination sends to ' +
       'Broadcastify or another third-party provider, leave catch-all Streaming disabled and configure approved ' +
       'talkgroups individually.'));
-  const newAliases = behaviorPanel('newAlias', defaults.new_alias_behavior || {},
+  const newAliases = aliasDefaultBehaviorPanel(options, 'newAlias', defaults.new_alias_behavior || {},
     'Applies only when a new Alias is manually created or imported from RadioReference. Changes here do not alter ' +
     'existing Aliases, and RadioReference updates preserve each existing Alias\'s local handling settings.',
     'New Aliases begin with recording enabled or disabled as selected here.',
@@ -7748,6 +7749,23 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   aliasEditorPageController = pageController;
 }
 
+function registerAliasesGuidePresentation(workspace, renderContext) {
+  if (!renderIsCurrent(renderContext) || !workspace.isConnected ||
+      workspace.dataset.guidePresentationRegistered === 'true') return;
+  workspace.dataset.guidePresentationRegistered = 'true';
+  const unregister = guideSampleData.registerPresentation('aliases-workspace',
+    (sample) => createAliasesGuidePresentation(sample, {
+      node, badge, section, tabs, aliasListRail, aliasListChannelUsageCard,
+      configurationColumns: () => aliasEditorBaseColumns([], () => {}).filter((column) => column.id !== 'select'),
+      activityColumns: aliasActivityColumns, aliasBehavior, aliasEditorModalTabs,
+      aliasFormField, aliasTextInput, aliasSelect, aliasScanListChoices, uiToggleField,
+      aliasDefaultBehaviorPanel
+    }), { root: workspace });
+  const presentation = { close: unregister };
+  renderContext.signal.addEventListener('abort', presentation.close, { once: true });
+  pageConnections.add(presentation);
+}
+
 async function renderAliases() {
   const retainedWorkspace = aliasEditorWorkspaceController?.isCurrent?.() ?
     aliasEditorWorkspaceController : null;
@@ -7850,6 +7868,7 @@ async function renderAliases() {
 
   if (scanListScope) {
     await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext, request, mount);
+    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
@@ -7861,6 +7880,7 @@ async function renderAliases() {
       node('p', '', 'This scan list may have been deleted or changed.'),
       anchor('Back to Scan Lists', href('scan-lists'), 'ui-button ui-button-secondary'));
     main.append(missing);
+    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
@@ -7868,6 +7888,7 @@ async function renderAliases() {
     if (!mount()) return;
     clearInactiveAliasSelection(false);
     main.append(aliasEditorEmptyState(lists));
+    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
@@ -7953,6 +7974,7 @@ async function renderAliases() {
   if (view === 'discover') {
     aliasEditorPageController = renderObservedGroupIdentities(main, page, selectedList, renderContext,
       updateSummary);
+    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
@@ -8176,6 +8198,7 @@ async function renderAliases() {
       await openAliasEditorModal('edit', id);
     }
   }
+  registerAliasesGuidePresentation(workspace, renderContext);
 }
 
 function signalingCounts(row) {
@@ -34222,7 +34245,7 @@ const guideController = createGuideController({
     window.history.replaceState({}, '', currentHref());
   },
   navigate: (view) => navigateTo(href(view)),
-  preparePlayer: () => audioDock.prepareGuide()
+  preparePlayer: (options) => audioDock.prepareGuide(options)
 });
 
 function synchronizePageGuideButton() {

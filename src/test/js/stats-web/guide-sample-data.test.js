@@ -196,6 +196,79 @@ async function checkGuideSampleData(assetsRoot) {
   assert.equal(clearRoot.getAttribute('data-guide-sample'), null);
   assert.equal(clearRoot.dispatchEvent(new Event('input', { cancelable: true })), true);
 
+  class PresentationRoot extends RegionRoot {
+    constructor(...children) { super(); this.childNodes = children; }
+    replaceChildren(...children) { this.childNodes = children; }
+  }
+  const presentations = createGuideSampleData();
+  const savedControl = { nodeType: 1, value: 'unfinished search', selection: [2, 7] };
+  const presentationRoot = new PresentationRoot(savedControl);
+  let closedPresentations = 0;
+  const unregisterPresentation = presentations.registerPresentation('workspace', value => ({
+    element: { nodeType: 1, label: value.label },
+    cleanup: () => { closedPresentations += 1; }
+  }), { root: presentationRoot });
+  const endPresentation = presentations.activate([{ id: 'workspace', value: { label: 'Outer example' } }]);
+  assert.throws(() => presentations.registerPresentation('second', () => ({ nodeType: 1 }),
+    { root: presentationRoot }), /only one/,
+  'Independent presenters cannot capture one another’s sample DOM as the real view.');
+  assert.equal(presentationRoot.childNodes[0].label, 'Outer example');
+  assert.equal(presentationRoot.dispatchEvent(new Event('submit', { cancelable: true })), false,
+    'Whole-view presentations receive the same mutation protection as data regions.');
+  const endNestedPresentation = presentations.activate([{ id: 'workspace', value: { label: 'Inner example' } }]);
+  assert.equal(presentationRoot.childNodes[0].label, 'Inner example');
+  assert.equal(closedPresentations, 1, 'Replacing a presentation releases its resources.');
+  endNestedPresentation();
+  assert.equal(presentationRoot.childNodes[0].label, 'Outer example');
+  endPresentation();
+  assert.equal(presentationRoot.childNodes[0], savedControl,
+    'Closing restores the actual original control instead of rebuilding it.');
+  assert.deepEqual(savedControl, { nodeType: 1, value: 'unfinished search', selection: [2, 7] });
+  assert.equal(closedPresentations, 3);
+  endPresentation();
+  assert.equal(closedPresentations, 3, 'Repeated scope cleanup does not dispose a presentation twice.');
+  presentations.activate([{ id: 'workspace', value: { label: 'Unregister me' } }]);
+  unregisterPresentation();
+  assert.equal(presentationRoot.childNodes[0], savedControl, 'Unregistering an active page restores its real DOM.');
+  assert.equal(presentationRoot.getAttribute('data-guide-sample'), null);
+  const unregisterReplacement = presentations.registerPresentation('replacement', () => ({ nodeType: 1 }),
+    { root: presentationRoot });
+  unregisterPresentation();
+  assert.throws(() => presentations.registerPresentation('duplicate', () => ({ nodeType: 1 }),
+    { root: presentationRoot }), /only one/,
+  'A repeated old disposer cannot release a replacement renderer’s ownership.');
+  unregisterReplacement();
+  presentations.clear();
+  assert.equal(closedPresentations, 4);
+
+  const emptyPresentation = new PresentationRoot();
+  presentations.registerPresentation('empty', () => ({ nodeType: 1 }), { root: emptyPresentation });
+  const endEmpty = presentations.activate([{ id: 'empty', value: null }]);
+  assert.equal(emptyPresentation.childNodes.length, 1, 'An empty page can still present a complete example.');
+  endEmpty();
+  assert.equal(emptyPresentation.childNodes.length, 0);
+  const brokenPresentation = new PresentationRoot(savedControl);
+  presentations.registerPresentation('broken', () => { throw new Error('Preview failed'); }, { root: brokenPresentation });
+  assert.throws(() => presentations.activate([{ id: 'broken', value: null }]), /Preview failed/);
+  assert.equal(brokenPresentation.childNodes[0], savedControl);
+  assert.equal(brokenPresentation.getAttribute('data-guide-sample'), null);
+  const failingCleanup = new PresentationRoot(savedControl);
+  presentations.registerPresentation('cleanup', () => ({ element: { nodeType: 1 },
+    cleanup: () => { throw new Error('Cleanup failed'); } }), { root: failingCleanup });
+  const endFailingCleanup = presentations.activate([{ id: 'cleanup', value: null }]);
+  assert.throws(endFailingCleanup, /Cleanup failed/);
+  assert.equal(failingCleanup.childNodes[0], savedControl,
+    'Resource cleanup errors cannot strand example DOM in the real workspace.');
+  assert.equal(failingCleanup.getAttribute('data-guide-sample'), null);
+  const invalidPresentation = new PresentationRoot(savedControl);
+  let invalidCleanup = 0;
+  presentations.registerPresentation('invalid', () => ({ element: null,
+    cleanup: () => { invalidCleanup += 1; } }), { root: invalidPresentation });
+  assert.throws(() => presentations.activate([{ id: 'invalid', value: null }]), /UI node/);
+  assert.equal(invalidCleanup, 1, 'Invalid presentation results still release resources created by the renderer.');
+  assert.equal(invalidPresentation.childNodes[0], savedControl);
+  assert.throws(() => presentations.registerPresentation('bad', null, { root: presentationRoot }), /renderer/);
+
   console.log('Guide sample scopes, adapter lifecycle, event protection, real-state isolation, and failure rollback checks passed.');
 }
 module.exports = { checkGuideSampleData };

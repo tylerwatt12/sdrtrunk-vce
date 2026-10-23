@@ -4,6 +4,11 @@ const { expect, test } = require('@playwright/test');
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`Call Handling Defaults pair the displayed settings with their own edit version in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 850 });
+    await page.addInitScript(() => {
+      for (const id of ['welcome', 'channel-setup', 'aliases']) {
+        localStorage.setItem(`sdrtrunk-vce-guide:v1:administrator:alias-defaults-fixture:${id}:${id === 'aliases' ? 2 : 1}`, '1');
+      }
+    });
     const stale = { alias_list_id: 1, name: 'County', family: 'P25', alias_count: 0, assigned_channel_count: 0,
       unknown_alias_behavior: { recordable: false, scan_list_ids: [], broadcast_configuration_ids: [] },
       new_alias_behavior: { recordable: false, scan_list_ids: [], broadcast_configuration_ids: [] } };
@@ -16,6 +21,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       const data = value => route.fulfill({ json: { data: value } });
       if (path === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
         username: 'administrator', tier: 'admin', primary: true, csrf_token: 'fixture',
+        guide_dismissal_scope: 'alias-defaults-fixture',
         capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true } });
       if (path === '/api/v1/admin/alias-lists/1/defaults') {
         writes.push(request.postDataJSON());

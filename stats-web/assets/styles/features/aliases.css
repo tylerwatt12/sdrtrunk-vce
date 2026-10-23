@@ -1007,3 +1007,49 @@
     flex: 1 1 auto;
   }
 }
+
+.alias-guide-preview {
+  min-width: 0;
+}
+
+.alias-guide-preview-body {
+  padding: var(--space-3);
+}
+
+.alias-guide-table {
+  overflow-x: auto;
+}
+
+.alias-guide-defaults-panel {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.alias-guide-defaults-panel > fieldset {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.alias-guide-column-choices {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.alias-guide-identity {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.scan-list-members-workspace[data-guide-sample] {
+  grid-template-columns: var(--catalog-rail-width) minmax(0, 1fr);
+}
+
+.alias-guide-preview-main {
+  grid-column: 1 / -1;
+  max-width: var(--modal-size-medium);
+}
+
+.alias-guide-default-streaming,
+.alias-guide-default-warning {
+  grid-column: 1 / -1;
+}

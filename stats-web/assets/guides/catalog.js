@@ -2,9 +2,12 @@ import { definitions as routes } from '../core/routes.js?v=11';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
-const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps });
+const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps });
+// The authored Aliases tour supersedes the dismissible version-one placeholder.
+const guideVersions = Object.freeze({ aliases: 2 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
-  Object.freeze({ id, title, version: 1, authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
+  Object.freeze({ id, title, version: guideVersions[id] || 1,
+    authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
 
 function targets(documentValue, ...selectors) {
   return () => selectors.flatMap((selector) => [...(documentValue?.querySelectorAll(selector) || [])]);
@@ -180,6 +183,61 @@ function channelSetupSteps(documentValue, preparePlayer) {
         'VCE records each call before playing it. You’ll hear the conversation after the transmission finishes.'],
       nextLabel: 'Finish' }
   ];
+}
+
+function aliasesSteps(documentValue, preparePlayer) {
+  const focus = (...names) => targets(documentValue,
+    ...names.map((name) => `[data-guide-target="${name}"]`));
+  const sample = (section) => [{ id: 'aliases-workspace', value: { section } }];
+  return [
+    { id: 'lists', title: 'Your Alias Lists', samples: sample('lists'),
+      targets: focus('aliases-lists', 'aliases-new-list', 'aliases-usage'),
+      paragraphs: ['Alias Lists connect recognizable names and call settings to your channels. Select a list here to explore its aliases and see which channels use it.',
+        'Channels with a matching protocol can share the same list. This tour uses example data; nothing is saved.'] },
+    { id: 'configure', title: 'Configure: names and behavior', samples: sample('configure'),
+      targets: focus('aliases-configure', 'aliases-filters', 'aliases-defaults'),
+      paragraphs: ['See what each alias matches and how its calls are handled. Search by name, description, group, or identifier, and use filters to narrow the list.',
+        'Open an alias to inspect or change its settings. Call Handling Defaults above the views controls unmatched traffic and how future aliases begin.'] },
+    { id: 'alias-editor', title: 'Inside an alias', samples: sample('alias-editor'),
+      targets: focus('aliases-editor-tabs'),
+      paragraphs: ['Basics holds the name and appearance. Identifier defines which radio activity matches. Call Handling controls recording, Scan List membership, and streaming. Activity shows what has been observed for this alias.',
+        'Add Alias opens this same editor for a new entry.'] },
+    { id: 'defaults-unmatched', title: 'Call Handling Defaults: Unmatched Calls', samples: sample('defaults-unmatched'),
+      targets: focus('aliases-defaults-tabs', 'aliases-default-record', 'aliases-default-scan', 'aliases-default-stream'),
+      paragraphs: ['This is the list’s catch-all for received talkgroups without an exact alias or covering talkgroup range.',
+        'Choose whether to record those calls, route them to Scan Lists for listening, or send them to streaming destinations. These settings handle the traffic without creating aliases.'] },
+    { id: 'defaults-new', title: 'Call Handling Defaults: New Aliases', samples: sample('defaults-new'),
+      targets: focus('aliases-defaults-tabs', 'aliases-default-record', 'aliases-default-scan', 'aliases-default-stream'),
+      paragraphs: ['Choose the starting recording, Scan List, and streaming settings for aliases you create or add from RadioReference.',
+        'Changing these defaults does not update existing aliases. Use individual editing or bulk operations to change aliases already in the list.'] },
+    { id: 'bulk', title: 'Work with several aliases', samples: sample('bulk'),
+      targets: focus('aliases-selection', 'aliases-bulk', 'aliases-select-all'),
+      paragraphs: ['Select aliases to move or group them, change their Scan Lists, recording, streaming, or appearance, or delete them together.',
+        'The header checkbox selects this page. Select All Matching extends the selection across your filtered results.'] },
+    { id: 'activity', title: 'Activity: see what’s being used', samples: sample('activity'),
+      targets: focus('aliases-activity', 'aliases-activity-columns'),
+      paragraphs: ['Review completed calls, recognized system signaling, and when activity was last observed.',
+        'Calls and signaling describe different aspects of radio activity and can overlap, so their counts should not be added together.'] },
+    { id: 'custom', title: 'Custom: choose your view', samples: sample('custom'),
+      targets: focus('aliases-custom', 'aliases-columns'),
+      paragraphs: ['Bring configuration and activity details together in the same table. Use Columns to choose and arrange the information you want.',
+        'Configure, Activity, and Custom are different views of the same aliases.'] },
+    { id: 'discover', title: 'Discover: find identities worth naming', samples: sample('discover'),
+      targets: focus('aliases-discover', 'aliases-discover-table'),
+      paragraphs: ['Explore talkgroups and patch groups heard on your assigned channels that have no exact alias. Groups already covered by a range can appear here too.',
+        'Where enough information is available, Create Alias opens an editor with the identifier filled in. Analog lists use Unmatched assignments for this view.'] },
+    { id: 'transfer', title: 'Create, import, and export', samples: sample('transfer'),
+      targets: focus('aliases-add', 'aliases-import', 'aliases-export'),
+      paragraphs: ['Add individual aliases here, or import from RadioReference or a supported CSV file into the current list. RadioReference imports require Premium access.',
+        'Export aliases provides a reusable configuration file or an activity report for analysis.'] },
+    { id: 'listening', title: 'How aliases become listening choices', samples: sample('listening'),
+      prepare: preparePlayer,
+      targets: focus('aliases-memberships', 'player-lists'),
+      paragraphs: ['In VCE, Scan Lists replace the old Alias List listening checkbox. Add the aliases you want to hear to Scan Lists, make those lists Available to listeners, then choose them through Lists in the player.',
+        'An alias can belong to several Scan Lists.'],
+      nextLabel: 'Finish' }
+  ].map((step) => ({ ...step,
+    prepare: step.prepare || (() => preparePlayer?.({ minimized: true })) }));
 }
 
 export function createGuideDefinition(id, { documentValue = globalThis.document, preparePlayer,
