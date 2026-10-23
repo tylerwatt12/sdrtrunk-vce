@@ -79,8 +79,11 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const scanListSections = ['overview', 'lists', 'members', 'add-list-button', 'add-alias-list', 'sources', 'listening-controls', 'listening'];
-  assert.equal(scanListsTour.version, 4, 'The shorter operational Scan Lists tour supersedes the settings walkthrough.');
+  const scanListSections = ['overview', 'lists', 'members', 'add-list-button', 'add-alias-list',
+    'back-to-lists', 'choose-unidentified', 'sources', 'listening-controls', 'listening'];
+  assert.equal(scanListsTour.version, 5, 'The connected Scan Lists tour supersedes the walkthrough that skipped its return action.');
+  assert.equal(scanListsTour.steps[0].diagram, 'scan-lists',
+    'The opening overview uses the approved relationship chart without preparing a sample workspace.');
   assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
   for (const step of scanListsTour.steps.filter(step => !step.overview)) {
     assert.deepEqual(step.samples, [{ id: 'scan-lists-workspace', value: { section: step.id } }]);
@@ -112,6 +115,19 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(targetNames(scanStop('add-list-button')), ['scan-lists-add-list-button'],
     'The Add an Entire Alias List button receives a separate, single-purpose stop.');
   assert.deepEqual(targetNames(scanStop('add-alias-list')), ['scan-lists-add-list-dialog']);
+  assert.deepEqual(targetNames(scanStop('back-to-lists')), ['scan-lists-back-to-lists'],
+    'Leaving the member workspace gets a dedicated stop on the actual return control.');
+  assert.equal(scanListTargets.steps.indexOf(scanStop('add-alias-list')) + 1,
+    scanListTargets.steps.indexOf(scanStop('back-to-lists')),
+    'The dialog closes onto its originating member workspace before the return action is taught.');
+  assert.equal(scanListTargets.steps.indexOf(scanStop('back-to-lists')) + 1,
+    scanListTargets.steps.indexOf(scanStop('choose-unidentified')),
+    'The return control is taught immediately before the Scan Lists catalog is shown again.');
+  assert.deepEqual(targetNames(scanStop('choose-unidentified')), ['scan-lists-unidentified-selector'],
+    'Selecting the next listening group is shown before its details are explained.');
+  assert.equal(scanListTargets.steps.indexOf(scanStop('choose-unidentified')) + 1,
+    scanListTargets.steps.indexOf(scanStop('sources')),
+    'Selecting Unidentified Traffic is taught immediately before its routes are shown.');
   assert.deepEqual(targetNames(scanStop('listening-controls')), ['player-lists'],
     'The actual Lists button is shown before its player panel opens.');
   assert.deepEqual(targetNames(scanStop('listening')), ['scan-lists-player-lists']);
@@ -129,12 +145,12 @@ async function checkGuides(assetsRoot) {
   assert.ok(noAudioScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
   assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
-    ['overview', 'lists', 'sources', 'listening-controls', 'listening'],
+    ['overview', 'lists', 'choose-unidentified', 'sources', 'listening-controls', 'listening'],
     'An account without Alias administration is not sent into member management.');
   assert.equal(noAliasesScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAliasesScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const scanListOnlyTour = createGuideDefinition('scan-lists', { canView: view => view === 'scan-lists' });
-  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['overview', 'lists', 'sources']);
+  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['overview', 'lists', 'choose-unidentified', 'sources']);
   assert.equal(scanListOnlyTour.steps.at(-1).nextLabel, 'Finish');
   const listOnlyTargets = createGuideDefinition('scan-lists', {
     canView: view => view === 'scan-lists', documentValue: { querySelectorAll: selector => [{ selector }] }
@@ -156,6 +172,11 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(getScanListsGuideData('members').selectedIds, [], 'The members stop shows the normal unselected table.');
   assert.equal(getScanListsGuideData('sources').selectedScanList.id, 900003);
   assert.equal(getScanListsGuideData('lists').selectedScanList.id, 900001);
+  assert.equal(getScanListsGuideData('choose-unidentified').selectedScanList.id, 900001,
+    'The next list’s selector is taught while the original selection is still visible.');
+  assert.equal(getScanListsGuideData('listening-controls').selectedScanList.id, 900003);
+  assert.equal(getScanListsGuideData('listening').selectedScanList.id, 900003,
+    'The catalog retains its current selection while the player is introduced.');
   scanListData.rows[0].name = 'Changed sample';
   assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
   const makeHarness = (overrides = {}) => {
@@ -260,13 +281,13 @@ async function checkGuides(assetsRoot) {
     'Completing an older Aliases tour cannot suppress the new overview and walkthrough.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
-    getItem: key => /:welcome:1$|:scan-lists:[123]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scan-lists:[1234]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedScanListPlaceholder.controller.pageReady();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
-  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 4,
-    'Completing an older Scan Lists tour cannot suppress its overview and separated opening stops.');
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 5,
+    'Completing an older Scan Lists tour cannot suppress its relationship overview and explicit return stop.');
   dismissedScanListPlaceholder.finish();
   await dismissedScanListPlaceholder.controller.openPage();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists',

@@ -35,8 +35,8 @@ const pageOverviewCopy = Object.freeze({
     'Review activity from this channel and follow its talkgroups and radios. Reception details help you connect what is heard with the channel receiving it.'],
   aliases: ['Give radio traffic meaning',
     'Aliases attach familiar names to talkgroups and radios. Their call handling settings choose which calls are recorded, sent to Scan Lists, or streamed.'],
-  'scan-lists': ['Choose which calls you hear',
-    'Your channels receive radio traffic. Scan Lists choose which calls reach your player. You can follow fire and EMS dispatch while your other channels continue receiving.'],
+  'scan-lists': ['From radio traffic to what you hear',
+    'Scan Lists bring together the calls you want to hear, across your radio systems.'],
   radioreference: ['Bring local radio information into VCE',
     'Use RadioReference to find radio systems and import channel and talkgroup information. A Premium subscription provides access to imports.'],
   alerts: ['Have important activity brought to your attention',
@@ -54,9 +54,10 @@ const pageOverviewCopy = Object.freeze({
 });
 export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entries(pageOverviewCopy)
   .map(([id, [title, ...paragraphs]]) => [id,
-    Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs) })])));
+    Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
+      ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 2, aliases: 4, 'scan-lists': 4 });
+const guideVersions = Object.freeze({ 'channel-setup': 2, aliases: 4, 'scan-lists': 5 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -319,7 +320,13 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
       paragraphs: ['Use this to bring an Alias List’s current aliases into your listening group.'] },
     { id: 'add-alias-list', title: 'Build a listening group quickly',
       targets: focus('scan-lists-add-list-dialog'),
-      paragraphs: ['Choose the Alias List whose talkgroups you want to include, then add its current aliases to this Scan List.'] },
+      paragraphs: ['Choose an Alias List. Add All Aliases adds its current aliases and returns you to the members page.'] },
+    { id: 'back-to-lists', title: 'Return to your listening groups',
+      targets: focus('scan-lists-back-to-lists'),
+      paragraphs: ['Return to Scan Lists to review your listening groups.'] },
+    { id: 'choose-unidentified', title: 'Open the unidentified traffic group',
+      targets: focus('scan-lists-unidentified-selector'),
+      paragraphs: ['Select Unidentified Traffic to see which Alias Lists send it calls without a matching alias.'] },
     { id: 'sources', title: 'Follow unidentified talkgroups',
       targets: focus('scan-lists-counts', 'scan-lists-routes'),
       paragraphs: ['An Alias List’s Unmatched Calls defaults can send unidentified talkgroups to a Scan List. Keep a list such as Unidentified Traffic to hear those calls while you work out who is using them.'] },
@@ -333,7 +340,7 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
   ].filter((step) => {
     if (typeof canView !== 'function') return true;
     if (['listening-controls', 'listening'].includes(step.id)) return canView('scanner') !== false;
-    if (['members', 'add-list-button', 'add-alias-list'].includes(step.id)) {
+    if (['members', 'add-list-button', 'add-alias-list', 'back-to-lists'].includes(step.id)) {
       return canView('aliases') !== false;
     }
     return true;

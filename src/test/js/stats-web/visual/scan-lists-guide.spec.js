@@ -11,7 +11,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 test.use({ viewport: { width: 1280, height: 800 } });
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="scan-lists"]');
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:4';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:5';
 const steps = [
   { id: 'lists', targets: ['scan-lists-manage-aliases'],
     copy: 'Open this Scan List’s members to see the aliases that feed your listening group.' },
@@ -20,7 +20,11 @@ const steps = [
   { id: 'add-list-button', targets: ['scan-lists-add-list-button'],
     copy: 'Use this to bring an Alias List’s current aliases into your listening group.' },
   { id: 'add-alias-list', targets: ['scan-lists-add-list-dialog'],
-    copy: 'Choose the Alias List whose talkgroups you want to include, then add its current aliases to this Scan List.' },
+    copy: 'Choose an Alias List. Add All Aliases adds its current aliases and returns you to the members page.' },
+  { id: 'back-to-lists', targets: ['scan-lists-back-to-lists'],
+    copy: 'Return to Scan Lists to review your listening groups.' },
+  { id: 'choose-unidentified', targets: ['scan-lists-unidentified-selector'],
+    copy: 'Select Unidentified Traffic to see which Alias Lists send it calls without a matching alias.' },
   { id: 'sources', targets: ['scan-lists-counts', 'scan-lists-routes'],
     copy: 'Keep a list such as Unidentified Traffic to hear those calls while you work out who is using them.' },
   { id: 'listening-controls', targets: ['player-lists'],
@@ -80,7 +84,7 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
     for (const [id, version] of [['welcome', 1], ['channel-setup', 2], ['aliases', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
-    for (const version of [1, 2, 3]) {
+    for (const version of [1, 2, 3, 4]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:${version}`, '1');
     }
   });
@@ -103,6 +107,72 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
   return { fixture, requests };
 }
 
+async function expectRelationshipChart(page) {
+  const chart = guide(page).locator('.ui-setup-guide-diagram[data-guide-diagram="scan-lists"]');
+  await expect(chart).toBeVisible();
+  await expect(chart.getByRole('img', { name: 'County and city aliases grouped into Scan Lists', exact: true })).toBeVisible();
+  const expectedRoutes = [
+    ['sheriff', 'alias-sheriff', 'member-law-sheriff', 'Sheriff'],
+    ['regional-fire', 'alias-regional-fire', 'member-fire-regional-fire', 'Regional Fire'],
+    ['police-department', 'alias-police-department', 'member-law-police-department', 'Police Department'],
+    ['city-fire', 'alias-city-fire', 'member-fire-city-fire', 'City Fire']
+  ];
+  const rendered = await chart.evaluate(root => {
+    const svg = root.querySelector('svg');
+    const ids = [...svg.querySelectorAll('[id]')].map(node => node.id);
+    return {
+      duplicateIds: ids.filter((id, index) => ids.indexOf(id) !== index),
+      unresolvedReferences: [...svg.querySelectorAll('[href], [marker-end]')].flatMap(node => {
+        const reference = node.getAttribute('href') || /url\(#([^)]*)\)/.exec(node.getAttribute('marker-end'))?.[1];
+        const id = reference?.replace(/^#/, '');
+        return id && !document.getElementById(id) ? [id] : [];
+      }),
+      routes: [...svg.querySelectorAll('[data-guide-diagram-route]')].map(route => {
+        const source = route.dataset.source;
+        const target = route.dataset.target;
+        const boxFor = id => [...svg.querySelectorAll('[id]')].find(node => node.id.endsWith(`-${id}`) || node.id === id)?.getBBox();
+        const labelFor = id => [...svg.querySelectorAll('[data-container]')]
+          .find(node => node.dataset.container === id)?.textContent;
+        const start = route.getPointAtLength(0);
+        const end = route.getPointAtLength(route.getTotalLength());
+        const from = boxFor(source);
+        const to = boxFor(target);
+        const matrix = route.getScreenCTM();
+        return { name: route.dataset.guideDiagramRoute, source, target,
+          sourceLabel: labelFor(source), targetLabel: labelFor(target),
+          stroke: Number(route.getAttribute('stroke-width')),
+          renderedStroke: Number(route.getAttribute('stroke-width')) * Math.hypot(matrix.a, matrix.b),
+          arrow: route.getAttribute('marker-end'),
+          startOnSource: !!from && Math.abs(start.x - from.x - from.width) < 1 &&
+            Math.abs(start.y - from.y - from.height / 2) < 1,
+          endOnTarget: !!to && Math.abs(end.x - to.x) < 1 &&
+            Math.abs(end.y - to.y - to.height / 2) < 1 };
+      })
+    };
+  });
+  expect(rendered.duplicateIds).toEqual([]);
+  expect(rendered.unresolvedReferences).toEqual([]);
+  expect(rendered.routes).toHaveLength(4);
+  for (const [name, source, target, label] of expectedRoutes) {
+    const route = rendered.routes.find(item => item.name === name);
+    expect(route, name).toMatchObject({ source, target, sourceLabel: label, targetLabel: label,
+      startOnSource: true, endOnTarget: true });
+    expect(route.stroke).toBeGreaterThanOrEqual(8);
+    expect(route.renderedStroke).toBeGreaterThanOrEqual(4);
+    expect(route.arrow).toMatch(/^url\(#.+\)$/);
+  }
+  for (const label of ['County P25', 'City P25', 'Law Enforcement', 'Fire/EMS']) {
+    await expect(chart.getByText(label, { exact: true }).first()).toBeVisible();
+  }
+  const bounds = await guide(page).boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.y).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height + 1);
+  await expect(guide(page).getByRole('button', { name: 'Close guide', exact: true })).toBeVisible();
+}
+
 async function expectOverview(page) {
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
@@ -111,6 +181,7 @@ async function expectOverview(page) {
   await expect(guide(page).getByRole('button', { name: 'Back', exact: true })).toBeHidden();
   await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
   await expect(page.locator('.alias-record-modal, .alias-policy-modal, .alias-bulk-modal, .alias-confirm-modal')).toHaveCount(0);
+  await expectRelationshipChart(page);
 }
 
 async function startTour(page) {
@@ -162,6 +233,7 @@ async function expectStep(page, step, index) {
     name: index === steps.length - 1 ? 'Finish' : 'Next', exact: true
   })).toBeVisible();
   await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
+  await expect(page.locator('.ui-setup-guide-diagram')).toHaveCount(0);
 }
 
 async function goToStep(page, id) {
@@ -209,10 +281,14 @@ for (const { theme, width, height } of [
 ]) {
   test(`Scan Lists tour uses the actual populated interface at every stop in ${theme} ${width}x${height}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height });
-    const { fixture, requests } = await openScanLists(page, { theme });
+    const { fixture, requests } = await openScanLists(page, { theme, replay: false });
+    await page.locator('#page-guide-button').click();
+    await expectOverview(page);
+    await page.screenshot({ path: testInfo.outputPath(`scan-lists-overview-${theme}-${width}x${height}.png`) });
+    await startTour(page);
     for (const [index, step] of steps.entries()) {
       await expectStep(page, step, index);
-      if (['lists', 'sources', 'listening-controls', 'listening'].includes(step.id)) {
+      if (['lists', 'choose-unidentified', 'sources', 'listening-controls', 'listening'].includes(step.id)) {
         await expect(page.locator('.scan-list-catalog')).toBeVisible();
         await expect(page.locator('.scan-list-selector')).toHaveCount(3);
       }
@@ -222,11 +298,16 @@ for (const { theme, width, height } of [
         expect(destination.searchParams.get('scanListId')).toBe('900001');
         await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
       }
-      if (step.id === 'sources') {
+      if (step.id === 'choose-unidentified') {
+        await expect(page.locator('.scan-list-detail-title')).toHaveText('Public Safety');
+        await expect(page.locator('[data-guide-target="scan-lists-unidentified-selector"]')).toContainText('Unidentified Traffic');
+        await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
+      }
+      if (['sources', 'listening-controls', 'listening'].includes(step.id)) {
         await expect(page.locator('.scan-list-detail-title')).toHaveText('Unidentified Traffic');
         await expect(page.locator('.scan-list-detail-routes')).toContainText('Example County');
       }
-      if (['members', 'add-list-button', 'add-alias-list'].includes(step.id)) {
+      if (['members', 'add-list-button', 'add-alias-list', 'back-to-lists'].includes(step.id)) {
         await expect(page.getByRole('heading', { name: 'Scan List Members', exact: true })).toBeVisible();
         const table = page.locator('table[data-table-type="alias-scan-list-members"]');
         await expect(table).toContainText('Fire Dispatch');
@@ -237,6 +318,13 @@ for (const { theme, width, height } of [
       if (step.id === 'members') {
         await expect(page.getByRole('button', { name: 'Add an Entire Alias List', exact: true })).toBeVisible();
         await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
+      }
+      if (step.id === 'back-to-lists') {
+        const back = page.locator('[data-guide-target="scan-lists-back-to-lists"]');
+        await expect(back).toHaveText('Back to Scan Lists');
+        expect(new URL(await back.getAttribute('href'), page.url()).searchParams.get('view')).toBe('scan-lists');
+        await expect(page.locator('.alias-confirm-modal, .scan-list-catalog')).toHaveCount(0);
+        await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
       }
       if (step.id === 'add-alias-list') {
         const modal = page.locator('.alias-confirm-modal');
@@ -321,7 +409,7 @@ for (const theme of ['light', 'dark']) {
     }));
     await page.locator('#page-guide-button').click();
     await expectOverview(page);
-    await expect(guide(page)).toContainText('Your channels receive radio traffic. Scan Lists choose which calls reach your player.');
+    await expect(guide(page)).toContainText('Scan Lists bring together the calls you want to hear, across your radio systems.');
     await expect(page.locator('#content')).toHaveText(original);
     await page.screenshot({ path: testInfo.outputPath(`scan-lists-overview-${theme}.png`) });
     for (let index = 0; index < 2; index++) {
@@ -379,15 +467,38 @@ test('opening controls have their own lesson before the actual member view, dial
   }
   await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
   await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
-  await expectStep(page, steps[4], 4);
-  await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
+  for (let index = 0; index < 3; index++) {
+    await expectStep(page, steps[4], 4);
+    await expect(page.getByRole('heading', { name: 'Scan List Members', exact: true })).toBeVisible();
+    await expect(page.locator('.alias-confirm-modal, .scan-list-catalog')).toHaveCount(0);
+    const back = page.locator('[data-guide-target="scan-lists-back-to-lists"]');
+    await expect(back).toHaveText('Back to Scan Lists');
+    expect(new URL(await back.getAttribute('href'), page.url()).searchParams.get('view')).toBe('scan-lists');
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
+    await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expectStep(page, steps[5], 5);
+    await expect(page.locator('.scan-list-detail-title')).toHaveText('Public Safety');
+    await expect(page.locator('.scan-list-catalog')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan List Members', exact: true })).toHaveCount(0);
+    await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expectStep(page, steps[6], 6);
+    await expect(page.locator('.scan-list-detail-title')).toHaveText('Unidentified Traffic');
+    await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await expectStep(page, steps[5], 5);
+    await expect(page.locator('.scan-list-detail-title')).toHaveText('Public Safety');
+    await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
+  }
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await expectStep(page, steps[6], 6);
+  await expect(page.locator('.scan-list-detail-title')).toHaveText('Unidentified Traffic');
   await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
   for (let index = 0; index < 3; index++) {
-    await expectStep(page, steps[5], 5);
+    await expectStep(page, steps[7], 7);
     await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(0);
     await expect(page.locator('.alias-confirm-modal, .ui-setup-guide-layer')).toHaveCount(0);
     await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
-    await expectStep(page, steps[6], 6);
+    await expectStep(page, steps[8], 8);
     await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(1);
     await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
   }
@@ -398,12 +509,12 @@ test('opening controls have their own lesson before the actual member view, dial
 
 test('Scan Lists omits both player stops when call audio is unavailable', async ({ page }) => {
   const { fixture, requests } = await openScanLists(page, { deniedCapabilities: ['call-audio'] });
-  for (const [index, step] of steps.slice(0, 5).entries()) {
+  for (const [index, step] of steps.slice(0, 7).entries()) {
     await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-    await expect(guide(page)).toContainText(`Step ${index + 1} of 5`);
+    await expect(guide(page)).toContainText(`Step ${index + 1} of 7`);
     for (const target of step.targets) await expectSpotlight(page, target);
     await expect(page.locator('#audio-dock')).toBeHidden();
-    await guide(page).getByRole('button', { name: index === 4 ? 'Finish' : 'Next', exact: true }).click();
+    await guide(page).getByRole('button', { name: index === 6 ? 'Finish' : 'Next', exact: true }).click();
   }
   await expect(guide(page)).toHaveCount(0);
   expectNoEffects(fixture, requests);
@@ -443,6 +554,7 @@ test('Scan Lists sample controls cannot save, navigate, delete, change membershi
 for (const { stop, dismiss } of [
   { stop: 'members', dismiss: 'Close guide' },
   { stop: 'add-alias-list', dismiss: 'Escape' },
+  { stop: 'back-to-lists', dismiss: 'Close guide' },
   { stop: 'sources', dismiss: 'shade' },
   { stop: 'listening-controls', dismiss: 'Escape' },
   { stop: 'listening', dismiss: 'Close guide' }

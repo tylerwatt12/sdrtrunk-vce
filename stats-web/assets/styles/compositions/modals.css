@@ -240,6 +240,47 @@ body.modal-open {
   width: min(var(--guide-welcome-width), calc(100vw - var(--guide-viewport-gap) * 2));
 }
 
+.read-only-modal.ui-setup-guide--diagram {
+  width: min(var(--guide-diagram-card-width), calc(100vw - var(--guide-viewport-gap) * 2));
+}
+
+.ui-setup-guide--diagram .modal-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ui-setup-guide--diagram .ui-setup-guide-surface {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.ui-setup-guide--diagram .ui-setup-guide-copy {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.ui-setup-guide--diagram .ui-setup-guide-footer { flex: 0 0 auto; }
+
+.ui-setup-guide-diagram {
+  min-width: 0;
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.ui-setup-guide-diagram > svg {
+  display: block;
+  width: 100%;
+  min-width: var(--guide-diagram-min-width);
+  height: auto;
+  font-family: var(--font-sans);
+}
+
 .ui-setup-guide .modal-header {
   min-height: auto;
   flex: 0 0 auto;

@@ -31,7 +31,7 @@ export function getScanListsGuideData(section = 'lists') {
     scan_lists: index < 2 ? ['Public Safety', 'Fire & EMS'] : ['Public Safety']
   }));
   const memberPage = { ...base.page, rows };
-  const selectedScanList = scanLists[section === 'sources' ? 2 : 0];
+  const selectedScanList = scanLists[['sources', 'listening-controls', 'listening'].includes(section) ? 2 : 0];
   const options = { ...base.options, alias_list: lists[0], scan_lists: scanLists };
   return { ...base, section, list: lists[0], lists, rows, page: memberPage, memberPage, options,
     selectedScanList, scanLists, scanListCatalog: { revision: 0, scan_lists: scanLists },

@@ -359,6 +359,17 @@
   --guide-progress-segment-height: 5px;
   --guide-illustration-height: 180px;
   --guide-wordmark-width: 190px;
+  --guide-diagram-card-width: 1340px;
+  --guide-diagram-min-width: 1120px;
+  --guide-diagram-background: var(--ui-panel-fill);
+  --guide-diagram-lane: var(--ui-tile-fill);
+  --guide-diagram-node: var(--ui-panel-fill);
+  --guide-diagram-group: color-mix(in srgb, var(--muted) 13%, var(--ui-panel-fill));
+  --guide-diagram-law: var(--info);
+  --guide-diagram-fire: var(--signal-fair);
+  --guide-diagram-uses: var(--muted);
+  --guide-diagram-law-fill: color-mix(in srgb, var(--guide-diagram-law) 10%, var(--ui-panel-fill));
+  --guide-diagram-fire-fill: color-mix(in srgb, var(--guide-diagram-fire) 10%, var(--ui-panel-fill));
   --modal-backdrop-strong: rgb(9 18 27 / 90%);
   --modal-content-padding: var(--space-4);
   --modal-viewport-gap: 22px;

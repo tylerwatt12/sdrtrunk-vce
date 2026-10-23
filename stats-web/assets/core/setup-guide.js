@@ -1,5 +1,7 @@
 // Shared page guidance: the modal foundation owns focus, dismissal and replacement.
 // Steps only describe copy, existing targets and temporary presentation work.
+import { createGuideDiagram } from '../guides/diagrams.js?v=1';
+
 export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, guideSampleData }, options) {
   const steps = options.steps || [];
   if (!steps.length) return null;
@@ -398,7 +400,11 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       modal.dialog.dataset.guideStep = step.id || String(index + 1);
       modal.dialog.classList.toggle('ui-setup-guide--illustrated', Boolean(step.illustration));
       copy.replaceChildren();
+      const diagram = step.diagram ? createGuideDiagram(step.diagram, { document,
+        idPrefix: `${heading.id}-diagram-${generation}` }) : null;
+      modal.dialog.classList.toggle('ui-setup-guide--diagram', Boolean(diagram));
       (step.paragraphs || []).forEach(text => copy.append(node('p', 'ui-setup-guide-description', text)));
+      if (diagram) copy.append(diagram);
       if (step.items?.length) {
         const items = node('div', 'ui-setup-guide-items');
         step.items.forEach(({ label, text }) => {

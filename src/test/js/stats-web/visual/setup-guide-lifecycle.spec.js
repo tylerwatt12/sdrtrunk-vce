@@ -182,3 +182,68 @@ test('a pending page walkthrough keeps its custom welcome action after the overv
   await expect(guide).toHaveCount(0);
   expect(await page.evaluate(() => window.guideHarness.completions)).toBe(1);
 });
+
+for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 1000 }]) {
+  test(`central concept diagrams keep navigation visible and release their wide layout at ${viewport.width}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installGuideHarness(page);
+    await page.evaluate(() => {
+      const harness = window.guideHarness;
+      harness.presentation = harness.open([
+        { id: 'overview', overview: true, title: 'Choose which calls you hear', diagram: 'scan-lists',
+          paragraphs: ['Combine related calls from your radio systems in Scan Lists.'] },
+        { id: 'opener', title: 'Review your listening group', paragraphs: ['Open its members here.'] }
+      ]);
+    });
+    const guide = page.locator('.ui-setup-guide');
+    const diagram = guide.locator('[data-guide-diagram="scan-lists"]');
+    await expect(diagram.getByRole('img', { name: 'County and city aliases grouped into Scan Lists' })).toBeVisible();
+    await expect(guide).toHaveClass(/ui-setup-guide--diagram/);
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(0);
+    const inspectLayout = () => page.evaluate(() => {
+      const guide = document.querySelector('.ui-setup-guide');
+      const footer = guide.querySelector('.ui-setup-guide-footer').getBoundingClientRect();
+      const copy = guide.querySelector('.ui-setup-guide-copy');
+      return { footerBottom: footer.bottom, viewportHeight: innerHeight,
+        width: guide.getBoundingClientRect().width, scrollHeight: copy.scrollHeight, clientHeight: copy.clientHeight };
+    });
+    const overview = await inspectLayout();
+    expect(overview.width).toBeGreaterThan(1100);
+    expect(overview.footerBottom).toBeLessThanOrEqual(viewport.height - 20);
+    if (viewport.height === 720) expect(overview.scrollHeight).toBeGreaterThan(overview.clientHeight);
+    await guide.locator('.ui-setup-guide-copy').evaluate(copy => { copy.scrollTop = copy.scrollHeight; });
+    expect((await inspectLayout()).footerBottom).toBeLessThanOrEqual(viewport.height - 20);
+    await guide.getByRole('button', { name: 'Start tour', exact: true }).click();
+    await expect(diagram).toHaveCount(0);
+    await expect(guide).not.toHaveClass(/ui-setup-guide--diagram/);
+    expect((await inspectLayout()).width).toBeLessThan(600);
+    await guide.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(diagram).toBeVisible();
+    expect((await inspectLayout()).width).toBeGreaterThan(1100);
+    await page.evaluate(() => window.guideHarness.presentation.close());
+    await expect(page.locator('[data-guide-diagram]')).toHaveCount(0);
+    expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
+  });
+}
+
+test('central diagrams scope SVG references for simultaneous renderings and ignore unknown artwork', async ({ page }) => {
+  await installGuideHarness(page);
+  const result = await page.evaluate(async () => {
+    const { createGuideDiagram } = await import('/assets/guides/diagrams.js');
+    const first = createGuideDiagram('scan-lists', { document, idPrefix: 'first-guide' });
+    const second = createGuideDiagram('scan-lists', { document, idPrefix: 'second-guide' });
+    document.body.append(first, second);
+    const ids = [...document.querySelectorAll('[data-guide-diagram] [id]')].map(element => element.id);
+    const referencesExist = [...document.querySelectorAll('[data-guide-diagram] [marker-end]')]
+      .every(path => document.getElementById(path.getAttribute('marker-end').match(/#([^)]*)/)[1]));
+    const result = { count: ids.length, unique: new Set(ids).size, referencesExist,
+      unknown: createGuideDiagram('unknown-diagram', { document, idPrefix: 'missing' }) };
+    first.remove();
+    second.remove();
+    return result;
+  });
+  expect(result.count).toBeGreaterThan(0);
+  expect(result.unique).toBe(result.count);
+  expect(result.referencesExist).toBe(true);
+  expect(result.unknown).toBeNull();
+});
