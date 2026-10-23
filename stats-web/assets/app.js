@@ -42,7 +42,7 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createAudioDock } from './core/audio-dock.js?v=29';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
-import { createRemoteSupportWorkspace } from './features/remote-support.js?v=4';
+import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=5';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
@@ -31927,7 +31927,7 @@ function renderAdminSupportReport() {
   content.append(body);
   void renderAdminRemoteSupport(body, renderContext, {
     heading: 'Remote support (optional)',
-    description: 'Allow full remote access to this installation’s web interface.'
+    description: remoteSupportDescription
   });
   body.append(footer);
 }
@@ -33721,7 +33721,7 @@ function adminSettingsGroups() {
       { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Create and submit a support report.' },
       { id: 'remote-support', label: 'Remote Support', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Allow full remote access to this installation’s web interface.' }
+        description: remoteSupportDescription }
     ] },
     { label: 'Decisions engine', items: [
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,

@@ -3,6 +3,12 @@
 import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 
 const ENDPOINT = '/api/v1/remote-support';
+export const remoteSupportDescription = 'Allow VCE’s developer to access this instance for troubleshooting.';
+const remoteSupportDetails = [
+  'The developer can review radio activity, recordings, and logs, and change VCE settings to investigate your issue.',
+  'This does not share your computer’s desktop or provide control of other applications.',
+  'You can select Stop remote support at any time to end access. Changes already made will remain.'
+];
 export const remoteSupportStopWarning = 'Remote access is off for now, but this setting could not be saved. Check the application data folder before restarting VCE.';
 export const remoteSupportDurations = Object.freeze([
   [1800, '30 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '24 hours'], [0, 'Unlimited']
@@ -83,6 +89,8 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
     element.append(header);
   }
   const form = node('form', 'admin-form settings-page-form ui-settings-form');
+  const accessDetails = node('div', 'remote-support-details editor-workspace');
+  remoteSupportDetails.forEach(text => accessDetails.append(node('p', 'settings-card-description', text)));
   const duration = node('select', 'ui-select');
   remoteSupportDurations.forEach(([seconds, label]) => {
     const option = node('option', '', label); option.value = String(seconds); duration.append(option);
@@ -118,7 +126,7 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
   const feedback = node('div', 'admin-form-message'); feedback.setAttribute('role', 'status');
   const actions = node('div', 'admin-form-actions'); actions.append(retry, submit);
   const footer = node('div', 'settings-form-footer'); footer.append(feedback, actions);
-  form.append(durationField, shared, unavailable, stopWarning, footer); element.append(form);
+  form.append(accessDetails, durationField, shared, unavailable, stopWarning, footer); element.append(form);
   let snapshot = null;
   let pending = false;
   let denied = false;

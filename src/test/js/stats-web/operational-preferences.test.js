@@ -3,10 +3,12 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 
-const application = fs.readFileSync(path.resolve(process.argv[2] ||
-  path.resolve(__dirname, '../../../../stats-web/assets/app.js')), 'utf8');
+const applicationPath = path.resolve(process.argv[2] ||
+  path.resolve(__dirname, '../../../../stats-web/assets/app.js'));
+const application = fs.readFileSync(applicationPath, 'utf8');
 
 function functionSource(signature) {
   const start = application.indexOf(signature);
@@ -81,7 +83,10 @@ async function main() {
   const capabilities = Object.fromEntries(['RECEIVER_HEALTH', 'ADMIN_SETTINGS', 'ADMIN_RECORDINGS',
     'ADMIN_USERS', 'ADMIN_ACCESS'].map((key) => [key, key]));
   const allowedCapabilities = new Set(Object.values(capabilities));
+  const { remoteSupportDescription } = await import(pathToFileURL(path.join(path.dirname(applicationPath),
+    'features/remote-support.js')).href);
   const navigationContext = {
+    remoteSupportDescription,
     ACCESS_CAPABILITIES: capabilities,
     capabilityAllowed: (capability) => allowedCapabilities.has(capability)
   };

@@ -193,6 +193,16 @@ async function preferenceIds(page) {
     forms.map((form) => form.dataset.preference));
 }
 
+async function expectRemoteSupportDetails(workspace) {
+  for (const text of [
+    'The developer can review radio activity, recordings, and logs, and change VCE settings to investigate your issue.',
+    'This does not share your computer’s desktop or provide control of other applications.',
+    'You can select Stop remote support at any time to end access. Changes already made will remain.'
+  ]) {
+    await expect(workspace.getByText(text, { exact: true })).toBeVisible();
+  }
+}
+
 test('desktop administration navigation includes every grouped page and its icon', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await openAdmin(page);
@@ -220,7 +230,8 @@ test('remote support stays simple in light and dark desktop and phone layouts', 
       const app = await openAdmin(page, 'remote-support', [], { theme });
       const workspace = page.locator('[data-remote-support]');
       await expect(page.getByRole('heading', { level: 1, name: 'Remote Support', exact: true })).toBeVisible();
-      await expect(page.getByText('Allow full remote access to this installation’s web interface.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Allow VCE’s developer to access this instance for troubleshooting.', { exact: true })).toBeVisible();
+      await expectRemoteSupportDetails(workspace);
       await expect(workspace.getByLabel('Allow access for')).toHaveValue('21600');
       await expect(workspace.locator('option')).toHaveText(['30 minutes', '1 hour', '6 hours', '24 hours', 'Unlimited']);
       await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeEnabled();
@@ -277,7 +288,8 @@ test('problem reports allow optional remote support with empty required fields i
       const report = page.locator('#support-report-form');
       const workspace = page.locator('[data-remote-support]');
       await expect(workspace.getByRole('heading', { name: 'Remote support (optional)', exact: true })).toBeVisible();
-      await expect(workspace.getByText('Allow full remote access to this installation’s web interface.', { exact: true })).toBeVisible();
+      await expect(workspace.getByText('Allow VCE’s developer to access this instance for troubleshooting.', { exact: true })).toBeVisible();
+      await expectRemoteSupportDetails(workspace);
       await expect(workspace.getByLabel('Allow access for')).toHaveValue('21600');
       await expect(page.getByRole('button', { name: 'Prepare support report', exact: true }))
         .toHaveAttribute('form', 'support-report-form');
