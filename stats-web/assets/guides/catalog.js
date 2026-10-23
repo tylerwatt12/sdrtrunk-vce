@@ -19,13 +19,6 @@ function menu(documentValue, groupName) {
   };
 }
 
-function combine(...preparations) {
-  return () => {
-    const cleanups = preparations.map((prepare) => prepare?.()).filter((cleanup) => typeof cleanup === 'function');
-    return () => cleanups.reverse().forEach((cleanup) => cleanup());
-  };
-}
-
 function navigationTargets(documentValue, group, views) {
   return targets(documentValue, `.primary-nav [data-nav-group="${group}"] > summary`,
     ...views.map((view) => `.primary-nav [data-view="${view}"]`));
@@ -181,8 +174,8 @@ function channelSetupSteps(documentValue, preparePlayer) {
       targets: targets(documentValue, '[data-guide-target="channel-startup"]'),
       paragraphs: ['Use Startup order to choose which channels start automatically when VCE launches, and the order in which they start.'] },
     { id: 'scan-lists', title: 'Choose what you hear',
-      prepare: combine(menu(documentValue, 'configuration'), preparePlayer),
-      targets: targets(documentValue, '.primary-nav [data-view="scan-lists"]', '[data-guide-target="player-lists"]'),
+      prepare: preparePlayer,
+      targets: targets(documentValue, '[data-guide-target="player-lists"]'),
       paragraphs: ['VCE separates starting channels from listening to them. Start a channel, create aliases, and add those aliases to Scan Lists. Then use Lists in the player to choose the Scan Lists you want to hear.',
         'VCE records each call before playing it. You’ll hear the conversation after the transmission finishes.'],
       nextLabel: 'Finish' }

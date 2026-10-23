@@ -195,27 +195,58 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('Channel Setup guide URL replays the complete guide after dismissal', async ({ page }) => {
-  const { fixture } = await openChannels(page, { guide: 'page' });
-  await expect(guide(page)).toBeVisible();
-  const expectedTitles = ['Search for trunked systems', 'Find the channel you need', 'Start receiving',
-    'Ready when you are', 'Choose what you hear'];
-  for (const title of expectedTitles) {
+for (const theme of ['light', 'dark']) {
+  test(`Channel Setup guide URL replays the complete guide after dismissal ${theme}`, async ({ page }, testInfo) => {
+    const { fixture } = await openChannels(page, { theme, guide: 'page' });
+    await expect(guide(page)).toBeVisible();
+    const player = page.locator('#audio-dock');
+    const originalPlayer = await player.evaluate(element => ({
+      source: element.dataset.source, state: element.dataset.state
+    }));
+    const expectListeningStep = async () => {
+      await expect(guideRoot(page).getByRole('heading', { name: 'Choose what you hear', exact: true })).toBeVisible();
+      await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
+      const lists = page.locator('[data-guide-target="player-lists"]');
+      await expect(lists).toBeVisible();
+      await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
+      await expect.poll(() => lists.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        const highlight = document.querySelector('.ui-setup-guide-highlight').getBoundingClientRect();
+        return highlight.left <= bounds.left && highlight.top <= bounds.top &&
+          highlight.right >= bounds.right && highlight.bottom >= bounds.bottom;
+      }), { message: 'The final step spotlights Lists in the player' }).toBe(true);
+    };
+    const expectedTitles = ['Search for trunked systems', 'Find the channel you need', 'Start receiving',
+      'Ready when you are', 'Choose what you hear'];
+    for (const title of expectedTitles) {
+      await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(guideRoot(page)).toContainText(title);
+    }
+    await expectListeningStep();
+    await page.screenshot({ path: testInfo.outputPath(`channel-listening-step-${theme}.png`) });
+    await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(guideRoot(page).getByRole('heading', { name: 'Ready when you are', exact: true })).toBeVisible();
+    await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
+    await expect(player).toHaveAttribute('data-source', originalPlayer.source);
+    await expect(player).toHaveAttribute('data-state', originalPlayer.state);
     await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
-    await expect(guideRoot(page)).toContainText(title);
-  }
-  await guideRoot(page).getByRole('button', { name: 'Finish', exact: true }).click();
-  await expect(guideRoot(page)).toHaveCount(0);
-  await page.goto('/app.html?view=channel-setup&guide=page');
-  await expect(guide(page)).toBeVisible();
-  await guideRoot(page).getByRole('button', { name: 'Close guide', exact: true }).click();
-  await expect(guideRoot(page)).toHaveCount(0);
-  // The fixture server mounts the application at /app.html and the gallery at /.
-  await page.goto(`/app.html${new URL(page.url()).search}`);
-  await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
-  await expect(guideRoot(page)).toHaveCount(0);
-  expect(fixture.pageErrors).toEqual([]);
-});
+    await expectListeningStep();
+    await guideRoot(page).getByRole('button', { name: 'Finish', exact: true }).click();
+    await expect(guideRoot(page)).toHaveCount(0);
+    await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
+    await expect(player).toHaveAttribute('data-source', originalPlayer.source);
+    await expect(player).toHaveAttribute('data-state', originalPlayer.state);
+    await page.goto('/app.html?view=channel-setup&guide=page');
+    await expect(guide(page)).toBeVisible();
+    await guideRoot(page).getByRole('button', { name: 'Close guide', exact: true }).click();
+    await expect(guideRoot(page)).toHaveCount(0);
+    // The fixture server mounts the application at /app.html and the gallery at /.
+    await page.goto(`/app.html${new URL(page.url()).search}`);
+    await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
+    await expect(guideRoot(page)).toHaveCount(0);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
 
 for (const channels of [[], [savedChannel]]) {
   for (const exit of ['Next', 'Back', 'Close guide', 'darkened area', 'Escape']) {
