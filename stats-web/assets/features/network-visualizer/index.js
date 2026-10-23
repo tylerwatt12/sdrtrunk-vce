@@ -157,7 +157,6 @@ function createP25Visualizer(dependencies = {}) {
   let scenePresented = false;
   let collectionEnabled = true;
   let sourceEpoch = '';
-  let partialView = false;
   let historyHours = 1, historyLoading = false, historySceneDirty = false;
   let nextHistoryExpiryAtMs = 0;
   let feedStatus = 'connecting';
@@ -302,7 +301,6 @@ function createP25Visualizer(dependencies = {}) {
     if (!renderer) return;
     const graph = buildP25Graph(state, selectedSystemKey, Date.now() + serverTimeOffsetMs, selectedGroupKey,
       { highlightCategories: highlightedCategories });
-    partialView = graph.truncated;
     if (feedStatus === 'live') setLiveStatus('live');
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate, affiliationChanges });
@@ -515,9 +513,7 @@ function createP25Visualizer(dependencies = {}) {
     if (value === 'live') {
       const label = !state.available ? 'P25 data unavailable · Showing previous data' :
         collectionEnabled ? 'Live' : 'Live affiliations · Activity collection off';
-      const partial = partialView;
-      status.title = partial ? 'The drawing shows up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '';
-      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : '') + (partial ? ' · Some radios or talkgroups are hidden' : ''), state.available ? 'current' : 'stale');
+      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : ''), state.available ? 'current' : 'stale');
     }
     else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
     else if (value === 'loading') setStatus('Loading recent activity', 'stale');

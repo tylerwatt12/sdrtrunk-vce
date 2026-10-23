@@ -135,7 +135,7 @@ test('current affiliations survive a committed saved-history clear', async ({ pa
   expect(fixture.unexpected).toEqual([]);
 });
 
-test('more than ten thousand native affiliations load while only the drawing is partial', async ({ page }, testInfo) => {
+test('more than ten thousand native affiliations load with normal Live status', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const fixture = await installSiteStyleApplication(page, 'dark');
   await historyRoute(page, () => []);
@@ -144,9 +144,8 @@ test('more than ten thousand native affiliations load while only the drawing is 
   await page.route('**/api/v1/activity/live/seed*', route => route.fulfill({ json: snapshot(current) }));
   await page.goto('/app.html?view=network-visualizer');
   const status = page.locator('.network-visualizer-status');
-  await expect(status).toHaveText('Live · Some radios or talkgroups are hidden');
-  await expect(status).toHaveAttribute('title', /^The drawing shows up to 900 radios and 220 talkgroups/);
-  await expect(status).not.toHaveAttribute('title', /10,000|recently confirmed/);
+  await expect(status).toHaveText('Live');
+  expect(await status.getAttribute('title')).toBeNull();
   await expect(page.locator('.network-visualizer-empty')).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('complete-affiliations-partial-drawing-dark-phone.png') });
   expect(fixture.pageErrors).toEqual([]);
