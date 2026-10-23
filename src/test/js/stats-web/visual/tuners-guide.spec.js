@@ -18,7 +18,8 @@ const steps = ['modes', 'setup-button', 'enter-setup', 'receiving-window', 'cent
     id === 'live' ? ['tn-live-mode', 'tn-live-count'] : [`tn-${id}`] }));
 const modalSteps = new Map([['enter-setup', 'Enter Setup'], ['resume-channels', 'Resume previous channels'],
   ['disable-tuner', 'Disable tuner'], ['restart-channels', 'Resume previous channels']]);
-const evidence = '/Users/owner/Documents/sdrtrunk-vce/docs/internal/tuners-tour-20261023/browser';
+const evidence = process.env.TUNERS_GUIDE_EVIDENCE ||
+  path.resolve(__dirname, '../../../../../build/playwright-results/tuners-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
   .filter(([key]) => !key.startsWith('sdrtrunk-vce-guide:'))));
 
@@ -101,6 +102,13 @@ async function expectSpotlight(page, id) {
   await expect(targets.first()).toBeVisible();
   for (const target of await targets.all()) {
     await expectWithinViewport(target, page.viewportSize());
+    await expect.poll(() => target.evaluate(element => {
+      if (element.closest('.read-only-modal')) return null;
+      const rect = element.getBoundingClientRect();
+      const header = document.querySelector('.app-header')?.getBoundingClientRect();
+      return !header || rect.top >= header.bottom - 1 ? null :
+        { targetTop: rect.top, headerBottom: header.bottom };
+    }), { message: `${id} remains below the sticky application header` }).toBeNull();
     await expect.poll(() => target.evaluate(element => {
       const rect = element.getBoundingClientRect();
       return [...document.querySelectorAll('.ui-setup-guide-highlight')].some(highlight => {
@@ -218,9 +226,7 @@ for (const { theme, width, height } of [
         await expect(page.locator('.tuners-channel-readout .tuners-readout-value')).toHaveText('2');
         await expect(page.locator('.tuners-recovery')).toBeHidden();
       }
-      if (['modes', 'enter-setup', 'receiving-window', 'center-frequency', 'lock-center', 'gain',
-        'frequency-correction', 'frequency-limits', 'resume-channels', 'disable-tuner', 'disabled',
-        'restart-channels', 'live'].includes(step.id)) await screenshot(page, `tuners-${step.id}-${theme}`);
+      await screenshot(page, `tuners-${step.id}-${theme}`);
       await next(page, step.id);
     }
     await expect(guide(page)).toHaveCount(0);

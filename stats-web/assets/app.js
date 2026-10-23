@@ -31226,7 +31226,6 @@ async function renderTuners(options = {}) {
   markGuide(lockReadout, 'lock-center');
   markGuide(commonPrimaryBody, 'frequency-correction');
   markGuide(channelReadout, 'live-count');
-  markGuide(spectrumBody, 'disabled-signal');
   const commonContent = node('div', 'tuners-common-content');
   commonContent.append(commonPrimaryBody, commonMore);
   const commonSection = section('Common tuning', commonContent);
@@ -32084,6 +32083,7 @@ async function renderTuners(options = {}) {
       ...(guideMode ? { guideMode: true } : {})
     });
     registerConnection(spectrum);
+    markGuide(spectrum.controls.status, 'disabled-signal');
     spectrumBody.replaceChildren(spectrum.element);
   } catch (error) {
     if (isCurrent()) spectrumBody.replaceChildren(
@@ -32148,7 +32148,6 @@ async function renderTuners(options = {}) {
       }
     }
     if (section === 'gain') gainSection.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-    else if (section === 'disabled') selectedSection.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     else if (targets.length > 1) {
       const top = Math.min(...targets.map(target => target.getBoundingClientRect().top));
       const headerBottom = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0);
