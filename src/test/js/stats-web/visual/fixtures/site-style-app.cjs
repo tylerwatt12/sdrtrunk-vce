@@ -297,13 +297,20 @@ function snapshot(duplicates = [duplicate()]) {
 }
 
 
-async function installSiteStyleApplication(page, theme = 'light', liveInitialSnapshot = liveSnapshot) {
+async function installSiteStyleApplication(page, theme = 'light', liveInitialSnapshot = liveSnapshot, options = {}) {
   const defaults = (await import(pathToFileURL(path.join(root, 'stats-web/assets/core/preference-schema.js')).href)).defaults;
   const preferences = structuredClone(defaults);
   preferences.appearance.theme = theme;
   const state = { unexpected: [], requests: [], pageErrors: [] };
   page.on('pageerror', error => state.pageErrors.push(error.message));
   await page.clock.setFixedTime(new Date(now));
+  // Most fixtures inspect existing page workflows. Tour tests opt into a fresh
+  // account so onboarding does not cover the controls those fixtures exercise.
+  if (!options.guides) await page.addInitScript(() => {
+    for (const id of ['welcome', 'channel-setup']) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:1`, '1');
+    }
+  });
   await page.addInitScript((snapshotValue) => {
     const fetchOriginal = window.fetch.bind(window);
     window.fetch = (input, options) => {

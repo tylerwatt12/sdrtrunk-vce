@@ -14,12 +14,14 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   radioIdentifier = (_call, value) => value }) {
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
+  dock.dataset.guideTarget = 'player';
   dock.setAttribute('aria-label', 'Audio player');
   const presentation = node('div', 'audio-dock-presentation');
   presentation.id = 'audio-dock-presentation';
   let size = 'minimal';
   // Desktop hiding is presentation only: retain the size, source and both engines.
   let superCollapsed = false;
+  let guidePresentation = false;
   const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let presentationMotion = null;
@@ -169,6 +171,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const handle = node('button', 'ui-audio-handle');
   handle.type = 'button';
   handle.id = 'audio-dock-size-handle';
+  handle.dataset.guideTarget = 'player-handle';
   handle.setAttribute('aria-label', 'Change audio player size');
   handle.setAttribute('aria-controls', 'audio-dock-content');
   handle.setAttribute('aria-describedby', 'audio-dock-size-hint');
@@ -293,6 +296,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     else switchSource(value);
   };
   const sourcePicker = node('select', 'ui-select ui-audio-source-picker');
+  sourcePicker.dataset.guideTarget = 'player-mode';
   sourcePicker.setAttribute('aria-label', 'Audio source');
   // A source choice is also a navigation action. The hidden current label lets
   // choosing Recordings navigate even when that source is already selected.
@@ -383,6 +387,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     'ui-disclosure-button ui-icon-button ui-audio-dismiss');
   hide.title = 'Minimize player to header';
   hide.id = 'audio-dock-hide';
+  hide.dataset.guideTarget = 'player-hide';
   hide.setAttribute('aria-controls', presentation.id);
   hide.addEventListener('click', () => setSuperCollapsed(true));
   const restore = iconButton('icon-maximize-corners', 'Restore player',
@@ -426,6 +431,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     return { button, badge };
   };
   const desktopLists = contextButton('Lists', 'scan-lists', 'listening', 'audio-dock-source-context', 'audio-dock-desktop-scanlists audio-dock-lists-trigger');
+  desktopLists.button.dataset.guideTarget = 'player-lists';
   const mobileLists = contextButton('Lists', 'scan-lists', 'listening', 'audio-dock-mobile-lists', 'audio-dock-mobile-scanlists audio-dock-lists-trigger');
   const library = iconButton('icon-recording', 'Browse recording library', 'ui-button ui-button-secondary ui-audio-context-trigger audio-dock-library-control');
   library.append(node('span', 'audio-dock-scan-label', 'Library'));
@@ -1028,7 +1034,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (destroyed) return;
     const permissions = access();
     if (!permissions[source] && (permissions.live || permissions.recordings)) { closeVolume(false); source = permissions.live ? 'live' : 'recordings'; panelKey = ''; }
-    const unavailable = document.body.dataset.view === 'scanner' || document.body.dataset.view === 'access-landing' || !permissions.live && !permissions.recordings;
+    const unavailable = (!guidePresentation && document.body.dataset.view === 'scanner') ||
+      document.body.dataset.view === 'access-landing' || !permissions.live && !permissions.recordings;
     if (unavailable && sizeGesture) cancelSizeGesture();
     const hiddenToHeader = superCollapsed && !mobileLayout.matches;
     const presentationSize = sizeGesture?.presentationSize || size;
@@ -1187,7 +1194,28 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (access().recordings && queue && queue !== sharedQueueKey) { sharedQueueKey = queue; closeVolume(false); source = 'recordings'; size = 'full'; panel = 'queue'; void recordings.loadSharedQueue(params).then(render); }
   }
   synchronize();
-  return { synchronize, destroy() {
+  // Tours only change the presentation. Neither audio engine is started, stopped,
+  // or switched, and closing the step restores the listener's original layout.
+  function prepareGuide() {
+    const previous = { size, superCollapsed, source, panel };
+    cancelSizeGesture(); closeVolume(false); cancelPresentationMotion();
+    guidePresentation = true;
+    superCollapsed = false;
+    size = 'minimal';
+    if (access().live) source = 'live';
+    panel = null; panelKey = '';
+    render();
+    let restored = false;
+    return () => {
+      if (restored) return;
+      restored = true;
+      guidePresentation = false;
+      ({ size, superCollapsed, source, panel } = previous);
+      panelKey = '';
+      render();
+    };
+  }
+  return { synchronize, prepareGuide, destroy() {
     cancelSizeGesture();
     closeVolume(false); destroyed = true; synchronizeLoops();
     mobileLayout.removeEventListener('change', updatePresentationLayout);

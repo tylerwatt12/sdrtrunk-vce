@@ -34,6 +34,7 @@ async function verifyDetailPageOrientation() {
   const content = {
     children: [],
     setAttribute() {},
+    getAttribute: () => 'false',
     replaceChildren(...children) { this.children = children; },
     querySelector() { return this.children.find((child) => child.className === 'page-header'); }
   };
@@ -43,6 +44,8 @@ async function verifyDetailPageOrientation() {
     activeRenderController: null, document: { body: { dataset: {} } },
     ACCESS_CAPABILITIES: { RECORDINGS: 'recordings' },
     recordingsFeature: { playback: { reset() {} } }, audioDock: { synchronize() {} },
+    guideController: { close() {}, pageReady() {} }, guidePageReady: false,
+    synchronizePageGuideButton() {},
     setNavigationOpen() {}, capabilityAllowed: () => true,
     closeReadOnlyModal: () => true, restorePlaybackBarBeforeRender() {},
     closePageConnections() {}, synchronizeAccessLanding: () => false,

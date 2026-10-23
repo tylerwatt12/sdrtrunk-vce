@@ -10,7 +10,8 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
-import { openSetupGuide } from '/assets/core/setup-guide.js?v=2';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=3';
+import { createGuideDefinition } from '/assets/guides/catalog.js?v=1';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=1';
 
@@ -676,13 +677,11 @@ if (view === 'setup-guide') {
   };
   const creationActions = example.querySelector('.channel-creation-actions');
   const [newChannel, findSystems] = creationActions.querySelectorAll('button');
+  newChannel.dataset.guideTarget = 'channel-new';
+  findSystems.dataset.guideTarget = 'channel-discover';
   const { openReadOnlyModal } = await createGalleryModalFoundation();
-  const introduction = openSetupGuide({ node, openReadOnlyModal }, {
-    title: 'Add your first channel', choices: [
-      { button: newChannel, description: 'Import a channel from RadioReference or set it up using a known frequency.' },
-      { button: findSystems, description: 'Search for trunked radio systems your tuner can receive.' }
-    ]
-  });
+  const definition = createGuideDefinition('channel-setup');
+  const introduction = openSetupGuide({ node, openReadOnlyModal }, definition);
   await introduction.ready;
   example.dataset.ready = 'true';
 }

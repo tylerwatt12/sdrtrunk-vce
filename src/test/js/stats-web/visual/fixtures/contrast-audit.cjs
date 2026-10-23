@@ -162,7 +162,11 @@ async function inspectContrast(page, { rootSelector = 'body', reviewedPaintOwner
       const backdrop = guide?.closest('.ui-setup-guide-backdrop');
       const dimmer = backdrop && [...backdrop.querySelectorAll('.ui-setup-guide-dimmer')].find((item) =>
         !hiddenReason(item) && (color(style(item).fill)?.[3] || 0) > 0);
-      if (dimmer) return { reason: 'non-ancestor-overlay-paint', owner: dimmer };
+      // A solid tour card paints above the sibling scrim. Transparent guidance
+      // still needs manual sampling; ordinary card copy can be audited normally.
+      const guidePaint = guide && color(style(guide).backgroundColor);
+      const opaqueGuide = guidePaint?.[3] === 1 && Number(style(guide).opacity) === 1;
+      if (dimmer && !opaqueGuide) return { reason: 'non-ancestor-overlay-paint', owner: dimmer };
       let backgroundBlocked = false;
       for (let item = element; item; item = item.parentElement) {
         const css = style(item);

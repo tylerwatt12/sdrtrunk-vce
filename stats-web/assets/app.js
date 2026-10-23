@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createChannelSetupGuide } from './features/channel-setup-guide.js?v=4';
+import { createGuideController } from './guides/controller.js?v=1';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -48,7 +48,7 @@ import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailabil
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=27';
+import { createAudioDock } from './core/audio-dock.js?v=28';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
@@ -786,7 +786,7 @@ function accessSessionSignature() {
   const capabilities = Object.entries(accessSession.capabilities || {})
     .sort(([left], [right]) => left.localeCompare(right));
   return JSON.stringify([accessSessionAvailable, accessSession.configured, accessSession.authenticated,
-    accessSession.username,
+    accessSession.username, accessSession.guideDismissalScope,
     accessSession.tier, accessSession.primary, capabilities]);
 }
 
@@ -1147,6 +1147,7 @@ function initializeNavigation() {
   const groups = [...navigation.querySelectorAll('.nav-group')];
   const drawerMedia = window.matchMedia(NAVIGATION_DRAWER_MEDIA);
   const hoverMedia = window.matchMedia(NAVIGATION_HOVER_MEDIA);
+  const guideOwnsNavigation = () => Boolean(document.querySelector('.ui-setup-guide-backdrop'));
   toggle.addEventListener('click', () => {
     const open = document.body.classList.contains('navigation-open');
     setNavigationOpen(!open, open);
@@ -1164,16 +1165,20 @@ function initializeNavigation() {
       if (group.open) closeNavigationGroups(group);
     });
     group.addEventListener('pointerenter', () => {
+      if (guideOwnsNavigation()) return;
       if (hoverMedia.matches) openNavigationGroup(group);
     });
     group.addEventListener('pointerleave', () => {
+      if (guideOwnsNavigation()) return;
       if (hoverMedia.matches && !group.querySelector(':focus-visible')) group.open = false;
     });
     group.addEventListener('focusin', () => {
+      if (guideOwnsNavigation()) return;
       if (!drawerMedia.matches) openNavigationGroup(group);
     });
     group.addEventListener('focusout', () => {
       window.requestAnimationFrame(() => {
+        if (guideOwnsNavigation()) return;
         if (!drawerMedia.matches && !group.contains(document.activeElement) && !group.matches(':hover')) {
           group.open = false;
         }
@@ -1186,9 +1191,11 @@ function initializeNavigation() {
     });
   });
   document.addEventListener('pointerdown', (event) => {
+    if (guideOwnsNavigation()) return;
     if (hoverMedia.matches && !navigation.contains(event.target)) closeNavigationGroups();
   });
   document.addEventListener('keydown', (event) => {
+    if (guideOwnsNavigation()) return;
     if (event.key === 'Tab' && drawerMedia.matches && document.body.classList.contains('navigation-open')) {
       const targets = drawerNavigationFocusTargets(navigation, toggle);
       if (!targets.length) return;
@@ -24668,6 +24675,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       draw({ rebuild: true });
     }, 'ui-button ui-button-secondary channel-order-mode');
     viewToggle.setAttribute('aria-pressed', 'false');
+    viewToggle.dataset.guideTarget = 'channel-startup';
     const statusFilter = uiSelect([
       { value: 'all', label: 'All statuses' },
       { value: 'running', label: 'Running' },
@@ -24695,6 +24703,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     statusHost.setAttribute('aria-live', 'polite');
     const newChannelButton = uiActionButton('New channel', 'icon-plus', () =>
       openChannelCreationChoice({ protocols, options }), 'ui-button ui-button-primary');
+    newChannelButton.dataset.guideTarget = 'channel-new';
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
@@ -24717,14 +24726,11 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
           });
         }
       }), 'ui-button ui-button-primary') : null;
-    if (findSystemsButton) creationActions.append(findSystemsButton);
-    const setupGuide = createChannelSetupGuide({ ui: { node, openReadOnlyModal }, account: accessSession.username,
-      dismissalScope: accessSession.guideDismissalScope,
-      channels: () => state.catalog.channels,
-      isCurrent: () => renderIsCurrent(renderContext) && wrapper.isConnected,
-      canPresent: () => !activeReadOnlyModal,
-      loadTuners: () => requestJson('/api/v1/admin/spectrum-search/catalog', { csrf: false }),
-      newChannelButton, findSystemsButton });
+    if (findSystemsButton) {
+      findSystemsButton.dataset.guideTarget = 'channel-discover';
+      creationActions.append(findSystemsButton);
+    }
+    toolbar.dataset.guideTarget = 'channel-filters';
     const exportLink = exportCsvLink('channels');
     exportLink.classList.add('ui-button-quiet', 'ui-icon-button-compact');
     const refresh = uiActionButton('', 'icon-refresh', () => renderChannelSetup(),
@@ -24742,6 +24748,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     catalogHeader.append(overview, toolbar);
 
     const tableHost = node('div', 'channel-catalog-table-host');
+    tableHost.dataset.guideTarget = 'channel-catalog';
     const tableController = {};
     const selectedBar = node('div', 'channel-selection-bar ui-selection-bar');
     selectedBar.hidden = true;
@@ -24804,7 +24811,6 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       if (!Number.isFinite(revision) || revision < state.revision) return false;
       state.revision = revision;
       state.catalog = refreshed;
-      if (refreshed.channels?.length) setupGuide.close();
       const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
       [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
       summaryHost.replaceChildren(channelSetupSummary(refreshed));
@@ -24976,7 +24982,6 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     draw({ rebuild: true, revealId: revealId || route.get('channel') });
     wrapper.append(catalogHeader, statusHost, selectedBar, tableHost, navigation);
     updateSelection();
-    pageTimeout(() => { void setupGuide.refresh(); }, 0);
 
     let refreshInFlight = false;
     pageInterval(async () => {
@@ -24985,7 +24990,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       refreshInFlight = true;
       try {
         const refreshed = await requestJson('/api/v1/admin/channels', { csrf: false });
-        if (applyCatalog(refreshed)) { draw(); void setupGuide.refresh(); }
+        if (applyCatalog(refreshed)) draw();
       } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
       finally { refreshInFlight = false; }
     }, 5_000);
@@ -34340,6 +34345,43 @@ const audioDock = createAudioDock({
   })
 });
 
+const guideDesktopLayout = window.matchMedia('(min-width: 1181px)');
+const pageGuideButton = document.getElementById('page-guide-button');
+let guidePageReady = false;
+const guideController = createGuideController({
+  ui: { node, openReadOnlyModal, mountAccessWireframe },
+  getContext: () => ({
+    view: routeFoundation.requestedView(route),
+    guide: route.get('guide'),
+    account: accessSession.username,
+    dismissalScope: accessSession.guideDismissalScope,
+    authenticated: accessSession.authenticated,
+    isDesktop: guideDesktopLayout.matches,
+    canSetup: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS),
+    canView: viewAllowed,
+    canReport: accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS),
+    canPresent: guidePageReady && !activeReadOnlyModal &&
+      !document.querySelector('.app-shell')?.hidden && content.getAttribute('aria-busy') !== 'true'
+  }),
+  consumeGuide: () => {
+    route.delete('guide');
+    window.history.replaceState({}, '', currentHref());
+  },
+  navigate: (view) => navigateTo(href(view)),
+  preparePlayer: () => audioDock.prepareGuide()
+});
+
+function synchronizePageGuideButton() {
+  if (pageGuideButton) pageGuideButton.hidden = !guideDesktopLayout.matches || !guidePageReady;
+}
+
+pageGuideButton?.addEventListener('click', () => guideController.openPage());
+guideDesktopLayout.addEventListener('change', () => {
+  synchronizePageGuideButton();
+  if (!guideDesktopLayout.matches) guideController.close();
+  else if (guidePageReady) guideController.pageReady();
+});
+
 function pendingDetailPageTitle(view, parameters = route) {
   if (['radio-system', 'group-identity', 'radio', 'channel'].includes(view)) {
     return applicationRoutes[view]?.title || '';
@@ -34363,6 +34405,9 @@ function normalizeLegacyAlertRoute() {
 }
 
 async function render() {
+  guidePageReady = false;
+  guideController.close();
+  synchronizePageGuideButton();
   setNavigationOpen(false);
   if (!capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)) recordingsFeature.playback.reset();
   audioDock.synchronize();
@@ -34424,6 +34469,10 @@ async function render() {
       if (header) header.after(notice);
       else content.prepend(notice);
     }
+    guidePageReady = content.getAttribute('aria-busy') === 'false' &&
+      !content.querySelector('.async-section-error');
+    synchronizePageGuideButton();
+    if (guidePageReady) guideController.pageReady();
   } catch (error) {
     if (epoch !== activeRenderEpoch || renderController.signal.aborted || error?.name === 'AbortError') return;
     if (error?.status === 401 || error?.status === 403) {

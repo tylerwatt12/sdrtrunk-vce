@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="468">
+  <meta name="sdrtrunk-web-revision" content="469">
   <meta name="theme-color" content="#202a33" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#090e13" media="(prefers-color-scheme: dark)">
   <title>SDRTrunk VCE — Radio in your browser</title>
@@ -28,7 +28,7 @@
   <link rel="icon" href="/assets/vce-icon-32.png?v=1" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/assets/vce-apple-touch-icon.png?v=1" sizes="180x180">
   <link rel="manifest" href="/assets/site.webmanifest?v=2">
-  <link rel="stylesheet" href="/assets/app.css?v=365">
+  <link rel="stylesheet" href="/assets/app.css?v=366">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -72,6 +72,7 @@
     <symbol id="icon-radio-tower" viewBox="0 0 24 24"><path d="M4.9 16.1a10 10 0 0 1 0-14.1M7.8 13.2a6 6 0 0 1 0-8.4M16.2 4.8a6 6 0 0 1 0 8.4M19.1 2a10 10 0 0 1 0 14.1M9.5 18h5M8 22l4-11 4 11"></path><circle cx="12" cy="9" r="2"></circle></symbol>
     <symbol id="icon-display" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8M12 17v4"></path></symbol>
     <symbol id="icon-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"></path><circle cx="9" cy="7" r="4"></circle></symbol>
+    <symbol id="icon-help-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 0 1 5 .5c0 1.5-2.5 2-2.5 3.5M12 16h.01"></path></symbol>
     <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 8.5a4 4 0 0 1 8 0V16a4 4 0 0 1-8 0Z"></path><path d="M12 4V2M8.5 5 6.5 3M15.5 5l2-2M8 11H4M16 11h4M8 15H4M16 15h4M10 11h4M12 11v8"></path></symbol>
     <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"></path></symbol>
     <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path></symbol>
@@ -165,11 +166,12 @@
         </nav>
         <div class="header-controls">
           <a id="receiver-health-indicator" class="receiver-health-indicator receiver-health-loading icon-button ui-header-indicator" href="/?view=admin&amp;tab=health" hidden aria-label="Loading receiver status" title="Loading receiver status"><svg aria-hidden="true"><use href="#icon-health"></use></svg><span id="receiver-health-indicator-state" class="visually-hidden">Checking</span></a>
-          <a id="support-report-indicator" class="receiver-health-indicator receiver-health-neutral icon-button ui-header-indicator" href="/?view=admin&amp;tab=support" hidden aria-label="Report a problem" title="Report a problem"><svg aria-hidden="true"><use href="#icon-bug"></use></svg></a>
+          <button type="button" id="page-guide-button" class="icon-button ui-button ui-button-header" data-guide-target="page-help" hidden aria-label="Open page guide" title="Open page guide"><svg aria-hidden="true"><use href="#icon-help-circle"></use></svg></button>
+          <a id="support-report-indicator" data-guide-target="report-issue" class="receiver-health-indicator receiver-health-neutral icon-button ui-header-indicator" href="/?view=admin&amp;tab=support" hidden aria-label="Report a problem" title="Report a problem"><svg aria-hidden="true"><use href="#icon-bug"></use></svg></a>
           <div id="global-status" class="visually-hidden" role="status" aria-live="polite">Loading</div>
           <div id="preference-status" class="preference-status ui-notice" role="status" aria-live="polite" hidden></div>
           <div id="auth-controls" class="auth-controls" aria-live="polite"><span id="auth-status-label" class="auth-session-label" hidden></span><button type="button" id="auth-session-label" class="auth-session-label auth-session-button ui-button ui-button-header" hidden>My Settings</button><button type="button" id="auth-action" class="auth-action ui-button ui-button-header" disabled>Checking access</button></div>
-          <button type="button" id="theme-toggle" class="theme-toggle icon-button ui-button ui-button-header" aria-pressed="false" aria-label="Use dark theme" title="Use dark theme"><svg aria-hidden="true"><use href="#icon-moon"></use></svg></button>
+          <button type="button" id="theme-toggle" data-guide-target="theme" class="theme-toggle icon-button ui-button ui-button-header" aria-pressed="false" aria-label="Use dark theme" title="Use dark theme"><svg aria-hidden="true"><use href="#icon-moon"></use></svg></button>
         </div>
       </header>
       <button type="button" id="navigation-backdrop" class="navigation-backdrop" aria-label="Close navigation" hidden></button>
@@ -186,6 +188,6 @@
         </section>
       </div>
   </div>
-  <script type="module" src="/assets/app.js?v=566"></script>
+  <script type="module" src="/assets/app.js?v=567"></script>
 </body>
 </html>

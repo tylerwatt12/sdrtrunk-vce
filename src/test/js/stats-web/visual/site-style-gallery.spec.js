@@ -58,7 +58,8 @@ for (const view of galleryViews) {
       }
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
       if (view === 'setup-guide') {
-        const dismiss = await page.getByRole('button', { name: 'Dismiss setup guide', exact: true }).boundingBox();
+        await expect(page.locator('.visual-setup-guide-example')).toHaveAttribute('data-ready', 'true');
+        const dismiss = await page.getByRole('button', { name: 'Close guide', exact: true }).boundingBox();
         for (const action of await page.locator('.channel-creation-actions > button').all()) {
           const bounds = await action.boundingBox();
           expect(dismiss.x < bounds.x + bounds.width && dismiss.x + dismiss.width > bounds.x &&

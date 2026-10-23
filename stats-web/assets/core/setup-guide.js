@@ -1,140 +1,343 @@
-// Spotlight existing actions without moving or duplicating their controls.
-// The shared modal owns dismissal, keyboard focus, replacement and cleanup.
-export function openSetupGuide({ node, openReadOnlyModal }, { title, choices, onDismiss }) {
-  const body = node('div', 'ui-setup-guide-choices');
-  const originals = [];
-  const buttons = choices.map(choice => choice.button);
-  let automaticClose = false;
+// Shared page guidance: the modal foundation owns focus, dismissal and replacement.
+// Steps only describe copy, existing targets and temporary presentation work.
+export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }, options) {
+  const steps = options.steps || [];
+  if (!steps.length) return null;
+
+  const body = node('div', 'ui-setup-guide-surface');
+  const copy = node('div', 'ui-setup-guide-copy');
+  const footer = node('div', 'ui-modal-footer ui-modal-footer-flush ui-setup-guide-footer');
+  const progress = node('div', 'ui-setup-guide-progress');
+  const counter = node('span', 'ui-setup-guide-counter');
+  counter.setAttribute('role', 'status');
+  counter.setAttribute('aria-live', 'polite');
+  const dots = node('div', 'ui-setup-guide-dots');
+  dots.setAttribute('aria-hidden', 'true');
+  steps.forEach(() => dots.append(node('span', 'ui-setup-guide-dot')));
+  progress.append(counter, dots);
+  const actions = node('div', 'ui-action-row');
+  const back = node('button', 'ui-button ui-button-secondary', 'Back');
+  const next = node('button', 'ui-button ui-button-primary', 'Next');
+  back.type = next.type = 'button';
+  actions.append(back, next);
+  footer.append(progress, actions);
+  body.append(copy, footer);
+
+  let index = 0;
   let closed = false;
+  let programmaticClose = false;
+  let pendingClose = null;
   let frame = null;
   let observer = null;
+  let stepCleanup = null;
+  let illustrationCleanup = null;
+  let hero = null;
+  const targetIds = new Map();
   let update = () => {};
   const schedule = () => {
     if (closed || frame !== null) return;
     frame = requestAnimationFrame(() => { frame = null; update(); });
   };
-  const restore = () => {
+  const cleanStep = () => {
+    stepCleanup?.();
+    stepCleanup = null;
+    illustrationCleanup?.();
+    illustrationCleanup = null;
+    hero?.remove();
+    hero = null;
+  };
+  const cleanup = () => {
     closed = true;
     if (frame !== null) cancelAnimationFrame(frame);
     observer?.disconnect();
+    cleanStep();
+    targetIds.forEach((original, target) => {
+      if (original === null) target.removeAttribute('id');
+      else target.id = original;
+    });
     window.removeEventListener('resize', schedule);
     document.removeEventListener('scroll', schedule, true);
     window.visualViewport?.removeEventListener('resize', schedule);
     window.visualViewport?.removeEventListener('scroll', schedule);
-    originals.forEach(({ button, id, describedBy, choose }) => {
-      button.removeEventListener('click', choose, true);
-      if (describedBy === null) button.removeAttribute('aria-describedby');
-      else button.setAttribute('aria-describedby', describedBy);
-      if (id === null) button.removeAttribute('id');
-      else button.id = id;
-    });
   };
-  const modal = openReadOnlyModal(title, body, {
-    id: 'setup-guide', className: 'ui-setup-guide', closeLabel: 'Dismiss setup guide',
-    focusTargets: buttons, lockScroll: false, cleanup: restore,
-    onDismiss: () => { if (!automaticClose) onDismiss?.(); }
+  const modal = openReadOnlyModal(steps[0].title || options.title || 'Welcome guide', body, {
+    id: options.id || 'setup-guide', className: 'ui-setup-guide', closeLabel: 'Close guide',
+    lockScroll: false, cleanup,
+    onDismiss: () => { if (!programmaticClose) options.onDismiss?.(); }
   });
   if (!modal) return null;
+
   const backdrop = modal.state.backdrop;
   backdrop.classList.add('ui-setup-guide-backdrop');
-  void modal.ready.then((shown) => {
-    if (!shown || closed) return;
-    const prefix = modal.dialog.querySelector('h2').id;
-    const svgNode = tag => document.createElementNS('http://www.w3.org/2000/svg', tag);
-    const shade = svgNode('svg');
-    shade.classList.add('ui-setup-guide-shade');
-    shade.setAttribute('aria-hidden', 'true');
-    const dimmer = svgNode('path');
-    dimmer.classList.add('ui-setup-guide-dimmer');
-    dimmer.setAttribute('fill-rule', 'evenodd');
-    dimmer.setAttribute('data-modal-dismiss-surface', '');
-    shade.append(dimmer);
-    const highlights = choices.map(({ button, description }, index) => {
-      const id = button.getAttribute('id');
-      const describedBy = button.getAttribute('aria-describedby');
-      if (!id) button.id = `${prefix}-action-${index}`;
-      const detail = node('p', 'ui-setup-guide-description', description);
-      detail.id = `${prefix}-choice-${index}`;
-      button.setAttribute('aria-describedby', [describedBy, detail.id].filter(Boolean).join(' '));
-      const choice = node('div', 'ui-setup-guide-choice');
-      choice.append(node('strong', '', button.textContent.trim()), detail);
-      body.append(choice);
-      const choose = () => modal.close();
-      originals.push({ button, id, describedBy, choose });
-      button.addEventListener('click', choose, true);
+  const heading = modal.dialog.querySelector('h2');
+  const header = modal.dialog.querySelector('.modal-header');
+  const headingGroup = node('div', 'ui-setup-guide-heading');
+  const eyebrow = node('p', 'ui-setup-guide-eyebrow', options.eyebrow || 'WELCOME GUIDE');
+  heading.before(headingGroup);
+  headingGroup.append(eyebrow, heading);
+
+  const svgNode = tag => document.createElementNS('http://www.w3.org/2000/svg', tag);
+  const shade = svgNode('svg');
+  shade.classList.add('ui-setup-guide-shade');
+  shade.setAttribute('aria-hidden', 'true');
+  const definitions = svgNode('defs');
+  const mask = svgNode('mask');
+  const maskId = `${heading.id}-spotlight`;
+  mask.id = maskId;
+  mask.setAttribute('maskUnits', 'userSpaceOnUse');
+  mask.setAttribute('x', '0');
+  mask.setAttribute('y', '0');
+  const maskSurface = svgNode('rect');
+  maskSurface.classList.add('ui-setup-guide-mask-surface');
+  mask.append(maskSurface);
+  definitions.append(mask);
+  const dimmer = svgNode('path');
+  dimmer.classList.add('ui-setup-guide-dimmer');
+  dimmer.setAttribute('mask', `url(#${maskId})`);
+  dimmer.setAttribute('data-modal-dismiss-surface', '');
+  const highlights = svgNode('g');
+  shade.append(definitions, dimmer, highlights);
+  backdrop.prepend(shade);
+  const pointer = node('div', 'ui-setup-guide-pointer');
+  pointer.setAttribute('aria-hidden', 'true');
+  pointer.hidden = true;
+  modal.dialog.before(pointer);
+
+  const numericToken = (name, fallback) => {
+    const value = parseFloat(getComputedStyle(backdrop).getPropertyValue(name));
+    return Number.isFinite(value) ? value : fallback;
+  };
+  const targets = () => [...(steps[index].targets?.() || [])]
+    .filter(target => target?.isConnected && target.getClientRects().length);
+  const paintRect = (element, rectangle) => {
+    for (const [name, value] of Object.entries({
+      x: rectangle.left, y: rectangle.top, width: rectangle.right - rectangle.left,
+      height: rectangle.bottom - rectangle.top
+    })) element.setAttribute(name, String(value));
+  };
+  const close = (onClosed) => {
+    if (closed) return;
+    programmaticClose = true;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      onClosed?.();
+    };
+    if (!backdrop.isConnected) {
+      pendingClose = finish;
+      return;
+    }
+    if (modal.close(finish)) finish();
+  };
+
+  update = () => {
+    if (closed || !backdrop.isConnected) return;
+    const width = document.documentElement.clientWidth;
+    const height = document.documentElement.clientHeight;
+    const gutter = numericToken('--guide-viewport-gap', 24);
+    const padding = numericToken('--guide-spotlight-padding', 8);
+    const gap = numericToken('--guide-anchor-gap', 24);
+    const radius = numericToken('--guide-spotlight-radius', 12);
+    const bounds = targets().map(target => {
+      if (!targetIds.has(target)) targetIds.set(target, target.getAttribute('id'));
+      if (!target.id) target.id = `${heading.id}-target-${targetIds.size}`;
+      const rectangle = target.getBoundingClientRect();
+      return { left: rectangle.left, top: rectangle.top, right: rectangle.right,
+        bottom: rectangle.bottom, target };
+    })
+      .filter(rect => rect.right > 0 && rect.bottom > 0 && rect.left < width && rect.top < height)
+      .map(rect => ({ left: Math.max(0, rect.left - padding), top: Math.max(0, rect.top - padding),
+        right: Math.min(width, rect.right + padding), bottom: Math.min(height, rect.bottom + padding),
+        target: rect.target }));
+    shade.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    mask.setAttribute('width', String(width));
+    mask.setAttribute('height', String(height));
+    paintRect(maskSurface, { left: 0, top: 0, right: width, bottom: height });
+    dimmer.setAttribute('d', `M0 0H${width}V${height}H0Z`);
+    // Black mask regions form a union: overlapping targets never dim one another.
+    mask.replaceChildren(maskSurface);
+    definitions.replaceChildren(mask);
+    highlights.replaceChildren();
+    bounds.forEach((rect, rectIndex) => {
+      const hole = svgNode('rect');
+      hole.classList.add('ui-setup-guide-mask-hole');
+      hole.setAttribute('rx', String(radius));
+      paintRect(hole, rect);
+      mask.append(hole);
       const highlight = svgNode('rect');
       highlight.classList.add('ui-setup-guide-highlight');
-      highlight.setAttribute('data-setup-guide-target', button.id);
-      shade.append(highlight);
-      return highlight;
-    });
-    modal.dialog.setAttribute('aria-owns', buttons.map(button => button.id).join(' '));
-    backdrop.prepend(shade);
-    const styles = getComputedStyle(backdrop);
-    const inset = parseFloat(styles.getPropertyValue('--space-1'));
-    const gap = parseFloat(styles.getPropertyValue('--space-3'));
-    const gutter = parseFloat(styles.getPropertyValue('--space-4'));
-    update = () => {
-      if (closed) return;
-      if (buttons.some(button => !button.isConnected)) {
-        automaticClose = true;
-        modal.close();
-        return;
-      }
-      const width = document.documentElement.clientWidth;
-      const height = document.documentElement.clientHeight;
-      shade.setAttribute('viewBox', `0 0 ${width} ${height}`);
-      const bounds = buttons.map(button => button.getBoundingClientRect());
-      let path = `M0 0H${width}V${height}H0Z`;
-      bounds.forEach((rect, index) => {
-        const left = Math.max(0, rect.left - inset);
-        const top = Math.max(0, rect.top - inset);
-        const right = Math.min(width, rect.right + inset);
-        const bottom = Math.min(height, rect.bottom + inset);
-        const visible = right > left && bottom > top;
-        highlights[index].toggleAttribute('hidden', !visible);
-        if (!visible) return;
-        path += `M${left} ${top}H${right}V${bottom}H${left}Z`;
-        for (const [key, value] of Object.entries({ x: left, y: top, width: right - left, height: bottom - top })) {
-          highlights[index].setAttribute(key, String(value));
+      highlight.setAttribute('data-setup-guide-target', rect.target.id);
+      highlight.setAttribute('rx', String(radius));
+      paintRect(highlight, rect);
+      if (steps[index].groupTargets && bounds.length > 1) {
+        // Hide each outline wherever another spotlight covers it. The remaining
+        // strokes trace the union's silhouette without exposing its bounding box.
+        const outlineMask = svgNode('mask');
+        outlineMask.id = `${maskId}-outline-${rectIndex}`;
+        for (const [name, value] of Object.entries({ maskUnits: 'userSpaceOnUse', x: 0, y: 0, width, height })) {
+          outlineMask.setAttribute(name, String(value));
         }
-      });
-      dimmer.setAttribute('d', path);
-      // Keep the explanation beside the toolbar, choosing the side with room.
-      modal.dialog.style.maxHeight = `${height - gutter * 2}px`;
-      const panel = modal.dialog.getBoundingClientRect();
-      const top = Math.min(...bounds.map(rect => rect.top)) - inset;
-      const bottom = Math.max(...bounds.map(rect => rect.bottom)) + inset;
-      const below = height - gutter - bottom - gap;
-      const above = top - gap - gutter;
-      const useBelow = below >= panel.height || below >= above;
-      const room = Math.max(0, useBelow ? below : above);
-      modal.dialog.style.maxHeight = `${room}px`;
-      const panelHeight = Math.min(panel.height, room);
-      modal.dialog.style.left = `${Math.max(gutter, Math.min(Math.min(...bounds.map(rect => rect.left)),
-        width - gutter - panel.width))}px`;
-      modal.dialog.style.top = `${Math.max(gutter, Math.min(useBelow ? bottom + gap : top - gap - panelHeight,
-        height - gutter - panelHeight))}px`;
-    };
-    // Summary cards can put the real toolbar below the fold on a phone.
-    const visible = buttons.every(button => {
-      const rect = button.getBoundingClientRect();
-      return rect.top >= gutter && rect.bottom <= document.documentElement.clientHeight - gutter;
+        const surface = svgNode('rect');
+        surface.classList.add('ui-setup-guide-mask-surface');
+        paintRect(surface, { left: 0, top: 0, right: width, bottom: height });
+        outlineMask.append(surface);
+        bounds.forEach((other, otherIndex) => {
+          if (otherIndex === rectIndex) return;
+          const cutout = svgNode('rect');
+          cutout.classList.add('ui-setup-guide-mask-hole');
+          cutout.setAttribute('rx', String(radius));
+          paintRect(cutout, other);
+          outlineMask.append(cutout);
+        });
+        definitions.append(outlineMask);
+        highlight.setAttribute('mask', `url(#${outlineMask.id})`);
+      }
+      // Transparent filled hit regions shield the live controls underneath.
+      highlights.append(highlight);
     });
-    if (!visible) buttons[0].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    if (steps[index].groupTargets) bounds.forEach(rect => {
+      const hitRegion = svgNode('rect');
+      hitRegion.classList.add('ui-setup-guide-hit-region');
+      hitRegion.setAttribute('rx', String(radius));
+      paintRect(hitRegion, rect);
+      highlights.append(hitRegion);
+    });
+
+    modal.dialog.style.maxHeight = `${Math.max(0, height - gutter * 2)}px`;
+    const panel = modal.dialog.getBoundingClientRect();
+    let left = (width - panel.width) / 2;
+    let top = (height - panel.height) / 2;
+    let anchor = null;
+    if (bounds.length) {
+      anchor = { left: Math.min(...bounds.map(rect => rect.left)),
+        top: Math.min(...bounds.map(rect => rect.top)),
+        right: Math.max(...bounds.map(rect => rect.right)),
+        bottom: Math.max(...bounds.map(rect => rect.bottom)) };
+      const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+      const sideTop = Math.max(gutter, anchor.top, headerBottom ? headerBottom + gap / 2 : 0);
+      const candidates = [
+        { left: anchor.right + gap, top: sideTop },
+        { left: anchor.left, top: anchor.bottom + gap },
+        { left: anchor.left - panel.width - gap, top: sideTop },
+        { left: anchor.left, top: anchor.top - panel.height - gap }
+      ];
+      const score = candidate => Math.max(0, gutter - candidate.left) + Math.max(0, gutter - candidate.top) +
+        Math.max(0, candidate.left + panel.width + gutter - width) +
+        Math.max(0, candidate.top + panel.height + gutter - height);
+      const candidate = candidates.reduce((best, value) => score(value) < score(best) ? value : best);
+      left = candidate.left;
+      top = candidate.top;
+    }
+    left = Math.max(gutter, Math.min(left, width - gutter - panel.width));
+    top = Math.max(gutter, Math.min(top, height - gutter - panel.height));
+    modal.dialog.style.left = `${left}px`;
+    modal.dialog.style.top = `${top}px`;
+    pointer.hidden = true;
+    if (anchor) {
+      const half = numericToken('--guide-pointer-size', 16) / 2;
+      const inset = numericToken('--guide-card-radius', 20) + half;
+      const clamp = (value, start, length) => Math.max(start + Math.min(inset, length / 2),
+        Math.min(value, start + length - Math.min(inset, length / 2)));
+      let x;
+      let y;
+      if (left >= anchor.right || left + panel.width <= anchor.left) {
+        x = left >= anchor.right ? left : left + panel.width;
+        y = clamp((anchor.top + anchor.bottom) / 2, top, panel.height);
+      } else if (top >= anchor.bottom || top + panel.height <= anchor.top) {
+        x = clamp((anchor.left + anchor.right) / 2, left, panel.width);
+        y = top >= anchor.bottom ? top : top + panel.height;
+      }
+      if (x !== undefined) {
+        pointer.style.left = `${x - half}px`;
+        pointer.style.top = `${y - half}px`;
+        pointer.hidden = false;
+      }
+    }
+  };
+
+  const showStep = () => {
+    if (closed) return;
+    cleanStep();
+    observer?.disconnect();
+    const step = steps[index];
+    const prepared = step.prepare?.();
+    stepCleanup = typeof prepared === 'function' ? prepared : null;
+    modal.setTitle(step.title || options.title || 'Welcome guide');
+    modal.dialog.dataset.guideId = options.id || 'setup-guide';
+    modal.dialog.dataset.guideStep = step.id || String(index + 1);
+    modal.dialog.classList.toggle('ui-setup-guide--illustrated', Boolean(step.illustration));
+    copy.replaceChildren();
+    (step.paragraphs || []).forEach(text => copy.append(node('p', 'ui-setup-guide-description', text)));
+    if (step.items?.length) {
+      const items = node('div', 'ui-setup-guide-items');
+      step.items.forEach(({ label, text }) => {
+        const item = node('div', 'ui-setup-guide-item');
+        item.append(node('strong', '', label), node('p', 'ui-setup-guide-description', text));
+        items.append(item);
+      });
+      copy.append(items);
+    }
+    if (step.hint) copy.append(node('p', 'ui-setup-guide-hint', step.hint));
+    if (step.illustration) {
+      hero = node('div', 'ui-setup-guide-illustration');
+      const canvas = node('canvas', 'ui-setup-guide-wireframe');
+      canvas.setAttribute('aria-hidden', 'true');
+      const mark = node('img', 'ui-setup-guide-wordmark');
+      mark.src = '/assets/vce-wordmark.svg?v=3';
+      mark.alt = '';
+      hero.append(canvas, mark);
+      header.before(hero);
+      illustrationCleanup = mountAccessWireframe?.(canvas, { compact: true }) || null;
+    }
+    back.hidden = index === 0;
+    next.replaceChildren(node('span', '', step.nextLabel || (index === steps.length - 1 ? 'Done' : 'Next')));
+    const nextIcon = svgNode('svg');
+    nextIcon.setAttribute('aria-hidden', 'true');
+    const nextUse = svgNode('use');
+    nextUse.setAttribute('href', '#icon-chevron-right');
+    nextIcon.append(nextUse);
+    next.append(nextIcon);
+    counter.textContent = `Step ${index + 1} of ${steps.length}`;
+    [...dots.children].forEach((dot, dotIndex) => {
+      dot.classList.toggle('is-current', dotIndex === index);
+      dot.classList.toggle('is-complete', dotIndex < index);
+    });
     update();
+    if (typeof ResizeObserver !== 'undefined') {
+      observer ||= new ResizeObserver(schedule);
+      observer.observe(modal.dialog);
+      targets().forEach(target => observer.observe(target));
+    }
+    options.onStepChange?.(index, step);
+    modal.focus(next);
+  };
+  const advance = () => {
+    if (closed) return;
+    if (index === steps.length - 1) close(() => options.onComplete?.());
+    else { index += 1; showStep(); }
+  };
+  const retreat = () => {
+    if (closed || index === 0) return;
+    index -= 1;
+    showStep();
+  };
+  next.addEventListener('click', advance);
+  back.addEventListener('click', retreat);
+  void modal.ready.then(shown => {
+    if (!shown || closed) return;
+    if (pendingClose) {
+      const finish = pendingClose;
+      pendingClose = null;
+      close(finish);
+      return;
+    }
     window.addEventListener('resize', schedule);
     document.addEventListener('scroll', schedule, true);
     window.visualViewport?.addEventListener('resize', schedule);
     window.visualViewport?.addEventListener('scroll', schedule);
-    observer = new ResizeObserver(schedule);
-    observer.observe(modal.dialog);
-    buttons.forEach(button => observer.observe(button));
-    modal.focus(buttons[0]);
+    showStep();
   });
-  return {
-    ready: modal.ready,
-    isOpen: () => !closed && backdrop.isConnected,
-    close: () => { automaticClose = true; modal.close(); }
-  };
+  return { ready: modal.ready, isOpen: () => !closed && backdrop.isConnected, close,
+    next: advance, back: retreat };
 }

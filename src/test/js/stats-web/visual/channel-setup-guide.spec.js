@@ -8,7 +8,7 @@ const guide = page => page.getByRole('dialog', { name: 'Add your first channel',
 const toolbarAction = (page, name) => page.locator('.channel-creation-actions')
   .getByRole('button', { name, exact: true });
 const actionNames = ['Find Trunked Systems', 'New channel'];
-const dismissalKey = 'sdrtrunk-vce-channel-setup-guide-dismissed:v2:fixture-admin:account-1-100';
+const guideRoot = page => page.locator('.ui-setup-guide');
 
 async function expectWithinViewport(locator, viewport) {
   await expect.poll(async () => {
@@ -18,29 +18,22 @@ async function expectWithinViewport(locator, viewport) {
   }).toBe(true);
 }
 
-async function expectSpotlightsFollowToolbar(page) {
-  const viewport = page.viewportSize();
-  for (const name of actionNames) {
+async function expectSpotlightsFollowToolbar(page, names = ['New channel']) {
+  for (const name of names) {
     const action = toolbarAction(page, name);
     const bounds = await action.boundingBox();
-    const targetId = await action.getAttribute('id');
-    expect(targetId).toBeTruthy();
-    const highlight = page.locator(`.ui-setup-guide-highlight[data-setup-guide-target="${targetId}"]`);
-    await expect(highlight).toHaveCount(1);
-    const expected = { x: Math.max(0, bounds.x - 4), y: Math.max(0, bounds.y - 4),
-      width: Math.min(viewport.width, bounds.x + bounds.width + 4) - Math.max(0, bounds.x - 4),
-      height: Math.min(viewport.height, bounds.y + bounds.height + 4) - Math.max(0, bounds.y - 4) };
-    await expect.poll(async () => highlight.evaluate((element, expectedBounds) =>
-      ['x', 'y', 'width', 'height'].every(coordinate =>
-        Math.abs(Number(element.getAttribute(coordinate)) - expectedBounds[coordinate]) <= 1), expected)).toBe(true);
-    const panel = await guide(page).boundingBox();
-    const overlap = panel.x < bounds.x + bounds.width && panel.x + panel.width > bounds.x &&
-      panel.y < bounds.y + bounds.height && panel.y + panel.height > bounds.y;
-    expect(overlap).toBe(false);
-    const dismiss = await guide(page).getByRole('button', { name: 'Dismiss setup guide', exact: true }).boundingBox();
-    expect(dismiss.x < bounds.x + bounds.width && dismiss.x + dismiss.width > bounds.x &&
-      dismiss.y < bounds.y + bounds.height && dismiss.y + dismiss.height > bounds.y,
-    `Dismiss control does not cover ${name}`).toBe(false);
+    await expect.poll(async () => action.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return [...document.querySelectorAll('.ui-setup-guide-highlight')].some(highlight => {
+        const rect = highlight.getBoundingClientRect();
+        return rect.left <= bounds.left && rect.top <= bounds.top &&
+          rect.right >= bounds.right && rect.bottom >= bounds.bottom;
+      });
+    })).toBe(true);
+    const panel = await guideRoot(page).boundingBox();
+    expect(panel.x < bounds.x + bounds.width && panel.x + panel.width > bounds.x &&
+      panel.y < bounds.y + bounds.height && panel.y + panel.height > bounds.y,
+    `Guide does not cover ${name}`).toBe(false);
   }
 }
 
@@ -87,12 +80,12 @@ async function openChannels(page, options = {}) {
     source: { frequencies_hz: [], preferred_tuner: null }, settings: {}, event_logs: [], recorders: [], auxiliary_decoders: [] } } }));
   if (options.noTunerAccess) await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
     configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
-    csrf_token: 'fixture-csrf', capabilities: { 'admin-channels': true, 'admin-tuners': false, 'user-settings': true } } } }));
+    csrf_token: 'fixture-csrf', guide_dismissal_scope: 'account-1-100', capabilities: { 'admin-channels': true, 'admin-tuners': false, 'user-settings': true } } } }));
   if (options.noRadioReferenceAccess) await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
     configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
-    csrf_token: 'fixture-csrf', capabilities: { 'admin-channels': true, 'admin-tuners': true,
+    csrf_token: 'fixture-csrf', guide_dismissal_scope: 'account-1-100', capabilities: { 'admin-channels': true, 'admin-tuners': true,
       'admin-aliases': false, 'user-settings': true } } } }));
-  await page.goto('/app.html?view=channel-setup');
+  await page.goto(`/app.html?view=channel-setup${options.guide ? `&guide=${options.guide}` : ''}`);
   await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   return { fixture, state };
 }
@@ -134,7 +127,8 @@ for (const theme of ['light', 'dark']) {
       expect(actionBounds.x).toBeCloseTo(tableBounds.x, 0);
       const actionFilterGap = filterBounds.y - (actionBounds.y + actionBounds.height);
       expect(actionFilterGap).toBeGreaterThanOrEqual(8);
-      expect(actionFilterGap).toBeLessThanOrEqual(width >= 760 ? 8 : 64);
+      const summaryBounds = await page.locator('.channel-summary-row').boundingBox();
+      expect(actionFilterGap).toBeLessThanOrEqual(width >= 760 ? 8 : summaryBounds.height + 16);
       expect(tableBounds.y - (filterBounds.y + filterBounds.height)).toBeLessThanOrEqual(16);
       if (width >= 390) {
         const buttons = await actions.locator(':scope > button').all();
@@ -151,118 +145,53 @@ for (const theme of ['light', 'dark']) {
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`first channel guide fits a 320px phone ${theme}`, async ({ page }) => {
-    const viewport = { width: 320, height: 740 };
-    await page.setViewportSize(viewport);
-    await page.goto(`/design-system.html?view=setup-guide&theme=${theme}`);
-    await expect(guide(page)).toBeVisible();
-    await expect(guide(page).getByRole('button', { name: 'Dismiss setup guide', exact: true })).toBeVisible();
-    for (const name of actionNames) {
-      await expect(toolbarAction(page, name)).toBeVisible();
-      await expectWithinViewport(toolbarAction(page, name), viewport);
-    }
-    await expectWithinViewport(guide(page), viewport);
-    await expectSpotlightsFollowToolbar(page);
-  });
-
-  test(`setup guide follows the toolbar when resized ${theme}`, async ({ page }) => {
+  test(`Channel Setup guide uses the shared page tour and follows the original controls ${theme}`, async ({ page }) => {
     const { fixture } = await openChannels(page, { theme });
+    const actions = await captureToolbarActions(page);
+    await page.locator('#page-guide-button').click();
     await expect(guide(page)).toBeVisible();
-    for (const viewport of [{ width: 320, height: 740 }, { width: 960, height: 800 }]) {
-      await page.setViewportSize(viewport);
-      await expectWithinViewport(guide(page), viewport);
-      for (const name of actionNames) await expectWithinViewport(toolbarAction(page, name), viewport);
-      await expectSpotlightsFollowToolbar(page);
-    }
-    await toolbarAction(page, 'Find Trunked Systems').click();
-    await expect(guide(page)).toHaveCount(0);
-    await expect(page.getByRole('dialog', { name: 'Find Trunked Systems', exact: true })).toBeVisible();
+    await expect(guideRoot(page)).toContainText('Step 1 of 6');
+    await expectToolbarActionsUnmoved(page, actions);
+    await expectSpotlightsFollowToolbar(page);
+    await expectWithinViewport(guideRoot(page), page.viewportSize());
+    await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guideRoot(page)).toContainText('Search for trunked systems');
+    await expect(guideRoot(page)).toContainText('Step 2 of 6');
+    await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(guide(page)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(guideRoot(page)).toHaveCount(0);
+    await expectToolbarActionsUnmoved(page, actions);
+    for (const { button, describedBy } of actions) expect(await button.getAttribute('aria-describedby')).toBe(describedBy);
     expect(fixture.pageErrors).toEqual([]);
   });
 }
 
-test('setup guide highlights the original toolbar buttons without moving them', async ({ page }) => {
-  const { fixture, state } = await openChannels(page, { holdCatalog: true });
-  await expect.poll(() => state.catalogReads).toBeGreaterThan(0);
-  const actions = await captureToolbarActions(page);
-  state.releaseCatalog();
+test('Channel Setup guide URL replays the complete guide after dismissal', async ({ page }) => {
+  const { fixture } = await openChannels(page, { guide: 'page' });
   await expect(guide(page)).toBeVisible();
-  await expectToolbarActionsUnmoved(page, actions);
-  await expectSpotlightsFollowToolbar(page);
-  await guide(page).getByRole('button', { name: 'Dismiss setup guide', exact: true }).click();
-  await expect(guide(page)).toHaveCount(0);
-  await expectToolbarActionsUnmoved(page, actions);
-  for (const { button, describedBy } of actions) expect(await button.getAttribute('aria-describedby')).toBe(describedBy);
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('setup guide keeps keyboard focus and remembers dismissal after reload', async ({ page }) => {
-  const { fixture } = await openChannels(page);
-  await expect(guide(page)).toBeVisible();
-  await expect(guide(page)).toContainText('Search for trunked radio systems your tuner can receive.');
-  await expect(guide(page)).toContainText('Import a channel from RadioReference or set it up using a known frequency.');
-  await expect(page.getByRole('button', { name: 'New channel', exact: true })).toHaveCount(1);
-  const focusNames = new Set();
-  for (let index = 0; index < 6; index++) {
-    await page.keyboard.press('Tab');
-    const name = await page.evaluate(() => document.activeElement.getAttribute('aria-label') || document.activeElement.textContent.trim());
-    expect(['Dismiss setup guide', ...actionNames]).toContain(name);
-    focusNames.add(name);
+  const expectedTitles = ['Search for trunked systems', 'Find the channel you need', 'Start receiving',
+    'Ready when you are', 'Choose what you hear'];
+  for (const title of expectedTitles) {
+    await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guideRoot(page)).toContainText(title);
   }
-  expect([...focusNames].sort()).toEqual(['Dismiss setup guide', ...actionNames].sort());
-  await page.keyboard.press('Shift+Tab');
-  expect(await page.evaluate(() => document.activeElement.getAttribute('aria-label') || document.activeElement.textContent.trim()))
-    .toMatch(/^(Dismiss setup guide|Find Trunked Systems|New channel)$/);
-  await page.keyboard.press('Escape');
-  await expect(guide(page)).toHaveCount(0);
-  await expect(toolbarAction(page, 'New channel')).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await expect(guide(page)).toHaveCount(0);
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('a new install with the same username shows guidance despite an old install dismissal', async ({ page }) => {
-  const { fixture } = await openChannels(page);
+  await guideRoot(page).getByRole('button', { name: 'Finish', exact: true }).click();
+  await expect(guideRoot(page)).toHaveCount(0);
+  await page.goto('/app.html?view=channel-setup&guide=page');
   await expect(guide(page)).toBeVisible();
-  await guide(page).getByRole('button', { name: 'Dismiss setup guide', exact: true }).click();
-  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBe('1');
-  fixture.guideDismissalScope = 'account-1-200';
-  await page.reload();
-  await expect(guide(page)).toBeVisible();
-  await expectSpotlightsFollowToolbar(page);
-  await page.screenshot({ path: test.info().outputPath('first-channel-guide-new-install.png') });
-  await page.keyboard.press('Escape');
-  await page.reload();
+  await guideRoot(page).getByRole('button', { name: 'Close guide', exact: true }).click();
+  await expect(guideRoot(page)).toHaveCount(0);
+  // The fixture server mounts the application at /app.html and the gallery at /.
+  await page.goto(`/app.html${new URL(page.url()).search}`);
   await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
-  await expect(guide(page)).toHaveCount(0);
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('the old username-only dismissal does not hide first-install guidance', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-channel-setup-guide-dismissed:fixture-admin', '1'));
-  const { fixture } = await openChannels(page);
-  await expect(guide(page)).toBeVisible();
-  await expectSpotlightsFollowToolbar(page);
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('clicking the dimmed page dismisses the guide without activating its background', async ({ page }) => {
-  const { fixture } = await openChannels(page);
-  await expect(guide(page)).toBeVisible();
-  await page.mouse.click(8, 80);
-  await expect(guide(page)).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
-  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBe('1');
-  for (const name of actionNames) await expect(toolbarAction(page, name)).toBeVisible();
+  await expect(guideRoot(page)).toHaveCount(0);
   expect(fixture.pageErrors).toEqual([]);
 });
 
 for (const [action, destination] of [['New channel', 'Create Channel'], ['Find Trunked Systems', 'Find Trunked Systems']]) {
-  test(`guide opens the existing ${action} workflow and restores toolbar actions`, async ({ page }) => {
+  test(`Channel Setup opens the existing ${action} workflow`, async ({ page }) => {
     const { fixture } = await openChannels(page);
-    await expect(guide(page)).toBeVisible();
     await toolbarAction(page, action).click();
     await expect(guide(page)).toHaveCount(0);
     if (action === 'New channel') {
@@ -284,7 +213,7 @@ for (const [action, destination] of [['New channel', 'Create Channel'], ['Find T
 
 for (const { theme, viewport, entry } of [
   { theme: 'light', viewport: { width: 1280, height: 800 }, entry: 'toolbar' },
-  { theme: 'dark', viewport: { width: 320, height: 740 }, entry: 'setup guide' }
+  { theme: 'dark', viewport: { width: 320, height: 740 }, entry: 'toolbar' }
 ]) {
   test(`new channel choices open RadioReference from the ${entry} ${theme}`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -295,7 +224,6 @@ for (const { theme, viewport, entry } of [
           path === '/api/v1/admin/channels' && request.method() === 'POST') editorRequests.push(path);
     });
     const { fixture } = await openChannels(page, { theme, ...(entry === 'toolbar' ? { tuners: [] } : {}) });
-    if (entry === 'setup guide') await expect(guide(page)).toBeVisible();
     const newChannel = toolbarAction(page, 'New channel');
     await newChannel.focus();
     await page.keyboard.press('Enter');
@@ -314,7 +242,7 @@ for (const { theme, viewport, entry } of [
     await expectWithinViewport(chooser, viewport);
     await expectWithinViewport(importChoice, viewport);
     await expectWithinViewport(manualChoice, viewport);
-    await expect(chooser).toHaveScreenshot(`new-channel-choice-${theme}-${entry === 'toolbar' ? 'desktop' : 'mobile'}.png`);
+    await expect(chooser).toHaveScreenshot(`new-channel-choice-${theme}-${viewport.width > 760 ? 'desktop' : 'mobile'}.png`);
     await page.screenshot({ path: test.info().outputPath(`new-channel-choice-${theme}-viewport.png`) });
     await page.keyboard.press('Escape');
     await expect(chooser).toHaveCount(0);
@@ -353,25 +281,6 @@ test('new channel keeps manual creation available without RadioReference access'
   expect(fixture.pageErrors).toEqual([]);
 });
 
-for (const [name, options] of [
-  ['no tuners', { tuners: [] }],
-  ['ineligible tuner', { tuners: [{ ...eligibleTuner, eligible: false }] }],
-  ['recording source', { tuners: [{ ...eligibleTuner, source_type: 'recording' }] }],
-  ['unavailable catalog', { catalogFailure: true }],
-  ['no tuner access', { noTunerAccess: true }]
-]) {
-  test(`guide is absent with ${name}`, async ({ page }) => {
-    const { fixture, state } = await openChannels(page, options);
-    await expect(page.getByRole('button', { name: 'New channel', exact: true })).toBeVisible();
-    if (options.noTunerAccess) {
-      await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
-    } else await expect.poll(() => state.catalogReads).toBeGreaterThan(0);
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    await expect(guide(page)).toHaveCount(0);
-    expect(fixture.pageErrors).toEqual([]);
-  });
-}
-
 test('filters hiding configured channels do not trigger first channel guidance', async ({ page }) => {
   const { fixture } = await openChannels(page, { channels: [{ configuration_id: 'existing-channel', name: 'Existing channel',
     protocol: 'P25', protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', channel_kind: 'TRUNKED',
@@ -380,56 +289,5 @@ test('filters hiding configured channels do not trigger first channel guidance',
   await page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists', exact: true }).fill('No match');
   await expect(page.getByText('No channels match this view', { exact: true })).toBeVisible();
   await expect(guide(page)).toHaveCount(0);
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('tuner readiness changes automatically remove and restore guidance without dismissing it', async ({ page }) => {
-  await page.clock.install();
-  const { fixture, state } = await openChannels(page);
-  await expect(guide(page)).toBeVisible();
-  state.tuners = [];
-  await page.clock.fastForward(5100);
-  await expect(guide(page)).toHaveCount(0);
-  await expect(toolbarAction(page, 'New channel')).toBeVisible();
-  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
-  state.tuners = [eligibleTuner];
-  await page.clock.fastForward(5100);
-  await expect(guide(page)).toBeVisible();
-  state.catalogFailure = true;
-  await page.clock.fastForward(5100);
-  await expect(guide(page)).toHaveCount(0);
-  state.catalogFailure = false;
-  await page.clock.fastForward(5100);
-  await expect(guide(page)).toBeVisible();
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('adding a channel removes the guide automatically', async ({ page }) => {
-  await page.clock.install();
-  const { fixture, state } = await openChannels(page);
-  await expect(guide(page)).toBeVisible();
-  state.channels = [{ configuration_id: 'new-channel', name: 'Newly configured channel', protocol: 'P25',
-    protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', channel_kind: 'TRUNKED',
-    frequencies_hz: [851012500], processing_state: 'STOPPED', editable: true }];
-  state.revision += 1;
-  await page.clock.fastForward(5100);
-  await expect(guide(page)).toHaveCount(0);
-  await expect(page.locator('.channel-catalog-table tr[data-id="new-channel"]')).toBeVisible();
-  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-test('a pending tuner readiness lookup cannot open guidance after navigation', async ({ page }) => {
-  const { fixture, state } = await openChannels(page, { holdCatalog: true });
-  await expect.poll(() => state.catalogReads).toBeGreaterThan(0);
-  await page.evaluate(() => {
-    history.pushState({}, '', '/app.html?view=dashboard');
-    dispatchEvent(new PopStateEvent('popstate'));
-  });
-  await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
-  state.releaseCatalog();
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await expect(guide(page)).toHaveCount(0);
-  expect(await page.evaluate(key => localStorage.getItem(key), dismissalKey)).toBeNull();
   expect(fixture.pageErrors).toEqual([]);
 });

@@ -626,6 +626,8 @@ async function main() {
   const browsing = await loadModule('browsing-workflows');
   await require('./party-column-layouts.test').checkPartyColumnLayouts(core);
   await require('./message-types.test').checkMessageTypes(core, appSource);
+  await require('./guide-persistence.test').checkGuidePersistence(path.resolve(core, '..'));
+  await require('./guides.test').checkGuides(path.resolve(core, '..'));
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');
   assert.equal(browsing.scanListAvailabilityLabel({ published: false }), 'Hidden from listeners');
