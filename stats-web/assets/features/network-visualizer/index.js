@@ -262,7 +262,7 @@ function createP25Visualizer(dependencies = {}) {
     const highlightCard = settingsCard('Scene highlights',
       'Briefly emphasize new saved observations.', ...choices('highlight'));
     const zoomCard = settingsCard('Automatic camera',
-      'Let new saved observations move the Auto camera. Manual mode stays under your control.',
+      'Let new saved observations move the Auto camera.',
       ...choices('autoZoom'));
     const cancel = textButton(node, 'Cancel');
     const save = textButton(node, 'Save choices', 'ui-button ui-button-primary');

@@ -130,6 +130,9 @@ async function install(page, state = {}) {
   let leaseSequence = 0;
   const takeoverLeases = new Set();
   const preferenceModule = await import(pathToFileURL(resolve(root, 'stats-web/assets/core/preference-schema.js')).href);
+  const { guideStorageKey } = await import(pathToFileURL(resolve(root, 'stats-web/assets/guides/persistence.js')).href);
+  await page.addInitScript(keys => keys.forEach(key => localStorage.setItem(key, '1')),
+    ['welcome', 'channel-setup'].map(id => guideStorageKey(null, 'spectrum-search-fixture', id)));
   await page.route('**/assets/app.js*', (route) => route.fulfill({ contentType: 'text/javascript',
     body: `${readFileSync(resolve(root, 'stats-web/assets/app.js'), 'utf8')}\nexport { closeReadOnlyModal };` }));
   await page.route('**/api/v1/**', async (route) => {
@@ -141,6 +144,7 @@ async function install(page, state = {}) {
     const fail = (message, code = 'unavailable', status = 503) => route.fulfill({ status, contentType: 'application/json',
       body: JSON.stringify({ error: { message, code } }) });
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true, tier: 'admin',
+      guide_dismissal_scope: 'spectrum-search-fixture',
       csrf_token: 'test-token', capabilities: { 'web-access': true, dashboard: true, 'tuner-spectrum': true,
         'admin-settings': state.adminSettings !== false, 'admin-tuners': state.adminTuners !== false, 'admin-channels': state.adminChannels !== false, 'admin-aliases': true } });
     if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({

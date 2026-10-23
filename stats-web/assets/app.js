@@ -4849,10 +4849,9 @@ function scanListMemberColumns(rows, onSelectionChange) {
 
 function aliasEditorEmptyState(lists) {
   const wrapper = node('section', 'alias-editor-welcome ui-empty-state');
-  wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'),
-    node('p', '', lists.length ?
-      'Aliases load only after you select a list. This keeps large radio systems responsive.' :
-      'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
+  wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'));
+  if (!lists.length) wrapper.append(node('p', '',
+    'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
   const create = node('button', 'ui-button ui-button-primary', 'Create Alias List');
   create.type = 'button';
   create.addEventListener('click', () => openAliasListCreateModal());
@@ -13270,7 +13269,7 @@ function liveDetailFilterController(options) {
     if (!catalog) return;
     const modalBody = node('div', 'live-filter-editor');
     modalBody.append(node('p', 'modal-lead',
-      `Choose which ${options.noun} to show. Filters only change what you see here.`));
+      `Choose which ${options.noun} to show.`));
     const typeSection = node('section', 'live-filter-section');
     typeSection.append(node('h3', '', options.typeHeading || 'Types'));
     const typeActions = node('div', 'live-filter-type-actions');
@@ -15079,7 +15078,6 @@ function openSpectrumDiscoveryWizard(selection) {
   };
   const showSettings = () => {
     showStep(1, 'Ready for audio');
-    stage.append(node('p', 'muted', 'The usual audio settings are selected. You can keep them or make adjustments.'));
     const summary = audioSummary();
     summary.classList.add('spectrum-discovery-summary');
     const form = node('form', 'channel-editor-form');
@@ -15150,8 +15148,7 @@ function openSpectrumDiscoveryWizard(selection) {
     });
     const labels = node('div', 'channel-editor-grid');
     labels.append(controls.system, controls.site);
-    const optional = disclosure('Additional labels (optional)',
-      node('p', 'ui-field-hint', 'System and site labels help organize your channels. You can keep the suggested labels.'), labels);
+    const optional = disclosure('Additional labels (optional)', labels);
     optional.classList.add('spectrum-discovery-optional');
     channel.append(controls.name, optional);
     const mapFields = trunkedProtocol() && profile.id !== 'p25-phase1' ?
@@ -16126,7 +16123,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const smoothControl = smoothToggle.control;
   const smoothInput = smoothToggle.input;
   const idleToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false),
-    'Idle channel markers', 'Outline idle channels from the activity feed without implying tuner allocation.');
+    'Idle channel markers', 'Outline idle channels from the activity feed.');
   const idleChannelsControl = idleToggle.control;
   const idleChannelsInput = idleToggle.input;
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
@@ -16187,8 +16184,6 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
   optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
     node('strong', '', basicOperator ? 'Signal display' : 'Spectrum and waterfall'));
-  if (!basicOperator) optionsHeader.append(
-    node('span', '', 'Tune the visualization without changing receiver gain or decoder behavior.'));
   const optionGroups = settingsCardGrid(displayOptions, fftOptions, waterfallOptions,
     ...(!basicOperator ? [profilePanel] : []));
   optionGroups.classList.add('tuner-spectrum-settings-grid');
@@ -19554,7 +19549,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=55');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=56');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -24511,7 +24506,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=32');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=33');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -25486,8 +25481,7 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   advancedSummary.append(node('span', '', 'Advanced diagnostics'), node('small', 'muted', 'Exact values'));
   const advancedBody = node('div', 'channel-squelch-advanced-body');
   advancedBody.append(node('p', 'muted',
-    'These are the exact manual thresholds used by the decoder. Timing values are 10 ms evidence steps; ' +
-    'nothing is learned automatically.'), diagnosticReadouts);
+    'These are the exact manual thresholds used by the decoder. Timing values are 10 ms evidence steps.'), diagnosticReadouts);
   advancedFields.forEach((wrapper) => advancedBody.append(wrapper));
   advanced.append(advancedSummary, advancedBody);
 

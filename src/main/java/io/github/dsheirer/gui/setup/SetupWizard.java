@@ -366,9 +366,6 @@ public final class SetupWizard extends JDialog
         });
         navigation.add(exit); navigation.add(cancel); navigation.add(back); navigation.add(next);
         footer.add(navigation);
-        JTextArea exitNote=text("You can exit and return later. Completed steps are saved.");
-        exitNote.addPropertyChangeListener("UI",e -> exitNote.setForeground(WizardStyles.muted()));
-        exitNote.setForeground(WizardStyles.muted()); footer.add(exitNote);
         body.add(footer, BorderLayout.SOUTH); shell.add(body, BorderLayout.CENTER);
         setContentPane(shell);
         Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
@@ -1009,7 +1006,7 @@ public final class SetupWizard extends JDialog
             boolean updateAvailable = jmbeAvailableRelease != null &&
                 jmbeAvailableRelease.getVersion().compareTo(JmbeLibraryMetadata.getVersion(library)) > 0;
             if(jmbeInstalled)
-                notice("Digital voice is ready", "JMBE was installed and selected successfully. Choose Continue to move on.", true);
+                notice("Digital voice is ready", "JMBE was installed and selected successfully.", true);
             else if(jmbeUpdateChecked && jmbeAvailableRelease == null)
             {
                 notice("Couldn’t check for JMBE updates", "Check your internet connection and try again, or keep using your current library.", false);
@@ -1025,7 +1022,7 @@ public final class SetupWizard extends JDialog
             }
             else
                 notice("Digital voice is ready", jmbeUpdateChecked ?
-                    "Your selected JMBE library is current. No newer release is available." :
+                    "Your selected JMBE library is current." :
                     "A compatible JMBE library is already available. You’re ready to listen to supported digital voice channels.", true);
             details("Installed library details", "Version: " + JmbeLibraryMetadata.getVersion(library) + "\nLocation: " + library);
             button("Change digital voice setup…", () -> { editJmbe=true; showPage(step); });
@@ -1252,7 +1249,7 @@ public final class SetupWizard extends JDialog
         var app = preferences.getApplicationPreference();
         boolean initiallyOff = !app.isStatsLoggingEnabled();
         boolean storedDetailed = app.isStatsDetailedHistoryEnabled();
-        paragraph("Choose how much listening activity to keep. These settings do not change your audio recordings or application log files.");
+        paragraph("Choose how much listening activity to keep.");
         ButtonGroup group = new ButtonGroup();
         JRadioButton off = card(group,"Off", "Do not collect statistics or detailed activity history.",!app.isStatsLoggingEnabled());
         card(group,"Summary statistics", "Keep useful activity totals without a detailed event-by-event history.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
@@ -1311,7 +1308,7 @@ public final class SetupWizard extends JDialog
 
     private void hardwarePage()
     {
-        paragraph("Let’s see which radios are connected. We’re only looking for devices — nothing will start receiving yet.");
+        paragraph("Let’s see which radios are connected.");
         JPanel inventory=stack(); append(inventory);
         addTo(inventory,text("Looking for connected radios…"));
         Runnable scan = () -> {
@@ -1339,8 +1336,8 @@ public final class SetupWizard extends JDialog
         int pending = manager.getUncalibrated().size();
         if(pending==0)
         {
-            notice("Decoding is optimized", "The best available decoding methods have been saved for this computer. These choices will be used when you start listening.",true);
-            paragraph(manager.getCalibrationTypes().size()+" saved checks are up to date. There’s nothing else to run.");
+            notice("Decoding is optimized", "The best available decoding methods have been saved for this computer.",true);
+            paragraph(manager.getCalibrationTypes().size()+" saved checks are up to date.");
             accept=this::completeAndContinue;
             return;
         }

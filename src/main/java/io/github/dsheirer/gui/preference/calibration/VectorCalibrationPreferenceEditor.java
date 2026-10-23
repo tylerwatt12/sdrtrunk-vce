@@ -196,7 +196,6 @@ public class VectorCalibrationPreferenceEditor extends HBox
         if(mCalibrateButton == null)
         {
             mCalibrateButton = new Button("Calibrate");
-            mCalibrateButton.setTooltip(new Tooltip("Calibrate the items that need calibrated"));
             mCalibrateButton.setOnAction(event ->
             {
                 getCalibrateButton().setDisable(true);

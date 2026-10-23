@@ -866,7 +866,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       details.append(heading, count, copy);
       notice.append(details);
       status.append(notice);
-      stage.append(status, node('p', 'ui-field-hint', 'Nothing is saved during the search. Stop at any time to return to Channels.'));
+      stage.append(status);
       button('Stop search', () => modal.close());
       progressNodes = { title: stage.querySelector('h3'), notice, heading, copy, count };
     }
@@ -942,8 +942,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     else if (candidates().some((candidate) => candidate.saved)) showSaved();
     else {
       show('failed', 1, 'Search stopped');
-      stage.append(node('div', 'ui-notice ui-notice-warning', job.reason || 'The search could not finish. Try again with an idle receiver.'),
-        node('p', 'muted', 'Nothing has been added.'));
+      stage.append(node('div', 'ui-notice ui-notice-warning', job.reason || 'The search could not finish. Try again with an idle receiver.'));
       button('Close', () => modal.close());
       button('Try another search', () => void restart(), true);
     }
