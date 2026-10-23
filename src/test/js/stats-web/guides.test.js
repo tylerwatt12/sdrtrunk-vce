@@ -6,18 +6,37 @@ const { pathToFileURL } = require('node:url');
 async function checkGuides(assetsRoot) {
   const assets = path.resolve(assetsRoot || process.argv[2] || 'stats-web/assets');
   const load = (relative) => import(pathToFileURL(path.join(assets, relative)).href);
-  const [{ createGuideController }, { createGuideDefinition, pageGuideTemplates },
+  const [{ createGuideController }, { createGuideDefinition, pageGuideTemplates, pageGuideOverviews },
     { definitions }] = await Promise.all([
     load('guides/controller.js'), load('guides/catalog.js'), load('core/routes.js')
   ]);
   assert.deepEqual(Object.keys(pageGuideTemplates).sort(), definitions.map(({ id }) => id).sort(),
     'Every application route has a central guide template.');
+  assert.deepEqual(Object.keys(pageGuideOverviews).sort(), definitions.map(({ id }) => id).sort(),
+    'Every page has centrally authored concept copy before its numbered walkthrough.');
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
     assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists'].includes(id));
+    const overview = guide.steps[0];
+    assert.equal(overview.id, 'overview');
+    assert.equal(overview.overview, true);
+    assert.ok(overview.title && overview.paragraphs.length, 'Each overview explains its page’s purpose.');
+    assert.equal(overview.samples, undefined, 'An overview leaves real page data in place.');
+    assert.equal(overview.prepare, undefined, 'An overview opens no menus, dialogs, or player panels.');
+    assert.equal(overview.targets, undefined, 'An overview is a centered concept introduction.');
+    assert.equal(guide.steps.filter(step => step.overview).length, 1);
+    if (!guide.authored) {
+      assert.equal(overview.nextLabel, 'Continue', 'Pending walkthroughs keep their honest welcome-tour invitation.');
+      assert.equal(guide.steps[1].id, 'coming-soon');
+      assert.equal(guide.steps[1].nextLabel, 'Take the welcome tour');
+    }
   }
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
+  assert.equal(createGuideDefinition('welcome').steps.some(step => step.overview), false,
+    'The general welcome retains its own introduction and numbered progression.');
+  assert.equal(createGuideDefinition('channel-setup').version, 2);
+  assert.equal(createGuideDefinition('aliases').version, 4);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -28,13 +47,13 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const aliasSections = ['lists', 'views', 'alias-editor', 'defaults-unmatched', 'defaults-new',
+  const aliasSections = ['overview', 'lists', 'views', 'alias-editor', 'defaults-unmatched', 'defaults-new',
     'bulk', 'scan-lists', 'activity', 'custom', 'discover', 'transfer'];
   assert.deepEqual(aliasesTour.steps.map(({ id }) => id), aliasSections,
     'The Aliases tour introduces all views before editors, defaults, bulk tools, and imports.');
   assert.equal(new Set(aliasesTour.steps.map(({ id }) => id)).size, aliasesTour.steps.length,
     'Each Aliases stop has a stable distinct identity for progression and cleanup.');
-  for (const step of aliasesTour.steps) {
+  for (const step of aliasesTour.steps.filter(step => !step.overview)) {
     assert.deepEqual(step.samples, [{ id: 'aliases-workspace', value: { section: step.id } }],
       'Every Aliases stop identifies its temporary workspace state centrally.');
     assert.doesNotThrow(() => step.targets(), 'A sample target can resolve safely before its page has rendered.');
@@ -60,10 +79,10 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const scanListSections = ['lists', 'members', 'add-alias-list', 'sources', 'listening-controls', 'listening'];
-  assert.equal(scanListsTour.version, 3, 'The shorter operational Scan Lists tour supersedes the settings walkthrough.');
+  const scanListSections = ['overview', 'lists', 'members', 'add-list-button', 'add-alias-list', 'sources', 'listening-controls', 'listening'];
+  assert.equal(scanListsTour.version, 4, 'The shorter operational Scan Lists tour supersedes the settings walkthrough.');
   assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
-  for (const step of scanListsTour.steps) {
+  for (const step of scanListsTour.steps.filter(step => !step.overview)) {
     assert.deepEqual(step.samples, [{ id: 'scan-lists-workspace', value: { section: step.id } }]);
     assert.doesNotThrow(() => step.targets());
     const context = { registerLayer() {} };
@@ -84,15 +103,23 @@ async function checkGuides(assetsRoot) {
   const scanListTargets = createGuideDefinition('scan-lists', { documentValue: {
     querySelectorAll: selector => [{ selector }]
   } });
-  assert.deepEqual(targetNames(scanListTargets.steps[0]), ['scan-lists-manage-aliases'],
-    'Manage aliases is shown before the member destination opens.');
-  assert.deepEqual(targetNames(scanListTargets.steps[1]),
-    ['scan-lists-member-table', 'scan-lists-member-alias-list', 'scan-lists-add-list-button'],
-    'The actual Add an Entire Alias List button is shown before its dialog.');
-  assert.deepEqual(targetNames(scanListTargets.steps[2]), ['scan-lists-add-list-dialog']);
-  assert.deepEqual(targetNames(scanListTargets.steps[4]), ['player-lists'],
+  const scanStop = id => scanListTargets.steps.find(step => step.id === id);
+  assert.deepEqual(targetNames(scanStop('lists')), ['scan-lists-manage-aliases'],
+    'Manage aliases receives its own explanation before the member destination opens.');
+  assert.deepEqual(targetNames(scanStop('members')),
+    ['scan-lists-member-alias', 'scan-lists-member-alias-list'],
+    'The member lesson highlights only the columns it explains.');
+  assert.deepEqual(targetNames(scanStop('add-list-button')), ['scan-lists-add-list-button'],
+    'The Add an Entire Alias List button receives a separate, single-purpose stop.');
+  assert.deepEqual(targetNames(scanStop('add-alias-list')), ['scan-lists-add-list-dialog']);
+  assert.deepEqual(targetNames(scanStop('listening-controls')), ['player-lists'],
     'The actual Lists button is shown before its player panel opens.');
-  assert.deepEqual(targetNames(scanListTargets.steps[5]), ['scan-lists-player-lists']);
+  assert.deepEqual(targetNames(scanStop('listening')), ['scan-lists-player-lists']);
+  assert.equal(scanListTargets.steps.indexOf(scanStop('add-list-button')) + 1,
+    scanListTargets.steps.indexOf(scanStop('add-alias-list')),
+    'A dialog’s own opening control is introduced immediately before that dialog.');
+  assert.doesNotMatch(scanStop('add-alias-list').paragraphs.join(' '), /Call Handling Defaults|New Aliases/,
+    'The add-list dialog lesson stays on its own operation.');
   assert.equal(scanListsTour.steps.at(-1).nextLabel, 'Finish');
   const noAudioScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'scanner' });
   assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -2),
@@ -102,17 +129,17 @@ async function checkGuides(assetsRoot) {
   assert.ok(noAudioScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
   assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
-    ['lists', 'sources', 'listening-controls', 'listening'],
+    ['overview', 'lists', 'sources', 'listening-controls', 'listening'],
     'An account without Alias administration is not sent into member management.');
   assert.equal(noAliasesScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAliasesScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const scanListOnlyTour = createGuideDefinition('scan-lists', { canView: view => view === 'scan-lists' });
-  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['lists', 'sources']);
+  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['overview', 'lists', 'sources']);
   assert.equal(scanListOnlyTour.steps.at(-1).nextLabel, 'Finish');
   const listOnlyTargets = createGuideDefinition('scan-lists', {
     canView: view => view === 'scan-lists', documentValue: { querySelectorAll: selector => [{ selector }] }
   });
-  assert.deepEqual(targetNames(listOnlyTargets.steps[0]), ['scan-lists-selector'],
+  assert.deepEqual(targetNames(listOnlyTargets.steps.find(step => step.id === 'lists')), ['scan-lists-selector'],
     'A listener without member-management access receives an available page target instead of its launch button.');
   const { getScanListsGuideData } = await load('guides/scan-lists-data.js');
   const scanListData = getScanListsGuideData('members');
@@ -156,7 +183,9 @@ async function checkGuides(assetsRoot) {
   const pagePrepared = makeHarness({ context: { view: 'aliases' },
     preparePage: (...args) => { pagePreparation.push(args); } });
   await pagePrepared.controller.openPage();
-  await pagePrepared.shown.at(-1).options.steps[0].prepare({ registerLayer() {} });
+  assert.equal(pagePrepared.shown.at(-1).options.steps[0].prepare, undefined);
+  assert.deepEqual(pagePreparation, [], 'Opening the concept overview leaves sample workspaces inactive.');
+  await pagePrepared.shown.at(-1).options.steps[1].prepare({ registerLayer() {} });
   assert.equal(pagePreparation[0][0], 'aliases', 'The controller forwards page preparation to authored guides.');
   assert.equal(pagePreparation[0][1], 'lists');
   pagePrepared.controller.destroy();
@@ -192,7 +221,8 @@ async function checkGuides(assetsRoot) {
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, 1, 'Blank page templates do not interrupt users automatically.');
   await dismissedWelcome.controller.openPage();
-  assert.equal(dismissedWelcome.shown.at(-1).options.steps[0].title, 'Guide coming soon');
+  assert.equal(dismissedWelcome.shown.at(-1).options.steps[0].overview, true);
+  assert.equal(dismissedWelcome.shown.at(-1).options.steps[1].title, 'Guide coming soon');
   dismissedWelcome.finish();
   await Promise.resolve();
   assert.equal(dismissedWelcome.shown.at(-1).options.id, 'welcome', 'A placeholder offers a working welcome-tour action.');
@@ -221,22 +251,22 @@ async function checkGuides(assetsRoot) {
   dismissedWelcome.dismiss();
 
   const dismissedPlaceholder = makeHarness({ context: { view: 'aliases' }, storage: {
-    getItem: key => /:(welcome|aliases):1$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:aliases:[123]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedPlaceholder.controller.pageReady();
   assert.equal(dismissedPlaceholder.shown.at(-1).options.id, 'aliases');
-  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 3,
-    'Dismissing the old coming-soon placeholder cannot suppress the new authored tour.');
+  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 4,
+    'Completing an older Aliases tour cannot suppress the new overview and walkthrough.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
-    getItem: key => /:welcome:1$|:scan-lists:[12]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scan-lists:[123]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedScanListPlaceholder.controller.pageReady();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
-  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 3,
-    'Dismissing the old settings walkthrough cannot suppress the shorter operational tour.');
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 4,
+    'Completing an older Scan Lists tour cannot suppress its overview and separated opening stops.');
   dismissedScanListPlaceholder.finish();
   await dismissedScanListPlaceholder.controller.openPage();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists',
@@ -337,6 +367,19 @@ async function checkGuides(assetsRoot) {
   const deniedReplay = makeHarness({ context: { view: 'dashboard', guide: 'channel-setup', canView: (view) => view === 'dashboard' } });
   await deniedReplay.controller.pageReady();
   assert.deepEqual(deniedReplay.navigations, [], 'A replay request cannot navigate a listener to an inaccessible page.');
+
+  for (const [view, expected, excluded] of [
+    ['tuners', /^In Tuners,/, /Browser Spectrum/],
+    ['tuner-spectrum', /^Use Browser Spectrum/, /In Tuners,/]
+  ]) {
+    const hardwareOnly = createGuideDefinition('welcome', {
+      canView: candidate => candidate === view, canSetup: false, canReport: false
+    }).steps.find(step => step.id === 'hardware');
+    assert.equal(hardwareOnly.paragraphs.length, 1);
+    assert.match(hardwareOnly.paragraphs[0], expected,
+      'Hardware permission filtering follows the same order as its displayed explanations.');
+    assert.doesNotMatch(hardwareOnly.paragraphs[0], excluded);
+  }
 
   const hiddenControls = new Set(['tuners', 'tuner-spectrum', 'channel-setup', 'aliases', 'radioreference',
     'streaming', 'scan-lists', 'alerts', 'admin']);

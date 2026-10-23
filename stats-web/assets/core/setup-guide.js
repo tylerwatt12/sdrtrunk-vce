@@ -3,6 +3,7 @@
 export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, guideSampleData }, options) {
   const steps = options.steps || [];
   if (!steps.length) return null;
+  const numberedSteps = steps.filter(step => !step.overview);
 
   const body = node('div', 'ui-setup-guide-surface');
   const copy = node('div', 'ui-setup-guide-copy');
@@ -13,7 +14,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   counter.setAttribute('aria-live', 'polite');
   const dots = node('div', 'ui-setup-guide-dots');
   dots.setAttribute('aria-hidden', 'true');
-  steps.forEach(() => dots.append(node('span', 'ui-setup-guide-dot')));
+  numberedSteps.forEach(() => dots.append(node('span', 'ui-setup-guide-dot')));
   progress.append(counter, dots);
   const actions = node('div', 'ui-action-row');
   const back = node('button', 'ui-button ui-button-secondary', 'Back');
@@ -164,7 +165,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     schedule();
     return restore;
   };
-  const targets = () => [...(steps[index].targets?.() || [])]
+  const targets = () => steps[index].overview ? [] : [...(steps[index].targets?.() || [])]
     .filter(target => target?.isConnected && target.getClientRects().length);
   const paintRect = (element, rectangle) => {
     for (const [name, value] of Object.entries({
@@ -380,11 +381,13 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     const signal = stepController.signal;
     const isCurrent = () => !closed && generation === stepGeneration && !signal.aborted;
     try {
-      sampleCleanup = guideSampleData?.activate(step.samples || []) || null;
-      const prepared = await step.prepare?.({ modal, registerLayer: (...args) => {
+      // An overview explains the page before a tour changes its visible state.
+      // Even an accidentally supplied target or prepare hook stays inactive here.
+      sampleCleanup = !step.overview ? guideSampleData?.activate(step.samples || []) || null : null;
+      const prepared = !step.overview ? await step.prepare?.({ modal, registerLayer: (...args) => {
         if (!isCurrent()) return () => {};
         return registerLayer(...args);
-      }, signal, isCurrent });
+      }, signal, isCurrent }) : null;
       if (!isCurrent()) {
         if (typeof prepared === 'function') prepared();
         return;
@@ -418,17 +421,20 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         illustrationCleanup = mountAccessWireframe?.(canvas, { compact: true }) || null;
       }
       back.hidden = index === 0;
-      next.replaceChildren(node('span', '', step.nextLabel || (index === steps.length - 1 ? 'Done' : 'Next')));
+      next.replaceChildren(node('span', '', step.nextLabel ||
+        (step.overview ? 'Start tour' : index === steps.length - 1 ? 'Done' : 'Next')));
       const nextIcon = svgNode('svg');
       nextIcon.setAttribute('aria-hidden', 'true');
       const nextUse = svgNode('use');
       nextUse.setAttribute('href', '#icon-chevron-right');
       nextIcon.append(nextUse);
       next.append(nextIcon);
-      counter.textContent = `Step ${index + 1} of ${steps.length}`;
+      const numberedIndex = steps.slice(0, index + 1).filter(value => !value.overview).length - 1;
+      counter.textContent = step.overview ? 'Overview' : `Step ${numberedIndex + 1} of ${numberedSteps.length}`;
+      dots.hidden = Boolean(step.overview);
       [...dots.children].forEach((dot, dotIndex) => {
-        dot.classList.toggle('is-current', dotIndex === index);
-        dot.classList.toggle('is-complete', dotIndex < index);
+        dot.classList.toggle('is-current', !step.overview && dotIndex === numberedIndex);
+        dot.classList.toggle('is-complete', !step.overview && dotIndex < numberedIndex);
       });
       update();
       if (typeof ResizeObserver !== 'undefined') {

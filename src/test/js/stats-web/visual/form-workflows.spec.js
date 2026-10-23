@@ -11,7 +11,7 @@ test.beforeAll(async () => {
 
 async function openForms(page, view, theme = 'light', scanList = {}) {
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['scan-lists', 3]]) {
+    for (const [id, version] of [['welcome', 1], ['scan-lists', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:form-workflows-fixture:${id}:${version}`, '1');
     }
   });

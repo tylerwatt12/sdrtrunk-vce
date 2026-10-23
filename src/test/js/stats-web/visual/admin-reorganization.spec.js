@@ -47,7 +47,7 @@ function operationalDocument() {
 async function openAdmin(page, tab = 'audio-quality', denied = [], options = {}) {
   await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:account-1-100:${id}:1`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:account-1-100:${id}:${id === 'channel-setup' ? 2 : 1}`, '1');
     }
   });
   let operational = operationalDocument();

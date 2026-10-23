@@ -9,7 +9,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="aliases"]');
 const samples = page => page.locator('.alias-editor-workspace[data-guide-sample]');
 const target = (page, name) => page.locator(`[data-guide-target="${name}"]:visible`).first();
-const memoryKey = id => `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 3 : 1}`;
+const memoryKey = id => `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`;
 const steps = [
   { id: 'lists', targets: ['aliases-lists', 'aliases-new-list'] },
   { id: 'views', targets: ['aliases-configure', 'aliases-activity', 'aliases-custom', 'aliases-discover'] },
@@ -58,8 +58,8 @@ async function openAliases(page, { theme = 'light', replay = true, firstVisit = 
       route.fulfill({ json: { revision: 1, preferences } }));
   }
   if (firstVisit) await page.addInitScript(() => {
-    for (const id of ['welcome', 'channel-setup']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:1`, '1');
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 2]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
     // A dismissed coming-soon placeholder must not suppress the authored tour.
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:aliases:1', '1');
@@ -71,6 +71,7 @@ async function openAliases(page, { theme = 'light', replay = true, firstVisit = 
   });
   // The fixture server mounts the production index at /app.html; / is its gallery.
   await page.goto(`/app.html?view=aliases${query ? `&${query}` : ''}${replay ? '&guide=aliases' : ''}`);
+  if ((replay || firstVisit) && page.viewportSize().width >= 760) await startTour(page);
   return { fixture, requests };
 }
 
@@ -125,6 +126,21 @@ async function expectWithinViewport(locator, viewport) {
     return bounds !== null && bounds.x >= 0 && bounds.y >= 0 &&
       bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1;
   }).toBe(true);
+}
+
+async function expectOverview(page) {
+  await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
+  await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
+  await expect(guide(page)).not.toContainText(/Step \d+ of/);
+  await expect(guide(page).getByRole('button', { name: 'Start tour', exact: true })).toBeVisible();
+  await expect(guide(page).getByRole('button', { name: 'Back', exact: true })).toBeHidden();
+  await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
+  await expect(page.locator('.alias-record-modal, .alias-policy-modal, .alias-bulk-modal, .alias-confirm-modal')).toHaveCount(0);
+}
+
+async function startTour(page) {
+  await expectOverview(page);
+  await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
 }
 
 async function expectSpotlight(page, name) {
@@ -324,6 +340,7 @@ for (const theme of ['light', 'dark']) {
     await page.keyboard.press('Escape');
     await expect(columns).toHaveCount(0);
     await page.locator('#page-guide-button').click();
+    await startTour(page);
     for (const step of steps) {
       await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
       if (baseline[step.id]) {
@@ -393,6 +410,7 @@ for (const { dismissal, stop } of [
         table: element.querySelector('table').dataset.tableType };
     });
     await page.locator('#page-guide-button').click();
+    await startTour(page);
     await goToStep(page, stop);
     await expect(samples(page)).toBeVisible();
     await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
@@ -441,6 +459,7 @@ test('the tour preserves original table overflow controls and keyboard scrolling
       controls: document.querySelector('.alias-editor-main .ui-table-overflow-controls') };
   });
   await page.locator('#page-guide-button').click();
+  await startTour(page);
   await goToStep(page, 'defaults-new');
   await guide(page).getByRole('button', { name: 'Close guide', exact: true }).click();
   await expect(scrolling).toBeVisible();
@@ -465,6 +484,7 @@ test('the tour restores a Scan List members origin and its page title', async ({
   const titleBefore = await page.title();
   const routeBefore = page.url();
   await page.locator('#page-guide-button').click();
+  await startTour(page);
   await goToStep(page, 'scan-lists');
   await guide(page).getByRole('button', { name: 'Close guide', exact: true }).click();
   await expect(page).toHaveURL(routeBefore);
@@ -484,6 +504,7 @@ test('Aliases tour works with no real lists and Help replays after dismissal', a
   await expect(page.getByRole('heading', { name: 'No alias lists are configured', exact: true })).toBeVisible();
   await expect(page.locator('[data-guide-sample]')).toHaveCount(0);
   await page.locator('#page-guide-button').click();
+  await startTour(page);
   await expectStep(page, steps[0], 0);
   for (let index = 0; index < 5; index += 1) {
     await page.keyboard.press('Tab');
@@ -503,6 +524,7 @@ test('a first Aliases visit shows the authored tour once after the welcome tour'
   await expect(page.locator('#page-guide-button')).toBeVisible();
   await expect(guide(page)).toHaveCount(0);
   await page.goto('/app.html?view=aliases&guide=aliases');
+  await startTour(page);
   await expectStep(page, steps[0], 0);
   expectNoEffects(fixture, requests);
 });
@@ -537,6 +559,7 @@ test('the tour restores an expanded Recordings player without loading or playing
   await expect(player).toHaveAttribute('data-source', 'recordings');
   const before = audioRequests.length;
   await page.locator('#page-guide-button').click();
+  await startTour(page);
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'lists');
   await expect(player).toBeHidden();
   await goToStep(page, 'transfer');

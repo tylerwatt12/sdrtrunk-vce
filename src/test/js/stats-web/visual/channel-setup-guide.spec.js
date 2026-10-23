@@ -10,6 +10,14 @@ const toolbarAction = (page, name) => page.locator('.channel-creation-actions')
 const actionNames = ['Find Trunked Systems', 'New channel'];
 const guideRoot = page => page.locator('.ui-setup-guide');
 
+async function startTour(page) {
+  await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'overview');
+  await expect(guideRoot(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
+  await expect(guideRoot(page)).not.toContainText(/Step \d+ of/);
+  await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
+  await guideRoot(page).getByRole('button', { name: 'Start tour', exact: true }).click();
+}
+
 async function expectWithinViewport(locator, viewport) {
   await expect.poll(async () => {
     const bounds = await locator.boundingBox();
@@ -89,6 +97,7 @@ async function openChannels(page, options = {}) {
       'admin-aliases': false, 'user-settings': true } } } }));
   await page.goto(`/app.html?view=channel-setup${options.guide ? `&guide=${options.guide}` : ''}`);
   await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
+  if (options.guide && page.viewportSize().width >= 760) await startTour(page);
   return { fixture, state };
 }
 
@@ -177,6 +186,7 @@ for (const theme of ['light', 'dark']) {
     const { fixture } = await openChannels(page, { theme });
     const actions = await captureToolbarActions(page);
     await page.locator('#page-guide-button').click();
+    await startTour(page);
     await expect(guide(page)).toBeVisible();
     await expect(guideRoot(page)).toContainText('Step 1 of 6');
     await expectToolbarActionsUnmoved(page, actions);
@@ -187,6 +197,12 @@ for (const theme of ['light', 'dark']) {
     await expect(guideRoot(page)).toContainText('Step 2 of 6');
     await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
     await expect(guide(page)).toBeVisible();
+    await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'overview');
+    await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
+    await expectToolbarActionsUnmoved(page, actions);
+    await startTour(page);
+    await expect(guideRoot(page)).toContainText('Step 1 of 6');
     await page.keyboard.press('Escape');
     await expect(guideRoot(page)).toHaveCount(0);
     await expectToolbarActionsUnmoved(page, actions);
@@ -237,6 +253,7 @@ for (const theme of ['light', 'dark']) {
     await expect(player).toHaveAttribute('data-source', originalPlayer.source);
     await expect(player).toHaveAttribute('data-state', originalPlayer.state);
     await page.goto('/app.html?view=channel-setup&guide=page');
+    await startTour(page);
     await expect(guide(page)).toBeVisible();
     await guideRoot(page).getByRole('button', { name: 'Close guide', exact: true }).click();
     await expect(guideRoot(page)).toHaveCount(0);
@@ -286,6 +303,7 @@ test('receiving sample keeps real filters and selection, ignores actions, and re
     .getByRole('checkbox', { name: 'Select Existing channel', exact: true }).check();
   await search.fill('Existing');
   await page.locator('#page-guide-button').click();
+  await startTour(page);
   await openReceivingStep(page);
   await expectSampleChannel(page);
   const before = page.url();

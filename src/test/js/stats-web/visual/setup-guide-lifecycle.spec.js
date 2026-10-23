@@ -31,8 +31,8 @@ async function installGuideHarness(page) {
         close() { options.cleanup(); backdrop.remove(); return true; }
       };
     };
-    window.guideHarness.open = steps => openSetupGuide({ node, openReadOnlyModal }, {
-      id: 'lifecycle-test', steps, onError: error => window.guideHarness.errors.push(error.message)
+    window.guideHarness.open = (steps, ui = {}, options = {}) => openSetupGuide({ node, openReadOnlyModal, ...ui }, {
+      id: 'lifecycle-test', steps, onError: error => window.guideHarness.errors.push(error.message), ...options
     });
   });
 }
@@ -99,4 +99,86 @@ test('closing a pending guide restores its real popover and cleans late preparat
   expect(await page.evaluate(() => window.guideHarness.cleanups)).toEqual(['late']);
   expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
   await expect(page.locator('.ui-setup-guide')).toHaveCount(0);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`page overview precedes numbered steps without changing page state in ${theme}`, async ({ page }) => {
+    await installGuideHarness(page);
+    await page.evaluate(theme => {
+      document.documentElement.dataset.theme = theme;
+      const harness = window.guideHarness;
+      const target = harness.node('button', 'ui-button', 'Actual opening button');
+      document.body.prepend(target);
+      harness.sampleActivations = [];
+      harness.preparations = [];
+      harness.presentation = harness.open([
+        { id: 'overview', overview: true, title: 'Choose which calls you hear',
+          paragraphs: ['Scan Lists choose which received calls reach your player.'],
+          // Overview presentation stays pure even if future metadata supplies hooks.
+          samples: [{ id: 'unexpected' }], targets: () => [target],
+          prepare: () => harness.preparations.push('overview') },
+        { id: 'opener', title: 'Open the listening group', paragraphs: ['Review its members here.'],
+          targets: () => [target], samples: [{ id: 'members' }],
+          prepare: () => { harness.preparations.push('opener'); return () => harness.cleanups.push('opener'); } },
+        { id: 'members', title: 'Follow related traffic', paragraphs: ['Bring related talkgroups together.'] }
+      ], { guideSampleData: { activate(samples) {
+        harness.sampleActivations.push(samples);
+        return () => harness.cleanups.push('samples');
+      } } });
+    }, theme);
+    const guide = page.locator('.ui-setup-guide');
+    const counter = guide.locator('.ui-setup-guide-counter');
+    await expect(guide).toHaveAttribute('data-guide-step', 'overview');
+    await expect(counter).toHaveText('Overview');
+    await expect(guide.locator('.ui-setup-guide-dots')).toBeHidden();
+    await expect(guide.getByRole('button', { name: 'Back', exact: true })).toBeHidden();
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(0);
+    await expect(page.locator('.ui-setup-guide-pointer')).toBeHidden();
+    expect(await page.evaluate(() => ({ samples: window.guideHarness.sampleActivations,
+      preparations: window.guideHarness.preparations }))).toEqual({ samples: [], preparations: [] });
+    const bounds = await guide.boundingBox();
+    const viewport = page.viewportSize();
+    expect(Math.abs(bounds.x + bounds.width / 2 - viewport.width / 2)).toBeLessThan(2);
+    expect(Math.abs(bounds.y + bounds.height / 2 - viewport.height / 2)).toBeLessThan(2);
+    await guide.getByRole('button', { name: 'Start tour', exact: true }).click();
+    await expect(guide).toHaveAttribute('data-guide-step', 'opener');
+    await expect(counter).toHaveText('Step 1 of 2');
+    await expect(guide.locator('.ui-setup-guide-dots')).toBeVisible();
+    await expect(guide.locator('.ui-setup-guide-dot')).toHaveCount(2);
+    await expect(guide.locator('.ui-setup-guide-dot').nth(0)).toHaveClass(/is-current/);
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
+    await guide.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(counter).toHaveText('Overview');
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(0);
+    expect(await page.evaluate(() => window.guideHarness.cleanups)).toEqual(['opener', 'samples']);
+    await guide.getByRole('button', { name: 'Start tour', exact: true }).click();
+    await guide.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(counter).toHaveText('Step 2 of 2');
+    await expect(guide.locator('.ui-setup-guide-dot').nth(0)).toHaveClass(/is-complete/);
+    await expect(guide.locator('.ui-setup-guide-dot').nth(1)).toHaveClass(/is-current/);
+    await guide.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(guide).toHaveCount(0);
+    expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
+  });
+}
+
+test('a pending page walkthrough keeps its custom welcome action after the overview', async ({ page }) => {
+  await installGuideHarness(page);
+  await page.evaluate(() => {
+    const harness = window.guideHarness;
+    harness.completions = 0;
+    harness.presentation = harness.open([
+      { id: 'overview', overview: true, title: 'Follow your radio systems',
+        paragraphs: ['Explore activity over time.'], nextLabel: 'Continue' },
+      { id: 'coming-soon', title: 'Guide coming soon', paragraphs: ['Take the welcome tour.'],
+        nextLabel: 'Take the welcome tour' }
+    ], {}, { onComplete: () => { harness.completions += 1; } });
+  });
+  const guide = page.locator('.ui-setup-guide');
+  await expect(guide.locator('.ui-setup-guide-counter')).toHaveText('Overview');
+  await guide.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(guide.locator('.ui-setup-guide-counter')).toHaveText('Step 1 of 1');
+  await guide.getByRole('button', { name: 'Take the welcome tour', exact: true }).click();
+  await expect(guide).toHaveCount(0);
+  expect(await page.evaluate(() => window.guideHarness.completions)).toBe(1);
 });

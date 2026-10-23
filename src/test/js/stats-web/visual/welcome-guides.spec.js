@@ -119,6 +119,10 @@ for (const theme of ['light', 'dark']) {
     await expect(guide(page)).toContainText('Step 11 of 11');
     await expectSpotlight(page, '#theme-toggle');
     await guide(page).getByRole('button', { name: 'Set up channels', exact: true }).click();
+    await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
+    await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
+    await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
+    await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
     await expect(guide(page).getByRole('heading', { name: 'Add your first channel', exact: true })).toBeVisible();
     await expect(guide(page)).toContainText('Step 1 of 6');
     await expect(page.locator('.primary-nav [data-nav-group][open]')).toHaveCount(0);
@@ -162,7 +166,9 @@ test('page help opens a fallback template and keeps keyboard focus inside the gu
   const fixture = await openApplication(page, { replay: false, view: 'dashboard' });
   const help = page.locator('#page-guide-button');
   await help.click();
-  await expect(guide(page)).toContainText('Guide coming soon');
+  await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
+  await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
+  await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
   for (let index = 0; index < 5; index += 1) {
     await page.keyboard.press('Tab');
     expect(await page.evaluate(() => Boolean(document.activeElement.closest('.ui-setup-guide')))).toBe(true);
@@ -171,6 +177,8 @@ test('page help opens a fallback template and keeps keyboard focus inside the gu
   await expect(guide(page)).toHaveCount(0);
   await expect(help).toBeFocused();
   await help.click();
+  await guide(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(guide(page)).toContainText('Guide coming soon');
   await guide(page).getByRole('button', { name: 'Take the welcome tour', exact: true }).click();
   await expect(guide(page)).toContainText('Welcome to sdrtrunk VCE');
   expect(fixture.pageErrors).toEqual([]);
@@ -212,6 +220,8 @@ test('the player spotlight restores a minimized listener without starting audio'
   const before = audioRequests.length;
   // Replay through the template without reloading or changing the listening session.
   await page.locator('#page-guide-button').click();
+  await guide(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(guide(page)).toContainText('Guide coming soon');
   await guide(page).getByRole('button', { name: 'Take the welcome tour', exact: true }).click();
   for (let step = 1; step < 7; step += 1) await next(page).click();
   await expect(guide(page)).toContainText('Keep listening as you browse');

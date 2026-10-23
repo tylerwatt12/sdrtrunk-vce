@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=7';
+import { createGuideController } from './guides/controller.js?v=8';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=2';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=2';
@@ -7837,7 +7837,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
 async function preparePageGuideSample(view, section, context) {
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
-  const memberView = scanListsTour && ['members', 'add-alias-list'].includes(section);
+  const memberView = scanListsTour && ['members', 'add-list-button', 'add-alias-list'].includes(section);
   const renderContext = captureRenderContext();
   const originalNodes = [...content.childNodes];
   const originalPageTitle = pageTitleController.state.pageTitle;
@@ -7912,7 +7912,7 @@ async function preparePageGuideSample(view, section, context) {
       mark('.admin-scan-list-members', 'scan-lists-manage-aliases');
       mark('.scan-list-add-all', 'scan-lists-add-list-button');
       mark('.scan-list-member-table-section th[data-column="alias"], .scan-list-member-table-section td[data-column="alias"]',
-        'scan-lists-member-table');
+        'scan-lists-member-alias');
       mark('.scan-list-member-table-section [data-column="alias-list"]', 'scan-lists-member-alias-list');
       if (section === 'add-alias-list') {
         targetModal = openFullScanListMembershipModal(data.selectedScanList, 'add', data);

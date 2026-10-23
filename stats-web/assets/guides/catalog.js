@@ -4,11 +4,62 @@ import { definitions as routes } from '../core/routes.js?v=11';
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps });
-// Authored tours supersede their dismissible version-one placeholders.
-const guideVersions = Object.freeze({ aliases: 3, 'scan-lists': 3 });
+// Page concepts stay separate from the numbered controls that follow them.
+// Keep a purpose and practical radio use here even while a walkthrough is pending.
+const pageOverviewCopy = Object.freeze({
+  dashboard: ['Follow your radio systems',
+    'See activity across your radio systems and use the statistics to find busy talkgroups, active radios, and changes over time.'],
+  live: ['Watch radio traffic as it happens',
+    'Follow your running channels and decoded radio activity as it arrives. Use this view to see which talkgroups and radios are active.'],
+  topics: ['Follow the activity that matters to you',
+    'Subscribe to topics for alerts about selected radio activity or receiver conditions. Each topic brings related alerts together.'],
+  recordings: ['Return to a conversation',
+    'With Managed Recordings enabled, saved calls become a searchable listening library. Find traffic by its radio system, talkgroup, or time and replay the calls you need.'],
+  map: ['Put radio activity on the map',
+    'Follow reported locations and review recent location history to see where radio activity is taking place.'],
+  'network-visualizer': ['See how a P25 system is connected',
+    'Explore the sites and connections reported by a P25 system. Use the visualizer to understand its network and follow changes as they are heard.'],
+  scanner: ['Settle in and listen',
+    'Follow completed calls from your selected Scan Lists, with details about the call playing and the traffic waiting to be heard.'],
+  'tuner-spectrum': ['Find signals your tuner can receive',
+    'Explore the spectrum to spot active signals and inspect their frequencies. Use what you find to choose signals worth receiving.'],
+  'radio-system': ['Get to know a radio system',
+    'Explore a system’s talkgroups, radios, and activity history. Follow the names and identifiers to see who uses the system and when.'],
+  'group-identity': ['Follow a talkgroup’s activity',
+    'Review calls and radios associated with this talkgroup. Its activity history can help you recognize how the group is used.'],
+  radio: ['Follow an individual radio',
+    'Review this radio’s activity and the talkgroups it has used. Compare its identity and history as you work out who is operating it.'],
+  'channel-setup': ['Choose the signals VCE receives',
+    'A channel tells VCE which frequency or trunked system to receive and how to decode it. Start your channels here, then use Scan Lists to choose which calls you hear.'],
+  channel: ['Understand reception on this channel',
+    'Review activity from this channel and follow its talkgroups and radios. Reception details help you connect what is heard with the channel receiving it.'],
+  aliases: ['Give radio traffic meaning',
+    'Aliases attach familiar names to talkgroups and radios. Their call handling settings choose which calls are recorded, sent to Scan Lists, or streamed.'],
+  'scan-lists': ['Choose which calls you hear',
+    'Your channels receive radio traffic. Scan Lists choose which calls reach your player. You can follow fire and EMS dispatch while your other channels continue receiving.'],
+  radioreference: ['Bring local radio information into VCE',
+    'Use RadioReference to find radio systems and import channel and talkgroup information. A Premium subscription provides access to imports.'],
+  alerts: ['Have important activity brought to your attention',
+    'Choose radio activity or receiver conditions that should publish an alert. Group related alerts into topics that listeners can follow.'],
+  streaming: ['Share received calls with other services',
+    'Send selected calls to your streaming destinations and check their delivery. Alias call handling settings choose which traffic reaches each destination.'],
+  tuners: ['Prepare your receivers',
+    'Your tuners supply the radio signals VCE decodes. Check their availability and adjust reception settings to suit your antennas and local signals.'],
+  admin: ['Look after this VCE installation',
+    'Control the receiver and the services shared by everyone using it. Check receiver health and manage access as your installation grows.'],
+  settings: ['Make VCE comfortable for you',
+    'Choose the display and listening preferences used with your sign-in. Your preferences follow you when you return.'],
+  credits: ['The people and projects behind VCE',
+    'Meet VCE’s developer and the projects that make it possible. Find project links and open-source license information here.']
+});
+export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entries(pageOverviewCopy)
+  .map(([id, [title, ...paragraphs]]) => [id,
+    Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs) })])));
+// A revised page structure receives a new dismissal version for its first visit.
+const guideVersions = Object.freeze({ 'channel-setup': 2, aliases: 4, 'scan-lists': 4 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
-  Object.freeze({ id, title, version: guideVersions[id] || 1,
-    authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
+  Object.freeze({ id, title, version: guideVersions[id] || 2,
+    overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
 
 function targets(documentValue, ...selectors) {
   return () => selectors.flatMap((selector) => [...(documentValue?.querySelectorAll(selector) || [])]);
@@ -256,15 +307,19 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
     ...names.map((name) => `[data-guide-target="${name}"]`));
   const canManageAliases = typeof canView !== 'function' || canView('aliases') !== false;
   return [
-    { id: 'lists', title: 'Choose which calls you hear',
+    { id: 'lists', title: canManageAliases ? 'Review your listening group' : 'Your listening groups',
       targets: canManageAliases ? focus('scan-lists-manage-aliases') : focus('scan-lists-selector'),
-      paragraphs: ['Your channels receive radio traffic. Scan Lists choose which calls reach your player. You can follow fire and EMS dispatch while your other channels continue receiving.'] },
+      paragraphs: [canManageAliases ? 'Open this Scan List’s members to see the aliases that feed your listening group.' :
+        'Choose a listening group to see its assigned aliases and the Alias Lists sending it unidentified traffic.'] },
     { id: 'members', title: 'Follow related traffic across systems',
-      targets: focus('scan-lists-member-table', 'scan-lists-member-alias-list', 'scan-lists-add-list-button'),
+      targets: focus('scan-lists-member-alias', 'scan-lists-member-alias-list'),
       paragraphs: ['Bring related talkgroups from several radio systems together in one listening group. Fire Dispatch can belong to both a focused Fire & EMS list and a broader Public Safety list.'] },
+    { id: 'add-list-button', title: 'Bring in an Alias List',
+      targets: focus('scan-lists-add-list-button'),
+      paragraphs: ['Use this to bring an Alias List’s current aliases into your listening group.'] },
     { id: 'add-alias-list', title: 'Build a listening group quickly',
       targets: focus('scan-lists-add-list-dialog'),
-      paragraphs: ['Add an Alias List’s current aliases in one operation. For aliases you create or import from RadioReference, Call Handling Defaults → New Aliases can assign a Scan List automatically.'] },
+      paragraphs: ['Choose the Alias List whose talkgroups you want to include, then add its current aliases to this Scan List.'] },
     { id: 'sources', title: 'Follow unidentified talkgroups',
       targets: focus('scan-lists-counts', 'scan-lists-routes'),
       paragraphs: ['An Alias List’s Unmatched Calls defaults can send unidentified talkgroups to a Scan List. Keep a list such as Unidentified Traffic to hear those calls while you work out who is using them.'] },
@@ -278,7 +333,7 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
   ].filter((step) => {
     if (typeof canView !== 'function') return true;
     if (['listening-controls', 'listening'].includes(step.id)) return canView('scanner') !== false;
-    if (['members', 'add-alias-list'].includes(step.id)) {
+    if (['members', 'add-list-button', 'add-alias-list'].includes(step.id)) {
       return canView('aliases') !== false;
     }
     return true;
@@ -306,8 +361,9 @@ export function createGuideDefinition(id, { documentValue = globalThis.document,
   const template = pageGuideTemplates[id];
   if (!template) return null;
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
-    steps: authoredPages[id](documentValue, preparePlayer, preparePage, canView) };
+    steps: [template.overview, ...authoredPages[id](documentValue, preparePlayer, preparePage, canView)] };
   return { ...template, eyebrow: template.title, steps: [
+    { ...template.overview, nextLabel: 'Continue' },
     { id: 'coming-soon', title: 'Guide coming soon', paragraphs: [
       `A walkthrough for ${template.title} is being prepared. Take the welcome tour for an introduction to the menus and player.`
     ], nextLabel: 'Take the welcome tour' }
