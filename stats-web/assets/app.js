@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=12';
+import { createGuideController } from './guides/controller.js?v=13';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7865,7 +7865,7 @@ async function prepareChannelGuideSample(section, context) {
   } catch (error) { restore(); throw error; }
 }
 
-async function prepareRadioReferenceGuideSample(section, context) {
+async function prepareWorkspaceGuideSample(view, section, context) {
   if (context.signal.aborted) return () => {};
   const renderContext = captureRenderContext();
   const originalNodes = [...content.childNodes];
@@ -7889,7 +7889,7 @@ async function prepareRadioReferenceGuideSample(section, context) {
     context.signal.removeEventListener('abort', restore);
     const failures = [];
     const safely = action => { try { action(); } catch (error) { failures.push(error); } };
-    safely(() => workspace?.destroy());
+    safely(() => { if (view === 'streaming') workspace?.dispose(); else workspace?.destroy(); });
     releases.splice(0).reverse().forEach(release => safely(release));
     modals.reverse().forEach(modal => safely(() => modal.close()));
     tables.forEach(controller => {
@@ -7904,16 +7904,21 @@ async function prepareRadioReferenceGuideSample(section, context) {
       }));
     }
     holding.remove();
-    if (failures.length) console.error('Unable to finish cleaning up the RadioReference guide example.', failures[0]);
+    if (failures.length) console.error('Unable to finish cleaning up a page guide example.', failures[0]);
   };
   context.signal.addEventListener('abort', restore, { once: true });
   try {
-    const [{ createRadioReferenceImportWorkspace }, { createRadioReferenceGuideData }] = await Promise.all([
-      import('./features/radioreference-import.js?v=33'),
-      import('./guides/radioreference-presentation.js?v=1')
+    const streaming = view === 'streaming';
+    const [feature, presentation] = await Promise.all(streaming ? [
+      import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
+    ] : [
+      import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = createRadioReferenceGuideData({ signal: context.signal });
+    const sample = (streaming ? presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal });
+    if (streaming && typeof sample.requestOperationalPreference !== 'function') {
+      throw new Error('The Streaming guide settings could not be prepared.');
+    }
     const sampleRequest = async (...args) => {
       if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
       const value = await sample.requestJson(...args);
@@ -7928,39 +7933,76 @@ async function prepareRadioReferenceGuideSample(section, context) {
     };
     const closeSampleModal = () => [...modals].reverse()
       .find(modal => modal.dialog.isConnected)?.close();
-    workspace = createRadioReferenceImportWorkspace(radioReferenceWorkspaceDependencies({
-      guideMode: true, requestJson: sampleRequest, localityCache: sample.localityCache,
-      openReadOnlyModal: openSampleModal, closeReadOnlyModal: closeSampleModal,
-      table: (rows, columns, emptyText, options = {}) => {
-        const controller = options.controller || {};
-        tables.add(controller);
-        return table(rows, columns, emptyText, { ...options, controller, presentation: true });
-      },
-      createAliasListPopupTrigger: options => aliasAdminAllowed() ?
-        buildAliasListPopupTrigger({ node, iconGlyph, uiPill, requestJson: sampleRequest,
-          openReadOnlyModal: openSampleModal }, options) : document.createDocumentFragment()
-    }));
-    const surface = createRadioReferencePageSurface();
-    surface.loadingState.hidden = true;
-    surface.workspace.hidden = false;
-    surface.workspace.append(workspace.element);
-    surface.page.dataset.guideExample = 'radioreference';
-    content.replaceChildren(radioReferencePageHeader(), surface.page);
-    await workspace.setConfiguration(sample.configuration);
+    const sampleTable = (rows, columns, emptyText, options = {}) => {
+      const controller = options.controller || {};
+      tables.add(controller);
+      return table(rows, columns, emptyText, { ...options, controller, presentation: true });
+    };
+    let protectedRoots;
+    let routingHost = null;
+    if (streaming) {
+      workspace = feature.createStreamingWorkspace(streamingWorkspaceDependencies({
+        guideMode: true, signal: context.signal, requestJson: sampleRequest, table: sampleTable,
+        openReadOnlyModal: openSampleModal,
+        confirmAction: async () => false,
+        connectRadioReference: () => sampleRequest('/api/v1/admin/radioreference')
+      }));
+      const surface = streamingPageSurface(workspace);
+      routingHost = surface.routingHost;
+      workspace.element.dataset.guideExample = 'streaming';
+      content.replaceChildren(...surface.nodes);
+      protectedRoots = [routingHost, workspace.element];
+      await workspace.ready;
+      if (closed || !context.isCurrent()) { restore(); return restore; }
+      if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+        await renderAdminOperationalPreferences({ ...renderContext, signal: context.signal }, {
+          target: routingHost, fields: ['patch_group_streaming_option'], title: 'Patch-group routing',
+          requestPreference: async (...args) => {
+            if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+            const value = await sample.requestOperationalPreference(...args);
+            if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+            return value;
+          }
+        });
+        const patch = routingHost.querySelector('[data-preference="patch_group_streaming_option"] select');
+        if (patch) patch.dataset.guideTarget = 'st-patch-routing';
+      }
+    } else {
+      workspace = feature.createRadioReferenceImportWorkspace(radioReferenceWorkspaceDependencies({
+        guideMode: true, requestJson: sampleRequest, localityCache: sample.localityCache,
+        openReadOnlyModal: openSampleModal, closeReadOnlyModal: closeSampleModal, table: sampleTable,
+        createAliasListPopupTrigger: options => aliasAdminAllowed() ?
+          buildAliasListPopupTrigger({ node, iconGlyph, uiPill, requestJson: sampleRequest,
+            openReadOnlyModal: openSampleModal }, options) : document.createDocumentFragment()
+      }));
+      const surface = createRadioReferencePageSurface();
+      surface.loadingState.hidden = true;
+      surface.workspace.hidden = false;
+      surface.workspace.append(workspace.element);
+      surface.page.dataset.guideExample = 'radioreference';
+      content.replaceChildren(radioReferencePageHeader(), surface.page);
+      protectedRoots = [surface.page];
+      await workspace.setConfiguration(sample.configuration);
+    }
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const release = await workspace.prepareGuide(section, context);
     if (closed || !context.isCurrent()) { release?.(); restore(); return restore; }
     if (typeof release === 'function') releases.push(release);
-    releases.push(guideSampleData.register('radioreference-workspace', () => {}, { root: surface.page }));
+    if (streaming && section === 'patch-routing') {
+      routingHost?.querySelector('[data-guide-target="st-patch-routing"]')
+        ?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    }
+    const region = streaming ? 'streaming-workspace' : 'radioreference-workspace';
+    protectedRoots.forEach(root => releases.push(guideSampleData.register(region, () => {}, { root })));
     modals.filter(modal => modal.dialog.isConnected).forEach(modal => {
-      releases.push(guideSampleData.register('radioreference-workspace', () => {}, { root: modal.dialog }));
+      releases.push(guideSampleData.register(region, () => {}, { root: modal.dialog }));
     });
     return restore;
   } catch (error) { restore(); throw error; }
 }
 
 async function preparePageGuideSample(view, section, context) {
-  if (view === 'radioreference') return prepareRadioReferenceGuideSample(section, context);
+  if (['radioreference', 'streaming'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -28820,6 +28862,7 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
 }
 
 async function renderAdminOperationalPreferences(renderContext = captureRenderContext(), options = {}) {
+  const requestPreference = options.requestPreference || requestOperationalPreference;
   const body = node('div', 'admin-section-body');
   const status = node('div', 'admin-form-message', 'Loading settings…');
   status.setAttribute('role', 'status');
@@ -28953,7 +28996,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
           reload.disabled = true;
           try {
             await workflow.save(async () => {
-              confirmed = await requestOperationalPreference('PUT', field.id, readValue(), confirmed.revision);
+              confirmed = await requestPreference('PUT', field.id, readValue(), confirmed.revision);
               drafts.delete(field.id);
               if (field.id === 'stats_logging_enabled' || field.id === 'stats_detailed_history_enabled') {
                 await loadStatus(true);
@@ -29012,7 +29055,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
   reload.addEventListener('click', async () => {
     reload.disabled = true;
     try {
-      confirmed = await requestOperationalPreference();
+      confirmed = await requestPreference();
       drafts.clear();
       status.textContent = '';
       renderFields();
@@ -29023,7 +29066,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
     }
   });
   try {
-    confirmed = await requestOperationalPreference();
+    confirmed = await requestPreference();
     if (!renderIsCurrent(renderContext)) return;
     renderFields();
     status.textContent = '';
@@ -30539,22 +30582,31 @@ async function renderSettings() {
   } });
 }
 
-async function renderStreaming() {
-  const renderContext = captureRenderContext();
-  const { createStreamingWorkspace } = await import('./features/streaming.js?v=13');
-  if (!renderIsCurrent(renderContext)) return;
-  const workspace = createStreamingWorkspace({
+function streamingWorkspaceDependencies(overrides = {}) {
+  return {
     node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table, browsingWorkflows,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
     connectRadioReference, radioReferenceAllowed: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS),
-    signal: renderContext.signal
-  });
+    ...overrides
+  };
+}
+
+function streamingPageSurface(workspace) {
   const routingHost = node('div');
-  if (!beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'),
-    routingHost, workspace.element)) return;
+  return { routingHost, nodes: [pageHeader('Streaming', 'Manage destinations and monitor delivery'),
+    routingHost, workspace.element] };
+}
+
+async function renderStreaming() {
+  const renderContext = captureRenderContext();
+  const { createStreamingWorkspace } = await import('./features/streaming.js?v=14');
+  if (!renderIsCurrent(renderContext)) return;
+  const workspace = createStreamingWorkspace(streamingWorkspaceDependencies({ signal: renderContext.signal }));
+  const surface = streamingPageSurface(workspace);
+  if (!beginPage(renderContext, ...surface.nodes)) { workspace.dispose(); return; }
   if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
     await renderAdminOperationalPreferences(renderContext, {
-      target: routingHost, fields: ['patch_group_streaming_option'], title: 'Patch-group routing'
+      target: surface.routingHost, fields: ['patch_group_streaming_option'], title: 'Patch-group routing'
     });
   }
 }
@@ -34633,6 +34685,7 @@ const guideController = createGuideController({
     isDesktop: guideDesktopLayout.matches,
     canSetup: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS),
     canView: viewAllowed,
+    canAccess: capabilityAllowed,
     canReport: accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS),
     canPresent: guidePageReady && !activeReadOnlyModal &&
       !document.querySelector('.app-shell')?.hidden && content.getAttribute('aria-busy') !== 'true'

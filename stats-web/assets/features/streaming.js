@@ -8,7 +8,10 @@ const POLL_MS = 3000;
 export function createStreamingWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
     openReadOnlyModal, confirmAction, requestJson, modalFooter, metrics, formatNumber, href,
-    browsingWorkflows, connectRadioReference, radioReferenceAllowed = true, signal } = deps;
+    browsingWorkflows, connectRadioReference, radioReferenceAllowed = true, signal: parentSignal,
+    guideMode = false } = deps;
+  const lifetime = new AbortController();
+  const signal = lifetime.signal;
   const host = node('div', 'streaming-page data-workspace');
   const toolbar = node('div', 'streaming-toolbar streaming-page-toolbar ui-catalog-toolbar');
   const summary = node('div', 'streaming-summary');
@@ -20,6 +23,13 @@ export function createStreamingWorkspace(deps) {
   const freshness = node('span', 'muted');
   const pageMeta = node('footer', 'streaming-page-meta');
   let catalog = null, timer = null, loading = false, disposed = false, signature = '', modalActive = false;
+  let pendingAction = Promise.resolve(), editor = null, feedBrowser = null;
+  const ownedDialogs = new Set();
+  const markGuide = (element, id) => {
+    element.dataset.guideTarget = `st-${id}`;
+    return element;
+  };
+  const perform = operation => { pendingAction = Promise.resolve(operation()); return pendingAction; };
   const cells = new Map();
   const button = (label, action, primary = false) => {
     const control = node('button', `ui-button ui-button-${primary ? 'primary' : 'secondary'}`, label);
@@ -71,10 +81,11 @@ export function createStreamingWorkspace(deps) {
       } else {
         destinationHost.replaceChildren(...rows.map(row => {
           const card = node('article', 'streaming-destination-card ui-surface');
+          if (row === rows[0]) markGuide(card, 'destinations');
           const header = node('header', 'streaming-destination-header');
           const identity = node('div', 'streaming-identity');
           const title = node('h2', 'streaming-destination-title');
-          const open = button(row.name || 'Unnamed destination', () => openEditor(row.configuration_id));
+          const open = button(row.name || 'Unnamed destination', () => perform(() => openEditor(row.configuration_id)));
           open.className = 'link-button streaming-destination-name';
           title.append(open);
           identity.append(title, node('small', 'muted', row.provider_label));
@@ -91,7 +102,9 @@ export function createStreamingWorkspace(deps) {
           const error = node('div', 'streaming-destination-error ui-notice ui-notice-danger');
           error.append(node('strong', '', 'Last error'), cell(row, 'last_error'));
           const footer = node('footer', 'streaming-destination-actions ui-action-row');
-          footer.append(button('Manage destination', () => openEditor(row.configuration_id)));
+          const manage = button('Manage destination', () => perform(() => openEditor(row.configuration_id)));
+          if (row === rows[0]) markGuide(manage, 'manage-button');
+          footer.append(manage);
           card.append(header, counters, error, footer);
           return card;
         }));
@@ -127,6 +140,7 @@ export function createStreamingWorkspace(deps) {
   }
 
   async function openEditor(id = null, initialTab = 'settings') {
+    if (disposed) return;
     const content = node('div', 'streaming-editor editor-workspace ui-form-workflow ui-form-workflow-modal');
     const workflowBody = node('div', 'ui-form-workflow-body');
     workflowBody.append(feedback('Loading destination…', 'loading'));
@@ -138,9 +152,15 @@ export function createStreamingWorkspace(deps) {
     const changedAliases = new Map(), aliasOriginal = new Map(), controls = new Map();
     const modal = openReadOnlyModal(id ? 'Streaming destination' : 'Add streaming destination', content, {
       id: 'streaming-destination', className: 'streaming-editor-modal',
-      cleanup: () => { alive = false; abort.abort(); clearTimeout(statusTimer); modalActive = false; void refresh(); }
+      cleanup: () => {
+        alive = false; abort.abort(); clearTimeout(statusTimer); modalActive = false;
+        ownedDialogs.delete(modal); if (editor?.modal === modal) editor = null;
+        void refresh();
+      }
     });
+    if (modal) ownedDialogs.add(modal);
     if (!modal || (modal.ready && !await modal.ready)) return;
+    if (disposed) { modal.close(); return; }
     modalActive = true;
     const requestOptions = { signal: abort.signal, page: false };
     const localMessage = node('div');
@@ -156,7 +176,7 @@ export function createStreamingWorkspace(deps) {
     const aliasesPanel = node('section', 'streaming-panel');
     const statusPanel = node('section', 'streaming-panel');
     const panels = { settings: settingsPanel, aliases: aliasesPanel, status: statusPanel };
-    const save = button('Save settings', () => void saveActive(), true);
+    const save = markGuide(button('Save settings', () => perform(saveActive), true), 'save-assignments');
     save.classList.add('ui-form-submit');
     const formState = node('span', 'ui-form-state');
     formState.setAttribute('role', 'status');
@@ -169,7 +189,7 @@ export function createStreamingWorkspace(deps) {
         localMessage.hidden = false;
       }
     }));
-    const cancel = button('Cancel', modal.close);
+    const cancel = markGuide(button('Cancel', modal.close), 'add-cancel');
     const remove = button('Delete destination', () => void removeDestination());
     remove.classList.remove('ui-button-secondary');
     remove.classList.add('ui-button-danger');
@@ -180,6 +200,7 @@ export function createStreamingWorkspace(deps) {
     reload.hidden = true;
     const footer = modalFooter(formState, test, remove, cancel, save);
     const providerControl = select([], '');
+    markGuide(providerControl, 'provider');
     providerControl.setAttribute('aria-label', 'Provider');
     const fields = node('div', 'streaming-fields');
     const advanced = node('details', 'streaming-advanced');
@@ -289,13 +310,14 @@ export function createStreamingWorkspace(deps) {
       dirty();
       syncButtons();
     }
-    function switchTab(value) {
+    async function switchTab(value) {
       activeTab = value;
       Object.entries(panels).forEach(([key, panel]) => { panel.hidden = key !== value; });
       syncButtons();
-      if (value === 'aliases' && !aliasLoaded && id) void loadAliases();
+      const aliasesReady = value === 'aliases' && !aliasLoaded && id ? loadAliases() : null;
       clearTimeout(statusTimer);
-      if (value === 'status' && id) void updateStatus();
+      const statusReady = value === 'status' && id ? updateStatus() : null;
+      await Promise.all([aliasesReady, statusReady]);
     }
     function bindField(field, target) {
       const initial = definition.settings[field.key];
@@ -407,7 +429,7 @@ export function createStreamingWorkspace(deps) {
           { id: 'list', label: 'Alias List', render: row => row.alias_list_name }
         ], 'No matching aliases', { type: 'streaming-aliases', sortable: false, mobileCards: true,
           tableClass: 'ui-mobile-cards ui-data-table-quiet', layoutMenuHost: aliasLayoutHost,
-          controller: aliasTableController }));
+          controller: aliasTableController, presentation: guideMode }));
         syncPageToggle();
         aliasCount.textContent = `${formatNumber(result.total)} ${result.total === 1 ? 'alias' : 'aliases'}`;
       } catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
@@ -423,8 +445,10 @@ export function createStreamingWorkspace(deps) {
       const facts = node('dl', 'ui-facts');
       for (const [label, value] of [['Last error', row.last_error || 'None'], ['Provider', row.provider_label]]) {
         const fact = node('div', 'ui-fact'); fact.append(node('dt', '', label), node('dd', '', value)); facts.append(fact);
+        if (label === 'Last error') markGuide(fact, 'recovery-error');
       }
-      statusPanel.replaceChildren(uiStatus(row.state_label, statusTone(row)), counters, facts,
+      markGuide(counters, 'delivery');
+      statusPanel.replaceChildren(markGuide(uiStatus(row.state_label, statusTone(row)), 'recovery-state'), counters, facts,
         node('p', 'muted', 'These counts show delivery by this sender. The dashboard’s “Sent to Streamer” count shows calls handed over for delivery.'),
         button('Refresh status', () => void updateStatus()));
     }
@@ -433,7 +457,7 @@ export function createStreamingWorkspace(deps) {
       catch (error) { if (alive && error.name !== 'AbortError') showError(statusPanel, error); }
       finally {
         clearTimeout(statusTimer);
-        if (alive && activeTab === 'status') statusTimer = setTimeout(() => void updateStatus(), POLL_MS);
+        if (!guideMode && alive && activeTab === 'status') statusTimer = setTimeout(() => void updateStatus(), POLL_MS);
       }
     }
     async function saveActive() {
@@ -458,7 +482,7 @@ export function createStreamingWorkspace(deps) {
         if (!alive) return;
         dirty();
       });
-      if (alive && activeTab === 'aliases' && !aliasLoaded) void loadAliases();
+      if (alive && activeTab === 'aliases' && !aliasLoaded) await loadAliases();
     }
     async function removeDestination() {
       await run(async () => {
@@ -497,13 +521,18 @@ export function createStreamingWorkspace(deps) {
       }));
       settingsPanel.append(formField('Provider', uiSelectFrame(providerControl)), fields, advanced, warning);
       tabs = uiSegmentedControl([{ value: 'settings', label: 'Settings' }, { value: 'aliases', label: 'Aliases' },
-        { value: 'status', label: 'Status' }], initialTab, switchTab);
+        { value: 'status', label: 'Status' }], initialTab, value => perform(() => switchTab(value)));
       tabs.setAttribute('aria-label', 'Streaming destination sections');
+      markGuide(tabs, 'sections');
+      markGuide(tabs.querySelector('[data-value="aliases"]'), 'aliases-button');
+      markGuide(tabs.querySelector('[data-value="status"]'), 'status-button');
+      markGuide(modal.dialog.querySelector('.modal-close'), 'destination-close');
       workflowBody.replaceChildren(tabs, settingsPanel, aliasesPanel, statusPanel, localMessage, reload);
       content.replaceChildren(workflowBody, footer);
       renderFields();
       if (existing) drawStatus(existing.status);
-      switchTab(initialTab);
+      await switchTab(initialTab);
+      if (alive && !disposed) editor = { modal, tabs, aliasesPanel, save, cancel };
     } catch (error) { if (alive && error.name !== 'AbortError') {
       workflowBody.replaceChildren(feedback(error.message, 'error'), button('Retry', () => {
         const reopen = () => void openEditor(id, initialTab);
@@ -523,12 +552,15 @@ export function createStreamingWorkspace(deps) {
       id: 'streaming-feeds', className: 'streaming-feeds-modal', stack: 'child',
       cleanup: () => {
         alive = false; abort.abort(); modalActive = false;
+        ownedDialogs.delete(modal); if (feedBrowser?.modal === modal) feedBrowser = null;
         signal?.removeEventListener('abort', closeFeeds);
         void refresh();
       }
     });
+    if (modal) ownedDialogs.add(modal);
     const closeFeeds = () => { abort.abort(); modal?.close(); };
     if (!modal || (modal.ready && !await modal.ready)) { modalActive = false; return; }
+    if (disposed) { modal.close(); return; }
     signal?.addEventListener('abort', closeFeeds, { once: true });
     const current = () => alive && !disposed && !abort.signal.aborted;
     const showConnect = () => {
@@ -570,16 +602,16 @@ export function createStreamingWorkspace(deps) {
         }
         const grid = node('div', 'streaming-feed-grid');
         rows.forEach(row => {
-          const card = node('article', 'streaming-feed-card ui-surface');
+          const card = node('article', 'streaming-feed-card ui-surface ui-surface-soft');
           const header = node('header', 'streaming-feed-card-header');
           const identity = node('div', 'streaming-feed-identity');
           identity.append(node('h3', 'streaming-feed-name', row.name || 'Unnamed Broadcastify feed'),
             node('span', 'muted', 'Broadcastify feed'));
           header.append(identity, uiStatus(row.configured ? 'Configured' : 'Available', row.configured ? 'success' : 'neutral'));
-          const facts = node('dl', 'ui-facts streaming-feed-facts');
-          const feedId = node('div', 'ui-fact');
-          feedId.append(node('dt', '', 'Feed ID'), node('dd', '', formatNumber(row.id)));
-          facts.append(feedId);
+          const facts = node('div', 'ui-section-body');
+          const feedDetails = node('dl', 'ui-fact-list streaming-feed-facts');
+          feedDetails.append(node('dt', '', 'Feed ID'), node('dd', '', formatNumber(row.id)));
+          facts.append(feedDetails);
           const cardMessage = node('div');
           cardMessage.setAttribute('role', 'status');
           const cardActions = node('footer', 'streaming-feed-card-actions ui-action-row');
@@ -612,6 +644,7 @@ export function createStreamingWorkspace(deps) {
           grid.append(card);
         });
         body.replaceChildren(introduction, grid);
+        markGuide(grid, 'feeds');
       } catch (error) {
         if (alive && error.name !== 'AbortError') {
           const errorState = node('div', 'streaming-feed-error');
@@ -624,18 +657,81 @@ export function createStreamingWorkspace(deps) {
         }
       } finally { running = false; }
     }
-    void loadFeeds();
+    await loadFeeds();
+    if (current()) {
+      markGuide(modal.dialog.querySelector('.modal-close'), 'feeds-close');
+      feedBrowser = { modal };
+    }
   }
 
-  const findFeedsAction = button('Find Broadcastify feeds', () => void findFeeds());
+  const findFeedsAction = markGuide(button('Find Broadcastify feeds', () => perform(findFeeds)), 'feeds-button');
   findFeedsAction.disabled = !radioReferenceAllowed;
   if (!radioReferenceAllowed) findFeedsAction.title = 'RadioReference settings access is required.';
-  actions.append(findFeedsAction, button('Add destination', () => void openEditor(), true));
+  const addAction = markGuide(button('Add destination', () => perform(() => openEditor()), true), 'add-button');
+  actions.append(findFeedsAction, addAction);
   toolbar.append(summary, actions);
   pageMeta.append(note, freshness);
   host.append(toolbar, message, destinationHost, pageMeta);
-  const dispose = () => { disposed = true; clearTimeout(timer); };
-  signal?.addEventListener('abort', dispose, { once: true });
-  void poll();
-  return { element: host, dispose, refresh };
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true; lifetime.abort(); clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', dispose);
+    ownedDialogs.forEach(modal => { modal.setDirty(false); modal.setBusy(false); modal.close(); });
+    ownedDialogs.clear(); editor = null; feedBrowser = null;
+  };
+  parentSignal?.addEventListener('abort', dispose, { once: true });
+  if (parentSignal?.aborted) dispose();
+  const ready = refresh();
+  if (!guideMode) void ready.then(() => { if (!disposed) timer = setTimeout(poll, POLL_MS); });
+
+  async function prepareGuideSection(section, context = {}) {
+    if (!guideMode) throw new Error('Streaming examples require an isolated workspace.');
+    await ready;
+    const current = () => !disposed && !context.signal?.aborted && context.isCurrent?.() !== false;
+    const activate = async control => {
+      if (!current()) return;
+      if (!control || control.disabled) throw new Error(`Streaming tour control unavailable: ${section}`);
+      control.click();
+      await pendingAction;
+    };
+    if (!current()) return;
+    if (['provider', 'add-cancel'].includes(section)) {
+      await activate(addAction);
+      return;
+    }
+    if (['feeds', 'feeds-close'].includes(section)) {
+      await activate(findFeedsAction);
+      return;
+    }
+    const editorSections = ['sections', 'aliases-button', 'assign-alias', 'save-assignments',
+      'status-button', 'delivery', 'recovery', 'destination-close'];
+    if (!editorSections.includes(section)) return;
+    await activate(host.querySelector('[data-guide-target="st-manage-button"]'));
+    if (!current() || !editor) return;
+    if (['sections', 'aliases-button'].includes(section)) return;
+    await activate(editor.tabs.querySelector('[data-value="aliases"]'));
+    if (!current() || !editor) return;
+    const unchecked = [...editor.aliasesPanel.querySelectorAll('tbody input[type="checkbox"]')]
+      .find(control => !control.checked);
+    if (!unchecked) throw new Error('The Streaming example needs an unassigned alias.');
+    markGuide(unchecked.closest('tr') || unchecked, 'assign-alias');
+    if (section === 'assign-alias') return;
+    unchecked.click();
+    if (section === 'save-assignments') return;
+    await activate(editor.save);
+    if (!current() || !editor || section === 'status-button') return;
+    await activate(editor.tabs.querySelector('[data-value="status"]'));
+  }
+  async function prepareGuide(section, context = {}) {
+    await prepareGuideSection(section, context);
+    if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
+    const ids = section === 'recovery' ? ['recovery-state', 'recovery-error'] : [section];
+    const targets = ids.map(id => {
+      const selector = `[data-guide-target="st-${id}"]`;
+      return editor?.modal.dialog.querySelector(selector) || feedBrowser?.modal.dialog.querySelector(selector) ||
+        host.querySelector(selector);
+    }).filter(Boolean);
+    targets.forEach(target => target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+  }
+  return { element: host, dispose, refresh, ready, prepareGuide };
 }

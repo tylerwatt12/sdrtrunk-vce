@@ -17,7 +17,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -38,6 +38,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('channel-setup').version, 3);
   assert.equal(createGuideDefinition('aliases').version, 5);
   assert.equal(createGuideDefinition('radioreference').version, 3);
+  assert.equal(createGuideDefinition('streaming').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -278,6 +279,121 @@ async function checkGuides(assetsRoot) {
   closedExamples.abort();
   await assert.rejects(abortableRadioReferenceData.requestJson(comparisonPath), error => error.name === 'AbortError',
     'Dismissed examples cannot continue a pending interface preparation.');
+  const streamingTour = createGuideDefinition('streaming', {
+    documentValue: targetDocument,
+    preparePlayer: options => { prepared.push(['player', options]); return () => released.push('player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const streamingSections = ['overview', 'destinations', 'add-button', 'provider', 'add-cancel',
+    'feeds-button', 'feeds', 'feeds-close', 'manage-button', 'sections', 'aliases-button',
+    'assign-alias', 'save-assignments', 'status-button', 'delivery', 'recovery',
+    'destination-close', 'patch-routing'];
+  assert.deepEqual(streamingTour.steps.map(step => step.id), streamingSections,
+    'Streaming follows destination creation, feed lookup, assignment and delivery through visible opening and return actions.');
+  const streamingStop = id => streamingTour.steps.find(step => step.id === id);
+  assert.equal(streamingTour.steps[0].title, 'Share your radio traffic');
+  assert.deepEqual(streamingStop('sections').items.map(item => item.label), ['Settings', 'Aliases', 'Status']);
+  assert.deepEqual(streamingStop('delivery').items.map(item => item.label),
+    ['Queued', 'Sent / uploaded', 'Aged off', 'Errors']);
+  assert.deepEqual(targetNames(streamingStop('recovery')), ['st-recovery-state', 'st-recovery-error'],
+    'Recovery connects the current state with the earlier error rather than treating Last error as the current connection.');
+  for (const step of streamingTour.steps.filter(step => !step.overview)) {
+    assert.deepEqual(step.samples, [{ id: 'streaming-workspace', value: { section: step.id } }],
+      'Each Streaming stop shares the protected sample workspace lifecycle.');
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), [['player', { minimized: true }], ['streaming', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'player'],
+      'Streaming releases its real dialogs and workspace before restoring the player.');
+  }
+  for (const [opener, destination] of [['add-button', 'provider'], ['feeds-button', 'feeds'],
+    ['manage-button', 'sections'], ['aliases-button', 'assign-alias'], ['status-button', 'delivery'],
+    ['add-cancel', 'feeds-button'], ['feeds-close', 'manage-button'], ['destination-close', 'patch-routing']]) {
+    assert.deepEqual(targetNames(streamingStop(opener)), [`st-${opener}`],
+      `${opener} spotlights its own actual opening or return action.`);
+    assert.equal(streamingTour.steps.indexOf(streamingStop(opener)) + 1,
+      streamingTour.steps.indexOf(streamingStop(destination)),
+      `${destination} follows the action that opens or returns to its context.`);
+  }
+  assert.equal(streamingTour.steps.at(-1).nextLabel, 'Finish');
+  const streamingOnly = createGuideDefinition('streaming', {
+    canView: view => view === 'streaming', canAccess: () => false
+  });
+  const adminStreamingSections = ['feeds-button', 'feeds', 'feeds-close', 'patch-routing'];
+  assert.deepEqual(streamingOnly.steps.map(step => step.id),
+    streamingSections.filter(id => !adminStreamingSections.includes(id)),
+    'An account with only Streaming access keeps destination workflows while omitting administration-only feed and patch controls.');
+  assert.equal(streamingOnly.steps.at(-1).id, 'destination-close');
+  assert.equal(streamingOnly.steps.at(-1).nextLabel, 'Finish');
+  assert.ok(streamingOnly.steps.slice(0, -1).every(step => step.nextLabel === undefined),
+    'Role filtering leaves one final Finish action.');
+  const hiddenFeeds = createGuideDefinition('streaming', { documentValue: {
+    querySelector: () => ({ disabled: true }), querySelectorAll: () => []
+  } });
+  assert.deepEqual(hiddenFeeds.steps.map(step => step.id), streamingOnly.steps.map(step => step.id),
+    'The actual disabled feed opener supplies the same availability fallback when no capability callback is provided.');
+  const failedStreamingPreparation = createGuideDefinition('streaming', {
+    preparePlayer: () => () => released.push('player'),
+    preparePage: () => { throw new Error('Streaming sample preparation failed'); }
+  });
+  await assert.rejects(failedStreamingPreparation.steps.find(step => step.id === 'provider').prepare({}),
+    /Streaming sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['player'],
+    'A failed Streaming dialog preparation releases the minimized player presentation.');
+  const failedStreamingCleanup = createGuideDefinition('streaming', {
+    preparePlayer: () => () => released.push('player'),
+    preparePage: () => () => { throw new Error('Streaming cleanup failed'); }
+  });
+  const releaseFailedStreaming = await failedStreamingCleanup.steps[1].prepare({});
+  assert.throws(releaseFailedStreaming, /Streaming cleanup failed/);
+  assert.deepEqual(released.splice(0), ['player'],
+    'A workspace cleanup error still restores the player.');
+  const { createStreamingGuideData } = await load('guides/streaming-presentation.js');
+  const streamingData = createStreamingGuideData();
+  const streamingApi = '/api/v1/admin/streaming';
+  const sampleDestinations = await streamingData.requestJson(streamingApi);
+  const countyCalls = sampleDestinations.destinations.find(row => row.configuration_id === 'county-calls');
+  assert.deepEqual([countyCalls.state, countyCalls.queued, countyCalls.sent, countyCalls.aged_off, countyCalls.errors],
+    ['CONNECTED', 3, 128, 2, 1], 'The recovery example pairs successful current delivery with an earlier timeout.');
+  assert.equal(countyCalls.last_error, 'Connection timed out');
+  countyCalls.name = 'Changed outside the fixture';
+  assert.equal((await streamingData.requestJson(streamingApi)).destinations[0].name, 'County Calls',
+    'Production rendering cannot mutate the Streaming sample documents.');
+  const assignmentsPath = `${streamingApi}/county-calls/aliases`;
+  const sampleAssignments = await streamingData.requestJson(assignmentsPath);
+  const regionalFire = sampleAssignments.items.find(row => row.name === 'Regional Fire');
+  assert.equal(regionalFire.assigned, false);
+  assert.deepEqual([...new Set(sampleAssignments.items.map(row => row.alias_list_name))], ['County P25', 'City P25'],
+    'The assignment example shows traffic from several Alias Lists reaching one destination.');
+  await streamingData.requestJson(assignmentsPath, { method: 'POST',
+    body: { revision: sampleAssignments.revision, add: [regionalFire.id], remove: [] } });
+  assert.equal((await streamingData.requestJson(assignmentsPath)).items.find(row => row.id === regionalFire.id).assigned, true,
+    'The real Save assignments action updates its isolated sample result.');
+  assert.equal((await createStreamingGuideData().requestJson(assignmentsPath)).items.find(row => row.id === regionalFire.id).assigned, false,
+    'Leaving and revisiting the lesson starts with fresh assignment examples.');
+  await assert.rejects(streamingData.requestJson(assignmentsPath, { method: 'POST',
+    body: { revision: sampleAssignments.revision, add: [], remove: [regionalFire.id] } }),
+  error => error.code === 'stale_revision', 'Sample writes follow the real revision safety contract.');
+  const sampleFeeds = await streamingData.requestJson(`${streamingApi}/feeds/refresh`, { method: 'POST' });
+  assert.deepEqual(sampleFeeds.items.map(row => row.configured), [true, false],
+    'The actual feed picker receives both an already-added feed and one ready to add.');
+  const samplePreferences = await streamingData.requestOperationalPreference();
+  await streamingData.requestOperationalPreference('PUT', 'patch_group_streaming_option', 'TALKGROUPS', samplePreferences.revision);
+  assert.equal((await streamingData.requestOperationalPreference()).settings.patch_group_streaming_option, 'TALKGROUPS');
+  assert.equal((await createStreamingGuideData().requestOperationalPreference()).settings.patch_group_streaming_option, 'PATCH_GROUP',
+    'Patch routing examples leave receiver preferences untouched.');
+  await assert.rejects(streamingData.requestJson(`${streamingApi}/county-calls`, { method: 'DELETE' }),
+    /Unsupported Streaming example request/, 'Unexpected sample operations fail locally.');
+  const closedStreamingExamples = new AbortController();
+  const abortableStreamingData = createStreamingGuideData({ signal: closedStreamingExamples.signal });
+  closedStreamingExamples.abort();
+  await assert.rejects(abortableStreamingData.requestJson(streamingApi), error => error.name === 'AbortError');
+  await assert.rejects(abortableStreamingData.requestOperationalPreference(), error => error.name === 'AbortError',
+    'Dismissed Streaming examples cannot continue a pending page or preference request.');
   const scanListsTour = createGuideDefinition('scan-lists', {
     preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
     preparePage: async (view, section, context) => {
@@ -438,6 +554,30 @@ async function checkGuides(assetsRoot) {
   assert.equal(await restrictedRadioReference.controller.pageReady(), false);
   assert.equal(restrictedRadioReference.shown.length, 0,
     'A requested RadioReference tour preserves the production route’s access restrictions.');
+
+  const firstStreamingVisit = makeHarness({ context: { view: 'streaming', canAccess: () => false }, storage: {
+    getItem: key => /:welcome:1$|:streaming:[12]$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await firstStreamingVisit.controller.pageReady();
+  assert.equal(firstStreamingVisit.shown.at(-1).options.id, 'streaming');
+  assert.equal(firstStreamingVisit.shown.at(-1).options.version, 3,
+    'Completing the old Streaming placeholder does not suppress its first authored tour.');
+  assert.deepEqual(firstStreamingVisit.shown.at(-1).options.steps.map(step => step.id),
+    streamingOnly.steps.map(step => step.id),
+    'The controller forwards account capabilities to the actual page guide.');
+  firstStreamingVisit.finish();
+  firstStreamingVisit.controller.destroy();
+  const completedStreaming = makeHarness({ context: { view: 'streaming' }, storage: {
+    getItem: key => /:welcome:1$|:streaming:3$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await completedStreaming.controller.pageReady();
+  assert.equal(completedStreaming.shown.length, 0, 'Completing the Streaming tour keeps subsequent visits quiet.');
+  await completedStreaming.controller.openPage();
+  assert.equal(completedStreaming.shown.at(-1).options.id, 'streaming',
+    'The question-mark action can replay the completed Streaming tour.');
+  completedStreaming.controller.destroy();
 
   const firstRun = makeHarness();
   await firstRun.controller.pageReady();

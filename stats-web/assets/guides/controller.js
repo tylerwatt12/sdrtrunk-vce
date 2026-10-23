@@ -1,5 +1,5 @@
 import { openSetupGuide } from '../core/setup-guide.js?v=8';
-import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=12';
+import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=13';
 import { createGuideMemory } from './persistence.js?v=1';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',
@@ -20,7 +20,7 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
   let consumedRequest = null;
 
   const definitionFor = (id, context) => createGuideDefinition(id, { documentValue, preparePlayer, preparePage,
-    canSetup: context.canSetup !== false, canView: context.canView, canReport: context.canReport });
+    canSetup: context.canSetup !== false, canView: context.canView, canReport: context.canReport, canAccess: context.canAccess });
   const contextMatches = (context) => !destroyed && visitKey(getContext()) === visitKey(context);
   const eligible = (context, manual) => !destroyed && context.isDesktop === true &&
     (manual || context.authenticated === true) && context.canView?.(context.view) !== false;

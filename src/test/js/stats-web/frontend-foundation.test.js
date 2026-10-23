@@ -1583,7 +1583,7 @@ async function main() {
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
   assert.equal(tableCalls.length, 22, 'Every application table call must be audited');
-  const rrGuidePreparation = functionBinding(appSource, 'prepareRadioReferenceGuideSample');
+  const rrGuidePreparation = functionBinding(appSource, 'prepareWorkspaceGuideSample');
   assert.match(rrGuidePreparation, /return table\(rows, columns, emptyText, \{ \.\.\.options, controller, presentation: true \}\)/,
     'RadioReference guide tables keep production columns and use isolated presentation layouts.');
   assert.match(rrGuidePreparation, /controller\.widthObserver\?\.disconnect\(\)/,

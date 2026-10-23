@@ -6,6 +6,14 @@ const { pathToFileURL } = require('node:url');
 
 let defaultPreferences;
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const account of ['admin', 'listener']) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:${account}:operational-preferences:welcome:1`, '1');
+    }
+  });
+});
+
 test.beforeAll(async () => {
   const file = path.resolve(__dirname, '../../../../../stats-web/assets/core/preference-schema.js');
   defaultPreferences = (await import(pathToFileURL(file).href)).defaults;
@@ -44,6 +52,7 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: tier === 'admin' ? 'admin' : 'listener', tier, primary: tier === 'admin',
+        guide_dismissal_scope: 'operational-preferences',
         capabilities: { dashboard: true, 'admin-settings': tier === 'admin',
           'admin-recordings': tier === 'admin',
           'receiver-health': tier === 'admin',
@@ -108,6 +117,7 @@ async function openCurrentStatus(page, tab = 'health') {
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'admin', tier: 'admin', primary: true,
+        guide_dismissal_scope: 'operational-preferences',
         capabilities: { dashboard: true, 'admin-settings': true, 'receiver-health': true,
           'admin-users': true, 'admin-access': true, credits: true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
@@ -205,7 +215,7 @@ test('administration navigation becomes a complete compact picker on mobile', as
   await expect(select).toHaveValue('audio-quality');
   await expect(navigation.locator('.admin-settings-branch:visible')).toHaveCount(0);
   expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
-    .toEqual(['health', 'application-log', 'web-diagnostic-log', 'support', 'call-matching', 'tuner-allocation', 'recordings', 'audio-quality', 'transcription',
+    .toEqual(['health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support', 'call-matching', 'tuner-allocation', 'recordings', 'audio-quality', 'transcription',
       'push-setup',
       'activity', 'retained-statistics', 'remote-links', 'protocol-p25', 'display', 'users', 'access']);
 

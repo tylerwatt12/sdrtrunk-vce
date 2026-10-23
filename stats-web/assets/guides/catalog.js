@@ -2,11 +2,12 @@ import { definitions as routes } from '../core/routes.js?v=11';
 import { channelSetupSteps } from './pages/channel-setup.js?v=1';
 import { aliasesSteps } from './pages/aliases.js?v=1';
 import { radioReferenceSteps } from './pages/radioreference.js?v=1';
+import { streamingSteps } from './pages/streaming.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
-  'scan-lists': scanListsSteps, radioreference: radioReferenceSteps });
+  'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -44,8 +45,8 @@ const pageOverviewCopy = Object.freeze({
     'Find receiving frequencies and talkgroup names in RadioReference, import them into VCE, and return here to keep that information current.'],
   alerts: ['Have important activity brought to your attention',
     'Choose radio activity or receiver conditions that should publish an alert. Group related alerts into topics that listeners can follow.'],
-  streaming: ['Share received calls with other services',
-    'Send selected calls to your streaming destinations and check their delivery. Alias call handling settings choose which traffic reaches each destination.'],
+  streaming: ['Share your radio traffic',
+    'Send received radio traffic to services such as Broadcastify, OpenMHz, and RadioResolve. Alias assignments choose which calls each destination receives.'],
   tuners: ['Prepare your receivers',
     'Your tuners supply the radio signals VCE decodes. Check their availability and adjust reception settings to suit your antennas and local signals.'],
   admin: ['Look after this VCE installation',
@@ -60,7 +61,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -258,14 +259,14 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
 }
 
 export function createGuideDefinition(id, { documentValue = globalThis.document, preparePlayer,
-  preparePage, canSetup = true, canView, canReport } = {}) {
+  preparePage, canSetup = true, canView, canAccess, canReport } = {}) {
   if (id === 'welcome') return { id, version: 1, authored: true, title: 'Welcome to sdrtrunk VCE',
     eyebrow: 'WELCOME GUIDE', steps: welcomeSteps(documentValue, preparePlayer,
       canSetup && (typeof canView !== 'function' || canView('channel-setup') !== false), canView, canReport) };
   const template = pageGuideTemplates[id];
   if (!template) return null;
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
-    steps: [template.overview, ...authoredPages[id](documentValue, preparePlayer, preparePage, canView)] };
+    steps: [template.overview, ...authoredPages[id](documentValue, preparePlayer, preparePage, canView, canAccess)] };
   return { ...template, eyebrow: template.title, steps: [
     { ...template.overview, nextLabel: 'Continue' },
     { id: 'coming-soon', title: 'Guide coming soon', paragraphs: [
