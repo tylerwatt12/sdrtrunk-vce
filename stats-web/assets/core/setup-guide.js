@@ -1,6 +1,9 @@
 // Shared page guidance: the modal foundation owns focus, dismissal and replacement.
 // Steps only describe copy, existing targets and temporary presentation work.
 import { createGuideDiagram } from '../guides/diagrams.js?v=1';
+import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=1';
+
+const dynamicGuideDiagrams = Object.freeze({ 'tuner-coverage': createTunerCoverageDiagram });
 
 export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, guideSampleData }, options) {
   const steps = options.steps || [];
@@ -35,6 +38,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   let stepCleanup = null;
   let sampleCleanup = null;
   let illustrationCleanup = null;
+  let diagramCleanup = null;
   let stepGeneration = 0;
   let stepController = null;
   let preparing = false;
@@ -53,10 +57,11 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   };
   const cleanStep = () => {
     stepController?.abort();
-    const cleanups = [stepCleanup, ...layers.values(), sampleCleanup, illustrationCleanup, () => hero?.remove()];
+    const cleanups = [stepCleanup, ...layers.values(), sampleCleanup, illustrationCleanup, diagramCleanup, () => hero?.remove()];
     stepCleanup = null;
     sampleCleanup = null;
     illustrationCleanup = null;
+    diagramCleanup = null;
     let failure = null;
     cleanups.forEach(clean => {
       try { clean?.(); } catch (error) { failure ||= error; }
@@ -400,11 +405,14 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       modal.dialog.dataset.guideStep = step.id || String(index + 1);
       modal.dialog.classList.toggle('ui-setup-guide--illustrated', Boolean(step.illustration));
       copy.replaceChildren();
-      const diagram = step.diagram ? createGuideDiagram(step.diagram, { document,
-        idPrefix: `${heading.id}-diagram-${generation}` }) : null;
+      const diagramOptions = { document, idPrefix: `${heading.id}-diagram-${generation}` };
+      const dynamicDiagram = dynamicGuideDiagrams[step.diagram]?.(diagramOptions);
+      const diagram = dynamicDiagram?.element || (step.diagram ? createGuideDiagram(step.diagram, diagramOptions) : null);
       modal.dialog.classList.toggle('ui-setup-guide--diagram', Boolean(diagram));
+      modal.dialog.classList.toggle('ui-setup-guide--coverage', Boolean(dynamicDiagram));
       (step.paragraphs || []).forEach(text => copy.append(node('p', 'ui-setup-guide-description', text)));
       if (diagram) copy.append(diagram);
+      diagramCleanup = dynamicDiagram?.mount({ signal }) || null;
       if (step.items?.length) {
         const items = node('div', 'ui-setup-guide-items');
         step.items.forEach(({ label, text }) => {

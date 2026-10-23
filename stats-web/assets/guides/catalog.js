@@ -3,11 +3,12 @@ import { channelSetupSteps } from './pages/channel-setup.js?v=1';
 import { aliasesSteps } from './pages/aliases.js?v=1';
 import { radioReferenceSteps } from './pages/radioreference.js?v=1';
 import { streamingSteps } from './pages/streaming.js?v=2';
+import { tunersSteps } from './pages/tuners.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
-  'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps });
+  'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps, tuners: tunersSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -47,8 +48,8 @@ const pageOverviewCopy = Object.freeze({
     'Choose radio activity or receiver conditions that should publish an alert. Group related alerts into topics that listeners can follow.'],
   streaming: ['Share your radio traffic',
     'Send received radio traffic to services such as Broadcastify, OpenMHz, and RadioResolve. Alias assignments choose which calls each destination receives.'],
-  tuners: ['Prepare your receivers',
-    'Your tuners supply the radio signals VCE decodes. Check their availability and adjust reception settings to suit your antennas and local signals.'],
+  tuners: ['One receiver, several channels',
+    'Each tuner receives a window of spectrum. VCE creates receiving channels within its usable bandwidth as needed, including conventional channels, trunked control channels, and temporary voice channels. Center frequency positions that window.'],
   admin: ['Look after this VCE installation',
     'Control the receiver and the services shared by everyone using it. Check receiver health and manage access as your installation grows.'],
   settings: ['Make VCE comfortable for you',
@@ -59,9 +60,9 @@ const pageOverviewCopy = Object.freeze({
 export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entries(pageOverviewCopy)
   .map(([id, [title, ...paragraphs]]) => [id,
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
-      ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : {}) })])));
+      ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));

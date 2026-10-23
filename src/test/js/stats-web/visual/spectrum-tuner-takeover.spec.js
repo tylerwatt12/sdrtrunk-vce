@@ -71,6 +71,11 @@ function searchSnapshot() {
 }
 
 async function install(page, options = {}) {
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['tuners', 3]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:spectrum-takeover-tests:${id}:${version}`, '1');
+    }
+  });
   const state = { requests: [], takeoverSequence: 0, monitorSequence: 0,
     failNextTakeover: options.failTakeover === true };
   const inventory = options.paired ? pairedTuners() : [options.idle ? {
@@ -93,7 +98,7 @@ async function install(page, options = {}) {
       contentType: 'application/json', body: JSON.stringify({ error: { message, code } }) });
 
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
-      tier: 'admin', username: 'admin', csrf_token: 'test-token', capabilities: {
+      tier: 'admin', username: 'admin', guide_dismissal_scope: 'spectrum-takeover-tests', csrf_token: 'test-token', capabilities: {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,
         'admin-channels': true, 'admin-aliases': true
       } });
@@ -134,6 +139,8 @@ async function install(page, options = {}) {
         tuner: options.idle ? { ...inventory[0], operator_state: 'setup' } : activeTuner() });
     }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
+    if (path === '/api/v1/dashboard/main') return respond({ quality: { current: [] },
+      directory: { systems: [], channels: [] } });
     if (path === `${searchPath}/catalog`) return respond(catalog());
     if (path === searchPath && method === 'POST') return respond(searchSnapshot());
     if (path === `${searchPath}/search-active-a`) {

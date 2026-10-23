@@ -2,6 +2,14 @@ const { expect, test } = require('@playwright/test');
 const { resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['tuners', 3]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:tuners-native-tests:${id}:${version}`, '1');
+    }
+  });
+});
+
 function setting(id, label, group, kind, value, overrides = {}) {
   return { id, label, group, kind, value, scope: 'tuner', availability: 'live', editable: true,
     dependencies: [], ...overrides };
@@ -81,6 +89,7 @@ async function mockTuners(page, mutations, state = {}) {
     });
     if (path === '/api/v1/auth/session') {
       await respond({ configured: true, authenticated: true, username: 'admin', tier: 'admin', primary: true,
+        guide_dismissal_scope: 'tuners-native-tests',
         csrf_token: 'test-token', capabilities: {
           'admin-tuners': true, 'tuner-spectrum': true, 'dashboard': true, 'web-access': true
         } });
@@ -416,7 +425,7 @@ test('inline setting drafts survive tuner selection and can be discarded', async
   await expect(ppm).toHaveValue('12');
   await page.locator('[data-setting-id="frequency_correction_ppm"]')
     .getByRole('button', { name: 'Discard' }).click();
-  await expect(ppm).toHaveValue('0');
+  await expect(ppm).toHaveValue('0.00');
 });
 
 test('descriptor availability and dependencies control common and device settings', async ({ page }) => {

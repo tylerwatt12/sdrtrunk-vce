@@ -150,6 +150,11 @@ async function installLiveStream(page) {
 }
 
 async function install(page) {
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['tuners', 3]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:spectrum-drag-tests:${id}:${version}`, '1');
+    }
+  });
   const preferences = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
   const state = { centerHz: INITIAL_CENTER_HZ, requests: [], tunes: [], controls: [],
@@ -165,7 +170,7 @@ async function install(page) {
     const respond = (data, status = 200) => route.fulfill({ status, contentType: 'application/json',
       body: JSON.stringify({ data }) });
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
-      tier: 'admin', username: 'admin', csrf_token: 'test-token', capabilities: {
+      tier: 'admin', username: 'admin', guide_dismissal_scope: 'spectrum-drag-tests', csrf_token: 'test-token', capabilities: {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,
         'admin-channels': true, 'admin-aliases': true
       } });

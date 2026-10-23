@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=14';
+import { createGuideController } from './guides/controller.js?v=15';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -2448,7 +2448,7 @@ function openReadOnlyModal(title, body, options = {}) {
     document.addEventListener('keydown', keydown);
     if (options.lockScroll !== false) document.body.classList.add('modal-open');
     document.body.append(backdrop);
-    close.focus();
+    close.focus({ preventScroll: true });
     resolveReady(true);
   };
   const api = {
@@ -7881,6 +7881,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   const releases = [];
   const modals = [];
   const tables = new Set();
+  const sampleConnections = new Set();
   let workspace = null;
   let closed = false;
   const restore = () => {
@@ -7889,7 +7890,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     context.signal.removeEventListener('abort', restore);
     const failures = [];
     const safely = action => { try { action(); } catch (error) { failures.push(error); } };
-    safely(() => { if (view === 'streaming') workspace?.dispose(); else workspace?.destroy(); });
+    safely(() => { if (view === 'radioreference') workspace?.destroy(); else workspace?.dispose(); });
+    sampleConnections.forEach(connection => safely(() => connection.close()));
+    sampleConnections.clear();
     releases.splice(0).reverse().forEach(release => safely(release));
     modals.reverse().forEach(modal => safely(() => modal.close()));
     tables.forEach(controller => {
@@ -7909,13 +7912,17 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   context.signal.addEventListener('abort', restore, { once: true });
   try {
     const streaming = view === 'streaming';
-    const [feature, presentation] = await Promise.all(streaming ? [
+    const tuners = view === 'tuners';
+    const [feature, presentation] = await Promise.all(tuners ? [
+      Promise.resolve(null), import('./guides/tuners-presentation.js?v=1')
+    ] : streaming ? [
       import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
     ] : [
       import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = (streaming ? presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal });
+    const sample = (tuners ? presentation.createTunersGuideData : streaming ?
+      presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal });
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
     }
@@ -7940,7 +7947,40 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     };
     let protectedRoots;
     let routingHost = null;
-    if (streaming) {
+    if (tuners) {
+      const pageRoots = [];
+      if (typeof sample.api !== 'function' || typeof sample.connectionFactory !== 'function') {
+        throw new Error('The Tuners guide receiver data could not be prepared.');
+      }
+      const sampleApi = async (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const value = await sample.api(...args);
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        return value;
+      };
+      const sampleConnection = (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const connection = sample.connectionFactory(...args);
+        sampleConnections.add(connection);
+        return connection;
+      };
+      workspace = await renderTuners({
+        guideMode: true, renderContext: { ...renderContext, signal: context.signal },
+        requestJson: sampleRequest, api: sampleApi, openReadOnlyModal: openSampleModal,
+        snapPresets: sample.snapPresets,
+        spectrumOptions: { guideMode: true, api: sampleApi, connectionFactory: sampleConnection },
+        mount: (...nodes) => {
+          if (!closed && context.isCurrent()) {
+            pageRoots.push(...nodes.filter(node => node instanceof Element));
+            content.replaceChildren(...nodes);
+          }
+        },
+        registerConnection: connection => sampleConnections.add(connection)
+      });
+      if (closed || !context.isCurrent()) { workspace?.dispose(); restore(); return restore; }
+      workspace.element.dataset.guideExample = 'tuners';
+      protectedRoots = pageRoots;
+    } else if (streaming) {
       workspace = feature.createStreamingWorkspace(streamingWorkspaceDependencies({
         guideMode: true, signal: context.signal, requestJson: sampleRequest, table: sampleTable,
         openReadOnlyModal: openSampleModal,
@@ -7992,7 +8032,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       routingHost?.querySelector('[data-guide-target="st-patch-routing"]')
         ?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     }
-    const region = streaming ? 'streaming-workspace' : 'radioreference-workspace';
+    const region = `${view}-workspace`;
     protectedRoots.forEach(root => releases.push(guideSampleData.register(region, () => {}, { root })));
     modals.filter(modal => modal.dialog.isConnected).forEach(modal => {
       releases.push(guideSampleData.register(region, () => {}, { root: modal.dialog }));
@@ -8002,7 +8042,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
-  if (['radioreference', 'streaming'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
+  if (['radioreference', 'streaming', 'tuners'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -16421,8 +16461,23 @@ function tunerResolvedScopeSegments(viewport, scopes = []) {
 }
 
 function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
-  const spectrumDisplayPreferences = createSpectrumDisplayPreferences({
-    identity: userPreferenceController.snapshot().identity });
+  const guideMode = panelOptions.guideMode === true;
+  if (guideMode && (typeof panelOptions.api !== 'function' || typeof panelOptions.connectionFactory !== 'function')) {
+    throw new Error('Tuner examples require an isolated signal transport.');
+  }
+  const spectrumApi = panelOptions.api || api;
+  const connectSpectrum = panelOptions.connectionFactory || binaryFrameConnection;
+  const storedNumber = guideMode ? ((key, fallback) => fallback) : tunerStoredNumber;
+  const storedBoolean = guideMode ? ((key, fallback) => fallback) : tunerStoredBoolean;
+  const storedChoice = guideMode ? ((key, fallback) => fallback) : tunerStoredChoice;
+  const storeChoice = guideMode ? (() => {}) : storeTunerChoice;
+  const storeNumber = guideMode ? (() => {}) : storeTunerNumber;
+  const storeBoolean = guideMode ? (() => {}) : storeTunerBoolean;
+  let sampleAutoRange = true;
+  const spectrumDisplayPreferences = guideMode ? {
+    autoRangeEnabled: () => sampleAutoRange,
+    setAutoRangeEnabled: value => { sampleAutoRange = value; }
+  } : createSpectrumDisplayPreferences({ identity: userPreferenceController.snapshot().identity });
   const frequencyScopes = snapPresetDocument?.scopes || [];
   const basicOperator = panelOptions.basicOperator === true;
   const frequencyCursor = !basicOperator || panelOptions.frequencyCursor === true;
@@ -16490,10 +16545,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const optionsPanel = node('div', 'tuner-spectrum-options-panel ui-surface');
   optionsPanel.setAttribute('role', 'group');
   optionsPanel.setAttribute('aria-label', 'Tuner spectrum options');
-  let initialFloor = tunerStoredNumber(TUNER_SPECTRUM_FLOOR_PREFERENCE,
+  let initialFloor = storedNumber(TUNER_SPECTRUM_FLOOR_PREFERENCE,
     TUNER_SPECTRUM_DEFAULT_FLOOR_DB, TUNER_SPECTRUM_MINIMUM_DISPLAY_DB,
     TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB);
-  let initialCeiling = tunerStoredNumber(TUNER_SPECTRUM_CEILING_PREFERENCE,
+  let initialCeiling = storedNumber(TUNER_SPECTRUM_CEILING_PREFERENCE,
     TUNER_SPECTRUM_DEFAULT_CEILING_DB,
     TUNER_SPECTRUM_MINIMUM_DISPLAY_DB + TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB,
     TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB);
@@ -16533,7 +16588,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   speedInput.min = '0.25';
   speedInput.max = '4';
   speedInput.step = '0.25';
-  speedInput.value = String(tunerStoredNumber(TUNER_WATERFALL_SPEED_PREFERENCE, 1, 0.25, 4));
+  speedInput.value = String(storedNumber(TUNER_WATERFALL_SPEED_PREFERENCE, 1, 0.25, 4));
   speedInput.id = 'tuner-waterfall-speed';
   speedInput.setAttribute('aria-label', 'Waterfall speed');
   const speedValue = node('output', '', `${Number(speedInput.value).toFixed(2)}×`);
@@ -16543,15 +16598,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     return preferenceCheckbox('', label, checked, detail);
   };
   const snapToggle = optionToggle(!basicOperator &&
-    tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true),
+    storedBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true),
     'Snap frequency', 'Move the cursor to the nearest preset frequency in supported bands.');
   const snapControl = snapToggle.control;
   const snapInput = snapToggle.input;
-  const smoothToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true),
+  const smoothToggle = optionToggle(storedBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true),
     'Smooth FFT', 'Average successive frames so the spectrum trace is easier to read.');
   const smoothControl = smoothToggle.control;
   const smoothInput = smoothToggle.input;
-  const idleToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false),
+  const idleToggle = optionToggle(storedBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false),
     'Idle channel markers', 'Outline idle channels from the activity feed.');
   const idleChannelsControl = idleToggle.control;
   const idleChannelsInput = idleToggle.input;
@@ -16584,8 +16639,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     option.value = value;
     profileSelect.append(option);
   });
-  profileSelect.value = profileSelection ? (basicOperator ? tunerOperatorSpectrumProfile :
-    tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
+  profileSelect.value = profileSelection ? (basicOperator ? (guideMode ? 'balanced' : tunerOperatorSpectrumProfile) :
+    storedChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
       'balanced', Object.keys(TUNER_SPECTRUM_PROFILES))) : 'efficient';
   profileControl.append(profileLabel, uiSelectFrame(profileSelect));
   const profileWarning = node('p', 'tuner-spectrum-control-help',
@@ -17394,7 +17449,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const managedEmptyState = () => panelOptions.emptyState?.() || {
     status: 'Idle', message: 'No live samples—the tuner is idle.'
   };
-  const shouldRun = () => !disposed && !paused && !externallySuspended && pageFocused && !pageSuspended &&
+  const shouldRun = () => !disposed && !paused && !externallySuspended && (guideMode || pageFocused) && !pageSuspended &&
     !document.hidden && selectedTargetId();
 
   function diagnosticParameters() {
@@ -17608,7 +17663,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       if (!shouldRun() || stream || openingEpoch !== streamEpoch) return;
       const epoch = ++streamEpoch;
       let candidate = null;
-      candidate = binaryFrameConnection('tuner_diagnostics', diagnosticParameters(), {
+      candidate = connectSpectrum('tuner_diagnostics', diagnosticParameters(), {
         onOpen: () => {
           if (disposed || candidate !== stream || epoch !== streamEpoch) return;
           sequence = null;
@@ -18127,7 +18182,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function connectActiveChannels() {
-    if (basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource) return;
+    if (guideMode || basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource) return;
     const source = subscribeLiveChannelActivity({
       snapshot: (snapshot) => {
         activeChannelTables.clear();
@@ -18404,7 +18459,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   targetSelect.addEventListener('change', () => {
-    storeTunerChoice('session-target', targetSelect.value);
+    storeChoice('session-target', targetSelect.value);
     closeStreams();
     closeActiveChannels();
     resetViewportForTarget();
@@ -18413,8 +18468,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   });
   function applySelectedProfile() {
     spectrumProfile = profileSelect.value;
-    if (basicOperator) tunerOperatorSpectrumProfile = spectrumProfile;
-    else storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile);
+    if (basicOperator && !guideMode) tunerOperatorSpectrumProfile = spectrumProfile;
+    else storeChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile);
     if (basicOperator) syncOperatorQuality();
     if (shouldRun()) queueViewportUpdate(true);
   }
@@ -18471,7 +18526,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       `${(dbFloor - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB) / fullSpan * 100}%`);
     rangeSlider.style.setProperty('--range-upper',
       `${(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB) / fullSpan * 100}%`);
-    if (persist) {
+    if (persist && !guideMode) {
       void settleUserPreferenceMutation((preferences) => {
         preferences.tuner.floor_db = dbFloor;
         preferences.tuner.ceiling_db = dbCeiling;
@@ -18493,13 +18548,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     speedValue.textContent = `${waterfallSpeed.toFixed(2)}×`;
   });
   speedInput.addEventListener('change', () =>
-    storeTunerNumber(TUNER_WATERFALL_SPEED_PREFERENCE, waterfallSpeed));
+    storeNumber(TUNER_WATERFALL_SPEED_PREFERENCE, waterfallSpeed));
   snapInput.addEventListener('change', () => {
-    storeTunerBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked);
+    storeBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked);
     if (hoverRatio !== null) updateCursor(hoverRatio);
   });
   smoothInput.addEventListener('change', () => {
-    storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked);
+    storeBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked);
     clearSpectrumSmoothing();
     if (smoothInput.checked && fftValues.length && frameMetadata) {
       updateSpectrumSmoothing(fftValues, frameMetadata, tunerFrameDomain(frameMetadata, fftValues.length));
@@ -18510,7 +18565,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     if (!refining) scheduleDraw('spectrum');
   });
   idleChannelsInput.addEventListener('change', () => {
-    storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
+    storeBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
   autoRangeInput.addEventListener('change', () => {
@@ -18575,7 +18630,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     if (disposed) return;
     if (targetsRefreshPending) { targetsRefreshRequested = true; return; }
     targetsRefreshPending = true;
-    api('/api/v1/diagnostics/tuners').then((response) => {
+    spectrumApi('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed) return;
     const targets = tunerDiagnosticTargets(response);
     targetsById.clear();
@@ -18599,7 +18654,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     });
     targetSelect.value = managedSelection ?
       (targetsById.has(managedTargetId) ? managedTargetId : '') :
-      tunerStoredChoice('session-target', targets[0].id, targets.map((target) => target.id));
+      storedChoice('session-target', targets[0].id, targets.map((target) => target.id));
     targetSelect.disabled = managedSelection;
     pause.disabled = !targetSelect.value;
     resetViewportForTarget();
@@ -31080,8 +31135,39 @@ function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) 
   return wrapper;
 }
 
-async function renderTuners() {
-  const renderContext = captureRenderContext();
+async function renderTuners(options = {}) {
+  const guideMode = options.guideMode === true;
+  if (guideMode && (typeof options.requestJson !== 'function' || typeof options.api !== 'function' ||
+      typeof options.openReadOnlyModal !== 'function' || !options.snapPresets ||
+      typeof options.spectrumOptions?.api !== 'function' || typeof options.spectrumOptions?.connectionFactory !== 'function')) {
+    throw new Error('Tuner examples require isolated receiver and signal transports.');
+  }
+  const renderContext = options.renderContext || captureRenderContext();
+  const requestTunerJson = options.requestJson || requestJson;
+  const tunerApi = options.api || api;
+  const ownedModals = new Set(), connections = new Set();
+  let disposed = false, pendingAction = Promise.resolve(), activeModal = null;
+  const isCurrent = () => !disposed && !renderContext.signal.aborted && renderIsCurrent(renderContext);
+  const perform = operation => { pendingAction = Promise.resolve(operation()); return pendingAction; };
+  const registerConnection = connection => {
+    connections.add(connection);
+    if (options.registerConnection) options.registerConnection(connection);
+    else pageConnections.add(connection);
+  };
+  const markGuide = (element, name) => { element.dataset.guideTarget = `tn-${name}`; return element; };
+  const openTunerModal = (title, body, modalOptions = {}) => {
+    if (disposed || renderContext.signal.aborted) return null;
+    let modal;
+    modal = (options.openReadOnlyModal || openReadOnlyModal)(title, body, { ...modalOptions,
+      cleanup: () => {
+        ownedModals.delete(modal);
+        if (activeModal === modal) activeModal = null;
+        modalOptions.cleanup?.();
+      }
+    });
+    if (modal) { ownedModals.add(modal); activeModal = modal; }
+    return modal;
+  };
   const listBody = node('div', 'tuners-list');
   const detailsBody = node('div', 'tuners-details');
   const centerLockBody = node('div', 'tuners-center-lock');
@@ -31133,6 +31219,14 @@ async function renderTuners() {
   gainSection.classList.add('tuners-gain-section');
   const commonMore = node('details', 'tuners-common-details');
   commonMore.append(node('summary', '', 'Frequency limits'), commonMoreBody);
+  markGuide(commonMore.querySelector('summary'), 'frequency-limits-button');
+  markGuide(commonLimitsBody, 'frequency-limits');
+  markGuide(commonSampleBody, 'receiving-window');
+  markGuide(centerHost, 'center-frequency');
+  markGuide(lockReadout, 'lock-center');
+  markGuide(commonPrimaryBody, 'frequency-correction');
+  markGuide(channelReadout, 'live-count');
+  markGuide(spectrumBody, 'disabled-signal');
   const commonContent = node('div', 'tuners-common-content');
   commonContent.append(commonPrimaryBody, commonMore);
   const commonSection = section('Common tuning', commonContent);
@@ -31145,7 +31239,8 @@ async function renderTuners() {
   const heading = pageHeader('Tuners', 'Tune and watch receiver signal');
   heading.classList.add('tuners-page-header');
   heading.append(analyzeButton);
-  if (!beginPage(renderContext, heading, workspace)) return;
+  if (options.mount) options.mount(heading, workspace);
+  else if (!beginPage(renderContext, heading, workspace)) return;
 
   let rows = [];
   let selectedId = '';
@@ -31158,10 +31253,21 @@ async function renderTuners() {
   let promptedSetupId = '';
   let centerKeydownCleanup = null;
   const settingDrafts = new Map();
-  pageConnections.add({ close() {
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    renderContext.signal.removeEventListener('abort', dispose);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     centerKeydownCleanup?.();
-  } });
+    connections.forEach(connection => connection.close());
+    connections.clear();
+    ownedModals.forEach(modal => { modal.setDirty(false); modal.setBusy(false); modal.close(); });
+    ownedModals.clear();
+  };
+  renderContext.signal.addEventListener('abort', dispose, { once: true });
+  if (renderContext.signal.aborted) dispose();
+  if (options.registerConnection) options.registerConnection({ close: dispose });
+  else pageConnections.add({ close: dispose });
   listBody.append(node('div', 'loading', 'Loading tuners…'));
   detailsBody.append(node('div', 'loading', 'Loading tuner details…'));
   spectrumBody.append(node('div', 'loading', 'Loading spectrum…'));
@@ -31175,7 +31281,7 @@ async function renderTuners() {
     rescanButton.type = 'button';
     rescanButton.prepend(iconGlyph('icon-refresh'));
     body.append(intro, rescanButton, catalogBody);
-    const modal = openReadOnlyModal('Add recording tuner', body, {
+    const modal = openTunerModal('Add recording tuner', body, {
       id: 'add-recording-tuner', className: 'tuners-recordings-modal',
       returnFocusSelector: '#add-recording-tuner', onClose: () => { recordingRequest += 1; }
     });
@@ -31188,10 +31294,10 @@ async function renderTuners() {
       rescanButton.disabled = true;
       catalogBody.replaceChildren(node('div', 'loading', 'Reading recording tuner files…'));
       try {
-        const catalog = rescan ? await requestJson('/api/v1/admin/tuners/recordings/rescan', {
+        const catalog = rescan ? await requestTunerJson('/api/v1/admin/tuners/recordings/rescan', {
           method: 'POST', signal: renderContext.signal
-        }) : await api('/api/v1/admin/tuners/recordings', {}, { signal: renderContext.signal });
-        if (!renderIsCurrent(renderContext) || request !== recordingRequest || !modal.dialog.isConnected) return;
+        }) : await tunerApi('/api/v1/admin/tuners/recordings', {}, { signal: renderContext.signal });
+        if (!isCurrent() || request !== recordingRequest || !modal.dialog.isConnected) return;
         const entries = Array.isArray(catalog?.entries) ? catalog.entries : [];
         catalogBody.replaceChildren();
         if (catalog?.truncated) catalogBody.append(node('div', 'ui-notice',
@@ -31251,7 +31357,7 @@ async function renderTuners() {
             if (!Number.isSafeInteger(centerFrequencyHz) || centerFrequencyHz <= 0) {
               throw new Error('Enter a valid center frequency.');
             }
-            await requestJson('/api/v1/admin/tuners/recordings', {
+            await requestTunerJson('/api/v1/admin/tuners/recordings', {
               method: 'POST', body: { file_id: selectedId, center_frequency_hz: centerFrequencyHz }
             });
           }, { saving: 'Adding recording tuner…', onSuccess: async () => {
@@ -31262,7 +31368,7 @@ async function renderTuners() {
         });
         catalogBody.append(form);
       } catch (error) {
-        if (renderIsCurrent(renderContext) && request === recordingRequest && modal.dialog.isConnected) {
+        if (isCurrent() && request === recordingRequest && modal.dialog.isConnected) {
           catalogBody.replaceChildren(node('div', 'error', error.message || 'Could not read recording tuner files.'));
         }
       } finally {
@@ -31285,7 +31391,7 @@ async function renderTuners() {
   async function saveTunerSetting(tuner, setting, value, message = null) {
     const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
     if (message) message.textContent = 'Saving…';
-    await requestJson(path, { method: 'PUT', body: { value } });
+    await requestTunerJson(path, { method: 'PUT', body: { value } });
     settingDrafts.delete(`${tuner.id}:${setting.id}`);
     if (message) message.textContent = '';
     await refresh();
@@ -31410,6 +31516,7 @@ async function renderTuners() {
       });
       if (control) {
         const controlRow = node('div', 'tuners-setting-control-row');
+        if (group === 'gain') markGuide(controlRow, 'gain');
         controlRow.append(control.element);
         if (!usability.enabled && usability.reason) {
           const help = iconButton('icon-about', usability.reason,
@@ -31463,7 +31570,7 @@ async function renderTuners() {
 
   async function changeOperatorState(tuner, state) {
     const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/state`;
-    await requestJson(path, { method: 'PUT', body: { state } });
+    await requestTunerJson(path, { method: 'PUT', body: { state } });
     operationNotice = '';
     await refresh();
   }
@@ -31489,19 +31596,19 @@ async function renderTuners() {
         `${group.voiceCount} Voice channel${group.voiceCount === 1 ? '' : 's'}`));
       body.append(card);
     }
-    openReadOnlyModal(title, body, { id: 'tuner-channel-list', returnFocusSelector, className: 'admin-modal' });
+    openTunerModal(title, body, { id: 'tuner-channel-list', returnFocusSelector, className: 'admin-modal' });
   }
 
   async function restoreStoppedChannels(tuner) {
     operationNotice = '';
     renderSelection();
-    await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/restore`, {
+    await requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/restore`, {
       method: 'POST'
     });
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       await refresh(true);
-      if (!renderIsCurrent(renderContext)) throw new Error('Restart status unavailable');
+      if (!isCurrent()) throw new Error('Restart status unavailable');
       const current = rows.find((candidate) => candidate.id === tuner.id);
       if (!current) throw new Error('Tuner is no longer available');
       if (String(current.transition || '').toLowerCase() === 'restoring') {
@@ -31530,10 +31637,11 @@ async function renderTuners() {
     const later = node('button', 'ui-button ui-button-secondary', 'Not now');
     later.type = 'button';
     const restore = node('button', 'ui-button ui-button-primary', 'Resume channels');
+    markGuide(restore, 'resume-channels');
     restore.type = 'button';
     actions.append(later, restore);
     body.append(message, actions);
-    const modal = openReadOnlyModal('Resume previous channels', body, {
+    const modal = openTunerModal('Resume previous channels', body, {
       id: 'restore-tuner-channels', returnFocusSelector: '#selected-tuner-restore', className: 'admin-modal'
     });
     if (!modal) return;
@@ -31543,7 +31651,7 @@ async function renderTuners() {
       restore.disabled = true;
       modal.setBusy(true);
       message.textContent = 'Resuming channels…';
-      void restoreStoppedChannels(tuner).then((failed) => {
+      perform(() => restoreStoppedChannels(tuner).then((failed) => {
         modal.setBusy(false);
         modal.close();
         if (failed.length) {
@@ -31557,7 +31665,7 @@ async function renderTuners() {
         later.disabled = false;
         restore.disabled = false;
         modal.setBusy(false);
-      });
+      }));
     });
     modal.focus?.(restore);
   }
@@ -31576,7 +31684,7 @@ async function renderTuners() {
     confirm.type = 'button';
     actions.append(cancel, confirm);
     body.append(message, actions);
-    const modal = openReadOnlyModal('Go live without resuming', body, {
+    const modal = openTunerModal('Go live without resuming', body, {
       id: 'tuner-live-without-resuming', returnFocusSelector: '#selected-tuner-live', className: 'admin-modal'
     });
     if (!modal) return;
@@ -31615,10 +31723,11 @@ async function renderTuners() {
     cancel.type = 'button';
     const confirm = node('button', state === 'disabled' ? 'ui-button ui-button-danger' : 'ui-button ui-button-primary',
       stateLabel);
+    markGuide(confirm, state === 'disabled' ? 'disable-tuner' : 'enter-setup');
     confirm.type = 'button';
     actions.append(cancel, confirm);
     body.append(message, actions);
-    const modal = openReadOnlyModal(stateLabel, body, {
+    const modal = openTunerModal(stateLabel, body, {
       id: 'change-tuner-state', returnFocusSelector, className: 'admin-modal'
     });
     if (!modal) return;
@@ -31628,7 +31737,7 @@ async function renderTuners() {
       cancel.disabled = true;
       modal.setBusy(true);
       message.textContent = state === 'setup' ? 'Entering Setup…' : 'Stopping…';
-      void changeOperatorState(tuner, state).then(() => {
+      perform(() => changeOperatorState(tuner, state).then(() => {
         modal.setBusy(false);
         modal.close();
       }).catch((error) => {
@@ -31636,7 +31745,7 @@ async function renderTuners() {
         confirm.disabled = false;
         cancel.disabled = false;
         modal.setBusy(false);
-      });
+      }));
     });
     modal.focus?.(confirm);
   }
@@ -31653,7 +31762,7 @@ async function renderTuners() {
     remove.type = 'button';
     actions.append(cancel, remove);
     body.append(message, actions);
-    const modal = openReadOnlyModal('Remove recording tuner', body, {
+    const modal = openTunerModal('Remove recording tuner', body, {
       id: 'remove-recording-tuner', returnFocusSelector: '#selected-tuner-remove', className: 'admin-modal'
     });
     if (!modal) return;
@@ -31663,7 +31772,7 @@ async function renderTuners() {
       cancel.disabled = true;
       modal.setBusy(true);
       message.textContent = 'Removing recording tuner…';
-      void requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}`, { method: 'DELETE' })
+      void requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}`, { method: 'DELETE' })
         .then(async () => {
           selectedId = '';
           operationNotice = 'Recording tuner removed';
@@ -31681,6 +31790,7 @@ async function renderTuners() {
   }
 
   function renderSelection() {
+    if (!isCurrent()) return;
     const tuner = selectedTuner();
     listBody.replaceChildren();
     if (!rows.length) {
@@ -31756,6 +31866,7 @@ async function renderTuners() {
       'icon-recording' : 'icon-tuner'), identity);
     if (transitioning) title.append(uiPill(status.label, status.tone));
     const mode = node('div', 'tuners-mode ui-segmented');
+    markGuide(mode, 'modes');
     mode.setAttribute('role', 'group');
     mode.setAttribute('aria-label', 'Tuner mode');
     for (const next of ['live', 'setup', 'disabled']) {
@@ -31763,6 +31874,9 @@ async function renderTuners() {
         next === 'live' ? 'Live' : next === 'setup' ? 'Setup' : 'Disabled');
       button.type = 'button';
       button.dataset.mode = next;
+      markGuide(button, next === 'live' ? 'live-mode' : next === 'setup' ?
+        (state === 'disabled' ? 'restart-setup-button' : 'setup-button') :
+        (state === 'disabled' ? 'disabled-mode' : 'disable-button'));
       button.id = next === 'setup' && state === 'disabled' ? 'selected-tuner-start' :
         `selected-tuner-${next === 'disabled' ? 'disable' : next}`;
       button.setAttribute('aria-pressed', String(next === state));
@@ -31777,21 +31891,21 @@ async function renderTuners() {
         if (next === 'setup' && state === 'disabled') {
           button.setAttribute('aria-disabled', 'true');
           promptedSetupId = tuner.id;
-          void changeOperatorState(tuner, 'setup').catch((error) => {
+          perform(() => changeOperatorState(tuner, 'setup').catch((error) => {
             promptedSetupId = '';
             operationNotice = error.message || 'Could not start tuner';
             renderSelection();
-          });
+          }));
         } else if (next === 'setup') {
           confirmStateChange(tuner, 'setup', '#selected-tuner-setup');
         } else if (next === 'live' && stoppedChannels.length) {
           confirmGoLiveWithoutResuming(tuner);
         } else if (next === 'live') {
           button.setAttribute('aria-disabled', 'true');
-          void changeOperatorState(tuner, 'live').catch((error) => {
+          perform(() => changeOperatorState(tuner, 'live').catch((error) => {
             operationNotice = error.message || 'Could not go live';
             renderSelection();
-          });
+          }));
         } else {
           confirmStateChange(tuner, 'disabled', '#selected-tuner-disable');
         }
@@ -31825,6 +31939,7 @@ async function renderTuners() {
         const restore = node('button', 'ui-button ui-button-primary', 'Resume & go Live');
         restore.type = 'button';
         restore.id = 'selected-tuner-restore';
+        markGuide(restore, 'resume-button');
         restore.disabled = transitioning;
         restore.addEventListener('click', () => promptRestore(tuner));
         recoveryActions.prepend(restore);
@@ -31843,7 +31958,8 @@ async function renderTuners() {
     spectrum?.selectTarget(tuner.spectrum_target_id || '');
     if (state === 'setup' && !transitioning && promptedSetupId === tuner.id) {
       promptedSetupId = '';
-      window.setTimeout(() => promptRestore(tuner), 0);
+      if (guideMode) promptRestore(tuner);
+      else window.setTimeout(() => promptRestore(tuner), 0);
     }
   }
 
@@ -31852,8 +31968,8 @@ async function renderTuners() {
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     refreshTimer = null;
     try {
-      const response = await api('/api/v1/admin/tuners', {}, { signal: renderContext.signal });
-      if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
+      const response = await tunerApi('/api/v1/admin/tuners', {}, { signal: renderContext.signal });
+      if (!isCurrent() || generation !== refreshGeneration) return;
       const active = right.contains(document.activeElement) ?
         document.activeElement : null;
       const activeSetting = active?.dataset?.tunerSetting || '';
@@ -31882,7 +31998,7 @@ async function renderTuners() {
         }
       }
     } catch (error) {
-      if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
+      if (!isCurrent() || generation !== refreshGeneration) return;
       listBody.replaceChildren(node('div', 'error', error.message || 'Could not load tuners.'));
       tunerCount.textContent = 'Unavailable';
       detailsBody.replaceChildren(node('div', 'error', 'Tuner details are unavailable.'));
@@ -31899,7 +32015,7 @@ async function renderTuners() {
       spectrum?.selectTarget('');
       if (throwOnError) throw error;
     } finally {
-      if (renderIsCurrent(renderContext) && generation === refreshGeneration) {
+      if (!guideMode && isCurrent() && generation === refreshGeneration) {
         refreshTimer = window.setTimeout(() => {
           if (document.hidden) {
             refreshTimer = window.setTimeout(() => void refresh(), 5_000);
@@ -31910,6 +32026,7 @@ async function renderTuners() {
   }
 
   analyzeButton.addEventListener('click', async () => {
+    if (guideMode || !isCurrent()) return;
     const plannerTab = window.open('about:blank', '_blank');
     if (!plannerTab) {
       operationNotice = 'Allow pop-ups to open RadioResolve.';
@@ -31920,27 +32037,27 @@ async function renderTuners() {
     analyzing = true;
     analyzeButton.disabled = true;
     try {
-      const snapshot = await api('/api/v1/admin/tuners/rf-analysis', {}, { signal: renderContext.signal });
-      if (!renderIsCurrent(renderContext)) {
+      const snapshot = await tunerApi('/api/v1/admin/tuners/rf-analysis', {}, { signal: renderContext.signal });
+      if (!isCurrent()) {
         plannerTab.close();
         return;
       }
       plannerTab.location.replace(buildRadioResolvePlannerUrl(snapshot));
     } catch (error) {
       plannerTab.close();
-      if (renderIsCurrent(renderContext)) {
+      if (isCurrent()) {
         operationNotice = error.message || 'Could not open external RF analysis.';
         renderSelection();
       }
     } finally {
       analyzing = false;
-      if (renderIsCurrent(renderContext)) analyzeButton.disabled = false;
+      if (isCurrent()) analyzeButton.disabled = false;
     }
   });
   rescanUsbButton.addEventListener('click', async () => {
     rescanUsbButton.disabled = true;
     try {
-      await requestJson('/api/v1/admin/tuners/rescan', { method: 'POST' });
+      await requestTunerJson('/api/v1/admin/tuners/rescan', { method: 'POST' });
       operationNotice = 'USB tuner rescan requested.';
       await refresh();
     } catch (error) {
@@ -31950,10 +32067,10 @@ async function renderTuners() {
       rescanUsbButton.disabled = false;
     }
   });
-  void refresh();
+  const ready = refresh();
   try {
-    const snapPresetDocument = await requestSpectrumSnapPresetDocument();
-    if (!renderIsCurrent(renderContext)) return;
+    const snapPresetDocument = options.snapPresets || await requestSpectrumSnapPresetDocument();
+    if (!isCurrent()) return;
     spectrum = tunerSpectrumPanel(snapPresetDocument, {
       managedSelection: true,
       inlineDisplayOptions: true,
@@ -31962,14 +32079,86 @@ async function renderTuners() {
       viewportControls: true,
       wheelZoom: false,
       profileSelection: true,
-      targetId: selectedTuner()?.spectrum_target_id || ''
+      targetId: selectedTuner()?.spectrum_target_id || '',
+      ...options.spectrumOptions,
+      ...(guideMode ? { guideMode: true } : {})
     });
-    pageConnections.add(spectrum);
+    registerConnection(spectrum);
     spectrumBody.replaceChildren(spectrum.element);
   } catch (error) {
-    if (renderIsCurrent(renderContext)) spectrumBody.replaceChildren(
+    if (isCurrent()) spectrumBody.replaceChildren(
       node('div', 'error', error.message || 'Spectrum is unavailable.'));
   }
+  await ready;
+  async function prepareTunerGuideSection(section, context = {}) {
+    if (!guideMode) throw new Error('Tuner examples require an isolated workspace.');
+    const current = () => !disposed && !context.signal?.aborted && context.isCurrent?.() !== false;
+    const activate = async control => {
+      if (!current()) return;
+      if (!control || control.disabled || control.getAttribute('aria-disabled') === 'true') {
+        throw new Error(`Tuner tour control unavailable: ${section}`);
+      }
+      control.click();
+      await pendingAction;
+      if (activeModal?.ready) await activeModal.ready;
+    };
+    const mode = name => workspace.querySelector(`.tuners-mode [data-mode="${name}"]`);
+    const action = name => activeModal?.dialog.querySelector(`[data-guide-target="tn-${name}"]`);
+    if (!current()) return;
+    const setupSections = ['enter-setup', 'receiving-window', 'center-frequency', 'lock-center', 'gain',
+      'frequency-correction', 'frequency-limits-button', 'frequency-limits', 'resume-button', 'resume-channels'];
+    if (setupSections.includes(section)) {
+      await activate(mode('setup'));
+      if (!current() || section === 'enter-setup') return;
+      await activate(action('enter-setup'));
+      if (!current()) return;
+      if (section === 'frequency-limits') await activate(commonMore.querySelector('summary'));
+      if (section === 'resume-channels') await activate(workspace.querySelector('#selected-tuner-restore'));
+    } else if (['disable-tuner', 'disabled', 'restart-setup-button', 'restart-channels', 'live'].includes(section)) {
+      await activate(mode('disabled'));
+      if (!current() || section === 'disable-tuner') return;
+      await activate(action('disable-tuner'));
+      if (!current() || ['disabled', 'restart-setup-button'].includes(section)) return;
+      await activate(mode('setup'));
+      if (!current()) return;
+      if (section === 'restart-channels') {
+        markGuide(action('resume-channels'), 'restart-channels');
+      } else await activate(action('resume-channels'));
+    }
+    if (!current()) return;
+  }
+  async function prepareGuide(section, context = {}) {
+    await prepareTunerGuideSection(section, context);
+    if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
+    const names = section === 'disabled' ? ['disabled-mode', 'disabled-signal'] :
+      section === 'live' ? ['live-mode', 'live-count'] : [section];
+    let targets = names.map(name => {
+      const selector = `[data-guide-target="tn-${name}"]`;
+      return activeModal?.dialog.isConnected && activeModal.dialog.querySelector(selector) || workspace.querySelector(selector);
+    }).filter(Boolean);
+    if (section === 'live' && targets.length > 1) {
+      const rects = targets.map(target => target.getBoundingClientRect());
+      const headerBottom = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0);
+      const height = Math.max(...rects.map(rect => rect.bottom)) - Math.min(...rects.map(rect => rect.top));
+      const receiverCount = listBody.querySelector('[aria-pressed="true"] .tuners-list-item-meta');
+      if (height > window.innerHeight - headerBottom - 24 && receiverCount) {
+        channelReadout.removeAttribute('data-guide-target');
+        markGuide(receiverCount, 'live-count');
+        targets = targets.map(target => target === channelReadout ? receiverCount : target);
+      }
+    }
+    if (section === 'gain') gainSection.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    else if (section === 'disabled') selectedSection.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    else if (targets.length > 1) {
+      const top = Math.min(...targets.map(target => target.getBoundingClientRect().top));
+      const headerBottom = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0);
+      window.scrollBy({ top: top - headerBottom - 12, behavior: 'instant' });
+    }
+    else targets.forEach(target => target.scrollIntoView({
+      block: section === 'lock-center' ? 'end' : 'center', inline: 'nearest', behavior: 'instant'
+    }));
+  }
+  return { element: workspace, prepareGuide, dispose, close: dispose };
 }
 
 function receiverHealthSavedActivitySection() {

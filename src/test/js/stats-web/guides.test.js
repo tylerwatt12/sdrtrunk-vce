@@ -17,7 +17,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -39,6 +39,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('aliases').version, 5);
   assert.equal(createGuideDefinition('radioreference').version, 3);
   assert.equal(createGuideDefinition('streaming').version, 3);
+  assert.equal(createGuideDefinition('tuners').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -394,6 +395,145 @@ async function checkGuides(assetsRoot) {
   await assert.rejects(abortableStreamingData.requestJson(streamingApi), error => error.name === 'AbortError');
   await assert.rejects(abortableStreamingData.requestOperationalPreference(), error => error.name === 'AbortError',
     'Dismissed Streaming examples cannot continue a pending page or preference request.');
+  const tunersTour = createGuideDefinition('tuners', {
+    documentValue: targetDocument,
+    preparePlayer: options => { prepared.push(['player', options]); return () => released.push('player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]); return () => released.push(section);
+    }
+  });
+  const tunerSections = ['overview', 'modes', 'setup-button', 'enter-setup', 'receiving-window',
+    'center-frequency', 'lock-center', 'gain', 'frequency-correction', 'frequency-limits-button',
+    'frequency-limits', 'resume-button', 'resume-channels', 'disable-button', 'disable-tuner',
+    'disabled', 'restart-setup-button', 'restart-channels', 'live'];
+  assert.deepEqual(tunersTour.steps.map(step => step.id), tunerSections,
+    'Tuners establishes its receiving concept, then modes, adjustments, and a complete stop/restart workflow.');
+  const tunerStop = id => tunersTour.steps.find(step => step.id === id);
+  assert.equal(tunerStop('overview').diagram, 'tuner-coverage');
+  assert.equal(tunerStop('overview').prepare, undefined,
+    'The animated overview operates independently of the actual receiver page and player.');
+  assert.deepEqual(tunerStop('modes').items.map(item => item.label), ['Live', 'Setup', 'Disabled']);
+  assert.deepEqual(targetNames(tunerStop('disabled')), ['tn-disabled-mode', 'tn-disabled-signal']);
+  assert.deepEqual(targetNames(tunerStop('live')), ['tn-live-mode', 'tn-live-count']);
+  for (const [opener, destination] of [['setup-button', 'enter-setup'],
+    ['frequency-limits-button', 'frequency-limits'], ['resume-button', 'resume-channels'],
+    ['disable-button', 'disable-tuner'], ['restart-setup-button', 'restart-channels']]) {
+    assert.deepEqual(targetNames(tunerStop(opener)), [`tn-${opener}`]);
+    assert.equal(tunersTour.steps.indexOf(tunerStop(opener)) + 1,
+      tunersTour.steps.indexOf(tunerStop(destination)),
+      `${destination} follows its actual opening control instead of appearing unexpectedly.`);
+  }
+  for (const step of tunersTour.steps.filter(step => !step.overview)) {
+    assert.deepEqual(step.samples, [{ id: 'tuners-workspace', value: { section: step.id } }]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), [['player', { minimized: true }], ['tuners', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'player'],
+      'Tuner examples release actual dialogs and page state before restoring the player.');
+  }
+  assert.equal(tunersTour.steps.at(-1).nextLabel, 'Finish');
+  const failedTunerCleanup = createGuideDefinition('tuners', {
+    preparePlayer: () => () => released.push('player'),
+    preparePage: () => () => { throw new Error('Tuner cleanup failed'); }
+  });
+  const releaseFailedTuner = await failedTunerCleanup.steps[1].prepare({});
+  assert.throws(releaseFailedTuner, /Tuner cleanup failed/);
+  assert.deepEqual(released.splice(0), ['player']);
+  const { TUNER_COVERAGE_MODEL: coverageModel, coverageCenterAt, coverageReceiverFor } =
+    await load('guides/tuner-coverage.js');
+  assert.deepEqual([coverageModel.rtl.sampleRate, coverageModel.rtl.usableBandwidth,
+    coverageModel.airspy.sampleRate, coverageModel.airspy.usableBandwidth], [2.4, 2.352, 10, 9]);
+  assert.equal(coverageModel.duration / coverageModel.speed, 13,
+    'The finite overview takes thirteen seconds of wall time at twice the simulated speed.');
+  const coverageCall = id => coverageModel.calls.find(call => call.id === id);
+  assert.equal(coverageReceiverFor(coverageCall('regional-missed')), null);
+  assert.equal(coverageReceiverFor(coverageCall('regional-later')), 'RTL-SDR');
+  assert.equal(coverageReceiverFor(coverageCall('regional-later'), false), null);
+  assert.equal(coverageReceiverFor(coverageCall('distant-later')), null);
+  assert.equal(coverageReceiverFor(coverageCall('regional-missed')), null,
+    'The earlier missed transmission stays missed after a later transmission fits the shifted window.');
+  const shifted = coverageCenterAt(coverageModel.duration);
+  for (const frequency of [coverageModel.controls[0].frequency, coverageCall('fire').frequency]) {
+    assert.ok(frequency - .00625 >= shifted - coverageModel.rtl.usableBandwidth / 2 &&
+      frequency + .00625 <= shifted + coverageModel.rtl.usableBandwidth / 2,
+    'Retuning retains the existing control and conventional receiving channels.');
+  }
+  const lowerEdge = coverageModel.initialCenter - coverageModel.rtl.usableBandwidth / 2;
+  assert.equal(coverageReceiverFor({ frequency: lowerEdge + .001, start: 0 }), null,
+    'The whole channel must fit inside usable bandwidth, including its width near an edge.');
+  assert.equal(coverageReceiverFor({ frequency: coverageModel.initialCenter, start: 0 }), null,
+    'The RTL-SDR center notch stays excluded just as it does for actual channel placement.');
+  assert.equal(coverageCenterAt(coverageModel.duration, false), coverageModel.initialCenter);
+  const { createTunersGuideData } = await load('guides/tuners-presentation.js');
+  const tunerExamples = createTunersGuideData();
+  const tunerApi = '/api/v1/admin/tuners';
+  const initialTuners = await tunerExamples.requestJson(tunerApi);
+  const exampleTuner = initialTuners.tuners[0];
+  assert.equal(exampleTuner.channel_count, 2);
+  exampleTuner.name = 'Changed outside the fixture';
+  assert.equal((await tunerExamples.requestJson(tunerApi)).tuners[0].name, 'Airspy R2');
+  const exampleTunerRow = async () => (await tunerExamples.requestJson(tunerApi)).tuners[0];
+  const setTunerMode = state => tunerExamples.requestJson(`${tunerApi}/${exampleTuner.id}/state`,
+    { method: 'PUT', body: { state } });
+  await setTunerMode('setup');
+  assert.deepEqual([(await exampleTunerRow()).operator_state, (await exampleTunerRow()).channel_count,
+    (await exampleTunerRow()).stopped_channels.length], ['setup', 0, 2],
+  'Entering actual Setup remembers two stopped sample channels.');
+  await tunerExamples.requestJson(`${tunerApi}/${exampleTuner.id}/restore`, { method: 'POST' });
+  assert.equal((await exampleTunerRow()).channel_count, 2);
+  await setTunerMode('disabled');
+  assert.deepEqual([(await exampleTunerRow()).operator_state, (await exampleTunerRow()).channel_count,
+    (await exampleTunerRow()).spectrum_available], ['disabled', 0, false],
+  'The sample Disabled mode turns off its diagnostic signal while retaining restartable channels.');
+  await setTunerMode('setup');
+  assert.equal((await exampleTunerRow()).stopped_channels.length, 2);
+  await tunerExamples.requestJson(`${tunerApi}/${exampleTuner.id}/restore`, { method: 'POST' });
+  assert.deepEqual([(await exampleTunerRow()).operator_state, (await exampleTunerRow()).channel_count], ['live', 2]);
+  assert.equal((await createTunersGuideData().requestJson(tunerApi)).tuners[0].operator_state, 'live',
+    'A new step starts with independent receiver state.');
+  await assert.rejects(tunerExamples.requestJson(`${tunerApi}/${exampleTuner.id}/settings`,
+    { method: 'PUT', body: { gain: 10 } }), /Unsupported tuner example request/,
+  'An unsupported operation fails inside the sample transport.');
+  const tunerFrames = [];
+  const exampleConnection = tunerExamples.connectionFactory('tuner_diagnostics', { profile: 'spectrum' },
+    { onFrame: frame => tunerFrames.push(frame) });
+  await Promise.resolve();
+  exampleConnection.close();
+  assert.ok(tunerFrames.some(frame => frame.type === 1) && tunerFrames.some(frame => frame.type === 4 && frame.valueCount === 1024),
+    'The actual spectrum receives fictional metadata and 1024-bin diagnostic frames.');
+  const originalInterval = globalThis.setInterval;
+  const openedExampleTimers = [];
+  globalThis.setInterval = (...args) => {
+    const timer = originalInterval(...args); openedExampleTimers.push(timer); return timer;
+  };
+  try {
+    let closeOnOpen;
+    closeOnOpen = tunerExamples.connectionFactory('tuner_diagnostics', { profile: 'spectrum' }, {
+      onOpen: () => closeOnOpen.close(), onFrame() {}
+    });
+    await Promise.resolve();
+    assert.equal(openedExampleTimers.length, 0,
+      'Closing a fictional connection inside onOpen prevents its queued opener from creating a later interval.');
+    const abortDuringFrame = new AbortController();
+    const closingFrames = [];
+    const closingTransport = createTunersGuideData({ signal: abortDuringFrame.signal });
+    closingTransport.connectionFactory('tuner_diagnostics', { profile: 'spectrum' }, {
+      onFrame: frame => { closingFrames.push(frame.type); abortDuringFrame.abort(); }
+    });
+    await Promise.resolve();
+    assert.deepEqual(closingFrames, [1], 'Aborting during state delivery prevents the following FFT frame.');
+    assert.equal(openedExampleTimers.length, 0,
+      'Aborting inside a frame callback prevents a timer from being installed after cleanup.');
+  } finally {
+    openedExampleTimers.forEach(timer => clearInterval(timer));
+    globalThis.setInterval = originalInterval;
+  }
+  const closedTunerExamples = new AbortController();
+  const abortableTuners = createTunersGuideData({ signal: closedTunerExamples.signal });
+  closedTunerExamples.abort();
+  await assert.rejects(abortableTuners.requestJson(tunerApi), error => error.name === 'AbortError');
+  assert.throws(() => abortableTuners.connectionFactory('tuner_diagnostics', {}, {}), error => error.name === 'AbortError');
   const scanListsTour = createGuideDefinition('scan-lists', {
     preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
     preparePage: async (view, section, context) => {
@@ -578,6 +718,28 @@ async function checkGuides(assetsRoot) {
   assert.equal(completedStreaming.shown.at(-1).options.id, 'streaming',
     'The question-mark action can replay the completed Streaming tour.');
   completedStreaming.controller.destroy();
+
+  const firstTunerVisit = makeHarness({ context: { view: 'tuners' }, storage: {
+    getItem: key => /:welcome:1$|:tuners:[12]$/.test(key) ? '1' : null, setItem() {}
+  } });
+  await firstTunerVisit.controller.pageReady();
+  assert.equal(firstTunerVisit.shown.at(-1).options.id, 'tuners');
+  assert.equal(firstTunerVisit.shown.at(-1).options.version, 3,
+    'The old Tuners placeholder does not suppress its first authored tour.');
+  assert.equal(firstTunerVisit.shown.at(-1).options.steps[0].diagram, 'tuner-coverage');
+  firstTunerVisit.finish();
+  firstTunerVisit.controller.destroy();
+  const completedTuners = makeHarness({ context: { view: 'tuners' }, storage: {
+    getItem: key => /:welcome:1$|:tuners:3$/.test(key) ? '1' : null, setItem() {}
+  } });
+  await completedTuners.controller.pageReady();
+  assert.equal(completedTuners.shown.length, 0);
+  await completedTuners.controller.openPage();
+  assert.equal(completedTuners.shown.at(-1).options.id, 'tuners');
+  completedTuners.controller.destroy();
+  const forbiddenTuners = makeHarness({ context: { view: 'tuners', guide: 'tuners', canView: view => view !== 'tuners' } });
+  assert.equal(await forbiddenTuners.controller.pageReady(), false);
+  assert.equal(forbiddenTuners.shown.length, 0, 'The Tuners guide preserves actual route access restrictions.');
 
   const firstRun = makeHarness();
   await firstRun.controller.pageReady();

@@ -55,7 +55,7 @@ function harness(liveAllowed = true) {
   let subscriber;
   let closed = 0;
   const context = {
-    basicOperator: false,
+    basicOperator: false, guideMode: false,
     route: { get: () => '' }, initialFloor: -120, initialCeiling: -20,
     spectrumDisplayPreferences: { autoRangeEnabled: () => true, setAutoRangeEnabled: () => {} },
     syncAutomaticDisplayRangeReadouts: () => {}, restoreWaterfallHistory: () => {}, scheduleDraw: () => {},
@@ -129,6 +129,7 @@ function harness(liveAllowed = true) {
     'function hideActiveFlag(flag)', 'function renderActiveChannels()',
     'function connectActiveChannels()', 'function closeActiveChannels()'
   ].forEach((signature) => vm.runInContext(functionSource(signature), context));
+  vm.runInContext('const storedBoolean = tunerStoredBoolean; const storeBoolean = storeTunerBoolean;', context);
   vm.runInContext(source.slice(source.indexOf('  const optionToggle = (checked, label, detail) => {'),
     source.indexOf("  const profileControl = node('label', 'settings-field-control")), context);
   vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
@@ -173,6 +174,8 @@ function spectrumLifecycleHarness() {
       };
     }
   };
+  context.connectSpectrum = context.binaryFrameConnection;
+  context.storeChoice = context.storeTunerChoice;
   vm.createContext(context);
   vm.runInContext(`
     let disposed = false;
@@ -428,7 +431,7 @@ test('full receiver window drag tunes during movement and flushes release while 
 
 test('Tuners and Spectrum pages instantiate the same spectrum renderer', () => {
   const spectrumPage = functionSource('async function renderTunerSpectrum()');
-  const tunersPage = functionSource('async function renderTuners()');
+  const tunersPage = functionSource('async function renderTuners(options = {})');
   assert.match(spectrumPage, /tunerSpectrumPanel\(snapPresetDocument\)/);
   assert.match(tunersPage, /tunerSpectrumPanel\(snapPresetDocument,\s*\{/);
   assert.match(tunersPage, /basicOperator:\s*true/);
@@ -437,7 +440,7 @@ test('Tuners and Spectrum pages instantiate the same spectrum renderer', () => {
   assert.match(tunersPage, /profileSelection:\s*true/);
   assert.match(source, /const frequencyActions = !basicOperator/);
   assert.match(source, /let tunerOperatorSpectrumProfile = 'efficient'/);
-  assert.match(source, /if \(basicOperator\) tunerOperatorSpectrumProfile = spectrumProfile/);
+  assert.match(source, /if \(basicOperator && !guideMode\) tunerOperatorSpectrumProfile = spectrumProfile/);
   assert.match(source, /if \(basicOperator \|\| !panelOptions\.inlineDisplayOptions\) toolbarActions.append\(options\)/);
   assert.equal((source.match(/function tunerSpectrumPanel\(/g) || []).length, 1);
 });
@@ -646,11 +649,11 @@ test('maximum detail persists while inactive and only updates a running spectrum
   let updates = 0;
   const profileSelect = Object.assign(new Element('select'), { value: 'maximum-detail' });
   const context = {
-    basicOperator: false,
+    basicOperator: false, guideMode: false,
     tunerOperatorSpectrumProfile: 'efficient',
     profileSelect,
     TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
-    storeTunerChoice: (key, value) => stored.push([key, value]),
+    storeChoice: (key, value) => stored.push([key, value]),
     shouldRun: () => running,
     queueViewportUpdate: () => { updates += 1; }
   };
@@ -675,14 +678,14 @@ test('embedded quality stays session-local and does not overwrite the Spectrum p
   const hiRes = new Element('button');
   const loRes = new Element('button');
   const context = {
-    basicOperator: true,
+    basicOperator: true, guideMode: false,
     profileSelection: true,
     tunerOperatorSpectrumProfile: 'efficient',
     profileSelect,
     hiRes, loRes,
     syncOperatorQuality: () => {},
     TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
-    storeTunerChoice: (key, value) => stored.push([key, value]),
+    storeChoice: (key, value) => stored.push([key, value]),
     shouldRun: () => false,
     queueViewportUpdate: () => {}
   };
