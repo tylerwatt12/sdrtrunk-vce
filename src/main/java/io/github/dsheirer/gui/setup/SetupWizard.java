@@ -1395,16 +1395,13 @@ public final class SetupWizard extends JDialog
         append(summary); append(Box.createVerticalStrut(24));
         if(!selectedScope.isBlank()) paragraph(selectedScope);
         var dirs = preferences.getDirectoryPreference();
-        paragraph("New recordings: " + (preferences.getRecordPreference().getRecordingMode() == RecordingMode.MANAGED ?
-            "Managed Recordings · organized and searchable" : "Basic Recordings · flat folder"));
         details("Recording and other output folders", "Recordings: " + dirs.getDirectoryRecording() +
             "\nManaged recordings: " + dirs.getDirectoryManagedRecording() +
             "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " +
             dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
         var app = preferences.getApplicationPreference();
-        paragraph("Web address: " + (app.isStatsWebServerHttpsEnabled() ? "https" : "http") + "://localhost:" + app.getStatsWebServerPort() + "/" +
-            (app.isStatsWebServerAnyIpEnabled() ? "\nOther devices: use this computer's reachable address; host firewall restrictions still apply." : " — this computer only"));
-        paragraph("Channels selected to start: " + (autoStart.isEmpty() ? "None — you can add channels after setup." : String.join(", ",autoStart)));
+        if(!autoStart.isEmpty() || progress.isImported() || progress.isComplete())
+            paragraph("Channels selected to start: " + (autoStart.isEmpty() ? "None — you can add channels after setup." : String.join(", ",autoStart)));
         JCheckBox launchChannels = new JCheckBox("Start configured channels after setup", startChannels);
         if(!autoStart.isEmpty()) append(launchChannels);
         if(vaultLocked())
