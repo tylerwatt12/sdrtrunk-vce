@@ -167,3 +167,55 @@ test('symbol-window changes and real selection changes reset only the relevant h
     assert.equal(h.symbols.context.points.length, 2);
   } finally { h.pane.close(); }
 });
+
+test('reconnecting to a restarted producer with the same generation resets its sequence baseline', () => {
+  const h = harness();
+  try {
+    h.state(); h.frame(2, 100, [-80, -40]); h.frame(3, 100, [0, 0.1]);
+    h.connection().callbacks.onError(new Error('The live connection ended.'));
+    h.connection().callbacks.onOpen();
+    h.state(7);
+    assert.equal(h.waterfall.context.rows.size, 0, 'The first state of a new connection is a fresh source boundary');
+    assert.equal(h.symbols.context.points.length, 0);
+    h.frame(2, 1, [-70, -30]); h.frame(3, 1, [1, 2]);
+    assert.equal(h.waterfall.context.rows.size, 1, 'Restarted sequence one must not be rejected as old');
+    assert.equal(h.symbols.context.points.length, 2);
+    h.state(7, { frequency_correction: { channel_correction_hz: -6 } });
+    assert.equal(h.waterfall.context.rows.size, 1, 'Later metadata on that connection still preserves history');
+    assert.equal(h.symbols.context.points.length, 2);
+  } finally { h.pane.close(); }
+});
+
+test('real multiplex ready events reopen diagnostic callbacks while ordinary STATE frames do not', () => {
+  let target;
+  let opens = 0;
+  let frames = 0;
+  const context = vm.createContext({
+    Uint8Array, DataView, TextDecoder, Error,
+    LIVE_MULTIPLEX_DECODER: new TextDecoder(), DIAGNOSTIC_FRAME_HEADER_BYTES: 64,
+    DIAGNOSTIC_FRAME_MAXIMUM_BYTES: 16 * 1024 * 1024, DIAGNOSTIC_FRAME_MAGIC: 0x53444447,
+    liveConnections: new Set(), pageConnections: new Set(),
+    invokeLiveSubscriber: (subscriber, name, ...args) => subscriber[name]?.(...args),
+    liveMultiplexer: { subscribe(_topic, _parameters, callbacks) { target = callbacks; return { close() {} }; } }
+  });
+  for (const name of ['decodeDiagnosticFrame', 'binaryFrameConnection']) vm.runInContext(functionSource(name), context);
+  context.binaryFrameConnection('channel_diagnostics', {}, { onOpen: () => opens++, onFrame: () => frames++ });
+  const start = source.indexOf('  dispatch(topic, kind, payload) {');
+  const end = source.indexOf('\n  dispatchError(', start);
+  assert.ok(start >= 0 && end > start);
+  const dispatch = vm.runInContext(`(function ${source.slice(start, end).trim()})`, context);
+  const transport = { clientId: 'first', failedTopics: new Set(),
+    subscribers: new Map([['channel_diagnostics', new Set([target])]]), queueControl() {} };
+  const state = new Uint8Array(64);
+  const header = new DataView(state.buffer);
+  header.setUint32(0, 0x53444447, true); header.setUint8(4, 1); header.setUint8(5, 1);
+  header.setUint16(6, 64, true); header.setBigInt64(16, 7n, true);
+  for (const [index, clientId] of ['first', 'reconnected'].entries()) {
+    transport.clientId = clientId;
+    dispatch.call(transport, 'control', 1, Buffer.from(JSON.stringify({ event: 'ready', data: { client_id: clientId } })));
+    assert.equal(opens, index + 1);
+    dispatch.call(transport, 'channel_diagnostics', 2, state);
+    assert.equal(opens, index + 1, 'Metadata STATE frames do not signal a transport reopen');
+    assert.equal(frames, index + 1);
+  }
+});

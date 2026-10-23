@@ -14004,7 +14004,10 @@ function liveChannelPane() {
     parameters.strength_encoding = 'packed6';
     stream = binaryFrameConnection('channel_diagnostics', parameters, {
       onOpen: () => {
-        if (epoch === streamEpoch) setStatus('Connected', 'state-current');
+        if (epoch === streamEpoch) {
+          awaitingState = true;
+          setStatus('Connected', 'state-current');
+        }
       },
       onFrame: (frame) => {
         if (epoch !== streamEpoch || frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
