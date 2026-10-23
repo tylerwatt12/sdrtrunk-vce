@@ -1,5 +1,5 @@
 import { applyThemeHue, APPEARANCE_SCHEMES } from '/assets/core/theme.js?v=2';
-import { receiverHealthAlertGroups } from '/assets/core/receiver-health-alerts.js?v=3';
+import { receiverHealthAlertGroups } from '/assets/core/receiver-health-alerts.js?v=4';
 import { setIconHintDetails } from '/assets/core/icon-hints.js';
 import { formatPagingToneSummary } from '/assets/core/call-audio-details.js';
 import * as tableDefaults from '/assets/core/table-defaults.js';
@@ -14,7 +14,7 @@ import { openSetupGuide } from '/assets/core/setup-guide.js?v=3';
 import { createGuideDefinition } from '/assets/guides/catalog.js?v=1';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=2';
-import { createRemoteSupportWorkspace } from '/assets/features/remote-support.js';
+import { createRemoteSupportWorkspace } from '/assets/features/remote-support.js?v=4';
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
   'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));

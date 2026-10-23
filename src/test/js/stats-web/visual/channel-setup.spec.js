@@ -2,6 +2,16 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+const guideDismissalScope = 'channel-setup-fixture';
+test.beforeEach(async ({ page }) => {
+  const { guideStorageKey } = await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/guides/persistence.js')).href);
+  const keys = ['welcome', 'channel-setup'].map(id => guideStorageKey('channel-admin', guideDismissalScope, id));
+  await page.addInitScript(completed => {
+    completed.forEach(key => localStorage.setItem(key, '1'));
+  }, keys);
+});
+
 const p25Phase1Profile = require(path.resolve(__dirname,
   '../../../../../src/main/resources/channel-protocols.json')).profiles
   .find((profile) => profile.id === 'p25-phase1');
@@ -103,7 +113,7 @@ test('channel editor refreshes the voice-module override and renders the effecti
       await respond({
         configured: true,
         authenticated: true,
-        username: 'channel-admin',
+        username: 'channel-admin', guide_dismissal_scope: guideDismissalScope,
         tier: 'admin',
         primary: true,
         csrf_token: 'test-token',
@@ -185,7 +195,7 @@ test('editing a channel opens and creates the selected Alias List without losing
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     const data = path === '/api/v1/auth/session' ? {
-      configured: true, authenticated: true, username: 'channel-admin', tier: 'admin', primary: true,
+      configured: true, authenticated: true, username: 'channel-admin', guide_dismissal_scope: guideDismissalScope, tier: 'admin', primary: true,
       csrf_token: 'test-token', capabilities: { 'admin-channels': true, 'admin-aliases': true }
     } : path === '/api/v1/admin/channels' ? {
       revision: 1, channels: [{ ...channel, processing_state: 'STOPPED', editable: true }]
@@ -310,7 +320,7 @@ async function installEditableChannelCatalog(page) {
     const pathname = new URL(request.url()).pathname;
     const respond = (data) => route.fulfill({ json: apiData(data) });
     if (pathname === '/api/v1/auth/session') {
-      await respond({ configured: true, authenticated: true, username: 'channel-admin', tier: 'admin',
+      await respond({ configured: true, authenticated: true, username: 'channel-admin', guide_dismissal_scope: guideDismissalScope, tier: 'admin',
         primary: true, csrf_token: 'test-token',
         capabilities: { 'admin-channels': true, 'admin-aliases': true, 'admin-settings': true } });
     } else if (pathname === '/api/v1/admin/channels' && request.method() === 'GET') {
@@ -410,15 +420,27 @@ for (const width of [1280, 390]) {
     await select.check();
     await expect(dialogs).toHaveCount(0);
     await select.uncheck();
+    const rowBeforeMove = await row.elementHandle();
     await row.getByRole('button', { name: 'Start earlier', exact: true }).click();
     await expect.poll(() => fixture.orderMoves).toBe(1);
+    await expect.poll(() => rowBeforeMove.evaluate(element => element.isConnected)).toBe(false);
     await expect(dialogs).toHaveCount(0);
     expect(fixture.entryRequests).toBe(0);
 
+    const clickRowSpace = async targetRow => {
+      const cell = targetRow.locator('td[data-column="name"]');
+      await expect(cell).toBeVisible();
+      const point = await cell.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const x = box.width - 3, y = box.height - 3;
+        const hit = document.elementFromPoint(box.left + x, box.top + y);
+        return { x, y, blank: element.contains(hit) && !hit.closest('a, button, input, select, textarea, label') };
+      });
+      expect(point.blank, 'the visible cell corner is outside nested controls').toBe(true);
+      await cell.click({ position: { x: point.x, y: point.y } });
+    };
     fixture.holdEntry();
-    const cell = row.locator('td[data-column="status"]');
-    const box = await cell.boundingBox();
-    await cell.click({ position: { x: box.width - 3, y: box.height - 3 } });
+    await clickRowSpace(row);
     const loadingDialog = page.getByRole('dialog', { name: 'Edit Channel', exact: true });
     await expect(loadingDialog).toBeVisible();
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -444,7 +466,7 @@ for (const width of [1280, 390]) {
     }
     const entries = fixture.entryRequests;
     const readOnlyRow = page.locator(`tr[data-id="${readOnlyId}"]`);
-    await readOnlyRow.locator('td[data-column="status"]').click();
+    await clickRowSpace(readOnlyRow);
     await expect(dialogs).toHaveCount(0);
     await expect(readOnlyRow).toBeFocused();
     expect(fixture.entryRequests).toBe(entries);
@@ -462,7 +484,7 @@ test('bulk Clone is unavailable whenever the selection includes a remote channel
     const pathname = new URL(route.request().url()).pathname;
     const respond = (data) => route.fulfill({ json: apiData(data) });
     if (pathname === '/api/v1/auth/session') {
-      await respond({ configured: true, authenticated: true, username: 'channel-admin', tier: 'admin',
+      await respond({ configured: true, authenticated: true, username: 'channel-admin', guide_dismissal_scope: guideDismissalScope, tier: 'admin',
         primary: true, csrf_token: 'test-token', capabilities: { 'admin-channels': true } });
     } else if (pathname === '/api/v1/admin/channels') {
       await respond({ revision: 1, channels: [local, remote] });
@@ -512,7 +534,7 @@ test('startup-order view moves keyed rows without replacing the page or losing p
       await respond(apiData({
         configured: true,
         authenticated: true,
-        username: 'channel-admin',
+        username: 'channel-admin', guide_dismissal_scope: guideDismissalScope,
         tier: 'admin',
         primary: true,
         csrf_token: 'test-token',

@@ -39,9 +39,9 @@ import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailabil
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=28';
+import { createAudioDock } from './core/audio-dock.js?v=29';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
-import { createRemoteSupportWorkspace } from './features/remote-support.js?v=3';
+import { createRemoteSupportWorkspace } from './features/remote-support.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
@@ -24511,7 +24511,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=31');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=32');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -30109,7 +30109,7 @@ async function renderAdminRemoteLinks(renderContext) {
 }
 
 async function alertsWorkspace(renderContext, view) {
-  const { createAlertsWorkspace } = await import('./features/alerts.js?v=19');
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=20');
   if (!renderIsCurrent(renderContext)) return;
   return createAlertsWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
