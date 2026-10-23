@@ -2835,8 +2835,10 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
       const key = row.dataset.id;
       onRowClick(row.tableRowData, row, event);
       if (!key || !body) return;
-      window.requestAnimationFrame(() => [...body.children]
-        .find((candidate) => candidate.dataset.id === key)?.focus({ preventScroll: true }));
+      window.requestAnimationFrame(() => {
+        if (!activeReadOnlyModal) [...body.children]
+          .find((candidate) => candidate.dataset.id === key)?.focus({ preventScroll: true });
+      });
     };
     row.addEventListener('click', (event) => {
       if (!event.target.closest('a, button, input, select, textarea, label')) {
@@ -14009,21 +14011,26 @@ function liveChannelPane() {
         if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
           const nextState = diagnosticJsonPayload(frame);
           if (!liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)) return;
+          const resetHistory = awaitingState || frame.generation !== generation;
           awaitingState = false;
           state = nextState;
           generation = frame.generation;
-          signalSequence = 0;
-          symbolSequence = 0;
-          signalValues = new Float32Array(0);
-          signalPeak = null;
-          signalLatencyMs = null;
-          latencyClock.offsetMs = null;
-          resetWaterfall();
+          if (resetHistory) {
+            signalSequence = 0;
+            symbolSequence = 0;
+            signalValues = new Float32Array(0);
+            signalPeak = null;
+            signalLatencyMs = null;
+            latencyClock.offsetMs = null;
+            resetWaterfall();
+          }
           const maximumSymbols = Math.max(1, Number(state?.maximum_visible_symbols) || 4800);
-          symbolValues = new Float32Array(maximumSymbols);
-          symbolValues.fill(Number.NaN);
-          symbolCursor = 0;
-          symbolCount = 0;
+          if (resetHistory || symbolValues.length !== maximumSymbols) {
+            symbolValues = new Float32Array(maximumSymbols);
+            symbolValues.fill(Number.NaN);
+            symbolCursor = 0;
+            symbolCount = 0;
+          }
           const signalState = state?.signal_state;
           const symbolsState = state?.symbols_state;
           updateDiagnosticState(signalDiagnostic, signalState,
@@ -19544,7 +19551,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=53');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=54');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -24747,6 +24754,9 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             revealRowGroups: () => Boolean(search.value.trim())
           } : {}),
           rowKey: (row) => row.configuration_id,
+          onRowClick: (row) => {
+            if (row.editable !== false) void openChannelEditorModal('edit', row.configuration_id);
+          },
           rowClass: (row) => [
             selected.has(row.configuration_id) ? 'selected' : '',
             highlightedOrderRows.has(row.configuration_id) ? 'channel-order-row-moved' : ''

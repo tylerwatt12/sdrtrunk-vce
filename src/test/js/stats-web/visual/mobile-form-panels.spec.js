@@ -102,7 +102,7 @@ async function mockApplication(page, theme) {
 }
 
 async function savedHistoryReady(page) {
-  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live · Updated /);
+  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live(?: · Loading (?:1|24)h history…)?$/);
 }
 
 async function dockSize(page, state) {

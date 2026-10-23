@@ -46,7 +46,16 @@ test('native affiliations and saved appends update independently without Refresh
   await page.goto('/app.html?view=network-visualizer');
   const radios = page.locator('.network-visualizer-label[data-type="radio"]:not([hidden])');
   await expect(radios).toHaveText('Engine 4');
-  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live · Updated /);
+  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live(?: · Loading (?:1|24)h history…)?$/);
+  const legend = page.getByRole('group', { name: 'Shape and line key' });
+  await expect(legend.locator(':scope > span')).toHaveText([
+    'System', 'Talkgroup', 'Radio', 'Last accepted affiliation', 'Earlier affiliation', 'Call activity'
+  ]);
+  await expect(legend.locator('svg[aria-hidden="true"]')).toHaveCount(6);
+  expect(await legend.locator('svg path').evaluateAll(paths =>
+    new Set(paths.slice(0, 3).map(path => path.getAttribute('d'))).size)).toBe(3);
+  await expect(legend.locator('svg path').nth(4)).toHaveAttribute('opacity', '0.4');
+  await expect(legend.locator('svg path').nth(5)).toHaveAttribute('stroke-dasharray', '4 3');
   const emergency = activity('Field unit', { id: 2, observed_at_ms: now, action: 'EMERGENCY',
     source_identity_key: 'v1-r-00001-001-30915', source_radio_id: 30915 });
   rows.push(emergency);
@@ -56,6 +65,7 @@ test('native affiliations and saved appends update independently without Refresh
   await page.getByRole('button', { name: 'Events', exact: true }).click();
   const events = page.locator('.network-visualizer-event-list .network-visualizer-event');
   await expect(events).toHaveCount(2);
+  await expect(events.locator('time'), 'event times remain available after removing the status timestamp').toHaveCount(2);
   await sendAppend(page, 1, 2, [emergency]);
   await expect(events).toHaveCount(2);
   await sendNative(page, 1, { collection_enabled: false });
@@ -103,7 +113,7 @@ test('a failed native reload retains the scene and recovers on a dark phone', as
   releaseRetry();
   await expect(radio).toHaveText('Updated Engine 4');
   expect(requests).toBe(3);
-  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live · Updated /);
+  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live(?: · Loading (?:1|24)h history…)?$/);
   expect(fixture.pageErrors).toEqual([]);
   expect(fixture.unexpected).toEqual([]);
 });
@@ -114,7 +124,7 @@ test('current affiliations survive a committed saved-history clear', async ({ pa
   const history = await historyRoute(page, () => cleared ? [] : [activity()], () => cleared ? 0 : 1);
   await page.route('**/api/v1/activity/live/seed*', route => route.fulfill({ json: snapshot([activity()]) }));
   await page.goto('/app.html?view=network-visualizer');
-  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live · Updated /);
+  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live(?: · Loading (?:1|24)h history…)?$/);
   cleared = true;
   await page.evaluate(() => window.fixtureSendLiveFrame(7, 'activity_reset',
     { source_epoch: 'fixture-p25', watermark_id: 0, history_generation: 1 }));
@@ -134,8 +144,8 @@ test('more than ten thousand native affiliations load while only the drawing is 
   await page.route('**/api/v1/activity/live/seed*', route => route.fulfill({ json: snapshot(current) }));
   await page.goto('/app.html?view=network-visualizer');
   const status = page.locator('.network-visualizer-status');
-  await expect(status).toContainText('Partial view');
-  await expect(status).toHaveAttribute('title', /^Showing up to 900 radios and 220 talkgroups/);
+  await expect(status).toHaveText('Live · Some radios or talkgroups are hidden');
+  await expect(status).toHaveAttribute('title', /^The drawing shows up to 900 radios and 220 talkgroups/);
   await expect(status).not.toHaveAttribute('title', /10,000|recently confirmed/);
   await expect(page.locator('.network-visualizer-empty')).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath('complete-affiliations-partial-drawing-dark-phone.png') });

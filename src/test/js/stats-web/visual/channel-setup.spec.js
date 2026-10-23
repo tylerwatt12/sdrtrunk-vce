@@ -271,7 +271,7 @@ test('editing a channel opens and creates the selected Alias List without losing
   await expect(page).toHaveURL(/view=aliases&list=1$/);
 });
 
-test('remote P25 editor shows applicable controls and preserves its linked source on save', async ({ page }) => {
+async function installEditableChannelCatalog(page) {
   const remoteId = '11111111-1111-4111-8111-111111111111';
   const localId = '22222222-2222-4222-8222-222222222222';
   const senderId = '33333333-3333-4333-8333-333333333333';
@@ -303,6 +303,7 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   };
   const channels = new Map([[remoteId, remoteChannel], [localId, localChannel]]);
   let savedRemote = null;
+  let entryRequests = 0, orderMoves = 0, entryHold = null, releaseEntry = null;
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
@@ -316,7 +317,7 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
       await respond({ revision: 1, channels: [...channels.values()].map((channel) => ({
         ...channel, frequencies_hz: channel.source.frequencies_hz, protocol_label: 'P25 Phase 1',
         channel_kind: 'TRUNKED', alias_list_name: 'Default P25', processing_state: 'STOPPED',
-        auto_start_order: 1, editable: true,
+        auto_start_order: 1, editable: channel.editable !== false,
         remote_origin: channel.source.source_type === 'REMOTE' ? { remote: true } : null
       })) });
     } else if (pathname === '/api/v1/admin/channels/options') {
@@ -324,12 +325,17 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
         tuners: ['Test tuner'] });
     } else if (pathname === '/api/v1/admin/channels/protocols') {
       await respond({ voice_decryption_module_loaded: false, profiles: [p25Phase1Profile] });
+    } else if (pathname === `/api/v1/admin/channels/${remoteId}/auto-start/move`) {
+      orderMoves++;
+      await respond({ revision: 1, configuration_ids: [remoteId] });
     } else if (pathname === `/api/v1/admin/channels/${remoteId}` && request.method() === 'PUT') {
       savedRemote = request.postDataJSON();
       channels.set(remoteId, { ...remoteChannel, ...savedRemote });
       await respond({ revision: 2, configuration_ids: [remoteId] });
     } else if (pathname === `/api/v1/admin/channels/${remoteId}` ||
         pathname === `/api/v1/admin/channels/${localId}`) {
+      entryRequests++;
+      if (entryHold) await entryHold;
       await respond({ revision: 1, channel: channels.get(pathname.split('/').at(-1)),
         processing_state: 'STOPPED' });
     } else {
@@ -337,6 +343,18 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
     }
   });
 
+  return { remoteId, localId, senderId, feedId, channels, settings,
+    get savedRemote() { return savedRemote; },
+    get entryRequests() { return entryRequests; },
+    get orderMoves() { return orderMoves; },
+    holdEntry() { entryHold = new Promise(resolve => { releaseEntry = resolve; }); },
+    releaseEntry() { releaseEntry?.(); entryHold = null; }
+  };
+}
+
+test('remote P25 editor shows applicable controls and preserves its linked source on save', async ({ page }) => {
+  const fixture = await installEditableChannelCatalog(page);
+  const { remoteId, localId, senderId, feedId, settings } = fixture;
   await page.goto('/app.html?view=channel-setup');
   await page.locator(`tr[data-id="${remoteId}"]`).getByRole('button', { name: 'Remote Control', exact: true }).click();
   const remoteDialog = page.getByRole('dialog', { name: 'Edit Remote Control' });
@@ -356,13 +374,13 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   await remoteDialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(remoteDialog).toHaveCount(0);
   await expect(page.locator(`tr[data-id="${remoteId}"] .channel-edit-name`)).toBeFocused();
-  expect(savedRemote).not.toBeNull();
-  expect(savedRemote.name).toBe('Remote Control Renamed');
-  expect(savedRemote.source).toMatchObject({ source_type: 'REMOTE', sender_id: senderId,
+  expect(fixture.savedRemote).not.toBeNull();
+  expect(fixture.savedRemote.name).toBe('Remote Control Renamed');
+  expect(fixture.savedRemote.source).toMatchObject({ source_type: 'REMOTE', sender_id: senderId,
     feed_id: feedId, frequencies_hz: [851_012_500] });
-  expect(savedRemote.settings).toMatchObject(settings);
-  expect(savedRemote.event_logs).toEqual(['CALL_EVENT']);
-  expect(savedRemote.recorders).toEqual(['BASEBAND'],
+  expect(fixture.savedRemote.settings).toMatchObject(settings);
+  expect(fixture.savedRemote.event_logs).toEqual(['CALL_EVENT']);
+  expect(fixture.savedRemote.recorders).toEqual(['BASEBAND'],
     'editing a remote channel must not erase hidden saved recorder choices');
 
   await page.goto(`/app.html?view=channel-setup&channel=${localId}`);
@@ -377,6 +395,65 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   await localDialog.locator('details[data-channel-section="output"] > summary').click();
   await expect(localDialog.locator('[data-channel-path="recorders"]')).toBeVisible();
 });
+
+for (const width of [1280, 390]) {
+  test(`editable channel row space opens its editor without stealing modal focus at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const fixture = await installEditableChannelCatalog(page);
+    const readOnlyId = '55555555-5555-4555-8555-555555555555';
+    fixture.channels.set(readOnlyId, { ...fixture.channels.get(fixture.localId),
+      configuration_id: readOnlyId, name: 'Read-only Control', editable: false });
+    await page.goto('/app.html?view=channel-setup');
+    const row = page.locator(`tr[data-id="${fixture.remoteId}"]`);
+    const dialogs = page.getByRole('dialog');
+    const select = row.getByRole('checkbox', { name: 'Select Remote Control', exact: true });
+    await select.check();
+    await expect(dialogs).toHaveCount(0);
+    await select.uncheck();
+    await row.getByRole('button', { name: 'Start earlier', exact: true }).click();
+    await expect.poll(() => fixture.orderMoves).toBe(1);
+    await expect(dialogs).toHaveCount(0);
+    expect(fixture.entryRequests).toBe(0);
+
+    fixture.holdEntry();
+    const cell = row.locator('td[data-column="status"]');
+    const box = await cell.boundingBox();
+    await cell.click({ position: { x: box.width - 3, y: box.height - 3 } });
+    const loadingDialog = page.getByRole('dialog', { name: 'Edit Channel', exact: true });
+    await expect(loadingDialog).toBeVisible();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await loadingDialog.evaluate(element => element.contains(document.activeElement)),
+      'row activation must not focus the background after opening the modal').toBe(true);
+    await page.keyboard.press('Tab');
+    expect(await loadingDialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
+    fixture.releaseEntry();
+    const editor = page.getByRole('dialog', { name: 'Edit Remote Control', exact: true });
+    await expect(editor).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialogs).toHaveCount(0);
+    expect(await row.evaluate(element => element.contains(document.activeElement))).toBe(true);
+
+    for (const key of ['Enter', ' ']) {
+      await row.focus();
+      await row.press(key);
+      await expect(editor).toBeVisible();
+      await page.keyboard.press('Shift+Tab');
+      expect(await editor.evaluate(element => element.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(row).toBeFocused();
+    }
+    const entries = fixture.entryRequests;
+    const readOnlyRow = page.locator(`tr[data-id="${readOnlyId}"]`);
+    await readOnlyRow.locator('td[data-column="status"]').click();
+    await expect(dialogs).toHaveCount(0);
+    await expect(readOnlyRow).toBeFocused();
+    expect(fixture.entryRequests).toBe(entries);
+    await row.getByRole('link', { name: 'Default P25', exact: true }).click();
+    await expect(page).toHaveURL(/view=aliases&list=1$/);
+    await expect(dialogs).toHaveCount(0);
+    expect(fixture.entryRequests).toBe(entries);
+  });
+}
 
 test('bulk Clone is unavailable whenever the selection includes a remote channel', async ({ page }) => {
   const local = { ...channelFixture(1), name: 'Local Control', remote_origin: null };

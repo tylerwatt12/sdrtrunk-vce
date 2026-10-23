@@ -248,7 +248,7 @@ test('remote support stays simple in light and dark desktop and phone layouts', 
   }
 });
 
-test('remote support retries safely, permits remote stop, and stops polling after navigation', async ({ page }) => {
+test('remote support retries safely, permits remote stop, and stops polling after navigation', async ({ page }, testInfo) => {
   await page.clock.install();
   const app = await openAdmin(page, 'remote-support', [], { remoteSupportFailure: true,
     remoteSupport: { enabled: true, connected: true, code: '482719356', can_start: false,
@@ -256,8 +256,9 @@ test('remote support retries safely, permits remote stop, and stops polling afte
   const workspace = page.locator('[data-remote-support]');
   await expect(workspace.getByText('Remote support status is unavailable. Try again.', { exact: true })).toBeVisible();
   await workspace.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(workspace.getByText('Connected', { exact: true })).toBeVisible();
+  await expect(workspace.getByText('Remote support allowed.', { exact: true })).toBeVisible();
   await expect(workspace.getByText(/^Access ends /)).toBeVisible();
+  await workspace.screenshot({ path: testInfo.outputPath('remote-support-allowed.png') });
   await workspace.getByRole('button', { name: 'Stop remote support', exact: true }).click();
   await expect(workspace.getByText('Start remote support from this installation.', { exact: true })).toBeVisible();
   await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeHidden();

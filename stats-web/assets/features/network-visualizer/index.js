@@ -107,10 +107,26 @@ function createP25Visualizer(dependencies = {}) {
   empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'Loading recent P25 activity…'),
     node('p', '', 'New saved activity appears automatically.'));
   const legend = node('div', 'network-visualizer-legend');
-  legend.append(node('span', '', 'Sphere · system'), node('span', '', 'Cube · talkgroup'),
-    node('span', '', 'Triangle · radio'), node('span', '', 'Solid line · last accepted affiliation'),
-    node('span', '', 'Faint line · earlier affiliation'),
-    node('span', '', 'Dashed line · call activity'));
+  legend.setAttribute('role', 'group');
+  legend.setAttribute('aria-label', 'Shape and line key');
+  for (const [label, path, attributes] of [
+    ['System', 'M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0ZM3 12h18M12 3c-4 4-4 14 0 18c4-4 4-14 0-18Z'],
+    ['Talkgroup', 'm12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10'],
+    ['Radio', 'm12 3 9 17H3ZM12 3v13m0 0L3 20m9-4 9 4'],
+    ['Last accepted affiliation', 'M2 12h20'],
+    ['Earlier affiliation', 'M2 12h20', { opacity: '0.4' }],
+    ['Call activity', 'M2 12h20', { 'stroke-dasharray': '4 3' }]
+  ]) {
+    const entry = node('span');
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const shape = document.createElementNS(icon.namespaceURI, 'path');
+    Object.entries({ viewBox: '0 0 24 24', 'aria-hidden': 'true', width: 24, height: 24,
+      fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5 }).forEach(([key, value]) => icon.setAttribute(key, value));
+    Object.entries({ d: path, ...attributes }).forEach(([key, value]) => shape.setAttribute(key, value));
+    icon.append(shape);
+    entry.append(icon, node('span', '', label));
+    legend.append(entry);
+  }
   const events = node('aside', 'network-visualizer-events');
   events.hidden = true;
   const eventsHeader = node('header', 'network-visualizer-panel-header');
@@ -135,7 +151,7 @@ function createP25Visualizer(dependencies = {}) {
   let selectedGroupKey = '';
   let visibleNodeKeys = new Set();
   let mode = 'auto';
-  let snapshotLoadedAtMs = 0;
+  let hasSnapshot = false;
   let feed = null;
   let serverTimeOffsetMs = 0;
   let scenePresented = false;
@@ -406,7 +422,7 @@ function createP25Visualizer(dependencies = {}) {
 
   async function loadSeed(signal, options = {}) {
     refresh.disabled = true;
-    if (!snapshotLoadedAtMs) setEmpty('Loading recent P25 activity…', 'New saved activity appears automatically.');
+    if (!hasSnapshot) setEmpty('Loading recent P25 activity…', 'New saved activity appears automatically.');
     return requestActivitySeed(options.refresh === true ? { refresh: true } : {}, { signal });
   }
 
@@ -461,7 +477,7 @@ function createP25Visualizer(dependencies = {}) {
     const timing = document.traffic_grant_age_out_milliseconds;
     if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
     const result = applyP25Affiliations(state, document, { ...activityOptions(replace), replace, sequence: document.sequence });
-    if (result.changed || replace) { snapshotLoadedAtMs = Date.now(); updateScene(result, replace); }
+    if (result.changed || replace) { hasSnapshot = true; updateScene(result, replace); }
   }
 
   function resetHistory() {
@@ -488,7 +504,7 @@ function createP25Visualizer(dependencies = {}) {
       (routineP25ActivityEnabled(eventSettings) || !P25_ROUTINE_ACTIONS.includes(row.action)));
     const result = applyP25ActivityRows(state, selected, activityOptions(initial));
     if (result.changed) {
-      snapshotLoadedAtMs = Date.now();
+      hasSnapshot = true;
       if (initial) historySceneDirty = true; else updateScene(result);
     }
   }
@@ -498,17 +514,17 @@ function createP25Visualizer(dependencies = {}) {
     refresh.disabled = value === 'loading' || value === 'refreshing';
     if (value === 'live') {
       const label = !state.available ? 'P25 data unavailable · Showing previous data' :
-        collectionEnabled ? `Live · Updated ${formatTime(snapshotLoadedAtMs || Date.now())}` : 'Live affiliations · Activity collection off';
+        collectionEnabled ? 'Live' : 'Live affiliations · Activity collection off';
       const partial = partialView;
-      status.title = partial ? 'Showing up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '';
-      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : '') + (partial ? ' · Partial view' : ''), state.available ? 'current' : 'stale');
+      status.title = partial ? 'The drawing shows up to 900 radios and 220 talkgroups. Select a talkgroup to narrow the view.' : '';
+      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : '') + (partial ? ' · Some radios or talkgroups are hidden' : ''), state.available ? 'current' : 'stale');
     }
     else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
     else if (value === 'loading') setStatus('Loading recent activity', 'stale');
     else if (value === 'refreshing') setStatus('Refreshing recent activity…', 'stale');
-    else if (value === 'retrying' || value === 'error') setStatus(snapshotLoadedAtMs ?
+    else if (value === 'retrying' || value === 'error') setStatus(hasSnapshot ?
       'Reconnecting · showing previous activity' : 'Activity unavailable · retrying', 'stale');
-    else setStatus(snapshotLoadedAtMs ? 'Reconnecting · showing previous activity' : 'Connecting to live activity', 'stale');
+    else setStatus(hasSnapshot ? 'Reconnecting · showing previous activity' : 'Connecting to live activity', 'stale');
   }
 
   function loadSnapshot(options = {}) { feed?.reseed(options); }
@@ -669,7 +685,7 @@ function createP25Visualizer(dependencies = {}) {
       if (sourceEpoch && sourceEpoch !== boundary.source_epoch) {
         state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
         nextHistoryExpiryAtMs = 0;
-        snapshotLoadedAtMs = 0;
+        hasSnapshot = false;
         clearAutoFocus();
         if (renderer) renderGraph(false);
       }
@@ -680,7 +696,7 @@ function createP25Visualizer(dependencies = {}) {
       if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
     },
     onError: (error) => {
-      if (!snapshotLoadedAtMs) setEmpty('Recent P25 activity could not be loaded',
+      if (!hasSnapshot) setEmpty('Recent P25 activity could not be loaded',
         error?.message || 'Reconnecting automatically. You can also select Refresh.', 'error');
     },
     isHidden: () => document.hidden,
