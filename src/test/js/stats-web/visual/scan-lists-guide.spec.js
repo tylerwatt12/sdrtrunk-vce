@@ -77,7 +77,7 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
   });
   const fixture = await installSiteStyleApplication(page, theme, undefined, { guides: firstVisit });
   if (firstVisit) await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 2], ['aliases', 4]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 3], ['aliases', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
     for (const version of [1, 2, 3, 4, 5]) {

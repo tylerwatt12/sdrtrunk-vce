@@ -123,8 +123,8 @@ for (const theme of ['light', 'dark']) {
     await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
     await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
     await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
-    await expect(guide(page).getByRole('heading', { name: 'Add your first channel', exact: true })).toBeVisible();
-    await expect(guide(page)).toContainText('Step 1 of 6');
+    await expect(guide(page).getByRole('heading', { name: 'Add a channel', exact: true })).toBeVisible();
+    await expect(guide(page)).toContainText('Step 1 of 9');
     await expect(page.locator('.primary-nav [data-nav-group][open]')).toHaveCount(0);
     expect(writes).toEqual([]);
     expect(fixture.pageErrors).toEqual([]);

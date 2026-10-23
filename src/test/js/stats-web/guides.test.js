@@ -35,11 +35,60 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
   assert.equal(createGuideDefinition('welcome').steps.some(step => step.overview), false,
     'The general welcome retains its own introduction and numbered progression.');
-  assert.equal(createGuideDefinition('channel-setup').version, 2);
-  assert.equal(createGuideDefinition('aliases').version, 4);
+  assert.equal(createGuideDefinition('channel-setup').version, 3);
+  assert.equal(createGuideDefinition('aliases').version, 5);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
+  const targetNames = (step) => step.targets().map(({ selector }) => /data-guide-target="([^"]+)"/.exec(selector)[1]);
+  const targetDocument = { querySelectorAll: selector => [{ selector }] };
+  const channelTour = createGuideDefinition('channel-setup', {
+    documentValue: targetDocument,
+    preparePlayer: () => { throw new Error('The page sample owns its player presentation.'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const channelSections = ['overview', 'new-channel', 'channel-choice', 'channel-choice-close',
+    'discover', 'select-channel', 'receiving', 'startup', 'listening-controls', 'listening'];
+  assert.deepEqual(channelTour.steps.map(step => step.id), channelSections,
+    'Channel Setup teaches the chooser opening and return actions, then the actual player entry point.');
+  const channelStop = id => channelTour.steps.find(step => step.id === id);
+  for (const [id, target] of [['new-channel', 'channel-new'], ['channel-choice', 'channel-choice'],
+    ['channel-choice-close', 'channel-choice-close'], ['discover', 'channel-discover'],
+    ['select-channel', 'channel-sample-select'],
+    ['startup', 'channel-startup'], ['listening-controls', 'player-lists'],
+    ['listening', 'scan-lists-player-lists']]) {
+    assert.deepEqual(targetNames(channelStop(id)), [target],
+      `${id} highlights its own control or destination instead of a later feature’s opener.`);
+  }
+  for (const id of ['channel-choice', 'channel-choice-close', 'listening-controls', 'listening']) {
+    const context = { registerLayer() {} };
+    const release = await channelStop(id).prepare(context);
+    assert.deepEqual(prepared.splice(0), [['channel-setup', id, context]],
+      'Actual channel chooser and player layers use the central page preparation context.');
+    release();
+    assert.deepEqual(released.splice(0), [id], 'Leaving each prepared channel step restores its actual interface.');
+  }
+  assert.ok(channelTour.steps.filter(step => !['channel-choice', 'channel-choice-close', 'listening-controls', 'listening'].includes(step.id))
+    .every(step => step.prepare === undefined), 'Channel steps open a dialog or player only when their lesson needs it.');
+  assert.deepEqual(channelStop('receiving').samples[0].value.selected_channel_ids, ['guide-sample-channel']);
+  assert.deepEqual(channelStop('select-channel').samples[0].value.selected_channel_ids, [],
+    'The sample channel is unselected while the actual selection action is introduced.');
+  assert.match(channelStop('receiving').targets()[0].selector, /channel-sample-start/,
+    'The receiving lesson exposes the Start action on its sample channel.');
+  assert.equal(channelTour.steps.at(-1).nextLabel, 'Finish');
+  assert.equal(channelTour.steps.some(step => step.id === 'filters'), false,
+    'The Channel Setup tour omits the self-explanatory filter lesson.');
+  const channelOnly = createGuideDefinition('channel-setup', { canView: view => view === 'channel-setup' });
+  assert.deepEqual(channelOnly.steps.map(step => step.id), channelSections.filter(id =>
+    !['discover', 'listening-controls', 'listening'].includes(id)),
+  'Unavailable tuner and player actions are omitted together with their destinations.');
+  assert.equal(channelOnly.steps.at(-1).nextLabel, 'Finish');
+  const channelOnlyCopy = channelOnly.steps.flatMap(step => step.paragraphs || []).join(' ');
+  assert.doesNotMatch(channelOnlyCopy, /RadioReference|Scan Lists you want to hear/,
+    'The channel chooser describes only source and listening actions available to the account.');
   const aliasesTour = createGuideDefinition('aliases', {
     preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
     preparePage: async (view, section, context) => {
@@ -47,10 +96,12 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const aliasSections = ['overview', 'lists', 'views', 'alias-editor', 'defaults-unmatched', 'defaults-new',
-    'bulk', 'scan-lists', 'activity', 'custom', 'discover', 'transfer'];
+  const aliasSections = ['overview', 'lists', 'views', 'alias-button', 'alias-editor', 'alias-close',
+    'defaults-button', 'defaults-unmatched', 'defaults-new-button', 'defaults-new', 'defaults-close',
+    'bulk', 'scan-lists-button', 'scan-lists', 'clear-selection', 'activity-button', 'activity',
+    'custom-button', 'custom', 'columns-button', 'discover-button', 'discover', 'configure-button', 'transfer'];
   assert.deepEqual(aliasesTour.steps.map(({ id }) => id), aliasSections,
-    'The Aliases tour introduces all views before editors, defaults, bulk tools, and imports.');
+    'The Aliases tour introduces its views and shows each opening, tab, and return action before changing context.');
   assert.equal(new Set(aliasesTour.steps.map(({ id }) => id)).size, aliasesTour.steps.length,
     'Each Aliases stop has a stable distinct identity for progression and cleanup.');
   for (const step of aliasesTour.steps.filter(step => !step.overview)) {
@@ -67,11 +118,58 @@ async function checkGuides(assetsRoot) {
   }
   assert.deepEqual(aliasesTour.steps.find(({ id }) => id === 'views').items.map(({ label }) => label),
     ['Configure', 'Activity', 'Custom', 'Discover']);
+  for (const id of ['defaults-unmatched', 'defaults-new']) {
+    const step = createGuideDefinition('aliases', { documentValue: targetDocument }).steps.find(step => step.id === id);
+    assert.deepEqual(targetNames(step), ['aliases-defaults-content'],
+      'Defaults concepts highlight the actual visible dialog viewport rather than fields clipped below its sticky footer.');
+  }
   const editor = aliasesTour.steps.find(({ id }) => id === 'alias-editor');
   assert.equal(editor.paragraphs.length, 0, 'Alias editor guidance is separated by tab rather than a dense paragraph.');
   assert.deepEqual(editor.items.map(({ label }) => label), ['Basics', 'Identifier', 'Call Handling', 'Activity']);
   assert.match(editor.items[1].text, /talkgroup ID or radio ID/);
   assert.equal(aliasesTour.steps.at(-1).nextLabel, 'Finish');
+  const aliasTargets = createGuideDefinition('aliases', { documentValue: targetDocument });
+  const aliasStop = id => aliasTargets.steps.find(step => step.id === id);
+  for (const [opener, target, destination] of [
+    ['alias-button', 'aliases-open-alias', 'alias-editor'],
+    ['defaults-button', 'aliases-defaults', 'defaults-unmatched'],
+    ['defaults-new-button', 'aliases-defaults-new-tab', 'defaults-new'],
+    ['scan-lists-button', 'aliases-bulk-scan-lists', 'scan-lists'],
+    ['activity-button', 'aliases-activity', 'activity'],
+    ['custom-button', 'aliases-custom', 'custom'],
+    ['discover-button', 'aliases-discover', 'discover'],
+    ['configure-button', 'aliases-configure', 'transfer']
+  ]) {
+    assert.deepEqual(targetNames(aliasStop(opener)), [target],
+      `${opener} has a dedicated spotlight on the actual opening or tab control.`);
+    assert.equal(aliasTargets.steps.indexOf(aliasStop(opener)) + 1,
+      aliasTargets.steps.indexOf(aliasStop(destination)),
+      `The ${destination} destination follows its own visible navigation action.`);
+  }
+  for (const [id, target] of [['alias-close', 'aliases-editor-close'],
+    ['defaults-close', 'aliases-defaults-close'], ['clear-selection', 'aliases-clear-selection'],
+    ['bulk', 'aliases-selection'], ['columns-button', 'aliases-columns']]) {
+    assert.deepEqual(targetNames(aliasStop(id)), [target],
+      'Returns, selection, and Columns each receive an explanation for the highlighted action.');
+  }
+  for (const [returnStep, nextStep] of [['alias-close', 'defaults-button'], ['defaults-close', 'bulk'],
+    ['clear-selection', 'activity-button']]) {
+    assert.equal(aliasTargets.steps.indexOf(aliasStop(returnStep)) + 1,
+      aliasTargets.steps.indexOf(aliasStop(nextStep)),
+      'The tour teaches the actual return action before moving to another section.');
+  }
+  assert.deepEqual(targetNames(aliasStop('activity')), ['aliases-activity-columns']);
+  assert.deepEqual(targetNames(aliasStop('custom')), ['aliases-table']);
+  assert.equal(aliasTargets.steps.some(step => step.id === 'columns'), false,
+    'The Columns lesson stays on its real button without opening an unexplained popover.');
+  const failedPreparation = createGuideDefinition('aliases', {
+    preparePlayer: () => () => released.push('player'),
+    preparePage: () => { throw new Error('sample preparation failed'); }
+  });
+  await assert.rejects(failedPreparation.steps.find(step => step.id === 'alias-editor').prepare({}),
+    /sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['player'],
+    'A failed page preparation releases the temporary player presentation.');
   const scanListsTour = createGuideDefinition('scan-lists', {
     preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
     preparePage: async (view, section, context) => {
@@ -102,7 +200,6 @@ async function checkGuides(assetsRoot) {
     'The tour omits self-explanatory list settings.');
   assert.match(scanListsTour.steps.find(({ id }) => id === 'add-list-button').paragraphs[1], /individual aliases.*Manage > Aliases/);
   assert.match(scanListsTour.steps.at(-1).paragraphs[0], /queues completed calls.*one at a time.*plays once/);
-  const targetNames = (step) => step.targets().map(({ selector }) => /data-guide-target="([^"]+)"/.exec(selector)[1]);
   const scanListTargets = createGuideDefinition('scan-lists', { documentValue: {
     querySelectorAll: selector => [{ selector }]
   } });
@@ -264,13 +361,13 @@ async function checkGuides(assetsRoot) {
   dismissedWelcome.dismiss();
 
   const dismissedPlaceholder = makeHarness({ context: { view: 'aliases' }, storage: {
-    getItem: key => /:welcome:1$|:aliases:[123]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:aliases:[1234]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedPlaceholder.controller.pageReady();
   assert.equal(dismissedPlaceholder.shown.at(-1).options.id, 'aliases');
-  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 4,
-    'Completing an older Aliases tour cannot suppress the new overview and walkthrough.');
+  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 5,
+    'Completing an older Aliases tour cannot suppress the walkthrough with visible navigation actions.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
     getItem: key => /:welcome:1$|:scan-lists:[12345]$/.test(key) ? '1' : null,

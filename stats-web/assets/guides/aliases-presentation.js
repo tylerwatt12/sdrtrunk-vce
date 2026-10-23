@@ -3,7 +3,7 @@
 export function getAliasesGuideData(section = 'lists') {
   const scanLists = [
     { id: 900001, name: 'Public Safety', published: true },
-    { id: 900002, name: 'Unidentified Traffic', published: false }
+    { id: 900002, name: 'Fire & EMS', published: true }
   ];
   const list = { id: 900001, alias_list_id: 900001, name: 'Example County', family: 'P25',
     alias_count: 4, assigned_channel_count: 1,
@@ -43,12 +43,22 @@ export function getAliasesGuideData(section = 'lists') {
     promotion_supported: true, logical_call_count: 8, signaling_observation_count: 13, last_seen_ms: latest }];
   const page = { rows, total_count: rows.length, offset: 0, limit: 100, has_more: false,
     matcher_types: ['talkgroup', 'talkgroup_range'] };
-  const view = ['activity', 'custom', 'discover'].includes(section) ? section : 'configure';
+  const view = {
+    'custom-button': 'activity', 'columns-button': 'custom', 'discover-button': 'custom',
+    'configure-button': 'discover'
+  }[section] || (['activity', 'custom', 'discover'].includes(section) ? section : 'configure');
+  if (['clear-selection', 'activity-button', 'activity', 'custom-button', 'custom', 'columns-button',
+    'discover-button', 'discover', 'configure-button', 'transfer'].includes(section)) {
+    rows.slice(0, 2).forEach(row => {
+      row.scan_lists = ['Public Safety', 'Fire & EMS'];
+      row.scan_list_ids = [900001, 900002];
+    });
+  }
   return { section, list, lists: [list], options, rows, page,
     observedPage: { rows: observed, total_count: observed.length, offset: 0, limit: 100, has_more: false },
     channels: [{ configuration_id: '00000000-0000-4000-8000-000000000001', name: 'Example County Site 1', alias_list_id: list.id }],
     recordResponse: { alias: rows[0], edit_revision: 'guide-alias' },
     analytics: { ...rows[0], first_evidence_ms: latest - 86400000, breakdown: [] },
-    selectedIds: ['bulk', 'scan-lists'].includes(section) ? [910001, 910002] : [],
+    selectedIds: ['scan-lists-button', 'scan-lists', 'clear-selection'].includes(section) ? [910001, 910002] : [],
     query: new URLSearchParams({ view: 'aliases', list: String(list.id), aliasTab: view }) };
 }

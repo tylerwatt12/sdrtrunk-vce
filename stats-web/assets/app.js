@@ -16,10 +16,10 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=10';
+import { createGuideController } from './guides/controller.js?v=11';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
-import { getAliasesGuideData } from './guides/aliases-presentation.js?v=2';
-import { getScanListsGuideData } from './guides/scan-lists-data.js?v=4';
+import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
+import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -7834,7 +7834,39 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
 }
 
 
+async function prepareChannelGuideSample(section, context) {
+  if (context.signal.aborted) return () => {};
+  const releases = [];
+  let modal = null;
+  let closed = false;
+  const restore = () => {
+    if (closed) return;
+    closed = true;
+    context.signal.removeEventListener('abort', restore);
+    try { modal?.close(); } finally { releases.splice(0).reverse().forEach(release => release()); }
+  };
+  context.signal.addEventListener('abort', restore, { once: true });
+  try {
+    if (['channel-choice', 'channel-choice-close'].includes(section)) {
+      modal = await openChannelCreationChoice(null, { guide: true });
+      if (closed || context.signal.aborted || !context.isCurrent()) { modal?.close(); restore(); return restore; }
+      if (!modal) throw new Error('The channel guide choice could not be presented.');
+      modal.content.dataset.guideTarget = 'channel-choice';
+      const close = modal.dialog.querySelector('.modal-close');
+      if (close) close.dataset.guideTarget = 'channel-choice-close';
+      releases.push(guideSampleData.register('channel-guide', () => {}, { root: modal.dialog }));
+    } else if (['listening-controls', 'listening'].includes(section)) {
+      releases.push(audioDock.prepareGuide({ sampleScanLists: getScanListsGuideData().scanLists.map(item => ({
+        ...item, selected: item.default === true })), openSampleLists: section === 'listening' }));
+      const dock = document.getElementById('audio-dock');
+      if (dock) releases.push(guideSampleData.register('channel-guide', () => {}, { root: dock }));
+    }
+    return restore;
+  } catch (error) { restore(); throw error; }
+}
+
 async function preparePageGuideSample(view, section, context) {
+  if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
   const memberView = scanListsTour && ['members', 'add-list-button', 'add-alias-list', 'back-to-lists'].includes(section);
@@ -7941,7 +7973,16 @@ async function preparePageGuideSample(view, section, context) {
     mark('.alias-add-button', 'aliases-add'); mark('.alias-transfer-import-button', 'aliases-import');
     mark('.alias-transfer-export-button', 'aliases-export'); mark('.alias-policy-button', 'aliases-defaults');
     mark('.alias-bulk-bar', 'aliases-bulk'); mark('.alias-select-all', 'aliases-select-all');
-    mark('thead .alias-page-select, .alias-row-select:checked', 'aliases-selection');
+    mark(`.alias-detail-link[data-alias-id="${data.rows[0].alias_id}"]`, 'aliases-open-alias');
+    mark('.alias-bulk-clear', 'aliases-clear-selection');
+    workspace.querySelectorAll('.alias-bulk-bar button').forEach(button => {
+      if (button.textContent === 'Scan Lists') button.dataset.guideTarget = 'aliases-bulk-scan-lists';
+    });
+    mark('.alias-row-select', 'aliases-selection');
+    workspace.querySelectorAll('.alias-row-select').forEach((checkbox, index) => {
+      if (index > 0) delete checkbox.dataset.guideTarget;
+    });
+    mark('.alias-editor-main .table-layout-trigger', 'aliases-columns');
     mark('th[data-column="calls"], th[data-column="signaling"], th[data-column="last-seen"]', 'aliases-activity-columns');
     if (section === 'activity') {
       await new Promise(resolve => requestAnimationFrame(resolve));
@@ -7950,30 +7991,25 @@ async function preparePageGuideSample(view, section, context) {
       if (scroller) scroller.scrollLeft = scroller.scrollWidth;
     }
     const dialogData = { guide: true, ...data, revision: 0 };
-    if (section === 'alias-editor') targetModal = await openAliasEditorModal('edit', data.rows[0].alias_id, null, dialogData);
-    else if (section.startsWith('defaults-')) {
+    if (['alias-editor', 'alias-close'].includes(section)) {
+      targetModal = await openAliasEditorModal('edit', data.rows[0].alias_id, null, dialogData);
+      if (targetModal) mark('.modal-close', 'aliases-editor-close', targetModal.dialog);
+    } else if (['defaults-unmatched', 'defaults-new-button', 'defaults-new', 'defaults-close'].includes(section)) {
       targetModal = openUnmatchedTalkgroupPolicyModal(data.list, dialogData);
-      if (targetModal && section === 'defaults-new') targetModal.dialog.querySelector('[data-tab="newAlias"]')?.click();
+      if (targetModal) {
+        if (['defaults-new', 'defaults-close'].includes(section)) targetModal.dialog.querySelector('[data-tab="newAlias"]')?.click();
+        mark('.modal-content', 'aliases-defaults-content', targetModal.dialog);
+        mark('[data-tab="newAlias"]', 'aliases-defaults-new-tab', targetModal.dialog);
+        mark('.modal-close', 'aliases-defaults-close', targetModal.dialog);
+      }
     } else if (section === 'scan-lists') {
       targetModal = openAliasBulkModal('scan-lists', dialogData);
-      if (targetModal) targetModal.dialog.querySelector('[name="scanListId"]').value = '900001';
+      if (targetModal) targetModal.dialog.querySelector('[name="scanListId"]').value = '900002';
     }
     if (targetModal) {
       await targetModal.ready;
       if (context.signal.aborted || !context.isCurrent()) { restore(); return restore; }
       data.releases.push(guideSampleData.register('aliases-workspace', () => {}, { root: targetModal.dialog }));
-    }
-    if (section === 'custom') {
-      const trigger = workspace.querySelector('.table-layout-trigger');
-      const panel = workspace.querySelector('.table-layout-panel');
-      if (trigger && panel) {
-        panel.showPopover();
-        await new Promise(resolve => requestAnimationFrame(resolve));
-        if (context.signal.aborted || !context.isCurrent()) { restore(); return restore; }
-        context.registerLayer(panel, { anchor: trigger });
-        trigger.setAttribute('aria-expanded', 'true');
-        panel.dataset.guideTarget = 'aliases-columns';
-      }
     }
     return restore;
   } catch (error) { restore(); throw error; }
@@ -24159,6 +24195,7 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       checkbox.className = 'ui-selection-check';
       checkbox.checked = selected.has(row.configuration_id);
       checkbox.setAttribute('aria-label', `Select ${row.name || 'channel'}`);
+      if (row.configuration_id === 'guide-sample-channel') checkbox.dataset.guideTarget = 'channel-sample-select';
       let shiftPressed = false;
       checkbox.addEventListener('click', (event) => { shiftPressed = event.shiftKey; });
       checkbox.addEventListener('change', () => selectedChanged(row.configuration_id,
@@ -25867,7 +25904,7 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   return { element: panel, start, close };
 }
 
-async function openActionChoiceModal({ title, id, returnFocusSelector, choices }) {
+async function openActionChoiceModal({ title, id, returnFocusSelector, choices, guide = false }) {
   const body = node('div', 'ui-confirmation-content');
   let modal;
   for (const choice of choices) {
@@ -25895,21 +25932,22 @@ async function openActionChoiceModal({ title, id, returnFocusSelector, choices }
     button.setAttribute('aria-describedby', describedBy.join(' '));
     button.append(iconGlyph(choice.icon), copy);
     button.addEventListener('click', () => {
-      if (!viewAllowed(choice.view)) return;
+      if (guide || !viewAllowed(choice.view)) return;
       const proceed = () => { if (viewAllowed(choice.view)) choice.action(); };
       if (modal.close(proceed)) proceed();
     });
     body.append(button);
   }
-  modal = openReadOnlyModal(title, body, { id, className: 'modal-size-small', returnFocusSelector });
+  modal = openReadOnlyModal(title, body, { id, className: 'modal-size-small', returnFocusSelector, guideTarget: guide });
   if (!modal || !await modal.ready) return;
   modal.focus(body.querySelector('button:not([disabled])'));
+  return modal;
 }
 
-async function openChannelCreationChoice(prefetched = null) {
+async function openChannelCreationChoice(prefetched = null, presentation = null) {
   if (!viewAllowed('channel-setup')) return;
   return openActionChoiceModal({
-    title: 'How would you like to create a channel?', id: 'create-channel-choice',
+    title: 'How would you like to create a channel?', id: 'create-channel-choice', guide: presentation?.guide === true,
     returnFocusSelector: '.channel-creation-actions .ui-button-primary',
     choices: [
       { id: 'import', title: 'Import from RadioReference', icon: 'icon-radioreference',

@@ -4,7 +4,7 @@ test('Alias column views keep the current results and switch without rebuilding 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-view-tabs-fixture:${id}:${id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-view-tabs-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`, '1');
     }
   });
   const aliasList = { alias_list_id: 1, name: 'County Public Safety', family: 'P25',

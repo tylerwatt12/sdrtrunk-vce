@@ -6,7 +6,7 @@ const path = require('node:path');
 async function installEditor(page, query = 'list=1&aliasTab=configure', options = {}) {
   await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-workspace-fixture:${id}:${id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-workspace-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`, '1');
     }
   });
   const lists = [

@@ -1,4 +1,6 @@
 import { definitions as routes } from '../core/routes.js?v=11';
+import { channelSetupSteps } from './pages/channel-setup.js?v=1';
+import { aliasesSteps } from './pages/aliases.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
@@ -30,11 +32,11 @@ const pageOverviewCopy = Object.freeze({
   radio: ['Follow an individual radio',
     'Review this radio’s activity and the talkgroups it has used. Compare its identity and history as you work out who is operating it.'],
   'channel-setup': ['Choose the signals VCE receives',
-    'A channel tells VCE which frequency or trunked system to receive and how to decode it. Start your channels here, then use Scan Lists to choose which calls you hear.'],
+    'A channel tells VCE which frequency or trunked system to receive. Start channels here, then use Scan Lists to choose which calls you hear.'],
   channel: ['Understand reception on this channel',
     'Review activity from this channel and follow its talkgroups and radios. Reception details help you connect what is heard with the channel receiving it.'],
   aliases: ['Give radio traffic meaning',
-    'Aliases attach familiar names to talkgroups and radios. Their call handling settings choose which calls are recorded, sent to Scan Lists, or streamed.'],
+    'Aliases give familiar names to talkgroups and radios. Their call handling settings choose recording, Scan List membership, and streaming.'],
   'scan-lists': ['From radio traffic to what you hear',
     'Scan Lists bring together the calls you want to hear, across your radio systems.'],
   radioreference: ['Bring local radio information into VCE',
@@ -57,7 +59,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 2, aliases: 4, 'scan-lists': 6 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -200,107 +202,6 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
     if (step.id === 'settings' && !allowed('admin')) step.title = 'Make it yours';
     return step;
   });
-}
-
-function channelSetupSteps(documentValue, preparePlayer) {
-  return [
-    { id: 'new-channel', title: 'Add your first channel',
-      targets: targets(documentValue, '[data-guide-target="channel-new"]'),
-      paragraphs: ['Start with a frequency you know, or import a channel from RadioReference. Give it a name you’ll recognize and choose the matching radio protocol.'] },
-    { id: 'discover', title: 'Search for trunked systems',
-      targets: targets(documentValue, '[data-guide-target="channel-discover"]'),
-      paragraphs: ['Not sure where to start? Find Trunked Systems searches for radio systems your tuner can receive.',
-        'Scan supported bands for trunked radio systems, then automatically name and add the systems you choose to your channels. Running channels may need to stop temporarily during the search.'] },
-    { id: 'filters', title: 'Find the channel you need',
-      targets: targets(documentValue, '[data-guide-target="channel-filters"]'),
-      paragraphs: ['Search by channel, system, frequency, protocol, or Alias List. Use the status and protocol filters to narrow a busy channel list.'] },
-    { id: 'receiving', title: 'Start receiving',
-      samples: [{ id: 'channel-catalog', value: {
-        channels: [{ configuration_id: 'guide-sample-channel', name: 'Sample channel', system: 'Example system',
-          protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', processing_state: 'STOPPED',
-          frequencies_hz: [851012500], editable: true, alias_list_name: 'Sample aliases',
-          alias_list_id: null, auto_start_order: null }],
-        selected_channel_ids: ['guide-sample-channel']
-      } }],
-      targets: targets(documentValue, '[data-guide-sample] .channel-name-summary',
-        '[data-guide-sample] td[data-label="State"]', '[data-guide-target="channel-sample-start"]'),
-      paragraphs: ['Once you’ve saved a channel, use its Start action to begin receiving. Running channels show their current state here.',
-        'Select a channel to review its configuration. For trunked systems, the channel receives the control signal and follows the system’s voice traffic.'] },
-    { id: 'startup', title: 'Ready when you are',
-      targets: targets(documentValue, '[data-guide-target="channel-startup"]'),
-      paragraphs: ['Use Startup order to choose which channels start automatically when VCE launches, and the order in which they start.'] },
-    { id: 'scan-lists', title: 'Choose what you hear',
-      prepare: preparePlayer,
-      targets: targets(documentValue, '[data-guide-target="player-lists"]'),
-      paragraphs: ['VCE separates starting channels from listening to them. Start a channel, create aliases, and add those aliases to Scan Lists. Then use Lists in the player to choose the Scan Lists you want to hear.',
-        'VCE records each call before playing it. You’ll hear the conversation after the transmission finishes.'],
-      nextLabel: 'Finish' }
-  ];
-}
-
-function aliasesSteps(documentValue, preparePlayer, preparePage) {
-  const focus = (...names) => targets(documentValue,
-    ...names.map((name) => `[data-guide-target="${name}"]`));
-  const sample = (section) => [{ id: 'aliases-workspace', value: { section } }];
-  return [
-    { id: 'lists', title: 'Your Alias Lists', samples: sample('lists'),
-      targets: focus('aliases-lists', 'aliases-new-list'),
-      paragraphs: ['Alias Lists connect recognizable names and call settings to your channels. Select a list here to explore its aliases.'] },
-    { id: 'views', title: 'Four views of your aliases', samples: sample('views'),
-      targets: focus('aliases-configure', 'aliases-activity', 'aliases-custom', 'aliases-discover'), paragraphs: [],
-      items: [
-        { label: 'Configure', text: 'Manage alias names, identifiers, and call settings.' },
-        { label: 'Activity', text: 'See which aliases are being used.' },
-        { label: 'Custom', text: 'Choose the columns for your own view.' },
-        { label: 'Discover', text: 'Find heard talkgroups that have no defined alias.' }
-      ] },
-    { id: 'alias-editor', title: 'Inside an alias', samples: sample('alias-editor'),
-      targets: focus('aliases-editor-tabs'), paragraphs: [],
-      items: [
-        { label: 'Basics', text: 'Holds the name and appearance.' },
-        { label: 'Identifier', text: 'Defines which radio activity (like talkgroup ID or radio ID) matches.' },
-        { label: 'Call Handling', text: 'Controls recording, Scan List membership, and streaming.' },
-        { label: 'Activity', text: 'Shows what has been observed for this alias.' }
-      ] },
-    { id: 'defaults-unmatched', title: 'Call Handling Defaults: Unmatched Calls', samples: sample('defaults-unmatched'),
-      targets: focus('aliases-defaults-tabs', 'aliases-defaults-recording', 'aliases-defaults-scan-lists', 'aliases-defaults-streaming'),
-      paragraphs: ['This is where you configure what to do with unknown talkgroups.'] },
-    { id: 'defaults-new', title: 'Call Handling Defaults: New Aliases', samples: sample('defaults-new'),
-      targets: focus('aliases-defaults-tabs', 'aliases-defaults-recording', 'aliases-defaults-scan-lists', 'aliases-defaults-streaming'),
-      paragraphs: ['This is where you configure what settings newly added or RadioReference-imported aliases use.'] },
-    { id: 'bulk', title: 'Work with several aliases', samples: sample('bulk'),
-      targets: focus('aliases-selection', 'aliases-bulk', 'aliases-select-all'),
-      paragraphs: ['Select aliases to change their settings together.',
-        'The header checkbox selects this page. Select All Matching includes all filtered results.'] },
-    { id: 'scan-lists', title: 'Choose Scan List membership', samples: sample('scan-lists'),
-      targets: focus('aliases-scan-list-dialog'),
-      paragraphs: ['Add or remove the selected aliases from a Scan List here.'] },
-    { id: 'activity', title: 'Activity: see what’s being used', samples: sample('activity'),
-      targets: focus('aliases-activity', 'aliases-activity-columns'),
-      paragraphs: ["This page helps you determine which aliases are used. VCE records statistics on what's heard and displays them here."] },
-    { id: 'custom', title: 'Custom: choose your view', samples: sample('custom'),
-      targets: focus('aliases-custom', 'aliases-columns'),
-      paragraphs: ['Choose the columns that matter the most, to create a view tailored to your workflow.'] },
-    { id: 'discover', title: 'Discover: find identities worth naming', samples: sample('discover'),
-      targets: focus('aliases-discover', 'aliases-discover-identities'),
-      paragraphs: ['Explore talkgroups heard on your channels that have no defined alias.',
-        'This helps you identify and name new and unknown radio traffic.'] },
-    { id: 'transfer', title: 'Create, import, and export', samples: sample('transfer'),
-      targets: focus('aliases-add', 'aliases-import', 'aliases-export'),
-      paragraphs: ['Add, import, or export aliases here.',
-        'Add an alias from scratch, or import from RadioReference or a file.',
-        'Export a report for analysis or a configuration file you can import again later.'],
-      nextLabel: 'Finish' }
-  ].map((step) => ({ ...step, prepare: async (context) => {
-    const releasePlayer = await preparePlayer?.({ minimized: true });
-    try {
-      const releasePage = await preparePage?.('aliases', step.id, context);
-      return () => { releasePage?.(); releasePlayer?.(); };
-    } catch (error) {
-      releasePlayer?.();
-      throw error;
-    }
-  } }));
 }
 
 function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {

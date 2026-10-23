@@ -1,4 +1,4 @@
-import { getAliasesGuideData } from './aliases-presentation.js?v=2';
+import { getAliasesGuideData } from './aliases-presentation.js?v=3';
 
 // Fictional records only. The normal Scan Lists page, member table, dialogs and
 // player panel render these inputs; this module does not create UI.

@@ -6,7 +6,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await page.setViewportSize({ width, height: 850 });
     await page.addInitScript(() => {
       for (const id of ['welcome', 'channel-setup', 'aliases']) {
-        localStorage.setItem(`sdrtrunk-vce-guide:v1:administrator:alias-defaults-fixture:${id}:${id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`, '1');
+        localStorage.setItem(`sdrtrunk-vce-guide:v1:administrator:alias-defaults-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`, '1');
       }
     });
     const stale = { alias_list_id: 1, name: 'County', family: 'P25', alias_count: 0, assigned_channel_count: 0,

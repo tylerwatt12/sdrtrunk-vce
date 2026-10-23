@@ -4,7 +4,7 @@ const { installSiteStyleApplication, operatorTuner } = require('./fixtures/site-
 const eligibleTuner = { ...operatorTuner({ spectrum_target_id: 'target-a', spectrum_available: true }),
   eligible: true, source_type: 'receiver', channel_count: 0, center_frequency_hz: 851012500,
   usable_bandwidth_hz: 9000000, minimum_frequency_hz: 24000000, maximum_frequency_hz: 1800000000 };
-const guide = page => page.getByRole('dialog', { name: 'Add your first channel', exact: true });
+const guide = page => page.getByRole('dialog', { name: 'Add a channel', exact: true });
 const toolbarAction = (page, name) => page.locator('.channel-creation-actions')
   .getByRole('button', { name, exact: true });
 const actionNames = ['Find Trunked Systems', 'New channel'];
@@ -43,6 +43,27 @@ async function expectSpotlightsFollowToolbar(page, names = ['New channel']) {
       panel.y < bounds.y + bounds.height && panel.y + panel.height > bounds.y,
     `Guide does not cover ${name}`).toBe(false);
   }
+}
+
+async function expectSpotlightOn(page, locator) {
+  await expect(locator).toBeVisible();
+  await expect.poll(() => locator.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return [...document.querySelectorAll('.ui-setup-guide-highlight')].some(highlight => {
+      const rect = highlight.getBoundingClientRect();
+      return rect.left <= bounds.left && rect.top <= bounds.top &&
+        rect.right >= bounds.right && rect.bottom >= bounds.bottom;
+    });
+  })).toBe(true);
+}
+
+async function chooserChoices(dialog) {
+  return dialog.locator('.ui-choice-card').evaluateAll(elements => elements.map(element => ({
+    name: element.getAttribute('aria-label'), classes: element.className,
+    disabled: element.disabled, text: element.textContent,
+    description: (element.getAttribute('aria-describedby') || '').split(' ')
+      .map(id => document.getElementById(id)?.textContent).join(' ')
+  })));
 }
 
 async function captureToolbarActions(page) {
@@ -102,9 +123,16 @@ async function openChannels(page, options = {}) {
 }
 
 async function openReceivingStep(page) {
-  await expect(guideRoot(page)).toContainText('Add your first channel');
-  for (let step = 1; step < 4; step += 1) {
+  await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'new-channel');
+  for (const step of ['channel-choice', 'channel-choice-close', 'discover', 'select-channel', 'receiving']) {
     await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guideRoot(page)).toHaveAttribute('data-guide-step', step);
+    if (step === 'select-channel') {
+      const selection = page.locator('[data-guide-target="channel-sample-select"]');
+      await expect(selection).not.toBeChecked();
+      await expectSpotlightOn(page, selection);
+      await expect(page.locator('[data-guide-target="channel-sample-start"]')).not.toBeVisible();
+    }
   }
   await expect(guideRoot(page).getByRole('heading', { name: 'Start receiving', exact: true })).toBeVisible();
 }
@@ -182,19 +210,69 @@ for (const theme of ['light', 'dark']) {
 }
 
 for (const theme of ['light', 'dark']) {
+  test(`channel tour shows the actual chooser after its opener and its Close action before returning ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const { fixture } = await openChannels(page, { theme });
+    const chooser = page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true });
+    await toolbarAction(page, 'New channel').click();
+    const originalChoices = await chooserChoices(chooser);
+    await page.keyboard.press('Escape');
+    const writes = [], navigations = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) writes.push(request.url());
+    });
+    page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
+    await page.locator('#page-guide-button').click();
+    await startTour(page);
+    await expectSpotlightsFollowToolbar(page);
+    await expect(chooser).toHaveCount(0);
+    await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'channel-choice');
+    await expect(chooser).toBeVisible();
+    expect(await chooserChoices(chooser)).toEqual(originalChoices);
+    await expectSpotlightOn(page, page.locator('[data-guide-target="channel-choice"]'));
+    // Sample isolation also guards direct events on the real production controls.
+    for (const button of await chooser.locator('button').all()) {
+      await button.evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    }
+    await expect(chooser).toBeVisible();
+    await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'channel-choice-close');
+    await expect(chooser).toBeVisible();
+    await expectSpotlightOn(page, page.locator('[data-guide-target="channel-choice-close"]'));
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
+    await page.screenshot({ path: testInfo.outputPath(`channel-return-${theme}.png`) });
+    await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'discover');
+    await expect(chooser).toHaveCount(0);
+    await expectSpotlightsFollowToolbar(page, ['Find Trunked Systems']);
+    await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(chooser).toBeVisible();
+    await expectSpotlightOn(page, page.locator('[data-guide-target="channel-choice-close"]'));
+    await page.keyboard.press('Escape');
+    await expect(chooser).toHaveCount(0);
+    await expect(page.locator('.ui-setup-guide-layer, [data-guide-sample]')).toHaveCount(0);
+    expect(writes).toEqual([]);
+    expect(navigations).toEqual([]);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
+for (const theme of ['light', 'dark']) {
   test(`Channel Setup guide uses the shared page tour and follows the original controls ${theme}`, async ({ page }) => {
     const { fixture } = await openChannels(page, { theme });
     const actions = await captureToolbarActions(page);
     await page.locator('#page-guide-button').click();
     await startTour(page);
     await expect(guide(page)).toBeVisible();
-    await expect(guideRoot(page)).toContainText('Step 1 of 6');
+    await expect(guideRoot(page)).toContainText('Step 1 of 9');
     await expectToolbarActionsUnmoved(page, actions);
     await expectSpotlightsFollowToolbar(page);
     await expectWithinViewport(guideRoot(page), page.viewportSize());
     await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
-    await expect(guideRoot(page)).toContainText('Search for trunked systems');
-    await expect(guideRoot(page)).toContainText('Step 2 of 6');
+    await expect(guideRoot(page)).toContainText('Choose your source');
+    await expect(guideRoot(page)).toContainText('Step 2 of 9');
+    await expect(page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true })).toBeVisible();
     await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
     await expect(guide(page)).toBeVisible();
     await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
@@ -202,7 +280,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
     await expectToolbarActionsUnmoved(page, actions);
     await startTour(page);
-    await expect(guideRoot(page)).toContainText('Step 1 of 6');
+    await expect(guideRoot(page)).toContainText('Step 1 of 9');
     await page.keyboard.press('Escape');
     await expect(guideRoot(page)).toHaveCount(0);
     await expectToolbarActionsUnmoved(page, actions);
@@ -222,7 +300,7 @@ for (const theme of ['light', 'dark']) {
     const expectListeningStep = async () => {
       await expect(guideRoot(page).getByRole('heading', { name: 'Choose what you hear', exact: true })).toBeVisible();
       await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
-      const lists = page.locator('[data-guide-target="player-lists"]');
+      const lists = page.locator('[data-guide-target="scan-lists-player-lists"]');
       await expect(lists).toBeVisible();
       await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(1);
       await expect.poll(() => lists.evaluate(element => {
@@ -230,10 +308,13 @@ for (const theme of ['light', 'dark']) {
         const highlight = document.querySelector('.ui-setup-guide-highlight').getBoundingClientRect();
         return highlight.left <= bounds.left && highlight.top <= bounds.top &&
           highlight.right >= bounds.right && highlight.bottom >= bounds.bottom;
-      }), { message: 'The final step spotlights Lists in the player' }).toBe(true);
+      }), { message: 'The final step spotlights the actual player Lists panel' }).toBe(true);
+      await expect(lists).toContainText('Public Safety');
+      await expect(lists).toContainText('Fire & EMS');
+      await expect(lists).not.toContainText('Unidentified');
     };
-    const expectedTitles = ['Search for trunked systems', 'Find the channel you need', 'Start receiving',
-      'Ready when you are', 'Choose what you hear'];
+    const expectedTitles = ['Choose your source', 'Return to your channels', 'Search for trunked systems',
+      'Choose a channel to start', 'Start receiving', 'Ready when you are', 'Open your listening choices', 'Choose what you hear'];
     for (const title of expectedTitles) {
       await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
       await expect(guideRoot(page)).toContainText(title);
@@ -241,10 +322,10 @@ for (const theme of ['light', 'dark']) {
     await expectListeningStep();
     await page.screenshot({ path: testInfo.outputPath(`channel-listening-step-${theme}.png`) });
     await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
-    await expect(guideRoot(page).getByRole('heading', { name: 'Ready when you are', exact: true })).toBeVisible();
+    await expect(guideRoot(page).getByRole('heading', { name: 'Open your listening choices', exact: true })).toBeVisible();
     await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
-    await expect(player).toHaveAttribute('data-source', originalPlayer.source);
-    await expect(player).toHaveAttribute('data-state', originalPlayer.state);
+    await expect(page.locator('[data-guide-target="scan-lists-player-lists"]')).toHaveCount(0);
+    await expect(page.locator('[data-guide-target="player-lists"]')).toBeVisible();
     await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
     await expectListeningStep();
     await guideRoot(page).getByRole('button', { name: 'Finish', exact: true }).click();
@@ -278,12 +359,20 @@ for (const channels of [[], [savedChannel]]) {
       if (exit === 'darkened area') await page.mouse.click(8, 500);
       else if (exit === 'Escape') await page.keyboard.press('Escape');
       else await guideRoot(page).getByRole('button', { name: exit, exact: true }).click();
-      await expect(sampleChannel(page)).toHaveCount(0);
-      if (channels.length) {
+      if (exit === 'Next') {
+        await expectSampleChannel(page);
+      } else if (exit === 'Back') {
+        await expect(sampleChannel(page)).toBeVisible();
+        await expect(page.locator('[data-guide-target="channel-sample-select"]')).not.toBeChecked();
+        await expect(page.locator('[data-guide-target="channel-sample-start"]')).not.toBeVisible();
+      } else await expect(sampleChannel(page)).toHaveCount(0);
+      if (!['Next', 'Back'].includes(exit) && channels.length) {
         await expect(page.locator('.channel-catalog-table tr[data-id="existing-channel"]')).toBeVisible();
-      } else await expect(page.getByText('No channels match this view', { exact: true })).toBeVisible();
+      } else if (!['Next', 'Back'].includes(exit)) await expect(page.getByText('No channels match this view', { exact: true })).toBeVisible();
       if (['Next', 'Back'].includes(exit)) {
-        await expect(guideRoot(page)).toContainText(exit === 'Next' ? 'Ready when you are' : 'Find the channel you need');
+        await expect(guideRoot(page)).toContainText(exit === 'Next' ? 'Ready when you are' : 'Choose a channel to start');
+        await guideRoot(page).getByRole('button', { name: 'Close guide', exact: true }).click();
+        await expect(sampleChannel(page)).toHaveCount(0);
       } else await expect(guideRoot(page)).toHaveCount(0);
       expect(fixture.pageErrors).toEqual([]);
     });
@@ -325,7 +414,7 @@ test('receiving sample keeps real filters and selection, ignores actions, and re
   await expect.poll(() => state.channelReads, { timeout: 7_000 }).toBeGreaterThan(reads);
   await expectSampleChannel(page);
   await expect(page.locator('.channel-catalog-table')).not.toContainText('Existing channel updated');
-  await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await guideRoot(page).getByRole('button', { name: 'Close guide', exact: true }).click();
   await expect(sampleChannel(page)).toHaveCount(0);
   await expect(search).toHaveValue('Existing');
   const restored = page.locator('.channel-catalog-table tr[data-id="existing-channel"]');
@@ -457,6 +546,29 @@ test('new channel keeps manual creation available without RadioReference access'
   await expect(toolbarAction(page, 'New channel')).toBeFocused();
   expect(fixture.pageErrors).toEqual([]);
 });
+
+for (const options of [{ noTunerAccess: true }, { noRadioReferenceAccess: true }]) {
+  test(`channel tour follows available controls with ${Object.keys(options)[0]}`, async ({ page }) => {
+    const { fixture } = await openChannels(page, { ...options, guide: 'page' });
+    const expected = ['channel-choice', 'channel-choice-close',
+      ...(options.noTunerAccess ? [] : ['discover']), 'select-channel', 'receiving', 'startup'];
+    await expect(guideRoot(page)).toContainText('Enter a known frequency to create a channel.');
+    await expect(guideRoot(page)).toContainText(`Step 1 of ${expected.length + 1}`);
+    for (const id of expected) {
+      await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(guideRoot(page)).toHaveAttribute('data-guide-step', id);
+      if (id === 'channel-choice') {
+        const chooser = page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true });
+        await expect(chooser.getByRole('button', { name: 'Import from RadioReference', exact: true })).toBeDisabled();
+        await expect(chooser.getByRole('button', { name: 'Create a channel from scratch', exact: true })).toBeEnabled();
+      }
+    }
+    await guideRoot(page).getByRole('button', { name: 'Finish', exact: true }).click();
+    await expect(guideRoot(page)).toHaveCount(0);
+    await expect(page.locator('.ui-setup-guide-layer, [data-guide-sample]')).toHaveCount(0);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
 
 test('filters hiding configured channels do not trigger first channel guidance', async ({ page }) => {
   const { fixture } = await openChannels(page, { channels: [{ configuration_id: 'existing-channel', name: 'Existing channel',

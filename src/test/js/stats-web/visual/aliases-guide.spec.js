@@ -9,22 +9,39 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="aliases"]');
 const samples = page => page.locator('.alias-editor-workspace[data-guide-sample]');
 const target = (page, name) => page.locator(`[data-guide-target="${name}"]:visible`).first();
-const memoryKey = id => `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`;
+const memoryKey = id => `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`;
 const steps = [
-  { id: 'lists', targets: ['aliases-lists', 'aliases-new-list'] },
+  { id: 'lists', targets: ['aliases-lists'] },
   { id: 'views', targets: ['aliases-configure', 'aliases-activity', 'aliases-custom', 'aliases-discover'] },
+  { id: 'alias-button', targets: ['aliases-open-alias'] },
   { id: 'alias-editor', targets: ['aliases-editor-tabs'] },
-  { id: 'defaults-unmatched', targets: ['aliases-defaults-tabs', 'aliases-defaults-recording',
-    'aliases-defaults-scan-lists', 'aliases-defaults-streaming'] },
-  { id: 'defaults-new', targets: ['aliases-defaults-tabs', 'aliases-defaults-recording',
-    'aliases-defaults-scan-lists', 'aliases-defaults-streaming'] },
-  { id: 'bulk', targets: ['aliases-selection', 'aliases-bulk', 'aliases-select-all'] },
+  { id: 'alias-close', targets: ['aliases-editor-close'] },
+  { id: 'defaults-button', targets: ['aliases-defaults'] },
+  { id: 'defaults-unmatched', targets: ['aliases-defaults-content'] },
+  { id: 'defaults-new-button', targets: ['aliases-defaults-new-tab'] },
+  { id: 'defaults-new', targets: ['aliases-defaults-content'] },
+  { id: 'defaults-close', targets: ['aliases-defaults-close'] },
+  { id: 'bulk', targets: ['aliases-selection'] },
+  { id: 'scan-lists-button', targets: ['aliases-bulk-scan-lists'] },
   { id: 'scan-lists', targets: ['aliases-scan-list-dialog'] },
-  { id: 'activity', targets: ['aliases-activity', 'aliases-activity-columns'] },
-  { id: 'custom', targets: ['aliases-custom', 'aliases-columns'] },
-  { id: 'discover', targets: ['aliases-discover', 'aliases-discover-identities'] },
+  { id: 'clear-selection', targets: ['aliases-clear-selection'] },
+  { id: 'activity-button', targets: ['aliases-activity'] },
+  { id: 'activity', targets: ['aliases-activity-columns'] },
+  { id: 'custom-button', targets: ['aliases-custom'] },
+  { id: 'custom', targets: ['aliases-table'] },
+  { id: 'columns-button', targets: ['aliases-columns'] },
+  { id: 'discover-button', targets: ['aliases-discover'] },
+  { id: 'discover', targets: ['aliases-discover-identities'] },
+  { id: 'configure-button', targets: ['aliases-configure'] },
   { id: 'transfer', targets: ['aliases-add', 'aliases-import', 'aliases-export'] }
 ];
+
+const modalClasses = {
+  'alias-editor': 'alias-record-modal', 'alias-close': 'alias-record-modal',
+  'defaults-unmatched': 'alias-policy-modal', 'defaults-new-button': 'alias-policy-modal',
+  'defaults-new': 'alias-policy-modal', 'defaults-close': 'alias-policy-modal',
+  'scan-lists': 'alias-bulk-modal'
+};
 
 async function openAliases(page, { theme = 'light', replay = true, firstVisit = false,
   empty = false, customLayout = false, query = 'list=1' } = {}) {
@@ -58,7 +75,7 @@ async function openAliases(page, { theme = 'light', replay = true, firstVisit = 
       route.fulfill({ json: { revision: 1, preferences } }));
   }
   if (firstVisit) await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 2]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 3]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
     // A dismissed coming-soon placeholder must not suppress the authored tour.
@@ -208,7 +225,7 @@ function expectNoEffects(fixture, requests) {
 }
 
 for (const { theme, width, height } of [
-  { theme: 'light', width: 1280, height: 800 },
+  { theme: 'light', width: 1280, height: 720 },
   { theme: 'dark', width: 1440, height: 1000 }
 ]) {
   test(`Aliases tour shows each populated section without changing receiver state ${theme}`, async ({ page }, testInfo) => {
@@ -238,8 +255,7 @@ for (const { theme, width, height } of [
           await expect(guide(page).locator('.ui-setup-guide-items')).toContainText(label);
         }
       }
-      const modalClass = { 'alias-editor': 'alias-record-modal', 'defaults-unmatched': 'alias-policy-modal',
-        'defaults-new': 'alias-policy-modal', 'scan-lists': 'alias-bulk-modal' }[step.id];
+      const modalClass = modalClasses[step.id];
       if (modalClass) {
         const dialog = page.locator(`.read-only-modal.${modalClass}`);
         await expect(dialog).toBeVisible();
@@ -259,30 +275,43 @@ for (const { theme, width, height } of [
         await expect(guide(page)).toContainText('This is where you configure what to do with unknown talkgroups.');
         await expect(page.locator('.alias-policy-modal [role="tab"][aria-selected="true"]')).toHaveText('Unmatched Calls');
       }
+      if (['defaults-unmatched', 'defaults-new'].includes(step.id)) {
+        const body = target(page, 'aliases-defaults-content');
+        await expect(body).toHaveClass(/modal-content/);
+        expect(await body.evaluate(element => {
+          const bodyBounds = element.getBoundingClientRect();
+          const dialog = element.closest('.alias-policy-modal').getBoundingClientRect();
+          return bodyBounds.bottom <= dialog.bottom + 1;
+        })).toBe(true);
+      }
       if (step.id === 'defaults-new') {
         await expect(guide(page)).toContainText('This is where you configure what settings newly added or RadioReference-imported aliases use.');
         await expect(page.locator('.alias-policy-modal [role="tab"][aria-selected="true"]')).toHaveText('New Aliases');
       }
       if (step.id === 'scan-lists') {
-        await expect(guide(page)).toContainText('Add or remove the selected aliases from a Scan List here.');
+        await expect(guide(page)).toContainText('Choose a Scan List and add or remove these aliases. Apply Change returns you to the Alias List.');
         await expect(page.locator('.alias-bulk-modal .modal-header')).toContainText('2 aliases');
-        await expect(page.locator('.alias-bulk-modal select[name="scanListId"]')).toHaveValue('900001');
+        await expect(page.locator('.alias-bulk-modal select[name="scanListId"]')).toHaveValue('900002');
         await expect(page.locator('.alias-bulk-modal .ui-modal-footer')).toContainText('Apply Change');
       }
       if (step.id === 'activity') {
         await expect(page.locator('[data-guide-target="aliases-activity-columns"]'))
           .toHaveText(['Calls', 'Signaling', 'Last Seen']);
       }
-      if (step.id === 'custom') {
-        const columns = page.locator('.table-layout-panel.ui-setup-guide-layer');
-        await expect(columns).toBeVisible();
-        await expect(columns).toHaveClass(/ui-popover/);
-        await expect(columns.locator('.table-layout-panel-header')).toContainText('Table columns');
-        await expect(columns.locator('.table-layout-column')).not.toHaveCount(0);
-        await expect(columns.locator('.table-layout-panel-footer .table-layout-reset')).toBeVisible();
-        const id = await columns.getAttribute('id');
-        await expect(page.locator(`.table-layout-trigger[aria-controls="${id}"]`)).toHaveAttribute('aria-expanded', 'true');
-        await expectWithinViewport(columns, page.viewportSize());
+      await expect(page.locator('.table-layout-panel:popover-open, .table-layout-panel.ui-setup-guide-layer')).toHaveCount(0);
+      const currentView = {
+        'activity': 'activity', 'custom-button': 'activity', 'custom': 'custom',
+        'columns-button': 'custom', 'discover-button': 'custom',
+        'discover': 'discover', 'configure-button': 'discover'
+      }[step.id] || 'configure';
+      await expect(samples(page).locator('[data-alias-view][aria-current="page"]')).toHaveAttribute('data-alias-view', currentView);
+      const selected = ['scan-lists-button', 'scan-lists', 'clear-selection'].includes(step.id);
+      await expect(samples(page).locator('.alias-row-select:checked')).toHaveCount(selected ? 2 : 0);
+      if (step.id === 'defaults-new-button') {
+        await expect(page.locator('.alias-policy-modal [role="tab"][aria-selected="true"]')).toHaveText('Unmatched Calls');
+      }
+      if (step.id === 'defaults-close') {
+        await expect(page.locator('.alias-policy-modal [role="tab"][aria-selected="true"]')).toHaveText('New Aliases');
       }
       if (step.id === 'discover') await expect(target(page, 'aliases-discover-table')).toContainText('2501');
       if (step.id === 'transfer') {
@@ -306,7 +335,7 @@ for (const { theme, width, height } of [
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`Aliases guide uses the ordinary dialog and Columns surfaces in ${theme}`, async ({ page }, testInfo) => {
+  test(`Aliases guide uses the ordinary dialog surfaces in ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     const { fixture, requests } = await openAliases(page, { theme, replay: false });
     const sample = await installSampleAliasCatalog(page);
@@ -331,22 +360,13 @@ for (const theme of ['light', 'dark']) {
     baseline['scan-lists'] = await surfaceSignature(bulk);
     await page.screenshot({ path: testInfo.outputPath(`ordinary-scan-lists-${theme}.png`) });
     await bulk.locator('.modal-close').click();
-    await page.locator('[data-alias-view="custom"]').click();
-    await expect(page.locator('.alias-editor-table-host table')).toHaveAttribute('data-table-type', 'alias-editor-custom');
-    await page.locator('.alias-editor-main .table-layout-trigger').click();
-    const columns = page.locator('.table-layout-panel:popover-open');
-    baseline.custom = await surfaceSignature(columns);
-    await page.screenshot({ path: testInfo.outputPath(`ordinary-columns-${theme}.png`) });
-    await page.keyboard.press('Escape');
-    await expect(columns).toHaveCount(0);
     await page.locator('#page-guide-button').click();
     await startTour(page);
     for (const step of steps) {
       await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
       if (baseline[step.id]) {
         const selector = { 'alias-editor': '.alias-record-modal', 'defaults-unmatched': '.alias-policy-modal',
-          'defaults-new': '.alias-policy-modal', 'scan-lists': '.alias-bulk-modal',
-          custom: '.table-layout-panel.ui-setup-guide-layer' }[step.id];
+          'defaults-new': '.alias-policy-modal', 'scan-lists': '.alias-bulk-modal' }[step.id];
         expect(await surfaceSignature(page.locator(selector))).toEqual(baseline[step.id]);
         await page.screenshot({ path: testInfo.outputPath(`guide-${step.id}-${theme}.png`) });
       }
