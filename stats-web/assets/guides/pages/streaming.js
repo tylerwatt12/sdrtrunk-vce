@@ -33,7 +33,7 @@ export function streamingSteps(documentValue, preparePlayer, preparePage, canVie
     { id: 'aliases-button', title: 'Choose the traffic',
       paragraphs: ['Open Aliases to choose which talkgroups and radios send calls to this destination.'] },
     { id: 'assign-alias', title: 'Assign an alias',
-      paragraphs: ['Select the aliases whose calls you want to send here.'] },
+      paragraphs: ['Select the aliases whose calls you want to send here. Add more in the alias editor.'] },
     { id: 'save-assignments', title: 'Apply your choices',
       paragraphs: ['Save assignments applies your traffic choices. These same assignments also appear in the Alias Editor.'] },
     { id: 'status-button', title: 'Check delivery',
