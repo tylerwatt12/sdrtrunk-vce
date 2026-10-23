@@ -53,7 +53,7 @@ public class VoiceDecryptionModuleManagerTest
             manager.addStatusListener(listener);
             assertFalse(manager.isLoaded());
             assertFalse(manager.statusSnapshot().loaded());
-            assertTrue(manager.load(createTestModuleJar(tempDirectory), "request", "accepted"),
+            assertTrue(manager.load(createTestModuleJar(tempDirectory)),
                 manager.getStatus());
             assertTrue(manager.isLoaded());
             assertTrue(manager.statusSnapshot().loaded());
@@ -64,7 +64,7 @@ public class VoiceDecryptionModuleManagerTest
             assertFalse(manager.statusSnapshot().loaded());
             assertEquals(List.of(true, false), transitions);
             manager.removeStatusListener(listener);
-            assertTrue(manager.load(createTestModuleJar(tempDirectory), "request", "accepted"));
+            assertTrue(manager.load(createTestModuleJar(tempDirectory)));
             manager.unload();
             assertEquals(List.of(true, false), transitions, "removed local observers do not receive later state");
         }
@@ -76,14 +76,44 @@ public class VoiceDecryptionModuleManagerTest
         try(VoiceDecryptionModuleManager manager = new VoiceDecryptionModuleManager())
         {
             manager.addStatusListener((previous, current) -> { throw new IllegalStateException("observer unavailable"); });
-            assertTrue(manager.load(createTestModuleJar(tempDirectory), "request", "accepted"));
+            assertTrue(manager.load(createTestModuleJar(tempDirectory)));
             assertTrue(manager.isLoaded());
             assertFalse(manager.getProviders().isEmpty());
-            assertFalse(manager.load(createTestModuleJar(tempDirectory), "request", "rejected"));
+            assertFalse(manager.load(tempDirectory.resolve("missing.jar")));
             assertTrue(manager.isLoaded(), "rejecting another module selection keeps the active module");
             assertTrue(manager.statusSnapshot().loaded());
             manager.unload();
             assertFalse(manager.isLoaded());
+        }
+    }
+
+    @Test
+    void rejectsLegacyActivationModulesWithoutReplacingTheActiveModule(@TempDir Path tempDirectory) throws Exception
+    {
+        try(VoiceDecryptionModuleManager manager = new VoiceDecryptionModuleManager())
+        {
+            Path active = createTestModuleJar(tempDirectory);
+            assertTrue(manager.load(active));
+            Path legacy = createTestModuleJar(tempDirectory, LegacyVoiceDecryptionModule.class);
+
+            assertFalse(manager.isCompatible(legacy));
+            assertFalse(manager.load(legacy));
+            assertTrue(manager.getStatus().contains("Module API 2 is incompatible with SDRTrunk API 3"));
+            assertTrue(manager.isLoaded());
+            assertEquals(active.toRealPath(), manager.getPath());
+            assertFalse(manager.getProviders().isEmpty());
+        }
+    }
+
+    @Test
+    void rejectsModulesWithoutUsableProviders(@TempDir Path tempDirectory) throws Exception
+    {
+        try(VoiceDecryptionModuleManager manager = new VoiceDecryptionModuleManager())
+        {
+            assertFalse(manager.load(createTestModuleJar(tempDirectory, EmptyVoiceDecryptionModule.class)));
+            assertFalse(manager.isLoaded());
+            assertTrue(manager.getStatus().contains("Module contains no usable providers"));
+            assertTrue(manager.getProviders().isEmpty());
         }
     }
 
@@ -98,33 +128,29 @@ public class VoiceDecryptionModuleManagerTest
             assertTrue(manager.isCompatible(Path.of(moduleJar)), manager.getStatus());
             assertFalse(manager.isLoaded());
 
-            String requestId = System.getenv("SDRTRUNK_MODULE_TEST_REQUEST_ID");
-            String key = System.getenv("SDRTRUNK_MODULE_TEST_KEY");
-
-            if(requestId != null && !requestId.isBlank() && key != null && !key.isBlank())
-            {
-                assertFalse(manager.load(Path.of(moduleJar), requestId, key + "x"));
-                assertFalse(manager.isLoaded());
-                assertTrue(manager.load(Path.of(moduleJar), requestId, key), manager.getStatus());
-                assertFalse(manager.getProviders().isEmpty());
-                assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.APCO25)
-                    .contains(VoiceEncryptionAlgorithm.APCO25_AES_256));
-                assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.DMR)
-                    .contains(VoiceEncryptionAlgorithm.DMR_DMRA_AES_256));
-                assertFalse(manager.load(Path.of(moduleJar), requestId, key + "x"));
-                assertTrue(manager.isLoaded());
-            }
+            assertTrue(manager.load(Path.of(moduleJar)), manager.getStatus());
+            assertFalse(manager.getProviders().isEmpty());
+            assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.APCO25)
+                .contains(VoiceEncryptionAlgorithm.APCO25_AES_256));
+            assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.DMR)
+                .contains(VoiceEncryptionAlgorithm.DMR_DMRA_AES_256));
         }
     }
 
     private static Path createTestModuleJar(Path directory) throws IOException
     {
-        Path moduleJar = directory.resolve("voice-decryption-test-module.jar");
+        return createTestModuleJar(directory, TestVoiceDecryptionModule.class);
+    }
+
+    private static Path createTestModuleJar(Path directory, Class<? extends VoiceDecryptionModule> module)
+        throws IOException
+    {
+        Path moduleJar = directory.resolve(module.getSimpleName() + ".jar");
 
         try(JarOutputStream output = new JarOutputStream(Files.newOutputStream(moduleJar)))
         {
             output.putNextEntry(new JarEntry("META-INF/services/" + VoiceDecryptionModule.class.getName()));
-            output.write((TestVoiceDecryptionModule.class.getName() + System.lineSeparator())
+            output.write((module.getName() + System.lineSeparator())
                 .getBytes(StandardCharsets.UTF_8));
             output.closeEntry();
         }
@@ -157,12 +183,6 @@ public class VoiceDecryptionModuleManagerTest
         }
 
         @Override
-        public boolean verifyKey(String requestId, String key)
-        {
-            return "accepted".equals(key);
-        }
-
-        @Override
         public Collection<VoiceEncryptionAlgorithm> getSupportedAlgorithms()
         {
             return List.of(VoiceEncryptionAlgorithm.APCO25_AES_256);
@@ -172,6 +192,24 @@ public class VoiceDecryptionModuleManagerTest
         public Collection<VoiceFrameDecryptorProvider> getProviders()
         {
             return List.of(new TestVoiceFrameDecryptorProvider());
+        }
+    }
+
+    public static class LegacyVoiceDecryptionModule extends TestVoiceDecryptionModule
+    {
+        @Override
+        public int getApiVersion()
+        {
+            return 2;
+        }
+    }
+
+    public static class EmptyVoiceDecryptionModule extends TestVoiceDecryptionModule
+    {
+        @Override
+        public Collection<VoiceFrameDecryptorProvider> getProviders()
+        {
+            return List.of();
         }
     }
 

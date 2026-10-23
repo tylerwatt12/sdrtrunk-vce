@@ -18,9 +18,9 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.decoder.VoiceDecryptionModulePreference;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Optional;
 import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
@@ -28,10 +28,7 @@ import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
-import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -57,8 +54,7 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
         setSpacing(10);
 
         Label title = new Label("Optional Voice Module");
-        Label help = new Label("Select a compatible optional module JAR. A key is requested only after the file " +
-            "has been checked.");
+        Label help = new Label("Select a compatible optional module JAR.");
         help.setWrapText(true);
         help.setMaxWidth(650);
 
@@ -108,56 +104,18 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
 
         if(selected != null)
         {
-            if(mPreference.preparePath(selected.toPath()))
+            try
             {
-                promptForKey(owner);
+                if(!mPreference.setPath(selected.toPath()))
+                {
+                    showError(owner, "The selected file could not be used", mPreference.getModuleManager().getStatus());
+                }
             }
-            else
+            catch(IOException e)
             {
-                showError(owner, "The selected file could not be used", mPreference.getModuleManager().getStatus());
+                showError(owner, "The selected file could not be installed",
+                    "Check that the file is readable and the application data folder is writable, then try again.");
             }
-        }
-    }
-
-    private void promptForKey(Window owner)
-    {
-        while(true)
-        {
-            Dialog<String> dialog = new Dialog<>();
-            dialog.setTitle("Module Key");
-            dialog.setHeaderText("File accepted");
-            dialog.initOwner(owner);
-
-            TextField requestId = new TextField(mPreference.getRequestId());
-            requestId.setEditable(false);
-            TextField key = new TextField();
-            key.setPromptText("Paste key");
-            GridPane content = new GridPane();
-            content.setHgap(10);
-            content.setVgap(10);
-            addRow(content, 0, "Request ID:", requestId);
-            addRow(content, 1, "Key:", key);
-
-            DialogPane pane = dialog.getDialogPane();
-            pane.setContent(content);
-            pane.getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            dialog.setResultConverter(button -> button == ButtonType.OK ? key.getText() : null);
-            pane.lookupButton(ButtonType.OK).disableProperty().bind(key.textProperty().isEmpty());
-            dialog.setOnShown(event -> key.requestFocus());
-            Optional<String> result = dialog.showAndWait();
-
-            if(result.isEmpty())
-            {
-                return;
-            }
-
-            if(mPreference.setKey(result.get()))
-            {
-                refresh();
-                return;
-            }
-
-            showError(owner, "The key was not accepted", "Check the key and try again.");
         }
     }
 

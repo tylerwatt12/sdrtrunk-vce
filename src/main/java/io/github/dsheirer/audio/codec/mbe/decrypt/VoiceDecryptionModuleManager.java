@@ -69,7 +69,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         }
     }
 
-    public synchronized boolean load(Path path, String requestId, String key)
+    public synchronized boolean load(Path path)
     {
         ModuleCandidate candidate = null;
 
@@ -77,11 +77,6 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         {
             candidate = open(path);
             VoiceDecryptionModule module = candidate.module();
-
-            if(!module.verifyKey(requestId, key))
-            {
-                throw new IllegalArgumentException("Key not accepted");
-            }
 
             List<VoiceFrameDecryptorProvider> providers = List.copyOf(module.getProviders());
 
