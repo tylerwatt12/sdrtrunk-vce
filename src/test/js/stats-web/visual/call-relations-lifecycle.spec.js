@@ -41,7 +41,7 @@ for (const delayed of ['module', 'catalog', 'failed-module']) {
       await response;
       // Wait for the real module and queued catalog handlers, without a timing-based assertion delay.
       await page.evaluate(async failureExpected => {
-        await import('/assets/features/call-relations.js?v=4').catch(error => {
+        await import('/assets/features/call-relations.js?v=5').catch(error => {
           if (!failureExpected) throw error;
         });
         await new Promise(requestAnimationFrame);

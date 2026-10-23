@@ -1,5 +1,5 @@
 import { systemLabel } from '../core/system-labels.js?v=2';
-import { recordingProtocolLabel, recordingCallTypeLabel } from './recordings.js?v=54';
+import { recordingProtocolLabel, recordingCallTypeLabel } from './recordings.js?v=56';
 
 // Relationships come from the receiver; playback uses the same player as Recordings and the audio dock.
 export function createCallRelations(deps) {

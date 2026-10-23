@@ -2,7 +2,7 @@ import { systemLabel, systemName, homeSystemName } from './system-labels.js?v=2'
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
-import { callAudioDetailGroups } from './call-audio-details.js?v=6';
+import { callAudioDetailGroups } from './call-audio-details.js?v=7';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner

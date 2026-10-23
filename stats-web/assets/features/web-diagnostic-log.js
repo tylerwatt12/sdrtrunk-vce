@@ -1,5 +1,5 @@
 import { createApplicationLogWorkspace } from '../core/application-log.js?v=5';
-import { createFormWorkflow } from '../core/form-workflows.js?v=4';
+import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 
 const ROOT = '/api/v1/admin/web-diagnostic-log';
 const STATUS_INTERVAL = 5_000;

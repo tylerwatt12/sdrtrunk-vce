@@ -31,9 +31,9 @@ import {
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=8';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
-import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
+import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=2';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=55';
+import { createRecordingsFeature } from './features/recordings.js?v=56';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
@@ -19544,7 +19544,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=52');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=53');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -30150,7 +30150,7 @@ async function renderAdminApplicationLog(renderContext) {
 }
 
 async function renderAdminWebDiagnosticLog(renderContext) {
-  const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=3');
+  const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=4');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createWebDiagnosticLogWorkspace({
     node, section, sectionActionHost, formField, uiSelectFrame, uiToggleField, setUiToggle,
@@ -33793,7 +33793,7 @@ async function renderAdmin() {
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
-    const { createPagingToneDetectionSettings } = await import('./features/paging-tone-detection.js?v=4');
+    const { createPagingToneDetectionSettings } = await import('./features/paging-tone-detection.js?v=5');
     if (!renderIsCurrent(renderContext)) return;
     const pagingTones = createPagingToneDetectionSettings({ node, section, sectionActionHost, uiToggleField,
       setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
@@ -34104,7 +34104,7 @@ async function openCallRelations(kind, id) {
   let relationsModule;
   try {
     [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=4'), loadActivityMessageTypes()
+      import('./features/call-relations.js?v=5'), loadActivityMessageTypes()
     ]);
   } catch (error) {
     if (!renderIsCurrent(renderContext)) return;

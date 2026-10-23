@@ -13,7 +13,7 @@ import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.j
 import { openSetupGuide } from '/assets/core/setup-guide.js?v=3';
 import { createGuideDefinition } from '/assets/guides/catalog.js?v=1';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
-import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=1';
+import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=2';
 import { createRemoteSupportWorkspace } from '/assets/features/remote-support.js';
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
