@@ -3896,7 +3896,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void radioRegisterHistoryUsesRoleIndexesDespiteSkewedActionStatistics() throws Exception
+    void radioHistoryKeepsBroadPagesOnIdentityIndexesAndSelectiveActionPaths() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -3961,6 +3961,21 @@ class StatsWebDatabaseTest
                 """);
             statement.execute("ANALYZE sqlite_schema");
         }
+
+        String broadScope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
+            p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 303) + "&hide_grants=true&limit=2";
+        StatsWebDatabase.ActivityQuery[] broadQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> broad = mDatabase.activity(request(broadScope), query -> broadQuery[0] = query);
+        assertEquals(List.of(2_001_000L, 2_000_999L), activityTimes(broad));
+        assertTrue((Boolean)broad.get("has_more"));
+        assertTrue(broadQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        assertTrue(broadQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"),
+            "Busy default history must not switch to system-wide scanning after 1,000 role events");
+        Map<String,Object> broadNext = mDatabase.activity(request(broadScope + "&before_id=" +
+            broad.get("next_before_id")));
+        assertEquals(List.of(2_000_998L, 2_000_997L), activityTimes(broadNext));
+        assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
+            request(broadScope + "&radio_role=target"))));
 
         String scope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
             p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202) + "&action=REGISTER&hide_grants=true";
@@ -4035,6 +4050,10 @@ class StatsWebDatabaseTest
                 "SEARCH candidate USING INDEX idx_receiver_activity_event_source_time")), plan.toString());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains(
                 "SEARCH candidate USING INDEX idx_receiver_activity_event_target_time")), plan.toString());
+            List<String> broadPlan = explain(connection, broadQuery[0].sql(),
+                broadQuery[0].parameters().toArray());
+            assertTrue(broadPlan.stream().noneMatch(detail -> detail.contains(
+                "SEARCH candidate USING INDEX idx_receiver_activity_event_system_time")), broadPlan.toString());
             List<String> busyPlan = explain(connection, busyQuery[0].sql(), busyQuery[0].parameters().toArray());
             assertTrue(busyPlan.stream().anyMatch(detail -> detail.contains(
                 "SEARCH candidate USING INDEX idx_receiver_activity_event_system_action_time")), busyPlan.toString());
@@ -4068,7 +4087,7 @@ class StatsWebDatabaseTest
                         }
                     }
                 }
-                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0]))
+                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0], broadQuery[0]))
                 {
                     try(PreparedStatement statement = connection.prepareStatement(query.sql()))
                     {
@@ -4083,7 +4102,7 @@ class StatsWebDatabaseTest
                             {
                                 matches++;
                             }
-                            assertEquals(query == anyQuery[0] ? 6 : 2, matches);
+                            assertEquals(query == anyQuery[0] ? 6 : query == broadQuery[0] ? 3 : 2, matches);
                         }
                     }
                 }
@@ -4139,9 +4158,17 @@ class StatsWebDatabaseTest
         mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" + radio202 +
             "&radio_role=any&limit=20"), query -> radioAny[0] = query);
         StatsWebDatabase.ActivityQuery[] groupAll = new StatsWebDatabase.ActivityQuery[1];
-        mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
-            p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) + "&group_match=all&limit=20"),
+        Map<String,Object> groupHistory = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&group_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
+            "&group_match=all&hide_grants=true&limit=20"),
             query -> groupAll[0] = query);
+        assertEquals(List.of(10_000L), activityTimes(groupHistory),
+            "Direct and patch-member matches still deduplicate, and hidden grants stay excluded");
+        assertTrue(groupAll[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"));
+        assertEquals(List.of(11_000L, 10_000L), activityTimes(mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
+                p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
+                "&group_match=via_patch&hide_grants=false&limit=20"))));
         StatsWebDatabase.ActivityQuery[] channelSource = new StatsWebDatabase.ActivityQuery[1];
         mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL + "&source_id=17&limit=20"),
             query -> channelSource[0] = query);

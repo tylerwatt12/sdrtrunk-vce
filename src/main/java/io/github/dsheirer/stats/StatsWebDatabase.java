@@ -5910,7 +5910,8 @@ class StatsWebDatabase
         {
             if(filters.groupMatch() != ActivityGroupMatch.VIA_PATCH)
             {
-                branches.add(activityCandidateBranch(filters, candidateSource,
+                branches.add(activityCandidateBranch(filters, activityBroadIdentityHistory(filters) ?
+                    candidateSource + " INDEXED BY idx_receiver_activity_event_target_time" : candidateSource,
                     "candidate.target_identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
             }
             if(filters.groupMatch() != ActivityGroupMatch.DIRECT)
@@ -5985,13 +5986,31 @@ class StatsWebDatabase
             return source;
         }
 
+        String identitySource = source + " INDEXED BY idx_receiver_activity_event_" +
+            (sourceRole ? "source" : "target") + "_time";
+        // Broad history is already ordered within this identity. Its population must not redirect a page to
+        // the system-wide history index, including when the page merely hides grants.
+        if(activityBroadIdentityHistory(filters))
+        {
+            return identitySource;
+        }
+
         // SQLite's system/action averages can hide a particular radio's sparse history. Probe at most 1,001
-        // covering-index entries, independently for each role. Busy roles retain planner freedom so selective
-        // action/channel filters can use their own indexes instead of reading the radio's entire history.
+        // covering-index entries only for selective filters. Busy roles retain the selective action/channel path.
         long events = scalarLong(connection, activityRadioIndexProbeSql(sourceRole),
             filters.radioIdentitySummaryId(), MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS + 1);
-        return events <= MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS ? source + " INDEXED BY " +
-            "idx_receiver_activity_event_" + (sourceRole ? "source" : "target") + "_time" : source;
+        return events <= MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS ? identitySource : source;
+    }
+
+    private static boolean activityBroadIdentityHistory(ActivityFilters filters)
+    {
+        return filters.afterId() == null && !filters.hasTones() && filters.channelId() == null &&
+            filters.actionCode() == null && filters.actionCodes() == null && filters.eventTypeCode() == null &&
+            filters.encryption() == null && filters.sourceIdentitySummaryId() == null &&
+            filters.targetIdentitySummaryId() == null && filters.sourceId() == null && filters.targetId() == null &&
+            filters.targetKind() == null && filters.frequencyHertz() == null && filters.lcnBand() == null &&
+            filters.timeslot() == null &&
+            (filters.groupIdentitySummaryId() == null || filters.radioIdentitySummaryId() == null);
     }
 
     static String activityRadioIndexProbeSql(boolean sourceRole)
