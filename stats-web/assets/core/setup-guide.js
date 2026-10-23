@@ -301,12 +301,39 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         { left: anchor.left - panel.width - gap, top: sideTop },
         { left: anchor.left, top: anchor.top - panel.height - gap }
       ];
-      const score = candidate => Math.max(0, gutter - candidate.left) + Math.max(0, gutter - candidate.top) +
+      // Separate targets can leave usable space inside their combined bounds.
+      // Consider those gaps before accepting a card over a highlighted control.
+      const obstacles = targetDialog?.isConnected ? [anchor] : bounds;
+      const horizontal = [gutter, width - gutter - panel.width,
+        ...obstacles.flatMap(rect => [rect.left, rect.right + gap, rect.left - panel.width - gap])];
+      const vertical = [Math.max(gutter, headerBottom + gap / 2), height - gutter - panel.height,
+        ...obstacles.flatMap(rect => [rect.top, rect.bottom + gap, rect.top - panel.height - gap])];
+      horizontal.forEach(left => vertical.forEach(top => candidates.push({ left, top })));
+      const overflow = candidate => Math.max(0, gutter - candidate.left) + Math.max(0, gutter - candidate.top) +
         Math.max(0, candidate.left + panel.width + gutter - width) +
         Math.max(0, candidate.top + panel.height + gutter - height);
-      const candidate = candidates.reduce((best, value) => score(value) < score(best) ? value : best);
+      const position = candidate => ({
+        left: Math.max(gutter, Math.min(candidate.left, width - gutter - panel.width)),
+        top: Math.max(gutter, Math.min(candidate.top, height - gutter - panel.height))
+      });
+      const overlap = candidate => {
+        const placed = position(candidate);
+        return obstacles.reduce((area, rect) => area +
+          Math.max(0, Math.min(placed.left + panel.width, rect.right) - Math.max(placed.left, rect.left)) *
+          Math.max(0, Math.min(placed.top + panel.height, rect.bottom) - Math.max(placed.top, rect.top)), 0);
+      };
+      const candidate = candidates.reduce((best, value) => {
+        const difference = overlap(value) - overlap(best);
+        return difference < 0 || difference === 0 && overflow(value) < overflow(best) ? value : best;
+      });
       left = candidate.left;
       top = candidate.top;
+      if (!targetDialog?.isConnected && bounds.length > 1) {
+        const placed = position(candidate);
+        const distance = rect => Math.max(0, rect.left - placed.left - panel.width, placed.left - rect.right) +
+          Math.max(0, rect.top - placed.top - panel.height, placed.top - rect.bottom);
+        anchor = bounds.reduce((closest, rect) => distance(rect) < distance(closest) ? rect : closest);
+      }
     }
     left = Math.max(gutter, Math.min(left, width - gutter - panel.width));
     top = Math.max(gutter, Math.min(top, height - gutter - panel.height));

@@ -29,6 +29,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let source = 'live';
   let panel = null;
   let liveState = {};
+  let latestLiveState = liveState;
+  let guideScanListState = null;
   let recordingState = recordings.viewState();
   let previousRecordingActive = false;
   let previousLiveActive = false;
@@ -872,6 +874,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       'Lists are unavailable. Try listening again when the receiver is available.' : 'Lists are loading…'));
     else if (!lists.length) panelHost.append(message('No lists are available.'));
     const choices = node('div', 'ui-surface audio-dock-selection-list');
+    choices.dataset.guideTarget = 'scan-lists-player-lists';
     lists.forEach(item => {
       const label = node('label', 'ui-select-list-item ui-audio-selection-row audio-dock-selection-row');
       const checkbox = node('input', 'ui-selection-check'); checkbox.type = 'checkbox'; checkbox.checked = item.selected;
@@ -962,7 +965,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function updateAge() { age.textContent = relativeAge(current()); }
   function updateProgress() {
     if (dock.hidden || superCollapsed && !mobileLayout.matches || size === 'collapsed') return;
-    const snapshot = source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState();
+    const snapshot = guideScanListState || (source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState());
     const total = Math.max(0, Number(snapshot.duration) || 0), position = Math.max(0, Number(snapshot.currentTime) || 0);
     elapsed.textContent = compactElapsed.textContent = time(position); duration.textContent = compactDuration.textContent = time(total);
     progress.value = compactProgress.value = total ? Math.min(1, position / total) : 0;
@@ -974,7 +977,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function drawSpectrum() {
     spectrumFrame = null;
     if (destroyed || dock.hidden || document.hidden || source !== 'live' || !isAllowed()) return;
-    const playing = Boolean(getLivePlayer()?.readAudioSpectrum?.(spectrumLevels, 8_000));
+    const playing = !guideScanListState && Boolean(getLivePlayer()?.readAudioSpectrum?.(spectrumLevels, 8_000));
     spectrumNodes.forEach(wave => {
       if (!wave.getClientRects().length) return;
       wave.classList.toggle('paused', !playing);
@@ -1163,7 +1166,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const resizeObserver = new ResizeObserver(measure); resizeObserver.observe(dock);
   const viewportChanged = () => { cancelSizeGesture(); closeVolume(false); cancelPresentationMotion(); measure(); };
   const visibilityChanged = () => { if (document.hidden) { cancelSizeGesture(); closeVolume(false); } synchronizeLoops(); };
-  const escapeContext = event => { if (event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
+  const escapeContext = event => { if (!guideScanListState && event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
   mobileLayout.addEventListener('change', updatePresentationLayout);
   reducedMotion.addEventListener('change', cancelPresentationMotion);
   window.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('scroll', viewportChanged);
@@ -1175,7 +1178,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     recordingState = value;
     const queueOnly = !value.current && value.queue?.length && liveState.stopped !== false;
     const active = Boolean(value.playing || value.loading || queueOnly);
-    if (active && !previousRecordingActive && access().recordings) { closeVolume(false); source = 'recordings'; panelKey = ''; }
+    if (!guidePresentation && active && !previousRecordingActive && access().recordings) { closeVolume(false); source = 'recordings'; panelKey = ''; }
     previousRecordingActive = active; render();
   });
   function synchronize() {
@@ -1184,8 +1187,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (player !== boundLive) {
       unsubscribeLive(); boundLive = player;
       unsubscribeLive = player?.subscribeState(value => {
-        liveState = value;
-        if (!value.stopped && !previousLiveActive && access().live) { closeVolume(false); source = 'live'; panelKey = ''; }
+        latestLiveState = value;
+        if (!guideScanListState) liveState = value;
+        if (!guidePresentation && !value.stopped && !previousLiveActive && access().live) { closeVolume(false); source = 'live'; panelKey = ''; }
         previousLiveActive = !value.stopped; render();
       }) || (() => {});
     }
@@ -1194,10 +1198,21 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (access().recordings && queue && queue !== sharedQueueKey) { sharedQueueKey = queue; closeVolume(false); source = 'recordings'; size = 'full'; panel = 'queue'; void recordings.loadSharedQueue(params).then(render); }
   }
   synchronize();
-  // Tours only change the presentation. Neither audio engine is started, stopped,
-  // or switched, and closing the step restores the listener's original layout.
-  function prepareGuide({ minimized = false } = {}) {
-    const previous = { size, superCollapsed, source, panel, guidePresentation };
+  // Tours use the normal player renderers with a separate, read-only view of
+  // sample lists. Real engine snapshots keep arriving while the guide is open.
+  // No sample control may issue an engine command, including synthetic events.
+  const guideCommandEvents = ['click', 'dblclick', 'pointerdown', 'mousedown', 'keydown', 'input', 'change', 'submit'];
+  const protectGuideCommands = (event) => {
+    if (!guideScanListState || event.type === 'keydown' && ['Tab', 'Escape'].includes(event.key)) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (['input', 'change'].includes(event.type)) { panelKey = ''; render(); }
+  };
+  [dock, volumePopover, restore].forEach(root => guideCommandEvents.forEach(type =>
+    root.addEventListener(type, protectGuideCommands, true)));
+  function prepareGuide({ minimized = false, sampleScanLists = null } = {}) {
+    const previous = { size, superCollapsed, source, panel, guidePresentation, guideScanListState,
+      contextInvoker, selectedQueueKey, focus: document.activeElement,
+      scroll: [mainScroll.scrollTop, panelHost.scrollTop, sidebarList.scrollTop] };
     cancelSizeGesture(); closeVolume(false); cancelPresentationMotion();
     guidePresentation = true;
     superCollapsed = minimized;
@@ -1205,18 +1220,38 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       size = 'minimal';
       if (access().live) source = 'live';
     }
-    panel = null; panelKey = '';
-    render();
+    panel = null;
+    if (Array.isArray(sampleScanLists)) {
+      guideScanListState = { scanLists: sampleScanLists.filter(item => item.enabled !== false &&
+        item.available_to_listeners !== false).map(item => ({ ...item, enabled: true, selected: Boolean(item.selected) })),
+      maximumSelectedScanLists: 16, scanListCatalogReady: true, scanListCatalogState: 'ready',
+      stopped: true, paused: false, current: null, displayCall: null, queue: [], queuedCount: 0,
+      currentReady: false, lastCallReady: false, currentTime: 0, duration: 0, volume: 1,
+      status: 'Stopped', avoids: [], holdTarget: null };
+      liveState = guideScanListState;
+      superCollapsed = false; size = 'full'; source = 'live'; panel = 'listening';
+      contextInvoker = desktopLists.button;
+    }
+    panelKey = ''; sidebarKey = ''; render();
     let restored = false;
     return () => {
       if (restored) return;
       restored = true;
-      ({ size, superCollapsed, source, panel, guidePresentation } = previous);
-      panelKey = '';
-      render();
+      if (guideScanListState) { panelHost.replaceChildren(); renderedPanel = ''; }
+      ({ size, superCollapsed, source, panel, guidePresentation, guideScanListState,
+        contextInvoker, selectedQueueKey } = previous);
+      liveState = guideScanListState || latestLiveState;
+      panelKey = ''; sidebarKey = ''; render();
+      [mainScroll.scrollTop, panelHost.scrollTop, sidebarList.scrollTop] = previous.scroll;
+      if (previous.focus?.isConnected && (dock.contains(previous.focus) || previous.focus === restore) &&
+        previous.focus.getClientRects().length && !document.querySelector('.ui-setup-guide')) {
+        previous.focus.focus({ preventScroll: true });
+      }
     };
   }
   return { synchronize, prepareGuide, destroy() {
+    [dock, volumePopover, restore].forEach(root => guideCommandEvents.forEach(type =>
+      root.removeEventListener(type, protectGuideCommands, true)));
     cancelSizeGesture();
     closeVolume(false); destroyed = true; synchronizeLoops();
     mobileLayout.removeEventListener('change', updatePresentationLayout);

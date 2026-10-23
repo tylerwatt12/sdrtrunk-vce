@@ -4,6 +4,11 @@ const { expect, test } = require('@playwright/test');
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`Scan List saves use the selected list version and preserve conflicting drafts in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
+    await page.addInitScript(() => {
+      for (const [id, version] of [['welcome', 1], ['scan-lists', 2]]) {
+        localStorage.setItem(`sdrtrunk-vce-guide:v1:administrator:scan-list-save-fixture:${id}:${version}`, '1');
+      }
+    });
     let revision = 1;
     const writes = [];
     const lists = [
@@ -17,6 +22,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       const data = value => route.fulfill({ json: { data: value } });
       if (path === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
         username: 'administrator', tier: 'admin', primary: true, csrf_token: 'fixture',
+        guide_dismissal_scope: 'scan-list-save-fixture',
         capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true } });
       if (path === '/api/v1/admin/scan-lists/2' && request.method() === 'PUT') {
         const body = request.postDataJSON();

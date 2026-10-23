@@ -2,9 +2,10 @@ import { definitions as routes } from '../core/routes.js?v=11';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
-const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps });
-// The authored Aliases tour supersedes the dismissible version-one placeholder.
-const guideVersions = Object.freeze({ aliases: 3 });
+const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
+  'scan-lists': scanListsSteps });
+// Authored tours supersede their dismissible version-one placeholders.
+const guideVersions = Object.freeze({ aliases: 3, 'scan-lists': 2 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 1,
     authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -250,6 +251,66 @@ function aliasesSteps(documentValue, preparePlayer, preparePage) {
   } }));
 }
 
+function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
+  const focus = (...names) => targets(documentValue,
+    ...names.map((name) => `[data-guide-target="${name}"]`));
+  return [
+    { id: 'lists', title: 'Your listening choices',
+      targets: focus('scan-lists-selector', 'scan-lists-search', 'scan-lists-filters'),
+      paragraphs: ['Scan Lists group calls you want to hear together. A list can include aliases from several Alias Lists. Use search and availability filters to find a list.'] },
+    { id: 'sources', title: 'Where calls come from',
+      targets: focus('scan-lists-counts', 'scan-lists-routes'), paragraphs: [],
+      items: [
+        { label: 'Assigned aliases', text: 'Aliases explicitly included in this Scan List.' },
+        { label: 'Unmatched calls', text: 'Unknown talkgroups routed here through an Alias List’s Call Handling Defaults. This does not automatically include that Alias List’s existing aliases.' }
+      ] },
+    { id: 'details', title: 'Name and organize lists',
+      targets: focus('scan-lists-details-fields'),
+      paragraphs: ['Names and descriptions help listeners recognize the traffic. Display order controls where each list appears, with lower numbers first.'] },
+    { id: 'availability', title: 'Make a list available',
+      targets: focus('scan-lists-availability'),
+      paragraphs: ['Controls whether listeners can select this list. Hiding a list keeps its aliases and settings in place.'] },
+    { id: 'default', title: 'Choose the default',
+      targets: focus('scan-lists-default'),
+      paragraphs: ['VCE uses the default when Live playback starts with no lists selected. Choose another default before hiding or deleting the current one.'] },
+    { id: 'members', title: 'Review the members',
+      targets: focus('scan-lists-member-table', 'scan-lists-member-alias-list'),
+      paragraphs: ['Review this Scan List’s members across all Alias Lists. Open an alias to inspect or change its settings.'] },
+    { id: 'add-alias-list', title: 'Add a whole Alias List',
+      targets: focus('scan-lists-add-list-dialog'),
+      paragraphs: ['Add the aliases currently in an Alias List. This does not automatically include aliases added to it later.'] },
+    { id: 'alias-membership', title: 'Individual membership',
+      targets: focus('scan-lists-alias-membership'),
+      paragraphs: ['An alias’s Call Handling tab controls which Scan Lists it belongs to. The same alias can belong to several lists.'] },
+    { id: 'remove-members', title: 'Remove memberships',
+      targets: focus('scan-lists-remove-selected', 'scan-lists-remove-all'),
+      paragraphs: ['Remove selected aliases or clear all assigned aliases. The aliases stay configured. Call Handling Defaults can still route unmatched calls here.'] },
+    { id: 'listening', title: 'Choose what you hear',
+      targets: focus('scan-lists-player-lists'),
+      paragraphs: ['Select the lists you want to hear, including several at once. Your choices apply to your sign-in. Calls shared by selected lists play once.'],
+      nextLabel: 'Finish' }
+  ].filter((step) => {
+    if (typeof canView !== 'function') return true;
+    if (step.id === 'listening') return canView('scanner') !== false;
+    if (['members', 'add-alias-list', 'alias-membership', 'remove-members'].includes(step.id)) {
+      return canView('aliases') !== false;
+    }
+    return true;
+  }).map((step) => ({ ...step,
+    samples: [{ id: 'scan-lists-workspace', value: { section: step.id } }],
+    prepare: async (context) => {
+      const releasePlayer = await preparePlayer?.({ minimized: true });
+      try {
+        const releasePage = await preparePage?.('scan-lists', step.id, context);
+        return () => { releasePage?.(); releasePlayer?.(); };
+      } catch (error) {
+        releasePlayer?.();
+        throw error;
+      }
+    }
+  }));
+}
+
 export function createGuideDefinition(id, { documentValue = globalThis.document, preparePlayer,
   preparePage, canSetup = true, canView, canReport } = {}) {
   if (id === 'welcome') return { id, version: 1, authored: true, title: 'Welcome to sdrtrunk VCE',
@@ -258,7 +319,7 @@ export function createGuideDefinition(id, { documentValue = globalThis.document,
   const template = pageGuideTemplates[id];
   if (!template) return null;
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
-    steps: authoredPages[id](documentValue, preparePlayer, preparePage) };
+    steps: authoredPages[id](documentValue, preparePlayer, preparePage, canView) };
   return { ...template, eyebrow: template.title, steps: [
     { id: 'coming-soon', title: 'Guide coming soon', paragraphs: [
       `A walkthrough for ${template.title} is being prepared. Take the welcome tour for an introduction to the menus and player.`

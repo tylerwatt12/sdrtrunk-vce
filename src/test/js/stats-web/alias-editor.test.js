@@ -808,7 +808,7 @@ async function verifyScanListDialogVersionSnapshot() {
     vm.createContext(probe);
     vm.runInContext(`${functionSource('function openScanListMemberRemoveModal(scanList)')}
       ${functionSource('function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)')}
-      ${functionSource('function openFullScanListMembershipModal(scanList, operation)')}`, probe);
+      ${functionSource('function openFullScanListMembershipModal(scanList, operation, presentation = null)')}`, probe);
     const scanList = { id: 7, name: 'County', alias_count: 2, edit_revision: 'opened-memberships' };
     if (removeAll) probe.openFullScanListMembershipModal(scanList, 'remove');
     else probe.openScanListMemberRemoveModal(scanList);

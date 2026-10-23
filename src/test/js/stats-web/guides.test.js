@@ -15,7 +15,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists'].includes(id));
   }
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
   assert.equal(createGuideDefinition('missing-page'), null);
@@ -53,6 +53,55 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(editor.items.map(({ label }) => label), ['Basics', 'Identifier', 'Call Handling', 'Activity']);
   assert.match(editor.items[1].text, /talkgroup ID or radio ID/);
   assert.equal(aliasesTour.steps.at(-1).nextLabel, 'Finish');
+  const scanListsTour = createGuideDefinition('scan-lists', {
+    preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const scanListSections = ['lists', 'sources', 'details', 'availability', 'default', 'members',
+    'add-alias-list', 'alias-membership', 'remove-members', 'listening'];
+  assert.equal(scanListsTour.version, 2, 'The authored Scan Lists tour supersedes the placeholder.');
+  assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
+  for (const step of scanListsTour.steps) {
+    assert.deepEqual(step.samples, [{ id: 'scan-lists-workspace', value: { section: step.id } }]);
+    assert.doesNotThrow(() => step.targets());
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), [['player', { minimized: true }], ['scan-lists', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'player']);
+  }
+  assert.deepEqual(scanListsTour.steps.find(({ id }) => id === 'sources').items.map(({ label }) => label),
+    ['Assigned aliases', 'Unmatched calls']);
+  assert.equal(scanListsTour.steps.at(-1).nextLabel, 'Finish');
+  const noAudioScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'scanner' });
+  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -1),
+    'An account without Live audio access is not shown player listening choices.');
+  assert.equal(noAudioScanListsTour.steps.at(-1).id, 'remove-members');
+  const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
+  assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
+    ['lists', 'sources', 'details', 'availability', 'default', 'listening'],
+    'An account without Alias administration is not sent into member management.');
+  const scanListOnlyTour = createGuideDefinition('scan-lists', { canView: view => view === 'scan-lists' });
+  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id),
+    ['lists', 'sources', 'details', 'availability', 'default']);
+  const { getScanListsGuideData } = await load('guides/scan-lists-data.js');
+  const scanListData = getScanListsGuideData('members');
+  assert.equal(scanListData.scanLists.filter(row => row.default).length, 1);
+  assert.deepEqual(scanListData.scanLists.map(row => [row.name, row.published, row.alias_count]),
+    [['Public Safety', true, 4], ['Fire & EMS', true, 2], ['Unidentified Traffic', false, 0]]);
+  assert.equal(new Set(scanListData.memberPage.rows.map(row => row.alias_list_id)).size, 2,
+    'The actual membership table demonstrates aliases from several Alias Lists.');
+  assert.deepEqual(scanListData.rows.slice(0, 2).map(row => row.scan_list_ids), [[900001, 900002], [900001, 900002]]);
+  assert.equal(scanListData.scanLists[2].unmatched_alias_lists[0].alias_list_id, scanListData.lists[0].id);
+  assert.deepEqual(scanListData.lists[0].unknown_alias_behavior.scan_list_ids, [900003]);
+  assert.deepEqual(getScanListsGuideData('remove-members').selectedIds, [910001, 910002]);
+  assert.equal(getScanListsGuideData('sources').selectedScanList.id, 900003);
+  assert.equal(getScanListsGuideData('details').selectedScanList.id, 900002);
+  scanListData.rows[0].name = 'Changed sample';
+  assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
   const makeHarness = (overrides = {}) => {
     const stored = new Map();
     const shown = [];
@@ -151,6 +200,17 @@ async function checkGuides(assetsRoot) {
   assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 3,
     'Dismissing the old coming-soon placeholder cannot suppress the new authored tour.');
 
+  const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
+    getItem: key => /:(welcome|scan-lists):1$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await dismissedScanListPlaceholder.controller.pageReady();
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 2);
+  dismissedScanListPlaceholder.finish();
+  await dismissedScanListPlaceholder.controller.openPage();
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists',
+    'Help replays the Scan Lists tour after completion.');
   const isolation = makeHarness();
   await isolation.controller.pageReady();
   isolation.dismiss();
@@ -215,6 +275,11 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(replayAliases.navigations, ['aliases']);
   await replayAliases.controller.pageReady();
   assert.equal(replayAliases.shown.at(-1).options.id, 'aliases', 'A named Aliases URL navigates before showing its sample tour.');
+  const replayScanLists = makeHarness({ context: { view: 'dashboard', guide: 'scan-lists' } });
+  await replayScanLists.controller.pageReady();
+  assert.deepEqual(replayScanLists.navigations, ['scan-lists']);
+  await replayScanLists.controller.pageReady();
+  assert.equal(replayScanLists.shown.at(-1).options.id, 'scan-lists');
   const restrictedWelcome = makeHarness({ context: { canSetup: false } });
   await restrictedWelcome.controller.pageReady();
   assert.equal(restrictedWelcome.shown[0].options.steps.at(-1).nextLabel, 'Finish');

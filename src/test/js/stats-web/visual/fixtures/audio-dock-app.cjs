@@ -89,6 +89,13 @@ async function stubAudio(page) {
 }
 
 async function openAudioApp(page, options = {}) {
+  // Audio fixtures inspect an existing listener's controls; onboarding would
+  // otherwise cover the native source picker on desktop.
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 1], ['aliases', 3], ['scan-lists', 2]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:${id}:${version}`, '1');
+    }
+  });
   const file = path.resolve(__dirname, '../../../../../../stats-web/assets/core/preference-schema.js');
   let preferences = structuredClone((await import(pathToFileURL(file).href)).defaults);
   preferences.appearance.theme = options.theme || 'light';
@@ -103,6 +110,7 @@ async function openAudioApp(page, options = {}) {
     feedCallsEnabled: options.feedCallsEnabled !== false, transcript: options.transcript || transcript,
     session: { configured: true, authenticated: options.authenticated !== false,
       username: options.authenticated === false ? null : 'fixture-listener',
+      guide_dismissal_scope: 'audio-fixture-account',
       tier: options.admin === false ? 'user' : 'admin', primary: options.admin !== false,
       csrf_token: 'test-only-csrf', capabilities: { 'web-access': true, dashboard: true, radio: true,
         live: true, 'call-audio': true, recordings: true, 'admin-tuners': true, 'admin-channels': true,

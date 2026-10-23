@@ -10,11 +10,17 @@ test.beforeAll(async () => {
 });
 
 async function openForms(page, view, theme = 'light', scanList = {}) {
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['scan-lists', 2]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:form-workflows-fixture:${id}:${version}`, '1');
+    }
+  });
   let preferences = structuredClone(defaults);
   let preferenceRevision = 1;
   preferences.appearance.theme = theme;
   const state = { writes: [], pending: [], scanLists: [{ id: 1, name: 'Public Safety',
-    description: 'Dispatch and mutual aid', sort_order: 0, published: true, default: true,
+    description: 'Dispatch and mutual aid', edit_revision: 'scan-list-1-1',
+    sort_order: 0, published: true, default: true,
     alias_count: 2, unmatched_alias_list_count: 0, unmatched_alias_lists: [], ...scanList }],
     receiver: { revision: 4, settings: { traffic_grant_age_out_milliseconds: 2000 } } };
   await page.route('**/api/v1/**', async (route) => {
@@ -22,7 +28,7 @@ async function openForms(page, view, theme = 'light', scanList = {}) {
     const pathname = new URL(request.url()).pathname;
     const data = (value) => route.fulfill({ json: { data: value } });
     if (pathname === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
-      username: 'admin', tier: 'admin', primary: true, capabilities: {
+      username: 'admin', tier: 'admin', primary: true, guide_dismissal_scope: 'form-workflows-fixture', capabilities: {
         'admin-settings': true, 'admin-aliases': true, 'receiver-health': true,
         'scanner': true, 'call-audio': true, 'live': true, 'user-settings': true, 'recordings': true, 'credits': true } });
     if (pathname === '/api/v1/me/preferences') {
@@ -102,7 +108,7 @@ test('scan-list save blocks dismissal and duplicate submissions, keeps draft aft
   app.finish();
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', { name: 'Edit County Dispatch details', exact: true })).toBeFocused();
-  expect(app.state.writes[1].body).toEqual({ revision: 1, scan_list: {
+  expect(app.state.writes[1].body).toEqual({ edit_revision: 'scan-list-1-1', scan_list: {
     name: 'County Dispatch', description: 'Dispatch and mutual aid', sort_order: 0,
     published: true, default: true } });
 });
