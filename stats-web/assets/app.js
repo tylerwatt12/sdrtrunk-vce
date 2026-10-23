@@ -16,7 +16,8 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=1';
+import { createGuideController } from './guides/controller.js?v=2';
+import { createGuideSampleData } from './guides/sample-data.js?v=1';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -34,7 +35,7 @@ import {
 } from './features/alias-list-create.js?v=8';
 import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=31';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
-import { openRadioReferenceConnect } from './features/radioreference-connect.js?v=1';
+import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=2';
 import { createStreamingWorkspace } from './features/streaming.js?v=13';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=20';
@@ -58,6 +59,7 @@ import { WebCallPlayer } from './web-call-player.js?v=19';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
+const guideSampleData = createGuideSampleData();
 const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revision"]')?.content?.trim() || '';
 
 function installStickyHeaderOffset() {
@@ -24648,6 +24650,11 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
     const state = { revision: Number(catalog.revision), catalog, visibleRows: [], pageRows: [], selectionAnchor: null };
+    // Tutorial data is a view over the latest receiver catalog, never a saved
+    // configuration. The same registry can serve any page or UI region.
+    const displayedCatalog = () => guideSampleData.read('channel-catalog', state.catalog);
+    const displayedSelection = () => guideSampleData.isActive('channel-catalog') ?
+      new Set(displayedCatalog().selected_channel_ids || []) : selected;
     const pageSize = 20;
     let pageIndex = 0;
     const wrapper = node('div', 'channel-admin-catalog ui-catalog editor-workspace');
@@ -24759,13 +24766,14 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     let cloneSelected = null;
     let selectAll = null;
     const updateSelection = () => {
+      const selection = displayedSelection();
       const visibleIds = new Set(state.visibleRows.map((row) => row.configuration_id));
-      const visibleSelected = [...selected].filter((id) => visibleIds.has(id)).length;
-      const hiddenSelected = selected.size - visibleSelected;
-      selectedBar.hidden = selected.size === 0;
-      selectedSummary.textContent = `${selected.size} selected`;
+      const visibleSelected = [...selection].filter((id) => visibleIds.has(id)).length;
+      const hiddenSelected = selection.size - visibleSelected;
+      selectedBar.hidden = selection.size === 0;
+      selectedSummary.textContent = `${selection.size} selected`;
       hiddenSummary.textContent = hiddenSelected ? `${hiddenSelected} outside this filter` : '';
-      const selectedRows = (state.catalog.channels || []).filter((row) => selected.has(row.configuration_id));
+      const selectedRows = (displayedCatalog().channels || []).filter((row) => selection.has(row.configuration_id));
       if (enableAutoStart) enableAutoStart.disabled = selectedRows.length > 0 &&
         selectedRows.every((row) => row.auto_start_order != null);
       if (disableAutoStart) disableAutoStart.disabled = selectedRows.length > 0 &&
@@ -24813,7 +24821,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       state.catalog = refreshed;
       const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
       [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
-      summaryHost.replaceChildren(channelSetupSummary(refreshed));
+      summaryHost.replaceChildren(channelSetupSummary(displayedCatalog()));
       if (autoStartVerificationNotice) {
         if (statusHost.firstElementChild === autoStartVerificationNotice) statusHost.replaceChildren();
         autoStartVerificationNotice = null;
@@ -24901,6 +24909,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     };
     const action = (label, icon, actionName, confirmMessage = null, danger = false) =>
       uiActionButton(label, icon, async () => {
+        if (guideSampleData.isActive('channel-catalog')) return;
         const ids = [...selected];
         if (!ids.length) return;
         if (confirmMessage && !await confirmAction(confirmMessage.replace('{count}', String(ids.length)), {
@@ -24916,12 +24925,15 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     enableAutoStart = action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START');
     disableAutoStart = action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START');
     cloneSelected = action('Clone', 'icon-copy', 'CLONE');
+    const startSelected = action('Start', 'icon-play', 'START');
+    startSelected.dataset.guideTarget = 'channel-sample-start';
     selectedBar.append(selectedSummary, hiddenSummary,
-      action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
+      startSelected, action('Stop', 'icon-stop', 'STOP'),
       enableAutoStart, disableAutoStart, cloneSelected,
       action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
 
     const filteredRows = () => {
+      if (guideSampleData.isActive('channel-catalog')) return displayedCatalog().channels || [];
       const term = search.value.trim().toLowerCase();
       const rows = (state.catalog.channels || []).filter((row) =>
         (activeProtocol === 'all' || row.protocol_id === activeProtocol) &&
@@ -24939,18 +24951,18 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     let channelTable = null;
     const renderChannelTable = () => {
       channelTable = table(state.pageRows,
-        channelAdminColumns(selected, state, updateSelection, renderSelectionHeader,
+        channelAdminColumns(displayedSelection(), state, updateSelection, renderSelectionHeader,
           moveAutoStart),
         'No channels match this view', {
           type: 'channel-catalog-admin-v3',
           sortable: false, controller: tableController,
           ...(activeCatalogView === 'grouped' ? {
             rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
-            revealRowGroups: () => Boolean(search.value.trim())
+            revealRowGroups: () => guideSampleData.isActive('channel-catalog') || Boolean(search.value.trim())
           } : {}),
           rowKey: (row) => row.configuration_id,
           rowClass: (row) => [
-            selected.has(row.configuration_id) ? 'selected' : '',
+            displayedSelection().has(row.configuration_id) ? 'selected' : '',
             highlightedOrderRows.has(row.configuration_id) ? 'channel-order-row-moved' : ''
           ].filter(Boolean).join(' '),
           tableClass: 'channel-catalog-table ui-data-table-quiet ui-data-table-calm ui-catalog-table',
@@ -24962,6 +24974,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       if (!channelTable.parentElement) tableHost.append(channelTable);
     };
     draw = ({ rebuild = false, revealId = null } = {}) => {
+      if (guideSampleData.isActive('channel-catalog')) pageIndex = 0;
       state.visibleRows = filteredRows();
       if (revealId) {
         const index = state.visibleRows.findIndex((row) => row.configuration_id === revealId);
@@ -24982,6 +24995,18 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     draw({ rebuild: true, revealId: revealId || route.get('channel') });
     wrapper.append(catalogHeader, statusHost, selectedBar, tableHost, navigation);
     updateSelection();
+    let samplePageIndex = null;
+    const unregisterGuideData = guideSampleData.register('channel-catalog', () => {
+      const active = guideSampleData.isActive('channel-catalog');
+      if (active && samplePageIndex === null) samplePageIndex = pageIndex;
+      if (!active && samplePageIndex !== null) {
+        pageIndex = samplePageIndex;
+        samplePageIndex = null;
+      }
+      summaryHost.replaceChildren(channelSetupSummary(displayedCatalog()));
+      draw({ rebuild: true });
+    }, { root: wrapper });
+    pageConnections.add({ close: unregisterGuideData });
 
     let refreshInFlight = false;
     pageInterval(async () => {
@@ -28015,7 +28040,7 @@ async function renderAdminRadioReferenceSettings() {
   const accountActions = node('div', 'admin-form-actions');
   accountActions.append(signOut, connect);
   accountForm.append(formField('Username', userName), formField('Password', password),
-    rememberSetting.control, accountMessage, accountActions);
+    rememberSetting.control, radioReferencePremiumSignup({ node }), accountMessage, accountActions);
 
   const regionForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-region-form');
@@ -34360,7 +34385,7 @@ const guideDesktopLayout = window.matchMedia('(min-width: 1181px)');
 const pageGuideButton = document.getElementById('page-guide-button');
 let guidePageReady = false;
 const guideController = createGuideController({
-  ui: { node, openReadOnlyModal, mountAccessWireframe },
+  ui: { node, openReadOnlyModal, mountAccessWireframe, guideSampleData },
   getContext: () => ({
     view: routeFoundation.requestedView(route),
     guide: route.get('guide'),

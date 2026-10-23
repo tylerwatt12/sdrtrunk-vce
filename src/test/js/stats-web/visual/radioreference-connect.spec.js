@@ -71,6 +71,11 @@ async function installHarness(page, theme = 'light') {
 
 test('nested connection blocks busy dismissal and duplicate submits, retains failure drafts, and resumes once after success', async ({ page }) => {
   const dialog = await installHarness(page);
+  const signup = dialog.getByRole('link', { name: 'Create a premium account', exact: true });
+  await expect(signup).toHaveAttribute('href', 'https://www.radioreference.com/premium/');
+  await expect(signup).toHaveAttribute('target', '_blank');
+  await expect(signup).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(signup.locator('..')).toHaveText('Need an account? Create a premium account');
   await expect(dialog.getByRole('textbox', { name: 'Username', exact: true })).toBeFocused();
   await expect(page.locator('.test-parent').locator('..')).toHaveJSProperty('inert', true);
   await dialog.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');

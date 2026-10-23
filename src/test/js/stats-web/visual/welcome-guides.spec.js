@@ -38,6 +38,32 @@ async function expectMenu(page, name, views) {
   for (const view of views) await expectSpotlight(page, `.primary-nav [data-view="${view}"]`);
 }
 
+async function expectUnionSpotlights(page, dimmedSelector) {
+  const geometry = await page.locator('.ui-setup-guide-shade').evaluate((shade, selector) => {
+    const highlights = [...shade.querySelectorAll('.ui-setup-guide-highlight')];
+    const attribute = (element, name) => Number(element.getAttribute(name));
+    const pointInRect = (rectangle, point) => point.x > attribute(rectangle, 'x') &&
+      point.x < attribute(rectangle, 'x') + attribute(rectangle, 'width') &&
+      point.y > attribute(rectangle, 'y') && point.y < attribute(rectangle, 'y') + attribute(rectangle, 'height');
+    const bounds = document.querySelector(selector).getBoundingClientRect();
+    const point = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 };
+    const dimmerMaskId = shade.querySelector('.ui-setup-guide-dimmer').getAttribute('mask').slice(5, -1);
+    const holes = [...document.getElementById(dimmerMaskId).querySelectorAll('.ui-setup-guide-mask-hole')];
+    return {
+      targetCount: highlights.length,
+      outlineCutouts: highlights.map(highlight => {
+        const mask = highlight.getAttribute('mask');
+        return mask ? document.getElementById(mask.slice(5, -1))
+          .querySelectorAll('.ui-setup-guide-mask-hole').length : 0;
+      }),
+      unselectedIsDimmed: !holes.some(hole => pointInRect(hole, point))
+    };
+  }, dimmedSelector);
+  expect(geometry.targetCount).toBeGreaterThan(1);
+  expect(geometry.outlineCutouts).toEqual(Array(geometry.targetCount).fill(geometry.targetCount - 1));
+  expect(geometry.unselectedIsDimmed).toBe(true);
+}
+
 for (const theme of ['light', 'dark']) {
   test(`welcome guide walks every menu and hands off to Channel Setup ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -51,21 +77,29 @@ for (const theme of ['light', 'dark']) {
     await expect(guide(page).getByRole('heading', { name: 'Welcome to sdrtrunk VCE', exact: true })).toBeVisible();
     await expect(guide(page)).toContainText('Step 1 of 11');
     await expect(guide(page).locator('canvas')).toBeVisible();
+    await expect(guide(page)).not.toContainText('Select Next to look around');
     await page.screenshot({ path: testInfo.outputPath(`welcome-${theme}.png`) });
     await next(page).click();
     await expect(guide(page)).toContainText('Explore the airwaves');
+    expect(await guide(page).locator('.ui-setup-guide-description').allTextContents()).toEqual([
+      'In Tuners, adjust gain, correct frequency error with PPM calibration, and set your tuner’s center frequency.',
+      'Use Browser Spectrum to spot active signals visually and inspect frequencies worth listening to.'
+    ]);
     await expectMenu(page, 'hardware', ['tuner-spectrum', 'tuners']);
     await guide(page).getByRole('heading', { name: 'Explore the airwaves', exact: true }).click();
     await expectMenu(page, 'hardware', ['tuner-spectrum', 'tuners']);
     await page.screenshot({ path: testInfo.outputPath(`hardware-spotlight-${theme}.png`) });
     await next(page).click();
     await expectMenu(page, 'configuration', ['channel-setup', 'aliases', 'radioreference', 'streaming']);
+    await expectUnionSpotlights(page, '.primary-nav [data-view="scan-lists"]');
     await expect(page.locator('.primary-nav [data-nav-group="hardware"]')).not.toHaveAttribute('open');
+    await page.screenshot({ path: testInfo.outputPath(`manage-spotlight-${theme}.png`) });
     await next(page).click();
     await expectMenu(page, 'configuration', ['scan-lists', 'alerts']);
     await expect(guide(page)).toContainText('Scan Lists replace the listening checkbox on Alias Lists');
     await next(page).click();
     await expectMenu(page, 'listen', ['live']);
+    await expect(guide(page)).toContainText('If you’ve used sdrtrunk before, Live is the new home for monitoring your channels and watching decoded radio activity as it happens.');
     await next(page).click();
     await expectMenu(page, 'listen', ['dashboard', 'scanner', 'recordings']);
     await expect(guide(page)).toContainText('VCE records each call before playing it');
@@ -77,7 +111,10 @@ for (const theme of ['light', 'dark']) {
     await next(page).click();
     await expectSpotlight(page, '#support-report-indicator');
     await next(page).click();
-    await expectMenu(page, 'settings', ['admin', 'settings', 'credits']);
+    await expectMenu(page, 'settings', ['admin', 'settings']);
+    await expect(guide(page).locator('h2')).not.toContainText('—');
+    await expect(guide(page)).toContainText('Personalize the user settings for your sign-in only');
+    await expect(guide(page)).not.toContainText('Meet VCE’s contributors');
     await next(page).click();
     await expect(guide(page)).toContainText('Step 11 of 11');
     await expectSpotlight(page, '#theme-toggle');

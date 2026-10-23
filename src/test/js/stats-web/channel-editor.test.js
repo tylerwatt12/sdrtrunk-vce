@@ -190,7 +190,8 @@ assert.doesNotMatch(channelColumns, /id: 'protocol'/,
 const channelCatalog = functionSource('async function renderModernChannelCatalog(');
 assert.match(channelCatalog, /channel-catalog-admin-v3/);
 assert.match(channelCatalog, /rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'/);
-assert.match(channelCatalog, /revealRowGroups: \(\) => Boolean\(search\.value\.trim\(\)\)/);
+assert.match(channelCatalog,
+  /revealRowGroups: \(\) => guideSampleData\.isActive\('channel-catalog'\) \|\| Boolean\(search\.value\.trim\(\)\)/);
 assert.match(channelCatalog, /channel-order-mode/);
 assert.match(channelCatalog, /uiActionButton\('Startup order'/);
 assert.match(channelCatalog, /aria-pressed/);

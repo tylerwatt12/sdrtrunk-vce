@@ -1,5 +1,15 @@
 import { createFormWorkflow } from '../core/form-workflows.js?v=4';
 
+export function radioReferencePremiumSignup({ node }) {
+  const signup = node('p', 'ui-field-detail');
+  const link = node('a', '', 'Create a premium account');
+  link.href = 'https://www.radioreference.com/premium/';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  signup.append('Need an account? ', link);
+  return signup;
+}
+
 function connectionFailure(error) {
   switch (error?.accountState) {
     case 'INVALID_CREDENTIALS':
@@ -50,7 +60,8 @@ export function openRadioReferenceConnect(ui, { introduction = '', signal = null
     footer.append(cancel, connect);
     if (introduction) form.append(node('p', 'ui-field-detail', introduction));
     form.append(formField('Username', userName), formField('Password', password), rememberField,
-      node('p', 'ui-field-detail', 'A RadioReference Premium subscription is required.'), feedback, footer);
+      node('p', 'ui-field-detail', 'A RadioReference Premium subscription is required.'),
+      radioReferencePremiumSignup(ui), feedback, footer);
 
     let disposed = false;
     let cancelled = false;

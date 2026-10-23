@@ -42,26 +42,24 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
     visibleControl(documentValue, `.primary-nav [data-view="${view}"]`);
   const canUsePlayer = allowed('scanner') || allowed('recordings');
   const navigation = {
-    hardware: ['hardware', ['tuner-spectrum', 'tuners']],
+    hardware: ['hardware', ['tuners', 'tuner-spectrum']],
     manage: ['configuration', ['channel-setup', 'aliases', 'radioreference', 'streaming']],
     'scan-lists': ['configuration', ['scan-lists', 'alerts']],
     live: ['listen', ['live']],
     listening: ['listen', ['dashboard', 'scanner', 'recordings']],
-    settings: ['settings', ['admin', 'settings', 'credits']]
+    settings: ['settings', ['admin', 'settings']]
   };
   const itemViews = { Main: 'dashboard', Scanner: 'scanner', Recordings: 'recordings',
-    Administration: 'admin', 'My Settings': 'settings', About: 'credits' };
+    Administration: 'admin', 'My Settings': 'settings' };
   const steps = [
     { id: 'welcome', title: 'Welcome to sdrtrunk VCE', illustration: true,
       paragraphs: ['Turn signals from your software-defined radio into conversations you can follow.',
-        'Listen to radio traffic, see who’s transmitting, and explore activity across your radio systems.'],
-      hint: 'Select Next to look around. Close with X or click a shaded area.' },
+        'Listen to radio traffic, see who’s transmitting, and explore activity across your radio systems.'] },
     { id: 'hardware', title: 'Explore the airwaves',
-      groupTargets: true,
       prepare: menu(documentValue, 'hardware'),
       targets: navigationTargets(documentValue, 'hardware', ['tuner-spectrum', 'tuners']),
-      paragraphs: ['Use Browser Spectrum to spot active signals visually and inspect frequencies worth listening to.',
-        'In Tuners, adjust gain, correct frequency error with PPM calibration, and set your tuner’s center frequency.'] },
+      paragraphs: ['In Tuners, adjust gain, correct frequency error with PPM calibration, and set your tuner’s center frequency.',
+        'Use Browser Spectrum to spot active signals visually and inspect frequencies worth listening to.'] },
     { id: 'manage', title: 'Your familiar setup tools',
       prepare: menu(documentValue, 'configuration'),
       targets: navigationTargets(documentValue, 'configuration', ['channel-setup', 'aliases', 'radioreference', 'streaming']),
@@ -74,7 +72,7 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
     { id: 'live', title: 'A familiar view of radio traffic',
       prepare: menu(documentValue, 'listen'),
       targets: navigationTargets(documentValue, 'listen', ['live']),
-      paragraphs: ['If you’ve used sdrtrunk before, start with Live. This is the new home for monitoring your channels and watching decoded radio activity as it happens.'] },
+      paragraphs: ['If you’ve used sdrtrunk before, Live is the new home for monitoring your channels and watching decoded radio activity as it happens.'] },
     { id: 'listening', title: 'See more. Settle in and listen.',
       prepare: menu(documentValue, 'listen'),
       targets: navigationTargets(documentValue, 'listen', ['dashboard', 'scanner', 'recordings']),
@@ -101,14 +99,13 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
       targets: targets(documentValue, '[data-guide-target="report-issue"]'),
       paragraphs: ['Something behaving unexpectedly? Select the bug icon and describe what you expected, what happened, and how to repeat it.',
         'You can include diagnostic information to help investigate, then prepare and submit your report.'] },
-    { id: 'settings', title: 'Settings for everyone—and for you',
+    { id: 'settings', title: 'Shared settings and your preferences',
       prepare: menu(documentValue, 'settings'),
-      targets: navigationTargets(documentValue, 'settings', ['admin', 'settings', 'credits']),
+      targets: navigationTargets(documentValue, 'settings', ['admin', 'settings']),
       paragraphs: [],
       items: [
         { label: 'Administration', text: 'Control the receiver and shared settings that can affect everyone using it.' },
-        { label: 'My Settings', text: 'Personalize your display and listening preferences.' },
-        { label: 'About', text: 'Meet VCE’s contributors and find the projects it builds on.' }
+        { label: 'My Settings', text: 'Personalize the user settings for your sign-in only' }
       ] },
     { id: 'theme', title: 'Make yourself comfortable',
       targets: targets(documentValue, '[data-guide-target="theme"]'),
@@ -164,12 +161,20 @@ function channelSetupSteps(documentValue, preparePlayer) {
     { id: 'discover', title: 'Search for trunked systems',
       targets: targets(documentValue, '[data-guide-target="channel-discover"]'),
       paragraphs: ['Not sure where to start? Find Trunked Systems searches for radio systems your tuner can receive.',
-        'You’ll need a supported tuner and permission to manage it. The search guides you through any receiver changes before it begins.'] },
+        'Scan supported bands for trunked radio systems, then automatically name and add the systems you choose to your channels. Running channels may need to stop temporarily during the search.'] },
     { id: 'filters', title: 'Find the channel you need',
       targets: targets(documentValue, '[data-guide-target="channel-filters"]'),
       paragraphs: ['Search by channel, system, frequency, protocol, or Alias List. Use the status and protocol filters to narrow a busy channel list.'] },
     { id: 'receiving', title: 'Start receiving',
-      targets: targets(documentValue, '[data-guide-target="channel-catalog"]'),
+      samples: [{ id: 'channel-catalog', value: {
+        channels: [{ configuration_id: 'guide-sample-channel', name: 'Sample channel', system: 'Example system',
+          protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', processing_state: 'STOPPED',
+          frequencies_hz: [851012500], editable: true, alias_list_name: 'Sample aliases',
+          alias_list_id: null, auto_start_order: null }],
+        selected_channel_ids: ['guide-sample-channel']
+      } }],
+      targets: targets(documentValue, '[data-guide-sample] .channel-name-summary',
+        '[data-guide-sample] td[data-label="State"]', '[data-guide-target="channel-sample-start"]'),
       paragraphs: ['Once you’ve saved a channel, use its Start action to begin receiving. Running channels show their current state here.',
         'Select a channel to review its configuration. For trunked systems, the channel receives the control signal and follows the system’s voice traffic.'] },
     { id: 'startup', title: 'Ready when you are',
@@ -178,7 +183,7 @@ function channelSetupSteps(documentValue, preparePlayer) {
     { id: 'scan-lists', title: 'Choose what you hear',
       prepare: combine(menu(documentValue, 'configuration'), preparePlayer),
       targets: targets(documentValue, '.primary-nav [data-view="scan-lists"]', '[data-guide-target="player-lists"]'),
-      paragraphs: ['Receiving a channel and choosing what to hear are separate steps. Add the aliases you want to a Scan List, make it available to listeners, then select that list in the player.',
+      paragraphs: ['VCE separates starting channels from listening to them. Start a channel, create aliases, and add those aliases to Scan Lists. Then use Lists in the player to choose the Scan Lists you want to hear.',
         'VCE records each call before playing it. You’ll hear the conversation after the transmission finishes.'],
       nextLabel: 'Finish' }
   ];

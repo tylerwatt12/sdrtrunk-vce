@@ -627,6 +627,7 @@ async function main() {
   await require('./party-column-layouts.test').checkPartyColumnLayouts(core);
   await require('./message-types.test').checkMessageTypes(core, appSource);
   await require('./guide-persistence.test').checkGuidePersistence(path.resolve(core, '..'));
+  await require('./guide-sample-data.test').checkGuideSampleData(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
   checkActivityDuration(tableLayouts, tableDefaults);
   const systemLabels = await loadModule('system-labels');

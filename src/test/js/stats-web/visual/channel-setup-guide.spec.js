@@ -57,11 +57,13 @@ async function expectToolbarActionsUnmoved(page, actions) {
 
 async function openChannels(page, options = {}) {
   const fixture = await installSiteStyleApplication(page, options.theme || 'light');
-  const state = { catalogReads: 0, revision: 1, channels: options.channels || [], tuners: options.tuners ?? [eligibleTuner],
+  const state = { catalogReads: 0, channelReads: 0, revision: 1, channels: options.channels || [], tuners: options.tuners ?? [eligibleTuner],
     catalogFailure: options.catalogFailure, pendingCatalog: null, releaseCatalog: null };
   if (options.holdCatalog) state.pendingCatalog = new Promise(resolve => { state.releaseCatalog = resolve; });
-  await page.route('**/api/v1/admin/channels', route => route.fulfill({ json: { data: {
-    revision: state.revision, channels: state.channels } } }));
+  await page.route('**/api/v1/admin/channels', route => {
+    state.channelReads += 1;
+    return route.fulfill({ json: { data: { revision: state.revision, channels: state.channels } } });
+  });
   await page.route('**/api/v1/channel-catalog', route => route.fulfill({ json: { data: {
     revision: state.revision, channels: state.channels } } }));
   await page.route('**/api/v1/admin/spectrum-search/catalog', async route => {
@@ -88,6 +90,32 @@ async function openChannels(page, options = {}) {
   await page.goto(`/app.html?view=channel-setup${options.guide ? `&guide=${options.guide}` : ''}`);
   await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   return { fixture, state };
+}
+
+async function openReceivingStep(page) {
+  await expect(guideRoot(page)).toContainText('Add your first channel');
+  for (let step = 1; step < 4; step += 1) {
+    await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+  }
+  await expect(guideRoot(page).getByRole('heading', { name: 'Start receiving', exact: true })).toBeVisible();
+}
+
+const savedChannel = { configuration_id: 'existing-channel', name: 'Existing channel',
+  protocol: 'P25', protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', channel_kind: 'TRUNKED',
+  frequencies_hz: [851012500], processing_state: 'STOPPED', editable: true };
+
+const sampleChannel = page => page.locator('.channel-catalog-table tr[data-id]')
+  .filter({ hasText: /sample/i });
+
+async function expectSampleChannel(page) {
+  await expect(sampleChannel(page)).toHaveCount(1);
+  await expect(sampleChannel(page)).toBeVisible();
+  await expect(page.locator('.channel-selection-bar').getByRole('button', { name: 'Start', exact: true })).toBeVisible();
+  const identity = await sampleChannel(page).locator('.channel-name-summary').boundingBox();
+  const panel = await guideRoot(page).boundingBox();
+  expect(panel.x < identity.x + identity.width && panel.x + panel.width > identity.x &&
+    panel.y < identity.y + identity.height && panel.y + panel.height > identity.y,
+  'The guide keeps the sample channel name readable').toBe(false);
 }
 
 for (const theme of ['light', 'dark']) {
@@ -186,6 +214,106 @@ test('Channel Setup guide URL replays the complete guide after dismissal', async
   await page.goto(`/app.html${new URL(page.url()).search}`);
   await expect(page.getByRole('heading', { name: 'Channel Setup', exact: true })).toBeVisible();
   await expect(guideRoot(page)).toHaveCount(0);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+for (const channels of [[], [savedChannel]]) {
+  for (const exit of ['Next', 'Back', 'Close guide', 'darkened area', 'Escape']) {
+    test(`receiving sample restores the ${channels.length ? 'populated' : 'empty'} channel catalog after ${exit}`, async ({ page }, testInfo) => {
+      const { fixture } = await openChannels(page, { channels, guide: 'page' });
+      await openReceivingStep(page);
+      await expectSampleChannel(page);
+      await expect(page.locator('.channel-catalog-table tr[data-id="existing-channel"]')).toHaveCount(0);
+      if (exit === 'Next' && !channels.length) {
+        await page.screenshot({ path: testInfo.outputPath('receiving-sample-light.png') });
+      }
+      if (exit === 'darkened area') await page.mouse.click(8, 500);
+      else if (exit === 'Escape') await page.keyboard.press('Escape');
+      else await guideRoot(page).getByRole('button', { name: exit, exact: true }).click();
+      await expect(sampleChannel(page)).toHaveCount(0);
+      if (channels.length) {
+        await expect(page.locator('.channel-catalog-table tr[data-id="existing-channel"]')).toBeVisible();
+      } else await expect(page.getByText('No channels match this view', { exact: true })).toBeVisible();
+      if (['Next', 'Back'].includes(exit)) {
+        await expect(guideRoot(page)).toContainText(exit === 'Next' ? 'Ready when you are' : 'Find the channel you need');
+      } else await expect(guideRoot(page)).toHaveCount(0);
+      expect(fixture.pageErrors).toEqual([]);
+    });
+  }
+}
+
+test('receiving sample keeps real filters and selection, ignores actions, and restores the latest catalog', async ({ page }) => {
+  const writes = [], sampleRequests = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) writes.push(path);
+    if (path.includes('guide-sample-channel')) sampleRequests.push(path);
+  });
+  const { fixture, state } = await openChannels(page, { channels: [savedChannel] });
+  const search = page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists', exact: true });
+  await page.locator('.channel-catalog-table tr[data-id="existing-channel"]')
+    .getByRole('checkbox', { name: 'Select Existing channel', exact: true }).check();
+  await search.fill('Existing');
+  await page.locator('#page-guide-button').click();
+  await openReceivingStep(page);
+  await expectSampleChannel(page);
+  const before = page.url();
+  const controls = await sampleChannel(page).locator('button, a, input, select').all();
+  controls.push(page.locator('[data-guide-target="channel-sample-start"]'));
+  for (const control of controls) {
+    // Exercise the handlers directly too: the guide's pointer shield is not the
+    // only thing preventing a fixture from changing receiver state.
+    await control.evaluate(element => {
+      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    });
+  }
+  await expect(page).toHaveURL(before);
+  await expect(guideRoot(page)).toContainText('Start receiving');
+  const reads = state.channelReads;
+  state.channels = [{ ...savedChannel, name: 'Existing channel updated', processing_state: 'RUNNING' }];
+  state.revision += 1;
+  await expect.poll(() => state.channelReads, { timeout: 7_000 }).toBeGreaterThan(reads);
+  await expectSampleChannel(page);
+  await expect(page.locator('.channel-catalog-table')).not.toContainText('Existing channel updated');
+  await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(sampleChannel(page)).toHaveCount(0);
+  await expect(search).toHaveValue('Existing');
+  const restored = page.locator('.channel-catalog-table tr[data-id="existing-channel"]');
+  await expect(restored).toContainText('Existing channel updated');
+  await expect(restored).toContainText('Running');
+  await expect(restored.getByRole('checkbox', { name: 'Select Existing channel updated', exact: true })).toBeChecked();
+  await expect(page.locator('.channel-selection-bar')).toContainText('1 selected');
+  expect(writes).toEqual([]);
+  expect(sampleRequests).toEqual([]);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('navigating away from a receiving sample removes it before returning to channels', async ({ page }) => {
+  const { fixture } = await openChannels(page, { channels: [savedChannel], guide: 'page' });
+  await openReceivingStep(page);
+  await expectSampleChannel(page);
+  await page.locator('.primary-nav [data-view="dashboard"]').evaluate(link => link.click());
+  await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
+  await expect(guideRoot(page)).toHaveCount(0);
+  await expect(sampleChannel(page)).toHaveCount(0);
+  await page.locator('.primary-nav [data-view="channel-setup"]').evaluate(link => link.click());
+  await expect(page.locator('.channel-catalog-table tr[data-id="existing-channel"]')).toBeVisible();
+  await expect(sampleChannel(page)).toHaveCount(0);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
+test('the RadioReference sign-in page links to premium account creation', async ({ page }) => {
+  const { fixture } = await openChannels(page);
+  await toolbarAction(page, 'New channel').click();
+  await page.getByRole('button', { name: 'Import from RadioReference', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Connect your account', exact: true })).toBeVisible();
+  const signup = page.getByRole('link', { name: 'Create a premium account', exact: true });
+  await expect(signup).toBeVisible();
+  await expect(signup.locator('..')).toHaveText('Need an account? Create a premium account');
+  await expect(signup).toHaveAttribute('href', 'https://www.radioreference.com/premium/');
+  await expect(signup).toHaveAttribute('target', '_blank');
+  await expect(signup).toHaveAttribute('rel', /noopener/);
   expect(fixture.pageErrors).toEqual([]);
 });
 

@@ -1,6 +1,6 @@
 // Shared page guidance: the modal foundation owns focus, dismissal and replacement.
 // Steps only describe copy, existing targets and temporary presentation work.
-export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }, options) {
+export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, guideSampleData }, options) {
   const steps = options.steps || [];
   if (!steps.length) return null;
 
@@ -30,6 +30,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }
   let frame = null;
   let observer = null;
   let stepCleanup = null;
+  let sampleCleanup = null;
   let illustrationCleanup = null;
   let hero = null;
   const targetIds = new Map();
@@ -38,19 +39,27 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }
     if (closed || frame !== null) return;
     frame = requestAnimationFrame(() => { frame = null; update(); });
   };
+  const reportError = error => {
+    if (options.onError) options.onError(error);
+    else console.error('Unable to show welcome guide', error);
+  };
   const cleanStep = () => {
-    stepCleanup?.();
+    const cleanups = [stepCleanup, sampleCleanup, illustrationCleanup, () => hero?.remove()];
     stepCleanup = null;
-    illustrationCleanup?.();
+    sampleCleanup = null;
     illustrationCleanup = null;
-    hero?.remove();
+    let failure = null;
+    cleanups.forEach(clean => {
+      try { clean?.(); } catch (error) { failure ||= error; }
+    });
     hero = null;
+    return failure;
   };
   const cleanup = () => {
     closed = true;
     if (frame !== null) cancelAnimationFrame(frame);
     observer?.disconnect();
-    cleanStep();
+    const failure = cleanStep();
     targetIds.forEach((original, target) => {
       if (original === null) target.removeAttribute('id');
       else target.id = original;
@@ -59,6 +68,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }
     document.removeEventListener('scroll', schedule, true);
     window.visualViewport?.removeEventListener('resize', schedule);
     window.visualViewport?.removeEventListener('scroll', schedule);
+    if (failure) reportError(failure);
   };
   const modal = openReadOnlyModal(steps[0].title || options.title || 'Welcome guide', body, {
     id: options.id || 'setup-guide', className: 'ui-setup-guide', closeLabel: 'Close guide',
@@ -170,7 +180,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }
       highlight.setAttribute('data-setup-guide-target', rect.target.id);
       highlight.setAttribute('rx', String(radius));
       paintRect(highlight, rect);
-      if (steps[index].groupTargets && bounds.length > 1) {
+      if (bounds.length > 1) {
         // Hide each outline wherever another spotlight covers it. The remaining
         // strokes trace the union's silhouette without exposing its bounding box.
         const outlineMask = svgNode('mask');
@@ -196,7 +206,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }
       // Transparent filled hit regions shield the live controls underneath.
       highlights.append(highlight);
     });
-    if (steps[index].groupTargets) bounds.forEach(rect => {
+    bounds.forEach(rect => {
       const hitRegion = svgNode('rect');
       hitRegion.classList.add('ui-setup-guide-hit-region');
       hitRegion.setAttribute('rx', String(radius));
@@ -258,59 +268,71 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe }
 
   const showStep = () => {
     if (closed) return;
-    cleanStep();
+    const cleanupFailure = cleanStep();
     observer?.disconnect();
+    if (cleanupFailure) {
+      close();
+      reportError(cleanupFailure);
+      return;
+    }
     const step = steps[index];
-    const prepared = step.prepare?.();
-    stepCleanup = typeof prepared === 'function' ? prepared : null;
-    modal.setTitle(step.title || options.title || 'Welcome guide');
-    modal.dialog.dataset.guideId = options.id || 'setup-guide';
-    modal.dialog.dataset.guideStep = step.id || String(index + 1);
-    modal.dialog.classList.toggle('ui-setup-guide--illustrated', Boolean(step.illustration));
-    copy.replaceChildren();
-    (step.paragraphs || []).forEach(text => copy.append(node('p', 'ui-setup-guide-description', text)));
-    if (step.items?.length) {
-      const items = node('div', 'ui-setup-guide-items');
-      step.items.forEach(({ label, text }) => {
-        const item = node('div', 'ui-setup-guide-item');
-        item.append(node('strong', '', label), node('p', 'ui-setup-guide-description', text));
-        items.append(item);
+    try {
+      sampleCleanup = guideSampleData?.activate(step.samples || []) || null;
+      const prepared = step.prepare?.();
+      stepCleanup = typeof prepared === 'function' ? prepared : null;
+      modal.setTitle(step.title || options.title || 'Welcome guide');
+      modal.dialog.dataset.guideId = options.id || 'setup-guide';
+      modal.dialog.dataset.guideStep = step.id || String(index + 1);
+      modal.dialog.classList.toggle('ui-setup-guide--illustrated', Boolean(step.illustration));
+      copy.replaceChildren();
+      (step.paragraphs || []).forEach(text => copy.append(node('p', 'ui-setup-guide-description', text)));
+      if (step.items?.length) {
+        const items = node('div', 'ui-setup-guide-items');
+        step.items.forEach(({ label, text }) => {
+          const item = node('div', 'ui-setup-guide-item');
+          item.append(node('strong', '', label), node('p', 'ui-setup-guide-description', text));
+          items.append(item);
+        });
+        copy.append(items);
+      }
+      if (step.hint) copy.append(node('p', 'ui-setup-guide-hint', step.hint));
+      if (step.illustration) {
+        hero = node('div', 'ui-setup-guide-illustration');
+        const canvas = node('canvas', 'ui-setup-guide-wireframe');
+        canvas.setAttribute('aria-hidden', 'true');
+        const mark = node('img', 'ui-setup-guide-wordmark');
+        mark.src = '/assets/vce-wordmark.svg?v=3';
+        mark.alt = '';
+        hero.append(canvas, mark);
+        header.before(hero);
+        illustrationCleanup = mountAccessWireframe?.(canvas, { compact: true }) || null;
+      }
+      back.hidden = index === 0;
+      next.replaceChildren(node('span', '', step.nextLabel || (index === steps.length - 1 ? 'Done' : 'Next')));
+      const nextIcon = svgNode('svg');
+      nextIcon.setAttribute('aria-hidden', 'true');
+      const nextUse = svgNode('use');
+      nextUse.setAttribute('href', '#icon-chevron-right');
+      nextIcon.append(nextUse);
+      next.append(nextIcon);
+      counter.textContent = `Step ${index + 1} of ${steps.length}`;
+      [...dots.children].forEach((dot, dotIndex) => {
+        dot.classList.toggle('is-current', dotIndex === index);
+        dot.classList.toggle('is-complete', dotIndex < index);
       });
-      copy.append(items);
+      update();
+      if (typeof ResizeObserver !== 'undefined') {
+        observer ||= new ResizeObserver(schedule);
+        observer.observe(modal.dialog);
+        targets().forEach(target => observer.observe(target));
+      }
+      options.onStepChange?.(index, step);
+      modal.focus(next);
+    } catch (error) {
+      cleanStep();
+      close();
+      reportError(error);
     }
-    if (step.hint) copy.append(node('p', 'ui-setup-guide-hint', step.hint));
-    if (step.illustration) {
-      hero = node('div', 'ui-setup-guide-illustration');
-      const canvas = node('canvas', 'ui-setup-guide-wireframe');
-      canvas.setAttribute('aria-hidden', 'true');
-      const mark = node('img', 'ui-setup-guide-wordmark');
-      mark.src = '/assets/vce-wordmark.svg?v=3';
-      mark.alt = '';
-      hero.append(canvas, mark);
-      header.before(hero);
-      illustrationCleanup = mountAccessWireframe?.(canvas, { compact: true }) || null;
-    }
-    back.hidden = index === 0;
-    next.replaceChildren(node('span', '', step.nextLabel || (index === steps.length - 1 ? 'Done' : 'Next')));
-    const nextIcon = svgNode('svg');
-    nextIcon.setAttribute('aria-hidden', 'true');
-    const nextUse = svgNode('use');
-    nextUse.setAttribute('href', '#icon-chevron-right');
-    nextIcon.append(nextUse);
-    next.append(nextIcon);
-    counter.textContent = `Step ${index + 1} of ${steps.length}`;
-    [...dots.children].forEach((dot, dotIndex) => {
-      dot.classList.toggle('is-current', dotIndex === index);
-      dot.classList.toggle('is-complete', dotIndex < index);
-    });
-    update();
-    if (typeof ResizeObserver !== 'undefined') {
-      observer ||= new ResizeObserver(schedule);
-      observer.observe(modal.dialog);
-      targets().forEach(target => observer.observe(target));
-    }
-    options.onStepChange?.(index, step);
-    modal.focus(next);
   };
   const advance = () => {
     if (closed) return;
