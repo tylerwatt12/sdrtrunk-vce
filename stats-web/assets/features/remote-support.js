@@ -5,9 +5,12 @@ import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 const ENDPOINT = '/api/v1/remote-support';
 export const remoteSupportDescription = 'Allow VCE’s developer to access this instance for troubleshooting.';
 const remoteSupportDetails = [
-  'The developer can review radio activity, recordings, and logs, and change VCE settings to investigate your issue.',
-  'This does not share your computer’s desktop or provide control of other applications.',
-  'You can select Stop remote support at any time to end access. Changes already made will remain.'
+  { title: 'Troubleshooting', icon: 'icon-playback-controls',
+    text: 'The developer can review radio activity, recordings, and logs, and change VCE settings to investigate your issue.' },
+  { title: 'Your computer', icon: 'icon-display',
+    text: 'This does not share your computer’s desktop or provide control of other applications.' },
+  { title: 'Stop anytime', icon: 'icon-stop',
+    text: 'You can select Stop remote support at any time to end access. Changes already made will remain.' }
 ];
 export const remoteSupportStopWarning = 'Remote access is off for now, but this setting could not be saved. Check the application data folder before restarting VCE.';
 export const remoteSupportDurations = Object.freeze([
@@ -77,10 +80,10 @@ export function remoteSupportEnd(snapshot, locale = undefined) {
     { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(snapshot.expiresAt))}.` : '';
 }
 
-export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, metricCard, uiActionButton,
+export function createRemoteSupportWorkspace({ node, iconGlyph, formField, uiSelectFrame, metricCard, uiActionButton,
   fetchDocument, signal, isCurrent = () => true, copyText = text => navigator.clipboard.writeText(text),
   heading = '', description = '' }) {
-  const element = node('section', 'ui-section ui-settings-panel');
+  const element = node('section', 'remote-support-workspace ui-section ui-settings-panel');
   element.dataset.remoteSupport = '';
   if (heading || description) {
     const header = node('header', 'settings-card-header');
@@ -88,18 +91,27 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
     if (description) header.append(node('p', 'settings-card-description', description));
     element.append(header);
   }
-  const form = node('form', 'admin-form settings-page-form ui-settings-form');
-  const accessDetails = node('div', 'remote-support-details editor-workspace');
-  remoteSupportDetails.forEach(text => accessDetails.append(node('p', 'settings-card-description', text)));
+  const form = node('form', 'remote-support-form admin-form settings-page-form ui-settings-form');
+  const accessDetails = node('div', 'remote-support-details');
+  remoteSupportDetails.forEach(({ title, icon, text }, index) => {
+    const detail = node('section', `remote-support-detail ui-surface-soft${index === 0 ? ' remote-support-detail-primary' : ''}`);
+    const symbol = node('span', `remote-support-detail-icon ui-record-avatar${index === 0 ? ' ui-record-avatar-accent' : ''}`);
+    symbol.append(iconGlyph(icon));
+    const copy = node('div', 'remote-support-detail-copy');
+    copy.append(node('h3', 'remote-support-detail-title ui-record-title', title), node('p', 'settings-card-description', text));
+    detail.append(symbol, copy);
+    accessDetails.append(detail);
+  });
   const duration = node('select', 'ui-select');
   remoteSupportDurations.forEach(([seconds, label]) => {
     const option = node('option', '', label); option.value = String(seconds); duration.append(option);
   });
   duration.value = '21600';
   const durationField = formField('Allow access for', uiSelectFrame(duration));
-  const shared = node('div'); shared.hidden = true;
-  const codeRow = node('div', 'ui-action-row ui-action-row-start');
-  const codeHost = node('div');
+  durationField.classList.add('remote-support-duration');
+  const shared = node('div', 'remote-support-shared'); shared.hidden = true;
+  const codeRow = node('div', 'remote-support-code-row ui-action-row ui-action-row-start');
+  const codeHost = node('div', 'remote-support-code-host');
   const copied = node('p', 'ui-form-state'); copied.setAttribute('role', 'status'); copied.hidden = true;
   const copy = uiActionButton('Copy', 'icon-copy', async () => {
     if (!snapshot?.code || copy.disabled) return;
@@ -112,21 +124,25 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
         copied.textContent = 'The code could not be copied. Select the code to copy it.'; copied.hidden = false;
       }
     } finally { if (current()) copy.disabled = false; }
-  }, 'ui-button ui-button-secondary');
+  }, 'remote-support-copy ui-button ui-button-secondary');
   codeRow.append(codeHost, copy);
+  const connectionDetails = node('div', 'remote-support-connection');
   const connection = node('p'); connection.setAttribute('role', 'status');
   const end = node('p');
-  shared.append(codeRow, copied, connection, end);
+  connectionDetails.append(connection, end);
+  shared.append(codeRow, copied, connectionDetails);
   const unavailable = node('p', '', 'Start remote support from this installation.');
   unavailable.hidden = true;
   const stopWarning = node('p', 'ui-notice ui-notice-warning', remoteSupportStopWarning);
   stopWarning.setAttribute('role', 'alert'); stopWarning.hidden = true;
   const submit = node('button', 'ui-button ui-button-primary', 'Allow remote support'); submit.type = 'submit';
   const retry = node('button', 'ui-button ui-button-secondary', 'Retry'); retry.type = 'button'; retry.hidden = true;
-  const feedback = node('div', 'admin-form-message'); feedback.setAttribute('role', 'status');
-  const actions = node('div', 'admin-form-actions'); actions.append(retry, submit);
-  const footer = node('div', 'settings-form-footer'); footer.append(feedback, actions);
-  form.append(accessDetails, durationField, shared, unavailable, stopWarning, footer); element.append(form);
+  const feedback = node('div', 'remote-support-feedback admin-form-message'); feedback.setAttribute('role', 'status');
+  const actions = node('div', 'remote-support-actions admin-form-actions'); actions.append(retry, submit);
+  const footer = node('div', 'remote-support-footer ui-settings-form-footer settings-form-footer'); footer.append(feedback, actions);
+  const controls = node('div', 'remote-support-controls');
+  controls.append(durationField, footer);
+  form.append(accessDetails, shared, unavailable, stopWarning, controls); element.append(form);
   let snapshot = null;
   let pending = false;
   let denied = false;
@@ -137,6 +153,7 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
   const sync = () => {
     const enabled = snapshot?.enabled === true;
     const needsStop = enabled || snapshot?.stopNotSaved === true;
+    element.dataset.remoteSupportState = needsStop ? 'active' : 'idle';
     durationField.hidden = needsStop || snapshot?.canStart === false;
     duration.disabled = pending || !snapshot || workflow.isBusy();
     shared.hidden = !enabled || snapshot?.stopNotSaved === true;

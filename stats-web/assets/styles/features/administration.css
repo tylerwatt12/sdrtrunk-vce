@@ -139,6 +139,131 @@
   grid-column: 1 / -1;
 }
 
+.remote-support-workspace {
+  width: 100%;
+  max-width: var(--modal-size-editor);
+}
+
+.remote-support-form {
+  align-content: start;
+}
+
+.remote-support-details {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.remote-support-detail {
+  min-width: 0;
+  display: flex;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.remote-support-detail-primary {
+  grid-column: 1 / -1;
+}
+
+.remote-support-detail-copy {
+  min-width: 0;
+}
+
+.remote-support-detail-title {
+  margin: 0;
+}
+
+.remote-support-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, max-content);
+  align-items: end;
+  justify-content: start;
+  gap: var(--space-3);
+}
+
+.remote-support-duration {
+  width: 100%;
+}
+
+.remote-support-footer {
+  grid-column: auto;
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: var(--space-2);
+  padding-top: 0;
+}
+
+.remote-support-feedback:empty {
+  display: none;
+}
+
+.remote-support-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.remote-support-shared {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.remote-support-code-row {
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.remote-support-code-host {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.remote-support-connection {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.remote-support-connection > p {
+  margin: 0;
+}
+
+.remote-support-workspace[data-remote-support-state="active"] .remote-support-shared {
+  order: -2;
+}
+
+.remote-support-workspace[data-remote-support-state="active"] .remote-support-controls {
+  order: -1;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.remote-support-workspace[data-remote-support-state="active"] .remote-support-details {
+  order: 1;
+}
+
+@media (max-width: 680px) {
+  .remote-support-details,
+  .remote-support-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .remote-support-detail-primary {
+    grid-column: auto;
+  }
+
+  .remote-support-footer,
+  .remote-support-actions,
+  .remote-support-actions > button {
+    width: 100%;
+  }
+}
+
 .operational-preferences {
   display: grid;
 }

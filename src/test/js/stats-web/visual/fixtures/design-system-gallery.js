@@ -14,7 +14,7 @@ import { openSetupGuide } from '/assets/core/setup-guide.js?v=4';
 import { createGuideDefinition } from '/assets/guides/catalog.js?v=3';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=3';
-import { createRemoteSupportWorkspace, remoteSupportDescription } from '/assets/features/remote-support.js?v=5';
+import { createRemoteSupportWorkspace, remoteSupportDescription } from '/assets/features/remote-support.js?v=6';
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
   'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));
@@ -465,7 +465,7 @@ if (view === 'admin-support' || view === 'gallery') {
     `${functions.join('\n')}\nreturn { ${names.join(', ')} };`)(node, iconGlyph, {}, String);
   let snapshot = { enabled: false, connected: false, code: '', expires_at_ms: 0,
     unlimited: false, can_start: true };
-  const workspace = createRemoteSupportWorkspace({ node, ...controls,
+  const workspace = createRemoteSupportWorkspace({ node, iconGlyph, ...controls,
     heading: 'Remote support (optional)',
     description: remoteSupportDescription,
     fetchDocument: async (_path, options) => {

@@ -42,7 +42,7 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createAudioDock } from './core/audio-dock.js?v=29';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
-import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=5';
+import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
@@ -31933,7 +31933,7 @@ function renderAdminSupportReport() {
 }
 
 async function renderAdminRemoteSupport(host, renderContext, options = {}) {
-  const workspace = createRemoteSupportWorkspace({ node, formField, uiSelectFrame, metricCard, uiActionButton,
+  const workspace = createRemoteSupportWorkspace({ node, iconGlyph, formField, uiSelectFrame, metricCard, uiActionButton,
     fetchDocument: jsonDocumentFetch, signal: renderContext.signal, isCurrent: () => renderIsCurrent(renderContext),
     ...options });
   host.append(workspace.element);

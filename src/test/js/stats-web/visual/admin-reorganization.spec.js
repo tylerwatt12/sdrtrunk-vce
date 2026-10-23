@@ -194,6 +194,10 @@ async function preferenceIds(page) {
 }
 
 async function expectRemoteSupportDetails(workspace) {
+  await expect(workspace.locator('.remote-support-detail').getByRole('heading'))
+    .toHaveText(['Troubleshooting', 'Your computer', 'Stop anytime']);
+  await expect(workspace.locator('.remote-support-detail svg')).toHaveCount(3);
+  await expect(workspace.locator('.remote-support-detail svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const text of [
     'The developer can review radio activity, recordings, and logs, and change VCE settings to investigate your issue.',
     'This does not share your computer’s desktop or provide control of other applications.',
@@ -201,6 +205,62 @@ async function expectRemoteSupportDetails(workspace) {
   ]) {
     await expect(workspace.getByText(text, { exact: true })).toBeVisible();
   }
+}
+
+async function expectRemoteSupportLayout(workspace, width) {
+  const details = await workspace.locator('.remote-support-detail').evaluateAll(sections =>
+    sections.map(section => {
+      const { x, y, width, height } = section.getBoundingClientRect();
+      return { x, y, width, height };
+    }));
+  const [primary, computer, stop] = details;
+  expect(computer.y).toBeGreaterThanOrEqual(primary.y + primary.height);
+  if (width > 600) {
+    expect(Math.abs(primary.x - computer.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(primary.x + primary.width - stop.x - stop.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(computer.y - stop.y)).toBeLessThanOrEqual(1);
+    expect(stop.x).toBeGreaterThanOrEqual(computer.x + computer.width);
+  } else {
+    expect(stop.y).toBeGreaterThanOrEqual(computer.y + computer.height);
+    for (const section of details) {
+      expect(Math.abs(section.x - primary.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(section.width - primary.width)).toBeLessThanOrEqual(1);
+    }
+  }
+  const select = await workspace.getByLabel('Allow access for').boundingBox();
+  const button = await workspace.getByRole('button', { name: 'Allow remote support', exact: true }).boundingBox();
+  expect(select.width).toBeGreaterThan(0);
+  if (width > 600) {
+    expect(select.width).toBeLessThanOrEqual(240);
+    expect(button.x).toBeGreaterThanOrEqual(select.x + select.width);
+    expect(Math.abs(button.y + button.height - select.y - select.height)).toBeLessThanOrEqual(2);
+  } else {
+    expect(button.y).toBeGreaterThanOrEqual(select.y + select.height);
+  }
+  for (const box of [select, button]) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+  }
+}
+
+async function expectRemoteSupportCodeLayout(workspace, width) {
+  const row = workspace.locator('.remote-support-code-row');
+  await expect(row.getByText('482 719 356', { exact: true })).toBeVisible();
+  await expect(row.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
+  const code = await row.getByText('482 719 356', { exact: true }).boundingBox();
+  const copy = await row.getByRole('button', { name: 'Copy', exact: true }).boundingBox();
+  const connection = await workspace.locator('.remote-support-connection').boundingBox();
+  const rowBounds = await row.boundingBox();
+  expect(connection.y).toBeGreaterThanOrEqual(rowBounds.y + rowBounds.height);
+  for (const box of [code, copy, connection]) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+  }
+  const codeFont = await row.getByText('482 719 356', { exact: true })
+    .evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize));
+  const detailFont = await workspace.locator('.remote-support-detail p').first()
+    .evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize));
+  expect(codeFont).toBeGreaterThan(detailFont);
 }
 
 test('desktop administration navigation includes every grouped page and its icon', async ({ page }) => {
@@ -223,9 +283,9 @@ test('desktop administration navigation includes every grouped page and its icon
   await expect(navigation.getByRole('link', { name: 'Call output & activity' })).toHaveCount(0);
 });
 
-test('remote support stays simple in light and dark desktop and phone layouts', async ({ page }) => {
+test('remote support groups its explanation and keeps start and code controls compact in every layout', async ({ page }) => {
   for (const theme of ['light', 'dark']) {
-    for (const width of [1440, 390]) {
+    for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       const app = await openAdmin(page, 'remote-support', [], { theme });
       const workspace = page.locator('[data-remote-support]');
@@ -235,6 +295,7 @@ test('remote support stays simple in light and dark desktop and phone layouts', 
       await expect(workspace.getByLabel('Allow access for')).toHaveValue('21600');
       await expect(workspace.locator('option')).toHaveText(['30 minutes', '1 hour', '6 hours', '24 hours', 'Unlimited']);
       await expect(workspace.getByRole('button', { name: 'Allow remote support', exact: true })).toBeEnabled();
+      await expectRemoteSupportLayout(workspace, width);
       await workspace.getByLabel('Allow access for').selectOption('0');
       await expect(workspace.getByText('Unsaved changes', { exact: true })).toHaveCount(0);
       await workspace.getByRole('button', { name: 'Allow remote support', exact: true }).click();
@@ -244,6 +305,7 @@ test('remote support stays simple in light and dark desktop and phone layouts', 
       await expect(workspace.getByText('No time limit', { exact: true })).toBeVisible();
       await expect(workspace.getByText('Connecting… VCE will keep trying.', { exact: true })).toBeVisible();
       await expect(workspace.getByRole('button', { name: 'Copy', exact: true })).toBeEnabled();
+      await expectRemoteSupportCodeLayout(workspace, width);
       await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.supportCodeCopied = text; }; });
       await workspace.getByRole('button', { name: 'Copy', exact: true }).click();
       await expect(workspace.getByText('Code copied.', { exact: true })).toBeVisible();
@@ -291,6 +353,7 @@ test('problem reports allow optional remote support with empty required fields i
       await expect(workspace.getByText('Allow VCE’s developer to access this instance for troubleshooting.', { exact: true })).toBeVisible();
       await expectRemoteSupportDetails(workspace);
       await expect(workspace.getByLabel('Allow access for')).toHaveValue('21600');
+      await expectRemoteSupportLayout(workspace, width);
       await expect(page.getByRole('button', { name: 'Prepare support report', exact: true }))
         .toHaveAttribute('form', 'support-report-form');
       expect(await workspace.evaluate(panel => panel.previousElementSibling.id)).toBe('support-report-form');
@@ -306,6 +369,7 @@ test('problem reports allow optional remote support with empty required fields i
       await workspace.getByRole('button', { name: 'Allow remote support', exact: true }).click();
       await expect(workspace.getByText('Support code', { exact: true })).toBeVisible();
       await expect(workspace.getByText('482 719 356', { exact: true })).toBeVisible();
+      await expectRemoteSupportCodeLayout(workspace, width);
       await expect(workspace).not.toContainText(/Tyler/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await workspace.screenshot({ path: `build/playwright-results/report-remote-support-${theme}-${width}.png` });
