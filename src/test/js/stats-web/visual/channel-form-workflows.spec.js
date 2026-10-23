@@ -4,6 +4,16 @@ const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+const guideDismissalScope = 'channel-form-workflows-fixture';
+test.beforeEach(async ({ page }) => {
+  const { guideStorageKey } = await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/guides/persistence.js')).href);
+  const keys = ['welcome', 'channel-setup'].map(id => guideStorageKey('channel-admin', guideDismissalScope, id));
+  await page.addInitScript(completed => {
+    completed.forEach(key => localStorage.setItem(key, '1'));
+  }, keys);
+});
+
 let defaults;
 test.beforeAll(async () => {
   defaults = (await import(pathToFileURL(path.resolve(__dirname,
@@ -33,7 +43,8 @@ async function openEditor(page, processingState = 'RUNNING', mode = 'edit') {
     const pathname = new URL(request.url()).pathname;
     const data = value => route.fulfill({ json: { data: value } });
     if (pathname === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
-      username: 'channel-admin', tier: 'admin', primary: true, csrf_token: 'fixture-token',
+      username: 'channel-admin', guide_dismissal_scope: guideDismissalScope,
+      tier: 'admin', primary: true, csrf_token: 'fixture-token',
       capabilities: { 'admin-channels': true } });
     if (pathname === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences: defaults } });
     if (pathname === '/api/v1/admin/channels/protocols') return data({

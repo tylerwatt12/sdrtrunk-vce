@@ -23850,7 +23850,7 @@ function channelAdminFrequency(row) {
 
 async function channelAdminMutation(path, options, statusHost, onSuccess = renderChannelSetup) {
   try {
-    statusHost?.replaceChildren(node('span', 'muted', 'Working…'));
+    statusHost?.replaceChildren();
     const result = await requestJson(path, { timeoutMs: 30_000, ...options });
     const failed = (result?.results || []).filter((entry) => entry.success !== true);
     if (failed.length) throw new Error(failed.map((entry) => entry.message ||
