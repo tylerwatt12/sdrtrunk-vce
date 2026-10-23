@@ -1323,7 +1323,6 @@ public final class SetupWizard extends JDialog
                     if(result.devices().isEmpty()) addTo(inventory,noticePanel("No radios found yet", "That’s okay — you can connect one later. If a radio is already plugged in, check its cable and driver, then choose Rescan.",false));
                     for(String info:result.notices()) addTo(inventory,noticePanel("Optional radio support",info,false));
                     for(String error:result.errors()) addTo(inventory,new WizardNotice("A radio could not be checked",error,WizardNotice.Tone.ERROR));
-                    addTo(inventory,text("Detected means the radio was found, not that reception has been tested. You’ll choose how to use it after setup."));
                     inventory.revalidate(); inventory.repaint();
                     progress.set(step, stopped.get() ? DEFERRED : COMPLETE);
                     if(persist() && stopped.get()) showPage(nextStep());

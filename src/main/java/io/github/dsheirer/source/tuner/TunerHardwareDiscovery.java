@@ -153,8 +153,7 @@ public final class TunerHardwareDiscovery
             {
                 case NOT_INSTALLED ->
                 {
-                    notices.add("Using an SDRplay RSP radio? Install the SDRplay API software to detect it here. " +
-                        "If you use another radio, you don't need this software and can continue.");
+                    notices.add("Using an SDRplay RSP radio? Install the SDRplay API software to detect it here.");
                     return;
                 }
                 case LOAD_FAILED ->

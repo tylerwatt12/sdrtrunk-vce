@@ -35,7 +35,7 @@ class TunerHardwareDiscoveryTest
         assertFalse(backend.opened);
         assertTrue(result.errors().isEmpty());
         assertEquals(1, result.notices().size());
-        assertTrue(result.notices().getFirst().contains("you don't need this software"));
+        assertTrue(result.notices().getFirst().contains("Install the SDRplay API"));
         assertThrows(UnsupportedOperationException.class, () -> result.notices().clear());
     }
 
