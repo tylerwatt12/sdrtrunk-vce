@@ -16,10 +16,10 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=9';
+import { createGuideController } from './guides/controller.js?v=10';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=2';
-import { getScanListsGuideData } from './guides/scan-lists-data.js?v=3';
+import { getScanListsGuideData } from './guides/scan-lists-data.js?v=4';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -7912,9 +7912,6 @@ async function preparePageGuideSample(view, section, context) {
       mark('.admin-scan-list-members', 'scan-lists-manage-aliases');
       mark('.scan-list-add-all', 'scan-lists-add-list-button');
       mark('.scan-list-back-to-catalog', 'scan-lists-back-to-lists');
-      const unidentifiedList = data.scanLists.find(item => item.unmatched_alias_list_count > 0);
-      if (unidentifiedList) mark(`.scan-list-selector[data-scan-list-id="${unidentifiedList.id}"]`,
-        'scan-lists-unidentified-selector');
       mark('.scan-list-member-table-section th[data-column="alias"], .scan-list-member-table-section td[data-column="alias"]',
         'scan-lists-member-alias');
       mark('.scan-list-member-table-section [data-column="alias-list"]', 'scan-lists-member-alias-list');

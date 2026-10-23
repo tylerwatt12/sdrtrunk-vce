@@ -6,7 +6,7 @@ export function getScanListsGuideData(section = 'lists') {
   const base = getAliasesGuideData();
   const lists = [
     { ...base.list, alias_count: 2,
-      unknown_alias_behavior: { recordable: true, scan_list_ids: [900003], broadcast_configuration_ids: [] } },
+      unknown_alias_behavior: { recordable: true, scan_list_ids: [], broadcast_configuration_ids: [] } },
     { ...base.list, id: 900002, alias_list_id: 900002, name: 'Regional Services',
       alias_count: 2, assigned_channel_count: 1,
       unknown_alias_behavior: { recordable: false, scan_list_ids: [], broadcast_configuration_ids: [] } }
@@ -17,12 +17,7 @@ export function getScanListsGuideData(section = 'lists') {
       unmatched_alias_list_count: 0, unmatched_alias_lists: [], edit_revision: 'guide-public-safety' },
     { id: 900002, name: 'Fire & EMS', description: 'Fire dispatch and emergency medical calls.',
       sort_order: 10, default: false, published: true, enabled: true, alias_count: 2,
-      unmatched_alias_list_count: 0, unmatched_alias_lists: [], edit_revision: 'guide-fire-ems' },
-    { id: 900003, name: 'Unidentified Traffic', description: 'Unidentified talkgroups from Example County.',
-      sort_order: 20, default: false, published: true, enabled: true, alias_count: 0,
-      unmatched_alias_list_count: 1,
-      unmatched_alias_lists: [{ alias_list_id: 900001, name: 'Example County' }],
-      edit_revision: 'guide-unidentified' }
+      unmatched_alias_list_count: 0, unmatched_alias_lists: [], edit_revision: 'guide-fire-ems' }
   ];
   const rows = base.rows.map((row, index) => ({ ...row,
     alias_list_id: lists[index < 2 ? 0 : 1].id,
@@ -31,7 +26,7 @@ export function getScanListsGuideData(section = 'lists') {
     scan_lists: index < 2 ? ['Public Safety', 'Fire & EMS'] : ['Public Safety']
   }));
   const memberPage = { ...base.page, rows };
-  const selectedScanList = scanLists[['sources', 'listening-controls', 'listening'].includes(section) ? 2 : 0];
+  const selectedScanList = scanLists[0];
   const options = { ...base.options, alias_list: lists[0], scan_lists: scanLists };
   return { ...base, section, list: lists[0], lists, rows, page: memberPage, memberPage, options,
     selectedScanList, scanLists, scanListCatalog: { revision: 0, scan_lists: scanLists },

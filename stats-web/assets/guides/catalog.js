@@ -57,7 +57,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 2, aliases: 4, 'scan-lists': 5 });
+const guideVersions = Object.freeze({ 'channel-setup': 2, aliases: 4, 'scan-lists': 6 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -311,25 +311,20 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
     { id: 'lists', title: canManageAliases ? 'Review your listening group' : 'Your listening groups',
       targets: canManageAliases ? focus('scan-lists-manage-aliases') : focus('scan-lists-selector'),
       paragraphs: [canManageAliases ? 'Open this Scan List’s members to see the aliases that feed your listening group.' :
-        'Choose a listening group to see its assigned aliases and the Alias Lists sending it unidentified traffic.'] },
+        'Choose a listening group to see its assigned aliases.'] },
     { id: 'members', title: 'Follow related traffic across systems',
       targets: focus('scan-lists-member-alias', 'scan-lists-member-alias-list'),
       paragraphs: ['Bring related talkgroups from several radio systems together in one listening group. Fire Dispatch can belong to both a focused Fire & EMS list and a broader Public Safety list.'] },
     { id: 'add-list-button', title: 'Bring in an Alias List',
       targets: focus('scan-lists-add-list-button'),
-      paragraphs: ['Use this to bring an Alias List’s current aliases into your listening group.'] },
+      paragraphs: ['Use this to bring an Alias List’s current aliases into your listening group.',
+        'To add individual aliases to a Scan List, go to Manage > Aliases.'] },
     { id: 'add-alias-list', title: 'Build a listening group quickly',
       targets: focus('scan-lists-add-list-dialog'),
       paragraphs: ['Choose an Alias List. Add All Aliases adds its current aliases and returns you to the members page.'] },
     { id: 'back-to-lists', title: 'Return to your listening groups',
       targets: focus('scan-lists-back-to-lists'),
       paragraphs: ['Return to Scan Lists to review your listening groups.'] },
-    { id: 'choose-unidentified', title: 'Open the unidentified traffic group',
-      targets: focus('scan-lists-unidentified-selector'),
-      paragraphs: ['Select Unidentified Traffic to see which Alias Lists send it calls without a matching alias.'] },
-    { id: 'sources', title: 'Follow unidentified talkgroups',
-      targets: focus('scan-lists-counts', 'scan-lists-routes'),
-      paragraphs: ['An Alias List’s Unmatched Calls defaults can send unidentified talkgroups to a Scan List. Keep a list such as Unidentified Traffic to hear those calls while you work out who is using them.'] },
     { id: 'listening-controls', title: 'Choose your listening mix',
       targets: focus('player-lists'),
       paragraphs: ['Each listener chooses a listening mix here. Your choices are saved for your sign-in.'] },

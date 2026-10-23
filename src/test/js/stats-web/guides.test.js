@@ -80,8 +80,8 @@ async function checkGuides(assetsRoot) {
     }
   });
   const scanListSections = ['overview', 'lists', 'members', 'add-list-button', 'add-alias-list',
-    'back-to-lists', 'choose-unidentified', 'sources', 'listening-controls', 'listening'];
-  assert.equal(scanListsTour.version, 5, 'The connected Scan Lists tour supersedes the walkthrough that skipped its return action.');
+    'back-to-lists', 'listening-controls', 'listening'];
+  assert.equal(scanListsTour.version, 6, 'The focused Scan Lists tour supersedes its earlier unmatched-traffic walkthrough.');
   assert.equal(scanListsTour.steps[0].diagram, 'scan-lists',
     'The opening overview uses the approved relationship chart without preparing a sample workspace.');
   assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
@@ -100,7 +100,7 @@ async function checkGuides(assetsRoot) {
   assert.ok(scanListCopy.split(/\s+/).length < 250, 'The tour stays short enough to read while following the interface.');
   assert.doesNotMatch(scanListCopy, /display order|lower numbers|name and organize|available to listeners|choose the default/i,
     'The tour omits self-explanatory list settings.');
-  assert.match(scanListsTour.steps.find(({ id }) => id === 'sources').paragraphs[0], /Unmatched Calls defaults.*unidentified talkgroups/);
+  assert.match(scanListsTour.steps.find(({ id }) => id === 'add-list-button').paragraphs[1], /individual aliases.*Manage > Aliases/);
   assert.match(scanListsTour.steps.at(-1).paragraphs[0], /queues completed calls.*one at a time.*plays once/);
   const targetNames = (step) => step.targets().map(({ selector }) => /data-guide-target="([^"]+)"/.exec(selector)[1]);
   const scanListTargets = createGuideDefinition('scan-lists', { documentValue: {
@@ -121,13 +121,8 @@ async function checkGuides(assetsRoot) {
     scanListTargets.steps.indexOf(scanStop('back-to-lists')),
     'The dialog closes onto its originating member workspace before the return action is taught.');
   assert.equal(scanListTargets.steps.indexOf(scanStop('back-to-lists')) + 1,
-    scanListTargets.steps.indexOf(scanStop('choose-unidentified')),
+    scanListTargets.steps.indexOf(scanStop('listening-controls')),
     'The return control is taught immediately before the Scan Lists catalog is shown again.');
-  assert.deepEqual(targetNames(scanStop('choose-unidentified')), ['scan-lists-unidentified-selector'],
-    'Selecting the next listening group is shown before its details are explained.');
-  assert.equal(scanListTargets.steps.indexOf(scanStop('choose-unidentified')) + 1,
-    scanListTargets.steps.indexOf(scanStop('sources')),
-    'Selecting Unidentified Traffic is taught immediately before its routes are shown.');
   assert.deepEqual(targetNames(scanStop('listening-controls')), ['player-lists'],
     'The actual Lists button is shown before its player panel opens.');
   assert.deepEqual(targetNames(scanStop('listening')), ['scan-lists-player-lists']);
@@ -140,17 +135,17 @@ async function checkGuides(assetsRoot) {
   const noAudioScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'scanner' });
   assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -2),
     'An account without Live audio access is not shown player listening choices.');
-  assert.equal(noAudioScanListsTour.steps.at(-1).id, 'sources');
+  assert.equal(noAudioScanListsTour.steps.at(-1).id, 'back-to-lists');
   assert.equal(noAudioScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAudioScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
   assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
-    ['overview', 'lists', 'choose-unidentified', 'sources', 'listening-controls', 'listening'],
+    ['overview', 'lists', 'listening-controls', 'listening'],
     'An account without Alias administration is not sent into member management.');
   assert.equal(noAliasesScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAliasesScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const scanListOnlyTour = createGuideDefinition('scan-lists', { canView: view => view === 'scan-lists' });
-  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['overview', 'lists', 'choose-unidentified', 'sources']);
+  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['overview', 'lists']);
   assert.equal(scanListOnlyTour.steps.at(-1).nextLabel, 'Finish');
   const listOnlyTargets = createGuideDefinition('scan-lists', {
     canView: view => view === 'scan-lists', documentValue: { querySelectorAll: selector => [{ selector }] }
@@ -161,21 +156,18 @@ async function checkGuides(assetsRoot) {
   const scanListData = getScanListsGuideData('members');
   assert.equal(scanListData.scanLists.filter(row => row.default).length, 1);
   assert.deepEqual(scanListData.scanLists.map(row => [row.name, row.published, row.alias_count]),
-    [['Public Safety', true, 4], ['Fire & EMS', true, 2], ['Unidentified Traffic', true, 0]]);
-  assert.equal(scanListData.scanLists.filter(row => row.published && row.enabled).length, 3,
+    [['Public Safety', true, 4], ['Fire & EMS', true, 2]]);
+  assert.equal(scanListData.scanLists.filter(row => row.published && row.enabled).length, 2,
     'Every listening group introduced by the tour is available in its player panel.');
   assert.equal(new Set(scanListData.memberPage.rows.map(row => row.alias_list_id)).size, 2,
     'The actual membership table demonstrates aliases from several Alias Lists.');
   assert.deepEqual(scanListData.rows.slice(0, 2).map(row => row.scan_list_ids), [[900001, 900002], [900001, 900002]]);
-  assert.equal(scanListData.scanLists[2].unmatched_alias_lists[0].alias_list_id, scanListData.lists[0].id);
-  assert.deepEqual(scanListData.lists[0].unknown_alias_behavior.scan_list_ids, [900003]);
+  assert.ok(scanListData.scanLists.every(row => row.unmatched_alias_lists.length === 0));
+  assert.deepEqual(scanListData.lists[0].unknown_alias_behavior.scan_list_ids, []);
   assert.deepEqual(getScanListsGuideData('members').selectedIds, [], 'The members stop shows the normal unselected table.');
-  assert.equal(getScanListsGuideData('sources').selectedScanList.id, 900003);
   assert.equal(getScanListsGuideData('lists').selectedScanList.id, 900001);
-  assert.equal(getScanListsGuideData('choose-unidentified').selectedScanList.id, 900001,
-    'The next list’s selector is taught while the original selection is still visible.');
-  assert.equal(getScanListsGuideData('listening-controls').selectedScanList.id, 900003);
-  assert.equal(getScanListsGuideData('listening').selectedScanList.id, 900003,
+  assert.equal(getScanListsGuideData('listening-controls').selectedScanList.id, 900001);
+  assert.equal(getScanListsGuideData('listening').selectedScanList.id, 900001,
     'The catalog retains its current selection while the player is introduced.');
   scanListData.rows[0].name = 'Changed sample';
   assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
@@ -281,13 +273,13 @@ async function checkGuides(assetsRoot) {
     'Completing an older Aliases tour cannot suppress the new overview and walkthrough.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
-    getItem: key => /:welcome:1$|:scan-lists:[1234]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scan-lists:[12345]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedScanListPlaceholder.controller.pageReady();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
-  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 5,
-    'Completing an older Scan Lists tour cannot suppress its relationship overview and explicit return stop.');
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 6,
+    'Completing an older Scan Lists tour cannot suppress its focused membership and listening walkthrough.');
   dismissedScanListPlaceholder.finish();
   await dismissedScanListPlaceholder.controller.openPage();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists',

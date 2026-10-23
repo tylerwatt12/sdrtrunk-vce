@@ -324,7 +324,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   // account so onboarding does not cover the controls those fixtures exercise.
   if (!options.guides) await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases', 'scan-lists']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'scan-lists' ? 5 : id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'scan-lists' ? 6 : id === 'aliases' ? 4 : id === 'channel-setup' ? 2 : 1}`, '1');
     }
   });
   await page.addInitScript((snapshotValue) => {
