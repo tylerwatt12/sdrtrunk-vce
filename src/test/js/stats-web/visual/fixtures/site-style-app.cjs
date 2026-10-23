@@ -324,7 +324,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   // account so onboarding does not cover the controls those fixtures exercise.
   if (!options.guides) await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 2 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 3 : 1}`, '1');
     }
   });
   await page.addInitScript((snapshotValue) => {
@@ -536,6 +536,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
           { latitude: 41.502, longitude: -81.685, timestamp_ms: now },
           { latitude: 41.5, longitude: -81.69, timestamp_ms: now - 10000 } ] }] });
     if (p === '/api/v1/listen/map/icons/fire-truck') return route.fulfill({ contentType: 'image/png', body: icon });
+    if (p === '/api/v1/listen/map/icons/no-icon') return route.fulfill({ contentType: 'image/png',
+      body: fs.readFileSync(path.join(root, 'src/main/resources/images/no_icon.png')) });
     state.unexpected.push(`${request.method()} ${p}`);
     return route.fulfill({ status: 501, json: { error: { message: `Style fixture has no response for ${p}` } } });
   });

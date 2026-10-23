@@ -1,5 +1,5 @@
-import { openSetupGuide } from '../core/setup-guide.js?v=4';
-import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=4';
+import { openSetupGuide } from '../core/setup-guide.js?v=5';
+import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=5';
 import { createGuideMemory } from './persistence.js?v=1';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',
@@ -8,7 +8,7 @@ const visitKey = (context) => `${sessionKey(context)}:${context.view}`;
 
 // The application calls pageReady after a successful route render and close when
 // rendering/signing out starts. Tour state stays independent of page builders.
-export function createGuideController({ ui, getContext, navigate, consumeGuide, preparePlayer,
+export function createGuideController({ ui, getContext, navigate, consumeGuide, preparePlayer, preparePage,
   documentValue = globalThis.document, storage, openGuide = openSetupGuide }) {
   const memory = createGuideMemory(storage);
   let active = null;
@@ -19,7 +19,7 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
   let replayOnPage = null;
   let consumedRequest = null;
 
-  const definitionFor = (id, context) => createGuideDefinition(id, { documentValue, preparePlayer,
+  const definitionFor = (id, context) => createGuideDefinition(id, { documentValue, preparePlayer, preparePage,
     canSetup: context.canSetup !== false, canView: context.canView, canReport: context.canReport });
   const contextMatches = (context) => !destroyed && visitKey(getContext()) === visitKey(context);
   const eligible = (context, manual) => !destroyed && context.isDesktop === true &&

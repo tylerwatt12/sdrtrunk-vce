@@ -19,18 +19,39 @@ async function checkGuides(assetsRoot) {
   }
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
   assert.equal(createGuideDefinition('missing-page'), null);
-  const preparePlayer = () => {};
-  const aliasesTour = createGuideDefinition('aliases', { preparePlayer });
-  assert.equal(aliasesTour.steps.length, 11, 'The Aliases guide tours the workspace, defaults, views, and listening controls.');
+  const prepared = [];
+  const released = [];
+  const aliasesTour = createGuideDefinition('aliases', {
+    preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const aliasSections = ['lists', 'views', 'alias-editor', 'defaults-unmatched', 'defaults-new',
+    'bulk', 'scan-lists', 'activity', 'custom', 'discover', 'transfer'];
+  assert.deepEqual(aliasesTour.steps.map(({ id }) => id), aliasSections,
+    'The Aliases tour introduces all views before editors, defaults, bulk tools, and imports.');
   assert.equal(new Set(aliasesTour.steps.map(({ id }) => id)).size, aliasesTour.steps.length,
-    'Each Aliases stop has a stable distinct identity for progression and sample cleanup.');
+    'Each Aliases stop has a stable distinct identity for progression and cleanup.');
   for (const step of aliasesTour.steps) {
     assert.deepEqual(step.samples, [{ id: 'aliases-workspace', value: { section: step.id } }],
-      'Every Aliases stop uses the shared sample presenter instead of operating on real aliases.');
+      'Every Aliases stop identifies its temporary workspace state centrally.');
     assert.doesNotThrow(() => step.targets(), 'A sample target can resolve safely before its page has rendered.');
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), [['player', { minimized: true }], ['aliases', step.id, context]],
+      'The real page prepares each sample presentation with the guide layer context.');
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'player'],
+      'The actual workspace closes its dialogs and popovers before restoring the player.');
   }
-  assert.equal(aliasesTour.steps.at(-1).prepare, preparePlayer,
-    'The listening stop uses the shared player preparation and restoration lifecycle.');
+  assert.deepEqual(aliasesTour.steps.find(({ id }) => id === 'views').items.map(({ label }) => label),
+    ['Configure', 'Activity', 'Custom', 'Discover']);
+  const editor = aliasesTour.steps.find(({ id }) => id === 'alias-editor');
+  assert.equal(editor.paragraphs.length, 0, 'Alias editor guidance is separated by tab rather than a dense paragraph.');
+  assert.deepEqual(editor.items.map(({ label }) => label), ['Basics', 'Identifier', 'Call Handling', 'Activity']);
+  assert.match(editor.items[1].text, /talkgroup ID or radio ID/);
   assert.equal(aliasesTour.steps.at(-1).nextLabel, 'Finish');
   const makeHarness = (overrides = {}) => {
     const stored = new Map();
@@ -47,11 +68,20 @@ async function checkGuides(assetsRoot) {
     const controller = createGuideController({ ui: {}, getContext: () => context, openGuide,
       storage: overrides.storage || { getItem: (key) => stored.get(key), setItem: (key, value) => stored.set(key, value) },
       navigate: (view) => { navigations.push(view); context.view = view; },
-      consumeGuide: () => { context.guide = null; }, documentValue: null });
+      consumeGuide: () => { context.guide = null; }, preparePage: overrides.preparePage, documentValue: null });
     const finish = () => { shown.at(-1).closed = true; shown.at(-1).options.onComplete(); };
     const dismiss = () => { shown.at(-1).closed = true; shown.at(-1).options.onDismiss(); };
     return { controller, context, shown, stored, navigations, finish, dismiss };
   };
+
+  const pagePreparation = [];
+  const pagePrepared = makeHarness({ context: { view: 'aliases' },
+    preparePage: (...args) => { pagePreparation.push(args); } });
+  await pagePrepared.controller.openPage();
+  await pagePrepared.shown.at(-1).options.steps[0].prepare({ registerLayer() {} });
+  assert.equal(pagePreparation[0][0], 'aliases', 'The controller forwards page preparation to authored guides.');
+  assert.equal(pagePreparation[0][1], 'lists');
+  pagePrepared.controller.destroy();
 
   const firstRun = makeHarness();
   await firstRun.controller.pageReady();
@@ -118,7 +148,7 @@ async function checkGuides(assetsRoot) {
   } });
   await dismissedPlaceholder.controller.pageReady();
   assert.equal(dismissedPlaceholder.shown.at(-1).options.id, 'aliases');
-  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 2,
+  assert.equal(dismissedPlaceholder.shown.at(-1).options.version, 3,
     'Dismissing the old coming-soon placeholder cannot suppress the new authored tour.');
 
   const isolation = makeHarness();

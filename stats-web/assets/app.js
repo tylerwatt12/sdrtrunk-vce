@@ -16,9 +16,9 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=4';
+import { createGuideController } from './guides/controller.js?v=5';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
-import { createAliasesGuidePresentation } from './guides/aliases-presentation.js?v=1';
+import { getAliasesGuideData } from './guides/aliases-presentation.js?v=2';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -275,6 +275,7 @@ let aliasEditorLastSelectionIndex = null;
 let aliasEditorContext = null;
 let aliasEditorPageController = null;
 let aliasEditorWorkspaceController = null;
+let activeAliasGuidePresentation = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
 let initialPageDeadline = 0;
@@ -2288,8 +2289,12 @@ function closeReadOnlyModal(force = false, topOnly = false, onResolved = null) {
 
 function openReadOnlyModal(title, body, options = {}) {
   const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // A tour can present the normal editor beneath its coachmark without replacing
+  // the guide, transferring focus, or exposing an editable sample to the user.
+  const guideOwner = options.guideTarget && activeReadOnlyModal?.isGuide ? activeReadOnlyModal : null;
+  if (options.guideTarget && !guideOwner) return null;
   const parent = options.stack === 'child' ? activeReadOnlyModal : null;
-  if (!parent) {
+  if (!parent && !guideOwner) {
     for (let current = activeReadOnlyModal; current; current = current.parent) {
       if (current.isBusy?.() || current.dismissalPending) return null;
     }
@@ -2316,6 +2321,15 @@ function openReadOnlyModal(title, body, options = {}) {
 
   let modalState = null;
   const dismiss = (onClosed = null) => {
+    if (guideOwner) {
+      if (modalState.closed) return true;
+      guideOwner.guideTargets.delete(modalState);
+      modalState.cleanup();
+      modalState.onClose();
+      backdrop.remove();
+      if (typeof onClosed === 'function') onClosed();
+      return true;
+    }
     if (activeReadOnlyModal !== modalState) return false;
     const finished = (closed) => {
       if (!closed) return;
@@ -2390,12 +2404,15 @@ function openReadOnlyModal(title, body, options = {}) {
   let discardMessage = options.discardMessage || 'Discard your unsaved changes?';
   modalState = {
     backdrop, dialog, parent, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
+    isGuide: Boolean(options.isGuide), guideTargets: new Set(), guideOwner,
+    get closed() { return closed; },
     isDirty: () => dirty,
     discardMessage: () => discardMessage,
     isBusy: () => busy,
     cleanup: () => {
       if (cleaned) return;
       cleaned = true;
+      [...modalState.guideTargets].forEach((target) => target.closeGuideTarget());
       options.cleanup?.();
     },
     onClose: () => {
@@ -2407,6 +2424,21 @@ function openReadOnlyModal(title, body, options = {}) {
   let resolveReady;
   const ready = new Promise((resolve) => { resolveReady = resolve; });
   const present = () => {
+    if (guideOwner) {
+      if (activeReadOnlyModal !== guideOwner || !guideOwner.backdrop.isConnected) {
+        modalState.cleanup();
+        modalState.onClose();
+        resolveReady(false);
+        return;
+      }
+      backdrop.classList.add('ui-setup-guide-underlay');
+      backdrop.inert = true;
+      dialog.setAttribute('aria-modal', 'false');
+      guideOwner.guideTargets.add(modalState);
+      guideOwner.backdrop.before(backdrop);
+      resolveReady(true);
+      return;
+    }
     if (parent) {
       parent.backdrop.inert = true;
       parent.dialog.setAttribute('aria-modal', 'false');
@@ -2421,6 +2453,8 @@ function openReadOnlyModal(title, body, options = {}) {
   const api = {
     dialog, content: contentNode, close: dismiss, state: modalState,
     ready,
+    isActive: () => guideOwner ? !closed && backdrop.isConnected && activeReadOnlyModal === guideOwner :
+      activeReadOnlyModal === modalState,
     focus: (element) => {
       const focus = () => {
         if (activeReadOnlyModal === modalState) element?.focus({ preventScroll: true });
@@ -2443,7 +2477,8 @@ function openReadOnlyModal(title, body, options = {}) {
     },
     isDirty: () => dirty
   };
-  if (parent || closeReadOnlyModal(false, false, (closed) => {
+  modalState.closeGuideTarget = dismiss;
+  if (guideOwner || parent || closeReadOnlyModal(false, false, (closed) => {
     if (closed) present();
     else {
       modalState.cleanup();
@@ -2766,10 +2801,11 @@ function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
     position();
   };
   const toggle = (event) => {
-    const open = event.newState === 'open';
+    const guideLayer = panel.classList.contains('ui-setup-guide-layer');
+    const open = event.newState === 'open' || guideLayer;
     trigger.setAttribute('aria-expanded', String(open));
     stopTracking();
-    if (!open) return;
+    if (!open || guideLayer) return;
     position();
     viewportListeners = new AbortController();
     const options = { signal: viewportListeners.signal };
@@ -3117,22 +3153,23 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   tableController.widthObserver?.disconnect();
   const previousScrollLeft = options.wrapper?.scrollLeft || 0;
   const declaredColumns = columns.slice();
-  tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
+  if (!options.presentation) tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
+  else activeAliasGuidePresentation?.tableControllers.push(tableController);
   const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns);
   const defaultLayout = options.recordList && Array.isArray(options.recordListOrder) ?
     { ...tableDefaultLayout, column_order: options.recordListOrder } : tableDefaultLayout;
   const storedLayout = tableLayouts.mergePartyColumns(tableType, declaredColumns,
-    options.layout || activeUserPreferences().tables[tableType] || defaultLayout);
+    options.layout || (!options.presentation && activeUserPreferences().tables[tableType]) || defaultLayout);
   let layout = tableLayouts.normalize(declaredColumns, storedLayout);
   if (layout.reset) {
-    removeResetTableLayout(tableType);
+    if (!options.presentation) removeResetTableLayout(tableType);
     layout = tableLayouts.normalize(declaredColumns, defaultLayout);
   }
   columns = layout.columns;
   if (!columns.length) {
     layout = tableLayouts.normalize(declaredColumns, null);
     columns = layout.columns;
-    removeResetTableLayout(tableType);
+    if (!options.presentation) removeResetTableLayout(tableType);
   }
   const wrapper = options.wrapper || node('div');
   wrapper.className = 'table-wrap ui-table-wrap';
@@ -3381,7 +3418,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       handle.setAttribute('aria-disabled', String(Boolean(busy))));
   };
   const beginLayoutMutation = () => {
-    if (layoutMutationPending) return false;
+    if (options.presentation || layoutMutationPending) return false;
     layoutMutationPending = true;
     setTableLayoutBusy(true);
     return true;
@@ -4521,7 +4558,9 @@ function aliasListRail(lists, selectedList, usage) {
   } };
 }
 
-function aliasEditorView(selectedList) {
+function currentAliasRoute() { return route; }
+
+function aliasEditorView(selectedList, route = currentAliasRoute()) {
   const supportsDiscovery = observedGroupIdentityDiscoverySupported(selectedList);
   const allowed = supportsDiscovery ? ['configure', 'discover', 'activity', 'custom'] :
     ['configure', 'activity', 'custom'];
@@ -4535,7 +4574,7 @@ function aliasEditorDefaultOrder(view) {
     { sort: 'name', direction: 'asc' };
 }
 
-function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList)) {
+function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList), route = currentAliasRoute()) {
   const id = aliasListId(selectedList);
   if (currentView === 'discover') return href('aliases', { list: id, aliasTab: target });
   const parameters = { list: id, aliasTab: target };
@@ -4558,13 +4597,13 @@ function setAliasEditorViewTabs(viewTabs, view) {
   });
 }
 
-function aliasEditorViewTabs(selectedList, onSwitch = null) {
+function aliasEditorViewTabs(selectedList, onSwitch = null, route = currentAliasRoute()) {
   const id = aliasListId(selectedList);
-  const active = aliasEditorView(selectedList);
+  const active = aliasEditorView(selectedList, route);
   const entries = [
-    { id: 'configure', label: 'Configure', href: aliasEditorViewHref(selectedList, 'configure', active) },
-    { id: 'activity', label: 'Activity', href: aliasEditorViewHref(selectedList, 'activity', active) },
-    { id: 'custom', label: 'Custom', href: aliasEditorViewHref(selectedList, 'custom', active) }
+    { id: 'configure', label: 'Configure', href: aliasEditorViewHref(selectedList, 'configure', active, route) },
+    { id: 'activity', label: 'Activity', href: aliasEditorViewHref(selectedList, 'activity', active, route) },
+    { id: 'custom', label: 'Custom', href: aliasEditorViewHref(selectedList, 'custom', active, route) }
   ];
   const navigation = tabs(entries, active);
   navigation.classList.add('alias-editor-view-tabs');
@@ -4597,7 +4636,7 @@ function aliasLocalDateTimeValue(epoch) {
   return date.toISOString().slice(0, 16);
 }
 
-function aliasEditorHasActiveFilters(scanListScope = false) {
+function aliasEditorHasActiveFilters(scanListScope = false, route = currentAliasRoute()) {
   return ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
     'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore']
     .some((key) => route.get(key));
@@ -4609,7 +4648,7 @@ function aliasEditorResultCount(page, filtered) {
   return `${number(total)} ${filtered ? 'matching ' : ''}${total === 1 ? 'alias' : 'aliases'}`;
 }
 
-function aliasEditorFilterToolbar(aliasPage, options = null) {
+function aliasEditorFilterToolbar(aliasPage, options = null, route = currentAliasRoute()) {
   const scanListScope = options?.scan_list_scope === true;
   const form = node('form', 'toolbar ui-toolbar ui-catalog-toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace');
   form.method = 'get';
@@ -5462,7 +5501,7 @@ function aliasMatcherPayload(form, descriptor) {
   return matcher;
 }
 
-function aliasActivityContent(response) {
+function aliasActivityContent(response, { presentation = false } = {}) {
   const alias = response || {};
   const sourceRows = response?.breakdown || [];
   const wrapper = node('div', 'alias-usage-content');
@@ -5494,7 +5533,7 @@ function aliasActivityContent(response) {
       'Not available means this information was not collected; 0 means none were heard.')
   )));
   if (!configuredAliasAssignment(alias)) wrapper.append(tableSection('Source Breakdown', sourceRows, aliasEditorSourceBreakdownColumns(),
-    'No compatible monitored sources', { type: 'alias-editor-source-breakdown' },
+    'No compatible monitored sources', { type: 'alias-editor-source-breakdown', presentation },
     node('p', 'ui-section-note',
       'Each source is a radio system or saved channel. Calls and signaling remain separate.')));
   return wrapper;
@@ -5608,7 +5647,8 @@ function aliasEditorPayloadKey(value) {
   });
 }
 
-async function openAliasEditorModal(mode = 'create', id = null, prefill = null) {
+async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null) {
+  const guide = presentation?.guide === true;
   const editing = mode === 'edit';
   const cloning = mode === 'clone';
   const selectedListId = Number(prefill?.alias_list_id || route.get('list'));
@@ -5617,35 +5657,37 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
   const modal = openReadOnlyModal(editing ? `Edit Alias ${identifierNumber(id)}` :
     (cloning ? 'Clone Alias' : 'Add Alias'), loading, {
       id: `${mode}-alias-${id || 'new'}`, className: 'alias-editor-modal alias-record-modal',
-      onClose: () => { if (modal.dialog.isConnected) clearAliasEditorRoute(); },
+      guideTarget: guide,
+      onClose: () => { if (!guide && modal.dialog.isConnected) clearAliasEditorRoute(); },
       returnFocusSelector: prefill?.returnFocusSelector ||
         (id ? `.alias-detail-link[data-alias-id="${id}"]` : '.alias-add-button')
     });
   if (!modal || (modal.ready && !await modal.ready)) return;
   try {
-    const recordResponse = editing || cloning ?
+    const recordResponse = guide ? presentation.recordResponse : editing || cloning ?
       await requestJson(`/api/v1/admin/aliases/${id}`, { csrf: false }) : null;
-    if (activeReadOnlyModal !== modal.state) return;
+    if (!modal.isActive()) return;
     const source = editing || cloning ? { ...(recordResponse?.alias || {}) } : { ...(prefill || {}) };
     const sourceListId = Number(source.alias_list_id);
     const effectiveListId = Number.isInteger(sourceListId) && sourceListId > 0 ? sourceListId : selectedListId;
     if (!Number.isInteger(effectiveListId) || effectiveListId <= 0) {
       throw new Error('This alias does not have a valid Alias List. Reload the list and try again.');
     }
-    const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?alias_list_id=${effectiveListId}`,
-      { csrf: false });
-    const analyticsPromise = editing || cloning ?
+    const initialOptionsPromise = guide ? Promise.resolve(presentation.options || {}) :
+      requestJson(`/api/v1/admin/aliases/options?alias_list_id=${effectiveListId}`, { csrf: false });
+    const analyticsPromise = guide ? Promise.resolve(presentation.analytics || null) : editing || cloning ?
       api(`/api/v1/aliases/${encodeURIComponent(String(id))}`).catch(() => null) : Promise.resolve(null);
     const [options, analytics] = await Promise.all([initialOptionsPromise, analyticsPromise]);
-    if (activeReadOnlyModal !== modal.state) return;
+    if (!modal.isActive()) return;
     if ((editing || cloning) && Number(source.alias_list_id) !== effectiveListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
     const editRevision = recordResponse?.edit_revision;
-    const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
-      effectiveListId) || aliasEditorContext?.selectedList;
+    const editorLists = guide ? presentation.lists || [] : aliasEditorContext?.lists || [];
+    const currentList = editorLists.find((row) => aliasListId(row) ===
+      effectiveListId) || (guide ? presentation.selectedList : aliasEditorContext?.selectedList);
     const family = aliasListFamily(currentList);
-    const compatibleLists = (aliasEditorContext?.lists || []).filter((row) => aliasListFamily(row) === family);
+    const compatibleLists = editorLists.filter((row) => aliasListFamily(row) === family);
     const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol,
       source.matcher?.variant);
     const initialMatcher = source.matcher || aliasMatcherDefault(descriptor, options);
@@ -5737,6 +5779,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     aliasMatcherFields(matcherHost, activeDescriptor, initialMatcher, options);
     let updateCreationRoutingDefaults = () => {};
     matcherType.addEventListener('change', () => {
+      if (guide) return;
       activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
       aliasMatcherFields(matcherHost, activeDescriptor, aliasMatcherDefault(activeDescriptor, options), options);
       updateCreationRoutingDefaults(activeDescriptor);
@@ -5795,10 +5838,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     audio.append(aliasFormField('Stream as talkgroup', streamAs,
       'Optional talkgroup ID sent to configured streaming destinations'));
 
-    usage.append(analytics ? aliasActivityContent(analytics) :
+    usage.append(analytics ? aliasActivityContent(analytics, { presentation: guide }) :
       node('div', 'empty', 'Activity becomes available after the alias is saved and observed.'));
     const panels = { basics, identifier, audio, usage };
     const tabBar = aliasEditorModalTabs(panels);
+    tabBar.dataset.guideTarget = 'aliases-editor-tabs';
     const errorHost = node('div', 'alias-form-message');
     const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
@@ -5810,6 +5854,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     if (clone) {
       clone.type = 'button';
       clone.addEventListener('click', async () => {
+        if (guide) return;
         if (modal.isDirty() && !await confirmAction('Discard these edits and clone the saved alias?', {
           title: 'Clone saved alias', confirmLabel: 'Discard and clone', cancelLabel: 'Keep editing'
         })) return;
@@ -5822,6 +5867,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     if (remove) {
       remove.type = 'button';
       remove.addEventListener('click', async () => {
+        if (guide) return;
         if (modal.isDirty() && !await confirmAction('Discard these edits and delete the saved alias?', {
           title: 'Delete saved alias', confirmLabel: 'Discard and review deletion', cancelLabel: 'Keep editing'
         })) return;
@@ -5834,7 +5880,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     form.append(tabBar, basics, identifier, audio, usage, errorHost,
       aliasModalFooter(remove, clone, node('span', 'alias-modal-footer-spacer'), cancel, save));
     let savedPayloadKey = editing ? aliasEditorPayloadKey(source) : null;
-    const workflow = aliasFormWorkflow(form, save, errorHost, modal, () => {
+    const workflowModal = guide ? { ...modal, setDirty: () => {} } : modal;
+    const workflow = aliasFormWorkflow(form, save, errorHost, workflowModal, () => {
       modal.setDirty(false);
       closeReadOnlyModal(true);
       openAliasEditorModal(mode, id, prefill);
@@ -5847,6 +5894,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (guide) return;
       await workflow.save(async () => {
         const payload = aliasEditorPayload(form, options);
         const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
@@ -5861,12 +5909,16 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       (cloning ? `Clone ${source.name}` : `Add Alias to ${currentList?.name || 'List'}`);
     modal.content.replaceChildren(form);
     modal.setDirty(false);
-    name.focus();
+    modal.focus(name);
+    return modal;
   } catch (error) {
+    if (!modal.isActive()) return;
     aliasMutationError(modal.content, error, () => {
+      if (guide) return;
   closeReadOnlyModal(true);
       openAliasEditorModal(mode, id, prefill);
     });
+    return modal;
   }
 }
 
@@ -6086,20 +6138,23 @@ function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescri
   return { element: operation, value: () => selected };
 }
 
-function openAliasBulkModal(kind) {
-  const ids = aliasMutationSelectionIds();
+function openAliasBulkModal(kind, presentation = null) {
+  const guide = presentation?.guide === true;
+  const ids = guide ? [...(presentation.selectedIds || [])] : aliasMutationSelectionIds();
   if (!ids?.length) return;
   const form = node('form', 'alias-editor-form alias-bulk-form editor-workspace');
   form.append(node('p', 'modal-introduction',
     `This change applies only to the ${number(ids.length)} selected aliases.`));
-  const options = aliasEditorContext?.options || {};
-  const payload = { revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0), alias_ids: ids };
+  const options = (guide ? presentation.options : aliasEditorContext?.options) || {};
+  const revision = guide ? presentation.revision : aliasEditorContext?.revision;
+  const payload = { revision: Number(revision ?? options.revision ?? 0), alias_ids: ids };
   let readChange;
   let submitLabel = 'Apply Change';
 
   if (kind === 'move') {
-    const current = aliasEditorContext.selectedList;
-    const targets = aliasEditorContext.lists.filter((row) => aliasListId(row) !== aliasListId(current) &&
+    const current = guide ? presentation.selectedList : aliasEditorContext.selectedList;
+    const lists = guide ? presentation.lists || [] : aliasEditorContext.lists;
+    const targets = lists.filter((row) => aliasListId(row) !== aliasListId(current) &&
       aliasListFamily(row) === aliasListFamily(current));
     const select = aliasSelect('aliasListId', [{ value: '', label: 'Leave unchanged' }, ...targets.map((row) => ({
       value: aliasListId(row), label: `${row.name} · ${aliasListFamilyLabel(row)}`
@@ -6121,11 +6176,13 @@ function openAliasBulkModal(kind) {
         group: operation.value() === 'add' ? group.value.trim() : null };
     };
   } else if (kind === 'scan-lists') {
+    form.dataset.guideTarget = 'aliases-scan-list-dialog';
     const scanList = aliasSelect('scanListId', [{ value: '', label: 'Choose a scan list' },
       ...(options.scan_lists || []).map((row) => ({
         value: row.id,
         label: `${row.name}${row.published === false ? ` · ${browsingWorkflows.scanListAvailabilityLabel(row)}` : ''}`
       }))], '');
+    scanList.dataset.guideTarget = 'aliases-scan-list-select';
     const operation = aliasBulkBinaryOperation('Membership change', 'Add selected aliases',
       'Remove selected aliases');
     form.append(aliasFormField('Scan list', scanList), aliasFormField('Membership change', operation.element));
@@ -6203,14 +6260,15 @@ function openAliasBulkModal(kind) {
   submit.type = 'submit';
   form.append(errorHost, aliasModalFooter(cancel, submit));
   const modal = openReadOnlyModal(`${kind === 'delete' ? 'Delete' : 'Bulk'} · ${number(ids.length)} aliases`, form, {
-    id: `bulk-alias-${kind}`, className: 'alias-editor-modal alias-bulk-modal'
+    id: `bulk-alias-${kind}`, className: 'alias-editor-modal alias-bulk-modal', guideTarget: guide
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
-  form.addEventListener('input', () => modal.setDirty(true));
-  form.addEventListener('change', () => modal.setDirty(true));
+  form.addEventListener('input', () => { if (!guide) modal.setDirty(true); });
+  form.addEventListener('change', () => { if (!guide) modal.setDirty(true); });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (guide) return;
     errorHost.replaceChildren();
     try {
       const change = readChange();
@@ -6243,6 +6301,7 @@ function openAliasBulkModal(kind) {
       modal.setBusy(false);
     }
   });
+  return modal;
 }
 
 function scanListMemberBulkBar(scanList, onClear) {
@@ -7127,14 +7186,17 @@ function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCop
   const record = recordField.querySelector('input');
   record.name = `${kind}Recordable`;
   const recording = node('fieldset', 'alias-stream-options alias-defaults-section ui-form-section');
+  recording.dataset.guideTarget = 'aliases-defaults-recording';
   recording.append(node('legend', '', 'Recording'), recordField);
 
   const scanLists = aliasScanListChoices(options, policy?.scan_list_ids || []);
+  scanLists.dataset.guideTarget = 'aliases-defaults-scan-lists';
   const scanListLegend = scanLists.querySelector('legend');
   if (scanListLegend) scanListLegend.textContent = 'Scan List';
   scanListLegend?.after(node('p', 'muted', scanCopy));
 
   const streams = node('fieldset', 'alias-stream-options ui-form-section');
+  streams.dataset.guideTarget = 'aliases-defaults-streaming';
   streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
   const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
   const configuredStreams = new Map((options.streams || []).map((entry) =>
@@ -7158,9 +7220,10 @@ function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCop
   return { panel, record, streams };
 }
 
-function openUnmatchedTalkgroupPolicyModal(selectedList) {
+function openUnmatchedTalkgroupPolicyModal(selectedList, presentation = null) {
+  const guide = presentation?.guide === true;
   const listId = aliasListId(selectedList);
-  const options = aliasEditorContext?.options || {};
+  const options = (guide ? presentation.options : aliasEditorContext?.options) || {};
   const defaults = options.alias_list || {};
   const form = node('form', 'alias-editor-form alias-policy-form editor-workspace');
   form.append(node('p', 'modal-introduction',
@@ -7185,6 +7248,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     'New Aliases begin with the selected external streaming destinations.');
 
   const tabs = node('nav', 'alias-modal-tabs alias-defaults-tabs ui-segmented');
+  tabs.dataset.guideTarget = 'aliases-defaults-tabs';
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Alias List Default behaviors');
   const activate = (id) => {
@@ -7216,6 +7280,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const modal = openReadOnlyModal(`Call Handling Defaults · ${selectedList.name}`, form, {
     id: `unmatched-talkgroups-${listId}`,
     className: 'alias-editor-modal alias-policy-modal',
+    guideTarget: guide,
     returnFocusSelector: '.alias-policy-button'
   });
   if (!modal) return;
@@ -7231,13 +7296,15 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       new_alias_behavior: behavior(newAliases, 'newAlias') };
   };
   let savedPayloadKey = JSON.stringify(readPayload());
-  const workflow = aliasFormWorkflow(form, save, errorHost, modal, () => {
+  const workflowModal = guide ? { ...modal, setDirty: () => {} } : modal;
+  const workflow = aliasFormWorkflow(form, save, errorHost, workflowModal, () => {
     modal.setDirty(false);
     closeReadOnlyModal(true);
     render();
   }, () => JSON.stringify(readPayload()) !== savedPayloadKey);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (guide) return;
     await workflow.save(async () => {
       const payload = readPayload();
       const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/defaults`, {
@@ -7250,6 +7317,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       await finishAliasMutation(modal, result);
     });
   });
+  return modal;
 }
 
 function observedGroupIdentityProtocol(row) {
@@ -7460,7 +7528,7 @@ function observedGroupIdentityActions(row, selectedList) {
   return actions.childNodes.length ? actions : '—';
 }
 
-function observedGroupIdentityToolbar(selectedList) {
+function observedGroupIdentityToolbar(selectedList, route = currentAliasRoute()) {
   const form = node('form', 'toolbar ui-toolbar ui-catalog-toolbar alias-catalog-toolbar observed-group-identity-toolbar data-workspace');
   form.method = 'get';
   [['view', 'aliases'], ['list', aliasListId(selectedList)], ['aliasTab', 'discover'],
@@ -7491,7 +7559,7 @@ function observedGroupIdentityToolbar(selectedList) {
   return form;
 }
 
-function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary) {
+function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary, presentation = null) {
   const rows = [...(page.rows || [])].filter((row) => observedGroupIdentityMatchKind(row) !== 'exact');
   const analog = analogAliasList(selectedList);
   let appliedQuery = new URLSearchParams(route);
@@ -7517,7 +7585,7 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
   const drawTable = () => table(rows, columns,
     analog ? 'No unmatched heard assignments are available for this list' :
       'No observed groups without an exact alias are available for this list', {
-      type: 'alias-observed-group-identities', serverSort: true, sortable: false,
+      type: 'alias-observed-group-identities', presentation: Boolean(presentation), serverSort: true, sortable: false,
       defaultSort: 'last_seen', defaultDirection: 'desc',
       controller: tableController,
       rowKey: observedGroupIdentityKey, rowClass: 'observed-group-identity-row',
@@ -7749,27 +7817,129 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   aliasEditorPageController = pageController;
 }
 
-function registerAliasesGuidePresentation(workspace, renderContext) {
-  if (!renderIsCurrent(renderContext) || !workspace.isConnected ||
-      workspace.dataset.guidePresentationRegistered === 'true') return;
-  workspace.dataset.guidePresentationRegistered = 'true';
-  const unregister = guideSampleData.registerPresentation('aliases-workspace',
-    (sample) => createAliasesGuidePresentation(sample, {
-      node, badge, section, tabs, aliasListRail, aliasListChannelUsageCard,
-      configurationColumns: () => aliasEditorBaseColumns([], () => {}).filter((column) => column.id !== 'select'),
-      activityColumns: aliasActivityColumns, aliasBehavior, aliasEditorModalTabs,
-      aliasFormField, aliasTextInput, aliasSelect, aliasScanListChoices, uiToggleField,
-      aliasDefaultBehaviorPanel
-    }), { root: workspace });
-  const presentation = { close: unregister };
-  renderContext.signal.addEventListener('abort', presentation.close, { once: true });
-  pageConnections.add(presentation);
+
+async function preparePageGuideSample(view, section, context) {
+  if (view !== 'aliases' || context.signal.aborted) return () => {};
+  const renderContext = captureRenderContext();
+  const originalNodes = [...content.childNodes];
+  const originalPageTitle = pageTitleController.state.pageTitle;
+  const saved = { editor: aliasEditorContext, page: aliasEditorPageController,
+    workspace: aliasEditorWorkspaceController, selection: aliasEditorSelection,
+    scope: aliasEditorSelectionScope, selectionRequest: aliasEditorSelectionRequest,
+    selectionIndex: aliasEditorLastSelectionIndex, presentation: activeAliasGuidePresentation };
+  // Keep the real page connected so its attachment observers and scrolling
+  // controls survive. A closed shadow root keeps its IDs out of sample queries.
+  const holding = node('div');
+  holding.hidden = true;
+  holding.inert = true;
+  document.body.append(holding);
+  holding.attachShadow({ mode: 'closed' }).append(...originalNodes);
+  const data = { ...getAliasesGuideData(section), renderContext: {
+    epoch: renderContext.epoch, signal: AbortSignal.any([renderContext.signal, context.signal]) },
+    releases: [], tableControllers: [] };
+  let targetModal = null;
+  let closed = false;
+  let workspace = null;
+  const restore = () => {
+    if (closed) return;
+    closed = true;
+    const failures = [];
+    const safely = action => { try { action(); } catch (error) { failures.push(error); } };
+    safely(() => targetModal?.close());
+    safely(() => {
+      if (aliasEditorWorkspaceController !== saved.workspace) aliasEditorWorkspaceController?.requestController?.abort();
+    });
+    data.releases.splice(0).reverse().forEach(close => safely(close));
+    data.tableControllers.forEach(controller => {
+      safely(() => cleanupTableLayoutMenu(controller));
+      safely(() => controller.widthObserver?.disconnect());
+    });
+    aliasEditorContext = saved.editor;
+    aliasEditorPageController = saved.page;
+    aliasEditorWorkspaceController = saved.workspace;
+    aliasEditorSelection = saved.selection;
+    aliasEditorSelectionScope = saved.scope;
+    aliasEditorSelectionRequest = saved.selectionRequest;
+    aliasEditorLastSelectionIndex = saved.selectionIndex;
+    activeAliasGuidePresentation = saved.presentation;
+    safely(() => {
+      if (renderIsCurrent(renderContext) && (!workspace || workspace.isConnected)) {
+        content.replaceChildren(...originalNodes);
+        pageTitleController.update({ pageTitle: originalPageTitle });
+      }
+    });
+    holding.remove();
+    if (failures.length) console.error('Unable to finish cleaning up an Aliases guide example.', failures[0]);
+  };
+  // An asynchronous step owns its temporary page until either preparation or the
+  // guide closes. Navigation aborts it before another route can render.
+  context.signal.addEventListener('abort', restore, { once: true });
+  data.releases.push(() => context.signal.removeEventListener('abort', restore));
+  aliasEditorContext = aliasEditorPageController = aliasEditorWorkspaceController = null;
+  aliasEditorSelection = new Set(); aliasEditorSelectionScope = null;
+  aliasEditorLastSelectionIndex = null;
+  activeAliasGuidePresentation = data;
+  try {
+    await renderAliases(data);
+    if (context.signal.aborted || !context.isCurrent()) { restore(); return restore; }
+    workspace = content.querySelector('.alias-editor-workspace');
+    if (!workspace) throw new Error('The Aliases example could not be presented.');
+    workspace.dataset.guideExample = 'aliases';
+    const mark = (selector, name, root = workspace) => root.querySelectorAll(selector)
+      .forEach(element => { element.dataset.guideTarget = name; });
+    mark('.alias-list-rail', 'aliases-lists'); mark('.alias-list-create', 'aliases-new-list');
+    mark('.alias-editor-view-switcher', 'aliases-views');
+    ['configure', 'activity', 'custom', 'discover'].forEach(name => mark(`[data-alias-view="${name}"]`, `aliases-${name}`));
+    mark('.alias-editor-filter-toolbar', 'aliases-filters');
+    mark('.alias-editor-table-host', 'aliases-table'); mark('.observed-group-identity-table-host', 'aliases-discover-table');
+    mark('.observed-group-identity-table-host [data-column="group-identity-id"], .observed-group-identity-table-host [data-column="source"]',
+      'aliases-discover-identities');
+    mark('.alias-add-button', 'aliases-add'); mark('.alias-transfer-import-button', 'aliases-import');
+    mark('.alias-transfer-export-button', 'aliases-export'); mark('.alias-policy-button', 'aliases-defaults');
+    mark('.alias-bulk-bar', 'aliases-bulk'); mark('.alias-select-all', 'aliases-select-all');
+    mark('thead .alias-page-select, .alias-row-select:checked', 'aliases-selection');
+    mark('th[data-column="calls"], th[data-column="signaling"], th[data-column="last-seen"]', 'aliases-activity-columns');
+    if (section === 'activity') {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      if (context.signal.aborted || !context.isCurrent()) { restore(); return restore; }
+      const scroller = workspace.querySelector('.alias-editor-table-host .ui-table-wrap');
+      if (scroller) scroller.scrollLeft = scroller.scrollWidth;
+    }
+    const dialogData = { guide: true, ...data, revision: 0 };
+    if (section === 'alias-editor') targetModal = await openAliasEditorModal('edit', data.rows[0].alias_id, null, dialogData);
+    else if (section.startsWith('defaults-')) {
+      targetModal = openUnmatchedTalkgroupPolicyModal(data.list, dialogData);
+      if (targetModal && section === 'defaults-new') targetModal.dialog.querySelector('[data-tab="newAlias"]')?.click();
+    } else if (section === 'scan-lists') {
+      targetModal = openAliasBulkModal('scan-lists', dialogData);
+      if (targetModal) targetModal.dialog.querySelector('[name="scanListId"]').value = '900001';
+    }
+    if (targetModal) {
+      await targetModal.ready;
+      if (context.signal.aborted || !context.isCurrent()) { restore(); return restore; }
+      data.releases.push(guideSampleData.register('aliases-workspace', () => {}, { root: targetModal.dialog }));
+    }
+    if (section === 'custom') {
+      const trigger = workspace.querySelector('.table-layout-trigger');
+      const panel = workspace.querySelector('.table-layout-panel');
+      if (trigger && panel) {
+        panel.showPopover();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        if (context.signal.aborted || !context.isCurrent()) { restore(); return restore; }
+        context.registerLayer(panel, { anchor: trigger });
+        trigger.setAttribute('aria-expanded', 'true');
+        panel.dataset.guideTarget = 'aliases-columns';
+      }
+    }
+    return restore;
+  } catch (error) { restore(); throw error; }
 }
 
-async function renderAliases() {
-  const retainedWorkspace = aliasEditorWorkspaceController?.isCurrent?.() ?
+async function renderAliases(presentation = null) {
+  const route = presentation?.query || currentAliasRoute();
+  const retainedWorkspace = !presentation && aliasEditorWorkspaceController?.isCurrent?.() ?
     aliasEditorWorkspaceController : null;
-  const renderContext = retainedWorkspace?.renderContext || captureRenderContext();
+  const renderContext = presentation?.renderContext || retainedWorkspace?.renderContext || captureRenderContext();
   let request = retainedWorkspace?.pendingRequest;
   const isCurrent = () => renderIsCurrent(renderContext) && (!request || request.isCurrent());
   const requestOptions = { signal: request?.signal || renderContext.signal };
@@ -7783,15 +7953,15 @@ async function renderAliases() {
   if (!retainedWorkspace) clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
   if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
   const reuseCatalog = retainedWorkspace && !retainedWorkspace.refreshCatalog;
-  const aliasListMetadataPromise = reuseCatalog ?
+  const aliasListMetadataPromise = presentation ? Promise.resolve({ rows: presentation.lists }) : reuseCatalog ?
     Promise.resolve({ rows: aliasEditorContext?.lists || [] }) :
     apiPage('/api/v1/alias-lists?limit=500', {}, requestOptions);
-  const editorCatalogPromise = reuseCatalog ? Promise.resolve({
+  const editorCatalogPromise = presentation ? Promise.resolve({ revision: 0, alias_lists: presentation.lists }) : reuseCatalog ? Promise.resolve({
     alias_lists: aliasEditorContext?.lists || [], revision: aliasEditorContext?.revision
   }) : activityRequested ?
     requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false, ...requestOptions }) :
     requestJson('/api/v1/admin/alias-lists', { csrf: false, ...requestOptions });
-  const scanListCatalogPromise = requestedScanListId ?
+  const scanListCatalogPromise = !presentation && requestedScanListId ?
     requestJson('/api/v1/admin/scan-lists', { csrf: false, ...requestOptions }) :
     Promise.resolve({ revision: null, scan_lists: [] });
   const [aliasListMetadata, editorCatalog, scanListCatalog] = await Promise.all([
@@ -7828,8 +7998,9 @@ async function renderAliases() {
   const workspace = retainedWorkspace?.element || node('div', scanListMode ?
     'alias-editor-workspace scan-list-members-workspace data-workspace' :
     'alias-editor-workspace editor-workspace');
+  if (presentation) presentation.releases.push(guideSampleData.register('aliases-workspace', () => {}, { root: workspace }));
   const usage = retainedWorkspace?.usage || {
-    canEditChannels: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS), channelsByList: null, error: false };
+    canEditChannels: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS), channelsByList: presentation ? aliasListChannelUsage(presentation.channels) : null, error: false };
   const rail = retainedWorkspace?.rail || (scanListMode ? null : aliasListRail(lists, selectedList, usage));
   if (rail && !rail.element.isConnected) workspace.append(rail.element);
   const main = retainedWorkspace?.main || node('div', 'alias-editor-main');
@@ -7853,7 +8024,8 @@ async function renderAliases() {
   let updateUsageCard = () => {};
   if (rail) {
     const channelCatalogPath = usage.canEditChannels ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
-    requestJson(channelCatalogPath, { csrf: false, signal: renderContext.signal })
+    (presentation ? Promise.resolve({ channels: presentation.channels }) :
+      requestJson(channelCatalogPath, { csrf: false, signal: renderContext.signal }))
       .then((catalog) => {
         if (!isCurrent() || !workspace.isConnected) return;
         usage.channelsByList = aliasListChannelUsage(catalog?.channels || []);
@@ -7868,7 +8040,6 @@ async function renderAliases() {
 
   if (scanListScope) {
     await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext, request, mount);
-    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
@@ -7880,7 +8051,6 @@ async function renderAliases() {
       node('p', '', 'This scan list may have been deleted or changed.'),
       anchor('Back to Scan Lists', href('scan-lists'), 'ui-button ui-button-secondary'));
     main.append(missing);
-    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
@@ -7888,11 +8058,10 @@ async function renderAliases() {
     if (!mount()) return;
     clearInactiveAliasSelection(false);
     main.append(aliasEditorEmptyState(lists));
-    registerAliasesGuidePresentation(workspace, renderContext);
     return;
   }
 
-  let view = aliasEditorView(selectedList);
+  let view = aliasEditorView(selectedList, route);
   let defaultOrder = aliasEditorDefaultOrder(view);
   const activityLoading = view === 'activity' ?
     node('div', 'loading alias-activity-loading', 'Preparing alias activity…') : null;
@@ -7907,7 +8076,8 @@ async function renderAliases() {
     stream: route.get('stream'), evidence: route.get('evidence'), use: route.get('use'),
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
-  const dataPromise = requestAliasEditorData(selectedList, view, requestOptions);
+  const dataPromise = presentation ? Promise.resolve({ page: view === 'discover' ? presentation.observedPage : presentation.page,
+    options: presentation.options }) : requestAliasEditorData(selectedList, view, requestOptions);
   let { page, options: initialOptions } = await dataPromise;
   if (!isCurrent() || !main.isConnected) return;
   if (!mount()) return;
@@ -7927,6 +8097,7 @@ async function renderAliases() {
   let selectionFilters = { ...filters, q: route.get('q') };
   let selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
+  if (presentation) aliasEditorSelection = new Set(presentation.selectedIds);
 
   const summary = node('section', 'alias-list-summary ui-surface');
   const summaryCopy = node('div', 'alias-list-summary-copy');
@@ -7966,15 +8137,14 @@ async function renderAliases() {
   const usageCard = aliasListChannelUsageCard(selectedList, usage);
   updateUsageCard = usageCard.update;
   let switchView = null;
-  const viewTabs = aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView));
-  let filterToolbar = view === 'discover' ? observedGroupIdentityToolbar(selectedList) :
-    aliasEditorFilterToolbar(page, options);
+  const viewTabs = aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView), route);
+  let filterToolbar = view === 'discover' ? observedGroupIdentityToolbar(selectedList, route) :
+    aliasEditorFilterToolbar(page, options, route);
   main.append(summary, usageCard.element, viewTabs, filterToolbar);
 
   if (view === 'discover') {
     aliasEditorPageController = renderObservedGroupIdentities(main, page, selectedList, renderContext,
-      updateSummary);
-    registerAliasesGuidePresentation(workspace, renderContext);
+      updateSummary, presentation);
     return;
   }
 
@@ -8003,11 +8173,11 @@ async function renderAliases() {
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
   const columnsForView = () => aliasEditorColumns(view, rows, updateSelection);
-  let filtersActive = aliasEditorHasActiveFilters();
+  let filtersActive = aliasEditorHasActiveFilters(false, route);
   const renderTable = () => {
     const aliasTable = table(rows, columnsForView(), filtersActive ?
       'No aliases match these filters' : 'This Alias List has no aliases yet', {
-      type: `alias-editor-${view}`, serverSort: true, sortable: false,
+      type: `alias-editor-${view}`, presentation: Boolean(presentation), serverSort: true, sortable: false,
       defaultSort: defaultOrder.sort, defaultDirection: defaultOrder.direction,
       controller: tableController,
       rowKey: (row) => row.alias_id,
@@ -8198,7 +8368,6 @@ async function renderAliases() {
       await openAliasEditorModal('edit', id);
     }
   }
-  registerAliasesGuidePresentation(workspace, renderContext);
 }
 
 function signalingCounts(row) {
@@ -34245,7 +34414,8 @@ const guideController = createGuideController({
     window.history.replaceState({}, '', currentHref());
   },
   navigate: (view) => navigateTo(href(view)),
-  preparePlayer: (options) => audioDock.prepareGuide(options)
+  preparePlayer: (options) => audioDock.prepareGuide(options),
+  preparePage: preparePageGuideSample
 });
 
 function synchronizePageGuideButton() {

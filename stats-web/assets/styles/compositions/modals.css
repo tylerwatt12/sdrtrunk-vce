@@ -166,6 +166,19 @@ body.modal-open {
 }
 
 /* Page tours share the modal lifecycle and preserve the real controls beneath the spotlight. */
+.modal-backdrop.ui-setup-guide-underlay {
+  justify-items: start;
+  padding-left: var(--guide-viewport-gap);
+  padding-right: calc(var(--guide-target-reserved-width, 0px) + var(--guide-viewport-gap));
+  background: transparent;
+}
+
+.ui-setup-guide-layer {
+  z-index: 99;
+  display: block;
+  pointer-events: none;
+}
+
 .modal-backdrop.ui-setup-guide-backdrop {
   display: block;
   padding: 0;

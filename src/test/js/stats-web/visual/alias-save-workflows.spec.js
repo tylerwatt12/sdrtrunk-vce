@@ -2,6 +2,11 @@
 const { expect, test } = require('@playwright/test');
 
 async function openAliasForm(page, editing) {
+  await page.addInitScript(() => {
+    for (const id of ['welcome', 'channel-setup', 'aliases']) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-save-fixture:${id}:${id === 'aliases' ? 3 : 1}`, '1');
+    }
+  });
   const list = { alias_list_id: 1, name: 'County', family: 'P25', alias_count: 1, assigned_channel_count: 0 };
   const alias = { alias_id: 101, alias_list_id: 1, name: 'Dispatch', description: '', group: 'Fire',
     color: 0, recordable: true, matcher: { type: 'talkgroup', protocol: 'APCO25', value: 1201 } };
@@ -24,7 +29,7 @@ async function openAliasForm(page, editing) {
       return;
     }
     if (pathname === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
-      username: 'alias-admin', tier: 'admin', primary: true, csrf_token: 'fixture',
+      username: 'alias-admin', tier: 'admin', primary: true, csrf_token: 'fixture', guide_dismissal_scope: 'alias-save-fixture',
       capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true } });
     if (pathname === '/api/v1/admin/alias-lists') return data({ revision, alias_lists: [list] });
     if (pathname === '/api/v1/alias-lists') return data({ rows: [list], limit: 500, offset: 0, has_more: false });

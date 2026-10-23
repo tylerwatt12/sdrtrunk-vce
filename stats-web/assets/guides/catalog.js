@@ -4,7 +4,7 @@ import { definitions as routes } from '../core/routes.js?v=11';
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps });
 // The authored Aliases tour supersedes the dismissible version-one placeholder.
-const guideVersions = Object.freeze({ aliases: 2 });
+const guideVersions = Object.freeze({ aliases: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 1,
     authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -185,70 +185,80 @@ function channelSetupSteps(documentValue, preparePlayer) {
   ];
 }
 
-function aliasesSteps(documentValue, preparePlayer) {
+function aliasesSteps(documentValue, preparePlayer, preparePage) {
   const focus = (...names) => targets(documentValue,
     ...names.map((name) => `[data-guide-target="${name}"]`));
   const sample = (section) => [{ id: 'aliases-workspace', value: { section } }];
   return [
     { id: 'lists', title: 'Your Alias Lists', samples: sample('lists'),
-      targets: focus('aliases-lists', 'aliases-new-list', 'aliases-usage'),
-      paragraphs: ['Alias Lists connect recognizable names and call settings to your channels. Select a list here to explore its aliases and see which channels use it.',
-        'Channels with a matching protocol can share the same list. This tour uses example data; nothing is saved.'] },
-    { id: 'configure', title: 'Configure: names and behavior', samples: sample('configure'),
-      targets: focus('aliases-configure', 'aliases-filters', 'aliases-defaults'),
-      paragraphs: ['See what each alias matches and how its calls are handled. Search by name, description, group, or identifier, and use filters to narrow the list.',
-        'Open an alias to inspect or change its settings. Call Handling Defaults above the views controls unmatched traffic and how future aliases begin.'] },
+      targets: focus('aliases-lists', 'aliases-new-list'),
+      paragraphs: ['Alias Lists connect recognizable names and call settings to your channels. Select a list here to explore its aliases.'] },
+    { id: 'views', title: 'Four views of your aliases', samples: sample('views'),
+      targets: focus('aliases-configure', 'aliases-activity', 'aliases-custom', 'aliases-discover'), paragraphs: [],
+      items: [
+        { label: 'Configure', text: 'Manage alias names, identifiers, and call settings.' },
+        { label: 'Activity', text: 'See which aliases are being used.' },
+        { label: 'Custom', text: 'Choose the columns for your own view.' },
+        { label: 'Discover', text: 'Find heard talkgroups that have no defined alias.' }
+      ] },
     { id: 'alias-editor', title: 'Inside an alias', samples: sample('alias-editor'),
-      targets: focus('aliases-editor-tabs'),
-      paragraphs: ['Basics holds the name and appearance. Identifier defines which radio activity matches. Call Handling controls recording, Scan List membership, and streaming. Activity shows what has been observed for this alias.',
-        'Add Alias opens this same editor for a new entry.'] },
+      targets: focus('aliases-editor-tabs'), paragraphs: [],
+      items: [
+        { label: 'Basics', text: 'Holds the name and appearance.' },
+        { label: 'Identifier', text: 'Defines which radio activity (like talkgroup ID or radio ID) matches.' },
+        { label: 'Call Handling', text: 'Controls recording, Scan List membership, and streaming.' },
+        { label: 'Activity', text: 'Shows what has been observed for this alias.' }
+      ] },
     { id: 'defaults-unmatched', title: 'Call Handling Defaults: Unmatched Calls', samples: sample('defaults-unmatched'),
-      targets: focus('aliases-defaults-tabs', 'aliases-default-record', 'aliases-default-scan', 'aliases-default-stream'),
-      paragraphs: ['This is the list’s catch-all for received talkgroups without an exact alias or covering talkgroup range.',
-        'Choose whether to record those calls, route them to Scan Lists for listening, or send them to streaming destinations. These settings handle the traffic without creating aliases.'] },
+      targets: focus('aliases-defaults-tabs', 'aliases-defaults-recording', 'aliases-defaults-scan-lists', 'aliases-defaults-streaming'),
+      paragraphs: ['This is where you configure what to do with unknown talkgroups.'] },
     { id: 'defaults-new', title: 'Call Handling Defaults: New Aliases', samples: sample('defaults-new'),
-      targets: focus('aliases-defaults-tabs', 'aliases-default-record', 'aliases-default-scan', 'aliases-default-stream'),
-      paragraphs: ['Choose the starting recording, Scan List, and streaming settings for aliases you create or add from RadioReference.',
-        'Changing these defaults does not update existing aliases. Use individual editing or bulk operations to change aliases already in the list.'] },
+      targets: focus('aliases-defaults-tabs', 'aliases-defaults-recording', 'aliases-defaults-scan-lists', 'aliases-defaults-streaming'),
+      paragraphs: ['This is where you configure what settings newly added or RadioReference-imported aliases use.'] },
     { id: 'bulk', title: 'Work with several aliases', samples: sample('bulk'),
       targets: focus('aliases-selection', 'aliases-bulk', 'aliases-select-all'),
-      paragraphs: ['Select aliases to move or group them, change their Scan Lists, recording, streaming, or appearance, or delete them together.',
-        'The header checkbox selects this page. Select All Matching extends the selection across your filtered results.'] },
+      paragraphs: ['Select aliases to change their settings together.',
+        'The header checkbox selects this page. Select All Matching includes all filtered results.'] },
+    { id: 'scan-lists', title: 'Choose Scan List membership', samples: sample('scan-lists'),
+      targets: focus('aliases-scan-list-dialog'),
+      paragraphs: ['Add or remove the selected aliases from a Scan List here.'] },
     { id: 'activity', title: 'Activity: see what’s being used', samples: sample('activity'),
       targets: focus('aliases-activity', 'aliases-activity-columns'),
-      paragraphs: ['Review completed calls, recognized system signaling, and when activity was last observed.',
-        'Calls and signaling describe different aspects of radio activity and can overlap, so their counts should not be added together.'] },
+      paragraphs: ["This page helps you determine which aliases are used. VCE records statistics on what's heard and displays them here."] },
     { id: 'custom', title: 'Custom: choose your view', samples: sample('custom'),
       targets: focus('aliases-custom', 'aliases-columns'),
-      paragraphs: ['Bring configuration and activity details together in the same table. Use Columns to choose and arrange the information you want.',
-        'Configure, Activity, and Custom are different views of the same aliases.'] },
+      paragraphs: ['Choose the columns that matter the most, to create a view tailored to your workflow.'] },
     { id: 'discover', title: 'Discover: find identities worth naming', samples: sample('discover'),
-      targets: focus('aliases-discover', 'aliases-discover-table'),
-      paragraphs: ['Explore talkgroups and patch groups heard on your assigned channels that have no exact alias. Groups already covered by a range can appear here too.',
-        'Where enough information is available, Create Alias opens an editor with the identifier filled in. Analog lists use Unmatched assignments for this view.'] },
+      targets: focus('aliases-discover', 'aliases-discover-identities'),
+      paragraphs: ['Explore talkgroups heard on your channels that have no defined alias.',
+        'This helps you identify and name new and unknown radio traffic.'] },
     { id: 'transfer', title: 'Create, import, and export', samples: sample('transfer'),
       targets: focus('aliases-add', 'aliases-import', 'aliases-export'),
-      paragraphs: ['Add individual aliases here, or import from RadioReference or a supported CSV file into the current list. RadioReference imports require Premium access.',
-        'Export aliases provides a reusable configuration file or an activity report for analysis.'] },
-    { id: 'listening', title: 'How aliases become listening choices', samples: sample('listening'),
-      prepare: preparePlayer,
-      targets: focus('aliases-memberships', 'player-lists'),
-      paragraphs: ['In VCE, Scan Lists replace the old Alias List listening checkbox. Add the aliases you want to hear to Scan Lists, make those lists Available to listeners, then choose them through Lists in the player.',
-        'An alias can belong to several Scan Lists.'],
+      paragraphs: ['Add, import, or export aliases here.',
+        'Add an alias from scratch, or import from RadioReference or a file.',
+        'Export a report for analysis or a configuration file you can import again later.'],
       nextLabel: 'Finish' }
-  ].map((step) => ({ ...step,
-    prepare: step.prepare || (() => preparePlayer?.({ minimized: true })) }));
+  ].map((step) => ({ ...step, prepare: async (context) => {
+    const releasePlayer = await preparePlayer?.({ minimized: true });
+    try {
+      const releasePage = await preparePage?.('aliases', step.id, context);
+      return () => { releasePage?.(); releasePlayer?.(); };
+    } catch (error) {
+      releasePlayer?.();
+      throw error;
+    }
+  } }));
 }
 
 export function createGuideDefinition(id, { documentValue = globalThis.document, preparePlayer,
-  canSetup = true, canView, canReport } = {}) {
+  preparePage, canSetup = true, canView, canReport } = {}) {
   if (id === 'welcome') return { id, version: 1, authored: true, title: 'Welcome to sdrtrunk VCE',
     eyebrow: 'WELCOME GUIDE', steps: welcomeSteps(documentValue, preparePlayer,
       canSetup && (typeof canView !== 'function' || canView('channel-setup') !== false), canView, canReport) };
   const template = pageGuideTemplates[id];
   if (!template) return null;
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
-    steps: authoredPages[id](documentValue, preparePlayer) };
+    steps: authoredPages[id](documentValue, preparePlayer, preparePage) };
   return { ...template, eyebrow: template.title, steps: [
     { id: 'coming-soon', title: 'Guide coming soon', paragraphs: [
       `A walkthrough for ${template.title} is being prepared. Take the welcome tour for an introduction to the menus and player.`

@@ -32,6 +32,11 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   let stepCleanup = null;
   let sampleCleanup = null;
   let illustrationCleanup = null;
+  let stepGeneration = 0;
+  let stepController = null;
+  let preparing = false;
+  const layers = new Map();
+  const layerAnchors = new Map();
   let hero = null;
   const targetIds = new Map();
   let update = () => {};
@@ -44,7 +49,8 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     else console.error('Unable to show welcome guide', error);
   };
   const cleanStep = () => {
-    const cleanups = [stepCleanup, sampleCleanup, illustrationCleanup, () => hero?.remove()];
+    stepController?.abort();
+    const cleanups = [stepCleanup, ...layers.values(), sampleCleanup, illustrationCleanup, () => hero?.remove()];
     stepCleanup = null;
     sampleCleanup = null;
     illustrationCleanup = null;
@@ -57,6 +63,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   };
   const cleanup = () => {
     closed = true;
+    stepGeneration += 1;
     if (frame !== null) cancelAnimationFrame(frame);
     observer?.disconnect();
     const failure = cleanStep();
@@ -72,7 +79,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   };
   const modal = openReadOnlyModal(steps[0].title || options.title || 'Welcome guide', body, {
     id: options.id || 'setup-guide', className: 'ui-setup-guide', closeLabel: 'Close guide',
-    lockScroll: false, cleanup,
+    isGuide: true, lockScroll: false, cleanup,
     onDismiss: () => { if (!programmaticClose) options.onDismiss?.(); }
   });
   if (!modal) return null;
@@ -117,6 +124,46 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     const value = parseFloat(getComputedStyle(backdrop).getPropertyValue(name));
     return Number.isFinite(value) ? value : fallback;
   };
+  // Preserve the production popover node and its anchored geometry, but leave the
+  // browser's top layer while the guide owns focus and pointer protection.
+  const registerLayer = (element, { anchor = null } = {}) => {
+    if (!element?.isConnected || closed) return () => {};
+    if (layers.has(element)) return layers.get(element);
+    const attributes = new Map(['popover', 'hidden', 'inert'].map(name => [name, element.getAttribute(name)]));
+    const geometry = new Map(['left', 'top', 'maxHeight', 'display'].map(name => [name, element.style[name]]));
+    const rectangle = element.getBoundingClientRect();
+    const display = getComputedStyle(element).display;
+    if (element.matches(':popover-open')) element.hidePopover();
+    element.removeAttribute('popover');
+    element.hidden = false;
+    element.inert = true;
+    element.classList.add('ui-setup-guide-layer');
+    element.style.display = display === 'none' ? 'block' : display;
+    element.style.left = `${rectangle.left}px`;
+    element.style.top = `${rectangle.top}px`;
+    if (anchor?.isConnected) {
+      const anchorRectangle = anchor.getBoundingClientRect();
+      layerAnchors.set(element, { element: anchor,
+        rightOffset: rectangle.right - anchorRectangle.right,
+        topOffset: rectangle.top - anchorRectangle.bottom });
+    }
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      layers.delete(element);
+      layerAnchors.delete(element);
+      element.classList.remove('ui-setup-guide-layer');
+      attributes.forEach((value, name) => {
+        if (value === null) element.removeAttribute(name);
+        else element.setAttribute(name, value);
+      });
+      geometry.forEach((value, name) => { element.style[name] = value; });
+    };
+    layers.set(element, restore);
+    schedule();
+    return restore;
+  };
   const targets = () => [...(steps[index].targets?.() || [])]
     .filter(target => target?.isConnected && target.getClientRects().length);
   const paintRect = (element, rectangle) => {
@@ -149,6 +196,23 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     const padding = numericToken('--guide-spotlight-padding', 8);
     const gap = numericToken('--guide-anchor-gap', 24);
     const radius = numericToken('--guide-spotlight-radius', 12);
+    const coachWidth = modal.dialog.getBoundingClientRect().width;
+    modal.state.guideTargets?.forEach(target => {
+      const available = Math.max(coachWidth, width - gutter * 2 - coachWidth - gap - padding * 2);
+      target.backdrop.style.setProperty('--guide-target-reserved-width', `${coachWidth + gap + padding * 2}px`);
+      target.dialog.style.maxWidth = `${Math.min(width - gutter * 2, available)}px`;
+    });
+    layers.forEach((_restore, element) => {
+      const alignment = layerAnchors.get(element);
+      const anchor = alignment?.element.getBoundingClientRect();
+      if (!anchor) return;
+      const rectangle = element.getBoundingClientRect();
+      const popoverGutter = numericToken('--space-2', 8);
+      element.style.left = `${Math.max(popoverGutter, Math.min(anchor.right + alignment.rightOffset - rectangle.width,
+        width - popoverGutter - rectangle.width))}px`;
+      element.style.top = `${Math.max(popoverGutter, Math.min(anchor.bottom + alignment.topOffset,
+        height - popoverGutter - rectangle.height))}px`;
+    });
     const bounds = targets().map(target => {
       if (!targetIds.has(target)) targetIds.set(target, target.getAttribute('id'));
       if (!target.id) target.id = `${heading.id}-target-${targetIds.size}`;
@@ -224,6 +288,11 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         top: Math.min(...bounds.map(rect => rect.top)),
         right: Math.max(...bounds.map(rect => rect.right)),
         bottom: Math.max(...bounds.map(rect => rect.bottom)) };
+      const targetDialog = [...(modal.state.guideTargets || [])].at(-1)?.dialog;
+      if (targetDialog?.isConnected) {
+        const rectangle = targetDialog.getBoundingClientRect();
+        anchor = { left: rectangle.left, top: rectangle.top, right: rectangle.right, bottom: rectangle.bottom };
+      }
       const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
       const sideTop = Math.max(gutter, anchor.top, headerBottom ? headerBottom + gap / 2 : 0);
       const candidates = [
@@ -266,8 +335,12 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     }
   };
 
-  const showStep = () => {
+  const showStep = async () => {
     if (closed) return;
+    const generation = ++stepGeneration;
+    preparing = true;
+    back.disabled = next.disabled = true;
+    modal.dialog.setAttribute('aria-busy', 'true');
     const cleanupFailure = cleanStep();
     observer?.disconnect();
     if (cleanupFailure) {
@@ -276,9 +349,19 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       return;
     }
     const step = steps[index];
+    stepController = new AbortController();
+    const signal = stepController.signal;
+    const isCurrent = () => !closed && generation === stepGeneration && !signal.aborted;
     try {
       sampleCleanup = guideSampleData?.activate(step.samples || []) || null;
-      const prepared = step.prepare?.();
+      const prepared = await step.prepare?.({ modal, registerLayer: (...args) => {
+        if (!isCurrent()) return () => {};
+        return registerLayer(...args);
+      }, signal, isCurrent });
+      if (!isCurrent()) {
+        if (typeof prepared === 'function') prepared();
+        return;
+      }
       stepCleanup = typeof prepared === 'function' ? prepared : null;
       modal.setTitle(step.title || options.title || 'Welcome guide');
       modal.dialog.dataset.guideId = options.id || 'setup-guide';
@@ -327,20 +410,24 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         targets().forEach(target => observer.observe(target));
       }
       options.onStepChange?.(index, step);
+      preparing = false;
+      back.disabled = next.disabled = false;
+      modal.dialog.removeAttribute('aria-busy');
       modal.focus(next);
     } catch (error) {
+      if (!isCurrent()) return;
       cleanStep();
       close();
       reportError(error);
     }
   };
   const advance = () => {
-    if (closed) return;
+    if (closed || preparing) return;
     if (index === steps.length - 1) close(() => options.onComplete?.());
     else { index += 1; showStep(); }
   };
   const retreat = () => {
-    if (closed || index === 0) return;
+    if (closed || preparing || index === 0) return;
     index -= 1;
     showStep();
   };

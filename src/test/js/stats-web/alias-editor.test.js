@@ -91,8 +91,9 @@ vm.runInContext(`
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
   ${functionSource('function aliasEditorDefaultOrder(view)')}
-  ${functionSource('function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList))')}
-  ${functionSource('function aliasEditorHasActiveFilters(scanListScope = false)')}
+  ${functionSource('function currentAliasRoute()')}
+  ${functionSource('function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList), route = currentAliasRoute())')}
+  ${functionSource('function aliasEditorHasActiveFilters(scanListScope = false, route = currentAliasRoute())')}
   ${functionSource('function aliasEditorResultCount(page, filtered)')}
   ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
@@ -297,22 +298,22 @@ const returnFromDiscover = viewRoute('configure', 'discover');
 assert.deepEqual([...returnFromDiscover.entries()],
   [['view', 'aliases'], ['list', '7'], ['aliasTab', 'configure']],
   'Returning from Discover must start a fresh Alias search instead of reusing its different query.');
-const aliasRenderer = functionSource('async function renderAliases()');
+const aliasRenderer = functionSource('async function renderAliases(presentation = null)');
 const aliasDataLoader = functionSource('async function requestAliasEditorData(selectedList, view, request = {})');
-const aliasViewTabs = functionSource('function aliasEditorViewTabs(selectedList, onSwitch = null)');
-const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(aliasPage, options = null)');
-const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList)');
+const aliasViewTabs = functionSource('function aliasEditorViewTabs(selectedList, onSwitch = null, route = currentAliasRoute())');
+const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(aliasPage, options = null, route = currentAliasRoute())');
+const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList, route = currentAliasRoute())');
 const aliasExportLink = functionSource('function exportCsvLink(dataset, context = {}, options = {})');
 const aliasDetailLink = functionSource('function aliasDetailLink(row)');
 const aliasMutationFinisher = functionSource('async function finishAliasMutation(modal, result, routeChanges = {})');
-assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'configure', active\)/);
-assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'activity', active\)/);
-assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'custom', active\)/);
+assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'configure', active, route\)/);
+assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'activity', active, route\)/);
+assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'custom', active, route\)/);
 assert.match(aliasViewTabs, /event\.preventDefault\(\);\s*void onSwitch\(entry\.id\)/,
   'An ordinary view click must switch the existing Alias table in place.');
 assert.match(aliasViewTabs, /anchor\('Discover', href\('aliases', \{ list: id, aliasTab: 'discover' \}\)/,
   'Discover must have a separate link to its own search and results.');
-assert.match(aliasRenderer, /aliasEditorViewTabs\(selectedList, \(nextView\) => switchView\?\.\(nextView\)\)/,
+assert.match(aliasRenderer, /aliasEditorViewTabs\(selectedList, \(nextView\) => switchView\?\.\(nextView\), route\)/,
   'The three column-view controls must be wired to the current Alias table.');
 assert.match(aliasRenderer, /switchView = async \(nextView, navigationRequest = null\) => \{[\s\S]*?aliasEditorWorkspaceController\.navigate\([\s\S]*?setAliasEditorViewTabs\(viewTabs, view\);[\s\S]*?renderTable\(\)/,
   'Switching views must update the route, selected control, and existing table without rendering the page again.');
@@ -939,7 +940,7 @@ async function verifySharedFormWorkflowLifecycle() {
 }
 
 async function verifyAliasSaveLifecycle() {
-  const editor = functionSource("async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+  const editor = functionSource("async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
   const setup = editor.slice(editor.indexOf('    let savedPayloadKey'),
     editor.indexOf("    modal.dialog.querySelector('.modal-header h2')"));
   const workflowSource = fs.readFileSync(path.resolve(path.dirname(applicationPath), 'core/form-workflows.js'),
@@ -973,7 +974,7 @@ async function verifyAliasSaveLifecycle() {
   let rendered = source;
   let refreshes = 0;
   const saveContext = {
-    form, save, errorHost: feedback, modal, source, editing: true, mode: 'edit', id: 101, prefill: null,
+    form, save, errorHost: feedback, modal, source, guide: false, editing: true, mode: 'edit', id: 101, prefill: null,
     options: {}, document: { createTextNode: (text) => ({ textContent: text }) },
     node: (_tag, _className, text) => ({ textContent: text, append() {}, setAttribute() {} }),
     aliasEditorPayload: () => ({ ...source, name: fields.name.value, recordable: fields.recordable.checked,

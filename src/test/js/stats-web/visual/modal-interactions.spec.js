@@ -14,6 +14,7 @@ const activityCellActions = application.slice(application.indexOf('function acti
 
 async function installModalHarness(page) {
   await page.goto('/design-system.html?theme=light&view=gallery');
+  await page.locator('.remote-support-workspace').waitFor({ state: 'attached' });
   await page.evaluate((source) => {
     document.body.replaceChildren();
     const node = (tag, className = '', text = null) => {
@@ -95,6 +96,7 @@ async function installStackHarness(page) {
 
 async function installDismissalHarness(page) {
   await page.goto('/design-system.html?theme=light&view=gallery');
+  await page.locator('.remote-support-workspace').waitFor({ state: 'attached' });
   await page.evaluate(async ({ source, navigation }) => {
     const routeFoundation = await import('/assets/core/routes.js');
     document.body.replaceChildren();
@@ -115,6 +117,7 @@ async function installDismissalHarness(page) {
     const shared = new Function('node', 'valueNode', 'iconButton', 'routeFoundation', 'render',
       `let activeReadOnlyModal = null; let route = new URLSearchParams(location.search);
        const aliasEditorWorkspaceController = null;
+       const personalSettingsWorkspace = null;
        ${source}\n${navigation}
        return { openReadOnlyModal, closeReadOnlyModal, confirmAction, navigateTo };`)(node,
       value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton,
