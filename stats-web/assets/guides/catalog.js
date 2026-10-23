@@ -5,7 +5,7 @@ import { definitions as routes } from '../core/routes.js?v=11';
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps });
 // Authored tours supersede their dismissible version-one placeholders.
-const guideVersions = Object.freeze({ aliases: 3, 'scan-lists': 2 });
+const guideVersions = Object.freeze({ aliases: 3, 'scan-lists': 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 1,
     authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -254,49 +254,36 @@ function aliasesSteps(documentValue, preparePlayer, preparePage) {
 function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
   const focus = (...names) => targets(documentValue,
     ...names.map((name) => `[data-guide-target="${name}"]`));
+  const canManageAliases = typeof canView !== 'function' || canView('aliases') !== false;
   return [
-    { id: 'lists', title: 'Your listening choices',
-      targets: focus('scan-lists-selector', 'scan-lists-search', 'scan-lists-filters'),
-      paragraphs: ['Scan Lists group calls you want to hear together. A list can include aliases from several Alias Lists. Use search and availability filters to find a list.'] },
-    { id: 'sources', title: 'Where calls come from',
-      targets: focus('scan-lists-counts', 'scan-lists-routes'), paragraphs: [],
-      items: [
-        { label: 'Assigned aliases', text: 'Aliases explicitly included in this Scan List.' },
-        { label: 'Unmatched calls', text: 'Unknown talkgroups routed here through an Alias List’s Call Handling Defaults. This does not automatically include that Alias List’s existing aliases.' }
-      ] },
-    { id: 'details', title: 'Name and organize lists',
-      targets: focus('scan-lists-details-fields'),
-      paragraphs: ['Names and descriptions help listeners recognize the traffic. Display order controls where each list appears, with lower numbers first.'] },
-    { id: 'availability', title: 'Make a list available',
-      targets: focus('scan-lists-availability'),
-      paragraphs: ['Controls whether listeners can select this list. Hiding a list keeps its aliases and settings in place.'] },
-    { id: 'default', title: 'Choose the default',
-      targets: focus('scan-lists-default'),
-      paragraphs: ['VCE uses the default when Live playback starts with no lists selected. Choose another default before hiding or deleting the current one.'] },
-    { id: 'members', title: 'Review the members',
-      targets: focus('scan-lists-member-table', 'scan-lists-member-alias-list'),
-      paragraphs: ['Review this Scan List’s members across all Alias Lists. Open an alias to inspect or change its settings.'] },
-    { id: 'add-alias-list', title: 'Add a whole Alias List',
+    { id: 'lists', title: 'Choose which calls you hear',
+      targets: canManageAliases ? focus('scan-lists-manage-aliases') : focus('scan-lists-selector'),
+      paragraphs: ['Your channels receive radio traffic. Scan Lists choose which calls reach your player. You can follow fire and EMS dispatch while your other channels continue receiving.'] },
+    { id: 'members', title: 'Follow related traffic across systems',
+      targets: focus('scan-lists-member-table', 'scan-lists-member-alias-list', 'scan-lists-add-list-button'),
+      paragraphs: ['Bring related talkgroups from several radio systems together in one listening group. Fire Dispatch can belong to both a focused Fire & EMS list and a broader Public Safety list.'] },
+    { id: 'add-alias-list', title: 'Build a listening group quickly',
       targets: focus('scan-lists-add-list-dialog'),
-      paragraphs: ['Add the aliases currently in an Alias List. This does not automatically include aliases added to it later.'] },
-    { id: 'alias-membership', title: 'Individual membership',
-      targets: focus('scan-lists-alias-membership'),
-      paragraphs: ['An alias’s Call Handling tab controls which Scan Lists it belongs to. The same alias can belong to several lists.'] },
-    { id: 'remove-members', title: 'Remove memberships',
-      targets: focus('scan-lists-remove-selected', 'scan-lists-remove-all'),
-      paragraphs: ['Remove selected aliases or clear all assigned aliases. The aliases stay configured. Call Handling Defaults can still route unmatched calls here.'] },
-    { id: 'listening', title: 'Choose what you hear',
+      paragraphs: ['Add an Alias List’s current aliases in one operation. For aliases you create or import from RadioReference, Call Handling Defaults → New Aliases can assign a Scan List automatically.'] },
+    { id: 'sources', title: 'Follow unidentified talkgroups',
+      targets: focus('scan-lists-counts', 'scan-lists-routes'),
+      paragraphs: ['An Alias List’s Unmatched Calls defaults can send unidentified talkgroups to a Scan List. Keep a list such as Unidentified Traffic to hear those calls while you work out who is using them.'] },
+    { id: 'listening-controls', title: 'Choose your listening mix',
+      targets: focus('player-lists'),
+      paragraphs: ['Each listener chooses a listening mix here. Your choices are saved for your sign-in.'] },
+    { id: 'listening', title: 'Hear your selected traffic together',
       targets: focus('scan-lists-player-lists'),
-      paragraphs: ['Select the lists you want to hear, including several at once. Your choices apply to your sign-in. Calls shared by selected lists play once.'],
+      paragraphs: ['VCE queues completed calls from your selected lists and plays them one at a time. A call shared by several selected lists plays once.'],
       nextLabel: 'Finish' }
   ].filter((step) => {
     if (typeof canView !== 'function') return true;
-    if (step.id === 'listening') return canView('scanner') !== false;
-    if (['members', 'add-alias-list', 'alias-membership', 'remove-members'].includes(step.id)) {
+    if (['listening-controls', 'listening'].includes(step.id)) return canView('scanner') !== false;
+    if (['members', 'add-alias-list'].includes(step.id)) {
       return canView('aliases') !== false;
     }
     return true;
-  }).map((step) => ({ ...step,
+  }).map((step, index, steps) => ({ ...step,
+    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
     samples: [{ id: 'scan-lists-workspace', value: { section: step.id } }],
     prepare: async (context) => {
       const releasePlayer = await preparePlayer?.({ minimized: true });

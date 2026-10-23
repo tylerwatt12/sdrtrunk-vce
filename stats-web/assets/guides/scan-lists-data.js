@@ -18,8 +18,8 @@ export function getScanListsGuideData(section = 'lists') {
     { id: 900002, name: 'Fire & EMS', description: 'Fire dispatch and emergency medical calls.',
       sort_order: 10, default: false, published: true, enabled: true, alias_count: 2,
       unmatched_alias_list_count: 0, unmatched_alias_lists: [], edit_revision: 'guide-fire-ems' },
-    { id: 900003, name: 'Unidentified Traffic', description: 'Unknown talkgroups from Example County.',
-      sort_order: 20, default: false, published: false, enabled: false, alias_count: 0,
+    { id: 900003, name: 'Unidentified Traffic', description: 'Unidentified talkgroups from Example County.',
+      sort_order: 20, default: false, published: true, enabled: true, alias_count: 0,
       unmatched_alias_list_count: 1,
       unmatched_alias_lists: [{ alias_list_id: 900001, name: 'Example County' }],
       edit_revision: 'guide-unidentified' }
@@ -31,13 +31,12 @@ export function getScanListsGuideData(section = 'lists') {
     scan_lists: index < 2 ? ['Public Safety', 'Fire & EMS'] : ['Public Safety']
   }));
   const memberPage = { ...base.page, rows };
-  const selectedScanList = scanLists[section === 'sources' ? 2 :
-    ['details', 'availability', 'default'].includes(section) ? 1 : 0];
+  const selectedScanList = scanLists[section === 'sources' ? 2 : 0];
   const options = { ...base.options, alias_list: lists[0], scan_lists: scanLists };
   return { ...base, section, list: lists[0], lists, rows, page: memberPage, memberPage, options,
     selectedScanList, scanLists, scanListCatalog: { revision: 0, scan_lists: scanLists },
     recordResponse: { ...base.recordResponse, alias: rows[0] },
     analytics: { ...base.analytics, ...rows[0] },
-    selectedIds: section === 'remove-members' ? [910001, 910002] : [],
+    selectedIds: [],
     query: new URLSearchParams({ view: 'aliases', scanListId: '900001', aliasTab: 'configure' }) };
 }

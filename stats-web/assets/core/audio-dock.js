@@ -1209,7 +1209,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   [dock, volumePopover, restore].forEach(root => guideCommandEvents.forEach(type =>
     root.addEventListener(type, protectGuideCommands, true)));
-  function prepareGuide({ minimized = false, sampleScanLists = null } = {}) {
+  function prepareGuide({ minimized = false, sampleScanLists = null, openSampleLists = true } = {}) {
     const previous = { size, superCollapsed, source, panel, guidePresentation, guideScanListState,
       contextInvoker, selectedQueueKey, focus: document.activeElement,
       scroll: [mainScroll.scrollTop, panelHost.scrollTop, sidebarList.scrollTop] };
@@ -1229,7 +1229,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       currentReady: false, lastCallReady: false, currentTime: 0, duration: 0, volume: 1,
       status: 'Stopped', avoids: [], holdTarget: null };
       liveState = guideScanListState;
-      superCollapsed = false; size = 'full'; source = 'live'; panel = 'listening';
+      superCollapsed = false; size = openSampleLists ? 'full' : 'minimal'; source = 'live';
+      panel = openSampleLists ? 'listening' : null;
       contextInvoker = desktopLists.button;
     }
     panelKey = ''; sidebarKey = ''; render();

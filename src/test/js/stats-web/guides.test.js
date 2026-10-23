@@ -60,9 +60,8 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const scanListSections = ['lists', 'sources', 'details', 'availability', 'default', 'members',
-    'add-alias-list', 'alias-membership', 'remove-members', 'listening'];
-  assert.equal(scanListsTour.version, 2, 'The authored Scan Lists tour supersedes the placeholder.');
+  const scanListSections = ['lists', 'members', 'add-alias-list', 'sources', 'listening-controls', 'listening'];
+  assert.equal(scanListsTour.version, 3, 'The shorter operational Scan Lists tour supersedes the settings walkthrough.');
   assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
   for (const step of scanListsTour.steps) {
     assert.deepEqual(step.samples, [{ id: 'scan-lists-workspace', value: { section: step.id } }]);
@@ -73,33 +72,63 @@ async function checkGuides(assetsRoot) {
     release();
     assert.deepEqual(released.splice(0), [step.id, 'player']);
   }
-  assert.deepEqual(scanListsTour.steps.find(({ id }) => id === 'sources').items.map(({ label }) => label),
-    ['Assigned aliases', 'Unmatched calls']);
+  const scanListCopy = scanListsTour.steps.flatMap(({ title, paragraphs = [] }) => [title, ...paragraphs]).join(' ');
+  assert.doesNotMatch(scanListCopy, /\b(?:not|doesn’t|doesn't|don’t|don't|no longer)\b/i,
+    'The Scan Lists tour explains the listening benefit positively.');
+  assert.ok(scanListCopy.split(/\s+/).length < 250, 'The tour stays short enough to read while following the interface.');
+  assert.doesNotMatch(scanListCopy, /display order|lower numbers|name and organize|available to listeners|choose the default/i,
+    'The tour omits self-explanatory list settings.');
+  assert.match(scanListsTour.steps.find(({ id }) => id === 'sources').paragraphs[0], /Unmatched Calls defaults.*unidentified talkgroups/);
+  assert.match(scanListsTour.steps.at(-1).paragraphs[0], /queues completed calls.*one at a time.*plays once/);
+  const targetNames = (step) => step.targets().map(({ selector }) => /data-guide-target="([^"]+)"/.exec(selector)[1]);
+  const scanListTargets = createGuideDefinition('scan-lists', { documentValue: {
+    querySelectorAll: selector => [{ selector }]
+  } });
+  assert.deepEqual(targetNames(scanListTargets.steps[0]), ['scan-lists-manage-aliases'],
+    'Manage aliases is shown before the member destination opens.');
+  assert.deepEqual(targetNames(scanListTargets.steps[1]),
+    ['scan-lists-member-table', 'scan-lists-member-alias-list', 'scan-lists-add-list-button'],
+    'The actual Add an Entire Alias List button is shown before its dialog.');
+  assert.deepEqual(targetNames(scanListTargets.steps[2]), ['scan-lists-add-list-dialog']);
+  assert.deepEqual(targetNames(scanListTargets.steps[4]), ['player-lists'],
+    'The actual Lists button is shown before its player panel opens.');
+  assert.deepEqual(targetNames(scanListTargets.steps[5]), ['scan-lists-player-lists']);
   assert.equal(scanListsTour.steps.at(-1).nextLabel, 'Finish');
   const noAudioScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'scanner' });
-  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -1),
+  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -2),
     'An account without Live audio access is not shown player listening choices.');
-  assert.equal(noAudioScanListsTour.steps.at(-1).id, 'remove-members');
+  assert.equal(noAudioScanListsTour.steps.at(-1).id, 'sources');
+  assert.equal(noAudioScanListsTour.steps.at(-1).nextLabel, 'Finish');
+  assert.ok(noAudioScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
   assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
-    ['lists', 'sources', 'details', 'availability', 'default', 'listening'],
+    ['lists', 'sources', 'listening-controls', 'listening'],
     'An account without Alias administration is not sent into member management.');
+  assert.equal(noAliasesScanListsTour.steps.at(-1).nextLabel, 'Finish');
+  assert.ok(noAliasesScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const scanListOnlyTour = createGuideDefinition('scan-lists', { canView: view => view === 'scan-lists' });
-  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id),
-    ['lists', 'sources', 'details', 'availability', 'default']);
+  assert.deepEqual(scanListOnlyTour.steps.map(({ id }) => id), ['lists', 'sources']);
+  assert.equal(scanListOnlyTour.steps.at(-1).nextLabel, 'Finish');
+  const listOnlyTargets = createGuideDefinition('scan-lists', {
+    canView: view => view === 'scan-lists', documentValue: { querySelectorAll: selector => [{ selector }] }
+  });
+  assert.deepEqual(targetNames(listOnlyTargets.steps[0]), ['scan-lists-selector'],
+    'A listener without member-management access receives an available page target instead of its launch button.');
   const { getScanListsGuideData } = await load('guides/scan-lists-data.js');
   const scanListData = getScanListsGuideData('members');
   assert.equal(scanListData.scanLists.filter(row => row.default).length, 1);
   assert.deepEqual(scanListData.scanLists.map(row => [row.name, row.published, row.alias_count]),
-    [['Public Safety', true, 4], ['Fire & EMS', true, 2], ['Unidentified Traffic', false, 0]]);
+    [['Public Safety', true, 4], ['Fire & EMS', true, 2], ['Unidentified Traffic', true, 0]]);
+  assert.equal(scanListData.scanLists.filter(row => row.published && row.enabled).length, 3,
+    'Every listening group introduced by the tour is available in its player panel.');
   assert.equal(new Set(scanListData.memberPage.rows.map(row => row.alias_list_id)).size, 2,
     'The actual membership table demonstrates aliases from several Alias Lists.');
   assert.deepEqual(scanListData.rows.slice(0, 2).map(row => row.scan_list_ids), [[900001, 900002], [900001, 900002]]);
   assert.equal(scanListData.scanLists[2].unmatched_alias_lists[0].alias_list_id, scanListData.lists[0].id);
   assert.deepEqual(scanListData.lists[0].unknown_alias_behavior.scan_list_ids, [900003]);
-  assert.deepEqual(getScanListsGuideData('remove-members').selectedIds, [910001, 910002]);
+  assert.deepEqual(getScanListsGuideData('members').selectedIds, [], 'The members stop shows the normal unselected table.');
   assert.equal(getScanListsGuideData('sources').selectedScanList.id, 900003);
-  assert.equal(getScanListsGuideData('details').selectedScanList.id, 900002);
+  assert.equal(getScanListsGuideData('lists').selectedScanList.id, 900001);
   scanListData.rows[0].name = 'Changed sample';
   assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
   const makeHarness = (overrides = {}) => {
@@ -201,12 +230,13 @@ async function checkGuides(assetsRoot) {
     'Dismissing the old coming-soon placeholder cannot suppress the new authored tour.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
-    getItem: key => /:(welcome|scan-lists):1$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scan-lists:[12]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedScanListPlaceholder.controller.pageReady();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
-  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 2);
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 3,
+    'Dismissing the old settings walkthrough cannot suppress the shorter operational tour.');
   dismissedScanListPlaceholder.finish();
   await dismissedScanListPlaceholder.controller.openPage();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists',

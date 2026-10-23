@@ -57,7 +57,7 @@ async function mountDock(page) {
     window.dockGuide = { component, events, sampleScanLists,
       emitLive(update) { liveState = { ...liveState, ...update }; liveListener(liveState); },
       emitRecording(update) { recordingState = { ...recordingState, ...update }; recordingListener(recordingState); },
-      prepare() { this.release = component.prepareGuide({ sampleScanLists }); },
+      prepare(options = {}) { this.release = component.prepareGuide({ sampleScanLists, ...options }); },
       restore() { this.release(); } };
   });
 }
@@ -80,6 +80,84 @@ test('guide uses the same Lists panel and choices as ordinary Live listening', a
   await page.evaluate(() => window.dockGuide.restore());
   expect(await panel.innerHTML()).toBe(ordinary);
   expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
+});
+
+test('guide shows the actual Lists opening button before the sample panel and protects its controls', async ({ page }) => {
+  await mountDock(page);
+  const dock = page.locator('#audio-dock');
+  const opener = dock.locator('[data-guide-target="player-lists"]');
+  const originalButton = await opener.evaluate(button => {
+    window.originalListsOpener = button;
+    return button.outerHTML;
+  });
+  await page.evaluate(() => window.dockGuide.prepare({ openSampleLists: false }));
+  await expect(dock).toHaveAttribute('data-source', 'live');
+  await expect(dock).toHaveAttribute('data-state', 'minimal');
+  await expect(opener).toBeVisible();
+  await expect(dock.locator('.audio-dock-context')).toBeHidden();
+  await expect(dock.locator('[data-guide-target="scan-lists-player-lists"]')).toHaveCount(0);
+  expect(await opener.evaluate(button => ({ same: button === window.originalListsOpener,
+    html: button.outerHTML }))).toEqual({ same: true, html: originalButton });
+  await page.evaluate(() => {
+    document.querySelectorAll('#audio-dock button').forEach(button => button.click());
+    const source = document.querySelector('.ui-audio-source-picker'); source.value = 'recordings';
+    source.dispatchEvent(new Event('change', { bubbles: true }));
+    const volume = document.querySelector('#audio-dock-volume'); volume.value = '0';
+    volume.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#audio-dock-size-handle').dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Home', bubbles: true, cancelable: true }));
+  });
+  await expect(dock).toHaveAttribute('data-state', 'minimal');
+  await expect(dock).toHaveAttribute('data-source', 'live');
+  await expect(dock.locator('.audio-dock-context')).toBeHidden();
+  expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
+  await page.evaluate(() => window.dockGuide.restore());
+  expect(await opener.evaluate(button => button.outerHTML)).toBe(originalButton);
+  expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
+});
+
+test('Next opens the real sample Lists panel and Back restores the opening button before restoring incoming player state', async ({ page }) => {
+  await mountDock(page);
+  const dock = page.locator('#audio-dock');
+  await dock.locator('.ui-audio-source-picker').selectOption('recordings');
+  await dock.locator('#audio-dock-size-handle').press('End');
+  await dock.locator('#audio-dock-call-details').click();
+  await page.evaluate(() => {
+    window.dockGuide.events.commands.length = 0;
+    window.dockGuide.prepare({ openSampleLists: false });
+  });
+  const opener = dock.locator('[data-guide-target="player-lists"]');
+  const openingButton = await opener.evaluate(button => button.outerHTML);
+  for (let visit = 0; visit < 2; visit++) {
+    await page.evaluate(() => {
+      window.releaseListsPanel = window.dockGuide.component.prepareGuide({
+        sampleScanLists: window.dockGuide.sampleScanLists });
+      window.dockGuide.emitLive({ stopped: false, current: { target_alias: 'Incoming live call' },
+        displayCall: { target_alias: 'Incoming live call' }, queuedCount: 3, queue: [] });
+      window.dockGuide.emitRecording({ current: { id: 43, talkgroup_alias: 'Updated recording' }, playing: true });
+    });
+    await expect(dock).toHaveAttribute('data-state', 'full');
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Lists');
+    await expect(dock.locator('#audio-dock-panel').getByRole('checkbox')).toHaveCount(2);
+    await expect(dock.locator('#audio-dock-panel')).toContainText('Public Safety');
+    await expect(dock.locator('#audio-dock-panel')).not.toContainText('Incoming live call');
+    await page.evaluate(() => { window.releaseListsPanel(); window.releaseListsPanel(); });
+    await expect(dock).toHaveAttribute('data-state', 'minimal');
+    await expect(opener).toBeVisible();
+    expect(await opener.evaluate(button => button.outerHTML)).toBe(openingButton);
+    await expect(dock.locator('.audio-dock-context')).toBeHidden();
+    await expect(dock.locator('[data-guide-target="scan-lists-player-lists"]')).toHaveCount(0);
+    await expect(dock.locator('h2.audio-dock-title')).toHaveText('Nothing queued');
+  }
+  await page.evaluate(() => { window.dockGuide.restore(); window.dockGuide.restore(); });
+  await expect(dock).toHaveAttribute('data-source', 'recordings');
+  await expect(dock).toHaveAttribute('data-state', 'full');
+  await expect(dock.locator('#audio-dock-context-title')).toHaveText('Call details');
+  await expect(dock.locator('.audio-dock-context-heading')).toContainText('Updated recording');
+  await expect(dock.locator('[data-guide-target="scan-lists-player-lists"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
+  expect(await page.evaluate(() => ({ live: window.dockGuide.events.liveSubscriptions,
+    recordings: window.dockGuide.events.recordingSubscriptions }))).toEqual({ live: 1, recordings: 1 });
 });
 
 test('sample player rejects synthetic checkbox, keyboard, source, volume, and playback commands', async ({ page }) => {

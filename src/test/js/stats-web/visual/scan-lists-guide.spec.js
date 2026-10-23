@@ -2,6 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
+const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
@@ -10,18 +11,20 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 test.use({ viewport: { width: 1280, height: 800 } });
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="scan-lists"]');
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:2';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:3';
 const steps = [
-  { id: 'lists', targets: ['scan-lists-selector', 'scan-lists-search', 'scan-lists-filters'] },
-  { id: 'sources', targets: ['scan-lists-counts', 'scan-lists-routes'] },
-  { id: 'details', targets: ['scan-lists-details-fields'] },
-  { id: 'availability', targets: ['scan-lists-availability'] },
-  { id: 'default', targets: ['scan-lists-default'] },
-  { id: 'members', targets: ['scan-lists-member-table', 'scan-lists-member-alias-list'] },
-  { id: 'add-alias-list', targets: ['scan-lists-add-list-dialog'] },
-  { id: 'alias-membership', targets: ['scan-lists-alias-membership'] },
-  { id: 'remove-members', targets: ['scan-lists-remove-selected', 'scan-lists-remove-all'] },
-  { id: 'listening', targets: ['scan-lists-player-lists'] }
+  { id: 'lists', targets: ['scan-lists-manage-aliases'],
+    copy: 'Your channels receive radio traffic. Scan Lists choose which calls reach your player.' },
+  { id: 'members', targets: ['scan-lists-member-table', 'scan-lists-member-alias-list', 'scan-lists-add-list-button'],
+    copy: 'Bring related talkgroups from several radio systems together in one listening group.' },
+  { id: 'add-alias-list', targets: ['scan-lists-add-list-dialog'],
+    copy: 'Add an Alias List’s current aliases in one operation.' },
+  { id: 'sources', targets: ['scan-lists-counts', 'scan-lists-routes'],
+    copy: 'Keep a list such as Unidentified Traffic to hear those calls while you work out who is using them.' },
+  { id: 'listening-controls', targets: ['player-lists'],
+    copy: 'Each listener chooses a listening mix here.' },
+  { id: 'listening', targets: ['scan-lists-player-lists'],
+    copy: 'VCE queues completed calls from your selected lists and plays them one at a time.' }
 ];
 
 async function sampleData() {
@@ -56,7 +59,7 @@ async function installOrdinarySampleCatalog(page) {
 }
 
 async function openScanLists(page, { theme = 'light', replay = true, firstVisit = false,
-  ordinarySamples = false, origin = 'scan-lists', empty = false } = {}) {
+  ordinarySamples = false, origin = 'scan-lists', empty = false, deniedCapabilities = [] } = {}) {
   const requests = { writes: [], audio: [], samples: [], external: [] };
   page.on('request', request => {
     const url = new URL(request.url());
@@ -75,8 +78,20 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
     for (const [id, version] of [['welcome', 1], ['channel-setup', 1], ['aliases', 3]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
-    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:1', '1');
+    for (const version of [1, 2]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:${version}`, '1');
+    }
   });
+  if (deniedCapabilities.length) {
+    const source = fs.readFileSync(path.resolve(__dirname,
+      '../../../../../src/main/java/io/github/dsheirer/web/auth/WebCapability.java'), 'utf8');
+    const capabilities = Object.fromEntries([...source.matchAll(/^\s+[A-Z_]+\("([^"]+)",/gm)]
+      .map(([, id]) => [id, !deniedCapabilities.includes(id)]));
+    await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
+      configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
+      csrf_token: 'fixture-csrf', guide_dismissal_scope: 'account-1-100', capabilities
+    } } }));
+  }
   if (ordinarySamples) await installOrdinarySampleCatalog(page);
   if (empty) await page.route('**/api/v1/admin/scan-lists', route =>
     route.fulfill({ json: { data: { revision: 1, scan_lists: [] } } }));
@@ -113,6 +128,8 @@ async function expectSpotlight(page, name) {
 async function expectStep(page, step, index) {
   await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
   await expect(guide(page)).toContainText(`Step ${index + 1} of ${steps.length}`);
+  await expect(guide(page)).toContainText(step.copy);
+  await expect(guide(page)).not.toContainText(/Hiding a list|Display order|Choose another default|does not|doesn’t|not automatically|not saved|nothing is saved/i);
   await expect(page.locator('[data-guide-sample]').first()).toBeVisible();
   await expect(page.locator('.alias-guide-preview, .scan-lists-guide-preview')).toHaveCount(0);
   for (const name of step.targets) await expectSpotlight(page, name);
@@ -177,55 +194,52 @@ for (const { theme, width, height } of [
     const { fixture, requests } = await openScanLists(page, { theme });
     for (const [index, step] of steps.entries()) {
       await expectStep(page, step, index);
-      if (['lists', 'sources', 'details', 'availability', 'default', 'listening'].includes(step.id)) {
+      if (['lists', 'sources', 'listening-controls', 'listening'].includes(step.id)) {
         await expect(page.locator('.scan-list-catalog')).toBeVisible();
         await expect(page.locator('.scan-list-selector')).toHaveCount(3);
+      }
+      if (step.id === 'lists') {
+        await expect(page.locator('.scan-list-detail-title')).toHaveText('Public Safety');
+        const destination = new URL(await page.locator('.admin-scan-list-members').getAttribute('href'), page.url());
+        expect(destination.searchParams.get('scanListId')).toBe('900001');
+        await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
       }
       if (step.id === 'sources') {
         await expect(page.locator('.scan-list-detail-title')).toHaveText('Unidentified Traffic');
         await expect(page.locator('.scan-list-detail-routes')).toContainText('Example County');
       }
-      if (['details', 'availability', 'default'].includes(step.id)) {
-        const modal = page.locator('.scan-list-admin-modal');
-        await expect(modal).toBeVisible();
-        await expect(modal.getByRole('textbox', { name: 'Name', exact: false })).toHaveValue('Fire & EMS');
-        await expect(modal.getByRole('spinbutton')).toHaveValue('10');
-        await expect(modal.locator('.ui-modal-footer')).toBeVisible();
-      }
-      if (['members', 'add-alias-list', 'alias-membership', 'remove-members'].includes(step.id)) {
+      if (['members', 'add-alias-list'].includes(step.id)) {
         await expect(page.getByRole('heading', { name: 'Scan List Members', exact: true })).toBeVisible();
         const table = page.locator('table[data-table-type="alias-scan-list-members"]');
         await expect(table).toContainText('Fire Dispatch');
         await expect(table).toContainText('Regional Services');
         await expect(table).toContainText('Example County');
+        await expect(page.locator('.scan-list-member-summary h2')).toContainText('Public Safety');
+      }
+      if (step.id === 'members') {
+        await expect(page.getByRole('button', { name: 'Add an Entire Alias List', exact: true })).toBeVisible();
+        await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
       }
       if (step.id === 'add-alias-list') {
-        const modal = page.locator('.alias-full-membership-form');
+        const modal = page.locator('.alias-confirm-modal');
+        await expect(modal).toContainText('Public Safety');
         await expect(modal.getByRole('combobox')).toHaveValue('900001');
         await expect(modal.getByRole('button', { name: 'Add All Aliases', exact: true })).toBeVisible();
       }
-      if (step.id === 'alias-membership') {
-        const modal = page.locator('.alias-record-modal');
-        await expect(modal).toBeVisible();
-        await expect(modal.locator('[role="tab"][aria-selected="true"]')).toHaveText('Call Handling');
-        const membership = page.locator('[data-guide-target="scan-lists-alias-membership"]');
-        await expect(membership).toContainText('Public Safety');
-        await expect(membership).toContainText('Fire & EMS');
-      }
-      if (step.id === 'remove-members') {
-        await expect(page.locator('.scan-list-member-bulk-bar')).toContainText('2 selected');
-        await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch', exact: true })).toBeChecked();
-        await expect(page.getByRole('checkbox', { name: 'Select EMS Dispatch', exact: true })).toBeChecked();
-      }
-      if (step.id === 'listening') {
+      if (['listening-controls', 'listening'].includes(step.id)) {
         const player = page.locator('#audio-dock');
         await expect(player).toBeVisible();
         await expect(player).toHaveAttribute('data-source', 'live');
-        const choices = player.locator('.audio-dock-selection-list');
-        await expect(choices).toContainText('Public Safety');
-        await expect(choices).toContainText('Fire & EMS');
-        await expect(choices).not.toContainText('Unidentified Traffic');
-        await expect(choices.getByRole('checkbox')).toHaveCount(2);
+        if (step.id === 'listening-controls') {
+          await expect(player.locator('.audio-dock-lists-trigger:visible').first()).toBeVisible();
+          await expect(player.locator('.audio-dock-selection-list')).toHaveCount(0);
+        } else {
+          const choices = player.locator('.audio-dock-selection-list');
+          await expect(choices).toContainText('Public Safety');
+          await expect(choices).toContainText('Fire & EMS');
+          await expect(choices).toContainText('Unidentified Traffic');
+          await expect(choices.getByRole('checkbox')).toHaveCount(3);
+        }
       } else await expect(page.locator('#audio-dock')).toBeHidden();
       await page.screenshot({ path: testInfo.outputPath(`scan-lists-${step.id}-${theme}.png`) });
       await guide(page).getByRole('button', {
@@ -242,12 +256,6 @@ for (const theme of ['light', 'dark']) {
   test(`Scan Lists tour keeps production dialog and player structure and paint in ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     const { fixture, requests } = await openScanLists(page, { theme, replay: false, ordinarySamples: true });
-    await page.locator('.scan-list-selector[data-scan-list-id="900002"]').click();
-    await page.getByRole('button', { name: 'Edit Fire & EMS details', exact: true }).click();
-    const modal = page.locator('.scan-list-admin-modal');
-    const details = await surfaceSignature(modal);
-    await page.screenshot({ path: testInfo.outputPath(`ordinary-details-${theme}.png`) });
-    await modal.locator('.modal-close').click();
     await page.locator('.scan-list-selector[data-scan-list-id="900001"]').click();
     await page.locator('.admin-scan-list-members').click();
     await expect(page.locator('table[data-table-type="alias-scan-list-members"]')).toBeVisible();
@@ -256,13 +264,6 @@ for (const theme of ['light', 'dark']) {
     const adding = await surfaceSignature(addAll);
     await page.screenshot({ path: testInfo.outputPath(`ordinary-add-alias-list-${theme}.png`) });
     await addAll.locator('.modal-close').click();
-    await page.locator('table .alias-cell').filter({ hasText: 'Fire Dispatch' }).first().click();
-    const editor = page.locator('.alias-record-modal');
-    await expect(editor.locator('.modal-content form')).toBeVisible();
-    await editor.getByRole('tab', { name: 'Call Handling', exact: true }).click();
-    const membership = await surfaceSignature(editor);
-    await page.screenshot({ path: testInfo.outputPath(`ordinary-alias-membership-${theme}.png`) });
-    await editor.locator('.modal-close').click();
     await page.locator('.primary-nav [data-view="scan-lists"]').evaluate(link => link.click());
     const player = page.locator('#audio-dock');
     await player.locator('.audio-dock-lists-trigger:visible').first().click();
@@ -272,13 +273,9 @@ for (const theme of ['light', 'dark']) {
     await page.locator('#page-guide-button').click();
     for (const [index, step] of steps.entries()) {
       await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-      if (['details', 'availability', 'default'].includes(step.id)) {
-        expect(await surfaceSignature(page.locator('.scan-list-admin-modal'))).toEqual(details);
-      }
       if (step.id === 'add-alias-list') expect(await surfaceSignature(page.locator('.alias-confirm-modal'))).toEqual(adding);
-      if (step.id === 'alias-membership') expect(await surfaceSignature(page.locator('.alias-record-modal'))).toEqual(membership);
       if (step.id === 'listening') expect(await surfaceSignature(page.locator('#audio-dock .audio-dock-selection-list'))).toEqual(listening);
-      if (['details', 'add-alias-list', 'alias-membership', 'listening'].includes(step.id)) {
+      if (['add-alias-list', 'listening'].includes(step.id)) {
         await page.screenshot({ path: testInfo.outputPath(`guide-${step.id}-${theme}.png`) });
       }
       await guide(page).getByRole('button', { name: index === steps.length - 1 ? 'Finish' : 'Next', exact: true }).click();
@@ -286,6 +283,55 @@ for (const theme of ['light', 'dark']) {
     expectNoEffects(fixture, requests, { ordinarySamples: true });
   });
 }
+
+test('opening controls precede the actual dialog and player panel through repeated Back and Next', async ({ page }) => {
+  const { fixture, requests } = await openScanLists(page);
+  await expectStep(page, steps[0], 0);
+  const destination = new URL(await page.locator('.admin-scan-list-members').getAttribute('href'), page.url());
+  expect(destination.searchParams.get('scanListId')).toBe('900001');
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  for (let index = 0; index < 3; index++) {
+    await expectStep(page, steps[1], 1);
+    await expect(page.locator('.scan-list-member-summary h2')).toHaveText('Public Safety');
+    await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
+    await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expectStep(page, steps[2], 2);
+    await expect(page.locator('.alias-confirm-modal')).toHaveCount(1);
+    await expect(page.locator('.alias-full-membership-form')).toContainText('Public Safety');
+    await expect(page.locator('.alias-full-membership-form select')).toHaveValue('900001');
+    await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
+  }
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await expectStep(page, steps[3], 3);
+  await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  for (let index = 0; index < 3; index++) {
+    await expectStep(page, steps[4], 4);
+    await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(0);
+    await expect(page.locator('.alias-confirm-modal, .ui-setup-guide-layer')).toHaveCount(0);
+    await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expectStep(page, steps[5], 5);
+    await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(1);
+    await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
+  }
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-guide-sample], .alias-confirm-modal, .ui-setup-guide-layer')).toHaveCount(0);
+  expectNoEffects(fixture, requests);
+});
+
+test('Scan Lists omits both player stops when call audio is unavailable', async ({ page }) => {
+  const { fixture, requests } = await openScanLists(page, { deniedCapabilities: ['call-audio'] });
+  for (const [index, step] of steps.slice(0, 4).entries()) {
+    await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
+    await expect(guide(page)).toContainText(`Step ${index + 1} of 4`);
+    for (const target of step.targets) await expectSpotlight(page, target);
+    await expect(page.locator('#audio-dock')).toBeHidden();
+    await guide(page).getByRole('button', { name: index === 3 ? 'Finish' : 'Next', exact: true }).click();
+  }
+  await expect(guide(page)).toHaveCount(0);
+  expectNoEffects(fixture, requests);
+});
 
 test('Scan Lists sample controls cannot save, navigate, delete, change membership, or player preferences', async ({ page }) => {
   const { fixture, requests } = await openScanLists(page);
@@ -319,9 +365,10 @@ test('Scan Lists sample controls cannot save, navigate, delete, change membershi
 });
 
 for (const { stop, dismiss } of [
-  { stop: 'details', dismiss: 'Close guide' },
+  { stop: 'members', dismiss: 'Close guide' },
   { stop: 'add-alias-list', dismiss: 'Escape' },
-  { stop: 'alias-membership', dismiss: 'shade' },
+  { stop: 'sources', dismiss: 'shade' },
+  { stop: 'listening-controls', dismiss: 'Escape' },
   { stop: 'listening', dismiss: 'Close guide' }
 ]) {
   test(`Scan Lists restores the original page and player after ${dismiss} from ${stop}`, async ({ page }) => {
@@ -390,7 +437,7 @@ test('Scan Lists tour restores an expanded Recordings player after showing sampl
 
 test('Scan Lists navigation releases all sample pages, dialogs, and player choices', async ({ page }) => {
   const { fixture, requests } = await openScanLists(page);
-  await goToStep(page, 'alias-membership');
+  await goToStep(page, 'add-alias-list');
   await page.locator('.primary-nav [data-view="dashboard"]').evaluate(link => link.click());
   await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
   await expect(guide(page)).toHaveCount(0);
@@ -411,7 +458,7 @@ test('Scan Lists Help works with an empty catalog and restores it on dismissal',
   expectNoEffects(fixture, requests);
 });
 
-test('first Scan Lists visit supersedes a dismissed placeholder and remembers completion', async ({ page }) => {
+test('first Scan Lists visit supersedes earlier tours and remembers completion', async ({ page }) => {
   const { fixture, requests } = await openScanLists(page, { firstVisit: true, replay: false });
   await expectStep(page, steps[0], 0);
   await page.keyboard.press('Escape');
@@ -443,7 +490,7 @@ for (const theme of ['light', 'dark']) {
     const { fixture, requests } = await openScanLists(page, { theme });
     for (const [index, step] of steps.entries()) {
       await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-      if (['sources', 'details', 'add-alias-list', 'alias-membership', 'listening'].includes(step.id)) {
+      if (['sources', 'add-alias-list', 'listening-controls', 'listening'].includes(step.id)) {
         await page.evaluate(() => {
           const backdrop = document.querySelector('.ui-setup-guide-backdrop');
           window.scanGuideContrast = { backdrop, visibility: backdrop.style.visibility,
@@ -458,12 +505,11 @@ for (const theme of ['light', 'dark']) {
               applyThemeHue(value);
             }, hue);
             const selector = step.id === 'sources' ? '.scan-list-catalog' :
-              step.id === 'details' ? '.scan-list-admin-modal' :
-                step.id === 'add-alias-list' ? '.alias-confirm-modal' :
-                  step.id === 'alias-membership' ? '.alias-record-modal' : '#audio-dock .audio-dock-selection-list';
+              step.id === 'add-alias-list' ? '.alias-confirm-modal' :
+                step.id === 'listening-controls' ? '#audio-dock' : '#audio-dock .audio-dock-selection-list';
             const result = await expectContrast(page, { rootSelector: selector,
               reportName: `scan-lists-${step.id}-${theme}-hue-${hue}` });
-            expect(result.summary.text.checked).toBeGreaterThan(2);
+            expect(result.summary.text.checked).toBeGreaterThanOrEqual(step.id === 'listening-controls' ? 2 : 3);
           }
         } finally {
           await page.evaluate(async () => {

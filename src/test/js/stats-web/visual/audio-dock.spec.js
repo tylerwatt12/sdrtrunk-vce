@@ -181,7 +181,7 @@ test('an expanded queue leaves the last recording and pagination usable', async 
   await fullControls(page);
   await selectPanel(page, 'Queue');
   await expect(dock(page)).toContainText('ENG 5');
-  const pager = page.getByRole('navigation', { name: 'Call result pages' });
+  const pager = page.getByRole('navigation', { name: 'Call result pages below calls', exact: true });
   await pager.getByRole('button', { name: 'Next', exact: true }).scrollIntoViewIfNeeded();
   await pager.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(pager).toContainText('Page 2');

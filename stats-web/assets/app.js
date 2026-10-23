@@ -16,10 +16,10 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=6';
+import { createGuideController } from './guides/controller.js?v=7';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=2';
-import { getScanListsGuideData } from './guides/scan-lists-data.js?v=1';
+import { getScanListsGuideData } from './guides/scan-lists-data.js?v=2';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
 import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
 import {
@@ -42,7 +42,7 @@ import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailabil
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=31';
+import { createAudioDock } from './core/audio-dock.js?v=32';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -7837,7 +7837,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
 async function preparePageGuideSample(view, section, context) {
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
-  const memberView = scanListsTour && ['members', 'add-alias-list', 'alias-membership', 'remove-members'].includes(section);
+  const memberView = scanListsTour && ['members', 'add-alias-list'].includes(section);
   const renderContext = captureRenderContext();
   const originalNodes = [...content.childNodes];
   const originalPageTitle = pageTitleController.state.pageTitle;
@@ -7909,25 +7909,17 @@ async function preparePageGuideSample(view, section, context) {
     const mark = (selector, name, root = workspace) => root.querySelectorAll(selector)
       .forEach(element => { element.dataset.guideTarget = name; });
     if (scanListsTour) {
+      mark('.admin-scan-list-members', 'scan-lists-manage-aliases');
+      mark('.scan-list-add-all', 'scan-lists-add-list-button');
       mark('.scan-list-member-table-section th[data-column="alias"], .scan-list-member-table-section td[data-column="alias"]',
         'scan-lists-member-table');
       mark('.scan-list-member-table-section [data-column="alias-list"]', 'scan-lists-member-alias-list');
-      mark('.scan-list-member-remove', 'scan-lists-remove-selected');
-      mark('.scan-list-remove-all', 'scan-lists-remove-all');
-      if (['details', 'availability', 'default'].includes(section)) {
-        targetModal = openScanListAdminModal(data.selectedScanList, data);
-      } else if (section === 'add-alias-list') {
+      if (section === 'add-alias-list') {
         targetModal = openFullScanListMembershipModal(data.selectedScanList, 'add', data);
         if (targetModal) targetModal.dialog.querySelector('[name="aliasListId"]').value = String(data.list.id);
-      } else if (section === 'alias-membership') {
-        targetModal = await openAliasEditorModal('edit', data.rows[0].alias_id, null, data);
-        if (targetModal) {
-          targetModal.dialog.querySelector('[data-tab="audio"]')?.click();
-          mark('.alias-scan-list-options', 'scan-lists-alias-membership', targetModal.dialog);
-        }
-      } else if (section === 'listening') {
+      } else if (['listening-controls', 'listening'].includes(section)) {
         data.releases.push(audioDock.prepareGuide({ sampleScanLists: data.scanLists.map(item => ({ ...item,
-          selected: item.default === true })) }));
+          selected: item.default === true })), openSampleLists: section === 'listening' }));
         const dock = document.getElementById('audio-dock');
         if (dock) data.releases.push(guideSampleData.register(data.region, () => {}, { root: dock }));
       }

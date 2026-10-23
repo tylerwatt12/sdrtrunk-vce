@@ -5,7 +5,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`Scan List saves use the selected list version and preserve conflicting drafts in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
     await page.addInitScript(() => {
-      for (const [id, version] of [['welcome', 1], ['scan-lists', 2]]) {
+      for (const [id, version] of [['welcome', 1], ['scan-lists', 3]]) {
         localStorage.setItem(`sdrtrunk-vce-guide:v1:administrator:scan-list-save-fixture:${id}:${version}`, '1');
       }
     });
