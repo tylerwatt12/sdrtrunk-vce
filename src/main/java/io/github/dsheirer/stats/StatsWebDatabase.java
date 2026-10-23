@@ -6004,13 +6004,15 @@ class StatsWebDatabase
 
     private static boolean activityBroadIdentityHistory(ActivityFilters filters)
     {
+        int identityScopes = (filters.groupIdentitySummaryId() != null ? 1 : 0) +
+            (filters.radioIdentitySummaryId() != null ? 1 : 0) +
+            (filters.sourceIdentitySummaryId() != null ? 1 : 0) +
+            (filters.targetIdentitySummaryId() != null ? 1 : 0);
         return filters.afterId() == null && !filters.hasTones() && filters.channelId() == null &&
             filters.actionCode() == null && filters.actionCodes() == null && filters.eventTypeCode() == null &&
-            filters.encryption() == null && filters.sourceIdentitySummaryId() == null &&
-            filters.targetIdentitySummaryId() == null && filters.sourceId() == null && filters.targetId() == null &&
+            filters.encryption() == null && filters.sourceId() == null && filters.targetId() == null &&
             filters.targetKind() == null && filters.frequencyHertz() == null && filters.lcnBand() == null &&
-            filters.timeslot() == null &&
-            (filters.groupIdentitySummaryId() == null || filters.radioIdentitySummaryId() == null);
+            filters.timeslot() == null && identityScopes == 1;
     }
 
     static String activityRadioIndexProbeSql(boolean sourceRole)
@@ -6030,6 +6032,12 @@ class StatsWebDatabase
         if(filters.hasTones())
         {
             return "receiver_activity_event candidate NOT INDEXED";
+        }
+        if(activityBroadIdentityHistory(filters) &&
+            (filters.sourceIdentitySummaryId() != null || filters.targetIdentitySummaryId() != null))
+        {
+            String role = filters.sourceIdentitySummaryId() != null ? "source" : "target";
+            return "receiver_activity_event candidate INDEXED BY idx_receiver_activity_event_" + role + "_time";
         }
         String index = activityEncryptedOwnerIndex(filters);
         return index != null ? "receiver_activity_event AS candidate INDEXED BY " + index :

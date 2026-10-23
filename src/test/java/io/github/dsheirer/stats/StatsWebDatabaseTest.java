@@ -3977,6 +3977,24 @@ class StatsWebDatabaseTest
         assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
             request(broadScope + "&radio_role=target"))));
 
+        String identity303 = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 303);
+        String ownerScope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&hide_grants=true&limit=2";
+        StatsWebDatabase.ActivityQuery[] sourceFilter = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(2_001_000L, 2_000_999L), activityTimes(mDatabase.activity(
+            request(ownerScope + "&source_identity_key=" + identity303), query -> sourceFilter[0] = query)));
+        assertTrue(sourceFilter[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        StatsWebDatabase.ActivityQuery[] targetFilter = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
+            request(ownerScope + "&target_identity_key=" + identity303), query -> targetFilter[0] = query)));
+        assertTrue(targetFilter[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"),
+            "System Activity target drilldowns need the same identity seek as the radio's target history");
+        StatsWebDatabase.ActivityQuery[] conjunction = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
+            request(ownerScope + "&source_identity_key=" + identity303 + "&target_identity_key=" + identity303),
+            query -> conjunction[0] = query)));
+        assertFalse(conjunction[0].sql().contains("INDEXED BY"),
+            "Multiple identity constraints retain the planner's choice of the more selective side");
+
         String scope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
             p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202) + "&action=REGISTER&hide_grants=true";
         StatsWebDatabase.ActivityQuery[] anyQuery = new StatsWebDatabase.ActivityQuery[1];
@@ -4087,7 +4105,8 @@ class StatsWebDatabaseTest
                         }
                     }
                 }
-                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0], broadQuery[0]))
+                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0], broadQuery[0],
+                    sourceFilter[0], targetFilter[0]))
                 {
                     try(PreparedStatement statement = connection.prepareStatement(query.sql()))
                     {
@@ -4102,7 +4121,7 @@ class StatsWebDatabaseTest
                             {
                                 matches++;
                             }
-                            assertEquals(query == anyQuery[0] ? 6 : query == broadQuery[0] ? 3 : 2, matches);
+                            assertEquals(query == anyQuery[0] ? 6 : query == busyQuery[0] ? 2 : 3, matches);
                         }
                     }
                 }
@@ -4169,6 +4188,14 @@ class StatsWebDatabaseTest
             "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
                 p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
                 "&group_match=via_patch&hide_grants=false&limit=20"))));
+        StatsWebDatabase.ActivityQuery[] groupSource = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(10_000L), activityTimes(mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
+                p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
+                "&source_identity_key=" + radio202 + "&hide_grants=true&limit=20"),
+            query -> groupSource[0] = query)));
+        assertFalse(groupSource[0].sql().contains("INDEXED BY"),
+            "A group with an additional source constraint retains selective query planning");
         StatsWebDatabase.ActivityQuery[] channelSource = new StatsWebDatabase.ActivityQuery[1];
         mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL + "&source_id=17&limit=20"),
             query -> channelSource[0] = query);
