@@ -814,7 +814,7 @@
       <nav class="admin-settings-tree ui-settings-navigation" data-visual-admin-nav-mirror="support" aria-label="Administration sections"></nav>
       <div class="admin-settings-content ui-settings-page"><header class="ui-settings-page-header"><div class="ui-settings-breadcrumb">Administration › Status & support</div><div class="ui-settings-title-row"><h1 class="page-title">Report a problem</h1></div><p class="ui-settings-description">Create and submit a support report.</p></header>
         <div class="admin-section-body support-report-settings">
-            <form class="admin-form settings-page-form ui-settings-form ui-settings-form-plain support-report-form">
+            <form id="support-report-form" class="admin-form settings-page-form ui-settings-form ui-settings-form-plain support-report-form">
               <div class="settings-card-grid ui-settings-card-grid support-report-card-grid">
                 <section class="settings-card ui-settings-panel">
                   <div class="settings-card-header ui-settings-panel-header"><h3 class="settings-card-title">Issue details</h3></div>
@@ -851,11 +851,12 @@
                   </div>
                 </section>
               </div>
+            </form>
+            <div data-support-remote-workspace></div>
               <footer class="settings-form-footer support-report-footer">
                 <div class="admin-form-message support-report-message" role="status"></div>
-                <div class="admin-form-actions ui-action-row"><button class="ui-button ui-button-primary" type="button">Prepare support report</button></div>
+                <div class="admin-form-actions ui-action-row"><button class="ui-button ui-button-primary" type="submit" form="support-report-form">Prepare support report</button></div>
               </footer>
-            </form>
         </div>
       </div>
     </div>

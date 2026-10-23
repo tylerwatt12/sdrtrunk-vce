@@ -72,9 +72,16 @@ export function remoteSupportEnd(snapshot, locale = undefined) {
 }
 
 export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, metricCard, uiActionButton,
-  fetchDocument, signal, isCurrent = () => true, copyText = text => navigator.clipboard.writeText(text) }) {
+  fetchDocument, signal, isCurrent = () => true, copyText = text => navigator.clipboard.writeText(text),
+  heading = '', description = '' }) {
   const element = node('section', 'ui-section ui-settings-panel');
   element.dataset.remoteSupport = '';
+  if (heading || description) {
+    const header = node('header', 'settings-card-header');
+    if (heading) header.append(node('h2', 'settings-card-title', heading));
+    if (description) header.append(node('p', 'settings-card-description', description));
+    element.append(header);
+  }
   const form = node('form', 'admin-form settings-page-form ui-settings-form');
   const duration = node('select', 'ui-select');
   remoteSupportDurations.forEach(([seconds, label]) => {
@@ -140,13 +147,13 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
     const previousCode = snapshot?.code;
     snapshot = value;
     if (previousCode !== value.code) {
-      codeHost.replaceChildren(value.code ? metricCard('Give this code to Tyler', null,
+      codeHost.replaceChildren(value.code ? metricCard('Support code', null,
         value.code.replace(/\s/g, '').replace(/(.{3})(?=.)/g, '$1 '), { tone: 'neutral', icon: 'icon-lock' }) : '');
       copied.hidden = true;
     }
     codeRow.hidden = !value.code;
     copy.disabled = !value.code;
-    connection.textContent = value.connected ? 'Ready for Tyler.' : 'Connecting… VCE will keep trying.';
+    connection.textContent = value.connected ? 'Connected' : 'Connecting… VCE will keep trying.';
     end.textContent = remoteSupportEnd(value);
     sync();
   };

@@ -33,7 +33,7 @@
 @import url("./styles/features/aliases.css?v=21") layer(features);
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=7") layer(features);
-@import url("./styles/features/administration.css?v=13") layer(features);
+@import url("./styles/features/administration.css?v=14") layer(features);
 @import url("./styles/features/alerts.css?v=6") layer(features);
 @import url("./styles/features/retained-statistics.css?v=5") layer(features);
 @import url("./styles/features/call-matching.css?v=7") layer(features);

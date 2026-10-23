@@ -14,6 +14,7 @@ import { openSetupGuide } from '/assets/core/setup-guide.js?v=3';
 import { createGuideDefinition } from '/assets/guides/catalog.js?v=1';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=1';
+import { createRemoteSupportWorkspace } from '/assets/features/remote-support.js';
 
 document.querySelector('[data-qr-example]').append(enrollmentQrCanvas(document,
   'https://radioresolve.example.net/enroll?code=demo-id.demo-pairing-code-22'));
@@ -437,6 +438,51 @@ document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+
+if (view === 'admin-support' || view === 'gallery') {
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  const iconGlyph = (name) => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `#visual-${name === 'icon-chevron-down' ? 'icon-chevron' : name}`);
+    svg.append(use);
+    return svg;
+  };
+  const source = await fetch('/assets/app.js').then(response => response.text());
+  const names = ['formField', 'uiSelectFrame', 'metricCard', 'valueNode', 'uiActionButton'];
+  const functions = names.map((name) => {
+    const match = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
+    if (!match) throw new Error(`Missing production control ${name}`);
+    return match[0];
+  });
+  const controls = new Function('node', 'iconGlyph', 'METRIC_ICONS', 'number',
+    `${functions.join('\n')}\nreturn { ${names.join(', ')} };`)(node, iconGlyph, {}, String);
+  let snapshot = { enabled: false, connected: false, code: '', expires_at_ms: 0,
+    unlimited: false, can_start: true };
+  const workspace = createRemoteSupportWorkspace({ node, ...controls,
+    heading: 'Remote support (optional)',
+    description: 'Allow full remote access to this installation’s web interface.',
+    fetchDocument: async (_path, options) => {
+      if (options.method === 'POST') {
+        const change = JSON.parse(options.body);
+        snapshot = change.action === 'stop' ? { ...snapshot, enabled: false } :
+          { ...snapshot, enabled: true, code: '482719356',
+            expires_at_ms: change.duration_seconds ? Date.now() + change.duration_seconds * 1000 : 0,
+            unlimited: change.duration_seconds === 0 };
+      }
+      return new Response(JSON.stringify({ data: snapshot }), { headers: { 'Content-Type': 'application/json' } });
+    }
+  });
+  workspace.element.querySelector('.settings-card-header').classList.add('ui-settings-panel-header');
+  document.querySelector('[data-support-remote-workspace]').replaceWith(workspace.element);
+  await workspace.load({ initial: true });
+}
 
 if (view === 'focused-settings') {
   const { createMySettingsWorkspace } = await import('/assets/features/my-settings.js?v=1');

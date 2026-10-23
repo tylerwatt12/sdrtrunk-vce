@@ -52,7 +52,7 @@ import { createAudioDock } from './core/audio-dock.js?v=28';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
 import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
-import { createRemoteSupportWorkspace } from './features/remote-support.js?v=2';
+import { createRemoteSupportWorkspace } from './features/remote-support.js?v=3';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
@@ -31803,9 +31803,11 @@ function supportReportSelect(entries) {
 }
 
 function renderAdminSupportReport() {
+  const renderContext = captureRenderContext();
   pageTitleController.update({ pageTitle: 'Report a problem' });
   const body = node('div', 'admin-section-body support-report-settings');
   const form = node('form', 'admin-form settings-page-form support-report-form ui-settings-form-plain');
+  form.id = 'support-report-form';
   const title = node('input', 'ui-input');
   title.type = 'text';
   title.required = true;
@@ -31886,6 +31888,7 @@ function renderAdminSupportReport() {
 
   const generate = node('button', 'ui-button ui-button-primary', 'Prepare support report');
   generate.type = 'submit';
+  generate.setAttribute('form', form.id);
   const stop = node('button', 'ui-button ui-button-secondary', 'Stop');
   stop.type = 'button';
   stop.hidden = true;
@@ -31898,7 +31901,7 @@ function renderAdminSupportReport() {
   actions.append(generate, stop, download, submit);
   const footer = node('footer', 'settings-form-footer support-report-footer');
   footer.append(progressWrap, outputWrap, status, actions);
-  form.append(cardGrid, footer);
+  form.append(cardGrid);
 
   let jobId = null;
   let working = false;
@@ -32081,6 +32084,20 @@ function renderAdminSupportReport() {
 
   body.append(form);
   content.append(body);
+  void renderAdminRemoteSupport(body, renderContext, {
+    heading: 'Remote support (optional)',
+    description: 'Allow full remote access to this installation’s web interface.'
+  });
+  body.append(footer);
+}
+
+async function renderAdminRemoteSupport(host, renderContext, options = {}) {
+  const workspace = createRemoteSupportWorkspace({ node, formField, uiSelectFrame, metricCard, uiActionButton,
+    fetchDocument: jsonDocumentFetch, signal: renderContext.signal, isCurrent: () => renderIsCurrent(renderContext),
+    ...options });
+  host.append(workspace.element);
+  await workspace.load({ initial: true });
+  if (renderIsCurrent(renderContext)) pageInterval(() => workspace.load(), 5_000);
 }
 
 const CALL_MATCHING_HISTORY_LIMIT = 100;
@@ -33863,7 +33880,7 @@ function adminSettingsGroups() {
       { id: 'support', label: 'Report a problem', icon: 'bug', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Create and submit a support report.' },
       { id: 'remote-support', label: 'Remote Support', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Allow Tyler full access to this installation’s web interface.' }
+        description: 'Allow full remote access to this installation’s web interface.' }
     ] },
     { label: 'Decisions engine', items: [
       { id: 'call-matching', label: 'Call matching', icon: 'call-matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -33967,13 +33984,7 @@ async function renderAdmin() {
   else if (active === 'application-log') renderAdminApplicationLog(renderContext);
   else if (active === 'web-diagnostic-log') renderAdminWebDiagnosticLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
-  else if (active === 'remote-support') {
-    const workspace = createRemoteSupportWorkspace({ node, formField, uiSelectFrame, metricCard, uiActionButton,
-      fetchDocument: jsonDocumentFetch, signal: renderContext.signal, isCurrent: () => renderIsCurrent(renderContext) });
-    body.append(workspace.element);
-    await workspace.load({ initial: true });
-    if (renderIsCurrent(renderContext)) pageInterval(() => workspace.load(), 5_000);
-  }
+  else if (active === 'remote-support') await renderAdminRemoteSupport(body, renderContext);
   else if (active === 'display') {
     const display = node('div', 'admin-display-settings');
     content.append(display);
