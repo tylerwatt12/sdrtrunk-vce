@@ -1344,7 +1344,7 @@ public final class SetupWizard extends JDialog
             accept=this::completeAndContinue;
             return;
         }
-        paragraph("Help VCE decode signals efficiently on this computer. We’ll compare a few processing methods and save the fastest supported choices. This is not a computer score, and it won’t change your channels.");
+        paragraph("Help VCE decode signals efficiently on this computer. We’ll compare a few processing methods and save the fastest supported choices.");
         notice("Before you start", "Close other applications and pause downloads, games and backups. Leave this wizard open. A quiet computer gives more reliable results.",false);
         paragraph(pending + " checks to run · " + (manager.getCalibrationTypes().size()-pending) + " saved checks reused");
         details("Why are these checks needed?", manager.getPendingReason() + "\n\nOnly new, changed or missing checks run. Valid results are kept if you stop or retry. A different processor or Java version may require all checks again.");
