@@ -1582,7 +1582,12 @@ async function main() {
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 21, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 22, 'Every application table call must be audited');
+  const rrGuidePreparation = functionBinding(appSource, 'prepareRadioReferenceGuideSample');
+  assert.match(rrGuidePreparation, /return table\(rows, columns, emptyText, \{ \.\.\.options, controller, presentation: true \}\)/,
+    'RadioReference guide tables keep production columns and use isolated presentation layouts.');
+  assert.match(rrGuidePreparation, /controller\.widthObserver\?\.disconnect\(\)/,
+    'Leaving the RadioReference examples releases table observers.');
   const channelPatches = functionBinding(appSource, 'renderTrunkedChannel');
   assert.match(channelPatches, /'channel-patches', layoutMenuHost: directory.titleActions, controller: directory.tableController/,
     'Patch tables retain their stable type and section-owned column controls during Retry');

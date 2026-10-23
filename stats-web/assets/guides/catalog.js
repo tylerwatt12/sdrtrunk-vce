@@ -1,11 +1,12 @@
 import { definitions as routes } from '../core/routes.js?v=11';
 import { channelSetupSteps } from './pages/channel-setup.js?v=1';
 import { aliasesSteps } from './pages/aliases.js?v=1';
+import { radioReferenceSteps } from './pages/radioreference.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
-  'scan-lists': scanListsSteps });
+  'scan-lists': scanListsSteps, radioreference: radioReferenceSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -39,8 +40,8 @@ const pageOverviewCopy = Object.freeze({
     'Aliases give familiar names to talkgroups and radios. Their call handling settings choose recording, Scan List membership, and streaming.'],
   'scan-lists': ['From radio traffic to what you hear',
     'Scan Lists bring together the calls you want to hear, across your radio systems.'],
-  radioreference: ['Bring local radio information into VCE',
-    'Use RadioReference to find radio systems and import channel and talkgroup information. A Premium subscription provides access to imports.'],
+  radioreference: ['Bring radio information into VCE',
+    'Find receiving frequencies and talkgroup names in RadioReference, import them into VCE, and return here to keep that information current.'],
   alerts: ['Have important activity brought to your attention',
     'Choose radio activity or receiver conditions that should publish an alert. Group related alerts into topics that listeners can follow.'],
   streaming: ['Share received calls with other services',
@@ -59,7 +60,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));

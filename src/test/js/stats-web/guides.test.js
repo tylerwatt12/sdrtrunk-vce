@@ -17,7 +17,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -37,6 +37,7 @@ async function checkGuides(assetsRoot) {
     'The general welcome retains its own introduction and numbered progression.');
   assert.equal(createGuideDefinition('channel-setup').version, 3);
   assert.equal(createGuideDefinition('aliases').version, 5);
+  assert.equal(createGuideDefinition('radioreference').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -170,6 +171,113 @@ async function checkGuides(assetsRoot) {
     /sample preparation failed/);
   assert.deepEqual(released.splice(0), ['player'],
     'A failed page preparation releases the temporary player presentation.');
+  const radioReferenceTour = createGuideDefinition('radioreference', {
+    documentValue: targetDocument,
+    preparePlayer: options => { prepared.push(['player', options]); return () => released.push('player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const radioReferenceSections = ['overview', 'area-groups', 'sort', 'bookmark', 'bookmarks-button',
+    'saved-system', 'system-sections', 'site-button', 'site-import', 'channel-review-button',
+    'channel-preview', 'channel-complete-close', 'talkgroups-button', 'alias-list', 'comparison',
+    'select-update', 'import-selected', 'alias-preview', 'alias-complete-close'];
+  assert.deepEqual(radioReferenceTour.steps.map(step => step.id), radioReferenceSections,
+    'RadioReference follows browsing, a site import, and an existing Alias List update with visible opening and return actions.');
+  const rrStop = id => radioReferenceTour.steps.find(step => step.id === id);
+  assert.equal(radioReferenceTour.steps[0].title, 'Bring radio information into VCE');
+  assert.equal(radioReferenceTour.steps[0].prepare, undefined,
+    'The RadioReference concept overview leaves the real account, locality, and workspace untouched.');
+  assert.deepEqual(targetNames(rrStop('area-groups')), ['rr-area-county', 'rr-area-state', 'rr-area-national']);
+  assert.deepEqual(targetNames(rrStop('system-sections')), ['rr-sites', 'rr-talkgroups-button']);
+  assert.deepEqual(rrStop('system-sections').items.map(item => item.label),
+    ['Sites & Channels', 'Talkgroups & Aliases'], 'Receiving frequencies and alias identities get separate explanations.');
+  assert.deepEqual(rrStop('comparison').items.map(item => item.label), ['Not present', 'Different', 'Identical']);
+  assert.match(rrStop('alias-preview').paragraphs[0], /keeping your recording, Scan List, and streaming choices/,
+    'An update explains which listening settings remain in the operator’s control.');
+  for (const step of radioReferenceTour.steps.filter(step => !step.overview)) {
+    assert.deepEqual(step.samples, [{ id: 'radioreference-workspace', value: { section: step.id } }],
+      'Every RadioReference stop activates the same protected, temporary workspace lifecycle.');
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), [['player', { minimized: true }], ['radioreference', step.id, context]],
+      'The shared page preparation renders the real interface and import dialogs beneath the guide.');
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'player'],
+      'Leaving a RadioReference stop releases its page and owned dialogs before restoring the player.');
+  }
+  for (const [opener, target, destination] of [
+    ['bookmarks-button', 'rr-bookmarks-button', 'saved-system'],
+    ['saved-system', 'rr-saved-system', 'system-sections'],
+    ['site-button', 'rr-site-button', 'site-import'],
+    ['channel-review-button', 'rr-channel-review-button', 'channel-preview'],
+    ['channel-complete-close', 'rr-channel-complete-close', 'talkgroups-button'],
+    ['talkgroups-button', 'rr-talkgroups-button', 'alias-list'],
+    ['alias-list', 'rr-alias-list', 'comparison'],
+    ['select-update', 'rr-select-update', 'import-selected'],
+    ['import-selected', 'rr-import-selected', 'alias-preview']
+  ]) {
+    assert.deepEqual(targetNames(rrStop(opener)), [target],
+      `${opener} teaches only its own real opening, selection, or return control.`);
+    assert.equal(radioReferenceTour.steps.indexOf(rrStop(opener)) + 1,
+      radioReferenceTour.steps.indexOf(rrStop(destination)),
+      `${destination} follows the visible action that gets the operator there.`);
+  }
+  assert.deepEqual(targetNames(rrStop('site-import')), ['rr-site-import']);
+  assert.deepEqual(targetNames(rrStop('channel-preview')), ['rr-channel-preview', 'rr-channel-apply']);
+  assert.deepEqual(targetNames(rrStop('alias-preview')), ['rr-alias-preview', 'rr-alias-apply']);
+  assert.deepEqual(targetNames(rrStop('comparison')), ['rr-comparison']);
+  assert.equal(rrStop('back-results'), undefined, 'Desktop results stay beside the system; its hidden Back control is omitted.');
+  assert.deepEqual(targetNames(rrStop('alias-complete-close')), ['rr-alias-complete-close']);
+  assert.equal(radioReferenceTour.steps.at(-1).nextLabel, 'Finish');
+  const failedRadioReferencePreparation = createGuideDefinition('radioreference', {
+    preparePlayer: () => () => released.push('player'),
+    preparePage: () => { throw new Error('RadioReference sample preparation failed'); }
+  });
+  await assert.rejects(failedRadioReferencePreparation.steps.find(step => step.id === 'site-import').prepare({}),
+    /RadioReference sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['player'],
+    'A failed actual RadioReference dialog preparation cannot leave the player minimized.');
+  const failedRadioReferenceCleanup = createGuideDefinition('radioreference', {
+    preparePlayer: () => () => released.push('player'),
+    preparePage: () => () => { throw new Error('RadioReference cleanup failed'); }
+  });
+  const releaseFailedRadioReference = await failedRadioReferenceCleanup.steps[1].prepare({});
+  assert.throws(releaseFailedRadioReference, /RadioReference cleanup failed/);
+  assert.deepEqual(released.splice(0), ['player'],
+    'Even a failed workspace cleanup releases the player presentation.');
+  const { createRadioReferenceGuideData, RADIO_REFERENCE_GUIDE_IDS: rrIds } =
+    await load('guides/radioreference-presentation.js');
+  const rrData = createRadioReferenceGuideData();
+  const rrExampleApi = '/api/v1/admin/radioreference';
+  const comparisonPath = `${rrExampleApi}/systems/talkgroups/catalog?system_id=${rrIds.system}&alias_list_id=${rrIds.aliasList}`;
+  const sampleComparison = await rrData.requestJson(comparisonPath);
+  assert.deepEqual(sampleComparison.items.map(row => row.status), ['DIFFERENT', 'NOT_PRESENT', 'IDENTICAL'],
+    'The real comparison table receives one changed, one new, and one current talkgroup.');
+  sampleComparison.items[0].talkgroup.alpha_tag = 'Changed outside the fixture';
+  assert.equal((await rrData.requestJson(comparisonPath)).items[0].talkgroup.alpha_tag, 'Sheriff Dispatch 1',
+    'An actual renderer cannot mutate the shared tutorial examples.');
+  const samplePreview = await rrData.requestJson(`${rrExampleApi}/imports/talkgroups/preview`, {
+    method: 'POST', body: { alias_list_id: rrIds.aliasList, system_id: rrIds.system, talkgroup_ids: [rrIds.sheriff] }
+  });
+  assert.equal(samplePreview.rows.length, 1, 'The update preview follows the selected talkgroup instead of importing every example.');
+  assert.deepEqual([samplePreview.add, samplePreview.update, samplePreview.unchanged], [0, 1, 0]);
+  assert.deepEqual(samplePreview.rows[0].changes,
+    [{ field: 'name', before: 'Sheriff Dispatch', after: 'Sheriff Dispatch 1' }]);
+  await rrData.requestJson(`${rrExampleApi}/imports/${samplePreview.preview_id}/apply`, { method: 'POST' });
+  assert.equal((await rrData.requestJson(comparisonPath)).items[0].status, 'IDENTICAL',
+    'The completion dialog and refreshed comparison use the same temporary import result.');
+  assert.equal((await createRadioReferenceGuideData().requestJson(comparisonPath)).items[0].status, 'DIFFERENT',
+    'A fresh presentation restores its own example rather than inheriting a previous update.');
+  await assert.rejects(rrData.requestJson('/api/v1/admin/channels', { method: 'POST' }),
+    /Unsupported RadioReference example request/,
+    'An unexpected operation fails within the sample transport rather than reaching a real receiver.');
+  const closedExamples = new AbortController();
+  const abortableRadioReferenceData = createRadioReferenceGuideData({ signal: closedExamples.signal });
+  closedExamples.abort();
+  await assert.rejects(abortableRadioReferenceData.requestJson(comparisonPath), error => error.name === 'AbortError',
+    'Dismissed examples cannot continue a pending interface preparation.');
   const scanListsTour = createGuideDefinition('scan-lists', {
     preparePlayer: (options) => { prepared.push(['player', options]); return () => released.push('player'); },
     preparePage: async (view, section, context) => {
@@ -299,6 +407,37 @@ async function checkGuides(assetsRoot) {
   assert.equal(pagePreparation[0][0], 'aliases', 'The controller forwards page preparation to authored guides.');
   assert.equal(pagePreparation[0][1], 'lists');
   pagePrepared.controller.destroy();
+
+  const firstRadioReferenceVisit = makeHarness({ context: { view: 'radioreference' }, storage: {
+    getItem: key => /:welcome:1$|:radioreference:[12]$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await firstRadioReferenceVisit.controller.pageReady();
+  assert.equal(firstRadioReferenceVisit.shown.at(-1).options.id, 'radioreference');
+  assert.equal(firstRadioReferenceVisit.shown.at(-1).options.version, 3,
+    'An earlier RadioReference placeholder cannot suppress its authored tour.');
+  assert.equal(firstRadioReferenceVisit.shown.at(-1).options.steps[0].overview, true);
+  await firstRadioReferenceVisit.controller.pageReady();
+  assert.equal(firstRadioReferenceVisit.shown.length, 1,
+    'A successful RadioReference render cannot stack another automatic tour.');
+  firstRadioReferenceVisit.finish();
+  await firstRadioReferenceVisit.controller.openPage();
+  assert.equal(firstRadioReferenceVisit.shown.at(-1).options.id, 'radioreference',
+    'The question-mark action replays the RadioReference tour after completion.');
+  firstRadioReferenceVisit.controller.destroy();
+
+  const completedRadioReference = makeHarness({ context: { view: 'radioreference' }, storage: {
+    getItem: key => /:welcome:1$|:radioreference:3$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await completedRadioReference.controller.pageReady();
+  assert.equal(completedRadioReference.shown.length, 0,
+    'Completing the current RadioReference tour keeps future visits quiet.');
+  const restrictedRadioReference = makeHarness({ context: { view: 'radioreference',
+    canView: view => view !== 'radioreference', guide: 'radioreference' } });
+  assert.equal(await restrictedRadioReference.controller.pageReady(), false);
+  assert.equal(restrictedRadioReference.shown.length, 0,
+    'A requested RadioReference tour preserves the production route’s access restrictions.');
 
   const firstRun = makeHarness();
   await firstRun.controller.pageReady();
@@ -450,6 +589,13 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(replayScanLists.navigations, ['scan-lists']);
   await replayScanLists.controller.pageReady();
   assert.equal(replayScanLists.shown.at(-1).options.id, 'scan-lists');
+  const replayRadioReference = makeHarness({ context: { view: 'dashboard', guide: 'radioreference' } });
+  await replayRadioReference.controller.pageReady();
+  assert.deepEqual(replayRadioReference.navigations, ['radioreference']);
+  await replayRadioReference.controller.pageReady();
+  assert.equal(replayRadioReference.shown.at(-1).options.id, 'radioreference',
+    'A named RadioReference URL navigates before presenting its actual-interface sample tour.');
+  assert.equal(replayRadioReference.context.guide, null);
   const restrictedWelcome = makeHarness({ context: { canSetup: false } });
   await restrictedWelcome.controller.pageReady();
   assert.equal(restrictedWelcome.shown[0].options.steps.at(-1).nextLabel, 'Finish');

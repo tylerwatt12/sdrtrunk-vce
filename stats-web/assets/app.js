@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=11';
+import { createGuideController } from './guides/controller.js?v=12';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7865,7 +7865,102 @@ async function prepareChannelGuideSample(section, context) {
   } catch (error) { restore(); throw error; }
 }
 
+async function prepareRadioReferenceGuideSample(section, context) {
+  if (context.signal.aborted) return () => {};
+  const renderContext = captureRenderContext();
+  const originalNodes = [...content.childNodes];
+  const scrollState = [content, document.scrollingElement, ...content.querySelectorAll('*')]
+    .filter(element => element && (element === content || element === document.scrollingElement ||
+      element.scrollTop || element.scrollLeft))
+    .map(element => [element, element.scrollTop, element.scrollLeft]);
+  const holding = node('div');
+  holding.hidden = true;
+  holding.inert = true;
+  document.body.append(holding);
+  holding.attachShadow({ mode: 'closed' }).append(...originalNodes);
+  const releases = [];
+  const modals = [];
+  const tables = new Set();
+  let workspace = null;
+  let closed = false;
+  const restore = () => {
+    if (closed) return;
+    closed = true;
+    context.signal.removeEventListener('abort', restore);
+    const failures = [];
+    const safely = action => { try { action(); } catch (error) { failures.push(error); } };
+    safely(() => workspace?.destroy());
+    releases.splice(0).reverse().forEach(release => safely(release));
+    modals.reverse().forEach(modal => safely(() => modal.close()));
+    tables.forEach(controller => {
+      safely(() => cleanupTableLayoutMenu(controller));
+      safely(() => controller.widthObserver?.disconnect());
+    });
+    if (renderIsCurrent(renderContext)) {
+      safely(() => content.replaceChildren(...originalNodes));
+      scrollState.forEach(([element, top, left]) => safely(() => {
+        element.scrollTop = top;
+        element.scrollLeft = left;
+      }));
+    }
+    holding.remove();
+    if (failures.length) console.error('Unable to finish cleaning up the RadioReference guide example.', failures[0]);
+  };
+  context.signal.addEventListener('abort', restore, { once: true });
+  try {
+    const [{ createRadioReferenceImportWorkspace }, { createRadioReferenceGuideData }] = await Promise.all([
+      import('./features/radioreference-import.js?v=33'),
+      import('./guides/radioreference-presentation.js?v=1')
+    ]);
+    if (closed || !context.isCurrent()) { restore(); return restore; }
+    const sample = createRadioReferenceGuideData({ signal: context.signal });
+    const sampleRequest = async (...args) => {
+      if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+      const value = await sample.requestJson(...args);
+      if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+      return value;
+    };
+    const openSampleModal = (title, body, options = {}) => {
+      if (closed || context.signal.aborted || !context.isCurrent()) return null;
+      const modal = openReadOnlyModal(title, body, { ...options, guideTarget: true });
+      if (modal) modals.push(modal);
+      return modal;
+    };
+    const closeSampleModal = () => [...modals].reverse()
+      .find(modal => modal.dialog.isConnected)?.close();
+    workspace = createRadioReferenceImportWorkspace(radioReferenceWorkspaceDependencies({
+      guideMode: true, requestJson: sampleRequest, localityCache: sample.localityCache,
+      openReadOnlyModal: openSampleModal, closeReadOnlyModal: closeSampleModal,
+      table: (rows, columns, emptyText, options = {}) => {
+        const controller = options.controller || {};
+        tables.add(controller);
+        return table(rows, columns, emptyText, { ...options, controller, presentation: true });
+      },
+      createAliasListPopupTrigger: options => aliasAdminAllowed() ?
+        buildAliasListPopupTrigger({ node, iconGlyph, uiPill, requestJson: sampleRequest,
+          openReadOnlyModal: openSampleModal }, options) : document.createDocumentFragment()
+    }));
+    const surface = createRadioReferencePageSurface();
+    surface.loadingState.hidden = true;
+    surface.workspace.hidden = false;
+    surface.workspace.append(workspace.element);
+    surface.page.dataset.guideExample = 'radioreference';
+    content.replaceChildren(radioReferencePageHeader(), surface.page);
+    await workspace.setConfiguration(sample.configuration);
+    if (closed || !context.isCurrent()) { restore(); return restore; }
+    const release = await workspace.prepareGuide(section, context);
+    if (closed || !context.isCurrent()) { release?.(); restore(); return restore; }
+    if (typeof release === 'function') releases.push(release);
+    releases.push(guideSampleData.register('radioreference-workspace', () => {}, { root: surface.page }));
+    modals.filter(modal => modal.dialog.isConnected).forEach(modal => {
+      releases.push(guideSampleData.register('radioreference-workspace', () => {}, { root: modal.dialog }));
+    });
+    return restore;
+  } catch (error) { restore(); throw error; }
+}
+
 async function preparePageGuideSample(view, section, context) {
+  if (view === 'radioreference') return prepareRadioReferenceGuideSample(section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -28092,12 +28187,11 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
   return true;
 }
 
-async function renderAdminRadioReferenceSettings() {
-  const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=32');
-  if (!renderIsCurrent(renderContext)) return;
-  if (!beginPage(renderContext, pageHeader('RadioReference',
-    'Browse systems and agencies, compare changes, and import'))) return;
+function radioReferencePageHeader() {
+  return pageHeader('RadioReference', 'Browse systems and agencies, compare changes, and import');
+}
+
+function createRadioReferencePageSurface() {
   const page = node('div', 'radioreference-page');
   const loadingState = node('div', 'ui-feedback ui-feedback-loading',
     'Checking saved RadioReference sign-in…');
@@ -28117,6 +28211,27 @@ async function renderAdminRadioReferenceSettings() {
   workspaceHeader.append(accountStatus, settingsButton);
   workspace.append(workspaceHeader);
   page.append(loadingState, gate, workspace);
+  return { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton };
+}
+
+function radioReferenceWorkspaceDependencies(overrides = {}) {
+  return {
+    node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table, browsingWorkflows,
+    openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
+    href, anchor, modalFooter: aliasModalFooter, createAliasListPopupTrigger: aliasListPopupTrigger,
+    directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
+    mutationTimeoutMs: 65_000,
+    ...overrides
+  };
+}
+
+async function renderAdminRadioReferenceSettings() {
+  const renderContext = captureRenderContext();
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=33');
+  if (!renderIsCurrent(renderContext)) return;
+  if (!beginPage(renderContext, radioReferencePageHeader())) return;
+  const { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton } =
+    createRadioReferencePageSurface();
   content.append(page);
   const accountForm = node('form', 'admin-form radioreference-account-form editor-workspace');
   const userName = node('input', 'ui-input');
@@ -28276,14 +28391,9 @@ async function renderAdminRadioReferenceSettings() {
     modal.focus(state.disabled ? country : state);
   });
 
-  const importWorkspace = createRadioReferenceImportWorkspace({
-    node, iconGlyph, metricCard, formField, uiSelectFrame, uiPill, uiSegmentedControl, table, browsingWorkflows,
-    openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
-    href, anchor, modalFooter: aliasModalFooter, createAliasListPopupTrigger: aliasListPopupTrigger,
-    directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
-    mutationTimeoutMs: 65_000,
+  const importWorkspace = createRadioReferenceImportWorkspace(radioReferenceWorkspaceDependencies({
     initialAliasListId: route.get('from') === 'aliases' ? route.get('list') : null
-  });
+  }));
   workspace.append(importWorkspace.element);
 
   const updateAccount = (next, initializeUserName = false) => {
