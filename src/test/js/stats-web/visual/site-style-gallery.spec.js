@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { galleryViews, gallerySelector, presentations } = require('./fixtures/site-style-cases.cjs');
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 test('style matrix includes every registered gallery composition', () => {
   const source = fs.readFileSync(path.join(__dirname, 'fixtures/design-system-gallery.js'), 'utf8');
@@ -97,6 +98,7 @@ for (const view of galleryViews) {
         }
       }
       await expectNoHorizontalOverflow(page);
+      await expectContrast(page, { rootSelector: gallerySelector(view), reportName: `gallery-${view}-${presentation.name}` });
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
         if (view === 'scanner' && presentation.viewport.width <= 680) {
           await expect(page).toHaveScreenshot(`${view}-${presentation.name}.png`, { fullPage: true });

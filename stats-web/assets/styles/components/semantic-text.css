@@ -27,7 +27,6 @@
 }
 
 .ui-content-idle { filter: grayscale(1); }
-.ui-content-idle > * { opacity: var(--content-idle-opacity); }
 
 a.ui-link-text {
   color: inherit;

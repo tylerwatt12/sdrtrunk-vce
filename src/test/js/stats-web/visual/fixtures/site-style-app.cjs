@@ -42,6 +42,41 @@ const aliases = [{ alias_id: 101, alias_list_id: 1, name: 'Fire Dispatch', group
   matcher_type: 'TALKGROUP', identifier_display: 'TG 1201' },
 { alias_id: 102, alias_list_id: 1, name: 'Engine 4', group: 'Field units',
   matcher_type: 'RADIO', identifier_display: 'Radio 30914' }];
+const inventoryAliases = aliases.map((alias, index) => ({ ...alias,
+  identity_type: index === 0 ? 'talkgroup' : 'radio', matcher_label: index === 0 ? 'Talkgroup' : 'Radio',
+  identity_display: index === 0 ? '1201' : '30914', value: index === 0 ? 1201 : 30914,
+  logical_call_count: index === 0 ? 128 : 12, signaling_observation_count: index === 0 ? 180 : 36,
+  first_evidence_ms: now - 86400000, last_evidence_ms: now, metrics_state: 'tracked',
+  entity_ref: { kind: index === 0 ? 'talkgroup' : 'radio', radio_system_key: systemKey,
+    identity_key: index === 0 ? groupKey : radioKey } }));
+const unassignedIdentities = [{ ...identity, group_identity_id: 1301, native_id: 1301,
+  group_identity_kind: 'talkgroup', logical_call_count: 3,
+  entity_ref: { kind: 'talkgroup', radio_system_key: systemKey, identity_key: 'v1-g-00001-001-1301' },
+  channel_entity_ref: { kind: 'channel', key: channelId } }];
+const dashboard = { last_seen_ms: now, call_activity: { totals,
+  from_ms: now - 86400000, to_ms: now, bucket_ms: 3600000,
+  metric_coverage: { logical_call_count: 'COLLECTED', recorded_logical_call_count: 'COLLECTED',
+    stream_submitted_logical_call_count: 'COLLECTED' },
+  coverage: [{ protocol: 'P25', channel_kind: 'TRUNKED', status: 'COLLECTED' },
+    { protocol: 'NBFM', channel_kind: 'CONVENTIONAL', status: 'COLLECTED' }],
+  series: [
+    { time_ms: now - 10800000, protocol: 'P25', channel_kind: 'TRUNKED', logical_call_count: 400,
+      recorded_logical_call_count: 30, stream_submitted_logical_call_count: 30 },
+    { time_ms: now - 7200000, protocol: 'P25', channel_kind: 'TRUNKED', logical_call_count: 500,
+      recorded_logical_call_count: 40, stream_submitted_logical_call_count: 40 },
+    { time_ms: now - 3600000, protocol: 'P25', channel_kind: 'TRUNKED', logical_call_count: 389,
+      recorded_logical_call_count: 40, stream_submitted_logical_call_count: 40 },
+    { time_ms: now - 3600000, protocol: 'NBFM', channel_kind: 'CONVENTIONAL', logical_call_count: 198,
+      recorded_logical_call_count: 18, stream_submitted_logical_call_count: 18 }
+  ] },
+  source_activity_24h: [{ source_label: 'County Fireground', protocol: 'NBFM', channel_kind: 'CONVENTIONAL',
+    frequency_hz: 154280000, logical_call_count: 198, recorded_logical_call_count: 18,
+    stream_submitted_logical_call_count: 18,
+    entity_ref: { kind: 'channel', key: '22222222-2222-4222-8222-222222222222' } }],
+  top_destinations: [{ ...group, identity_kind: 'talkgroup', identity_id: 1201,
+    entity_ref: { kind: 'talkgroup', radio_system_key: systemKey, identity_key: groupKey } }],
+  top_sources: [{ ...radio, identity_kind: 'radio', identity_id: 30914,
+    entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: radioKey } }] };
 const quality = { ...channel, decode_health_pct: 98.6, signal_dbfs: -38.5,
   average_signal_dbfs: -39.2, minimum_signal_dbfs: -42, maximum_signal_dbfs: -37,
   sample_count: 12, quality_frequency_hz: 851012500, frequency_hz: 851012500,
@@ -65,9 +100,24 @@ const stream = { configuration_id: 'county-calls', name: 'County Calls', provide
   provider_label: 'Broadcastify Calls', enabled: true, state: 'CONNECTED', state_label: 'Connected',
   queued: 3, sent: 128, aged_off: 0, errors: 0, last_error: null, attention: false };
 const health = { started_at_ms: now - 3600000, generated_at_ms: now,
+  computer: { application: 'SDRTrunk VCE', version: '0.6.2', update_track: 'Nightly', update_build: 'fixture-build',
+    build_timestamp: '2026-10-01T11:00:00Z', operating_system: 'Synthetic OS', operating_system_version: '1.0',
+    architecture: 'aarch64', cpu_model: 'Synthetic workstation', processors_available: 8,
+    installed_memory_bytes: 17179869184, system_memory_bytes: 16106127360, jvm_memory_limit_bytes: 4294967296,
+    java_version: '25', java_vendor: 'OpenJDK', application_uptime_ms: 3600000 },
   summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
-  active: [], resolved: [], measurements: [{ id: 'tuners', title: 'Tuners', rows: [
-    { severity: 'healthy', scope: 'Airspy R2', label: 'Active channels', value: 1, unit: 'channels' } ] }] };
+  active: [], resolved: [], measurements: [
+    { id: 'host', title: 'Computer resources', rows: [
+      { severity: 'healthy', scope: 'VCE', label: 'VCE processor use', value: 12.5, unit: '%' },
+      { severity: 'healthy', scope: 'VCE', label: 'VCE memory use', value: 25, unit: '%',
+        detail: '1.0 GiB of 4.0 GiB' },
+      { severity: 'healthy', scope: 'Computer', label: 'Free storage space', value: 75, unit: '%',
+        detail: '150 GiB available' }
+    ] },
+    { id: 'tuners', title: 'Tuners', rows: [
+      { severity: 'healthy', scope: 'Airspy R2', label: 'Active channels', value: 1, unit: 'channels' }
+    ] }
+  ] };
 const alertTopics = [{ id: 'fire', name: 'Fire activity', description: 'Dispatch and tactical activity.',
   visible: true, enabled: true, built_in: false, rule_count: 1, subscription_count: 4 },
 { id: 'administrator-alerts', name: 'Administrator alerts', description: 'Tuner and system health alerts.',
@@ -292,6 +342,16 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       summary_active: true, detailed_history_configured: true, detailed_history_active: true },
       database: { database_exists: true, database_bytes: 1048576, detailed_history_available: true, logger: [] } });
     if (p === '/api/v1/receiver-health') return respond(health);
+    if (p === '/api/v1/remote-support') return respond({ enabled: false, connected: false, code: '',
+      expires_at_ms: 0, unlimited: false, can_start: true });
+    if (p === '/api/v1/dashboard') return respond(dashboard);
+    if (p === '/api/v1/activity/actions') return respond({ rows: [
+      { action: 'GRANT', observation_count: 12 }, { action: 'REGISTER', observation_count: 4 } ] });
+    if (p === '/api/v1/activity/radios') return route.fulfill({ json: { data: [{ ...radio,
+      radio_entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: radioKey },
+      observation_count: 10 }], meta: { limit: 100, offset: 0, total_count: 1, has_more: false,
+      action_observation_count: 12, retained_observation_count: 12,
+      identified_observation_count: 10, unknown_source_observation_count: 2 } } });
     if (p === '/api/v1/application-log') return respond(
       url.searchParams.get('log') === 'previous' ? previousApplicationLog : applicationLog);
     if (p === '/api/v1/admin/web-diagnostic-log') return respond({ enabled: false, active: false,
@@ -355,6 +415,13 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/admin/recordings/status') return respond({ catalog: { call_count: 128, bytes: 1843200 },
       transcription: { pending: 3, completed: 125, failed: 0, active: false } });
     if (p === '/api/v1/alias-lists' || p === '/api/v1/identities/lists') return respond(pageOf([list]));
+    if (p === '/api/v1/identities/lists/1/overview') return respond({ alias_list: list,
+      totals: { configured_alias_count: 2, activity_eligible_alias_count: 2, active_alias_count: 2,
+        zero_call_alias_count: 0, never_heard_alias_count: 0 }, correlated_radio_system_count: 1,
+      channels: [{ ...channel, channel_entity_ref: { kind: 'channel', key: channelId } }] });
+    if (p === '/api/v1/identities/lists/1/aliases') return respond(pageOf(inventoryAliases));
+    if (p === '/api/v1/identities/lists/1/unassigned') return respond(pageOf(unassignedIdentities,
+      Number(url.searchParams.get('limit')) || 100));
     if (p === '/api/v1/admin/alias-lists') return respond({ revision: 1, alias_lists: [list] });
     if (p === '/api/v1/aliases') return respond(pageOf(aliases));
     if (p === '/api/v1/admin/aliases/options') return respond({ revision: 1, alias_list: list,

@@ -14,6 +14,11 @@
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
+:where(.ui-input, .ui-textarea, .ui-search input)::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
 .ui-select {
   appearance: none;
   padding-right: 36px;
@@ -811,7 +816,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--radius-control);
 }
@@ -1167,7 +1172,7 @@
   gap: var(--space-2);
   padding: var(--space-3);
   color: var(--ink);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border-radius: var(--radius-control);
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -1222,7 +1227,7 @@ a.ui-link-tile:focus-visible {
   justify-content: space-between;
   gap: var(--space-3);
   padding: 10px 12px;
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--radius-control);
 }
@@ -1487,7 +1492,7 @@ a.ui-link-tile:focus-visible {
 .ui-notice {
   padding: 11px 13px;
   color: var(--ink);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 1px solid transparent;
   border-radius: var(--ui-control-radius, var(--radius-control));
   line-height: 1.45;
@@ -1530,7 +1535,7 @@ a.ui-link-tile:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--radius-control);
 }
@@ -1574,7 +1579,7 @@ a.ui-link-tile:focus-visible {
   padding: var(--space-5);
   color: var(--muted);
   text-align: center;
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
 }

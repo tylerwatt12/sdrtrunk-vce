@@ -1196,7 +1196,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     toolbar.append(selectAll);
     const list = node('div', 'spectrum-search-system-list');
     groupedCandidates(candidates()).forEach((entry) => {
-      const section = node('section', 'ui-surface spectrum-search-system-group');
+      const section = node('section', 'spectrum-search-system-group');
       const sectionHeader = node('header', 'spectrum-search-system-header');
       const groupCheck = node('input', 'ui-selection-check');
       groupCheck.type = 'checkbox';

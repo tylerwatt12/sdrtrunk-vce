@@ -46,7 +46,7 @@
   --icon-action-size: var(--audio-action-size);
   color: var(--audio-ink);
   background: var(--audio-surface);
-  border-color: var(--audio-line);
+  border-color: var(--interactive-border);
   border-radius: var(--radius-control);
   box-shadow: none;
 }
@@ -66,7 +66,7 @@
   max-width: 100%;
   gap: var(--audio-source-gap);
   padding: var(--audio-source-inset);
-  border-color: var(--audio-line);
+  border-color: var(--interactive-border);
   border-radius: var(--radius-compact);
   background: var(--audio-surface);
   box-shadow: none;
@@ -95,7 +95,7 @@
   padding: var(--audio-source-padding-y) var(--audio-source-picker-end-padding) var(--audio-source-padding-y) var(--audio-source-padding-x);
   color: var(--audio-ink);
   background-color: var(--audio-surface);
-  border-color: var(--audio-line);
+  border-color: var(--interactive-border);
   border-radius: var(--radius-compact);
   font-size: var(--audio-source-font-size);
   font-weight: var(--font-weight-control);
@@ -166,7 +166,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--audio-volume-text, var(--transport-muted));
+  color: var(--audio-volume-text, var(--audio-muted));
   font-size: var(--font-size-label);
 }
 
@@ -184,7 +184,7 @@
   height: var(--control-height-comfortable);
   flex: 1 1 auto;
   margin: 0;
-  accent-color: var(--audio-volume-accent, var(--transport-accent));
+  accent-color: var(--audio-volume-accent, var(--audio-accent));
 }
 
 .ui-audio-volume-output {

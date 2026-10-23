@@ -69,11 +69,6 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  opacity: 0.62;
-}
-
-.activity-series-button.active {
-  opacity: 1;
 }
 
 .activity-series-swatch {
@@ -86,13 +81,11 @@
   color: inherit;
   font-weight: var(--font-weight-control);
   font-variant-numeric: tabular-nums;
-  opacity: .88;
 }
 
 .activity-series-status {
   color: inherit;
   font-size: var(--font-size-micro);
-  opacity: .8;
 }
 
 .activity-series-button:disabled {

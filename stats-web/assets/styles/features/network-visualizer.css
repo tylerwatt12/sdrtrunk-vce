@@ -26,15 +26,6 @@ body[data-view="network-visualizer"] .content {
   padding: var(--space-3);
 }
 
-.network-visualizer-layout,
-.network-visualizer-events {
-  --network-denial: var(--chart-denial);
-  --network-check: var(--chart-check);
-  --network-emergency: var(--chart-emergency);
-  --network-page: var(--chart-page);
-  --network-busy: var(--chart-busy);
-}
-
 .network-visualizer-layout {
   --network-focus-motion: 180ms;
   min-width: 0;
@@ -170,7 +161,7 @@ body[data-view="network-visualizer"] .content {
   white-space: nowrap;
   border: 1px solid color-mix(in srgb, var(--network-system) 34%, transparent);
   border-radius: var(--radius-compact);
-  background: color-mix(in srgb, var(--network-panel) 74%, transparent);
+  background: var(--network-panel);
   box-shadow: var(--network-label-shadow);
   translate: -50% -50%;
   will-change: transform, opacity, filter;
@@ -265,6 +256,7 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-scope-title {
+  --muted: var(--network-space-muted);
   top: var(--space-3);
   left: 50%;
   max-width: min(620px, 58%);
@@ -287,7 +279,7 @@ body[data-view="network-visualizer"] .content {
   max-width: min(var(--network-scope-max-width), calc(100% - 32px));
   padding: var(--space-2) var(--space-3);
   text-align: center;
-  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+  border-color: color-mix(in srgb, var(--network-system) 68%, transparent);
   border-radius: var(--radius-control);
   translate: -50% 0;
   transition: opacity var(--network-focus-motion) ease, translate var(--network-focus-motion) ease;
@@ -300,7 +292,7 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-auto-focus-kicker {
-  color: var(--accent);
+  color: var(--network-system);
   font-size: var(--font-size-label);
   font-weight: var(--font-weight-heading);
 }
@@ -368,8 +360,8 @@ body[data-view="network-visualizer"] .content {
   left: 50%;
   max-width: min(580px, 80%);
   padding: var(--space-2) var(--space-3);
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 62%, transparent);
+  color: var(--network-arrival);
+  border-color: color-mix(in srgb, var(--network-arrival) 62%, transparent);
   border-radius: var(--radius-control);
   translate: -50% 0;
 }

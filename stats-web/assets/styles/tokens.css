@@ -2,7 +2,8 @@
 :root {
   --ui-panel-fill: var(--surface);
   --ui-tile-fill: var(--surface-2);
-  --ui-inset-fill: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+  --ui-content-fill: var(--ui-panel-fill);
+  --ui-inset-fill: var(--ui-panel-fill);
   --main-page-width: 1120px;
   --page-nav-tab-rule: 3px;
   --quality-meter-height: 4px;
@@ -128,7 +129,7 @@
   --surface: #ffffff;
   --surface-2: #f5f7f9;
   --ink: #18212a;
-  --muted: #65717d;
+  --muted: #5c6874;
   --line: #c9d1d8;
   --line-dark: #9ba8b3;
   --header: #202a33;
@@ -230,10 +231,15 @@
   --network-arrival: #ffc366;
   --network-tx: #60df98;
   --network-activity: #80bfe5;
+  --network-emergency: #ff7d72;
+  --network-denial: #f38eae;
+  --network-check: #d2a06d;
+  --network-page: #bc91c1;
+  --network-busy: #e6a17f;
   --network-selected: #ffffff;
   --network-encrypted: #de8cbb;
   --network-ambiguous: #a997d4;
-  --network-overlay: rgb(6 14 22 / 72%);
+  --network-overlay: rgb(6 14 22 / 94%);
   --network-panel: rgb(14 25 35 / 94%);
   --network-panel-line: rgb(145 179 194 / 32%);
   --network-shadow: 0 20px 55px rgb(0 0 0 / 36%);
@@ -259,7 +265,7 @@
   --access-muted: #b7cbd0;
   --access-field-surface: #0a1b25;
   --access-field-hover: #102631;
-  --access-field-border: #365560;
+  --access-field-border: #64808b;
   --access-accent-soft: #163a39;
   --access-error: #ff8ea8;
   --access-panel-border: rgb(147 207 208 / 19%);
@@ -299,7 +305,7 @@
   --access-mobile-panel-width: 360px;
   --access-mobile-panel-padding: 29px 25px 27px;
   --access-mobile-wordmark-width: 320px;
-  --interactive-border: #8b9aa7;
+  --interactive-border: #7b8b9a;
   --focus-ring: #16877d;
   --signal-fair: #0b7168;
   --signal-excellent: color-mix(in srgb, var(--success) 72%, var(--signal-fair));
@@ -540,7 +546,7 @@
   --network-selected: #ffffff;
   --network-encrypted: #f0a2cf;
   --network-ambiguous: #baa9eb;
-  --network-overlay: rgb(4 10 16 / 76%);
+  --network-overlay: rgb(4 10 16 / 94%);
   --network-panel: rgb(10 18 27 / 95%);
   --network-panel-line: rgb(150 191 207 / 28%);
   --network-shadow: 0 22px 62px rgb(0 0 0 / 52%);
@@ -556,7 +562,7 @@
   --surface: oklch(100% 0 var(--theme-chrome-hue));
   --surface-2: oklch(97% 0.006 var(--theme-chrome-hue));
   --ink: oklch(26% 0.009 var(--theme-chrome-hue));
-  --muted: oklch(50% 0.009 var(--theme-chrome-hue));
+  --muted: oklch(47% 0.009 var(--theme-chrome-hue));
   --line: oklch(84% 0.009 var(--theme-chrome-hue));
   --line-dark: oklch(72% 0.012 var(--theme-chrome-hue));
   --header: oklch(28% 0.012 var(--theme-chrome-hue));
@@ -585,7 +591,7 @@
   --table-column-rule: oklch(91% 0.006 var(--theme-chrome-hue));
   --table-hover: oklch(97% 0.012 var(--theme-hue));
   --chart-grid: oklch(88% 0.022 var(--theme-hue));
-  --interactive-border: oklch(65% 0.018 var(--theme-chrome-hue));
+  --interactive-border: oklch(61% 0.018 var(--theme-chrome-hue));
   --focus-ring: oklch(47% 0.115 var(--theme-hue));
   --access-wire-color: oklch(84% 0.08 var(--theme-hue));
   --access-grid-color: oklch(78% 0.085 var(--theme-secondary-hue));
@@ -593,7 +599,7 @@
   --access-wire-glow: oklch(77% 0.1 var(--theme-hue));
   --access-field-surface: oklch(25% 0.022 var(--theme-chrome-hue));
   --access-field-hover: oklch(32% 0.027 var(--theme-chrome-hue));
-  --access-field-border: oklch(48% 0.024 var(--theme-chrome-hue));
+  --access-field-border: oklch(64% 0.024 var(--theme-chrome-hue));
   --access-accent-soft: oklch(35% 0.045 var(--theme-hue));
   --access-accent: oklch(78% 0.1 var(--theme-hue));
   --access-accent-hover: oklch(84% 0.08 var(--theme-hue));

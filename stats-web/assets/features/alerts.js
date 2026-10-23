@@ -1109,7 +1109,7 @@ export function createAlertsWorkspace(deps) {
     const clearCards = () => { alertCards.forEach(card => card.close()); alertCards.clear(); };
     cleanupPublicHistory = () => { historyClosed = true; generation++; clearCards(); };
     const createAlertCard = event => {
-      const card = node('article', 'alerts-event ui-surface ui-section-body');
+      const card = node('article', 'alerts-event ui-surface ui-surface-soft ui-section-body');
       card.dataset.alertId = event.id;
       const when = event.occurred_at ?? event.created_at_ms;
       const timestamp = node('time', 'ui-field-detail', formatTime(when));

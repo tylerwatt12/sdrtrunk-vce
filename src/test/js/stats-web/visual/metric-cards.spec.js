@@ -23,6 +23,13 @@ test.beforeAll(async () => {
 });
 
 async function mockEntities(page, theme) {
+  const messageTypes = [
+    [2, 'ACTIVE', 'Active channel', 'The system reported activity on a traffic channel.'],
+    [13, 'JOIN', 'Talkgroup affiliation', 'A radio reported or received a talkgroup affiliation.'],
+    [20, 'REGISTER', 'Registration', 'A radio registration message was observed.'],
+    [9, 'DENIAL', 'Denied', 'The system or radio refused a request.']
+  ].map(([code, name, label, meaning]) => ({ definition_kind: 'ACTION', code, name, label, meaning,
+    p25: true, dmr: name !== 'ACTIVE', nxdn: name !== 'ACTIVE', sort_order: code }));
   const totals = {
     logical_call_count: 279_148, channel_observation_count: 281_002,
     recorded_logical_call_count: 88, stream_submitted_logical_call_count: 145_601,
@@ -48,6 +55,7 @@ async function mockEntities(page, theme) {
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const respond = (data) => route.fulfill({ json: { data } });
+    if (pathname === '/api/v1/activity/message-types') return respond(messageTypes);
     if (pathname === '/api/v1/auth/session') {
       return respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
         primary: true, capabilities: { radio: true, dashboard: true, 'csv-export': true,
@@ -152,6 +160,12 @@ for (const theme of ['light', 'dark']) {
 
       await page.goto(`/app.html?view=group-identity&${scope}&identity_key=${groupKey}`);
       await expect(page.locator('.entity-info-layout .ui-metric-grid')).toHaveCount(6);
+      const signaling = page.locator('.group-identity-signaling-totals');
+      await expect(signaling.locator('.ui-metric-label')).toHaveText([
+        'Active channel', 'Talkgroup affiliation', 'Registration', 'Denied'
+      ]);
+      await expect(signaling.locator('.ui-metric strong')).toHaveText(['136,317', '36,060', '32,789', '553']);
+      await expect(signaling.locator('.empty')).toHaveCount(0);
       await expectMetricGridSpacing(page.locator('.entity-info-layout .ui-metric-grid'));
       const callCounts = page.locator('.entity-info-layout .ui-section')
         .filter({ has: page.locator('.ui-section-title:text-is("Calls heard across this system")') });

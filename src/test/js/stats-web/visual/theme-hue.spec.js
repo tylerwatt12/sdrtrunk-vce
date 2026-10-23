@@ -316,15 +316,68 @@ for (const theme of ['light', 'dark']) {
       primaryToken.style.color = 'var(--accent)';
       const secondaryToken = document.createElement('span');
       secondaryToken.style.color = 'var(--accent-secondary)';
-      document.querySelector('#content').append(button, link, tile, primaryToken, secondaryToken);
+      const samples = document.createElement('div');
+      samples.style.display = 'grid';
+      samples.style.gap = '12px';
+      const pageSample = document.createElement('div');
+      const panelSample = document.createElement('section');
+      panelSample.className = 'ui-surface';
+      const tileSample = document.createElement('div');
+      tileSample.className = 'ui-surface ui-surface-soft';
+      const accentSample = document.createElement('div');
+      accentSample.style.backgroundColor = 'var(--accent-soft)';
+      const sectionHeaderSample = document.createElement('div');
+      sectionHeaderSample.className = 'ui-catalog-rail-header';
+      const sectionTitleSample = document.createElement('div');
+      sectionTitleSample.className = 'ui-section-title';
+      panelSample.append(tileSample, sectionHeaderSample, sectionTitleSample);
+      samples.append(pageSample, panelSample, accentSample);
+      const textSamples = Object.entries({ page: pageSample, panel: panelSample, tile: tileSample,
+        accentSoft: accentSample, sectionHeader: sectionHeaderSample, sectionTitle: sectionTitleSample })
+        .map(([name, owner]) => {
+          const text = document.createElement('span');
+          text.className = 'muted';
+          text.textContent = `${name} metadata`;
+          owner.append(text);
+          return { name, text };
+        });
+      const inputSamples = Object.entries({ page: pageSample, panel: panelSample, tile: tileSample })
+        .map(([name, owner]) => {
+          const input = document.createElement('input');
+          input.className = 'ui-input';
+          input.setAttribute('aria-label', `${name} boundary sample`);
+          input.value = 'Input value';
+          // A synchronous hue sweep must inspect the settled CSS palette.
+          input.style.transition = 'none';
+          owner.append(input);
+          return { name, input };
+        });
+      button.style.transition = 'none';
+      document.querySelector('#content').append(button, link, tile, primaryToken, secondaryToken, samples);
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 1;
       const context = canvas.getContext('2d', { willReadFrequently: true });
+      const colorCache = new Map();
+      const rgba = (color) => {
+        if (!colorCache.has(color)) {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          colorCache.set(color, [...context.getImageData(0, 0, 1, 1).data]);
+        }
+        return colorCache.get(color);
+      };
+      const opaqueBackground = (element) => {
+        for (let owner = element; owner; owner = owner.parentElement) {
+          const background = getComputedStyle(owner).backgroundColor;
+          const alpha = rgba(background)[3];
+          if (alpha === 255) return background;
+          if (alpha !== 0) throw new Error('Palette samples require an opaque painted owner.');
+        }
+        throw new Error('Palette sample has no painted owner.');
+      };
       const luminance = (color) => {
-        context.clearRect(0, 0, 1, 1);
-        context.fillStyle = color;
-        context.fillRect(0, 0, 1, 1);
-        const values = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3).map((channel) => {
+        const values = rgba(color).slice(0, 3).map((channel) => {
           const value = channel / 255;
           return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
         });
@@ -339,12 +392,21 @@ for (const theme of ['light', 'dark']) {
       const qualityBar = document.querySelector('#theme-hue-scanner-quality i.active');
       const quality = getComputedStyle(qualityBar).backgroundColor;
       const qualityBorder = getComputedStyle(qualityBar).borderColor;
-      const minima = { general: Infinity, muted: Infinity, link: Infinity, primary: Infinity };
+      const minima = { general: Infinity, link: Infinity, primary: Infinity };
+      const mutedMinima = Object.fromEntries(textSamples.map(({ name }) => [name, Infinity]));
+      const inputMinima = Object.fromEntries(inputSamples.map(({ name }) => [name, Infinity]));
+      let panelPageMinimum = Infinity;
+      const worstCases = {};
+      const keepMinimum = (target, name, ratio, hue, foreground, background, kind) => {
+        if (ratio >= target[name]) return;
+        target[name] = ratio;
+        worstCases[`${kind}-${name}`] = { hue, foreground, background, ratio };
+      };
       const statusChanges = [];
       const primaryColors = new Set();
       const secondaryColors = new Set();
       const paletteMismatches = [];
-      for (let hue = 0; hue < 360; hue++) {
+      for (const hue of [null, ...Array.from({ length: 360 }, (_, value) => value)]) {
         applyThemeHue(hue);
         const palette = getComputedStyle(root);
         const token = (name) => palette.getPropertyValue(name).trim();
@@ -353,17 +415,37 @@ for (const theme of ['light', 'dark']) {
         const tileColor = getComputedStyle(tile).color;
         primaryColors.add(linkColor);
         secondaryColors.add(tileColor);
-        if (linkColor !== getComputedStyle(primaryToken).color ||
-            tileColor !== getComputedStyle(secondaryToken).color || tileColor === linkColor) {
+        // The original palette deliberately uses its blue secondary for links;
+        // custom hues coordinate links with the primary accent instead.
+        if (tileColor !== getComputedStyle(secondaryToken).color ||
+            (hue !== null && (linkColor !== getComputedStyle(primaryToken).color || tileColor === linkColor))) {
           paletteMismatches.push(hue);
         }
         const pairs = {
           general: [token('--ink'), token('--bg')],
-          muted: [token('--muted'), token('--surface-2')],
           link: [linkColor, token('--surface')],
           primary: [primary.color, primary.backgroundColor]
         };
         for (const [name, pair] of Object.entries(pairs)) minima[name] = Math.min(minima[name], contrast(...pair));
+        for (const { name, text } of textSamples) {
+          const foreground = getComputedStyle(text).color;
+          const background = opaqueBackground(text);
+          keepMinimum(mutedMinima, name, contrast(foreground, background), hue, foreground, background, 'muted');
+        }
+        for (const { name, input } of inputSamples) {
+          const css = getComputedStyle(input);
+          const outside = opaqueBackground(input.parentElement);
+          const inside = opaqueBackground(input);
+          for (const edge of ['Top', 'Right', 'Bottom', 'Left']) {
+            const border = css[`border${edge}Color`];
+            const visible = parseFloat(css[`border${edge}Width`]) > 0 &&
+              !['none', 'hidden'].includes(css[`border${edge}Style`]) && rgba(border)[3] === 255;
+            const ratio = Math.max(contrast(inside, outside), visible ? contrast(border, outside) : 1);
+            keepMinimum(inputMinima, name, ratio, hue, border, outside, 'input');
+          }
+        }
+        panelPageMinimum = Math.min(panelPageMinimum,
+          contrast(opaqueBackground(panelSample), opaqueBackground(panelSample.parentElement)));
         if (getComputedStyle(document.querySelector('#receiver-health-indicator')).color !== status ||
             getComputedStyle(qualityBar).backgroundColor !== quality ||
             getComputedStyle(qualityBar).borderColor !== qualityBorder) statusChanges.push(hue);
@@ -373,8 +455,10 @@ for (const theme of ['light', 'dark']) {
       tile.remove();
       primaryToken.remove();
       secondaryToken.remove();
+      samples.remove();
       applyThemeHue(null);
-      return { original, minima, statusChanges, primaryColors: primaryColors.size,
+      return { original, minima, mutedMinima, inputMinima, panelPageMinimum, worstCases,
+        statusChanges, primaryColors: primaryColors.size,
         secondaryColors: secondaryColors.size, paletteMismatches };
     });
     expect(result.original).toBe(theme === 'light' ? '#edf1f4' : '#10161c');
@@ -385,6 +469,17 @@ for (const theme of ['light', 'dark']) {
     for (const [name, minimum] of Object.entries(result.minima)) {
       expect(minimum, `${theme} ${name} must stay readable at every hue`).toBeGreaterThanOrEqual(4.5);
     }
+    for (const [name, minimum] of Object.entries(result.mutedMinima)) {
+      expect(minimum, `${theme} muted ${name} text: ${JSON.stringify(result.worstCases[`muted-${name}`])}`)
+        .toBeGreaterThanOrEqual(4.5);
+    }
+    for (const [name, minimum] of Object.entries(result.inputMinima)) {
+      expect(minimum, `${theme} input boundary on ${name}: ${JSON.stringify(result.worstCases[`input-${name}`])}`)
+        .toBeGreaterThanOrEqual(3);
+    }
+    // This is the project's surface-grouping floor, not a WCAG contrast rule.
+    expect(result.panelPageMinimum, `${theme} standalone panels must remain distinct from the page`)
+      .toBeGreaterThanOrEqual(1.10);
     await page.goto(`/design-system.html?theme=${theme}&view=radio-directory&hue=335`);
     await expect(page.locator('.radio-directory-conventional-card').first()).toBeVisible();
     await expect(page.locator('body')).toHaveScreenshot(`coordinated-directory-${theme}.png`, { fullPage: true });

@@ -8,6 +8,7 @@ const { presentations } = require('./fixtures/site-style-cases.cjs');
 const { installSiteStyleApplication, systemKey, channelId, groupKey, radioKey,
   channelName, systemName } = require('./fixtures/site-style-app.cjs');
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const scope = `radio_system_key=${encodeURIComponent(systemKey)}`;
 const routes = [
@@ -31,12 +32,13 @@ const routes = [
   ['streaming', 'view=streaming', '.streaming-page', 'County Calls'],
   ['tuners', 'view=tuners', '.tuners-workspace', 'Airspy R2'],
   ['admin', 'view=admin', '.receiver-health-overview', 'Receiver status'],
-  ['settings', 'view=settings', '.user-settings-summary', 'Theme'],
+  ['settings', 'view=settings', '.user-settings-workspace', 'Appearance'],
   ['credits', 'view=credits', '.credits-copy', 'SDRTrunk']
 ];
 const administration = [
   ['health', '.receiver-health-overview', 'Receiver status'],
   ['application-log', '.application-log-workspace', 'County receiver started'],
+  ['web-diagnostic-log', '.web-diagnostic-log-workspace', 'Web server log'],
   ['call-matching', '.call-matching-workspace', 'County Fire Dispatch'],
   ['tuner-allocation', '.tuner-allocation-workspace', channelName],
   ['support', '.support-report-form', 'Prepare support report'],
@@ -47,12 +49,41 @@ const administration = [
   ['activity', '.operational-preferences', 'Saved activity'],
   ['retained-statistics', '.retained-statistics-page', 'Saved data'],
   ['remote-links', '.remote-links-page', 'Regional receiver'],
+  ['remote-support', '[data-remote-support]', 'Allow remote support'],
   ['protocol-p25', '.p25-overrides-workspace', '851'],
   ['display', '.admin-display-settings', 'United States'],
   ['users', '.admin-account-card', 'field.operator'],
   ['access', '.admin-access-gate', 'Page access']
 ].map(([tab, selector, content]) => [`admin-${tab}`, `view=admin&tab=${tab}`, selector, content]);
-const cases = [...routes, ...administration];
+// Views within a production route belong here so the route registry stays a
+// strict one-to-one inventory while each major workspace gets a full-page audit.
+const openAliasChannelScope = async (page) => {
+  await page.locator('details.alias-coverage-scope > summary').click();
+  await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
+};
+const additionalCases = [
+  ['dashboard-calls', 'view=dashboard&tab=calls', '.dashboard-call-activity', 'Fire Dispatch'],
+  ['dashboard-activity', 'view=dashboard&tab=activity', '.dashboard-activity-radio-result', 'Engine 4',
+    async (page) => {
+      await page.locator('.dashboard-activity-legend-button[data-action="GRANT"]').click();
+      await expect(page.locator('.dashboard-activity-radio-host')).toHaveAttribute('aria-busy', 'false');
+    }],
+  ['dashboard-inventory', 'view=dashboard&tab=inventory&alias_list_id=1',
+    '.alias-coverage-table-section', 'Fire Dispatch', openAliasChannelScope],
+  ['dashboard-inventory-unassigned', 'view=dashboard&tab=inventory&alias_list_id=1&identity_tab=unassigned',
+    '.alias-coverage-table-section', '1301', openAliasChannelScope],
+  ['admin-health-diagnostics', 'view=admin&tab=health', '.receiver-health-diagnostics', 'Computer & version',
+    async (page) => {
+      await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
+      const toggles = page.locator('.receiver-health-diagnostics .receiver-health-section-toggle');
+      await expect(toggles).toHaveCount(4);
+      for (const toggle of await toggles.all()) {
+        if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+      }
+      await expect(page.locator('.receiver-health-diagnostics')).toContainText('Synthetic workstation');
+    }]
+];
+const cases = [...routes, ...administration, ...additionalCases];
 const operationalFields = {
   streaming: ['patch_group_streaming_option'],
   'admin-recordings': ['audio_record_format'],
@@ -73,16 +104,42 @@ async function expectSuccessfulPage(page, fixture, name, selector, content) {
     await expect(input).toBeEnabled();
   }
   if (operationalFields[name]) await expect(page.locator('.operational-preferences > .admin-form-message')).toHaveText('');
+  if (['admin', 'admin-health'].includes(name)) {
+    const resources = page.locator('.receiver-health-resources');
+    await expect(resources).toBeVisible();
+    await expect(resources.locator('.receiver-health-resource-bar')).toHaveCount(3);
+    for (const [label, value] of [['Processor', '12.5 %'], ['Memory', '25 %'], ['Free storage', '75 %']]) {
+      await expect(resources.getByRole('progressbar', { name: label, exact: true }))
+        .toHaveAttribute('aria-valuetext', value);
+    }
+    await expect(resources.locator('.receiver-health-empty')).toHaveCount(0);
+    expect(fixture.requests).toContain('/api/v1/receiver-health');
+  }
+  if (name === 'settings') {
+    const appearance = page.getByRole('form', { name: 'Appearance', exact: true });
+    await expect(appearance).toBeVisible();
+    const themes = appearance.getByRole('radiogroup', { name: 'Theme', exact: true });
+    await expect(themes.getByRole('radio', { name: 'Light', exact: true })).toBeEnabled();
+    await expect(themes.getByRole('radio', { name: 'Dark', exact: true })).toBeEnabled();
+    await expect(themes.locator('input:checked')).toHaveCount(1);
+    await expect(appearance.getByRole('radio', { name: 'Teal', exact: true })).toBeChecked();
+    await expect(appearance.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+    await expect(appearance.locator('.admin-form-message')).toHaveText('');
+    expect(fixture.requests).toContain('/api/v1/me/preferences');
+  }
   if (name === 'admin-display') {
     const liveTiming = page.locator('.receiver-settings-form input[type="number"]');
     await expect(liveTiming).toBeEnabled();
     await expect(liveTiming).toHaveValue('2000');
     await expect(page.locator('.receiver-settings-form .admin-form-message')).toHaveText('');
   }
-  if (name === 'admin-application-log') {
+  if (['admin-application-log', 'admin-web-diagnostic-log'].includes(name)) {
     await expect(page.locator('.application-log-entry')).toHaveCount(3);
     await expect(page.locator('.application-log-state')).toHaveText('Live');
     await expect(page.getByRole('button', { name: 'Copy shown', exact: true })).toBeEnabled();
+  }
+  if (name === 'admin-remote-support') {
+    await expect(page.getByRole('button', { name: 'Allow remote support', exact: true })).toBeEnabled();
   }
   const errors = page.locator('#content .ui-feedback-error:visible, #content > .error:visible, ' +
     '#content [role="alert"]:visible').filter({ hasText: /\S/ });
@@ -92,6 +149,28 @@ async function expectSuccessfulPage(page, fixture, name, selector, content) {
   await expect(formErrors, 'Form-level load failures must not count as successful page coverage').toHaveCount(0);
   expect(fixture.unexpected, 'Every API response is explicit; unknown requests may not silently return empty data').toEqual([]);
   expect(fixture.pageErrors, 'Production route must mount without a JavaScript error').toEqual([]);
+}
+
+// Exercise the same rendered page under representative custom colors without
+// saving a preference or reloading its populated workflow.
+async function auditPageContrast(page, name) {
+  await expectContrast(page, { reportName: name });
+  const hues = (process.env.CONTRAST_AUDIT_HUES ?? '0,120,240').split(',')
+    .filter(value => value.trim()).map(Number);
+  try {
+    for (const hue of hues) {
+      await page.evaluate(async (value) => {
+        const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+        applyThemeHue(value);
+      }, hue);
+      await expectContrast(page, { reportName: `${name}-hue-${hue}` });
+    }
+  } finally {
+    if (hues.length) await page.evaluate(async () => {
+      const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+      applyThemeHue(null);
+    });
+  }
 }
 
 async function expectSharedTypography(page) {
@@ -114,9 +193,7 @@ test('actual route style matrix includes every production route and administrati
   await expect(page.locator('.admin-settings-tree')).toBeVisible();
   const availableLeaves = await page.locator('.admin-settings-tree a[href]').evaluateAll(links =>
     links.map(link => new URL(link.href).searchParams.get('tab')).filter(Boolean));
-  // The diagnostic logger's saving/failure/cleanup and both-theme phone/desktop
-  // coverage lives in web-diagnostic-log.spec.js, with private render evidence.
-  expect([...administration.map(([, query]) => new URLSearchParams(query).get('tab')), 'web-diagnostic-log'].sort())
+  expect(administration.map(([, query]) => new URLSearchParams(query).get('tab')).sort())
     .toEqual(availableLeaves.sort());
 });
 
@@ -151,18 +228,20 @@ test('Spectrum frequency lookup opens shared account connection and keeps its se
   expect(fixture.pageErrors).toEqual([]);
 });
 
-for (const [name, query, selector, content] of cases) {
+for (const [name, query, selector, content, prepare] of cases) {
   for (const presentation of presentations) {
     test(`actual ${name} ${presentation.name}`, async ({ page }) => {
       await page.setViewportSize(presentation.viewport);
       const fixture = await installSiteStyleApplication(page, presentation.theme);
       if (name === 'credits') await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(`/app.html?${query}`);
+      if (prepare) await prepare(page);
       if (presentation.theme === 'dark') await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
       else await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'dark');
       await expectSuccessfulPage(page, fixture, name, selector, content);
       await expectSharedTypography(page);
       await expectNoHorizontalOverflow(page);
+      await auditPageContrast(page, `actual-${name}-${presentation.name}`);
       if (name === 'recordings') {
         const actions = await page.locator('.recordings-card-action').evaluateAll(controls => controls.map(control => ({
           width: control.getBoundingClientRect().width, height: control.getBoundingClientRect().height,
@@ -198,6 +277,7 @@ for (const [name, viewport] of [
       await page.goto(`/app.html?${query}`);
       await expectSuccessfulPage(page, fixture, id, selector, content);
       await expectNoHorizontalOverflow(page);
+      await auditPageContrast(page, `responsive-${id}-${name}`);
       await expectSharedTypography(page);
       const control = page.locator('#content .ui-button:not(:disabled):visible, #content .ui-input:not(:disabled):visible').first();
       if (await control.count()) {
@@ -208,8 +288,6 @@ for (const [name, viewport] of [
     });
   }
 }
-
-module.exports = { routes, administration };
 
 async function installRadioReferenceRegionApplication(page, theme, options = {}) {
   const fixture = await installSiteStyleApplication(page, theme);

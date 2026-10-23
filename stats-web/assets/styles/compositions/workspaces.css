@@ -323,7 +323,7 @@
   align-content: start;
   gap: var(--space-1);
   padding: var(--space-3);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--radius-control);
 }
@@ -434,7 +434,7 @@
 .ui-metric {
   min-width: 0;
   padding: var(--space-4);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--radius-control);
 }
@@ -785,7 +785,7 @@
 }
 
 .ui-surface-soft {
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   box-shadow: none;
 }
@@ -888,7 +888,7 @@
   gap: var(--space-1) var(--space-3);
   padding: var(--ui-surface-padding, 14px);
   color: var(--link);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
 }
@@ -933,7 +933,7 @@
   flex-wrap: wrap;
   gap: var(--ui-layout-gap, 9px);
   padding: var(--ui-surface-padding, 12px);
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
   box-shadow: none;
@@ -1090,7 +1090,7 @@
   display: grid;
   gap: var(--space-1);
   padding: 6px;
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--ui-surface-radius, var(--radius-card));
 }
@@ -1176,12 +1176,17 @@
   box-shadow: none;
 }
 
+.ui-form-section .ui-toggle-field {
+  background: transparent;
+}
+
 .ui-section-disclosure-flat > .ui-section-summary {
   padding-inline: 0;
   font-weight: var(--record-title-weight);
 }
 
-.ui-section-disclosure > .ui-form-section {
+.ui-section-disclosure > .ui-form-section,
+.ui-form-section .ui-form-section {
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -1270,11 +1275,20 @@
   font-size: var(--font-size-meta);
 }
 
+/* Filled groups inherit their role from the painted owner, not their feature.
+   A quiet tile directly on the page must not blend into the page background. */
+:where(.ui-section, .ui-surface, .ui-record-card, .settings-card,
+    .ui-form-section, .ui-section-disclosure, .ui-surface-inset,
+    .read-only-modal, .ui-popover, .ui-audio-surface) > * {
+  --ui-content-fill: var(--ui-tile-fill);
+  --ui-inset-fill: color-mix(in srgb, var(--ui-tile-fill) 55%, var(--ui-panel-fill));
+}
+
 /* Records share their appearance; feature styles only arrange their contents. */
 .ui-record-grid { display: grid; gap: var(--space-3); }
 .ui-record-card {
   min-width: 0;
-  background: var(--ui-tile-fill);
+  background: var(--ui-content-fill);
   border: 0;
   border-radius: var(--radius-control);
   overflow: hidden;

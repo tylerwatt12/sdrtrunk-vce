@@ -38,12 +38,12 @@ import { openRadioReferenceConnect } from './features/radioreference-connect.js?
 import { createStreamingWorkspace } from './features/streaming.js?v=13';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=20';
-import { createAlertsWorkspace } from './features/alerts.js?v=18';
+import { createAlertsWorkspace } from './features/alerts.js?v=19';
 import { createCallRelations } from './features/call-relations.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=55';
 import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=30';
+import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=31';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
@@ -9048,7 +9048,7 @@ function qualityHistoryChart(channel, response, metric, domain, decodeOnly = fal
 }
 
 function qualityChartPanel(title, description, chart) {
-  const panel = node('div', 'quality-chart-panel ui-surface');
+  const panel = node('div', 'quality-chart-panel ui-surface ui-surface-soft');
   const heading = node('div', 'quality-chart-heading');
   heading.append(node('strong', '', title), node('span', '', description));
   panel.append(heading, chart);
@@ -14805,7 +14805,7 @@ function openSpectrumDiscoveryWizard(selection) {
     }
   };
   const systemSummary = () => {
-    const card = node('section', 'ui-surface spectrum-discovery-system');
+    const card = node('section', 'ui-surface ui-surface-soft spectrum-discovery-system');
     const heading = node('div', 'spectrum-discovery-system-heading');
     const summary = node('p', 'ui-record-title spectrum-discovery-system-title');
     heading.append(summary);
@@ -19482,7 +19482,7 @@ function liveChannelsSection(onSelectionChange) {
     tables.set(value.table_id, value);
     let tab = tabNodes.get(value.table_id);
     if (!tab) {
-      tab = node('div', 'channels-live-tab ui-surface ui-surface-soft');
+      tab = node('div', 'channels-live-tab ui-surface');
       tab.setAttribute('role', 'none');
       const select = node('button', 'channels-tab-select');
       select.type = 'button';
